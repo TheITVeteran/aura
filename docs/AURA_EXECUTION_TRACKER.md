@@ -145,6 +145,14 @@ and Accessibility ready through `/api/system/desktop-access`.
 - Verifiable preference export exists, but the current live preference store
   has `0` exportable rows. That is a real open learning-data gap, not a closed
   RLVR/DPO training loop.
+- Verifier-reward preference training is now a first-class local bridge:
+  `core/learning/preference_trainer.py` and
+  `scripts/run_verifiable_preference_training.py` check the installed
+  `mlx-lm-lora` trainer, export real `prompt/chosen/rejected` verifier pairs
+  into train/valid/test splits, and assemble the local DPO/ORPO/online-DPO
+  command. The bridge refuses to run when the store has fewer than the required
+  real pairs, so the current `0`-row store remains visibly blocked instead of
+  being reported as learning.
 - New validator: `tools/closeout/frontier_standards_matrix.py` maps the
   requested frontier/fiction/phenomenal/general-AI standards to source paths,
   validator paths, and live artifact requirements.

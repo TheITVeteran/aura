@@ -1,5 +1,6 @@
 # Aura Luna v2026.4.20-Zenith
 mlx-lm>=0.31.0
+mlx-lm-lora==2.1.0
 faster-whisper
 webrtcvad
 pywebview>=5.0
