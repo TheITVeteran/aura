@@ -65,3 +65,50 @@ def test_report_names_failure_pressure_feeders(monkeypatch):
     assert report["failure_state"]["pressure"] == 0.85
     assert report["failure_state"]["top_subsystems"][0] == "mlx_warmup"
     assert any("failure pressure 0.85" in a for a in report["advisory"])
+
+
+def test_concern_verdict_uses_trailing_window_not_lifetime_counts(monkeypatch):
+    """A long-lived runtime must recover once a degradation storm passes:
+    old records outside the window must not hold the runtime unhealthy."""
+    import time
+
+    import core.runtime.integrity_audit as ia
+    from core.runtime.errors import DegradationRecord, get_degradation_tracker
+
+    tracker = get_degradation_tracker()
+    tracker.reset()
+    try:
+        old_ts = time.time() - ia._DEGRADATION_CONCERN_WINDOW_S - 60.0
+        for i in range(ia._DEGRADATION_CONCERN + 5):
+            tracker.record(
+                DegradationRecord(
+                    subsystem="stormy_subsystem",
+                    severity="warning",
+                    error_type="TimeoutError",
+                    error_message=f"old event {i}",
+                    action="recovered",
+                    timestamp=old_ts,
+                )
+            )
+
+        report = ia.run_integrity_audit(log=False)
+        assert not any("stormy_subsystem" in c for c in report["concerns"]), (
+            "stale records outside the window must not mark the runtime unhealthy"
+        )
+
+        # A fresh burst inside the window still trips the concern.
+        for i in range(ia._DEGRADATION_CONCERN):
+            tracker.record(
+                DegradationRecord(
+                    subsystem="stormy_subsystem",
+                    severity="warning",
+                    error_type="TimeoutError",
+                    error_message=f"fresh event {i}",
+                    action="recovered",
+                    timestamp=time.time(),
+                )
+            )
+        report = ia.run_integrity_audit(log=False)
+        assert any("stormy_subsystem" in c for c in report["concerns"])
+    finally:
+        tracker.reset()

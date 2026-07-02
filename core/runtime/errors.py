@@ -153,6 +153,26 @@ class DegradationTracker:
                 ],
             }
 
+    def recent_counts_by_subsystem(self, window_s: float) -> dict[str, dict[str, int]]:
+        """Counts restricted to the trailing window.
+
+        Health verdicts must use THIS, not the lifetime counters: a runtime
+        that lives for weeks accumulates sporadic warnings forever, and a
+        lifetime threshold eventually marks a healthy instance unhealthy
+        (observed live: 29 routine narrative timeouts held boot at 48%).
+        """
+        import time as _time
+
+        cutoff = _time.time() - max(0.0, float(window_s))
+        windowed: dict[str, dict[str, int]] = {}
+        with self._lock:
+            for rec in self._records:
+                if rec.timestamp < cutoff:
+                    continue
+                windowed.setdefault(rec.subsystem, {}).setdefault(rec.severity, 0)
+                windowed[rec.subsystem][rec.severity] += 1
+        return windowed
+
     def recent(self, *, subsystem: str | None = None, limit: int = 20) -> list[DegradationRecord]:
         with self._lock:
             records = self._records

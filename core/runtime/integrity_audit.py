@@ -28,6 +28,9 @@ _lock = threading.Lock()
 
 # Degradations above this for a single subsystem are flagged as a concern.
 _DEGRADATION_CONCERN = 10
+# Concern verdicts look at a trailing window so the runtime can recover after
+# a degradation storm instead of staying "unhealthy" for its whole lifetime.
+_DEGRADATION_CONCERN_WINDOW_S = 1800.0
 
 
 def strict_mode() -> bool:
@@ -48,11 +51,20 @@ def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
     try:
         from core.runtime.errors import get_degradation_tracker
 
-        degradations = get_degradation_tracker().status()
-        for sub, sevs in (degradations.get("counts_by_subsystem") or {}).items():
+        tracker = get_degradation_tracker()
+        degradations = tracker.status()
+        # Health verdicts use a trailing window, not lifetime counters — a
+        # long-lived runtime must be able to RECOVER once a storm passes.
+        recent_counts = tracker.recent_counts_by_subsystem(_DEGRADATION_CONCERN_WINDOW_S)
+        degradations["recent_window_s"] = _DEGRADATION_CONCERN_WINDOW_S
+        degradations["recent_counts_by_subsystem"] = recent_counts
+        for sub, sevs in recent_counts.items():
             total = sum(sevs.values())
             if total >= _DEGRADATION_CONCERN:
-                concerns.append(f"{sub}: {total} degradations")
+                concerns.append(
+                    f"{sub}: {total} degradations in the last "
+                    f"{int(_DEGRADATION_CONCERN_WINDOW_S // 60)}m"
+                )
     except (ImportError, AttributeError, RuntimeError, TypeError):
         degradations = {}
 
