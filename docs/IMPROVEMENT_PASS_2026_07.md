@@ -56,15 +56,28 @@ lint) and pushed to main.
 - `chat.py` / `routes/system.py`: targeted mechanical scans only; both are
   heavily hardened and blind refactoring would be churn.
 
-## Requires operator action
+## Operator actions — both CLOSED (July 2)
 
-1. **Restart the live instance** — it has been running pre-fix code since
-   July 1, 15:41 PDT; every fix above lands on restart. The first boot
-   writes `artifacts/current/boot_profile.json` naming any slow phase.
-2. **Regenerate the steering A/B artifact** in a quiet window (32B lane
-   free): `python tests/run_32b_steering_ab_live.py` (~25 min). Until
-   then the readiness gate correctly reports the steering behavioral
-   claim as unproven.
+1. ~~Restart the live instance~~ — restarted July 2 15:27 PDT on current
+   code. `artifacts/current/boot_profile.json`: core boot **12.9s** (was
+   ~13 minutes), no slow phase.
+2. ~~Regenerate the steering A/B artifact~~ — regenerated with the rebuilt
+   runner: 12,642 injections, sampled (temp 0.7, paired seeds), 5 held-out
+   tasks, `passes_adversarial_control: true`. Full chain validated:
+   `artifacts/CAA_32B_RESULTS.json` → **passed: true** with all five
+   behavioral checks green (steered-vs-baseline, steered-vs-rich,
+   held-out generalization, quality delta, prompt hygiene).
+
+## Phase 3 (in progress) — full-coverage sweep to closure
+
+Scope owned by the improvement pass (tasks tracked in-session):
+evidence-chain closure ✅ · backpressure degradation audit (the
+stream_of_being deep-narrative fix is the template) · tier-1 line sweeps
+(brain/llm, orchestrator+boot, memory, consciousness, governance/runtime/
+resilience/security) · tier-2 structured sweeps (agency, senses, skills,
+interface) · duplicate-system consolidation with written adjudications ·
+docs/claims truth pass · final full-suite + gates verification · the
+evidence-grounded qualitative assessment.
 
 ---
 

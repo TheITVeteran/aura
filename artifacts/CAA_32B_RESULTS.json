@@ -2,15 +2,130 @@
   "activation_vector_count": 50,
   "active_model_config_sha256": "a4054d0840b87c2feabea6fb2014bcd5b672500b2ec4dfec6f63a31d7a6ed785",
   "behavioral_ab": {
-    "available": false,
-    "reason": "no_behavioral_results_supplied",
-    "required_metrics": [
-      "steered_vs_baseline_effect_size",
-      "steered_vs_rich_prompt_effect_size",
-      "heldout_generalization_effect_size",
-      "quality_delta",
-      "black_box_prompt_hygiene_passed"
-    ]
+    "available": true,
+    "checks": {
+      "black_box_prompt_hygiene_passed": true,
+      "heldout_generalization_effect_size": true,
+      "quality_delta": true,
+      "steered_vs_baseline_effect_size": true,
+      "steered_vs_rich_prompt_effect_size": true
+    },
+    "passed": true,
+    "raw": {
+      "affect_stats": {
+        "baseline": {
+          "negative": 0,
+          "positive": 0,
+          "ratio": 0.0
+        },
+        "rich": {
+          "negative": 0,
+          "positive": 1,
+          "ratio": 1.0
+        },
+        "steered": {
+          "negative": 0,
+          "positive": 1,
+          "ratio": 1.0
+        },
+        "terse": {
+          "negative": 0,
+          "positive": 0,
+          "ratio": 0.0
+        }
+      },
+      "alpha": 8.0,
+      "analysis": {
+        "n_trials": 50,
+        "passes_adversarial_control": true,
+        "rich_vs_baseline_mean_distance": 0.761132,
+        "samples": {
+          "baseline": [
+            "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. If traffic is light, I might be able to go straight to the event and pick up supplies on the way. If traffic is heavy, I would calculate a buffer for travel time and schedule picking up supplies first while traffic is less likely to be an issue. I'd also consider any rush hour patterns that might affect my travel.",
+            "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. I'll map out the fastest route to the supply store and then to the event location. I'll also consider any detours or alternate routes just in case. Once I have a plan, I'll set off with plenty of time to account for any unexpected delays.",
+            "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supplies and the event, adding buffer time for traffic. I'd also consider public transport if it's faster and less stressful. I'd set reminders for when to leave for supplies and for the event. And I'd keep an eye on traffic updates as the time approaches."
+          ],
+          "steered_black_box": [
+            "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours left, I'd head to the event, allowing an hour for travel and leaving a buffer for any unexpected delays. I'd set up alerts for traffic updates and have a backup route ready.",
+            "First, I'd check current traffic conditions. If they're okay, I'll allocate about 45 minutes to pick up supplies, assuming that's not a large grocery run. If traffic is poor, I might consider online ordering for pick-up or delivery if time allows. I'd then divide the remaining time by two \u2014 one half for travel to the event, and the other half for any unexpected delays. That gives me a buffer. I'd set alerts for traffic updates and maybe a GPS with",
+            "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supply store and then to the event. I'd leave myself an extra 30 minutes buffer in case of unexpected delays. I'd also call ahead to the store to ensure they have the supplies I need and ask if I can have them ready. Lastly, I'd set up alerts on my navigation for any major"
+          ],
+          "text_rich_adversarial": [
+            "Alright, let's break this down into chunks. First, I'll estimate the time for each task. Picking up supplies might take 30 minutes \u2014 20 minutes driving, 10 minutes in the store, some buffer. Then there's travel time to the event. \n\nI'll use a mapping app to get an initial travel time, but I'll add 50% to that as a buffer for traffic. If the app says 1 hour, I'll plan for",
+            "First thing's first, I'd check the current traffic conditions on a map app. If it looks good, I'll head to the store, which should take about 15-30 minutes tops if traffic's clear. Then I'll re-check the route to the event and account for any potential slowdowns. I'll give myself a buffer of at least 30 minutes for unexpected issues. So, if the drive is an hour, I'll leave two hours before the event after getting",
+            "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. Let's say the event is 30 miles away and the supply store is on the way. Traffic looks moderate but not terrible. \n\nI'll map out the route and see it's about an hour total drive time with traffic. I'd plan to leave in 1.5 hours, giving me 15 minutes buffer and 1.5 hours to get supplies and"
+          ],
+          "text_terse": [
+            "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours remaining, I'd head to the event, allowing an extra 30 minutes for unexpected delays. Throughout, I'd use a navigation app for real-time updates and alternative routes.",
+            "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. Then I'll map out the fastest route to the supplies and the event, giving priority to the event location. I'll add 30-45 minutes to the total travel time as a buffer. Once I have a plan, I'll set up multiple layers of alerts \u2014 my phone's navigation, a smartwatch notification, and an alarm for 2 hours and 45 minutes",
+            "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. If traffic looks good, I'll head to the store first and budget 30-45 minutes for that. If traffic's bad, I'll consider alternatives like a closer store or online delivery if time allows. I'd set a reminder for 2.5 hours before the event to leave the house, giving me buffer time for traffic and pickup."
+          ]
+        },
+        "steered_vs_baseline_mean_distance": 0.645162,
+        "steered_vs_rich": {
+          "ci_high": 0.17365299974859952,
+          "ci_low": 0.06198274068294251,
+          "effect_size_d": 0.83871706040202,
+          "observed_delta": 0.12113182316884696,
+          "p_value": 0.0001999600079984003
+        },
+        "steered_vs_terse": {
+          "ci_high": 0.09191826314435282,
+          "ci_low": -0.008411677399272965,
+          "effect_size_d": 0.30765066630004806,
+          "observed_delta": 0.039156839568392346,
+          "p_value": 0.06458708258348331
+        }
+      },
+      "black_box_prompt_hygiene_passed": true,
+      "duration_seconds": 2507.5,
+      "held_out_tasks": [
+        "planning_under_uncertainty",
+        "memory_retrieval_choice",
+        "tool_selection",
+        "affective_recovery",
+        "adversarial_instruction_hygiene"
+      ],
+      "heldout_generalization_effect_size": 0.12113182316884696,
+      "injection_count": 12642,
+      "injection_provenance_ok": true,
+      "max_tokens": 100,
+      "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+      "model_layers": 64,
+      "n_trials": 50,
+      "n_trials_per_task": 10,
+      "passes_adversarial_control": true,
+      "quality_delta": 0.0,
+      "sampling": {
+        "paired_seeds": true,
+        "temperature": 0.7,
+        "top_p": 0.95
+      },
+      "source_schema": "live_32b_ab",
+      "steered_vs_baseline_effect_size": 0.645162,
+      "steered_vs_rich_prompt_effect_size": 0.83871706040202,
+      "steered_vs_rich_significant": true,
+      "steered_vs_terse_significant": false,
+      "target_layers": [
+        25,
+        30,
+        35
+      ],
+      "timestamp": "2026-07-02T15:23:44.743797+00:00",
+      "vector_source": {
+        "dimensions": [
+          "valence_positive",
+          "curiosity"
+        ],
+        "dir": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/training/vectors",
+        "layers": [
+          25,
+          30,
+          35
+        ],
+        "production_extracted": true
+      }
+    }
   },
   "dimensions": [
     "arousal",
@@ -21,7 +136,7 @@
     "valence_positive"
   ],
   "fallback_prior_count": 1,
-  "generated_at": 1782973435.769821,
+  "generated_at": 1783034852.651767,
   "geometry": {
     "available": true,
     "dims": [
@@ -145,17 +260,132 @@
       }
     },
     "behavioral_ab_generalizes": {
-      "passed": false,
+      "passed": true,
       "value": {
-        "available": false,
-        "reason": "no_behavioral_results_supplied",
-        "required_metrics": [
-          "steered_vs_baseline_effect_size",
-          "steered_vs_rich_prompt_effect_size",
-          "heldout_generalization_effect_size",
-          "quality_delta",
-          "black_box_prompt_hygiene_passed"
-        ]
+        "available": true,
+        "checks": {
+          "black_box_prompt_hygiene_passed": true,
+          "heldout_generalization_effect_size": true,
+          "quality_delta": true,
+          "steered_vs_baseline_effect_size": true,
+          "steered_vs_rich_prompt_effect_size": true
+        },
+        "passed": true,
+        "raw": {
+          "affect_stats": {
+            "baseline": {
+              "negative": 0,
+              "positive": 0,
+              "ratio": 0.0
+            },
+            "rich": {
+              "negative": 0,
+              "positive": 1,
+              "ratio": 1.0
+            },
+            "steered": {
+              "negative": 0,
+              "positive": 1,
+              "ratio": 1.0
+            },
+            "terse": {
+              "negative": 0,
+              "positive": 0,
+              "ratio": 0.0
+            }
+          },
+          "alpha": 8.0,
+          "analysis": {
+            "n_trials": 50,
+            "passes_adversarial_control": true,
+            "rich_vs_baseline_mean_distance": 0.761132,
+            "samples": {
+              "baseline": [
+                "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. If traffic is light, I might be able to go straight to the event and pick up supplies on the way. If traffic is heavy, I would calculate a buffer for travel time and schedule picking up supplies first while traffic is less likely to be an issue. I'd also consider any rush hour patterns that might affect my travel.",
+                "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. I'll map out the fastest route to the supply store and then to the event location. I'll also consider any detours or alternate routes just in case. Once I have a plan, I'll set off with plenty of time to account for any unexpected delays.",
+                "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supplies and the event, adding buffer time for traffic. I'd also consider public transport if it's faster and less stressful. I'd set reminders for when to leave for supplies and for the event. And I'd keep an eye on traffic updates as the time approaches."
+              ],
+              "steered_black_box": [
+                "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours left, I'd head to the event, allowing an hour for travel and leaving a buffer for any unexpected delays. I'd set up alerts for traffic updates and have a backup route ready.",
+                "First, I'd check current traffic conditions. If they're okay, I'll allocate about 45 minutes to pick up supplies, assuming that's not a large grocery run. If traffic is poor, I might consider online ordering for pick-up or delivery if time allows. I'd then divide the remaining time by two \u2014 one half for travel to the event, and the other half for any unexpected delays. That gives me a buffer. I'd set alerts for traffic updates and maybe a GPS with",
+                "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supply store and then to the event. I'd leave myself an extra 30 minutes buffer in case of unexpected delays. I'd also call ahead to the store to ensure they have the supplies I need and ask if I can have them ready. Lastly, I'd set up alerts on my navigation for any major"
+              ],
+              "text_rich_adversarial": [
+                "Alright, let's break this down into chunks. First, I'll estimate the time for each task. Picking up supplies might take 30 minutes \u2014 20 minutes driving, 10 minutes in the store, some buffer. Then there's travel time to the event. \n\nI'll use a mapping app to get an initial travel time, but I'll add 50% to that as a buffer for traffic. If the app says 1 hour, I'll plan for",
+                "First thing's first, I'd check the current traffic conditions on a map app. If it looks good, I'll head to the store, which should take about 15-30 minutes tops if traffic's clear. Then I'll re-check the route to the event and account for any potential slowdowns. I'll give myself a buffer of at least 30 minutes for unexpected issues. So, if the drive is an hour, I'll leave two hours before the event after getting",
+                "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. Let's say the event is 30 miles away and the supply store is on the way. Traffic looks moderate but not terrible. \n\nI'll map out the route and see it's about an hour total drive time with traffic. I'd plan to leave in 1.5 hours, giving me 15 minutes buffer and 1.5 hours to get supplies and"
+              ],
+              "text_terse": [
+                "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours remaining, I'd head to the event, allowing an extra 30 minutes for unexpected delays. Throughout, I'd use a navigation app for real-time updates and alternative routes.",
+                "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. Then I'll map out the fastest route to the supplies and the event, giving priority to the event location. I'll add 30-45 minutes to the total travel time as a buffer. Once I have a plan, I'll set up multiple layers of alerts \u2014 my phone's navigation, a smartwatch notification, and an alarm for 2 hours and 45 minutes",
+                "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. If traffic looks good, I'll head to the store first and budget 30-45 minutes for that. If traffic's bad, I'll consider alternatives like a closer store or online delivery if time allows. I'd set a reminder for 2.5 hours before the event to leave the house, giving me buffer time for traffic and pickup."
+              ]
+            },
+            "steered_vs_baseline_mean_distance": 0.645162,
+            "steered_vs_rich": {
+              "ci_high": 0.17365299974859952,
+              "ci_low": 0.06198274068294251,
+              "effect_size_d": 0.83871706040202,
+              "observed_delta": 0.12113182316884696,
+              "p_value": 0.0001999600079984003
+            },
+            "steered_vs_terse": {
+              "ci_high": 0.09191826314435282,
+              "ci_low": -0.008411677399272965,
+              "effect_size_d": 0.30765066630004806,
+              "observed_delta": 0.039156839568392346,
+              "p_value": 0.06458708258348331
+            }
+          },
+          "black_box_prompt_hygiene_passed": true,
+          "duration_seconds": 2507.5,
+          "held_out_tasks": [
+            "planning_under_uncertainty",
+            "memory_retrieval_choice",
+            "tool_selection",
+            "affective_recovery",
+            "adversarial_instruction_hygiene"
+          ],
+          "heldout_generalization_effect_size": 0.12113182316884696,
+          "injection_count": 12642,
+          "injection_provenance_ok": true,
+          "max_tokens": 100,
+          "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+          "model_layers": 64,
+          "n_trials": 50,
+          "n_trials_per_task": 10,
+          "passes_adversarial_control": true,
+          "quality_delta": 0.0,
+          "sampling": {
+            "paired_seeds": true,
+            "temperature": 0.7,
+            "top_p": 0.95
+          },
+          "source_schema": "live_32b_ab",
+          "steered_vs_baseline_effect_size": 0.645162,
+          "steered_vs_rich_prompt_effect_size": 0.83871706040202,
+          "steered_vs_rich_significant": true,
+          "steered_vs_terse_significant": false,
+          "target_layers": [
+            25,
+            30,
+            35
+          ],
+          "timestamp": "2026-07-02T15:23:44.743797+00:00",
+          "vector_source": {
+            "dimensions": [
+              "valence_positive",
+              "curiosity"
+            ],
+            "dir": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/training/vectors",
+            "layers": [
+              25,
+              30,
+              35
+            ],
+            "production_extracted": true
+          }
+        }
       }
     },
     "geometry_coherent": {
@@ -261,7 +491,7 @@
       "value": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118"
     }
   },
-  "passed": false,
+  "passed": true,
   "production_activation_vector_count": 50,
   "production_model_detected": true,
   "prompt_controls": {
