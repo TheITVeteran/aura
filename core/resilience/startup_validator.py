@@ -1,7 +1,7 @@
 from __future__ import annotations
 from core.runtime.errors import record_degradation
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 
 import asyncio
 import logging
@@ -243,7 +243,7 @@ class StartupValidator:
         try:
             from core.config import config
             test_file = config.paths.data_dir / ".write_test"
-            atomic_write_text(test_file, "ok")
+            await async_atomic_write_text(test_file, "ok")
             test_file.unlink()
             c.passed = True
             c.message = f"Data dir writable: {config.paths.data_dir}"

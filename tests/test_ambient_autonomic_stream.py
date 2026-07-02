@@ -267,6 +267,11 @@ def test_dream_journal_compiles_autobiographical_mythos(monkeypatch, tmp_path):
             assert source == "adaptation.dream_journal.autobiographical_mythos"
             path.write_text(text, encoding="utf-8")
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
+
     journal = dream_journal.DreamJournal.__new__(dream_journal.DreamJournal)
     journal.journal_dir = tmp_path
     journal.journal_file = tmp_path / "dream_journal.txt"

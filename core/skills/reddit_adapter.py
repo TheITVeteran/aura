@@ -337,7 +337,7 @@ class RedditAdapterSkill(BaseSkill):
         try:
             if browser.context:
                 cookies = await browser.context.cookies()
-                get_file_write_gateway().write_text(
+                await get_file_write_gateway().write_text_async(
                     _STORAGE_STATE_FILE,
                     json.dumps(
                         {

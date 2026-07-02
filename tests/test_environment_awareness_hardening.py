@@ -92,6 +92,11 @@ def test_user_identity_manager_persists_under_configured_data_path(monkeypatch, 
             writes.append((str(path), encoding, source))
             path.write_text(text, encoding=encoding)
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
+
     monkeypatch.setattr(env_module, "_data_path", lambda _filename: data_path)
     monkeypatch.setattr(env_module, "get_file_write_gateway", lambda: FileGateway())
 

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from core.config import config
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.tasks.managed_command import ManagedCommandResult
@@ -78,7 +78,7 @@ class AirlockProtocol:
         try:
             with tempfile.TemporaryDirectory(prefix="aura_airlock_patch_") as patch_tmp:
                 patch_file = Path(patch_tmp) / f"{self._safe_branch_suffix(hypothesis_id)}.patch"
-                atomic_write_text(patch_file, diff_patch, encoding="utf-8")
+                await async_atomic_write_text(patch_file, diff_patch, encoding="utf-8")
 
                 # 1. Setup Sandbox
                 if self.sandbox_dir.exists():

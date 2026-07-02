@@ -23,6 +23,11 @@ async def test_code_repl_subprocess_fallback_uses_file_gateway_and_action_execut
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding=encoding)
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
+
     class FakeActionExecutor:
         @classmethod
         async def execute(cls, **kwargs):

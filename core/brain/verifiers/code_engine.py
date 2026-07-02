@@ -13,6 +13,7 @@ from typing import Any
 from core.runtime.errors import record_degradation
 
 from .base import VerificationResult
+from core.runtime.atomic_writer import async_atomic_write_text
 
 _FENCE_RE = re.compile(r"```(?:python|py)?\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 # A line that looks like Python even without a fence (heuristic for inline code answers).
@@ -99,7 +100,7 @@ class CodeTruthEngine:
                 return []
             with tempfile.TemporaryDirectory(prefix="aura_ruff_") as td:
                 path = Path(td) / "candidate.py"
-                atomic_write_text(path, code, encoding="utf-8")
+                await async_atomic_write_text(path, code, encoding="utf-8")
                 res = await get_subprocess_gateway().run_async(
                     ("ruff", "check", "--quiet", "--no-cache", str(path)),
                     timeout=15.0,

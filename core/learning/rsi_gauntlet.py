@@ -38,7 +38,7 @@ from core.learning.rsi_lineage import (
 )
 from core.learning.rsi_test_catalog import catalog_summary, default_rsi_test_catalog
 from core.learning.successor_lab import SuccessorLab
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.hot_swap import HotSwapRegistry
 from core.self_modification.formal_verifier import verify_mutation
@@ -167,7 +167,7 @@ class RSIGauntlet:
             ledger_path=str(self.lineage.path),
             duration_s=round(time.time() - start, 3),
         )
-        atomic_write_text(
+        await async_atomic_write_text(
             self.artifact_dir / "latest_gauntlet_result.json",
             json.dumps(result.to_dict(), indent=2, sort_keys=True, default=str),
             encoding="utf-8",

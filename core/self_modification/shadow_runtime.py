@@ -154,7 +154,7 @@ class ShadowRuntime:
 
                 # 3. Apply mutation in shadow
                 shadow_file.parent.mkdir(parents=True, exist_ok=True)
-                get_file_write_gateway().write_text(
+                await get_file_write_gateway().write_text_async(
                     shadow_file,
                     patched_code,
                     encoding="utf-8",
@@ -270,7 +270,7 @@ print(f"SHADOW_OK: AST parsed, {{len(tree.body)}} top-level nodes")
     ) -> dict[str, str | int]:
         """Run a Python script in a subprocess."""
         script_path = cwd / "_shadow_boot.py"
-        get_file_write_gateway().write_text(
+        await get_file_write_gateway().write_text_async(
             script_path,
             script,
             encoding="utf-8",

@@ -134,10 +134,10 @@ class ActionExecutor:
                     gateway = get_file_write_gateway()
                     path = params.get("path")
                     if "text" in params:
-                        gateway.write_text(path, params["text"], source=source)
+                        await gateway.write_text_async(path, params["text"], source=source)
                         result = {"ok": True, "path": str(path)}
                     elif "payload" in params:
-                        gateway.write_bytes(path, params["payload"], source=source)
+                        await gateway.write_bytes_async(path, params["payload"], source=source)
                         result = {"ok": True, "path": str(path)}
                     elif "obj" in params:
                         gateway.write_json(

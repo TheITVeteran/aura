@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -718,7 +718,7 @@ class SandboxTester:
             sandbox_file.parent.mkdir(parents=True, exist_ok=True)
             
             # Write the PATCHED version
-            atomic_write_text(sandbox_file, code_patch, encoding="utf-8")
+            await async_atomic_write_text(sandbox_file, code_patch, encoding="utf-8")
             
             # Copy siblings for imports
             for sibling in target_abs.parent.glob("*.py"):
@@ -727,7 +727,7 @@ class SandboxTester:
 
             # 2. Write Probe
             probe_path = temp_path / "weakness_probe.py"
-            atomic_write_text(probe_path, probe_code, encoding="utf-8")
+            await async_atomic_write_text(probe_path, probe_code, encoding="utf-8")
             
             # 3. Run Probe
             try:

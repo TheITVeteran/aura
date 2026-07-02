@@ -34,7 +34,7 @@ class FileMotor(BaseMotor):
         try:
             gateway = get_file_write_gateway()
             if action == "write":
-                gateway.write_text(path, content, source="life_loop.file_motor")
+                await gateway.write_text_async(path, content, source="life_loop.file_motor")
                 return {
                     "status": "success",
                     "action": "write",

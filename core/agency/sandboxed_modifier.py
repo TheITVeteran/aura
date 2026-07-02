@@ -35,7 +35,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.tasks.managed_command import ManagedCommandResult
@@ -240,7 +240,7 @@ class SandboxedModifier:
                 # Write modified file in worktree
                 wt_file = worktree_path / file_path
                 wt_file.parent.mkdir(parents=True, exist_ok=True)
-                atomic_write_text(wt_file, new_content)
+                await async_atomic_write_text(wt_file, new_content)
 
                 # Syntax check in worktree
                 check = await self._run_command(

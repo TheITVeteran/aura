@@ -48,7 +48,7 @@ class DocumentService:
         """Create a plain text file atomically."""
         try:
             p = Path(path)
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 p,
                 content,
                 encoding="utf-8",
@@ -163,7 +163,7 @@ class DocumentService:
                 pdf_bytes = payload.encode("latin-1", errors="replace")
             else:
                 pdf_bytes = bytes(payload)
-            get_file_write_gateway().write_bytes(
+            await get_file_write_gateway().write_bytes_async(
                 p,
                 pdf_bytes,
                 source="document_service.create_pdf.fpdf2",
@@ -211,7 +211,7 @@ class DocumentService:
                     story.append(Spacer(1, 6))
 
             doc.build(story)
-            get_file_write_gateway().write_bytes(
+            await get_file_write_gateway().write_bytes_async(
                 p,
                 buffer.getvalue(),
                 source="document_service.create_pdf.reportlab",
@@ -235,7 +235,7 @@ class DocumentService:
                 content += "\n\nSources:\n"
                 for i, src in enumerate(sources, 1):
                     content += f"[{i}] {src.get('title', '')} — {src.get('url', '')}\n"
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 txt_path,
                 content,
                 encoding="utf-8",

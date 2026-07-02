@@ -20,6 +20,11 @@ async def test_shadow_runtime_boot_uses_file_and_subprocess_gateways(tmp_path, m
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding=encoding)
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
+
     class FakeProcess:
         returncode = 0
 

@@ -84,7 +84,7 @@ class NightlyLoRATrainer:
         
         # Write to JSONL for training
         output_file = self.training_data_path / f"training_{datetime.now().date()}.jsonl"
-        get_file_write_gateway().write_text(
+        await get_file_write_gateway().write_text_async(
             output_file,
             "".join(json.dumps(ex) + "\n" for ex in examples),
             source="adaptation.nightly_lora.training_data",

@@ -27,6 +27,7 @@ from core.environment.command import CommandSpec
 from core.environment.observation import Observation
 
 from .base import TerminalGridAdapter
+from core.runtime.atomic_writer import async_atomic_write_text
 
 
 class EnvironmentMode(Enum):
@@ -87,7 +88,7 @@ class NetHackTerminalGridAdapter(TerminalGridAdapter):
             env = os.environ.copy()
             env["TERM"] = "xterm-256color"
             rc_path = environment_runtime_file(self.environment_id, "nethackrc", purpose="config")
-            atomic_write_text(
+            await async_atomic_write_text(
                 rc_path,
                 "OPTIONS=color,autoquiver,autopickup,hitpointbar,showexp,time,statuslines:2\n"
                 "OPTIONS=pettype:none\n"

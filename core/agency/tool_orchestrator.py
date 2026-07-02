@@ -22,7 +22,7 @@ from urllib.parse import urlencode
 
 import aiohttp
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text
 from core.runtime.errors import (
     DependencyUnavailable,
     TimeoutBudgetExceeded,
@@ -119,7 +119,7 @@ class ToolOrchestrator:
 
         tmp_path = self.sandbox_dir / "temp_validation.py"
         try:
-            await asyncio.to_thread(lambda: atomic_write_text(tmp_path, script_content))
+            await async_atomic_write_text(tmp_path, script_content)
             report = CodeGuardian.validate_code(tmp_path)
         except (OSError, RuntimeError, TypeError, ValueError) as exc:
             await self._remove_validation_file(tmp_path)

@@ -12,6 +12,11 @@ class RecordingFileGateway:
         self.calls.append((str(path), encoding, source))
         path.write_text(text, encoding=encoding)
 
+    # Async lane delegators: production code now calls *_async; fakes
+    # must mirror the gateway surface or every governed write breaks.
+    async def write_text_async(self, *args, **kwargs):
+        return self.write_text(*args, **kwargs)
+
 
 def test_feature_flags_save_uses_file_write_gateway(monkeypatch, tmp_path) -> None:
     import core.governance.feature_flags as feature_flags

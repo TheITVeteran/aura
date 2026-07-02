@@ -331,7 +331,7 @@ class SelfEvolutionSkill(BaseSkill):
         filename = f"evolution_proposal_{timestamp}.md"
         filepath = self._evolution_dir() / filename
         try:
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 filepath,
                 f"# Self-Evolution Proposal\n\n**Objective**: {objective}\n\n{proposal}",
                 source="skills.self_evolution.proposal",

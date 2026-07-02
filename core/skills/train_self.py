@@ -11,7 +11,7 @@ from typing import Any, Dict
 
 import asyncio
 from core.config import config
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.skills.base_skill import BaseSkill
 
@@ -91,7 +91,7 @@ class TrainSelfSkill(BaseSkill):
 
             payload = "".join(json.dumps(entry) + "\n" for entry in examples[-10:])
             if payload:
-                get_file_write_gateway().append_text(
+                await get_file_write_gateway().append_text_async(
                     self.dataset_path,
                     payload,
                     source="skills.train_self.dataset",
@@ -175,14 +175,14 @@ class TrainSelfSkill(BaseSkill):
             
             # 3. Append to Knowledge Base
             timestamp = datetime.now().isoformat()
-            get_file_write_gateway().append_text(
+            await get_file_write_gateway().append_text_async(
                 knowledge_path,
                 f"\n\n### Consolidation {timestamp}\n" + "\n".join(new_knowledge),
                 source="skills.train_self.knowledge_base",
             )
                 
             # 4. Clear buffer
-            atomic_write_text(Path(self.dataset_path), "", encoding="utf-8")
+            await async_atomic_write_text(Path(self.dataset_path), "", encoding="utf-8")
             
             return {
                 "ok": True,

@@ -142,7 +142,7 @@ class SandboxedFileBroker:
             p = self._version_path(p)
 
         try:
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 p,
                 content,
                 encoding="utf-8",
@@ -164,7 +164,7 @@ class SandboxedFileBroker:
             p = self._version_path(p)
 
         try:
-            get_file_write_gateway().write_bytes(
+            await get_file_write_gateway().write_bytes_async(
                 p,
                 data,
                 source="file_broker.write_bytes",

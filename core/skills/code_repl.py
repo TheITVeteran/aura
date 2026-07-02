@@ -284,7 +284,7 @@ class CodeREPLSkill(BaseSkill):
         try:
             fd, temp_path = tempfile.mkstemp(suffix=".py", dir=str(cwd))
             os.close(fd)
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 temp_path,
                 code,
                 encoding="utf-8",

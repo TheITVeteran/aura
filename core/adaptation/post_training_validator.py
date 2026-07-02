@@ -849,14 +849,14 @@ class PostTrainingValidator:
         try:
             # quarantine_dest is a directory (moved adapter dir), write inside it
             if quarantine_dest.is_dir():
-                get_file_write_gateway().write_text(
+                await get_file_write_gateway().write_text_async(
                     manifest_path,
                     json.dumps(manifest, indent=2),
                     source="adaptation.post_training_validator.quarantine_manifest",
                 )
             else:
                 # If the adapter was a single file, write manifest alongside
-                get_file_write_gateway().write_text(
+                await get_file_write_gateway().write_text_async(
                     str(quarantine_dest) + "_manifest.json",
                     json.dumps(manifest, indent=2),
                     source="adaptation.post_training_validator.quarantine_manifest",
@@ -968,7 +968,7 @@ class PostTrainingValidator:
         log_file = self.validation_log_dir / f"validation_{date_str}_{status}.json"
 
         try:
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 log_file,
                 json.dumps(result.to_dict(), indent=2),
                 source="adaptation.post_training_validator.validation_log",

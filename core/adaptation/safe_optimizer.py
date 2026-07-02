@@ -76,7 +76,7 @@ class SafeSelfOptimizer:
         file_gateway = get_file_write_gateway()
         if not command:
             manifest = self.lora_dir / "training_gate_manifest.json"
-            file_gateway.write_text(
+            await file_gateway.write_text_async(
                 manifest,
                 json.dumps(
                     {
@@ -116,12 +116,12 @@ class SafeSelfOptimizer:
             proc.kill()
             stdout, stderr = await proc.communicate()
             stderr = (stderr or b"") + b"\nAURA_LORA_TRAIN_TIMEOUT\n"
-        file_gateway.write_bytes(
+        await file_gateway.write_bytes_async(
             self.lora_dir / "last_train_stdout.log",
             stdout[-_MAX_CAPTURE_BYTES:],
             source="core.adaptation.safe_optimizer.training_stdout",
         )
-        file_gateway.write_bytes(
+        await file_gateway.write_bytes_async(
             self.lora_dir / "last_train_stderr.log",
             stderr[-_MAX_CAPTURE_BYTES:],
             source="core.adaptation.safe_optimizer.training_stderr",
@@ -133,7 +133,7 @@ class SafeSelfOptimizer:
         ts = int(time.time())
         current_weights = self.lora_dir / "adapter_model.bin"
         if current_weights.exists():
-            get_file_write_gateway().write_bytes(
+            await get_file_write_gateway().write_bytes_async(
                 self.backup_dir / f"adapter_{ts}.bin",
                 current_weights.read_bytes(),
                 source="core.adaptation.safe_optimizer.backup_weights",
@@ -159,7 +159,7 @@ class SafeSelfOptimizer:
         backups = sorted(self.backup_dir.glob("adapter_*.bin"))
         if backups:
             latest = backups[-1]
-            get_file_write_gateway().write_bytes(
+            await get_file_write_gateway().write_bytes_async(
                 self.lora_dir / "adapter_model.bin",
                 latest.read_bytes(),
                 source="core.adaptation.safe_optimizer.rollback_weights",

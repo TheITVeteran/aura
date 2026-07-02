@@ -140,6 +140,13 @@ def test_harness_routes_temp_compile_and_pytest_through_gateways(
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(payload)
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
+        async def write_bytes_async(self, *args, **kwargs):
+            return self.write_bytes(*args, **kwargs)
+
     class FakeSubprocessGateway:
         async def run_async(self, argv, **kwargs):
             subprocess_calls.append((tuple(argv), kwargs))

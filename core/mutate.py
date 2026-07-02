@@ -4,7 +4,7 @@ import logging
 import subprocess
 from pathlib import Path
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -74,7 +74,7 @@ async def apply_mutation(target_path: str, new_code: str) -> bool:
 
     try:
         # 2. Write candidate
-        atomic_write_text(path, new_code, encoding="utf-8")
+        await async_atomic_write_text(path, new_code, encoding="utf-8")
         logger.info("Wrote candidate mutation to %s", path)
 
         # 3. Tests
@@ -84,7 +84,7 @@ async def apply_mutation(target_path: str, new_code: str) -> bool:
         if not ok:
             logger.error("Trial Failed: %s", msg)
             logger.warning("Rolling back mutation by restoring original file contents.")
-            atomic_write_text(path, original_text, encoding="utf-8")
+            await async_atomic_write_text(path, original_text, encoding="utf-8")
             return False
 
         # 4. Commit mutation (Finalize). Only stage the target file.
@@ -110,5 +110,5 @@ async def apply_mutation(target_path: str, new_code: str) -> bool:
     except (subprocess.SubprocessError, OSError) as e:
         record_degradation('mutate', e)
         logger.exception("Critical error during mutation: %s", e)
-        atomic_write_text(path, original_text, encoding="utf-8")
+        await async_atomic_write_text(path, original_text, encoding="utf-8")
         return False

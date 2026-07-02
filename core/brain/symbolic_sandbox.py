@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.SymbolicSandbox")
@@ -116,7 +116,7 @@ class SymbolicSandbox:
             workspace = self._resolve_workspace()
             with tempfile.TemporaryDirectory(prefix="aura_sbx_", dir=str(workspace)) as td:
                 script = Path(td) / "scratch.py"
-                atomic_write_text(script, body, encoding="utf-8")
+                await async_atomic_write_text(script, body, encoding="utf-8")
                 # Isolated mode: ignore env, user site, PYTHON* vars. Restricted PATH.
                 env = {"PATH": "/usr/bin:/bin", "HOME": td, "TMPDIR": td}
                 res = await get_subprocess_gateway().run_async(

@@ -146,7 +146,7 @@ class MindStateExporter:
             zf.writestr("manifest.json", json.dumps(manifest, indent=2))
 
         # Write the archive
-        get_file_write_gateway().write_bytes(
+        await get_file_write_gateway().write_bytes_async(
             path,
             buffer.getvalue(),
             source="mind_state_export.export_mind",

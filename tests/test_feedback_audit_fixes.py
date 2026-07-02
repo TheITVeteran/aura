@@ -108,6 +108,11 @@ def test_dream_journal_thread_save_uses_local_file_write_governance(monkeypatch,
             )
             calls.append((Path(path).name, source, token.domain, "dream body" in text))
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def append_text_async(self, *args, **kwargs):
+            return self.append_text(*args, **kwargs)
+
     journal = dream_journal.DreamJournal.__new__(dream_journal.DreamJournal)
     journal.journal_file = tmp_path / "dream_journal.txt"
 
@@ -139,6 +144,11 @@ def test_thought_tracer_uses_local_file_write_governance(monkeypatch, tmp_path):
                 allowed_domains=("file_write",),
             )
             calls.append((Path(path).name, source, token.domain, "probe" in text))
+
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def append_text_async(self, *args, **kwargs):
+            return self.append_text(*args, **kwargs)
 
     tracer = thought_tracer.ThoughtTracer(log_dir=str(tmp_path))
     monkeypatch.setattr(thought_tracer, "get_file_write_gateway", lambda: Gateway())
@@ -3506,6 +3516,13 @@ def test_integrity_guardian_restores_from_head_blob_with_forensic_backup(monkeyp
             writes.append(("text", Path(path), text, source))
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).write_text(text, encoding=encoding)
+
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
+        async def write_bytes_async(self, *args, **kwargs):
+            return self.write_bytes(*args, **kwargs)
 
     monkeypatch.setattr(ig_mod, "get_subprocess_gateway", lambda: _SubprocessGateway())
     monkeypatch.setattr(ig_mod, "get_file_write_gateway", lambda: _FileGateway())

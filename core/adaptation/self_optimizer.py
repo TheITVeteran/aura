@@ -106,12 +106,12 @@ class SelfOptimizer:
             train_file = temp_dir / "train.jsonl"
             valid_file = temp_dir / "valid.jsonl"
             
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 train_file,
                 "".join(json.dumps(entry) + "\n" for entry in train_data),
                 source="adaptation.self_optimizer.train_split",
             )
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 valid_file,
                 "".join(json.dumps(entry) + "\n" for entry in valid_data),
                 source="adaptation.self_optimizer.valid_split",
@@ -140,7 +140,7 @@ class SelfOptimizer:
                 source="adaptation.self_optimizer.lora_train",
                 abortable=True,
             )
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 log_file,
                 train_result["log"],
                 source="adaptation.self_optimizer.training_log",
@@ -161,7 +161,7 @@ class SelfOptimizer:
                     source="adaptation.self_optimizer.lora_fuse",
                     abortable=False,
                 )
-                get_file_write_gateway().append_text(
+                await get_file_write_gateway().append_text_async(
                     log_file,
                     "\n=== fuse ===\n" + fuse_result["log"],
                     source="adaptation.self_optimizer.training_log",
@@ -171,7 +171,7 @@ class SelfOptimizer:
                     logger.info("🧠 Nucleus: Fusion successful. Updating active.json...")
                     active_json_path = self.base_model_path.parent.parent / "training" / "fused-model" / "active.json"
                     active_json_path.parent.mkdir(parents=True, exist_ok=True)
-                    get_file_write_gateway().write_text(
+                    await get_file_write_gateway().write_text_async(
                         active_json_path,
                         json.dumps({"active_model_path": str(fused_dir)}),
                         source="adaptation.self_optimizer.active_model",

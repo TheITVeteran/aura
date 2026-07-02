@@ -60,7 +60,7 @@ class ShellInterface:
             if not str(full_path).startswith(str(sandbox_manager.base_dir.resolve())):
                 return {"success": False, "error": f"Path traversal attempt blocked: {target_file}"}
 
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 full_path,
                 content,
                 source="shell.write_file_safe",

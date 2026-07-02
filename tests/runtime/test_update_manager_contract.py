@@ -188,6 +188,11 @@ def test_signing_key_stays_consistent_when_persistence_fails(monkeypatch, tmp_pa
             _RefusingGateway.refused += 1
             raise RuntimeError("file-write gateway is in a rejecting mode")
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_bytes_async(self, *args, **kwargs):
+            return self.write_bytes(*args, **kwargs)
+
     monkeypatch.setattr(um, "get_file_write_gateway", lambda: _RefusingGateway())
 
     manager = UpdateManager(

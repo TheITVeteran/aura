@@ -16,7 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
@@ -91,7 +91,7 @@ except (OSError, IOError) as e:
         probe_path = _probe_script_path(probe_id)
 
         try:
-            atomic_write_text(probe_path, probe_script)
+            await async_atomic_write_text(probe_path, probe_script)
             # Spawn in background with asyncio
             process = await get_subprocess_gateway().spawn_async(
                 [sys.executable, str(probe_path)],

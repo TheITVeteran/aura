@@ -278,6 +278,13 @@ def test_export_writes_portable_bundle_through_file_gateway(tmp_path, monkeypatc
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding=encoding)
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
+        async def write_bytes_async(self, *args, **kwargs):
+            return self.write_bytes(*args, **kwargs)
+
     monkeypatch.setattr(
         audit_chain_mod,
         "get_file_write_gateway",

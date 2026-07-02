@@ -61,7 +61,7 @@ class ManimRendererSkill(BaseSkill):
         script_path = os.path.join(temp_dir, "scene.py")
         media_dir = os.path.join(temp_dir, "media")
 
-        get_file_write_gateway().write_text(
+        await get_file_write_gateway().write_text_async(
             script_path,
             params.python_code,
             source="skills.manim_renderer.scene",

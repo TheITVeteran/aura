@@ -62,6 +62,11 @@ def test_terminal_script_uses_file_write_gateway(tmp_path, monkeypatch):
             calls.append((Path(path).name, text, encoding, source))
             Path(path).write_text(text, encoding=encoding)
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
+
     monkeypatch.setattr(
         external_chat.tempfile,
         "gettempdir",

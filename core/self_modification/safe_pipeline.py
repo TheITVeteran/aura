@@ -49,7 +49,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -173,14 +173,14 @@ class SafePipeline:
         # 2. SANDBOX_PATCH
         sandbox = Path(tempfile.mkdtemp(prefix="aura-selfmod-"))
         sandbox_file = sandbox / Path(file_path).name
-        atomic_write_text(sandbox_file, after_source, encoding="utf-8")
+        await async_atomic_write_text(sandbox_file, after_source, encoding="utf-8")
         proposal.stages_completed.append(Stage.SANDBOX_PATCH.value)
         _record(proposal, "sandbox_patched", {"sandbox": str(sandbox)})
 
         try:
             # 3. GENERATED_TESTS
             test_path = sandbox / "test_self_mod_patch.py"
-            atomic_write_text(test_path, self._generate_tests(file_path, before_source, after_source), encoding="utf-8")
+            await async_atomic_write_text(test_path, self._generate_tests(file_path, before_source, after_source), encoding="utf-8")
             proposal.stages_completed.append(Stage.GENERATED_TESTS.value)
             _record(proposal, "tests_generated")
 
@@ -284,7 +284,7 @@ class SafePipeline:
                     ),
                 )
 
-            atomic_write_text(target, after_source, encoding="utf-8")
+            await async_atomic_write_text(target, after_source, encoding="utf-8")
             proposal.stages_completed.append(Stage.STAGED_DEPLOY.value)
             _record(proposal, "staged_deployed")
 

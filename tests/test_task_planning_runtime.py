@@ -115,6 +115,11 @@ def test_task_graph_persist_uses_file_write_gateway(monkeypatch, tmp_path) -> No
                 }
             )
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
+
     monkeypatch.setattr(module, "get_file_write_gateway", lambda: FakeGateway())
     graph = TaskGraph("mission-persist", "Persist")
     graph.add_node(TaskNode(task_id="t1", action="observe"))
@@ -146,6 +151,11 @@ async def test_mission_state_create_text_file_uses_file_write_gateway(monkeypatc
                 }
             )
             path.write_text(text, encoding=encoding)
+
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
 
     monkeypatch.setattr(module, "get_file_write_gateway", lambda: FakeGateway())
     node = TaskNode(

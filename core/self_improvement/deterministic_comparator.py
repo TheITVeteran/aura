@@ -16,7 +16,7 @@ import sys
 import time
 from pathlib import Path
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.self_improvement.blinded_workspace import BlindedWorkspace
 from core.self_improvement.interface_contract import (
@@ -79,7 +79,7 @@ class DeterministicComparator:
         # 4. Write candidate to workspace and run tests
         candidate_path = workspace.workspace_dir / spec.module_path
         candidate_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(candidate_path, candidate.source_code, encoding="utf-8")
+        await async_atomic_write_text(candidate_path, candidate.source_code, encoding="utf-8")
 
         # 5. Run tests
         test_verdicts = self._run_tests(spec, workspace)

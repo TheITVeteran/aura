@@ -72,7 +72,7 @@ class ManifestToDeviceSkill(BaseSkill):
             if int(response.get("status_code") or 0) != 200:
                 return {"ok": False, "error": f"Asset retrieval failed: {response.get('status_code')}"}
 
-            get_file_write_gateway().write_bytes(
+            await get_file_write_gateway().write_bytes_async(
                 filepath,
                 bytes(response.get("content") or b""),
                 source="skills.manifest_to_device.asset",

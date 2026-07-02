@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.utils.engine_support import coerce_text, data_root, record_engine_degradation, resolve_brain
 
 logger = logging.getLogger("Aura.KnowledgeBottling")
@@ -114,7 +114,7 @@ class KnowledgeBottlingEngine:
         )
         if self._store is not None:
             try:
-                atomic_write_text(self._store / f"{bottle.slug}.json", json.dumps(asdict(bottle), indent=2))
+                await async_atomic_write_text(self._store / f"{bottle.slug}.json", json.dumps(asdict(bottle), indent=2))
             except (OSError, TypeError, ValueError) as exc:
                 _degrade(exc, action="returned in-memory knowledge bottle after persistence failed")
         return bottle

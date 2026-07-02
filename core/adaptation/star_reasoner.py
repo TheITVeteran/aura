@@ -419,7 +419,7 @@ class STaRReasoner:
 
             # Write to local archive
             try:
-                get_file_write_gateway().append_text(
+                await get_file_write_gateway().append_text_async(
                     self._accepted_path,
                     json.dumps(sample) + "\n",
                     source="adaptation.star_reasoner.accepted_trace",

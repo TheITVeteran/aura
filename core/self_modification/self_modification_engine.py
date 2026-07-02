@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
 
@@ -1285,7 +1285,7 @@ class AutonomousSelfModificationEngine:
             # for a safe, non-critical file.
             test_file = self.code_base / "core" / "utils" / "test_canary.py"
             if not test_file.exists():
-                atomic_write_text(test_file, "# Synthetic test canary\ndef canary(): return True\n")
+                await async_atomic_write_text(test_file, "# Synthetic test canary\ndef canary(): return True\n")
 
             self.on_error(
                 RuntimeError("Synthetic recovery test failure"),

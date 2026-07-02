@@ -60,6 +60,11 @@ def test_stamp_persists_through_file_write_gateway(tmp_path: Path, monkeypatch):
             )
             Path(path).write_text(text, encoding=encoding)
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
+
     monkeypatch.setattr(
         tenant_boundary_mod,
         "get_file_write_gateway",

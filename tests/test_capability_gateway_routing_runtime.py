@@ -55,6 +55,13 @@ class FakeFileWriteGateway:
             {"path": target, "payload": bytes(payload), "source": source}
         )
 
+    # Async lane delegators: production code now calls *_async; fakes
+    # must mirror the gateway surface or every governed write breaks.
+    async def write_text_async(self, *args, **kwargs):
+        return self.write_text(*args, **kwargs)
+    async def write_bytes_async(self, *args, **kwargs):
+        return self.write_bytes(*args, **kwargs)
+
 
 class FakeProcess:
     def __init__(self, stdout: bytes = b"", returncode: int = 0) -> None:

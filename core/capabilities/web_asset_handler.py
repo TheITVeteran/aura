@@ -228,7 +228,7 @@ class WebAssetHandler:
                         file_path = candidate
                         break
 
-            get_file_write_gateway().write_bytes(
+            await get_file_write_gateway().write_bytes_async(
                 file_path,
                 data,
                 source="web_asset_handler.download_image",

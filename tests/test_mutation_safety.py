@@ -174,6 +174,11 @@ def test_quarantine_writes_artifacts_through_file_gateway(tmp_path, monkeypatch)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding=encoding)
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
+
     monkeypatch.setattr(
         mutation_safety_mod,
         "get_file_write_gateway",
@@ -214,6 +219,11 @@ def test_evaluator_uses_gateways_for_temp_files_and_child_process(tmp_path, monk
             target = Path(path)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(text, encoding=encoding)
+
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_text_async(self, *args, **kwargs):
+            return self.write_text(*args, **kwargs)
 
     class FakeProcess:
         returncode = 0

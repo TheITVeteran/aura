@@ -355,6 +355,11 @@ async def test_voice_local_playback_uses_gateways(monkeypatch, tmp_path) -> None
             writes.append((str(path), payload, source))
             path.write_bytes(payload)
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def write_bytes_async(self, *args, **kwargs):
+            return self.write_bytes(*args, **kwargs)
+
     class Proc:
         def __init__(self):
             self.done = False

@@ -58,6 +58,11 @@ def test_trust_event_log_uses_file_write_governance(monkeypatch):
             )
             calls.append((source, token.domain, "trust_elevated" in text))
 
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def append_text_async(self, *args, **kwargs):
+            return self.append_text(*args, **kwargs)
+
     monkeypatch.setattr(trust_engine_module, "get_file_write_gateway", lambda: Gateway())
 
     engine = TrustEngine()
@@ -81,6 +86,11 @@ def test_security_event_logs_use_file_write_governance(monkeypatch, tmp_path):
                 allowed_domains=("file_write",),
             )
             calls.append((source, token.domain))
+
+        # Async lane delegators: production code now calls *_async; fakes
+        # must mirror the gateway surface or every governed write breaks.
+        async def append_text_async(self, *args, **kwargs):
+            return self.append_text(*args, **kwargs)
 
     monkeypatch.setattr(audit_module, "get_file_write_gateway", lambda: Gateway())
     monkeypatch.setattr(emergency_module, "get_file_write_gateway", lambda: Gateway())

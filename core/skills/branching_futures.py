@@ -72,7 +72,7 @@ class BranchingFuturesSkill(BaseSkill):
             # We launch a headless script inside the sandbox that instantiates the 
             # environment, runs the goal, and exits.
             runner_script = os.path.join(sandbox_dir, ".branch_runner.py")
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 runner_script,
                 f'''
 import sys

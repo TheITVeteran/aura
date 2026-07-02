@@ -89,7 +89,7 @@ class CognitivePatchStrategy(PatchStrategy):
             patch_file = os.path.join(patch_dir, f"patch_{int(time.time())}.sh")
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
+            await get_file_write_gateway().write_text_async(
                 patch_file,
                 "# Cognitive patch proposal — REQUIRES MANUAL REVIEW\n"
                 f"# Goal: {goal}\n"

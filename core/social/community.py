@@ -95,7 +95,7 @@ class LocalLogTransport(CommunityTransport):
         self.outbox.append(msg)
         from core.runtime.file_write_gateway import get_file_write_gateway
 
-        get_file_write_gateway().append_text(
+        await get_file_write_gateway().append_text_async(
             _DIR / "outbox.jsonl",
             json.dumps(asdict(msg), default=str) + "\n",
             encoding="utf-8",

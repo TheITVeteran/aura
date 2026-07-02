@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from core.governance_context import governance_runtime_active
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -129,7 +129,7 @@ class LocalSandbox(Sandbox):
     async def run_code(self, code: str, timeout: int = 30) -> ExecutionResult:  # noqa: ASYNC109
         """Execute a Python script in the sandbox (Async Offload)."""
         script_path = self.work_path / "_aura_run.py"
-        atomic_write_text(script_path, code, encoding="utf-8")
+        await async_atomic_write_text(script_path, code, encoding="utf-8")
 
         start = time.monotonic()
         try:

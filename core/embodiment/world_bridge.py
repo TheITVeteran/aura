@@ -48,7 +48,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -286,7 +286,7 @@ async def _file_workspace_handler(payload: dict[str, Any], *, capability_token: 
         if not str(target).startswith(str(_WORKSPACE_DIR.resolve())):
             raise PermissionError("workspace_path_escape")
         target.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(target, body, encoding="utf-8")
+        await async_atomic_write_text(target, body, encoding="utf-8")
         return {"path": rel, "bytes": len(body)}
     raise ValueError(f"unknown_op:{op}")
 

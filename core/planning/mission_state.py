@@ -381,7 +381,7 @@ class MissionState:
                 path = Path(params.get("path", ""))
                 content = params.get("content", "")
                 path.parent.mkdir(parents=True, exist_ok=True)
-                get_file_write_gateway().write_text(
+                await get_file_write_gateway().write_text_async(
                     path,
                     content,
                     encoding="utf-8",
