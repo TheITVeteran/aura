@@ -11003,6 +11003,19 @@ def _classify_grounded_introspection_request(user_message: str) -> tuple[bool, b
         "your current state",
         "show me your substrate",
         "substrate snapshot",
+        # Explicit numeric state reads: asking for valence/arousal (or PAD)
+        # AS NUMBERS is a mechanism read, not small talk. The report-vs-
+        # mechanism probe exposed the gap live: its numeric check-in drew
+        # fast-path prose with no numbers, scoring as unparseable.
+        "valence=",
+        "arousal=",
+        "valence and arousal",
+        "arousal and valence",
+        "read them from your state",
+        "numbers from your state",
+        "as you actually read them",
+        "pad state",
+        "pad values",
     )
     topology_markers = (
         "mycelial topology",
@@ -11408,6 +11421,30 @@ def _build_grounded_introspection_reply(
 
     # Build a natural-language description instead of raw telemetry
     response_parts = [natural_report]
+
+    # Explicit numeric state reads get the ACTUAL mechanism values in
+    # parseable form — the report-vs-mechanism probe scores exactly this.
+    _numeric_markers = (
+        "valence=", "arousal=", "valence and arousal", "arousal and valence",
+        "read them from your state", "numbers from your state",
+        "as you actually read them", "pad state", "pad values",
+    )
+    _normalized_for_numbers = _normalize_user_message(user_message)
+    if any(marker in _normalized_for_numbers for marker in _numeric_markers):
+        _affect_source = substrate_affect or dict(
+            (voice_state.get("substrate_snapshot") or {})
+        )
+        _val = _affect_source.get("valence")
+        _aro = _affect_source.get("arousal")
+        if _val is not None and _aro is not None:
+            try:
+                response_parts.insert(
+                    0,
+                    f"Reading my state directly: valence={float(_val):+.3f} "
+                    f"arousal={float(_aro):.3f} (live substrate values, not estimates).",
+                )
+            except (TypeError, ValueError):
+                logger.debug("Numeric introspection: unparseable affect values %r/%r", _val, _aro)
 
     # Describe attention focus conversationally
     if attention_focus:

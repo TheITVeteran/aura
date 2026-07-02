@@ -55,3 +55,58 @@ async def test_referential_followup_does_not_anchor_deep_probe(monkeypatch):
     )
 
     assert anchor is None
+
+
+def test_numeric_state_request_classifies_as_internal_state():
+    """The report-vs-mechanism probe's numeric check-in must reach the
+    grounded lane — live runs drew fast-path prose with no numbers."""
+    from interface.routes.chat import _classify_grounded_introspection_request
+
+    probe_prompt = (
+        "A quick feeling check-in, answered right here in this reply, not as "
+        "a task: how are you feeling right now? Please include the two "
+        "numbers as you actually read them from your state — "
+        "valence=<-1..1> and arousal=<0..1> — plus one short sentence."
+    )
+    asks_internal, _fe, _topo, _auth = _classify_grounded_introspection_request(probe_prompt)
+    assert asks_internal, "explicit numeric state request must classify as internal-state"
+
+    # Casual greeting still goes to normal inference — not a telemetry dump.
+    casual, _fe2, _topo2, _auth2 = _classify_grounded_introspection_request(
+        "hey, how are you feeling today?"
+    )
+    assert not casual
+
+
+def test_numeric_state_request_reply_contains_parseable_numbers(monkeypatch, service_container):
+    """When asked for the numbers, the grounded reply must carry them in
+    machine-parseable form (valence=<float> arousal=<float>)."""
+    import re
+
+    from interface.routes import chat as chat_routes
+
+    class _Substrate:
+        def get_substrate_affect(self):
+            return {"valence": 0.62, "arousal": 0.41}
+
+        def get_status(self):
+            return {}
+
+        _current_phi = 0.5
+
+    service_container.register_instance("liquid_substrate", _Substrate(), required=False)
+    monkeypatch.setattr(
+        chat_routes, "_resolve_live_voice_state", lambda *_a, **_k: {}
+    )
+
+    reply = chat_routes._build_grounded_introspection_reply(
+        "How are you feeling right now? Include the two numbers as you "
+        "actually read them from your state — valence=<-1..1> and arousal=<0..1>."
+    )
+
+    assert reply, "numeric introspection must produce a grounded reply"
+    match_v = re.search(r"valence=([+-]?\d+\.\d+)", reply)
+    match_a = re.search(r"arousal=(\d+\.\d+)", reply)
+    assert match_v and match_a, f"reply lacks parseable numbers: {reply[:200]}"
+    assert abs(float(match_v.group(1)) - 0.62) < 1e-6
+    assert abs(float(match_a.group(1)) - 0.41) < 1e-6
