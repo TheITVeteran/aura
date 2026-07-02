@@ -274,8 +274,13 @@ artifact that does not carry `sampling.temperature > 0` and
 ([`tests/run_32b_steering_ab_live.py`](tests/run_32b_steering_ab_live.py))
 injects via subclass swap (`core/evaluation/steering_injection.py`), samples
 with paired seeds across conditions, and refuses to report a steered condition
-whose hook never fired. Steering readiness cannot reach PRODUCTION until a
-provenance-carrying artifact is regenerated on live hardware.
+whose hook never fired. UPDATE (July 2, 2026): the provenance-carrying
+artifact has been regenerated on live hardware — 12,642 injections, sampled
+with paired seeds, five held-out tasks, `passes_adversarial_control: true` —
+and the full chain now validates: `artifacts/CAA_32B_RESULTS.json` reports
+**passed: true** with all five behavioral checks green (steered-vs-baseline,
+steered-vs-rich-adversarial, held-out generalization, quality delta, prompt
+hygiene). Cite that artifact for CAA behavioral claims.
 
 ---
 
