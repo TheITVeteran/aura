@@ -113,6 +113,14 @@ MODEL_NAME = _resolve_model_path(None)
 
 
 def main() -> int:
+    # Evidence runs are watched from logs: stream progress line-by-line even
+    # when stdout is a pipe (a 30-minute run with fully buffered output is
+    # indistinguishable from a hang).
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, OSError, ValueError):
+        pass  # no-op: exotic stdout replacements keep their own policy
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-path", default=None,
                         help="Model to test (default: active fused model, else raw base).")
