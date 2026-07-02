@@ -263,6 +263,20 @@ does computational work that terse prompt text cannot replicate. It does not, by
 itself, rule out a strong prompt baseline; that is why the new
 `core.evaluation.steering_ab` harness requires the rich adversarial condition.
 
+**Injection-provenance requirement (July 2026).** An audit found the original
+live 32B A/B runner never actually injected: assigning `layer.__call__` on an
+instance is bypassed by Python's special-method lookup, decoding was greedy
+(collapsing every "trial" to one string), and the baseline used a different
+identity prompt. Its committed artifact is therefore prompt theater, and the
+validation chain (`training/caa_32b_validation.py`) now refuses any live A/B
+artifact that does not carry `sampling.temperature > 0` and
+`injection_count > 0`. The rebuilt runner
+([`tests/run_32b_steering_ab_live.py`](tests/run_32b_steering_ab_live.py))
+injects via subclass swap (`core/evaluation/steering_injection.py`), samples
+with paired seeds across conditions, and refuses to report a steered condition
+whose hook never fired. Steering readiness cannot reach PRODUCTION until a
+provenance-carrying artifact is regenerated on live hardware.
+
 ---
 
 ## Representative values (from [`tests/RESULTS.json`](tests/RESULTS.json))
