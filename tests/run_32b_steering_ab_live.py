@@ -106,6 +106,12 @@ def _resolve_model_path(cli_value: str | None) -> str:
     return FALLBACK_MODEL
 
 
+# Resolved once at import: the production lane this runner targets by default
+# (active fused 32B model, else the raw 32B base). Contract-checked by
+# tests/test_steering_ab.py — the runner must always aim at the 32B lane.
+MODEL_NAME = _resolve_model_path(None)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-path", default=None,
