@@ -1401,7 +1401,10 @@ class IPCWriterThread(threading.Thread):
     def _shed_one_nonessential(self) -> bool:
         retained: list[Any] = []
         dropped = False
-        while True:
+        # Explicit boundary: one full buffer is the most this drain can hold
+        # (this file forbids open-ended loops — a wedged feeder here starves
+        # IPC and kills the parent's WebSocket).
+        for _ in range(max(1, self.local_queue.maxsize)):
             try:
                 queued = self.local_queue.get_nowait()
             except queue.Empty:

@@ -1400,11 +1400,32 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
 
 class TestIPCWriterThread(unittest.TestCase):
-    def test_essential_messages_bypass_full_buffer(self):
+    def test_essential_messages_displace_telemetry_when_buffer_full(self):
+        """Ladder rung 1: shed one telemetry item, keep ordering through the
+        local queue, no synchronous (blocking) parent-queue write from the
+        producer path."""
         mp_queue = SimpleNamespace(put=SyncCallProbe())
         writer = IPCWriterThread(mp_queue)
         writer.local_queue = queue.Queue(maxsize=1)
         writer.local_queue.put({"status": "heartbeat"})
+
+        item = {"status": "ok", "action": "generate", "text": "hello"}
+        writer.put(item)
+
+        assert writer.local_queue.get_nowait() == item, (
+            "essential message must displace buffered telemetry"
+        )
+        assert mp_queue.put.call_args_list == [], (
+            "no synchronous parent-queue write when shedding succeeds"
+        )
+
+    def test_essential_messages_bypass_buffer_full_of_essentials(self):
+        """Ladder rung 2: nothing sheddable -> blocking bypass to the parent
+        queue so init/generation/error messages are never lost."""
+        mp_queue = SimpleNamespace(put=SyncCallProbe())
+        writer = IPCWriterThread(mp_queue)
+        writer.local_queue = queue.Queue(maxsize=1)
+        writer.local_queue.put({"status": "error", "message": "earlier failure"})
 
         item = {"status": "ok", "action": "generate", "text": "hello"}
         writer.put(item)

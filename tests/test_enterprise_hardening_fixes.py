@@ -1536,6 +1536,7 @@ def test_mlx_ipc_writer_sheds_telemetry_before_essential_messages(monkeypatch):
 
     class FullParentQueue:
         def put(self, item, block=True, timeout=None):
+            self.calls = getattr(self, "calls", 0) + 1
             raise queue.Full
 
     writer = IPCWriterThread(FullParentQueue())
