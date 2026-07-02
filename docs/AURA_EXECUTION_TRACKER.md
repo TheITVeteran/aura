@@ -3976,3 +3976,50 @@ Estimate after this checkpoint:
 - Remaining consolidated checkpoints: live app permission/control proof,
   launched full-mind conversation/background-autonomy proof, visible general
   desktop agency proof, and final clean proof replay.
+
+## Checkpoint 2026-07-02-03: Desktop Access Repair Controls
+
+Status: source-validated; live TCC approval still requires macOS approval for
+the current signed Aura.app bridge identity.
+
+Scope:
+
+- The Desktop Access panel correctly reported that the resident
+  `com.aura.desktop` bridge was reachable but blocked by macOS TCC for Screen
+  Recording and Accessibility.
+- The prior panel mostly explained the blocked state. That was not enough for
+  daily reliability because it left the user in a passive failure report.
+
+Root fix:
+
+- Added active Desktop Access repair controls to the Settings panel:
+  `Request Screen`, `Open Screen Settings`, `Request Control`,
+  `Open Control Settings`, and `Refresh`.
+- Added `POST /api/system/desktop-access/open-settings/{permission}` so the UI
+  can open the correct macOS privacy pane for Screen Recording or
+  Accessibility from the same runtime surface.
+- Kept the hard boundary honest: Aura can request and guide macOS TCC grants,
+  but app code cannot silently bypass TCC for a new or changed signed identity.
+
+Evidence:
+
+- `python -m py_compile interface/routes/system.py` -> passed.
+- `node --check interface/static/aura.js` -> passed.
+- `python -m ruff check --select F,E9 interface/routes/system.py tests/test_server_runtime_hardening.py tests/test_runtime_polish.py`
+  -> passed.
+- `python -m pytest tests/test_server_runtime_hardening.py::test_desktop_access_open_settings_route_aliases_screen_recording tests/test_server_runtime_hardening.py::test_desktop_access_open_settings_route_rejects_unknown_permission tests/test_runtime_polish.py::test_desktop_access_panel_uses_dedicated_probe_endpoint tests/test_runtime_polish.py::test_desktop_access_panel_bounds_raw_permission_status_labels -q`
+  -> `4 passed`.
+
+Live boundary:
+
+- This checkpoint improves the live recovery path when permissions drift,
+  but it does not claim desktop control is live until `/api/system/desktop-access`
+  reports Screen Recording and Accessibility granted for the current
+  `com.aura.desktop` bridge.
+
+Estimate after this checkpoint:
+
+- Expanded daily-runtime/product closure remains about 85%.
+- Remaining consolidated checkpoints: live app permission/control proof,
+  launched full-mind conversation/background-autonomy proof, visible general
+  desktop agency proof, and final clean proof replay.

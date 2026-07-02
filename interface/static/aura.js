@@ -361,6 +361,7 @@ const DOM = {
     neuralBacklog: $('neural-backlog'),
     desktopAccessState: $('desktop-access-state'),
     desktopAccessGrid: $('desktop-access-grid'),
+    desktopAccessActions: $('desktop-access-actions'),
     desktopAccessHelp: $('desktop-access-help'),
     metricGuide: {
         toggle: $('metric-guide-toggle'),
@@ -1172,6 +1173,7 @@ function applyDesktopAccessSummary(summary) {
     state.desktopAccess = summary || {};
     const banner = DOM.desktopAccessState || $('desktop-access-state');
     const grid = DOM.desktopAccessGrid || $('desktop-access-grid');
+    const actions = DOM.desktopAccessActions || $('desktop-access-actions');
     const help = DOM.desktopAccessHelp || $('desktop-access-help');
     if (!banner || !grid || !help) return;
 
@@ -1270,6 +1272,47 @@ function applyDesktopAccessSummary(summary) {
         </div>
     `).join('');
 
+    if (actions) {
+        const repairButtons = [];
+        if (blockers.includes('screen_recording')) {
+            repairButtons.push({
+                action: 'request-screen',
+                label: 'Request Screen',
+                title: 'Ask macOS to grant Screen Recording to the current Aura.app identity.',
+            });
+            repairButtons.push({
+                action: 'settings-screen',
+                label: 'Open Screen Settings',
+                title: 'Open the macOS Screen Recording pane.',
+            });
+        }
+        if (blockers.includes('accessibility')) {
+            repairButtons.push({
+                action: 'request-accessibility',
+                label: 'Request Control',
+                title: 'Ask macOS to grant Accessibility to the current Aura.app identity.',
+            });
+            repairButtons.push({
+                action: 'settings-accessibility',
+                label: 'Open Control Settings',
+                title: 'Open the macOS Accessibility pane.',
+            });
+        }
+        repairButtons.push({
+            action: 'refresh',
+            label: 'Refresh',
+            title: 'Probe the current desktop permission state again.',
+        });
+        actions.innerHTML = repairButtons.map(button => `
+            <button
+                type="button"
+                class="desktop-access-action"
+                data-desktop-access-action="${escHtml(button.action)}"
+                title="${escHtml(button.title)}"
+            >${escHtml(button.label)}</button>
+        `).join('');
+    }
+
     const helperLines = [];
     if (frontmostApp) helperLines.push(`Automation currently sees the frontmost app as ${frontmostApp}.`);
     const identity = access.process_identity || {};
@@ -1330,6 +1373,46 @@ async function pollDesktopAccess() {
     } finally {
         clearTimeout(timeoutId);
         state.desktopAccessPollInFlight = false;
+    }
+}
+
+async function runDesktopAccessAction(action) {
+    const normalized = String(action || '').trim().toLowerCase();
+    const endpointByAction = {
+        'request-screen': '/api/system/desktop-access/request-screen',
+        'request-accessibility': '/api/system/desktop-access/request-accessibility',
+        'settings-screen': '/api/system/desktop-access/open-settings/screen',
+        'settings-accessibility': '/api/system/desktop-access/open-settings/accessibility',
+    };
+    if (normalized === 'refresh') {
+        await pollDesktopAccess();
+        return;
+    }
+    const endpoint = endpointByAction[normalized];
+    if (!endpoint) return;
+    const actions = DOM.desktopAccessActions || $('desktop-access-actions');
+    try {
+        if (actions) actions.classList.add('busy');
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            cache: 'no-store',
+            credentials: 'same-origin',
+        });
+        let payload = {};
+        try {
+            payload = await response.json();
+        } catch (err) {
+            payload = { parse_error: String(err || '') };
+        }
+        if (!response.ok) {
+            console.warn('[DesktopAccess] repair action failed:', normalized, payload);
+        }
+    } catch (err) {
+        console.warn('[DesktopAccess] repair action error:', normalized, err);
+    } finally {
+        if (actions) actions.classList.remove('busy');
+        await new Promise(resolve => setTimeout(resolve, 500));
+        await pollDesktopAccess();
     }
 }
 
@@ -5105,6 +5188,16 @@ if (cheatInput) {
             e.preventDefault();
             activateCheatCode();
         }
+    });
+}
+if (DOM.desktopAccessActions) {
+    DOM.desktopAccessActions.addEventListener('click', (event) => {
+        const button = event.target && event.target.closest
+            ? event.target.closest('[data-desktop-access-action]')
+            : null;
+        if (!button) return;
+        event.preventDefault();
+        runDesktopAccessAction(button.getAttribute('data-desktop-access-action'));
     });
 }
 

@@ -850,11 +850,26 @@ def test_desktop_access_panel_bounds_raw_permission_status_labels():
 
 def test_desktop_access_panel_uses_dedicated_probe_endpoint():
     aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+    aura_html = (PROJECT_ROOT / "interface" / "static" / "index.html").read_text(encoding="utf-8")
+    aura_css = (PROJECT_ROOT / "interface" / "static" / "aura.css").read_text(encoding="utf-8")
 
     assert "async function pollDesktopAccess()" in aura_js
     assert "fetch('/api/system/desktop-access'" in aura_js
     assert "setInterval(pollDesktopAccess, 15000)" in aura_js
     assert "pollDesktopAccess();" in aura_js
+    assert 'id="desktop-access-actions"' in aura_html
+    assert "async function runDesktopAccessAction(action)" in aura_js
+    assert "'request-screen': '/api/system/desktop-access/request-screen'" in aura_js
+    assert "'request-accessibility': '/api/system/desktop-access/request-accessibility'" in aura_js
+    assert "'settings-screen': '/api/system/desktop-access/open-settings/screen'" in aura_js
+    assert (
+        "'settings-accessibility': '/api/system/desktop-access/open-settings/accessibility'"
+        in aura_js
+    )
+    assert 'data-desktop-access-action="${escHtml(button.action)}"' in aura_js
+    assert ".desktop-access-actions" in aura_css
+    assert ".desktop-access-action" in aura_css
+    assert "overflow-wrap: anywhere;" in aura_css
 
 
 def test_native_shell_waits_for_readiness_heartbeat():

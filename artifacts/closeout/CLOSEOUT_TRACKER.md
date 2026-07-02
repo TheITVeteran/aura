@@ -1606,3 +1606,49 @@ Estimate:
   source-closeout stream, but daily product/runtime closure remains about 85%
   until live Aura.app proves stable permissions, full-mind chat, background
   cognition, and general desktop agency after restart.
+
+## Checkpoint 2026-07-02-03: Desktop Access Repair Controls
+
+Status: source repair verified; live permission grant still requires macOS TCC
+approval on the current Aura.app bridge identity.
+
+Why:
+
+- The launched app can now distinguish the signed resident `com.aura.desktop`
+  bridge from Python, Terminal, and other launcher rows.
+- The remaining problem was operational: the Settings panel surfaced the TCC
+  denial but did not give the user a direct repair lane from inside Aura.
+
+What changed:
+
+- The Desktop Access settings panel now renders action buttons for blocked
+  permissions: request Screen Recording, request Accessibility, open the
+  relevant macOS settings pane, and refresh probes.
+- Added a backend route that opens the correct System Settings pane for screen
+  or accessibility repair requests.
+- The panel still uses direct probes and bounded status labels, so it cannot
+  overclaim desktop readiness from stale permission rows.
+
+Evidence:
+
+- `python -m py_compile interface/routes/system.py` passed.
+- `node --check interface/static/aura.js` passed.
+- `python -m ruff check --select F,E9 interface/routes/system.py tests/test_server_runtime_hardening.py tests/test_runtime_polish.py`
+  passed.
+- `python -m pytest tests/test_server_runtime_hardening.py::test_desktop_access_open_settings_route_aliases_screen_recording tests/test_server_runtime_hardening.py::test_desktop_access_open_settings_route_rejects_unknown_permission tests/test_runtime_polish.py::test_desktop_access_panel_uses_dedicated_probe_endpoint tests/test_runtime_polish.py::test_desktop_access_panel_bounds_raw_permission_status_labels -q`
+  passed with `4 passed`.
+
+Boundary:
+
+- This does not bypass macOS privacy policy. The live proof still needs the
+  current `/Applications/Aura.app` bridge identity to be approved by TCC.
+- After approval, `/api/system/desktop-access` must report
+  `desktop_control_ready=true` before the desktop-control/demo lane can be
+  marked closed.
+
+Estimate:
+
+- Reopened live desktop reliability source-closeout remains approximately 95%.
+- Daily product/runtime closure remains about 85% until permissions, full-mind
+  conversation, background autonomy, and general visible desktop agency are
+  proven after a clean restart.

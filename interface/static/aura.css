@@ -2573,6 +2573,39 @@ body.neural-visual-paused #pane-neural .live-dot {
     gap: 10px;
     margin-bottom: 10px;
 }
+.desktop-access-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 14px 0 10px;
+}
+.desktop-access-action {
+    min-height: 36px;
+    max-width: 100%;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(147,88,255,0.45);
+    background: rgba(147,88,255,0.14);
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+    transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+.desktop-access-action:hover,
+.desktop-access-action:focus-visible {
+    border-color: rgba(101,245,255,0.78);
+    background: rgba(101,245,255,0.16);
+    outline: none;
+    transform: translateY(-1px);
+}
+.desktop-access-actions.busy .desktop-access-action {
+    cursor: wait;
+    opacity: 0.66;
+}
 .desktop-access-card {
     border-radius: 10px;
     border: 1px solid rgba(255,255,255,0.08);

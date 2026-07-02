@@ -1740,6 +1740,45 @@ async def request_accessibility_access() -> dict[str, Any]:
         return {"requested": False, "granted": False, "error": str(exc)[:240]}
 
 
+@router.post("/system/desktop-access/open-settings/{permission}")
+async def open_desktop_access_settings(permission: str) -> dict[str, Any]:
+    aliases = {
+        "screen": "SCREEN",
+        "screen_recording": "SCREEN",
+        "screencapture": "SCREEN",
+        "accessibility": "ACCESSIBILITY",
+        "automation": "AUTOMATION",
+    }
+    normalized = aliases.get(str(permission or "").strip().lower())
+    if not normalized:
+        return {
+            "opened": False,
+            "permission": permission,
+            "error": "unknown_permission",
+        }
+    try:
+        from core.security.permission_setup import open_settings_pane
+
+        opened = bool(open_settings_pane(normalized))
+        return {
+            "opened": opened,
+            "permission": normalized,
+            "target": "System Settings",
+        }
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "system.desktop_access.open_settings",
+            exc,
+            action="reported desktop permission settings launch failure",
+            severity="warning",
+        )
+        return {
+            "opened": False,
+            "permission": normalized,
+            "error": str(exc)[:240],
+        }
+
+
 def _collect_neurodynamic_status() -> dict[str, Any]:
     payload: dict[str, Any] = {
         "status": "idle",

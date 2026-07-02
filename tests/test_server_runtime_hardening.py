@@ -8468,3 +8468,35 @@ def test_websocket_log_queue_capacity_env_parser(monkeypatch):
 
     monkeypatch.setenv("AURA_UI_LOG_QUEUE_MAXLEN", "not-an-int")
     assert websocket_manager._env_positive_int("AURA_UI_LOG_QUEUE_MAXLEN", 2000, minimum=500) == 2000
+
+
+def test_desktop_access_open_settings_route_aliases_screen_recording(monkeypatch):
+    import core.security.permission_setup as permission_setup
+    import interface.routes.system as system_routes
+
+    calls = []
+
+    def _open_settings(permission):
+        calls.append(permission)
+        return True
+
+    monkeypatch.setattr(permission_setup, "open_settings_pane", _open_settings)
+
+    result = asyncio.run(system_routes.open_desktop_access_settings("screen_recording"))
+
+    assert result == {
+        "opened": True,
+        "permission": "SCREEN",
+        "target": "System Settings",
+    }
+    assert calls == ["SCREEN"]
+
+
+def test_desktop_access_open_settings_route_rejects_unknown_permission():
+    import interface.routes.system as system_routes
+
+    result = asyncio.run(system_routes.open_desktop_access_settings("unknown"))
+
+    assert result["opened"] is False
+    assert result["permission"] == "unknown"
+    assert result["error"] == "unknown_permission"
