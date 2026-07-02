@@ -43,3 +43,25 @@ def test_strict_mode_reflected(monkeypatch):
     monkeypatch.setenv("AURA_STRICT_RUNTIME", "1")
     assert ia.strict_mode() is True
     assert ia.run_integrity_audit(log=False)["strict_mode"] is True
+
+
+def test_report_names_failure_pressure_feeders(monkeypatch):
+    """During a lockdown the integrity report must name the pressure's top
+    contributing subsystems — no log archaeology to find the feeder."""
+    import core.runtime.integrity_audit as ia
+
+    monkeypatch.setattr(
+        "core.health.degraded_events.get_unified_failure_state",
+        lambda limit=25: {
+            "pressure": 0.85,
+            "count": 12,
+            "critical": 2,
+            "top_subsystems": ["mlx_warmup", "chat.cognitive_engine_reply"],
+        },
+    )
+
+    report = ia.run_integrity_audit(log=False)
+
+    assert report["failure_state"]["pressure"] == 0.85
+    assert report["failure_state"]["top_subsystems"][0] == "mlx_warmup"
+    assert any("failure pressure 0.85" in a for a in report["advisory"])

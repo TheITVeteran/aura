@@ -79,6 +79,27 @@ def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
     except (ImportError, AttributeError, RuntimeError, TypeError):
         caa_readiness = {}
 
+    # Failure pressure with its top contributors: when background policy
+    # reports failure_lockdown_X, this names the feeder without log archaeology.
+    failure_state: dict[str, Any] = {}
+    try:
+        from core.health.degraded_events import get_unified_failure_state
+
+        unified = get_unified_failure_state()
+        failure_state = {
+            "pressure": unified.get("pressure", 0.0),
+            "count": unified.get("count", 0),
+            "critical": unified.get("critical", 0),
+            "top_subsystems": unified.get("top_subsystems", []),
+        }
+        if float(failure_state.get("pressure") or 0.0) >= 0.5:
+            advisory.append(
+                f"failure pressure {failure_state['pressure']:.2f} "
+                f"(top: {', '.join(str(t) for t in failure_state['top_subsystems'][:3]) or 'n/a'})"
+            )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        failure_state = {}
+
     report = {
         # 'healthy' reflects RUNTIME health only — advisory operational facts never make
         # the runtime unhealthy. 'concerns' (the health-blocking list) holds runtime
@@ -90,6 +111,7 @@ def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
         "degradations": degradations,
         "crsm_loop": crsm_loop,
         "caa_readiness": caa_readiness,
+        "failure_state": failure_state,
         "at": time.time(),
     }
 
