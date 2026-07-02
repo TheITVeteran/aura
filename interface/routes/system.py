@@ -288,6 +288,10 @@ _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S = _env_positive_float(
     "AURA_DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S",
     8.0,
 )
+_DESKTOP_ACCESS_MENU_CLOCK_TIMEOUT_S = _env_positive_float(
+    "AURA_DESKTOP_ACCESS_MENU_CLOCK_TIMEOUT_S",
+    1.5,
+)
 _SSE_IDLE_HEARTBEAT_S = _env_positive_float("AURA_SSE_IDLE_HEARTBEAT_S", 15.0)
 _SSE_QUEUE_BACKLOG_LIMIT = max(1, _safe_int(os.getenv("AURA_SSE_QUEUE_BACKLOG_LIMIT", ""), 100))
 _HEALTH_PROBE_TIMEOUT_S = _env_positive_float("AURA_HEALTH_PROBE_TIMEOUT_S", 2.5)
@@ -1171,6 +1175,7 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
         from core.security.permission_guard import PermissionType, get_permission_guard
         from core.skills._pyautogui_runtime import get_pyautogui
 
+        native_ready = False
         if sys.platform == "darwin":
             try:
                 from core.security.native_desktop_bridge import probe_native_desktop_bridge
@@ -1216,6 +1221,14 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                     native_probe if isinstance(native_probe, dict)
                     else {"ok": False, "error": f"invalid:{type(native_probe).__name__}"}
                 )
+                native_ready = bool(
+                    isinstance(native_probe, dict)
+                    and native_probe.get("ok")
+                    and all(
+                        bool(native_probe.get(key))
+                        for key in ("screen_recording", "accessibility", "automation")
+                    )
+                )
             except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
                 record_degradation(
                     "system.desktop_access.native_bridge_probe",
@@ -1241,56 +1254,57 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                         action="continued desktop access summary without process identity",
                         severity="debug",
                     )
-            screen = await guard.check_permission(PermissionType.SCREEN, force=False)
-            accessibility = await guard.check_permission(PermissionType.ACCESSIBILITY, force=False)
-            automation = await guard.check_permission(PermissionType.AUTOMATION, force=False)
-            payload["screen_recording"] = screen
-            payload["accessibility"] = accessibility
-            payload["automation"] = automation
-            payload["frontmost_app"] = str(automation.get("detail", "") or "")
-            direct_probe = getattr(guard, "check_permission_direct", None)
-            if callable(direct_probe):
-                async def _bounded_direct_probe(ptype: Any) -> dict[str, Any]:
+            if not native_ready:
+                screen = await guard.check_permission(PermissionType.SCREEN, force=False)
+                accessibility = await guard.check_permission(PermissionType.ACCESSIBILITY, force=False)
+                automation = await guard.check_permission(PermissionType.AUTOMATION, force=False)
+                payload["screen_recording"] = screen
+                payload["accessibility"] = accessibility
+                payload["automation"] = automation
+                payload["frontmost_app"] = str(automation.get("detail", "") or "")
+                direct_probe = getattr(guard, "check_permission_direct", None)
+                if callable(direct_probe):
+                    async def _bounded_direct_probe(ptype: Any) -> dict[str, Any]:
+                        try:
+                            result = await asyncio.wait_for(direct_probe(ptype), timeout=3.0)
+                            return result if isinstance(result, dict) else {
+                                "granted": False,
+                                "status": "invalid_probe_result",
+                                "guidance": "",
+                                "detail": f"got {type(result).__name__}",
+                                "direct_probe": True,
+                            }
+                        except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
+                            record_degradation(
+                                "system.desktop_access.direct_probe",
+                                exc,
+                                action=f"marked {ptype.name.lower()} direct permission unavailable without discarding other probes",
+                                severity="warning",
+                            )
+                            return {
+                                "granted": False,
+                                "status": "probe_failed",
+                                "guidance": getattr(guard, "get_guidance", lambda _ptype: "")(ptype),
+                                "detail": str(exc)[:240],
+                                "direct_probe": True,
+                            }
+
                     try:
-                        result = await asyncio.wait_for(direct_probe(ptype), timeout=3.0)
-                        return result if isinstance(result, dict) else {
-                            "granted": False,
-                            "status": "invalid_probe_result",
-                            "guidance": "",
-                            "detail": f"got {type(result).__name__}",
-                            "direct_probe": True,
-                        }
+                        direct_screen, direct_accessibility, direct_automation = await asyncio.gather(
+                            _bounded_direct_probe(PermissionType.SCREEN),
+                            _bounded_direct_probe(PermissionType.ACCESSIBILITY),
+                            _bounded_direct_probe(PermissionType.AUTOMATION),
+                        )
+                        payload["direct_screen_recording"] = direct_screen
+                        payload["direct_accessibility"] = direct_accessibility
+                        payload["direct_automation"] = direct_automation
                     except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
                         record_degradation(
-                            "system.desktop_access.direct_probe",
+                            "system",
                             exc,
-                            action=f"marked {ptype.name.lower()} direct permission unavailable without discarding other probes",
+                            action="continued desktop access summary after direct permission probe failed",
                             severity="warning",
                         )
-                        return {
-                            "granted": False,
-                            "status": "probe_failed",
-                            "guidance": getattr(guard, "get_guidance", lambda _ptype: "")(ptype),
-                            "detail": str(exc)[:240],
-                            "direct_probe": True,
-                        }
-
-                try:
-                    direct_screen, direct_accessibility, direct_automation = await asyncio.gather(
-                        _bounded_direct_probe(PermissionType.SCREEN),
-                        _bounded_direct_probe(PermissionType.ACCESSIBILITY),
-                        _bounded_direct_probe(PermissionType.AUTOMATION),
-                    )
-                    payload["direct_screen_recording"] = direct_screen
-                    payload["direct_accessibility"] = direct_accessibility
-                    payload["direct_automation"] = direct_automation
-                except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
-                    record_degradation(
-                        "system",
-                        exc,
-                        action="continued desktop access summary after direct permission probe failed",
-                        severity="warning",
-                    )
 
         native_bridge = payload.get("native_bridge_probe")
         if isinstance(native_bridge, dict) and native_bridge.get("ok"):
@@ -1378,7 +1392,22 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                     record_degradation('system', exc)
                     return {"ready": False, "error": str(exc)[:240]}
 
-            menu_clock_probe = await asyncio.to_thread(_probe_menu_clock)
+            try:
+                menu_clock_probe = await asyncio.wait_for(
+                    asyncio.to_thread(_probe_menu_clock),
+                    timeout=max(0.25, _DESKTOP_ACCESS_MENU_CLOCK_TIMEOUT_S),
+                )
+            except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
+                record_degradation(
+                    "system.desktop_access.menu_clock_probe",
+                    exc,
+                    action="returned desktop access summary without blocking on menu bar clock",
+                    severity="warning",
+                )
+                menu_clock_probe = {
+                    "ready": False,
+                    "error": str(exc)[:240] or type(exc).__name__,
+                }
             payload["menu_clock_ready"] = bool(menu_clock_probe.get("ready"))
             payload["menu_clock_text"] = str(menu_clock_probe.get("text", "") or "")
             payload["menu_clock_error"] = str(menu_clock_probe.get("error", "") or "")

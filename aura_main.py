@@ -3051,6 +3051,64 @@ def _lock_pid_matches_aura_runtime(pid: int, metadata: dict[str, Any]) -> tuple[
 def stop_aura():
     """Reads PID from lock file and sends SIGTERM. Also unloads launchd agent."""
     lock_file = Path.home() / ".aura" / "locks" / "orchestrator.lock"
+
+    def stop_native_desktop_launchers() -> list[int]:
+        """Terminate resident Aura.app launchers so they cannot respawn Python."""
+
+        if sys.platform != "darwin":
+            return []
+        try:
+            import psutil
+        except ImportError:
+            return []
+
+        launcher_suffix = "Aura.app/Contents/MacOS/aura-launcher"
+        current_pid = os.getpid()
+        stopped: list[int] = []
+        candidates = []
+        for proc in psutil.process_iter(["pid", "exe", "cmdline", "name"]):
+            try:
+                pid = int(proc.info.get("pid") or proc.pid)
+                if pid == current_pid:
+                    continue
+                exe = str(proc.info.get("exe") or "")
+                cmdline = [str(item) for item in (proc.info.get("cmdline") or [])]
+                first_arg = cmdline[0] if cmdline else ""
+                cmdline_text = " ".join(cmdline)
+                name = str(proc.info.get("name") or "")
+                is_native_launcher = (
+                    exe.endswith(launcher_suffix)
+                    or first_arg.endswith(launcher_suffix)
+                    or (name == "aura-launcher" and launcher_suffix in " ".join(cmdline + [exe]))
+                )
+                is_native_child = (
+                    "aura_main.py" in cmdline_text
+                    and any(arg in cmdline for arg in ("--desktop", "--gui-window"))
+                    and "--stop" not in cmdline
+                )
+                if is_native_launcher or is_native_child:
+                    candidates.append(proc)
+            except (psutil.Error, OSError, TypeError, ValueError):
+                continue
+
+        for proc in candidates:
+            try:
+                pid = int(proc.pid)
+                proc.terminate()
+                stopped.append(pid)
+            except psutil.Error:
+                continue
+        for proc in candidates:
+            try:
+                proc.wait(timeout=3.0)
+            except psutil.TimeoutExpired:
+                try:
+                    proc.kill()
+                except psutil.Error:
+                    pass
+            except psutil.Error:
+                pass
+        return stopped
     
     # 1. Unload Launchd Agent (Prevents auto-revival on macOS)
     if sys.platform == "darwin":
@@ -3074,7 +3132,14 @@ def stop_aura():
                 logger.warning("launchctl unload failed: %s", e)
             
     if not lock_file.exists():
-        print("Aura does not appear to be running (no lock file found).")
+        stopped_launchers = stop_native_desktop_launchers()
+        if stopped_launchers:
+            print(
+                "Aura runtime lock was absent, but stopped native launcher "
+                f"session(s): {', '.join(str(pid) for pid in stopped_launchers)}"
+            )
+        else:
+            print("Aura does not appear to be running (no lock file found).")
         return
 
     try:
@@ -3093,6 +3158,12 @@ def stop_aura():
                 f"({verify_reason}). Cleaning stale lock."
             )
             _unlink_orchestrator_lock(lock_file)
+            stopped_launchers = stop_native_desktop_launchers()
+            if stopped_launchers:
+                print(
+                    "Stopped native launcher session(s): "
+                    + ", ".join(str(pid) for pid in stopped_launchers)
+                )
             return
 
         try:
@@ -3171,6 +3242,12 @@ def stop_aura():
             except OSError as exc:
                 record_degradation("aura_main", exc)
                 print(f"Failed to remove Aura lock file: {exc}")
+        stopped_launchers = stop_native_desktop_launchers()
+        if stopped_launchers:
+            print(
+                "Stopped native launcher session(s): "
+                + ", ".join(str(pid) for pid in stopped_launchers)
+            )
             
         print("✅ Aura stopped successfully.")
     except _AURA_MAIN_BOUNDARY_ERRORS as e:

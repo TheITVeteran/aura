@@ -138,6 +138,16 @@ def test_launch_script_supports_gui_window_mode():
     assert '"$PYTHON_CMD" aura_cleanup.py >/dev/null 2>&1 || true' in shell
 
 
+def test_bundle_app_prefers_stable_local_codesign_without_timestamp_by_default():
+    bundle = (PROJECT_ROOT / "scripts" / "bundle_app.sh").read_text(encoding="utf-8")
+
+    assert 'AURA_AUTO_USE_LOCAL_CODESIGN="${AURA_AUTO_USE_LOCAL_CODESIGN:-1}"' in bundle
+    assert 'sed -n \'s/.*"\\(Aura Local Code Signing[^"]*\\)".*/\\1/p\'' in bundle
+    assert 'CODESIGN_ARGS+=(--options runtime)' in bundle
+    assert 'if [ "${AURA_CODESIGN_TIMESTAMP:-0}" = "1" ]; then' in bundle
+    assert 'CODESIGN_ARGS+=(--timestamp)' in bundle
+
+
 def test_launcher_cleanup_shim_exists_at_repo_root():
     shim = PROJECT_ROOT / "aura_cleanup.py"
     target = PROJECT_ROOT / "scripts" / "one_off" / "aura_cleanup.py"
@@ -223,6 +233,11 @@ def test_stop_aura_signals_parent_before_touching_child_actors():
     assert "p.send_signal(signal.SIGTERM)" in stop_body
     assert "AURA_STOP_GRACE_SECONDS" in stop_body
     assert "p.wait(timeout=stop_grace_s)" in stop_body
+    assert "def stop_native_desktop_launchers()" in stop_body
+    assert "Aura.app/Contents/MacOS/aura-launcher" in stop_body
+    assert '"--desktop", "--gui-window"' in stop_body
+    assert '"--stop" not in cmdline' in stop_body
+    assert "Stopped native launcher session(s)" in stop_body
     first_signal = stop_body.index("p.send_signal(signal.SIGTERM)")
     assert "for child in p.children(recursive=True):" not in stop_body[:first_signal]
 

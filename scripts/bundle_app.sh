@@ -11,7 +11,10 @@ APP_NAME="${APP_BASENAME}.app"
 APP_DIR="${DIST_DIR}/${APP_NAME}"
 INSTALL_PATH="${AURA_INSTALL_PATH:-}"
 DEFAULT_CODESIGN_IDENTITY="-"
-if [ "${AURA_AUTO_USE_LOCAL_CODESIGN:-0}" = "1" ] && command -v security >/dev/null 2>&1; then
+# Prefer Aura's persistent local code-signing identity when it exists.  macOS TCC
+# grants attach to the app identity, and ad-hoc signatures can drift on rebuilds.
+AURA_AUTO_USE_LOCAL_CODESIGN="${AURA_AUTO_USE_LOCAL_CODESIGN:-1}"
+if [ "${AURA_AUTO_USE_LOCAL_CODESIGN}" = "1" ] && command -v security >/dev/null 2>&1; then
     LOCAL_AURA_IDENTITY="$(
         security find-identity -v -p codesigning 2>/dev/null \
             | sed -n 's/.*"\(Aura Local Code Signing[^"]*\)".*/\1/p' \
@@ -155,7 +158,10 @@ echo "✍️ Edit the repo normally — this launcher always runs the current wo
 if command -v codesign >/dev/null 2>&1; then
     CODESIGN_ARGS=(--force --sign "${CODESIGN_IDENTITY}" --entitlements "${ENTITLEMENTS_PLIST}")
     if [ "${CODESIGN_IDENTITY}" != "-" ]; then
-        CODESIGN_ARGS+=(--options runtime --timestamp)
+        CODESIGN_ARGS+=(--options runtime)
+        if [ "${AURA_CODESIGN_TIMESTAMP:-0}" = "1" ]; then
+            CODESIGN_ARGS+=(--timestamp)
+        fi
     fi
     codesign "${CODESIGN_ARGS[@]}" "${APP_DIR}" >/dev/null
 fi

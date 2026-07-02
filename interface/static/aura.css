@@ -2580,16 +2580,18 @@ body.neural-visual-paused #pane-neural .live-dot {
     padding: 12px;
 }
 .desktop-access-card-head {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content;
     align-items: center;
-    justify-content: space-between;
     gap: 10px;
     margin-bottom: 8px;
+    min-width: 0;
 }
 .desktop-access-card-label {
     font-size: 0.74rem;
     color: var(--text);
     min-width: 0;
+    max-width: 100%;
     overflow-wrap: anywhere;
 }
 .desktop-access-card-meta,
@@ -2618,7 +2620,7 @@ body.neural-visual-paused #pane-neural .live-dot {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex: 0 1 auto;
+    justify-self: end;
 }
 .desktop-access-pill.ready {
     background: rgba(0,255,163,0.9);

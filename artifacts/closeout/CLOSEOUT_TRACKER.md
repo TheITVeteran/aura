@@ -1162,3 +1162,80 @@ Honest boundary and estimate:
 - Remaining smaller sub-checkpoints: 1.
 - Remaining work: rerun the live desktop proof from committed source, then rerun
   final-claim validation or the full final-proof gate as needed.
+
+## Checkpoint 2026-07-01-02: Stable Desktop Access and Stop/Respawn Control
+
+Status: source repair verified locally; checkpoint commit/push pending.
+
+Observed live-path failures:
+
+- The Desktop Access panel could report `BLOCKED` or raw statuses such as
+  `DENIED_NATIVE_BRIDGE` even after macOS showed Aura had Accessibility,
+  Screen Recording, and Automation permissions.
+- The installed `/Applications/Aura.app` was ad-hoc signed, so macOS TCC grants
+  could attach inconsistently across rebuilds or to the Python child instead of
+  Aura's resident desktop bridge.
+- `aura_main.py --stop` could stop the Python runtime while leaving the native
+  Aura.app launcher alive. The launcher then respawned a new desktop runtime,
+  making it look like multiple Aura sessions were spinning up.
+- The desktop-access health route could spend too long in menu-clock or Python
+  TCC probes even when the signed resident bridge had already proven direct
+  access.
+
+Root fixes:
+
+- `scripts/bundle_app.sh` now defaults to the stable local signing identity
+  `Aura Local Code Signing` when available and signs the app with hardened
+  runtime by default. Timestamping remains opt-in so local offline signing does
+  not hang packaging.
+- `/api/system/desktop-access` now trusts the signed resident Aura.app bridge as
+  authoritative when it reports Screen Recording, Accessibility, and Automation
+  are all granted. In that ready state it does not let Python's separate TCC row
+  downgrade desktop access.
+- Desktop-access summary probes now bound the menu-clock step, so health
+  readiness fails closed instead of hanging the route.
+- The access panel CSS now constrains long permission-status pills so labels do
+  not overlap or clip.
+- `aura_main.py --stop` now terminates resident Aura.app launchers and their
+  `--desktop` / `--gui-window` Python children, so a stop command actually
+  stops the full live desktop session instead of leaving a respawn owner behind.
+
+Evidence:
+
+- Focused tests passed:
+  `tests/test_launcher_polish_contract.py::test_stop_aura_signals_parent_before_touching_child_actors`,
+  `tests/test_launcher_polish_contract.py::test_bundle_app_prefers_stable_local_codesign_without_timestamp_by_default`,
+  `tests/test_server_runtime_hardening.py::test_desktop_access_summary_native_bridge_ready_skips_slow_python_tcc_probes`,
+  `tests/test_server_runtime_hardening.py::test_desktop_access_summary_menu_clock_probe_is_bounded`,
+  `tests/test_server_runtime_hardening.py::test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_grants`,
+  and `tests/test_runtime_polish.py::test_desktop_access_panel_bounds_raw_permission_status_labels`
+  (`6 passed`).
+- `py_compile` passed for `aura_main.py`, `interface/routes/system.py`, and the
+  touched tests.
+- `ruff --select F,E9` passed for the touched Python files.
+- `/Applications/Aura.app` was rebuilt and verified with a stable code-signing
+  identity instead of ad-hoc signing.
+- Live resident bridge and `/api/system/desktop-access` were verified as
+  `overall_status=ready`, with `screen_capture_ready`,
+  `desktop_control_ready`, `screen_text_ready`, and `menu_clock_ready`.
+- Live `/api/health` was verified with `status=ok`,
+  `full_runtime_ready=true`, and all full-desktop background components running.
+- Live desktop `/api/chat` returned through `CognitiveEngine` with
+  `full_mind_path=true`, no legacy fallback, and accepted required subsystem
+  participation.
+- Real stop proof: `.venv/bin/python aura_main.py --stop` stopped PID 78590 and
+  native launcher sessions 78565 and 79276; a follow-up process scan showed no
+  remaining Aura, Aura.app launcher, MLX, or uvicorn process.
+
+Honest boundary and estimate:
+
+- This closes the immediate permission-recognition and respawn-loop class of
+  failures, but it does not replace the final clean-tree live desktop proof or a
+  longer daily-runtime soak.
+- Prior final-proof closeout scope: 99.74%.
+- Reopened live desktop reliability scope after the June 30/July 1 user reports:
+  approximately 90%.
+- Remaining consolidated checkpoint: clean-tree live desktop proof plus final
+  claim validation from committed source.
+- Remaining smaller sub-checkpoints: one short live relaunch/access/chat smoke
+  after this commit is pushed.
