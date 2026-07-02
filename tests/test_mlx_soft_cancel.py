@@ -8,7 +8,6 @@ reload) remains the escalation, not the default.
 from __future__ import annotations
 
 import time
-from types import SimpleNamespace
 
 from core.brain.llm import mlx_client as mlx_client_mod
 from core.brain.llm.mlx_client import MLXLocalClient
