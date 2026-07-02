@@ -1893,13 +1893,30 @@ class JobWatchdog(threading.Thread):
                 os._exit(1)
             time.sleep(1.0)
 
+def soft_cancel_requested(cancel_seq: Any, job_seq: int) -> bool:
+    """True when the parent asked THIS job to stop between tokens.
+
+    Cooperative preemption: the parent writes the target job's sequence
+    number into shared memory; the token loop polls it each step. Cancel
+    latency is one decode step and the model stays warm — unlike
+    force-abort, which kills the worker and pays a full model reload.
+    """
+    if cancel_seq is None or job_seq <= 0:
+        return False
+    try:
+        return int(getattr(cancel_seq, "value", 0)) == int(job_seq)
+    except (TypeError, ValueError, OSError):
+        return False
+
+
 def _mlx_worker_loop(
     model_path: str,
     request_queue: mp.Queue,
     response_queue: mp.Queue,
     device: str = "gpu",
     substrate_mem: Any = None,
-    steering_active_flag: Any = None
+    steering_active_flag: Any = None,
+    cancel_seq: Any = None,
 ):
     """Runs in a FULLY ISOLATED native subprocess via ForkServer.
 
@@ -2523,6 +2540,8 @@ def _mlx_worker_loop(
                                     sentinel_loop_aborted = False
                                     sentinel_ontology_aborted = False
                                     role_continuation_hit = False
+                                    job_seq = _safe_int(job.get("seq"), 0)
+                                    soft_cancelled = False
 
                                     # ── Token Sentinel: mid-generation cognitive intervention ──
                                     # Creates a lightweight monitor that checks for capitulation,
@@ -2626,6 +2645,23 @@ def _mlx_worker_loop(
                                         clean_kwargs,
                                     ):
                                         watchdog.activity()
+
+                                        # Cooperative preemption: the parent asked this
+                                        # job to stop between tokens. Return the partial
+                                        # response and keep the model warm.
+                                        if soft_cancel_requested(cancel_seq, job_seq):
+                                            soft_cancelled = True
+                                            try:
+                                                cancel_seq.value = 0
+                                            except (OSError, ValueError):
+                                                logger.debug("Soft-cancel acknowledge write failed; continuing.")
+                                            logger.info(
+                                                "✋ [WORKER] Soft-cancel observed at token %d (job seq=%d).",
+                                                token_count,
+                                                job_seq,
+                                            )
+                                            break
+
                                         token_count += 1
                                         progress_now = time.time()
 
@@ -2746,6 +2782,17 @@ def _mlx_worker_loop(
                                             )
                                             response_text = trimmed_response
                                     total_generated_tokens = token_count
+
+                                    if soft_cancelled:
+                                        # Preempted turn: return the partial response
+                                        # as-is — contract/quality retries would defeat
+                                        # the point of cancelling.
+                                        logger.info(
+                                            "✋ [WORKER] Soft-cancel honored for job seq=%d after %d tokens.",
+                                            job_seq,
+                                            token_count,
+                                        )
+                                        break
 
                                     if proof_evaluation_contract and _proof_evaluation_fragment_incomplete(response_text):
                                         if internal_attempt < max_internal_retries:
@@ -3078,6 +3125,7 @@ def _mlx_worker_loop(
                         "status": "ok",
                         "text": response_text.strip(),
                         "tokens_used": total_generated_tokens,
+                        "soft_cancelled": bool(soft_cancelled),
                         "surface_control_receipt": _surface_generation_control_receipt(
                             job,
                             surface_control_state,

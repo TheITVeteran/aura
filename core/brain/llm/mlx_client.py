@@ -642,13 +642,41 @@ def force_clear_foreground_owner(
         age,
         reason,
     )
+    # Ownership is released, but the wedged generation may still be decoding
+    # and holding the GPU. Ask it to stop between tokens so the incoming turn
+    # gets compute within one decode step — without killing the warm worker.
+    soft_cancel = soft_cancel_active_generations(reason=f"owner_cleared:{reason}")
     return {
         "cleared": True,
         "reason": reason,
         "holder": holder,
         "age_s": round(age, 3),
         "detail": "cleared",
+        "soft_cancel": soft_cancel,
     }
+
+
+def soft_cancel_active_generations(*, reason: str) -> list[dict[str, Any]]:
+    """Request cooperative cancel on every client with an active generation.
+
+    Returns the per-client receipts for the clients that accepted a cancel
+    request; clients with nothing running are skipped.
+    """
+    receipts: list[dict[str, Any]] = []
+    for client in list(_CLIENTS.values()):
+        try:
+            receipt = client.soft_cancel_active_generation(reason)
+        except (AttributeError, OSError, RuntimeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="skipped one client during cooperative cancel sweep",
+                severity="warning",
+            )
+            continue
+        if receipt.get("requested"):
+            receipt["model"] = os.path.basename(getattr(client, "model_path", "") or "")
+            receipts.append(receipt)
+    return receipts
 
 
 @contextlib.asynccontextmanager
@@ -1137,6 +1165,14 @@ class MLXLocalClient:
         # Shared memory flag to track if affective steering successfully attached
         self._steering_active = self._mp_context.Value("b", False, lock=False)
 
+        # Cooperative preemption channel: the parent writes the ACTIVE job's
+        # numeric sequence here to ask the worker to stop between tokens.
+        # Cancel latency is one decode step and the model stays warm — unlike
+        # force-abort, which kills the worker and pays a full model reload.
+        self._cancel_seq = self._mp_context.Value("Q", 0, lock=False)
+        self._job_seq_counter = 0
+        self._current_request_seq = 0
+
     def _is_primary_or_deep_lane(self) -> bool:
         lowered = os.path.basename(self.model_path).lower()
         return any(token in lowered for token in ("32b", "72b", "zenith", "solver", "cortex"))
@@ -1225,9 +1261,18 @@ class MLXLocalClient:
         prompt_chars: int = 0,
         requested_max_tokens: int = 0,
         first_token_hard_ceiling_s: float = 0.0,
+        request_seq: int = 0,
     ) -> None:
         now = time.time()
         self._current_request_id = str(req_id or "")
+        self._current_request_seq = max(0, int(request_seq or 0))
+        # A new generation supersedes any stale cooperative-cancel request.
+        cancel_seq = getattr(self, "_cancel_seq", None)
+        if cancel_seq is not None and int(getattr(cancel_seq, "value", 0)) not in (
+            0,
+            self._current_request_seq,
+        ):
+            cancel_seq.value = 0
         self._current_request_progress_baseline_at = max(
             self._last_heartbeat,
             self._last_progress_at,
@@ -1264,6 +1309,7 @@ class MLXLocalClient:
         self._current_first_token_at = 0.0
         self._last_token_progress_at = 0.0
         self._current_request_id = ""
+        self._current_request_seq = 0
         self._current_request_progress_baseline_at = 0.0
         self._current_prompt_chars = 0
         self._current_requested_max_tokens = 0
@@ -2048,6 +2094,53 @@ class MLXLocalClient:
         self._req_q = None
         self._res_q = None
 
+    def soft_cancel_active_generation(self, reason: str = "foreground_preemption") -> dict[str, Any]:
+        """Ask the ACTIVE generation to stop between tokens (cooperative).
+
+        Writes the active job's sequence number into shared memory; the worker
+        token loop polls it each decode step and finishes the job early with a
+        ``soft_cancelled`` response. Cancel latency is roughly one decode step
+        and the worker (and its loaded model) stays warm — the cheap first
+        rung on the preemption ladder before ``force_abort_active_generation``.
+
+        Returns a receipt; ``requested`` is False when there is nothing to
+        cancel or the cancel channel is unavailable.
+        """
+        reason = str(reason or "foreground_preemption")
+        cancel_seq = getattr(self, "_cancel_seq", None)
+        active_seq = int(getattr(self, "_current_request_seq", 0) or 0)
+        generation_active = bool(
+            self._current_request_started_at > 0.0 and active_seq > 0
+        )
+        if cancel_seq is None or not generation_active:
+            return {
+                "requested": False,
+                "reason": reason,
+                "active_seq": active_seq,
+                "detail": "no_active_generation" if cancel_seq is not None else "cancel_channel_unavailable",
+            }
+        try:
+            cancel_seq.value = active_seq
+        except (OSError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="fell back to force-abort ladder after soft-cancel write failed",
+                severity="warning",
+            )
+            return {
+                "requested": False,
+                "reason": reason,
+                "active_seq": active_seq,
+                "detail": f"cancel_write_failed:{type(exc).__name__}",
+            }
+        logger.info(
+            "✋ [MLX] Soft-cancel requested for job seq=%d on %s (%s).",
+            active_seq,
+            os.path.basename(self.model_path),
+            reason,
+        )
+        return {"requested": True, "reason": reason, "active_seq": active_seq}
+
     def force_abort_active_generation(self, reason: str = "hard_generation_deadline") -> bool:
         """Thread-safe emergency abort for a wedged generation.
 
@@ -2232,6 +2325,7 @@ class MLXLocalClient:
                         self.device,
                         self._substrate_mem,
                         self._steering_active,
+                        self._cancel_seq,
                     ),
                     daemon=True,
                     name=f"MLXWorker-{os.path.basename(self.model_path)}",
@@ -3523,8 +3617,10 @@ class MLXLocalClient:
             return getattr(_bridge, field, fallback)
 
         req_id = uuid.uuid4().hex
+        self._job_seq_counter += 1
         req = {
             "id": req_id,
+            "seq": self._job_seq_counter,
             "action": "generate",
             "prompt": prompt,
             "messages": kwargs.get("messages"),
@@ -3623,6 +3719,7 @@ class MLXLocalClient:
             prompt_chars=len(prompt or ""),
             requested_max_tokens=req.get("max_tokens", self.max_tokens),
             first_token_hard_ceiling_s=first_token_hard_ceiling,
+            request_seq=int(req.get("seq", 0)),
         )
         foreground_watchdog = self._start_foreground_first_token_watchdog(
             req_id,
