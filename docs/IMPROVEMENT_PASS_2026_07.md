@@ -75,6 +75,7 @@ lint) and pushed to main.
 | Area | Depth | Findings / actions |
 |---|---|---|
 | core/orchestrator + aura_main (tier 1) | AST hunts (broad/bare except, sync sleep/IO in async, untracked create_task): zero; 25 swallow sites inspected — all narrow-typed with intentional-no-op comments (optional telemetry seams, per-PID reaper continues, boot-time executor fallback); boot/shutdown paths already instrumented (flight recorder, drain bounds, boot-tail phases) | No defects; adjudications recorded. Contract surface green (48 tests). |
+| core/memory (tier 1, 94 files) | AST hunt: 6 swallow sites, all inspected — queue-timeout worker continues, per-item skip of malformed records, best-effort optional stats/signals (correct patterns); WAL mode verified (episodic + vault), writer queue has flush_and_checkpoint + bounded drain batches; recall path previously line-read (gateway index rebuild) | No defects. Battery green (facade/index/sentinel 47 tests). |
 | core/brain/llm (tier 1) | mlx_client hot paths line-read (init, spawn, listener, wait/SLA ladder, abandonment, reboot, warmup, owner/cancel); mlx_worker token loop + dequeue + emit line-read; AST hunt (bare/broad except, sync sleep/IO in async) over all 40+ brain modules: **zero hits**; substrate ODE NaN/rollback verified | Abandoned generations now soft-cancel the worker (no 32B reload on recoverable SLA breaches); reboot resets cancel channel + request seq; warmup fg/bg duplication adjudicated: keep (stability-annotated). |
 
 
