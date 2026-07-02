@@ -110,6 +110,16 @@ _GENERATION_GATE_LAST_OWNER = ""
 _GENERATION_GATE_WAIT_S = float(
     os.environ.get("AURA_GENERATION_GATE_WAIT_S", "75") or 75
 )
+# Foreground preemption ladder budgets: a user turn waits only this grace
+# before asking a BACKGROUND gate holder to yield cooperatively (the worker
+# stops between tokens and stays warm), then this long for the yield to land.
+# Foreground-vs-foreground contention still honors the full gate window.
+_FOREGROUND_GATE_GRACE_S = float(
+    os.environ.get("AURA_FOREGROUND_GATE_GRACE_S", "5") or 5
+)
+_FOREGROUND_SOFT_CANCEL_WAIT_S = float(
+    os.environ.get("AURA_FOREGROUND_SOFT_CANCEL_WAIT_S", "10") or 10
+)
 _GATE_SATURATION_RESULT = {
     "ok": False,
     "text": "",
@@ -838,6 +848,34 @@ class HealthAwareLLMRouter:
 
         return force_release_generation_gate(reason=reason)
 
+    def _soft_cancel_local_generations(self, *, reason: str) -> bool:
+        """First rung of the preemption ladder: ask active local generations
+        to yield between tokens. The MLX worker honors the cancel within one
+        decode step and stays warm — no worker kill, no model reload.
+
+        Returns True when at least one client accepted a cancel request.
+        """
+        try:
+            from core.brain.llm.mlx_client import soft_cancel_active_generations
+
+            receipts = soft_cancel_active_generations(reason=reason)
+        except (ImportError, AttributeError, OSError, RuntimeError, ValueError) as exc:
+            record_degradation(
+                "llm_health_router",
+                exc,
+                severity="warning",
+                action="soft-cancel sweep unavailable; fell back to plain gate wait",
+            )
+            return False
+        if receipts:
+            logger.warning(
+                "✋ [ROUTER] Soft-cancelled %d background generation(s) for a "
+                "foreground turn (%s); model stays warm.",
+                len(receipts),
+                reason,
+            )
+        return bool(receipts)
+
     def force_abort_active_generation(self, reason: str = "hard_generation_deadline") -> int:
         """Abort stale router/model generation state from watchdog or saturation paths."""
 
@@ -1040,12 +1078,13 @@ class HealthAwareLLMRouter:
             or kwargs.get("protected_foreground_lane", False)
             or kwargs.get("proof_primary_lane_required", False)
         )
-        if self._is_background_request(
+        request_is_background = self._is_background_request(
             origin=origin,
             purpose=purpose,
             explicit_background=explicit_background,
             explicit_foreground=explicit_foreground,
-        ):
+        )
+        if request_is_background:
             foreground_owner = _active_foreground_generation_owner()
             if foreground_owner:
                 return _generation_gate_busy_result(foreground_owner)
@@ -1059,9 +1098,39 @@ class HealthAwareLLMRouter:
         if early_deferral is not None:
             return early_deferral
 
-        acquired = await asyncio.to_thread(
-            _GENERATION_GATE.acquire, True, _GENERATION_GATE_WAIT_S
-        )
+        if request_is_background:
+            acquired = await asyncio.to_thread(
+                _GENERATION_GATE.acquire, True, _GENERATION_GATE_WAIT_S
+            )
+        else:
+            # Foreground preemption ladder. A user turn must not sit the full
+            # gate window behind a BACKGROUND generation and then pay a
+            # worker-kill + model reload (observed live: conversation lane
+            # cold for 75s, then force-abort). Rung 1: short grace. Rung 2:
+            # cooperative soft-cancel of a background holder — the worker
+            # yields between tokens and stays warm, freeing the gate in
+            # about one decode step. Rung 3: the remaining wait and the
+            # existing force-abort escalation below, unchanged.
+            acquired = await asyncio.to_thread(
+                _GENERATION_GATE.acquire, True, _FOREGROUND_GATE_GRACE_S
+            )
+            if not acquired:
+                holder = _oldest_generation_gate_lease()
+                holder_owner = holder[2] if holder is not None else ""
+                if holder is not None and not _generation_owner_is_user_foreground(holder_owner):
+                    if self._soft_cancel_local_generations(
+                        reason=f"foreground_preempts_background:{holder_owner[:80]}"
+                    ):
+                        acquired = await asyncio.to_thread(
+                            _GENERATION_GATE.acquire, True, _FOREGROUND_SOFT_CANCEL_WAIT_S
+                        )
+                if not acquired:
+                    remaining_wait = max(
+                        1.0, _GENERATION_GATE_WAIT_S - _FOREGROUND_GATE_GRACE_S
+                    )
+                    acquired = await asyncio.to_thread(
+                        _GENERATION_GATE.acquire, True, remaining_wait
+                    )
         if not acquired:
             foreground_owner = _active_foreground_generation_owner()
             foreground_age_s = _oldest_generation_gate_lease_age_s() if foreground_owner else 0.0
