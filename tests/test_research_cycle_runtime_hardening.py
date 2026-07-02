@@ -167,6 +167,7 @@ async def test_start_research_daemon_registers_recoverable_service_policy(
 @pytest.mark.asyncio
 async def test_research_cycle_start_recovers_dead_daemon_task(monkeypatch):
     async def failed_daemon():
+        failed_daemon.calls = getattr(failed_daemon, "calls", 0) + 1
         raise RuntimeError("research timeout")
 
     old_task = asyncio.create_task(failed_daemon(), name="aura.research_cycle")
