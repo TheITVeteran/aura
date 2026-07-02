@@ -522,14 +522,20 @@ class LiveLearner:
                 self._buffer.append(example)
                 # Persist immediately (survive crashes)
                 try:
+                    from core.governance_context import local_internal_governed_scope
                     from core.runtime.file_write_gateway import get_file_write_gateway
 
-                    get_file_write_gateway().append_text(
-                        self._buffer_path,
-                        json.dumps(example) + "\n",
-                        encoding="utf-8",
-                        source="live_learner.append_example",
-                    )
+                    with local_internal_governed_scope(
+                        "live_learner.append_example",
+                        domain="memory_write",
+                        constraints={"artifact": "experience_buffer"},
+                    ):
+                        get_file_write_gateway().append_text(
+                            self._buffer_path,
+                            json.dumps(example) + "\n",
+                            encoding="utf-8",
+                            source="live_learner.append_example",
+                        )
                 except _LIVE_LEARNER_RECOVERABLE_ERRORS as exc:
                     _record_live_learning_degradation(
                         "live_learner",

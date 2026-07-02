@@ -27,6 +27,122 @@ def test_research_cycle_respects_background_policy_gate_before_starting(monkeypa
     assert cycle._should_run() is False
 
 
+def test_research_cycle_refuses_stale_desktop_action_as_search_query():
+    cycle = ResearchCycle.__new__(ResearchCycle)
+
+    query = cycle._search_query_for_goal(
+        "Stalled goal: Please create a folder named 'Aura Live Proof' in my Documents folder "
+        "and write a file named live_test.txt in it."
+    )
+
+    assert query == ""
+
+
+def test_research_cycle_filters_prompt_shaped_synthesis_from_selection():
+    cycle = ResearchCycle.__new__(ResearchCycle)
+    state = SimpleNamespace(
+        cognition=SimpleNamespace(
+            pending_initiatives=[
+                {
+                    "goal": (
+                        "SUBCONSCIOUS SYNTHESIS Concept A: autonomy Concept B: desktop "
+                        "Task: 1. Analyze the concepts and produce a universal principle."
+                    ),
+                    "urgency": 0.99,
+                    "timestamp": time.time(),
+                },
+                {
+                    "goal": "Research how operating systems expose accessibility APIs",
+                    "urgency": 0.4,
+                    "timestamp": time.time() - 60,
+                },
+            ],
+            pending_intents=[],
+        )
+    )
+
+    selected = cycle._select_initiative(state)
+
+    assert selected is not None
+    assert selected["goal"] == "Research how operating systems expose accessibility APIs"
+
+
+@pytest.mark.asyncio
+async def test_research_cycle_suppresses_unresearchable_initiatives(monkeypatch):
+    suppressed = []
+
+    class FakeAuthority:
+        async def suppress_initiatives(self, state, *, predicate, reason, source):
+            suppressed.append((reason, source))
+            state.cognition.pending_initiatives = [
+                item for item in state.cognition.pending_initiatives if not predicate(item)
+            ]
+            return state, {"action": "suppressed"}
+
+    monkeypatch.setattr(
+        "core.consciousness.executive_authority.get_executive_authority",
+        lambda _orchestrator=None: FakeAuthority(),
+    )
+
+    cycle = ResearchCycle.__new__(ResearchCycle)
+    cycle.orchestrator = SimpleNamespace()
+    cycle._last_cycle_error = None
+    state = SimpleNamespace(
+        cognition=SimpleNamespace(
+            pending_initiatives=[
+                {
+                    "goal": (
+                        "Stalled goal: Please create a folder named 'Aura Live Proof' "
+                        "in my Documents folder and write a file named live_test.txt in it."
+                    )
+                },
+                {"goal": "Research durable autonomy monitoring"},
+            ]
+        )
+    )
+
+    await cycle._suppress_unresearchable_initiatives(state)
+
+    assert suppressed == [("research_cycle_non_research_goal_quarantined", "research_cycle")]
+    assert state.cognition.pending_initiatives == [{"goal": "Research durable autonomy monitoring"}]
+
+
+@pytest.mark.asyncio
+async def test_research_cycle_repeated_no_findings_suppresses_goal(monkeypatch):
+    suppressed = []
+
+    class FakeAuthority:
+        async def suppress_initiatives(self, state, *, predicate, reason, source):
+            suppressed.append((reason, source))
+            state.cognition.pending_initiatives = [
+                item for item in state.cognition.pending_initiatives if not predicate(item)
+            ]
+            return state, {"action": "suppressed"}
+
+    monkeypatch.setenv("AURA_RESEARCH_SUPPRESS_AFTER_FAILURES", "1")
+    monkeypatch.setattr(
+        "core.consciousness.executive_authority.get_executive_authority",
+        lambda _orchestrator=None: FakeAuthority(),
+    )
+
+    cycle = ResearchCycle.__new__(ResearchCycle)
+    cycle.orchestrator = SimpleNamespace()
+    cycle._last_cycle_error = None
+    cycle._goal_failure_counts = {}
+    state = SimpleNamespace(
+        cognition=SimpleNamespace(
+            pending_initiatives=[
+                {"goal": "Research durable autonomy monitoring"},
+            ]
+        )
+    )
+
+    await cycle._handle_no_findings(state, "Research durable autonomy monitoring", "curiosity")
+
+    assert suppressed == [("research_cycle_repeated_no_findings", "research_cycle")]
+    assert state.cognition.pending_initiatives == []
+
+
 def test_research_cycle_defers_during_boot_grace(monkeypatch):
     cycle = ResearchCycle.__new__(ResearchCycle)
     cycle.orchestrator = SimpleNamespace(_last_user_interaction_time=0.0, status=SimpleNamespace(is_processing=False))

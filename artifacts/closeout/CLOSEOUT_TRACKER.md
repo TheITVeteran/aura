@@ -1703,3 +1703,113 @@ Estimate:
 - Daily product/runtime closure is about 87% pending permissions proof,
   full-mind conversation proof, background autonomy proof, and visible desktop
   agency proof.
+
+## Checkpoint 2026-07-02-05: Live Mind-Path Degradation Root Fixes
+
+Status: source verified with bounded live replay; checkpoint commit pending.
+
+Why:
+
+- A real launched Aura.app run surfaced a direct degradation chain after the
+  duplicate-instance fix: strict-governance learner writes failed, async scanner
+  results were not awaited, and MLX IPC backpressure could still drop essential
+  worker messages.
+- This is exactly the class of issue that makes the desktop path feel like a
+  partial foreground shell instead of the full mind path.
+
+What changed:
+
+- Governed `live_learner.append_example` persistence through a local internal
+  `memory_write` receipt.
+- Awaited async sovereign scanner output in `incoming_logic`.
+- Preserved essential MLX IPC messages by shedding telemetry first and
+  requeueing essential ready/reply messages during transient parent queue
+  saturation.
+- Quarantined stale desktop-action receipts and prompt-shaped internal
+  synthesis before autonomous research can convert them into web-search loops.
+- Suppressed repeated no-finding research attempts through executive authority
+  instead of leaving failed goals to churn forever.
+- Applied that quarantine boundary to global initiative arbitration, curiosity
+  exploration, and goal genesis so synthetic prompts and self-prediction action
+  dictionaries cannot become autonomous desires or background web searches.
+
+Evidence:
+
+- `python -m py_compile core/learning/live_learner.py core/orchestrator/mixins/incoming_logic.py core/brain/llm/mlx_worker.py`
+  passed.
+- `python -m ruff check --select F,E9 core/learning/live_learner.py core/orchestrator/mixins/incoming_logic.py core/brain/llm/mlx_worker.py tests/test_live_learner_continual_training.py tests/test_enterprise_hardening_fixes.py`
+  passed.
+- Focused pytest for strict learner persistence, essential IPC preservation,
+  full parent queue survival, and async scanner awaiting passed with
+  `4 passed`.
+- Compile/lint for the research-loop guard and touched live-path files passed.
+- Focused pytest for stale desktop-action search rejection, prompt-shaped
+  synthesis filtering, unresearchable initiative suppression, repeated
+  no-finding suppression, stale-topic exclusion, governed learner persistence,
+  essential IPC preservation, full queue survival, and async scanner awaiting
+  passed with `9 passed`.
+- Broader affected regression set passed with `37 passed`, including
+  InitiativeArbiter prompt-synthesis quarantine and CuriosityEngine
+  self-prediction query suppression.
+
+Boundary:
+
+- `/Applications/Aura.app` was rebuilt from this source state and replayed
+  boundedly. It reached healthy boot contract and conversation readiness with
+  one launcher/runtime process. Recurrent-depth/adaptive computation reported
+  active on the live MLX lane.
+- macOS still denies Screen Recording/Accessibility to the current app identity;
+  durable desktop-control proof remains blocked on TCC binding.
+
+Estimate:
+
+- Daily product/runtime closure moves to about 89%.
+- Remaining consolidated checkpoints: durable TCC/native-bridge permission
+  binding, full-mind multi-turn conversation proof, bounded background autonomy
+  proof under thermal limits, visible general desktop agency proof, and final
+  clean proof replay.
+
+Final evidence update:
+
+- Runtime-pressure classifier now distinguishes background Brainstem helper
+  timeouts from foreground/user-facing inference failures. Background Brainstem
+  timeout remains visible and repairable, but no longer blocks top-level boot
+  readiness after Cortex and the required probes are healthy; foreground Cortex
+  timeout and generation-gate saturation still fail closed.
+- `aura_main.py --stop` now handles the legacy
+  `com.aura.sovereign` LaunchAgent with `bootout`, persistent `disable`, legacy
+  `unload -w`, and a post-shutdown sweep for revived Aura.app/Python desktop
+  children.
+- Affected regression suite: `49 passed`.
+- `python -m py_compile ...`, `python -m ruff check --select F,E9 ...`, and
+  Swift launcher typecheck all passed.
+- `/Applications/Aura.app` was rebuilt and installed from the current source.
+- Packaged live replay reached:
+  `/api/health status=ok healthy=true`,
+  `/api/health/boot status=ready system_ready=true blockers=[]`,
+  `/api/health/contract status=healthy healthy=true operational=true`,
+  conversation lane `ready`, foreground `Cortex`, recurrent-depth active,
+  full runtime ready, proof readiness healthy, certification ready.
+- Fresh-launch tail after the latest Cortex spawn had zero fresh occurrences of
+  the stale-autonomy and live-path regressions this checkpoint targeted:
+  prompt-synthesis goal replay, stalled-goal replay, self-prediction search,
+  desktop-task receipt search, learner governance violation, un-awaited
+  coroutine, dropped essential IPC, Cortex-route-blocked, recent inference
+  critical blocker, and runtime degraded pulse.
+- Stop check killed all current Aura sessions. A launchd-revived orphan runtime
+  was observed during this checkpoint and stopped cleanly; the new stop-path
+  patch is the persistent guard for that class of recurrence.
+
+Still open:
+
+- macOS TCC still denies current Screen Recording/Accessibility grants even
+  though the resident bridge is reachable and Automation is active.
+- `auto_refactor` still returns immediately with no effective repair work in
+  the live log; immune/self-repair needs its own checkpoint.
+- `OutcomeLedger` has hundreds of thousands of pending receipts and needs
+  compaction/metabolism.
+- Background cognition is live, but autonomous external action needs proof
+  under foreground/thermal policy.
+- The user's requested evaluative label tests, fiction/game-inspired capability
+  deltas, Cell paper architecture pass, subjective preference/choice tests, and
+  final code-grounded Aura assessment remain in the closeout queue.

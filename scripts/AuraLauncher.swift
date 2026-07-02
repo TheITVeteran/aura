@@ -323,10 +323,19 @@ private struct BootSnapshot {
     }
 
     var runtimeIntegrityOK: Bool {
-        guard let checks = payload["checks"] as? [String: Any] else {
-            return true
-        }
         return (checks["runtime_integrity"] as? Bool) ?? true
+    }
+
+    var checks: [String: Any] {
+        (payload["checks"] as? [String: Any]) ?? [:]
+    }
+
+    var runtimeLoopRunning: Bool {
+        (checks["running"] as? Bool) ?? true
+    }
+
+    var runtimeContractHealthy: Bool {
+        (checks["runtime_contract_healthy"] as? Bool) ?? true
     }
 
     var lastFailureReason: String {
@@ -354,6 +363,23 @@ private struct BootSnapshot {
 
     var phaseDisplay: String {
         bootPhase.replacingOccurrences(of: "_", with: " ")
+    }
+
+    var staleRuntimeFailureReason: String? {
+        let normalized = bootPhase.lowercased()
+        let hasDeadCoreLoopBlocker = blockers.contains { blocker in
+            blocker == "important:mind_tick" || blocker == "important:event_loop_monitor"
+        }
+        if runtimeAge >= 45.0 && !runtimeLoopRunning {
+            return "Existing runtime lock points at a process whose boot loop is no longer running."
+        }
+        if runtimeAge >= 90.0 && hasDeadCoreLoopBlocker {
+            return "Existing runtime is explicitly blocked by a dead core loop."
+        }
+        if runtimeAge >= 90.0 && normalized == "kernel_warming" && !runtimeContractHealthy {
+            return "Existing runtime stayed in kernel warming with an unhealthy runtime contract."
+        }
+        return nil
     }
 
     func replacementReason(expectedSemver: String) -> String? {
@@ -886,6 +912,8 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private var nativeBridgeRequestDirectory: URL!
     private var nativeBridgeResponseDirectory: URL!
     private var appInstanceLockFD: Int32 = -1
+    private let spawnedProcessesLock = NSLock()
+    private var spawnedProcesses: [Process] = []
 
     private var pollTimer: Timer?
     private var nativeBridgeTimer: Timer?
@@ -960,6 +988,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        terminateSpawnedProcesses()
         releaseAppInstanceLock()
     }
 
@@ -2004,6 +2033,53 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         return kill(pid, 0) == 0 || errno == EPERM
     }
 
+    private func fetchBootSnapshotSynchronously(timeout: TimeInterval = 1.2) -> BootSnapshot? {
+        let request = URLRequest(
+            url: URL(string: "http://127.0.0.1:8000/api/health/boot")!,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: timeout
+        )
+        let semaphore = DispatchSemaphore(value: 0)
+        var snapshot: BootSnapshot?
+        let task = session.dataTask(with: request) { data, response, _ in
+            snapshot = Self.parseSnapshot(data: data, response: response)
+            semaphore.signal()
+        }
+        task.resume()
+        if semaphore.wait(timeout: .now() + timeout + 0.2) == .timedOut {
+            task.cancel()
+            return nil
+        }
+        return snapshot
+    }
+
+    private func existingRuntimeIsObservable() -> Bool {
+        guard runtimeLockIndicatesLiveProcess() else {
+            return false
+        }
+        guard let snapshot = fetchBootSnapshotSynchronously() else {
+            // A long foreground generation can miss the short launcher poll.
+            // Preserve the lock when health is merely unavailable; only an
+            // explicit boot contract failure is allowed to trigger cleanup.
+            return true
+        }
+        if let reason = snapshot.staleRuntimeFailureReason
+            ?? snapshot.replacementReason(expectedSemver: bundledSemver) {
+            _ = forceStopAuraProcess()
+            clearBootMarker()
+            clearTerminalHandoffMarker()
+            lastSnapshot = nil
+            forcedRelaunchAttempted = false
+            autoDesktopOpenTriggered = false
+            spawnedFreshRuntime = false
+            DispatchQueue.main.async { [weak self] in
+                self?.footerLabel.stringValue = "Replaced stale Aura runtime before launch: \(reason)"
+            }
+            return false
+        }
+        return true
+    }
+
     private func bootMarkerIsStaleWithoutRuntime() -> Bool {
         guard let age = bootMarkerAge(), age >= staleMarkerWithoutRuntimeWindow else {
             return false
@@ -2046,7 +2122,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             // generating a long reply. The orchestrator PID lock is the
             // authoritative process-liveness signal; never spawn a second
             // kernel merely because one HTTP poll missed its one-second SLA.
-            if !forceRelaunch && self.runtimeLockIndicatesLiveProcess() {
+            if !forceRelaunch && self.existingRuntimeIsObservable() {
                 return .observingExistingBoot
             }
             if !forceRelaunch && self.bootMarkerIsStaleWithoutRuntime() {
@@ -2265,6 +2341,45 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         proc.standardOutput = logHandle
         proc.standardError = logHandle
         try proc.run()
+        trackSpawnedProcess(proc)
+    }
+
+    private func trackSpawnedProcess(_ proc: Process) {
+        let pid = proc.processIdentifier
+        spawnedProcessesLock.lock()
+        spawnedProcesses.removeAll { $0.processIdentifier == pid }
+        spawnedProcesses.append(proc)
+        spawnedProcessesLock.unlock()
+        proc.terminationHandler = { [weak self] finished in
+            self?.untrackSpawnedProcess(pid: finished.processIdentifier)
+        }
+    }
+
+    private func untrackSpawnedProcess(pid: Int32) {
+        spawnedProcessesLock.lock()
+        spawnedProcesses.removeAll { $0.processIdentifier == pid }
+        spawnedProcessesLock.unlock()
+    }
+
+    private func terminateSpawnedProcesses() {
+        spawnedProcessesLock.lock()
+        let processes = spawnedProcesses
+        spawnedProcesses.removeAll()
+        spawnedProcessesLock.unlock()
+
+        for proc in processes where proc.isRunning {
+            proc.terminate()
+        }
+
+        let deadline = Date().addingTimeInterval(2.0)
+        for proc in processes where proc.isRunning {
+            while proc.isRunning && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if proc.isRunning {
+                kill(proc.processIdentifier, SIGKILL)
+            }
+        }
     }
 
     @discardableResult

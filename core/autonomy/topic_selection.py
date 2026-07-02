@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from core.autonomy.research_goal_filter import is_unresearchable_goal
+
 
 _LOW_INFORMATION = {
     "hello",
@@ -40,12 +42,16 @@ def _clean_topic(value: Any, *, limit: int = 180) -> str:
     text = " ".join(str(value or "").replace("\x00", " ").split()).strip(" -:;,.?!")
     if not text or text.lower() in _LOW_INFORMATION:
         return ""
+    if is_unresearchable_goal(text):
+        return ""
     text = re.sub(
         r"^(?:please\s+)?(?:research|explore|investigate|learn about|look into|find out about)\s+",
         "",
         text,
         flags=re.IGNORECASE,
     ).strip(" -:;,.?!")
+    if is_unresearchable_goal(text):
+        return ""
     if len(text) < 8:
         return ""
     return text[:limit].rstrip()

@@ -215,6 +215,28 @@ def test_record_tick_accepts_affect_payload_without_state_affect_object(tmp_path
     assert len(learner._buffer) == 1
 
 
+def test_record_tick_persists_training_row_under_strict_governance(monkeypatch, tmp_path):
+    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "strict")
+    learner = _bare_learner(tmp_path)
+    state = SimpleNamespace(
+        identity=SimpleNamespace(current_narrative="steady"),
+        phi=0.7,
+    )
+
+    score = learner.record_tick(
+        state,
+        user_input="What did you repair?",
+        response="I repaired the learner persistence path and kept the runtime evidence attached.",
+        affect={"valence": 0.6, "curiosity": 0.9},
+    )
+
+    assert score is not None
+    assert score.worth_training is True
+    rows = learner._buffer_path.read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 1
+    assert json.loads(rows[0])["messages"][1]["content"] == "What did you repair?"
+
+
 def test_record_tick_refuses_silent_repair_prompts_as_training_data(tmp_path):
     learner = _bare_learner(tmp_path)
     state = SimpleNamespace(identity=SimpleNamespace(current_narrative="steady"), phi=0.7)

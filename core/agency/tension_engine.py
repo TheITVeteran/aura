@@ -22,6 +22,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from core.autonomy.research_goal_filter import is_stale_or_prompt_scaffold_goal
 from core.container import ServiceContainer
 
 logger = logging.getLogger("Aura.Agency")
@@ -72,6 +73,7 @@ class Tension:
 _AGE_RATE_PER_HOUR = 0.02      # severity increases this much per hour unresolved
 _MAX_SEVERITY = 1.0
 _STALE_QUESTION_SECS = 300.0   # 5 minutes before a curiosity queue item counts
+_MAX_PERSISTED_TENSIONS = 2000
 
 
 class TensionEngine:
@@ -98,14 +100,25 @@ class TensionEngine:
         if self._persist_path.exists():
             try:
                 raw = json.loads(self._persist_path.read_text())
+                skipped = 0
                 for entry in raw:
                     try:
                         t = Tension.from_dict(entry)
+                        if t.resolved or self._is_quarantined_tension(t):
+                            skipped += 1
+                            continue
                         self._tensions[t.id] = t
                     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         record_degradation('tension_engine', exc)
                         logger.debug("Skipping malformed tension entry: %s", exc)
-                logger.info("TensionEngine loaded %d tensions from disk.", len(self._tensions))
+                skipped += self._prune_to_budget()
+                if skipped:
+                    self._save()
+                logger.info(
+                    "TensionEngine loaded %d tensions from disk (%d quarantined/pruned).",
+                    len(self._tensions),
+                    skipped,
+                )
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
                 record_degradation('tension_engine', exc)
                 logger.warning("TensionEngine failed to load persisted tensions: %s", exc)
@@ -125,7 +138,11 @@ class TensionEngine:
 
     def register_tension(self, tension: Tension) -> None:
         """Add or update a tension from any subsystem."""
+        if tension.resolved or self._is_quarantined_tension(tension):
+            logger.debug("TensionEngine refused stale/scaffold tension: %s", tension.description[:80])
+            return
         self._tensions[tension.id] = tension
+        self._prune_to_budget()
         logger.debug("Tension registered [%s]: %s (severity=%.2f)",
                       tension.category.value, tension.description[:80], tension.severity)
         self._save()
@@ -144,9 +161,31 @@ class TensionEngine:
 
     def get_active_tensions(self) -> List[Tension]:
         """All unresolved tensions sorted by severity descending."""
-        active = [t for t in self._tensions.values() if not t.resolved]
+        active = [
+            t for t in self._tensions.values()
+            if not t.resolved and not self._is_quarantined_tension(t)
+        ]
         active.sort(key=lambda t: t.severity, reverse=True)
         return active
+
+    @staticmethod
+    def _is_quarantined_tension(tension: Tension) -> bool:
+        if is_stale_or_prompt_scaffold_goal(tension.description):
+            return True
+        return any(is_stale_or_prompt_scaffold_goal(goal) for goal in tension.related_goals)
+
+    def _prune_to_budget(self) -> int:
+        if len(self._tensions) <= _MAX_PERSISTED_TENSIONS:
+            return 0
+        ranked = sorted(
+            self._tensions.values(),
+            key=lambda t: (float(t.severity), float(t.last_checked_at), float(t.created_at)),
+            reverse=True,
+        )
+        keep = {t.id for t in ranked[:_MAX_PERSISTED_TENSIONS]}
+        before = len(self._tensions)
+        self._tensions = {tid: tension for tid, tension in self._tensions.items() if tid in keep}
+        return before - len(self._tensions)
 
     def get_highest_tension(self) -> Optional[Tension]:
         """The single most pressing unresolved tension, or None."""

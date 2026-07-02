@@ -12,6 +12,10 @@ from pathlib import Path
 from time import monotonic
 from typing import Any
 
+from core.autonomy.research_goal_filter import (
+    is_unresearchable_goal,
+    research_query_for_goal,
+)
 from core.runtime import background_policy
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
@@ -181,6 +185,7 @@ class ResearchCycle:
         self._history_load_errors: int = 0
         self._restart_count: int = 0
         self._last_restart_mono: float = 0.0
+        self._goal_failure_counts: dict[str, int] = {}
 
         try:
             from core.config import config
@@ -365,6 +370,9 @@ class ResearchCycle:
         if state is None:
             return None
 
+        await self._suppress_unresearchable_initiatives(state)
+        state = self._get_state() or state
+
         # 1. Select the best initiative
         initiative = self._select_initiative(state)
         if initiative is None:
@@ -392,6 +400,7 @@ class ResearchCycle:
 
         if len(findings) < self.MIN_FINDINGS:
             logger.info("ResearchCycle: insufficient findings for '%s'. Skipping integration.", goal[:60])
+            await self._handle_no_findings(state, goal, drive)
             self._last_cycle_mono = monotonic()
             return None
 
@@ -508,6 +517,20 @@ class ResearchCycle:
         # 1. Try explicit pending initiatives
         initiatives = getattr(state.cognition, "pending_initiatives", [])
         if initiatives:
+            eligible = [
+                item
+                for item in initiatives
+                if not is_unresearchable_goal(item.get("goal", item.get("description", "")) if isinstance(item, dict) else item)
+            ]
+            if len(eligible) != len(initiatives):
+                logger.info(
+                    "ResearchCycle: quarantined %d non-research initiative(s) from autonomous search selection.",
+                    len(initiatives) - len(eligible),
+                )
+            initiatives = eligible
+            if not initiatives:
+                return None
+
             def _priority(item: dict[str, Any]) -> tuple[float, float]:
                 metadata = dict(item.get("metadata", {}) or {})
                 continuity_bonus = 0.0
@@ -908,21 +931,7 @@ class ResearchCycle:
         return None
 
     def _search_query_for_goal(self, goal: str) -> str:
-        text = str(goal or "").strip()
-        cleaned = text
-        prefixes = (
-            "research and learn something new about ",
-            "research ",
-            "learn about ",
-            "explore ",
-            "self-directed exploration of ",
-        )
-        lowered = cleaned.lower()
-        for prefix in prefixes:
-            if lowered.startswith(prefix):
-                cleaned = cleaned[len(prefix):].strip()
-                break
-        return cleaned.strip(" .")
+        return research_query_for_goal(goal)
 
     def _materialize_research_goal(
         self,
@@ -976,6 +985,70 @@ class ResearchCycle:
             )
             logger.debug("Autotelic topic derivation failed: %s", exc)
         return ""
+
+    async def _suppress_unresearchable_initiatives(self, state: Any) -> None:
+        cognition = getattr(state, "cognition", None)
+        initiatives = list(getattr(cognition, "pending_initiatives", []) or [])
+        blocked_goals: set[str] = set()
+        for initiative in initiatives:
+            goal = initiative.get("goal", initiative.get("description", "")) if isinstance(initiative, dict) else initiative
+            goal_text = str(goal or "")
+            if is_unresearchable_goal(goal_text):
+                blocked_goals.add(goal_text)
+        if not blocked_goals:
+            return
+        await self._suppress_matching_initiatives(
+            state,
+            goals=blocked_goals,
+            reason="research_cycle_non_research_goal_quarantined",
+        )
+
+    async def _handle_no_findings(self, state: Any, goal: str, drive: str) -> None:
+        key = goal.casefold()
+        failures = self._goal_failure_counts.get(key, 0) + 1
+        self._goal_failure_counts[key] = failures
+        suppress_after = _env_int("AURA_RESEARCH_SUPPRESS_AFTER_FAILURES", 2)
+        if failures < suppress_after:
+            return
+        await self._suppress_matching_initiatives(
+            state,
+            goals={goal},
+            reason="research_cycle_repeated_no_findings",
+        )
+        logger.info(
+            "ResearchCycle: suppressed '%s' after %d failed research attempt(s) (drive=%s).",
+            goal[:80],
+            failures,
+            drive,
+        )
+
+    async def _suppress_matching_initiatives(
+        self,
+        state: Any,
+        *,
+        goals: set[str],
+        reason: str,
+    ) -> None:
+        if not goals:
+            return
+        normalized = {goal.casefold() for goal in goals if goal}
+        try:
+            from core.consciousness.executive_authority import get_executive_authority
+
+            await get_executive_authority(self.orchestrator).suppress_initiatives(
+                state,
+                predicate=lambda item: str(item.get("goal", item.get("description", "")) or "").casefold() in normalized,
+                reason=reason,
+                source="research_cycle",
+            )
+        except RESEARCH_RECOVERABLE_ERRORS as exc:
+            self._last_cycle_error = f"{type(exc).__name__}: {exc}"
+            _record_research_degradation(
+                exc,
+                action="left non-integrable research initiative for executive reconciliation after suppression failed",
+                extra={"reason": reason, "goals": [goal[:160] for goal in goals]},
+            )
+            logger.debug("ResearchCycle initiative suppression failed (%s): %s", reason, exc)
 
     def _get_state(self) -> Any | None:
         try:

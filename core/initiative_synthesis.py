@@ -32,7 +32,6 @@ Not:
 """
 from __future__ import annotations
 import inspect
-import asyncio
 import hashlib
 import json
 import logging
@@ -41,9 +40,10 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional
 
 from core.container import ServiceContainer
+from core.autonomy.research_goal_filter import is_stale_or_prompt_scaffold_goal
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 
@@ -186,6 +186,9 @@ class InitiativeSynthesizer:
     def submit(self, content: str, source: str, urgency: float = 0.5,
                drive: str = "", **metadata) -> bool:
         """Convenience method for submitting an impulse."""
+        if is_stale_or_prompt_scaffold_goal(content):
+            logger.debug("Synth: quarantined stale/scaffold impulse from %s: %s", source, content[:80])
+            return False
         return self.submit_impulse(Impulse(
             content=content, source=source, urgency=urgency,
             drive=drive, metadata=metadata,
@@ -539,6 +542,9 @@ class InitiativeSynthesizer:
           - A goal stalled or was deferred
           - Aura had a question she couldn't explore at the time
         """
+        if is_stale_or_prompt_scaffold_goal(content):
+            logger.debug("Synth: refused stale/scaffold unresolved tension from %s: %s", source, content[:80])
+            return
         # Dedup: don't add near-duplicates
         for t in self._unresolved_tensions:
             if t.content == content and not t.resolved:
@@ -601,6 +607,7 @@ class InitiativeSynthesizer:
         candidates = [
             t for t in self._unresolved_tensions
             if not t.resolved and t.stale_enough and t.age_hours > (5.0 / 60.0)
+            and not is_stale_or_prompt_scaffold_goal(t.content)
         ]
         if not candidates:
             return
@@ -671,6 +678,7 @@ class InitiativeSynthesizer:
             if not path.exists():
                 return
             data = json.loads(path.read_text())
+            skipped = 0
             for item in data:
                 if not isinstance(item, dict):
                     continue
@@ -685,9 +693,17 @@ class InitiativeSynthesizer:
                     resolved=bool(item.get("resolved", False)),
                     metadata=item.get("metadata", {}),
                 )
-                if not tension.resolved:
+                if not tension.resolved and not is_stale_or_prompt_scaffold_goal(tension.content):
                     self._unresolved_tensions.append(tension)
-            logger.info("Loaded %d persisted unresolved tensions", len(self._unresolved_tensions))
+                elif not tension.resolved:
+                    skipped += 1
+            if skipped:
+                self._save_tensions()
+            logger.info(
+                "Loaded %d persisted unresolved tensions (%d quarantined).",
+                len(self._unresolved_tensions),
+                skipped,
+            )
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation('initiative_synthesis', e)
             logger.debug("Tension load failed: %s", e)

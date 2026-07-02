@@ -5,6 +5,7 @@ Extracts the incoming message handling pipeline, routing, and filesystem checks.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import re
 import time
@@ -1036,9 +1037,9 @@ class IncomingLogicMixin:
                                 and not config.skeletal_mode
                             ):
                                 try:
-                                    scan_res = (
-                                        scanner.scan(message) if hasattr(scanner, "scan") else None
-                                    )
+                                    scan_res = scanner.scan(message) if hasattr(scanner, "scan") else None
+                                    if inspect.isawaitable(scan_res):
+                                        scan_res = await scan_res
                                     if scan_res and scan_res.get("blocked"):
                                         final_response = scan_res.get(
                                             "reason", "I cannot process this request."

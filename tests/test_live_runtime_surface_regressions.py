@@ -1729,6 +1729,33 @@ async def test_initiative_arbiter_quarantines_generic_continuity_reentry_goal():
 
 
 @pytest.mark.asyncio
+async def test_initiative_arbiter_quarantines_prompt_shaped_synthesis_goal():
+    from core.agency.initiative_arbiter import InitiativeArbiter
+
+    cognition = SimpleNamespace(
+        pending_initiatives=[
+            {
+                "goal": (
+                    "SUBCONSCIOUS SYNTHESIS Concept A: user memory Concept B: idle thought "
+                    "Task: 1. Analyze these concepts. 2. If YES, produce a Universal Principle."
+                ),
+                "urgency": 1.0,
+            },
+            {"goal": "Investigate thermal surprise", "urgency": 0.4},
+        ],
+        working_memory=[],
+    )
+    state = SimpleNamespace(cognition=cognition, identity=SimpleNamespace(core_values=[]))
+
+    selected = await InitiativeArbiter().arbitrate(state)
+
+    assert selected is not None
+    assert selected.initiative["goal"] == "Investigate thermal surprise"
+    assert len(cognition.pending_initiatives) == 1
+    assert cognition.pending_initiatives[0]["goal"] == "Investigate thermal surprise"
+
+
+@pytest.mark.asyncio
 async def test_executive_authority_does_not_fallback_promote_quarantined_reentry_goal():
     from core.consciousness.executive_authority import ExecutiveAuthority
 
@@ -2565,3 +2592,136 @@ def test_desktop_self_sufficient_classifier_distinguishes_status_report_from_pro
     assert _desktop_objective_executable_after_cognitive_attempt(
         "Research three climate articles, summarize them in Google Docs, and give your opinion."
     )
+
+
+def test_goal_text_rejects_stale_or_prompt_scaffold_as_actionable():
+    from core.goals.goal_text import first_actionable_goal_text, is_actionable_goal_text
+
+    stale = (
+        "Unresolved: Stalled goal: Please create a folder named 'Aura Live Proof' "
+        "in my Documents folder and write a file inside it."
+    )
+    scaffold = (
+        "SUBCONSCIOUS SYNTHESIS Concept A: User asked about development "
+        "Concept B: desktop task Task: predict how self will react."
+    )
+
+    assert not is_actionable_goal_text(stale)
+    assert not is_actionable_goal_text(scaffold)
+    assert first_actionable_goal_text([{"goal": stale}, {"goal": "Research sleep and memory."}]) == (
+        "Research sleep and memory."
+    )
+
+
+def test_initiative_synthesizer_purges_stale_persisted_tensions(tmp_path, monkeypatch):
+    import json
+    import time
+
+    from core.initiative_synthesis import InitiativeSynthesizer
+
+    path = tmp_path / "unresolved_tensions.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "content": "Unresolved: Stalled goal: Please create a folder named Aura Live Proof.",
+                    "source": "persisted",
+                    "category": "stalled_goal",
+                    "urgency": 0.9,
+                    "created_at": time.time() - 3600,
+                    "last_surfaced": 0,
+                    "surface_count": 4,
+                    "resolved": False,
+                    "metadata": {},
+                },
+                {
+                    "content": "Why is biological sleep linked to memory consolidation?",
+                    "source": "conversation",
+                    "category": "question",
+                    "urgency": 0.5,
+                    "created_at": time.time() - 3600,
+                    "last_surfaced": 0,
+                    "surface_count": 0,
+                    "resolved": False,
+                    "metadata": {},
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    synth = InitiativeSynthesizer()
+    monkeypatch.setattr(synth, "_tension_path", lambda: path)
+
+    synth._load_tensions()
+
+    assert [t.content for t in synth._unresolved_tensions] == [
+        "Why is biological sleep linked to memory consolidation?"
+    ]
+    persisted = json.loads(path.read_text(encoding="utf-8"))
+    assert len(persisted) == 1
+    assert "biological sleep" in persisted[0]["content"]
+
+
+def test_tension_engine_quarantines_stale_and_prunes_persisted_tensions(tmp_path):
+    import json
+    import time
+
+    from core.agency.tension_engine import TensionEngine
+
+    path = tmp_path / "tensions.json"
+    now = time.time()
+    rows = [
+        {
+            "id": "stale",
+            "category": "broken_expectation",
+            "description": "SUBCONSCIOUS SYNTHESIS Concept A: desktop Concept B: proof Task: retry.",
+            "severity": 1.0,
+            "created_at": now,
+            "last_checked_at": now,
+            "resolution_attempts": 0,
+            "source_subsystem": "test",
+            "related_beliefs": [],
+            "related_goals": [],
+            "resolved": False,
+            "resolution": None,
+        }
+    ]
+    for idx in range(2010):
+        rows.append(
+            {
+                "id": f"valid-{idx}",
+                "category": "open_question",
+                "description": f"Open question {idx}",
+                "severity": (idx % 100) / 100,
+                "created_at": now - idx,
+                "last_checked_at": now - idx,
+                "resolution_attempts": 0,
+                "source_subsystem": "test",
+                "related_beliefs": [],
+                "related_goals": [],
+                "resolved": False,
+                "resolution": None,
+            }
+        )
+    path.write_text(json.dumps(rows), encoding="utf-8")
+
+    engine = TensionEngine(persist_path=path)
+
+    active = engine.get_active_tensions()
+    assert len(active) == 2000
+    assert all(t.id != "stale" for t in active)
+    assert len(json.loads(path.read_text(encoding="utf-8"))) == 2000
+
+
+def test_desktop_access_permission_route_has_ui_bounded_probe_budgets():
+    from pathlib import Path
+
+    src = Path("interface/routes/system.py").read_text(encoding="utf-8")
+
+    assert 'AURA_DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S"' in src
+    assert "0.8" in src
+    assert "AURA_DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S" in src
+    assert "0.6" in src
+    assert "timeout=max(0.2, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S)" in src
+    assert "timeout=max(0.2, _DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S)" in src

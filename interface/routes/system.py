@@ -330,11 +330,15 @@ _DESKTOP_ACCESS_DEGRADED_CACHE_TTL_S = _env_positive_float(
 )
 _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S = _env_positive_float(
     "AURA_DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S",
-    8.0,
+    0.8,
+)
+_DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S = _env_positive_float(
+    "AURA_DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S",
+    0.6,
 )
 _DESKTOP_ACCESS_MENU_CLOCK_TIMEOUT_S = _env_positive_float(
     "AURA_DESKTOP_ACCESS_MENU_CLOCK_TIMEOUT_S",
-    1.5,
+    0.5,
 )
 _SSE_IDLE_HEARTBEAT_S = _env_positive_float("AURA_SSE_IDLE_HEARTBEAT_S", 15.0)
 _SSE_QUEUE_BACKLOG_LIMIT = max(1, _safe_int(os.getenv("AURA_SSE_QUEUE_BACKLOG_LIMIT", ""), 100))
@@ -1226,7 +1230,7 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
 
                 native_probe = await asyncio.wait_for(
                     asyncio.to_thread(probe_native_desktop_bridge, force=False),
-                    timeout=max(1.0, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S),
+                    timeout=max(0.2, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S),
                 )
                 if (
                     isinstance(native_probe, dict)
@@ -1242,7 +1246,7 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                             force=True,
                             prefer_one_shot=True,
                         ),
-                        timeout=max(1.0, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S),
+                        timeout=max(0.2, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S),
                     )
                     if (
                         isinstance(one_shot_probe, dict)
@@ -1310,7 +1314,10 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                 if callable(direct_probe):
                     async def _bounded_direct_probe(ptype: Any) -> dict[str, Any]:
                         try:
-                            result = await asyncio.wait_for(direct_probe(ptype), timeout=3.0)
+                            result = await asyncio.wait_for(
+                                direct_probe(ptype),
+                                timeout=max(0.2, _DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S),
+                            )
                             return result if isinstance(result, dict) else {
                                 "granted": False,
                                 "status": "invalid_probe_result",

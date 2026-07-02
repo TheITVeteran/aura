@@ -7,12 +7,12 @@ import asyncio
 import logging
 import random
 import time
-import psutil
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
 from core.runtime.background_policy import background_activity_allowed
+from core.autonomy.research_goal_filter import research_query_for_goal
 from core.autonomy.topic_selection import conversation_topic, select_autonomous_topic
 
 logger = logging.getLogger("Aura.Curiosity")
@@ -248,7 +248,13 @@ class CuriosityEngine:
             logger.debug("Suppressed: %s", exc)        
         try:
             # 1. Formulate a concrete search query around the topic itself.
-            query = f"latest research on {topic.topic}"
+            clean_topic = research_query_for_goal(topic.topic)
+            if not clean_topic:
+                logger.info("Skipping non-research curiosity topic: %s", topic.topic[:120])
+                success = True
+                self.current_topic = None
+                return
+            query = f"latest research on {clean_topic}"
             
             # 2. Search & Learn
             if hasattr(self.orchestrator, 'execute_tool'):

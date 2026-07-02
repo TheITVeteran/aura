@@ -1523,6 +1523,42 @@ def test_mlx_ipc_writer_survives_full_parent_queue():
     assert parent_queue.calls >= 1
 
 
+def test_mlx_ipc_writer_sheds_telemetry_before_essential_messages(monkeypatch):
+    from core.brain.llm import mlx_worker
+    from core.brain.llm.mlx_worker import IPCWriterThread
+
+    degradations = []
+    monkeypatch.setattr(
+        mlx_worker,
+        "_record_mlx_degradation",
+        lambda *args, **kwargs: degradations.append((args, kwargs)),
+    )
+
+    class FullParentQueue:
+        def put(self, item, block=True, timeout=None):
+            raise queue.Full
+
+    writer = IPCWriterThread(FullParentQueue())
+    for idx in range(writer.local_queue.maxsize):
+        writer.local_queue.put({"status": "heartbeat", "idx": idx}, block=False)
+
+    writer.put({"status": "ready", "model": "test"})
+
+    queued = list(writer.local_queue.queue)
+    assert any(item.get("status") == "ready" for item in queued)
+    assert len(queued) == writer.local_queue.maxsize
+    assert not degradations
+
+
+def test_incoming_logic_awaits_async_sovereign_scanner():
+    source = (Path(__file__).resolve().parents[1] / "core/orchestrator/mixins/incoming_logic.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "inspect.isawaitable(scan_res)" in source
+    assert "scan_res = await scan_res" in source
+
+
 def test_world_state_push_event_matches_motor_reflex_contract():
     from core.world_state import WorldState
 

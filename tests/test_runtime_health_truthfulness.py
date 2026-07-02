@@ -408,6 +408,62 @@ def test_runtime_pressure_boot_grace_does_not_hide_inference_saturation(monkeypa
         get_degradation_tracker().reset()
 
 
+def test_runtime_pressure_ignores_background_brainstem_timeout(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime import health_contract
+    from core.runtime.errors import get_degradation_tracker, record_degradation
+
+    def fake_get(cls, name, default=None):
+        return default
+
+    get_degradation_tracker().reset()
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    monkeypatch.setenv("AURA_HEALTH_RECENT_DEGRADATION_WINDOW_S", "180")
+
+    try:
+        record_degradation(
+            "inference_gate",
+            TimeoutError("inference_gate_generation_timeout:Brainstem:7.0s"),
+            severity="critical",
+            action="returned control after local generation exceeded inference-gate timeout",
+        )
+
+        status = health_contract._runtime_pressure_status()
+
+        assert status.liveness_ok is True
+        assert status.error is None
+    finally:
+        get_degradation_tracker().reset()
+
+
+def test_runtime_pressure_rejects_foreground_cortex_timeout(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime import health_contract
+    from core.runtime.errors import get_degradation_tracker, record_degradation
+
+    def fake_get(cls, name, default=None):
+        return default
+
+    get_degradation_tracker().reset()
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+    monkeypatch.setenv("AURA_HEALTH_RECENT_DEGRADATION_WINDOW_S", "180")
+
+    try:
+        record_degradation(
+            "inference_gate",
+            TimeoutError("inference_gate_generation_timeout:Cortex:76.0s"),
+            severity="critical",
+            action="foreground user-facing generation exceeded inference-gate timeout",
+        )
+
+        status = health_contract._runtime_pressure_status()
+
+        assert status.liveness_ok is False
+        assert "inference_gate_generation_timeout:Cortex" in (status.error or "")
+    finally:
+        get_degradation_tracker().reset()
+
+
 def test_stability_guardian_initializing_summary_is_not_healthy():
     from core.resilience.stability_guardian import StabilityGuardian
 

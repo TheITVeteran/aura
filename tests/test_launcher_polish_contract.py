@@ -20,7 +20,7 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "replacementReason(expectedSemver:" in swift
     assert "if launcherReady || systemReady" in swift
     assert "recovery owns post-handoff failures" in swift
-    assert "if !forceRelaunch && self.runtimeLockIndicatesLiveProcess()" in swift
+    assert "if !forceRelaunch && self.existingRuntimeIsObservable()" in swift
     assert "never spawn a second" in swift
     assert 'split(separator: "-", maxSplits: 1)' in swift
     assert "autoOpenDesktopWindowIfNeeded" in swift
@@ -285,6 +285,31 @@ def test_packaged_launcher_parses_structured_runtime_lock():
     assert "guard let pid = parseRuntimeLockPID(text)" in swift
 
 
+def test_packaged_launcher_rejects_explicitly_stale_locked_runtime():
+    swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
+
+    assert "private func existingRuntimeIsObservable()" in swift
+    assert "fetchBootSnapshotSynchronously" in swift
+    assert "snapshot.staleRuntimeFailureReason" in swift
+    assert "forceStopAuraProcess()" in swift
+    assert 'checks["running"]' in swift
+    assert "important:mind_tick" in swift
+    assert "important:event_loop_monitor" in swift
+    assert "only an" in swift and "explicit boot contract failure" in swift
+
+
+def test_packaged_launcher_tracks_spawned_runtime_children_for_teardown():
+    swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
+
+    assert "private var spawnedProcesses: [Process] = []" in swift
+    assert "private let spawnedProcessesLock = NSLock()" in swift
+    assert "terminateSpawnedProcesses()" in swift
+    assert "func applicationWillTerminate" in swift
+    assert "trackSpawnedProcess(proc)" in swift
+    assert "proc.terminationHandler" in swift
+    assert "kill(proc.processIdentifier, SIGKILL)" in swift
+
+
 def test_aura_main_acquires_singleton_lock_before_port_cleanup_and_reaper_boot():
     main_py = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
 
@@ -307,7 +332,11 @@ def test_stop_aura_signals_parent_before_touching_child_actors():
     assert "Aura.app/Contents/MacOS/aura-launcher" in stop_body
     assert '"--desktop", "--gui-window"' in stop_body
     assert '"--stop" not in cmdline' in stop_body
+    assert '["launchctl", "bootout", f"gui/{uid}", str(plist_path)]' in stop_body
+    assert '["launchctl", "disable", f"gui/{uid}/com.aura.sovereign"]' in stop_body
+    assert '["launchctl", "unload", "-w", str(plist_path)]' in stop_body
     assert "Stopped native launcher session(s)" in stop_body
+    assert "Stopped post-shutdown revived Aura session(s)" in stop_body
     first_signal = stop_body.index("p.send_signal(signal.SIGTERM)")
     assert "for child in p.children(recursive=True):" not in stop_body[:first_signal]
 

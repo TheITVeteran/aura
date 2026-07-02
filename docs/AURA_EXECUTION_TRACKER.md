@@ -4077,3 +4077,130 @@ Estimate after this checkpoint:
 - Remaining consolidated checkpoints: live app permission/control proof,
   launched full-mind conversation/background-autonomy proof, visible general
   desktop agency proof, and final clean proof replay.
+
+## Checkpoint 2026-07-02-05: Live Mind-Path Degradation Root Fixes
+
+Status: source-verified with bounded live replay; checkpoint commit pending.
+
+Scope:
+
+- A clean installed-app launch initially proved the single-instance guard, but
+  the live neural/log stream then exposed a real mind-path degradation chain:
+  `live_learner` failed strict governance while appending training examples,
+  `incoming_logic` treated an async sovereign scanner coroutine as a dict, and
+  MLX worker IPC could drop essential ready/reply messages when the parent
+  queue stayed full.
+
+Root fixes:
+
+- `LiveLearner.record_tick()` now wraps crash-safe training-buffer persistence
+  in a local internal governed `memory_write` scope instead of failing closed
+  during normal background learning.
+- Incoming message scanning now awaits async scanner results before reading
+  `blocked`/`reason`, eliminating the `coroutine object has no attribute get`
+  failure that could poison hardwired response finalization.
+- The MLX IPC writer now sheds non-essential telemetry before essential
+  messages and requeues essential messages across transient parent-side queue
+  stalls instead of immediately recording a critical dropped-reply degradation.
+- The autonomous research daemon now rejects stale desktop-action receipts and
+  prompt-shaped internal synthesis before they can become web-search queries.
+  Repeated no-finding research attempts are cooled down through the executive
+  initiative-suppression path instead of retried forever.
+- The global `InitiativeArbiter`, `CuriosityEngine`, and goal-genesis path now
+  share the same quarantine boundary for prompt scaffolds such as
+  `SUBCONSCIOUS SYNTHESIS ... Task:` and self-prediction action dictionaries,
+  preventing them from becoming autonomous “desires,” web searches, or mastery
+  goals.
+
+Evidence:
+
+- `python -m py_compile core/learning/live_learner.py core/orchestrator/mixins/incoming_logic.py core/brain/llm/mlx_worker.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/learning/live_learner.py core/orchestrator/mixins/incoming_logic.py core/brain/llm/mlx_worker.py tests/test_live_learner_continual_training.py tests/test_enterprise_hardening_fixes.py`
+  -> passed.
+- `python -m pytest tests/test_live_learner_continual_training.py::test_record_tick_persists_training_row_under_strict_governance tests/test_enterprise_hardening_fixes.py::test_mlx_ipc_writer_sheds_telemetry_before_essential_messages tests/test_enterprise_hardening_fixes.py::test_mlx_ipc_writer_survives_full_parent_queue tests/test_enterprise_hardening_fixes.py::test_incoming_logic_awaits_async_sovereign_scanner -q`
+  -> `4 passed`.
+- `python -m py_compile core/autonomy/research_goal_filter.py core/autonomy/research_cycle.py core/autonomy/topic_selection.py core/learning/live_learner.py core/orchestrator/mixins/incoming_logic.py core/brain/llm/mlx_worker.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/autonomy/research_goal_filter.py core/autonomy/research_cycle.py core/autonomy/topic_selection.py tests/test_research_cycle_runtime_hardening.py tests/test_autonomous_topic_selection.py`
+  -> passed.
+- `python -m pytest tests/test_research_cycle_runtime_hardening.py::test_research_cycle_refuses_stale_desktop_action_as_search_query tests/test_research_cycle_runtime_hardening.py::test_research_cycle_filters_prompt_shaped_synthesis_from_selection tests/test_research_cycle_runtime_hardening.py::test_research_cycle_suppresses_unresearchable_initiatives tests/test_research_cycle_runtime_hardening.py::test_research_cycle_repeated_no_findings_suppresses_goal tests/test_autonomous_topic_selection.py::test_topic_selection_does_not_recycle_stale_desktop_action_objectives tests/test_live_learner_continual_training.py::test_record_tick_persists_training_row_under_strict_governance tests/test_enterprise_hardening_fixes.py::test_mlx_ipc_writer_sheds_telemetry_before_essential_messages tests/test_enterprise_hardening_fixes.py::test_mlx_ipc_writer_survives_full_parent_queue tests/test_enterprise_hardening_fixes.py::test_incoming_logic_awaits_async_sovereign_scanner -q`
+  -> `9 passed`.
+- `python -m pytest tests/test_research_cycle_runtime_hardening.py tests/test_autonomous_topic_selection.py tests/test_live_learner_continual_training.py tests/test_enterprise_hardening_fixes.py::test_mlx_ipc_writer_sheds_telemetry_before_essential_messages tests/test_enterprise_hardening_fixes.py::test_mlx_ipc_writer_survives_full_parent_queue tests/test_enterprise_hardening_fixes.py::test_incoming_logic_awaits_async_sovereign_scanner tests/test_live_runtime_surface_regressions.py::test_initiative_arbiter_quarantines_generic_continuity_reentry_goal tests/test_live_runtime_surface_regressions.py::test_initiative_arbiter_quarantines_prompt_shaped_synthesis_goal -q`
+  -> `37 passed`.
+
+Live boundary:
+
+- Rebuilt `/Applications/Aura.app` from this source state.
+- Installed-app replay reached healthy boot contract and conversation readiness
+  with a single Aura launcher/runtime process. The health payload reported
+  `conversation_lane.state=ready`, foreground `Cortex`, background
+  `Brainstem`, and recurrent-depth/adaptive-computation active for the live MLX
+  lane.
+- macOS TCC still reports Screen Recording/Accessibility denied for the current
+  `com.aura.desktop` identity. That remains an OS permission binding issue, not
+  a cognitive-runtime source failure.
+
+Estimate after this checkpoint:
+
+- Expanded daily-runtime/product closure moves to about 89%.
+- Remaining consolidated checkpoints: durable TCC/native-bridge permission
+  binding, full-mind multi-turn conversation proof, bounded background
+  autonomy proof under thermal limits, visible general desktop agency proof, and
+  final clean proof replay.
+
+Final checkpoint evidence update (2026-07-02 07:39 PDT):
+
+- Added runtime-pressure truthfulness classification so a background Brainstem
+  timeout remains logged/repairable but no longer keeps the launched desktop in
+  degraded boot when Cortex, required probes, full runtime, and conversation
+  readiness are healthy. Foreground/user-facing Cortex timeout and generation
+  saturation still fail the runtime-pressure gate.
+- Hardened `aura_main.py --stop` against the legacy
+  `~/Library/LaunchAgents/com.aura.sovereign.plist` KeepAlive path by using
+  `launchctl bootout`, persistent `launchctl disable`, legacy `unload -w`, and
+  a post-shutdown resweep for any revived launcher/runtime children.
+- Expanded regression evidence:
+  `python -m pytest ...` affected checkpoint set -> `49 passed`.
+- Syntax/lint/typecheck evidence:
+  `python -m py_compile ...` passed,
+  `python -m ruff check --select F,E9 ...` passed,
+  `xcrun swiftc -typecheck -framework AppKit -framework CoreGraphics -framework Foundation scripts/AuraLauncher.swift`
+  passed.
+- Rebuilt and installed `/Applications/Aura.app` with
+  `AURA_INSTALL_PATH=/Applications/Aura.app scripts/bundle_app.sh`.
+- Packaged live replay evidence:
+  `/api/health` -> `status=ok`, `healthy=true`, `conversation_ready=true`,
+  `conversation_lane.state=ready`, recurrent-depth active with 2 loops,
+  `full_runtime_ready=true`, `proof_readiness_healthy=true`,
+  `certification_ready=true`.
+- `/api/health/boot` -> `status=ready`, `system_ready=true`, blockers empty,
+  runtime degradations empty, runtime contract healthy, required probes passed.
+- `/api/health/contract` -> `status=healthy`, `healthy=true`,
+  `operational=true`, no critical/important/optional failures.
+- Fresh-launch tail marker check after the latest `Spawning worker for Aura-32B`
+  showed zero for `SUBCONSCIOUS SYNTHESIS`, `Unresolved: Stalled goal`,
+  `Predict how self will react`, `desktop task receipt`,
+  `GovernanceViolationError`, `coroutine was never awaited`,
+  `dropped essential IPC`, `Cortex route blocked`,
+  `recent_inference_gate_critical`, and `Runtime: DEGRADED`.
+- Stop verification: `python -u aura_main.py --stop` stopped the launcher and
+  GUI; a launchd-revived orphan desktop runtime was observed, then cleanly
+  stopped via SIGINT. The new stop-path code now explicitly disables/bootouts
+  the legacy LaunchAgent and performs the post-shutdown resweep.
+
+Open items carried into the next checkpoint:
+
+- TCC binding remains partial: the resident bridge is reachable, but macOS still
+  denies Screen Recording/Accessibility to the current app identity. This is
+  not marked solved.
+- The live log still shows `auto_refactor` dispatch returning in `0ms`; the
+  self-repair/immune pathway needs a dedicated root-cause pass.
+- `OutcomeLedger` recovered more than 341k pending receipts; memory metabolism
+  and receipt compaction need a bounded durability pass.
+- Background cognition is active (`22/22` required loops running), but some
+  work admission is deferred during foreground quiet windows. Next pass should
+  prove autonomous actions under thermal limits rather than only loop presence.
+- The requested label tests, fiction/game capability deltas, Cell paper
+  integration, preference/choice-game architecture, and code-grounded Aura
+  assessment remain queued as explicit closeout work.

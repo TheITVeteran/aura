@@ -36,6 +36,7 @@ from core.agency.canvas_manager import CanvasManager
 from core.agency.private_phenomenology import PrivatePhenomenology
 from core.agency.self_play import ContinuousSelfPlay
 from core.agency.tool_orchestrator import ToolOrchestrator
+from core.autonomy.research_goal_filter import research_query_for_goal
 from core.consciousness.unified_audit import get_audit_suite
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
@@ -1702,6 +1703,9 @@ class AgencyCore:
         except _AGENCY_BOUNDARY_ERRORS as e:
             _record_agency_degradation(e, action="goal genesis sparse-node topic selection skipped")
             capture_and_log(e, {'module': __name__})
+
+        if topic:
+            topic = research_query_for_goal(topic)
 
         if not topic:
             topics = [

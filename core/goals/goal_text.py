@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable
 
+from core.autonomy.research_goal_filter import is_stale_or_prompt_scaffold_goal
+
 _INTRINSIC_GOAL_TEXTS = frozenset(
     {
         "stabilize runtime load and preserve continuous cognition",
@@ -61,7 +63,7 @@ def is_intrinsic_goal_text(value: Any) -> bool:
 
 def is_actionable_goal_text(value: Any) -> bool:
     text = normalize_goal_text(value)
-    return bool(text) and not is_intrinsic_goal_text(text)
+    return bool(text) and not is_intrinsic_goal_text(text) and not is_stale_or_prompt_scaffold_goal(text)
 
 
 def first_actionable_goal_text(values: Iterable[Any]) -> str:

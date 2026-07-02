@@ -659,6 +659,55 @@ def _runtime_pressure_boot_grace_active() -> bool:
     return bool(boot_grace_s > 0.0 and 0.0 < uptime_s < boot_grace_s)
 
 
+def _recent_inference_degradation_blocks_runtime_pressure(record: Any) -> tuple[bool, str]:
+    """Classify recent inference degradations for the runtime-pressure gate.
+
+    The runtime health contract should fail closed for foreground/user-facing
+    inference saturation, but a background Brainstem timeout must not keep the
+    launched desktop stuck in "booting/degraded" after Cortex and the required
+    probes are ready. The degradation remains logged and repair-routable; this
+    function only decides whether it blocks the top-level readiness contract.
+    """
+
+    severity = str(getattr(record, "severity", "") or "")
+    if severity not in {"critical", "degraded"}:
+        return False, ""
+
+    action = str(getattr(record, "action", "") or "")
+    message = str(getattr(record, "error_message", "") or "")
+    combined = f"{message} {action}".lower()
+
+    if "generation gate saturated" in combined or "refused to stack" in combined:
+        return True, f"recent_{getattr(record, 'subsystem', 'inference')}_saturation: {(message or action)[:120]}"
+
+    # Known background lane timeout. In live mode this may be escalated by the
+    # fail-closed service policy even when the user-facing Cortex lane is fine.
+    if (
+        "inference_gate_generation_timeout:brainstem:" in combined
+        and "foreground" not in combined
+        and "user-facing" not in combined
+        and "user_facing" not in combined
+    ):
+        return False, "background_brainstem_timeout"
+
+    if any(marker in combined for marker in (
+        "inference_gate_generation_timeout:cortex:",
+        "inference_gate_generation_timeout:solver:",
+        "user-facing",
+        "user_facing",
+        "foreground",
+        "client_returned_no_text",
+    )):
+        return True, f"recent_{getattr(record, 'subsystem', 'inference')}_{severity}: {(message or action)[:120]}"
+
+    # Critical/degraded inference failures without lane context are still
+    # treated as blocking because they may represent the active conversation path.
+    if severity == "critical" and "brainstem" not in combined and "reflex" not in combined:
+        return True, f"recent_{getattr(record, 'subsystem', 'inference')}_{severity}: {(message or action)[:120]}"
+
+    return False, ""
+
+
 def _runtime_pressure_status() -> ServiceStatus:
     """Return an important health failure when runtime pressure is too high.
 
@@ -754,16 +803,9 @@ def _runtime_pressure_status() -> ServiceStatus:
             age_s = now - float(getattr(record, "timestamp", 0.0) or 0.0)
             if age_s > recent_degradation_window_s:
                 continue
-            severity = str(getattr(record, "severity", "") or "")
-            action = str(getattr(record, "action", "") or "")
-            message = str(getattr(record, "error_message", "") or "")
-            if severity in {"critical", "degraded"}:
-                blockers.append(
-                    f"recent_{subsystem}_{severity}: {(message or action)[:120]}"
-                )
-                continue
-            if "generation gate saturated" in message.lower() or "refused to stack" in action.lower():
-                blockers.append(f"recent_{subsystem}_saturation: {(message or action)[:120]}")
+            blocks, reason = _recent_inference_degradation_blocks_runtime_pressure(record)
+            if blocks and reason:
+                blockers.append(reason)
     except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         details.append(f"degradation_pressure_unavailable:{type(exc).__name__}")
 

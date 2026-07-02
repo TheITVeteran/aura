@@ -15,6 +15,7 @@ from collections import deque
 from dataclasses import dataclass
 
 from core.container import ServiceContainer
+from core.autonomy.research_goal_filter import is_stale_or_prompt_scaffold_goal, normalize_goal_text
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Agency")
@@ -101,14 +102,14 @@ class InitiativeArbiter:
         if not pending:
             return None
 
-        filtered = [initiative for initiative in pending if not _is_generic_reentry_goal(initiative)]
+        filtered = [initiative for initiative in pending if not _is_quarantined_initiative(initiative)]
         if len(filtered) != len(pending):
             try:
                 state.cognition.pending_initiatives = filtered
             except (AttributeError, TypeError) as exc:
                 logger.debug("InitiativeArbiter: unable to rewrite pending initiatives: %s", exc)
             logger.debug(
-                "InitiativeArbiter: quarantined %d generic continuity re-entry initiative(s).",
+                "InitiativeArbiter: quarantined %d non-actionable initiative(s).",
                 len(pending) - len(filtered),
             )
         pending = filtered
@@ -534,6 +535,22 @@ def _is_generic_reentry_goal(initiative: dict) -> bool:
             "reconcile continuity gap" in lowered
             or "re-establish the interrupted thread" in lowered
         )
+
+
+def _is_quarantined_initiative(initiative: dict) -> bool:
+    if _is_generic_reentry_goal(initiative):
+        return True
+    goal = normalize_goal_text(_goal(initiative))
+    lowered = goal.casefold()
+    if not goal:
+        return True
+    if is_stale_or_prompt_scaffold_goal(goal):
+        return True
+    return (
+        lowered.startswith(("stalled goal:", "unresolved: stalled goal:"))
+        or "desktop task receipt" in lowered
+        or "canonical computer-use gateway" in lowered
+    )
 
 
 # -- Singleton ---------------------------------------------------------------

@@ -3141,13 +3141,26 @@ def stop_aura():
             try:
                 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
-                get_subprocess_gateway().run(
-                    ["launchctl", "unload", str(plist_path)],
-                    capture_output=True,
-                    timeout=5,
-                    source="maintenance_tooling:stop_aura",
-                    offline_tooling=True,
+                gateway = get_subprocess_gateway()
+                uid = str(os.getuid())
+                launchd_commands = (
+                    ["launchctl", "bootout", f"gui/{uid}", str(plist_path)],
+                    ["launchctl", "disable", f"gui/{uid}/com.aura.sovereign"],
+                    ["launchctl", "unload", "-w", str(plist_path)],
                 )
+                for command in launchd_commands:
+                    try:
+                        gateway.run(
+                            command,
+                            capture_output=True,
+                            timeout=5,
+                            source="maintenance_tooling:stop_aura",
+                            offline_tooling=True,
+                        )
+                    except subprocess.TimeoutExpired:
+                        logger.warning("launchctl command timed out: %s", command)
+                    except _AURA_MAIN_BOUNDARY_ERRORS as e:
+                        logger.debug("launchctl command failed during stop (%s): %s", command, e)
             except subprocess.TimeoutExpired:
                 logger.warning("launchctl unload timed out.")
             except _AURA_MAIN_BOUNDARY_ERRORS as e:
@@ -3270,6 +3283,18 @@ def stop_aura():
             print(
                 "Stopped native launcher session(s): "
                 + ", ".join(str(pid) for pid in stopped_launchers)
+            )
+
+        # A legacy launchd agent or a still-terminating native launcher can
+        # briefly re-spawn the desktop runtime after the verified parent exits.
+        # Sweep once more after a short settle window so --stop leaves no
+        # orphaned Python process listening on the live desktop ports.
+        time.sleep(1.5)
+        revived_launchers = stop_native_desktop_launchers()
+        if revived_launchers:
+            print(
+                "Stopped post-shutdown revived Aura session(s): "
+                + ", ".join(str(pid) for pid in revived_launchers)
             )
             
         print("✅ Aura stopped successfully.")

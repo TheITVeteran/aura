@@ -1398,12 +1398,39 @@ class IPCWriterThread(threading.Thread):
         status = item.get("status")
         return status not in {"heartbeat", "token"}
 
+    def _shed_one_nonessential(self) -> bool:
+        retained: list[Any] = []
+        dropped = False
+        while True:
+            try:
+                queued = self.local_queue.get_nowait()
+            except queue.Empty:
+                break
+            if not dropped and not self._is_essential(queued):
+                dropped = True
+                continue
+            retained.append(queued)
+        for queued in retained:
+            try:
+                self.local_queue.put(queued, block=False)
+            except queue.Full:
+                # Only possible under concurrent producer pressure; the oldest
+                # retained telemetry has already been preferred for shedding.
+                break
+        return dropped
+
     def put(self, item):
         essential = self._is_essential(item)
         try:
             self.local_queue.put(item, block=False)
         except queue.Full:
             if essential:
+                if self._shed_one_nonessential():
+                    try:
+                        self.local_queue.put(item, block=False)
+                        return
+                    except queue.Full:
+                        pass
                 try:
                     # Never silently drop init/generation/error messages; bypass
                     # the local buffer when it is saturated with telemetry.
@@ -1433,13 +1460,24 @@ class IPCWriterThread(threading.Thread):
                 continue
             except queue.Full as exc:
                 # Queue saturated by parent-side backpressure. Drop telemetry
-                # first; report if an essential message also could not drain.
+                # first; essential messages are requeued so generation/init
+                # replies survive transient parent-side stalls.
                 if not self._stop_event.is_set() and self._is_essential(item):
-                    _record_mlx_degradation(
-                        exc,
-                        action="dropped essential IPC message after parent queue stayed full",
-                        severity="critical",
-                    )
+                    if self._shed_one_nonessential():
+                        try:
+                            self.local_queue.put(item, block=False)
+                        except queue.Full:
+                            self.local_queue.put(item, block=True, timeout=5.0)
+                    else:
+                        try:
+                            self.local_queue.put(item, block=True, timeout=5.0)
+                        except queue.Full:
+                            _record_mlx_degradation(
+                                exc,
+                                action="dropped essential IPC message after parent queue stayed full",
+                                severity="critical",
+                            )
+                    time.sleep(0.05)
                 continue
             except (OSError, ConnectionError, TimeoutError):
                 # Queue broken or unavailable — drop the item and continue
