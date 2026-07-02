@@ -679,6 +679,8 @@ class OrchestratorBootMixin(
                     logger.info("💀 Skeletal Mode: Cognitive Loop initialization skipped.")
                     ServiceContainer.register_instance("cognitive_loop", None)
 
+                boot_profiler.mark("cognitive_loop_start")
+
                 # Start UPSO MindTick (Phase 2) (Skipped in Skeletal Mode)
                 if not config.skeletal_mode:
                     tick = getattr(self, "mind_tick", None)
@@ -764,6 +766,8 @@ class OrchestratorBootMixin(
                         severity="degraded",
                     )
                     logger.error("❌ Memory Watchdog failed: %s", e)
+
+                boot_profiler.mark("mind_tick_and_memory_guardians")
 
                 # Start Prometheus Metrics (Phase 3)
                 try:
@@ -1140,6 +1144,7 @@ class OrchestratorBootMixin(
                 logger.error("BOOT ENCOUNTERED ISSUES (Recovering...): %s", e, exc_info=True)
                 self.status.add_error(str(e))
                 # IMMORTAL BOOT: We still mark as initialized if core components are likely to run
+                boot_profiler.mark("meta_healing_and_boot_tail")
                 self.status.initialized = True
                 self.status.healthy = False
                 logger.warning("⚠️ BOOT: Entering degraded state. Cycle starting despite errors.")
