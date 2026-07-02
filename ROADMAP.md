@@ -67,10 +67,10 @@ The columns are:
   **(shipped)**
 * Belief court adversarial revision tests under
   `tests/belief_court/` — distinguishing memory/belief/inference/fantasy
-  /preference under pressure. **(staged)**
+  /preference under pressure. **(shipped)**
 * Irreversible epistemic scar test under `tests/scars/` — ablate the
   scar, behavior reverts; restore the scar, behavior re-changes.
-  **(staged)**
+  **(shipped)**
 
 ## 4. aLife / Organism
 
@@ -81,8 +81,8 @@ The columns are:
 * Viability state machine: `core/organism/viability.py` — explicit
   metabolism (food / fatigue / waste / injury / healing) and behaviorally
   load-bearing states. **(shipped)**
-* Topology mutation behavioral consequence test — staged in
-  `tests/topology/`. **(staged)**
+* Topology mutation behavioral consequence test — shipped in
+  `tests/topology/test_behavioral_consequence.py`. **(shipped)**
 
 ## 5. Consciousness Proxies
 

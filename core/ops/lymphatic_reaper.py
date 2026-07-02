@@ -131,36 +131,48 @@ class LymphaticReaper:
             await asyncio.sleep(sleep_s)
 
     async def sweep(self) -> dict[str, Any]:
-        """Execute all maintenance tasks independently."""
+        """Execute all maintenance tasks independently.
+
+        Every step is blocking work (process-table walks, directory scans,
+        file deletion) and runs on a worker thread — a sweep over a large
+        artifact backlog must never stall the event loop it exists to keep
+        healthy.
+        """
         start_time = time.time()
         logger.debug("Starting lymphatic sweep")
 
-        proc_cleaned = self._run_step("hunt_orphans", self._hunt_orphans, default=0)
-        fs_cleaned = self._run_step("filesystem_sweep", self._filesystem_sweep, default=0)
-        memory_defragmented = self._run_step("defragment_memory", self._defragment_memory, default=False)
+        proc_cleaned = await self._run_step("hunt_orphans", self._hunt_orphans, default=0)
+        fs_cleaned = await self._run_step("filesystem_sweep", self._filesystem_sweep, default=0)
+        crash_cleaned = await self._run_step(
+            "crash_artifact_sweep", self._crash_artifact_sweep, default=0
+        )
+        memory_defragmented = await self._run_step(
+            "defragment_memory", self._defragment_memory, default=False
+        )
 
         duration = time.time() - start_time
         self._last_sweep_at = time.time()
         logger.info(
             "Sweep complete: %d procs reaped, %.1fMB storage reclaimed. (Duration: %.2fs)",
             proc_cleaned,
-            fs_cleaned / (1024 * 1024),
+            (fs_cleaned + crash_cleaned) / (1024 * 1024),
             duration,
         )
 
         self._emit_metrics(duration, memory_defragmented)
         self._last_sweep_status = {
             "processes_reaped": proc_cleaned,
-            "storage_reclaimed_bytes": fs_cleaned,
+            "storage_reclaimed_bytes": fs_cleaned + crash_cleaned,
+            "crash_artifact_bytes": crash_cleaned,
             "memory_defragmented": memory_defragmented,
             "duration_s": duration,
             "step_errors": dict(self._last_step_errors),
         }
         return dict(self._last_sweep_status)
 
-    def _run_step(self, name: str, fn: Callable[[], Any], *, default: Any) -> Any:
+    async def _run_step(self, name: str, fn: Callable[[], Any], *, default: Any) -> Any:
         try:
-            result = fn()
+            result = await asyncio.to_thread(fn)
             self._last_step_errors.pop(name, None)
             return result
         except _REAPER_ERRORS as exc:
@@ -230,6 +242,61 @@ class LymphaticReaper:
                     extra={"path": str(path)[:240]},
                 )
                 logger.debug("Reaper failed to clean %s: %s", path, exc)
+        return reclaimed
+
+    # Crash-artifact retention: newest N files kept per family. One live
+    # instance accumulated 18,226 stall dumps (558MB) because pruning only
+    # ran when NEW stalls happened — a healthy runtime never drained the
+    # backlog. Deletions are batch-bounded so one sweep stays cheap.
+    CRASH_ARTIFACT_POLICIES: tuple[tuple[str, str, int], ...] = (
+        ("error_logs/stalls", "stall_*.txt", 500),
+        ("error_logs/memory", "death_syslog_*.log", 20),
+        ("error_logs/memory", "oom_tombstone_*.json", 50),
+        ("error_logs/memory", "sentinel_tombstone_*.json", 50),
+    )
+    CRASH_SWEEP_DELETE_BATCH = 500
+
+    def _crash_artifact_root(self) -> Path:
+        try:
+            from core.config import config
+
+            return config.paths.project_root / "data"
+        except _REAPER_ERRORS:
+            return Path(__file__).resolve().parents[2] / "data"
+
+    def _crash_artifact_sweep(self) -> int:
+        """Drain crash-artifact backlogs beyond retention. Returns bytes freed."""
+        import fnmatch
+
+        reclaimed = 0
+        deletions_left = self.CRASH_SWEEP_DELETE_BATCH
+        root = self._crash_artifact_root()
+        for subdir, pattern, keep in self.CRASH_ARTIFACT_POLICIES:
+            if deletions_left <= 0:
+                break
+            target_dir = root / subdir
+            if not target_dir.is_dir():
+                continue
+            try:
+                # Names embed epoch timestamps, so name order is time order.
+                names = sorted(
+                    entry.name
+                    for entry in os.scandir(target_dir)
+                    if fnmatch.fnmatch(entry.name, pattern)
+                )
+            except OSError:
+                continue
+            excess = len(names) - keep
+            if excess <= 0:
+                continue
+            for name in names[: min(excess, deletions_left)]:
+                victim = target_dir / name
+                try:
+                    reclaimed += victim.stat().st_size
+                    victim.unlink()
+                    deletions_left -= 1
+                except OSError:
+                    continue
         return reclaimed
 
     @staticmethod
