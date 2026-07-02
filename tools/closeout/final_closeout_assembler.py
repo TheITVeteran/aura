@@ -20,6 +20,10 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 DEFAULT_ARTIFACTS_DIR = ROOT / "artifacts" / "current"
 DEFAULT_OUT_DIR = DEFAULT_ARTIFACTS_DIR / "final_closeout"
 
@@ -86,13 +90,12 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _run(command: list[str], *, timeout: float = 300.0) -> dict[str, Any]:
     started = time.time()
-    completed = subprocess.run(
+    completed = get_subprocess_gateway().run(
         command,
         cwd=ROOT,
-        text=True,
-        capture_output=True,
         timeout=timeout,
-        check=False,
+        offline_tooling=True,
+        source="certification_tooling:final_closeout_assembler.run_step",
     )
     finished = time.time()
     return {
@@ -107,12 +110,12 @@ def _run(command: list[str], *, timeout: float = 300.0) -> dict[str, Any]:
 
 def _git_state() -> dict[str, Any]:
     def _git(args: list[str]) -> str:
-        completed = subprocess.run(
+        completed = get_subprocess_gateway().run(
             ["git", *args],
             cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=False,
+            timeout=30,
+            read_only=True,
+            source="certification_tooling:final_closeout_assembler.git_state",
         )
         return (completed.stdout or completed.stderr or "").strip()
 

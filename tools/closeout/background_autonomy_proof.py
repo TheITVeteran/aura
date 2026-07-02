@@ -28,6 +28,8 @@ import httpx
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+
 from tools.live_boot_proof import LiveProof  # noqa: E402
 
 DEFAULT_OUT_DIR = ROOT / "artifacts" / "current" / "background_autonomy"
@@ -310,12 +312,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        subprocess.run(
+        get_subprocess_gateway().run(
             [os.environ.get("PYTHON", "python"), "-u", "aura_main.py", "--stop"],
             cwd=ROOT,
-            capture_output=True,
-            text=True,
             timeout=90,
+            offline_tooling=True,
+            source="certification_tooling:background_autonomy_proof.stop_runtime",
         )
     except (OSError, subprocess.SubprocessError):
         pass
