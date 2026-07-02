@@ -6,11 +6,21 @@ import inspect
 import os
 import shutil
 import sys
+import tempfile
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+# Log hermeticity: keep test logging out of the live ~/.aura/logs so suite
+# noise (test doubles, induced failures) never pollutes the running
+# instance's aura_json.log. Set before any core import can call
+# setup_logging(); PID-scoped so parallel chunk runners don't share a file.
+os.environ.setdefault(
+    "AURA_LOG_DIR",
+    str(Path(tempfile.gettempdir()) / f"aura-test-logs-{os.getpid()}"),
+)
 
 _CLEANUP_TIMEOUT_S = 2.0
 

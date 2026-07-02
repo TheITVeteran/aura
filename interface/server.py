@@ -166,8 +166,9 @@ class _QueueHandler(logging.Handler):
     _recursion_guard: contextvars.ContextVar[bool] = contextvars.ContextVar(
         "_qh_recursion_guard", default=False
     )
-    _overflow_logged: bool = False
     _dropped_count: int = 0
+    _dropped_warn_count: int = 0
+    _last_reported_warn_drops: int = 0
     _last_overflow_warning_at: float = 0.0
 
     @staticmethod
@@ -187,9 +188,6 @@ class _QueueHandler(logging.Handler):
         level = str(entry.get("level") or "").strip().lower()
         return level in {"warning", "error", "critical", "fatal"}
 
-    @classmethod
-    def _should_warn_for_overflow(cls, record: logging.LogRecord, dropped_entry: Any) -> bool:
-        return record.levelno >= logging.WARNING or cls._entry_is_warning_or_worse(dropped_entry)
 
     def emit(self, record: logging.LogRecord) -> None:
         if self._recursion_guard.get():
@@ -216,14 +214,19 @@ class _QueueHandler(logging.Handler):
 
             if queue_was_full:
                 self._dropped_count += 1
-                if self._should_warn_for_overflow(record, dropped_entry):
-                    last = self._last_overflow_warning_at
-                    if record.created - last >= 60.0:
+                if self._entry_is_warning_or_worse(dropped_entry):
+                    self._dropped_warn_count += 1
+                    if record.created - self._last_overflow_warning_at >= 60.0:
+                        rotated = self._dropped_warn_count - self._last_reported_warn_drops
                         logger.warning(
-                            "Log buffer dropped warning/error records while at capacity; "
-                            "circular buffer preserved newest records (dropped=%d).",
+                            "UI log buffer at capacity: rotated out %d warning+ records "
+                            "since last report (session totals: %d warning+, %d all levels); "
+                            "newest records preserved.",
+                            rotated,
+                            self._dropped_warn_count,
                             self._dropped_count,
                         )
+                        self._last_reported_warn_drops = self._dropped_warn_count
                         self._last_overflow_warning_at = record.created
 
             if main_loop is not None and not main_loop.is_closed() and main_loop.is_running():

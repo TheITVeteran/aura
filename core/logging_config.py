@@ -1,9 +1,11 @@
+import json
 import logging
 import logging.handlers
 import os
 import re
 import sys
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Pattern, Union, Optional
 import structlog
@@ -18,6 +20,12 @@ _REDACT_PATTERNS: list[tuple[Pattern[str], str]] = [
     (re.compile(r'(token["\s:=]+)[^\s"\']+', re.IGNORECASE), r"\1[REDACTED_TOKEN]"),
 ]
 
+def redact_text(text: str) -> str:
+    """Apply every redaction pattern to a rendered log line."""
+    for pattern, replacement in _REDACT_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
 def _redact_processor(_: Any, __: Any, event_dict: dict[str, Any]) -> dict[str, Any]:
     """Structlog processor to redact sensitive patterns in the event dict."""
     for key, value in event_dict.items():
@@ -26,9 +34,63 @@ def _redact_processor(_: Any, __: Any, event_dict: dict[str, Any]) -> dict[str, 
                 event_dict[key] = pattern.sub(replacement, event_dict[key])
     return event_dict
 
+
+class JsonLineFormatter(logging.Formatter):
+    """Render every record — structlog or plain stdlib — as one redacted JSON object per line.
+
+    Structlog events arrive pre-rendered as JSON strings and pass through with
+    logger/level/timestamp back-filled; anything else (third-party libraries,
+    bare ``logging`` calls) is wrapped in the same envelope so the file sink
+    stays machine-parseable end to end.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        try:
+            message = record.getMessage()
+        except (TypeError, ValueError):
+            message = str(record.msg)
+        if record.exc_info and not record.exc_text:
+            record.exc_text = self.formatException(record.exc_info)
+
+        timestamp = datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat()
+        payload: dict[str, Any] | None = None
+        if message.startswith("{"):
+            try:
+                parsed = json.loads(message)
+                if isinstance(parsed, dict):
+                    payload = parsed
+            except ValueError:
+                payload = None
+        if payload is None:
+            payload = {"event": message}
+        payload.setdefault("logger", record.name)
+        payload.setdefault("level", record.levelname.lower())
+        payload.setdefault("timestamp", timestamp)
+        if record.exc_text:
+            payload.setdefault("exc_info", record.exc_text)
+
+        try:
+            line = json.dumps(payload, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            line = json.dumps({
+                "event": message, "logger": record.name,
+                "level": record.levelname.lower(), "timestamp": timestamp,
+            }, ensure_ascii=False, default=str)
+        return redact_text(line)
+
 # ── Main Entry-Point ─────────────────────────────────────────
 
 _initialised: bool = False
+
+
+def _resolve_log_dir(log_dir: Optional[Path]) -> Path:
+    """Explicit argument wins, then AURA_LOG_DIR (test/CI hermeticity), then ~/.aura/logs."""
+    if log_dir is not None:
+        return Path(log_dir)
+    env_log_dir = os.environ.get("AURA_LOG_DIR")
+    if env_log_dir:
+        return Path(env_log_dir)
+    return Path.home() / ".aura" / "logs"
 
 def setup_logging(
     name: str = "Aura",
@@ -45,10 +107,9 @@ def setup_logging(
 
     # 1. Stdlib handlers for local file backup (structured JSON)
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
-    
-    if log_dir is None:
-        log_dir = Path.home() / ".aura" / "logs"
-    
+
+    log_dir = _resolve_log_dir(log_dir)
+
     file_handler = None
     for candidate in (Path(log_dir), Path(tempfile.gettempdir()) / "aura-logs"):
         try:
@@ -63,6 +124,7 @@ def setup_logging(
             continue
 
     if file_handler is not None:
+        file_handler.setFormatter(JsonLineFormatter())
         handlers.append(file_handler)
 
     # 2. Configure stdlib logging bridge
