@@ -64,8 +64,14 @@ def _fsync_dir(directory: Path) -> None:
         os.close(dir_fd)
 
 
-def atomic_write_bytes(path: PathLike, payload: bytes) -> None:
-    """Atomically replace `path` with `payload`."""
+def atomic_write_bytes(path: PathLike, payload: bytes, *, durable: bool = True) -> None:
+    """Atomically replace `path` with `payload`.
+
+    ``durable=False`` keeps the write atomic (readers never observe a torn
+    file) but skips both fsyncs. Probe files, caches, and other content that
+    is worthless after a crash must use it: under memory-pressure thrash a
+    single fsync has blocked the live event loop for 20 minutes.
+    """
     target = Path(path)
     parent = target.parent
     parent.mkdir(parents=True, exist_ok=True)
@@ -76,9 +82,11 @@ def atomic_write_bytes(path: PathLike, payload: bytes) -> None:
         with os.fdopen(fd, "wb") as fh:
             fh.write(payload)
             fh.flush()
-            _fsync_file(fh.fileno())
+            if durable:
+                _fsync_file(fh.fileno())
         os.replace(tmp_path, target)
-        _fsync_dir(parent)
+        if durable:
+            _fsync_dir(parent)
     except OSError:
         try:
             if tmp_path.exists():
@@ -88,8 +96,8 @@ def atomic_write_bytes(path: PathLike, payload: bytes) -> None:
         raise
 
 
-def atomic_write_text(path: PathLike, text: str, *, encoding: str = "utf-8") -> None:
-    atomic_write_bytes(path, text.encode(encoding))
+def atomic_write_text(path: PathLike, text: str, *, encoding: str = "utf-8", durable: bool = True) -> None:
+    atomic_write_bytes(path, text.encode(encoding), durable=durable)
 
 
 def atomic_append_text(path: PathLike, text: str, *, encoding: str = "utf-8") -> None:

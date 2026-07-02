@@ -1047,14 +1047,35 @@ def _install_fault_forensics() -> None:
 
 
 class _ExternalMemorySentinelStatus:
-    """Health-contract handle for the out-of-process memory sentinel."""
+    """Health-contract handle + re-arm supervisor state for the external memory sentinel.
 
-    def __init__(self, proc: subprocess.Popen | None, *, lethal_mb: float = 0.0, interval_s: float = 0.0):
+    The sentinel is a contract-CRITICAL guardian: when its process dies, the
+    runtime must not simply report CRITICAL forever (observed live: sentinel
+    died 85s after arming and the desktop ran unguarded — and unhealthy — for
+    two hours). ``rearm()`` respawns it with a bounded budget so a
+    crash-looping sentinel cannot fork-bomb the host.
+    """
+
+    REARM_MIN_INTERVAL_S = 30.0
+    REARM_HOURLY_BUDGET = 12
+
+    def __init__(
+        self,
+        proc: subprocess.Popen | None,
+        *,
+        lethal_mb: float = 0.0,
+        interval_s: float = 0.0,
+        spawner: Any = None,
+    ):
         self.proc = proc
         self.pid = int(getattr(proc, "pid", 0) or 0) if proc is not None else 0
         self.lethal_mb = float(lethal_mb or 0.0)
         self.interval_s = float(interval_s or 0.0)
         self.started_at = time.time() if proc is not None else 0.0
+        self._spawner = spawner
+        self._rearm_lock = threading.Lock()
+        self._rearm_times: list[float] = []
+        self._rearm_budget_warned = False
 
     def is_armed(self) -> bool:
         if self.proc is None or self.pid <= 0:
@@ -1068,6 +1089,60 @@ class _ExternalMemorySentinelStatus:
         except (ImportError, OSError, RuntimeError, TypeError, ValueError):
             return True
 
+    def rearm(self) -> bool:
+        """Respawn a dead sentinel. Returns True when armed after the call.
+
+        Thread-safe and bounded: at most one attempt per 30s and 12 per
+        hour. Called from the supervisor thread, which deliberately does not
+        depend on the event loop — memory protection matters most exactly
+        when the loop is wedged.
+        """
+        if self._spawner is None:
+            return False
+        with self._rearm_lock:
+            if self.is_armed():
+                return True
+            now = time.time()
+            self._rearm_times = [t for t in self._rearm_times if now - t < 3600.0]
+            if self._rearm_times and now - self._rearm_times[-1] < self.REARM_MIN_INTERVAL_S:
+                return False
+            if len(self._rearm_times) >= self.REARM_HOURLY_BUDGET:
+                if not self._rearm_budget_warned:
+                    self._rearm_budget_warned = True
+                    logger.error(
+                        "External memory sentinel re-arm budget exhausted "
+                        "(%d respawns in the last hour) — the sentinel is crash-looping; "
+                        "host-level memory protection is DOWN until the hour rolls over.",
+                        len(self._rearm_times),
+                    )
+                return False
+            self._rearm_times.append(now)
+            self._rearm_budget_warned = False
+            dead_pid = self.pid
+            try:
+                proc = self._spawner()
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                record_degradation(
+                    _AURA_MAIN_DEGRADATION_KEY,
+                    exc,
+                    action="external memory sentinel respawn failed; retrying on supervisor cadence",
+                    severity="degraded",
+                )
+                return False
+            self.proc = proc
+            self.pid = int(getattr(proc, "pid", 0) or 0)
+            self.started_at = now
+            logger.warning(
+                "🛡️ External memory sentinel re-armed (old pid=%d died, new pid=%d, "
+                "lethal=%.0fMB) — respawn %d/%d this hour.",
+                dead_pid,
+                self.pid,
+                self.lethal_mb,
+                len(self._rearm_times),
+                self.REARM_HOURLY_BUDGET,
+            )
+            return True
+
     def get_status(self) -> dict[str, Any]:
         return {
             "armed": self.is_armed(),
@@ -1075,7 +1150,53 @@ class _ExternalMemorySentinelStatus:
             "lethal_mb": self.lethal_mb,
             "interval_s": self.interval_s,
             "started_at": self.started_at,
+            "rearms_last_hour": len(self._rearm_times),
         }
+
+
+def _start_memory_sentinel_supervisor(status: "_ExternalMemorySentinelStatus") -> None:
+    """Watch the external sentinel and re-arm it when it dies.
+
+    Runs on a plain daemon thread — NOT the event loop — because the loop
+    being wedged is precisely the failure mode the sentinel exists to cover.
+    """
+    stop = threading.Event()
+
+    def _watch() -> None:
+        while not stop.wait(15.0):
+            if is_shutdown_requested():
+                return
+            try:
+                if not status.is_armed():
+                    status.rearm()
+            except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+                record_degradation(
+                    _AURA_MAIN_DEGRADATION_KEY,
+                    exc,
+                    action="memory sentinel supervisor tick failed; continuing",
+                    severity="warning",
+                )
+
+    thread = threading.Thread(
+        target=_watch, name="memory-sentinel-supervisor", daemon=True
+    )
+    thread.start()
+    try:
+        from core.runtime.shutdown_coordinator import get_shutdown_coordinator
+
+        get_shutdown_coordinator().register(
+            stop.set,
+            phase="task_supervisor",
+            name="memory_sentinel_supervisor",
+            timeout=2.0,
+        )
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action="sentinel supervisor runs unregistered (daemon thread exits with process)",
+            severity="warning",
+        )
 
 
 def _install_systemwide_memory_protection() -> None:
@@ -1200,33 +1321,45 @@ def _install_systemwide_memory_protection() -> None:
             sentinel_interval_s = float(os.environ.get("AURA_MEMORY_SENTINEL_INTERVAL_S", "1.0") or 1.0)
             sentinel_log = Path("data/error_logs/memory")
             sentinel_log.mkdir(parents=True, exist_ok=True)
-            sentinel_proc = subprocess.Popen(
-                [
-                    sys.executable,
-                    str(Path(__file__).resolve().parent / "tools" / "memory_sentinel.py"),
-                    "--pid",
-                    str(os.getpid()),
-                    "--lethal-mb",
-                    str(lethal_mb),
-                    "--interval",
-                    str(max(0.5, sentinel_interval_s)),
-                ],
-                stdout=open(sentinel_log / "sentinel.log", "a"),
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                cwd=str(Path(__file__).resolve().parent),
+            target_pid = os.getpid()
+
+            def _spawn_memory_sentinel() -> subprocess.Popen:
+                # Fresh append handle per spawn: the fd is inherited by the
+                # child, so respawns must not share a dead child's handle.
+                with open(sentinel_log / "sentinel.log", "a") as log_handle:
+                    return subprocess.Popen(
+                        [
+                            sys.executable,
+                            str(Path(__file__).resolve().parent / "tools" / "memory_sentinel.py"),
+                            "--pid",
+                            str(target_pid),
+                            "--lethal-mb",
+                            str(lethal_mb),
+                            "--interval",
+                            str(max(0.5, sentinel_interval_s)),
+                        ],
+                        stdout=log_handle,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                        cwd=str(Path(__file__).resolve().parent),
+                    )
+
+            sentinel_proc = _spawn_memory_sentinel()
+            sentinel_status = _ExternalMemorySentinelStatus(
+                sentinel_proc,
+                lethal_mb=lethal_mb,
+                interval_s=max(0.5, sentinel_interval_s),
+                spawner=_spawn_memory_sentinel,
             )
             ServiceContainer.register_instance(
                 "external_memory_sentinel",
-                _ExternalMemorySentinelStatus(
-                    sentinel_proc,
-                    lethal_mb=lethal_mb,
-                    interval_s=max(0.5, sentinel_interval_s),
-                ),
+                sentinel_status,
                 required=False,
             )
+            _start_memory_sentinel_supervisor(sentinel_status)
             logger.info(
-                "🛡️ External memory sentinel armed: lethal=%.0fMB (kills from outside).",
+                "🛡️ External memory sentinel armed: lethal=%.0fMB (kills from outside; "
+                "supervised — respawns on death).",
                 lethal_mb,
             )
         except (ImportError, OSError, ValueError, subprocess.SubprocessError) as exc:

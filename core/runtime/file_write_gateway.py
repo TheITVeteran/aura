@@ -50,7 +50,15 @@ class FileWriteGateway:
             )
         atomic_write_bytes(target, bytes(payload))
 
-    def write_text(self, path: PathLike, text: str, *, encoding: str = "utf-8", source: str = "unknown") -> None:
+    def write_text(
+        self,
+        path: PathLike,
+        text: str,
+        *,
+        encoding: str = "utf-8",
+        source: str = "unknown",
+        durable: bool = True,
+    ) -> None:
         target = _coerce_target(path)
         if not isinstance(text, str):
             raise TypeError("text payload must be a string")
@@ -62,7 +70,7 @@ class FileWriteGateway:
                 strict=True,
                 allowed_domains=self._allowed_domains,
             )
-        atomic_write_text(target, text, encoding=encoding)
+        atomic_write_text(target, text, encoding=encoding, durable=durable)
 
     def append_text(self, path: PathLike, text: str, *, encoding: str = "utf-8", source: str = "unknown") -> None:
         target = _coerce_target(path)

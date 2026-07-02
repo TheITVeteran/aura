@@ -135,3 +135,143 @@ def test_disabled_external_memory_sentinel_is_never_reported_armed(monkeypatch):
     sentinel = ServiceContainer.get("external_memory_sentinel")
     assert sentinel.is_armed() is False
     assert sentinel.get_status()["armed"] is False
+
+
+class _DeadProc:
+    """A sentinel process that has already exited."""
+
+    pid = 4242
+
+    def poll(self):
+        return 1
+
+
+class _LiveProc:
+    pid = 4343
+
+    def poll(self):
+        return None
+
+
+def _pid_exists_stub(monkeypatch, value=True):
+    import psutil
+
+    monkeypatch.setattr(psutil, "pid_exists", lambda _pid: value)
+
+
+class TestSentinelRearm:
+    """A dead contract-CRITICAL guardian must come back, boundedly.
+
+    Live incident: the sentinel died 85 seconds after arming and the desktop
+    ran CRITICAL — and unprotected — for two hours with nothing respawning it.
+    """
+
+    def _status(self, monkeypatch, *, spawn_results=None):
+        _pid_exists_stub(monkeypatch)
+        spawned = []
+        results = list(spawn_results or [])
+
+        def spawner():
+            if results:
+                item = results.pop(0)
+                if isinstance(item, Exception):
+                    raise item
+                spawned.append(item)
+                return item
+            proc = _LiveProc()
+            spawned.append(proc)
+            return proc
+
+        status = aura_main._ExternalMemorySentinelStatus(
+            _DeadProc(), lethal_mb=1000.0, interval_s=1.0, spawner=spawner
+        )
+        return status, spawned
+
+    def test_rearm_respawns_dead_sentinel(self, monkeypatch):
+        status, spawned = self._status(monkeypatch)
+        assert status.is_armed() is False
+        assert status.rearm() is True
+        assert status.is_armed() is True
+        assert len(spawned) == 1
+        assert status.pid == _LiveProc.pid
+        assert status.get_status()["rearms_last_hour"] == 1
+
+    def test_rearm_is_noop_while_armed(self, monkeypatch):
+        status, spawned = self._status(monkeypatch)
+        status.rearm()
+        assert status.rearm() is True
+        assert len(spawned) == 1, "an armed sentinel must not be respawned"
+
+    def test_rearm_respects_min_interval(self, monkeypatch):
+        status, spawned = self._status(monkeypatch)
+        status.rearm()
+        status.proc = _DeadProc()  # dies again immediately
+        status.pid = _DeadProc.pid
+        assert status.rearm() is False, "respawn faster than 30s must be refused"
+        assert len(spawned) == 1
+
+    def test_rearm_budget_is_bounded_per_hour(self, monkeypatch):
+        status, spawned = self._status(monkeypatch)
+        base = 1_000_000.0
+        clock = {"now": base}
+        monkeypatch.setattr(aura_main.time, "time", lambda: clock["now"])
+        for i in range(status.REARM_HOURLY_BUDGET):
+            clock["now"] = base + i * 60.0
+            assert status.rearm() is True
+            status.proc = _DeadProc()
+        clock["now"] = base + status.REARM_HOURLY_BUDGET * 60.0
+        assert status.rearm() is False, "hourly budget must stop a crash-looping sentinel"
+        assert len(spawned) == status.REARM_HOURLY_BUDGET
+        # After the oldest attempt ages out of the window, respawns resume.
+        clock["now"] = base + 3601.0
+        assert status.rearm() is True
+
+    def test_rearm_spawn_failure_records_and_returns_false(self, monkeypatch):
+        status, spawned = self._status(
+            monkeypatch, spawn_results=[OSError("spawn refused"), _LiveProc()]
+        )
+        assert status.rearm() is False
+        assert status.is_armed() is False
+        assert len(spawned) == 0
+
+    def test_disabled_sentinel_never_rearms(self, monkeypatch):
+        _pid_exists_stub(monkeypatch)
+        status = aura_main._ExternalMemorySentinelStatus(None)
+        assert status.rearm() is False
+        assert status.is_armed() is False
+
+
+def test_boot_registers_supervised_sentinel(monkeypatch):
+    """The install path must hand the status object a working respawner."""
+    popen_procs = []
+
+    class FakePopen:
+        def __init__(self, args, **kwargs):
+            self.pid = os.getpid()
+            stdout = kwargs.get("stdout")
+            popen_procs.append(self)
+            self._dead = False
+
+        def poll(self):
+            return 1 if self._dead else None
+
+    supervisors = []
+    monkeypatch.setattr(
+        aura_main, "_start_memory_sentinel_supervisor", lambda status: supervisors.append(status)
+    )
+    monkeypatch.setenv("AURA_MEMORY_SENTINEL", "1")
+    monkeypatch.setattr(resource, "getrlimit", lambda _kind: (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+    monkeypatch.setattr(resource, "setrlimit", lambda _kind, _limits: None)
+    monkeypatch.setattr(aura_main.subprocess, "Popen", FakePopen)
+
+    aura_main._install_systemwide_memory_protection()
+
+    sentinel = ServiceContainer.get("external_memory_sentinel")
+    assert supervisors == [sentinel], "supervisor must watch the registered status object"
+    assert sentinel.is_armed() is True
+    # Kill it; rearm must produce a fresh process through the real spawner.
+    popen_procs[0]._dead = True
+    assert sentinel.is_armed() is False
+    assert sentinel.rearm() is True
+    assert len(popen_procs) == 2
+    assert sentinel.is_armed() is True

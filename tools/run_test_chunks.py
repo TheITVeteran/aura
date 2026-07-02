@@ -128,6 +128,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="run later chunks after a failed chunk instead of stopping immediately",
     )
+    parser.add_argument(
+        "--only-chunks",
+        default="",
+        help="comma-separated 1-based chunk indexes to run (e.g. 5,6) — "
+        "resume a partial run without repeating chunks that already passed",
+    )
     parser.add_argument("extra", nargs="*", help="extra pytest args")
     args = parser.parse_args(argv)
 
@@ -137,8 +143,26 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     chunk_lists = split_chunks(files, args.chunks)
+    selected_indexes: set[int] | None = None
+    if args.only_chunks.strip():
+        try:
+            selected_indexes = {
+                int(part) for part in args.only_chunks.split(",") if part.strip()
+            }
+        except ValueError:
+            print(f"invalid --only-chunks value: {args.only_chunks!r}", file=sys.stderr)
+            return 2
+        invalid = {i for i in selected_indexes if not 1 <= i <= len(chunk_lists)}
+        if invalid:
+            print(
+                f"--only-chunks indexes out of range 1..{len(chunk_lists)}: {sorted(invalid)}",
+                file=sys.stderr,
+            )
+            return 2
     results: list[tuple[bool, str, list[str]]] = []
     for i, chunk in enumerate(chunk_lists, start=1):
+        if selected_indexes is not None and i not in selected_indexes:
+            continue
         result = run_chunk(
             i,
             len(chunk_lists),

@@ -249,6 +249,26 @@ def main(argv: list[str] | None = None) -> int:
     # Die quietly if our own parent re-execs; we re-attach by pid anyway.
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
+    # Death evidence: every start and exit leaves one line in sentinel.log.
+    # A live incident once left a sentinel dead within 85s of arming with a
+    # zero-byte log — undiagnosable. Never again: announce arming, announce
+    # every exit path, and turn SIGTERM into a logged, orderly exit.
+    def _evidence(line: str) -> None:
+        try:
+            print(f"[{time.strftime('%Y-%m-%dT%H:%M:%S%z')}] pid={os.getpid()} {line}", flush=True)
+        except OSError:
+            pass  # Evidence must never kill the guard.
+
+    def _on_sigterm(signum, frame):  # noqa: ARG001 — signal handler signature
+        _evidence(f"exiting: SIGTERM received while guarding target pid={args.pid}")
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+    _evidence(
+        f"armed: target pid={args.pid} lethal_mb={args.lethal_mb:.0f} "
+        f"interval_s={args.interval:.1f} ring={args.ring}"
+    )
+
     consecutive_over = 0
     # Bounded by the target's own lifetime: the sentinel exists exactly
     # as long as the process it guards.
@@ -298,6 +318,10 @@ def main(argv: list[str] | None = None) -> int:
                 ).write_text(json.dumps(tombstone, indent=2))
             except OSError:
                 pass
+            _evidence(
+                f"exiting: killed target tree at lethal ceiling "
+                f"(managed_mb={managed:.0f} >= lethal_mb={args.lethal_mb:.0f}, killed={killed})"
+            )
             return 0
 
         time.sleep(max(0.5, args.interval))
@@ -305,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
     # Target vanished without OUR kill: capture the unified log around
     # the death immediately — silent SIGKILLs leave their only evidence
     # in the kernel namespace, and it ages out fast.
+    _evidence(f"exiting: target pid={args.pid} vanished; capturing death syslog")
     try:
         capture = subprocess.run(
             [

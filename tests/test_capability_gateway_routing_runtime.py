@@ -39,12 +39,12 @@ class FakeFileWriteGateway:
         self.text_writes: list[dict[str, object]] = []
         self.byte_writes: list[dict[str, object]] = []
 
-    def write_text(self, path, text, *, encoding="utf-8", source="unknown") -> None:
+    def write_text(self, path, text, *, encoding="utf-8", source="unknown", durable=True) -> None:
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding=encoding)
         self.text_writes.append(
-            {"path": target, "text": text, "encoding": encoding, "source": source}
+            {"path": target, "text": text, "encoding": encoding, "source": source, "durable": durable}
         )
 
     def write_bytes(self, path, payload, *, source="unknown") -> None:
@@ -264,6 +264,9 @@ async def test_capability_discovery_writable_probe_uses_file_gateway(monkeypatch
     assert {write["source"] for write in writer.text_writes} == {
         "capability_discovery.writable_dir_probe"
     }
+    # Probe files are worthless after a crash; a durable fsync here wedged
+    # the live event loop for 20 minutes under disk thrash.
+    assert {write["durable"] for write in writer.text_writes} == {False}
 
 
 @pytest.mark.asyncio

@@ -138,11 +138,14 @@ class CapabilityDiscovery:
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("capability_discovery.app_registry", exc)
 
-        # Fallback: scan /Applications directly
+        # Fallback: scan /Applications directly (directory listing is
+        # blocking I/O — keep it off the event loop).
         try:
             app_dir = Path("/Applications")
             if app_dir.exists():
-                apps = [e.stem for e in app_dir.iterdir() if e.suffix == ".app"]
+                apps = await asyncio.to_thread(
+                    lambda: [e.stem for e in app_dir.iterdir() if e.suffix == ".app"]
+                )
                 report.installed_apps = sorted(apps)
                 for browser in ["Google Chrome", "Safari", "Firefox"]:
                     if browser in apps:
@@ -210,28 +213,67 @@ class CapabilityDiscovery:
             report.has_network = False
 
     async def _discover_tools(self, report: CapabilityReport) -> None:
-        """Check for required CLI tools."""
+        """Check for required CLI tools (PATH stats are blocking I/O)."""
         tools = {
             "screencapture": "has_screencapture",
             "osascript": "has_osascript",
             "pbcopy": "has_pbcopy",
             "say": "has_say",
         }
+        found = await asyncio.to_thread(
+            lambda: {tool: shutil.which(tool) is not None for tool in tools}
+        )
         for tool, attr in tools.items():
-            setattr(report, attr, shutil.which(tool) is not None)
+            setattr(report, attr, found.get(tool, False))
 
     async def _discover_python_packages(self, report: CapabilityReport) -> None:
-        """Check for useful Python packages."""
+        """Check for useful Python packages.
+
+        find_spec answers "is it installed?" without executing module init
+        code — importing numpy/PIL on the event loop at boot costs seconds
+        of loop stall and loads megabytes nothing asked for yet.
+        """
         packages = [
             "fpdf", "reportlab", "pytesseract", "PIL", "pyautogui",
             "psutil", "httpx", "numpy",
         ]
-        for pkg in packages:
-            try:
-                __import__(pkg)
-                report.has_python_packages[pkg] = True
-            except ImportError:
-                report.has_python_packages[pkg] = False
+
+        def _availability() -> Dict[str, bool]:
+            import importlib.util
+
+            status: Dict[str, bool] = {}
+            for pkg in packages:
+                try:
+                    status[pkg] = importlib.util.find_spec(pkg) is not None
+                except (ImportError, ValueError, AttributeError):
+                    status[pkg] = False
+            return status
+
+        report.has_python_packages = await asyncio.to_thread(_availability)
+
+    @staticmethod
+    def _probe_writable_dir(d: Path) -> None:
+        """Blocking write probe — must run OFF the event loop.
+
+        Every one of the 12 recorded live loop-wedge crashes (20-minute
+        event-loop freezes ending in liveness-sentinel SIGKILL) had this
+        probe's mkdir/write/unlink syscalls on the loop while the disk was
+        thrashing. Probe files are worthless after a crash, so the write is
+        atomic but non-durable (no fsync).
+        """
+        d.mkdir(parents=True, exist_ok=True)
+        test_file = d / ".aura_write_test"
+        with local_internal_governed_scope(
+            "capability_discovery.writable_dir_probe",
+            receipt_prefix="capability-write-probe",
+        ):
+            get_file_write_gateway().write_text(
+                test_file,
+                "test",
+                source="capability_discovery.writable_dir_probe",
+                durable=False,
+            )
+        test_file.unlink()
 
     async def _discover_writable_dirs(self, report: CapabilityReport) -> None:
         """Check which directories are writable."""
@@ -244,20 +286,12 @@ class CapabilityDiscovery:
         ]
         for d in candidates:
             try:
-                d.mkdir(parents=True, exist_ok=True)
-                test_file = d / ".aura_write_test"
-                with local_internal_governed_scope(
-                    "capability_discovery.writable_dir_probe",
-                    receipt_prefix="capability-write-probe",
-                ):
-                    get_file_write_gateway().write_text(
-                        test_file,
-                        "test",
-                        source="capability_discovery.writable_dir_probe",
-                    )
-                test_file.unlink()
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._probe_writable_dir, d),
+                    timeout=30.0,
+                )
                 report.writable_directories.append(str(d))
-            except (OSError, PermissionError, RuntimeError) as exc:
+            except (OSError, PermissionError, RuntimeError, asyncio.TimeoutError) as exc:
                 record_degradation("capability_discovery.writable_dir_probe", exc)
 
     async def _discover_models(self, report: CapabilityReport) -> None:
