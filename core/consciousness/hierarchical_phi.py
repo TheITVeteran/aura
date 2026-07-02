@@ -721,14 +721,32 @@ class HierarchicalPhi:
                 )
 
             results: list[SubsystemResult] = []
+            timed_out_jobs = 0
             for f in futures:
                 try:
                     r = f.result(timeout=10.0)
                     if r is not None:
                         results.append(r)
+                except TimeoutError:
+                    # Backpressure, not breakage: under foreground load a phi
+                    # job can exceed its slot; the next cycle self-heals with
+                    # the cached snapshot in between. This module is on the
+                    # fail-closed list, so a degradation record here escalated
+                    # every busy period to an EMERGENCY incident (19 in one
+                    # live boot). Only a fully starved cycle is a real event.
+                    timed_out_jobs += 1
+                    logger.info(
+                        "HierarchicalPhi job timed out under load; job discarded, cache serves."
+                    )
                 except _HIERARCHICAL_PHI_RECOVERABLE_ERRORS as exc:
                     record_degradation('hierarchical_phi', exc)
                     logger.warning("HierarchicalPhi subsystem job failed: %s", exc)
+            if timed_out_jobs and not results:
+                record_degradation(
+                    'hierarchical_phi',
+                    TimeoutError(f"all {timed_out_jobs} phi subsystem jobs timed out"),
+                    action="kept last cached phi snapshot; hierarchical phi cycle fully starved",
+                )
 
             primary_32 = next((r for r in results if r.name == "primary_32"), None)
             primary_16a = next((r for r in results if r.name == "primary_16_affective"), None)

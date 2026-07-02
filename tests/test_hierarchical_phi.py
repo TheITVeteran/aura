@@ -335,3 +335,66 @@ if __name__ == "__main__":
             traceback.print_exc()
     print(f"\n{passed}/{len(tests)} passed")
     sys.exit(0 if not failed else 1)
+
+
+# ── Timeout backpressure (live-incident regression) ──────────────────────────
+# hierarchical_phi sits on the fail-closed critical-module list, so a
+# degradation record for a routine busy-period job timeout escalated to a
+# CRITICAL SERVICE FAILURE + emergency incident — 19 times in one live boot.
+# Job timeouts are backpressure (cache serves, next cycle self-heals); only a
+# fully starved cycle deserves a degradation record.
+
+def test_single_job_timeout_is_not_recorded_as_degradation(monkeypatch):
+    h = HierarchicalPhi()
+    _prime_with_coupled_history(h, n_steps=400)
+
+    degradations = []
+    monkeypatch.setattr(
+        "core.consciousness.hierarchical_phi.record_degradation",
+        lambda *a, **k: degradations.append(a),
+    )
+
+    real_submit = h._executor.submit
+    slow_jobs = {"primary_16_affective"}
+
+    class _TimeoutFuture:
+        def result(self, timeout=None):
+            raise TimeoutError("job exceeded slot")
+
+    def submit(fn, history, name, idxs):
+        if name in slow_jobs:
+            return _TimeoutFuture()
+        return real_submit(fn, history, name, idxs)
+
+    monkeypatch.setattr(h._executor, "submit", submit)
+
+    result = h.compute(force=True)
+
+    assert result is not None, "remaining jobs must still produce a snapshot"
+    assert degradations == [], (
+        "an isolated job timeout must not degrade a fail-closed module"
+    )
+
+
+def test_fully_starved_cycle_records_one_degradation(monkeypatch):
+    h = HierarchicalPhi()
+    _prime_with_coupled_history(h, n_steps=400)
+
+    degradations = []
+    monkeypatch.setattr(
+        "core.consciousness.hierarchical_phi.record_degradation",
+        lambda *a, **k: degradations.append((a, k)),
+    )
+
+    class _TimeoutFuture:
+        def result(self, timeout=None):
+            raise TimeoutError("job exceeded slot")
+
+    monkeypatch.setattr(h._executor, "submit", lambda *a, **k: _TimeoutFuture())
+
+    h.compute(force=True)
+
+    assert len(degradations) == 1, "a fully starved cycle is one real event"
+    args, kwargs = degradations[0]
+    assert args[0] == "hierarchical_phi"
+    assert "starved" in kwargs.get("action", "")
