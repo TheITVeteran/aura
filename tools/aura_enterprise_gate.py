@@ -581,6 +581,15 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
                 # Concrete test-double syntax is not incomplete product code.
                 # Descriptive uses of stub/mock/placeholder remain findings.
                 continue
+            if kind == "placeholder_stub_mock" and re.search(
+                r"\b(?:audit|detect|detected|prevent|contaminat|scanner|forbid|refus|quarantin)\w*\b",
+                line,
+                re.IGNORECASE,
+            ):
+                # Anti-mock tooling talks ABOUT mocks (audits, detectors,
+                # contamination guards). Flagging the auditor for naming its
+                # target is a false positive; passive mock USAGE still flags.
+                continue
             if rel in SELF_DESCRIPTIVE_PATTERN_FILES and kind in {
                 "placeholder_stub_mock",
                 "pytest_skip_xfail",

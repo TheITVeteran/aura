@@ -1,8 +1,8 @@
 {
-  "description": "Aura enterprise gate debt baseline. Reduce counts over time; do not raise them.",
-  "generated_at_unix": 1781470977.526816,
+  "description": "Aura enterprise gate debt baseline: ZERO tolerated findings in every category. Counts may never rise.",
+  "generated_at_unix": 1783031709.413037,
   "max_counts": {
-    "placeholder_stub_mock": 25
+    "placeholder_stub_mock": 0
   },
   "max_high_or_critical_count": 0,
   "python_files": 3214
