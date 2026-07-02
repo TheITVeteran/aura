@@ -139,7 +139,8 @@ class GatewayRecordIndex:
                 self._entries = fresh
                 self._built = True
                 self._last_refresh = time.monotonic()
-        except Exception as exc:  # never let the refresher kill its thread loudly
+        except (OSError, RuntimeError, ValueError, TypeError, MemoryError) as exc:
+            # The refresher must never die loudly; the next search re-kicks it.
             logger.warning("Gateway record index refresh failed: %s", exc)
         finally:
             self._refresh_running.release()

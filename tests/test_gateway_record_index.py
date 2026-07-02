@@ -66,7 +66,10 @@ def test_warm_search_uses_index_without_reparsing(tmp_path, monkeypatch):
 
     import core.memory.gateway_record_index as mod
 
+    parse_calls: list[str] = []
+
     def _explode(path, mtime):
+        parse_calls.append(str(path))
         raise AssertionError("warm search must not re-parse record files")
 
     monkeypatch.setattr(mod, "_parse_record", _explode)
