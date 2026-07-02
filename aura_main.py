@@ -656,7 +656,7 @@ def _maybe_relaunch_with_preferred_python():
 # Shims & Compatibility
 # ---------------------------------------------------------------------------
 try:
-    from core.cognitive_integration import CognitiveIntegrationLayer
+    from core.cognitive_integration_layer import CognitiveIntegrationLayer
     CognitiveIntegration = CognitiveIntegrationLayer # Legacy Alias shim
 except ImportError:
     logger.debug("CognitiveIntegrationLayer unavailable; legacy alias not installed.")
