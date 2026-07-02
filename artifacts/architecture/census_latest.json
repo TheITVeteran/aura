@@ -1,0 +1,1602 @@
+{
+  "generated_at_unix": 1783029498.36514,
+  "schema": "aura.subsystem_census.v1",
+  "subsystem_count": 146,
+  "subsystems": {
+    "(core root)": {
+      "degradation_actionless": 332,
+      "degradation_sites": 388,
+      "fan_in": 0,
+      "fan_out": 101,
+      "files": 177,
+      "lines": 56913,
+      "tested": false,
+      "verdicts": [
+        "LEAF",
+        "UNTESTED"
+      ]
+    },
+    "actuation": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 0,
+      "fan_out": 2,
+      "files": 9,
+      "lines": 341,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "actuators": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 6,
+      "fan_out": 13,
+      "files": 9,
+      "lines": 2118,
+      "tested": true,
+      "verdicts": []
+    },
+    "adaptation": {
+      "degradation_actionless": 68,
+      "degradation_sites": 72,
+      "fan_in": 14,
+      "fan_out": 22,
+      "files": 28,
+      "lines": 12920,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "adapters": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 1,
+      "fan_out": 1,
+      "files": 4,
+      "lines": 446,
+      "tested": true,
+      "verdicts": []
+    },
+    "advanced_cognition": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 3,
+      "fan_out": 3,
+      "files": 13,
+      "lines": 2892,
+      "tested": true,
+      "verdicts": []
+    },
+    "affect": {
+      "degradation_actionless": 24,
+      "degradation_sites": 24,
+      "fan_in": 16,
+      "fan_out": 14,
+      "files": 10,
+      "lines": 3862,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "agency": {
+      "degradation_actionless": 104,
+      "degradation_sites": 129,
+      "fan_in": 20,
+      "fan_out": 34,
+      "files": 48,
+      "lines": 18011,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "agi": {
+      "degradation_actionless": 17,
+      "degradation_sites": 19,
+      "fan_in": 4,
+      "fan_out": 13,
+      "files": 6,
+      "lines": 1514,
+      "tested": true,
+      "verdicts": []
+    },
+    "architect": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 2,
+      "fan_out": 10,
+      "files": 25,
+      "lines": 5718,
+      "tested": true,
+      "verdicts": []
+    },
+    "audit": {
+      "degradation_actionless": 4,
+      "degradation_sites": 4,
+      "fan_in": 1,
+      "fan_out": 4,
+      "files": 6,
+      "lines": 531,
+      "tested": true,
+      "verdicts": []
+    },
+    "audits": {
+      "degradation_actionless": 4,
+      "degradation_sites": 4,
+      "fan_in": 0,
+      "fan_out": 3,
+      "files": 2,
+      "lines": 266,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "autonomic": {
+      "degradation_actionless": 16,
+      "degradation_sites": 16,
+      "fan_in": 5,
+      "fan_out": 7,
+      "files": 5,
+      "lines": 1171,
+      "tested": true,
+      "verdicts": []
+    },
+    "autonomy": {
+      "degradation_actionless": 43,
+      "degradation_sites": 47,
+      "fan_in": 8,
+      "fan_out": 18,
+      "files": 24,
+      "lines": 8458,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "being": {
+      "degradation_actionless": 7,
+      "degradation_sites": 16,
+      "fan_in": 7,
+      "fan_out": 6,
+      "files": 26,
+      "lines": 6163,
+      "tested": true,
+      "verdicts": []
+    },
+    "body": {
+      "degradation_actionless": 18,
+      "degradation_sites": 18,
+      "fan_in": 1,
+      "fan_out": 6,
+      "files": 22,
+      "lines": 1352,
+      "tested": true,
+      "verdicts": []
+    },
+    "brain": {
+      "degradation_actionless": 192,
+      "degradation_sites": 297,
+      "fan_in": 48,
+      "fan_out": 45,
+      "files": 152,
+      "lines": 57637,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "bus": {
+      "degradation_actionless": 32,
+      "degradation_sites": 44,
+      "fan_in": 4,
+      "fan_out": 6,
+      "files": 5,
+      "lines": 2316,
+      "tested": true,
+      "verdicts": []
+    },
+    "capabilities": {
+      "degradation_actionless": 55,
+      "degradation_sites": 62,
+      "fan_in": 5,
+      "fan_out": 13,
+      "files": 14,
+      "lines": 6438,
+      "tested": true,
+      "verdicts": []
+    },
+    "cognition": {
+      "degradation_actionless": 39,
+      "degradation_sites": 43,
+      "fan_in": 8,
+      "fan_out": 11,
+      "files": 16,
+      "lines": 5449,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "cognitive": {
+      "degradation_actionless": 8,
+      "degradation_sites": 10,
+      "fan_in": 4,
+      "fan_out": 9,
+      "files": 12,
+      "lines": 9200,
+      "tested": true,
+      "verdicts": []
+    },
+    "coherence": {
+      "degradation_actionless": 13,
+      "degradation_sites": 13,
+      "fan_in": 2,
+      "fan_out": 6,
+      "files": 2,
+      "lines": 395,
+      "tested": false,
+      "verdicts": [
+        "UNTESTED"
+      ]
+    },
+    "collective": {
+      "degradation_actionless": 13,
+      "degradation_sites": 14,
+      "fan_in": 4,
+      "fan_out": 8,
+      "files": 6,
+      "lines": 2040,
+      "tested": true,
+      "verdicts": []
+    },
+    "consciousness": {
+      "degradation_actionless": 340,
+      "degradation_sites": 383,
+      "fan_in": 31,
+      "fan_out": 43,
+      "files": 140,
+      "lines": 65660,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "consent": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 1,
+      "fan_out": 0,
+      "files": 2,
+      "lines": 165,
+      "tested": false,
+      "verdicts": [
+        "UNTESTED"
+      ]
+    },
+    "constitution": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 14,
+      "fan_out": 0,
+      "files": 1,
+      "lines": 24,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "context": {
+      "degradation_actionless": 5,
+      "degradation_sites": 6,
+      "fan_in": 1,
+      "fan_out": 1,
+      "files": 4,
+      "lines": 1211,
+      "tested": true,
+      "verdicts": []
+    },
+    "continuity": {
+      "degradation_actionless": 3,
+      "degradation_sites": 3,
+      "fan_in": 9,
+      "fan_out": 4,
+      "files": 7,
+      "lines": 231,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "control": {
+      "degradation_actionless": 0,
+      "degradation_sites": 2,
+      "fan_in": 0,
+      "fan_out": 4,
+      "files": 2,
+      "lines": 584,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "conversation": {
+      "degradation_actionless": 4,
+      "degradation_sites": 9,
+      "fan_in": 8,
+      "fan_out": 12,
+      "files": 10,
+      "lines": 7479,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "conversational": {
+      "degradation_actionless": 7,
+      "degradation_sites": 7,
+      "fan_in": 3,
+      "fan_out": 4,
+      "files": 4,
+      "lines": 2235,
+      "tested": false,
+      "verdicts": [
+        "UNTESTED"
+      ]
+    },
+    "coordinators": {
+      "degradation_actionless": 14,
+      "degradation_sites": 20,
+      "fan_in": 5,
+      "fan_out": 35,
+      "files": 9,
+      "lines": 4265,
+      "tested": true,
+      "verdicts": []
+    },
+    "council": {
+      "degradation_actionless": 0,
+      "degradation_sites": 5,
+      "fan_in": 0,
+      "fan_out": 4,
+      "files": 5,
+      "lines": 528,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "creativity": {
+      "degradation_actionless": 9,
+      "degradation_sites": 9,
+      "fan_in": 1,
+      "fan_out": 3,
+      "files": 2,
+      "lines": 799,
+      "tested": true,
+      "verdicts": []
+    },
+    "curriculum": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 1,
+      "fan_out": 1,
+      "files": 7,
+      "lines": 650,
+      "tested": true,
+      "verdicts": []
+    },
+    "cybernetics": {
+      "degradation_actionless": 6,
+      "degradation_sites": 8,
+      "fan_in": 1,
+      "fan_out": 6,
+      "files": 6,
+      "lines": 1127,
+      "tested": true,
+      "verdicts": []
+    },
+    "data": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 3,
+      "fan_out": 2,
+      "files": 3,
+      "lines": 648,
+      "tested": true,
+      "verdicts": []
+    },
+    "db": {
+      "degradation_actionless": 4,
+      "degradation_sites": 4,
+      "fan_in": 3,
+      "fan_out": 2,
+      "files": 4,
+      "lines": 580,
+      "tested": true,
+      "verdicts": []
+    },
+    "discovery": {
+      "degradation_actionless": 14,
+      "degradation_sites": 14,
+      "fan_in": 5,
+      "fan_out": 7,
+      "files": 5,
+      "lines": 1459,
+      "tested": true,
+      "verdicts": []
+    },
+    "distributed": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 0,
+      "fan_out": 0,
+      "files": 3,
+      "lines": 137,
+      "tested": true,
+      "verdicts": [
+        "ISOLATED"
+      ]
+    },
+    "embodiment": {
+      "degradation_actionless": 25,
+      "degradation_sites": 30,
+      "fan_in": 4,
+      "fan_out": 12,
+      "files": 15,
+      "lines": 2644,
+      "tested": true,
+      "verdicts": []
+    },
+    "environment": {
+      "degradation_actionless": 1,
+      "degradation_sites": 18,
+      "fan_in": 2,
+      "fan_out": 11,
+      "files": 82,
+      "lines": 8446,
+      "tested": true,
+      "verdicts": []
+    },
+    "environments": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 2,
+      "fan_out": 3,
+      "files": 7,
+      "lines": 742,
+      "tested": true,
+      "verdicts": []
+    },
+    "epistemics": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 1,
+      "fan_out": 0,
+      "files": 7,
+      "lines": 584,
+      "tested": true,
+      "verdicts": []
+    },
+    "ethics": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 5,
+      "fan_out": 6,
+      "files": 2,
+      "lines": 578,
+      "tested": true,
+      "verdicts": []
+    },
+    "evals": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 1,
+      "fan_out": 2,
+      "files": 2,
+      "lines": 278,
+      "tested": true,
+      "verdicts": []
+    },
+    "evaluation": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 4,
+      "fan_out": 4,
+      "files": 14,
+      "lines": 2754,
+      "tested": true,
+      "verdicts": []
+    },
+    "evolution": {
+      "degradation_actionless": 2,
+      "degradation_sites": 5,
+      "fan_in": 2,
+      "fan_out": 8,
+      "files": 6,
+      "lines": 1890,
+      "tested": true,
+      "verdicts": []
+    },
+    "executive": {
+      "degradation_actionless": 23,
+      "degradation_sites": 24,
+      "fan_in": 11,
+      "fan_out": 17,
+      "files": 11,
+      "lines": 3037,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "factory": {
+      "degradation_actionless": 0,
+      "degradation_sites": 4,
+      "fan_in": 1,
+      "fan_out": 3,
+      "files": 8,
+      "lines": 750,
+      "tested": true,
+      "verdicts": []
+    },
+    "forge": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 0,
+      "fan_out": 2,
+      "files": 8,
+      "lines": 317,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "goals": {
+      "degradation_actionless": 5,
+      "degradation_sites": 7,
+      "fan_in": 4,
+      "fan_out": 11,
+      "files": 9,
+      "lines": 3383,
+      "tested": true,
+      "verdicts": []
+    },
+    "governance": {
+      "degradation_actionless": 15,
+      "degradation_sites": 21,
+      "fan_in": 18,
+      "fan_out": 14,
+      "files": 10,
+      "lines": 3470,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "grounding": {
+      "degradation_actionless": 1,
+      "degradation_sites": 3,
+      "fan_in": 1,
+      "fan_out": 4,
+      "files": 7,
+      "lines": 1088,
+      "tested": true,
+      "verdicts": []
+    },
+    "guardians": {
+      "degradation_actionless": 9,
+      "degradation_sites": 9,
+      "fan_in": 1,
+      "fan_out": 8,
+      "files": 7,
+      "lines": 927,
+      "tested": true,
+      "verdicts": []
+    },
+    "health": {
+      "degradation_actionless": 1,
+      "degradation_sites": 3,
+      "fan_in": 22,
+      "fan_out": 8,
+      "files": 4,
+      "lines": 955,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "identity": {
+      "degradation_actionless": 11,
+      "degradation_sites": 11,
+      "fan_in": 15,
+      "fan_out": 9,
+      "files": 17,
+      "lines": 2337,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "initializers": {
+      "degradation_actionless": 12,
+      "degradation_sites": 12,
+      "fan_in": 0,
+      "fan_out": 10,
+      "files": 2,
+      "lines": 138,
+      "tested": false,
+      "verdicts": [
+        "LEAF",
+        "UNTESTED"
+      ]
+    },
+    "intent": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 0,
+      "fan_out": 1,
+      "files": 1,
+      "lines": 68,
+      "tested": false,
+      "verdicts": [
+        "LEAF",
+        "UNTESTED"
+      ]
+    },
+    "introspection": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 2,
+      "fan_out": 1,
+      "files": 3,
+      "lines": 740,
+      "tested": true,
+      "verdicts": []
+    },
+    "kernel": {
+      "degradation_actionless": 3,
+      "degradation_sites": 21,
+      "fan_in": 6,
+      "fan_out": 25,
+      "files": 11,
+      "lines": 6354,
+      "tested": true,
+      "verdicts": []
+    },
+    "knowledge": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 1,
+      "fan_out": 5,
+      "files": 7,
+      "lines": 315,
+      "tested": true,
+      "verdicts": []
+    },
+    "lab": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 0,
+      "fan_out": 3,
+      "files": 7,
+      "lines": 475,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "latent": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 0,
+      "fan_out": 0,
+      "files": 1,
+      "lines": 56,
+      "tested": false,
+      "verdicts": [
+        "ISOLATED",
+        "UNTESTED"
+      ]
+    },
+    "lattice": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 2,
+      "fan_out": 0,
+      "files": 5,
+      "lines": 699,
+      "tested": true,
+      "verdicts": []
+    },
+    "learning": {
+      "degradation_actionless": 19,
+      "degradation_sites": 24,
+      "fan_in": 8,
+      "fan_out": 16,
+      "files": 31,
+      "lines": 8672,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "llm": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 2,
+      "fan_out": 1,
+      "files": 2,
+      "lines": 17,
+      "tested": false,
+      "verdicts": [
+        "UNTESTED"
+      ]
+    },
+    "maintenance": {
+      "degradation_actionless": 0,
+      "degradation_sites": 3,
+      "fan_in": 2,
+      "fan_out": 4,
+      "files": 2,
+      "lines": 263,
+      "tested": true,
+      "verdicts": []
+    },
+    "managers": {
+      "degradation_actionless": 11,
+      "degradation_sites": 12,
+      "fan_in": 5,
+      "fan_out": 25,
+      "files": 6,
+      "lines": 950,
+      "tested": true,
+      "verdicts": []
+    },
+    "media": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 3,
+      "fan_out": 0,
+      "files": 2,
+      "lines": 334,
+      "tested": true,
+      "verdicts": []
+    },
+    "memory": {
+      "degradation_actionless": 200,
+      "degradation_sites": 220,
+      "fan_in": 35,
+      "fan_out": 21,
+      "files": 94,
+      "lines": 22152,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "meta": {
+      "degradation_actionless": 3,
+      "degradation_sites": 3,
+      "fan_in": 5,
+      "fan_out": 6,
+      "files": 7,
+      "lines": 1271,
+      "tested": true,
+      "verdicts": []
+    },
+    "middleware": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 1,
+      "fan_out": 2,
+      "files": 2,
+      "lines": 252,
+      "tested": true,
+      "verdicts": []
+    },
+    "mission": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 0,
+      "fan_out": 1,
+      "files": 4,
+      "lines": 468,
+      "tested": false,
+      "verdicts": [
+        "LEAF",
+        "UNTESTED"
+      ]
+    },
+    "morality": {
+      "degradation_actionless": 0,
+      "degradation_sites": 1,
+      "fan_in": 6,
+      "fan_out": 5,
+      "files": 14,
+      "lines": 638,
+      "tested": true,
+      "verdicts": []
+    },
+    "morphogenesis": {
+      "degradation_actionless": 10,
+      "degradation_sites": 14,
+      "fan_in": 3,
+      "fan_out": 7,
+      "files": 12,
+      "lines": 2849,
+      "tested": true,
+      "verdicts": []
+    },
+    "motivation": {
+      "degradation_actionless": 21,
+      "degradation_sites": 21,
+      "fan_in": 4,
+      "fan_out": 10,
+      "files": 7,
+      "lines": 1204,
+      "tested": true,
+      "verdicts": []
+    },
+    "multimodal": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 0,
+      "fan_out": 1,
+      "files": 2,
+      "lines": 183,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "networking": {
+      "degradation_actionless": 0,
+      "degradation_sites": 2,
+      "fan_in": 1,
+      "fan_out": 2,
+      "files": 1,
+      "lines": 317,
+      "tested": true,
+      "verdicts": []
+    },
+    "neuroweb": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 0,
+      "fan_out": 5,
+      "files": 5,
+      "lines": 365,
+      "tested": false,
+      "verdicts": [
+        "LEAF",
+        "UNTESTED"
+      ]
+    },
+    "observability": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 15,
+      "fan_out": 4,
+      "files": 3,
+      "lines": 572,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "ontology": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 0,
+      "fan_out": 0,
+      "files": 2,
+      "lines": 167,
+      "tested": false,
+      "verdicts": [
+        "ISOLATED",
+        "UNTESTED"
+      ]
+    },
+    "ops": {
+      "degradation_actionless": 3,
+      "degradation_sites": 10,
+      "fan_in": 5,
+      "fan_out": 15,
+      "files": 11,
+      "lines": 2491,
+      "tested": true,
+      "verdicts": []
+    },
+    "orchestrator": {
+      "degradation_actionless": 2,
+      "degradation_sites": 34,
+      "fan_in": 9,
+      "fan_out": 132,
+      "files": 43,
+      "lines": 19628,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "organism": {
+      "degradation_actionless": 20,
+      "degradation_sites": 23,
+      "fan_in": 9,
+      "fan_out": 17,
+      "files": 8,
+      "lines": 1867,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "perception": {
+      "degradation_actionless": 29,
+      "degradation_sites": 33,
+      "fan_in": 11,
+      "fan_out": 13,
+      "files": 23,
+      "lines": 6706,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "persistence": {
+      "degradation_actionless": 0,
+      "degradation_sites": 1,
+      "fan_in": 2,
+      "fan_out": 3,
+      "files": 2,
+      "lines": 615,
+      "tested": true,
+      "verdicts": []
+    },
+    "phases": {
+      "degradation_actionless": 10,
+      "degradation_sites": 32,
+      "fan_in": 7,
+      "fan_out": 35,
+      "files": 29,
+      "lines": 19505,
+      "tested": true,
+      "verdicts": []
+    },
+    "phenomenal_substrate": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 5,
+      "fan_out": 2,
+      "files": 11,
+      "lines": 1029,
+      "tested": true,
+      "verdicts": []
+    },
+    "pipeline": {
+      "degradation_actionless": 2,
+      "degradation_sites": 2,
+      "fan_in": 0,
+      "fan_out": 1,
+      "files": 3,
+      "lines": 215,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "planning": {
+      "degradation_actionless": 11,
+      "degradation_sites": 12,
+      "fan_in": 2,
+      "fan_out": 5,
+      "files": 7,
+      "lines": 2698,
+      "tested": true,
+      "verdicts": []
+    },
+    "plasticity": {
+      "degradation_actionless": 0,
+      "degradation_sites": 2,
+      "fan_in": 1,
+      "fan_out": 2,
+      "files": 4,
+      "lines": 338,
+      "tested": true,
+      "verdicts": []
+    },
+    "play": {
+      "degradation_actionless": 3,
+      "degradation_sites": 3,
+      "fan_in": 0,
+      "fan_out": 4,
+      "files": 1,
+      "lines": 227,
+      "tested": false,
+      "verdicts": [
+        "LEAF",
+        "UNTESTED"
+      ]
+    },
+    "pneuma": {
+      "degradation_actionless": 8,
+      "degradation_sites": 8,
+      "fan_in": 3,
+      "fan_out": 4,
+      "files": 7,
+      "lines": 1251,
+      "tested": true,
+      "verdicts": []
+    },
+    "predictive": {
+      "degradation_actionless": 2,
+      "degradation_sites": 2,
+      "fan_in": 2,
+      "fan_out": 5,
+      "files": 2,
+      "lines": 184,
+      "tested": false,
+      "verdicts": [
+        "UNTESTED"
+      ]
+    },
+    "promotion": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 4,
+      "fan_out": 1,
+      "files": 6,
+      "lines": 930,
+      "tested": true,
+      "verdicts": []
+    },
+    "providers": {
+      "degradation_actionless": 10,
+      "degradation_sites": 10,
+      "fan_in": 0,
+      "fan_out": 54,
+      "files": 6,
+      "lines": 1294,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "reasoning": {
+      "degradation_actionless": 4,
+      "degradation_sites": 4,
+      "fan_in": 7,
+      "fan_out": 3,
+      "files": 11,
+      "lines": 4968,
+      "tested": true,
+      "verdicts": []
+    },
+    "reproducibility": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 0,
+      "fan_out": 1,
+      "files": 2,
+      "lines": 495,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "research_core": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 1,
+      "fan_out": 8,
+      "files": 5,
+      "lines": 575,
+      "tested": true,
+      "verdicts": []
+    },
+    "resilience": {
+      "degradation_actionless": 102,
+      "degradation_sites": 117,
+      "fan_in": 27,
+      "fan_out": 17,
+      "files": 54,
+      "lines": 12636,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "resource": {
+      "degradation_actionless": 0,
+      "degradation_sites": 1,
+      "fan_in": 4,
+      "fan_out": 3,
+      "files": 2,
+      "lines": 428,
+      "tested": true,
+      "verdicts": []
+    },
+    "runtime": {
+      "degradation_actionless": 64,
+      "degradation_sites": 128,
+      "fan_in": 127,
+      "fan_out": 46,
+      "files": 114,
+      "lines": 27712,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "safety": {
+      "degradation_actionless": 5,
+      "degradation_sites": 5,
+      "fan_in": 1,
+      "fan_out": 3,
+      "files": 3,
+      "lines": 626,
+      "tested": false,
+      "verdicts": [
+        "UNTESTED"
+      ]
+    },
+    "sandbox": {
+      "degradation_actionless": 7,
+      "degradation_sites": 7,
+      "fan_in": 4,
+      "fan_out": 1,
+      "files": 4,
+      "lines": 608,
+      "tested": true,
+      "verdicts": []
+    },
+    "science": {
+      "degradation_actionless": 0,
+      "degradation_sites": 2,
+      "fan_in": 0,
+      "fan_out": 4,
+      "files": 1,
+      "lines": 138,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "search": {
+      "degradation_actionless": 7,
+      "degradation_sites": 7,
+      "fan_in": 3,
+      "fan_out": 7,
+      "files": 2,
+      "lines": 1723,
+      "tested": true,
+      "verdicts": []
+    },
+    "security": {
+      "degradation_actionless": 70,
+      "degradation_sites": 70,
+      "fan_in": 13,
+      "fan_out": 15,
+      "files": 34,
+      "lines": 7999,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "self": {
+      "degradation_actionless": 25,
+      "degradation_sites": 25,
+      "fan_in": 6,
+      "fan_out": 12,
+      "files": 7,
+      "lines": 2189,
+      "tested": true,
+      "verdicts": []
+    },
+    "self_improvement": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 2,
+      "fan_out": 4,
+      "files": 12,
+      "lines": 2376,
+      "tested": true,
+      "verdicts": []
+    },
+    "self_modification": {
+      "degradation_actionless": 59,
+      "degradation_sites": 71,
+      "fan_in": 14,
+      "fan_out": 13,
+      "files": 32,
+      "lines": 12013,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "senses": {
+      "degradation_actionless": 75,
+      "degradation_sites": 80,
+      "fan_in": 14,
+      "fan_out": 21,
+      "files": 25,
+      "lines": 5781,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "sensors": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 2,
+      "fan_out": 1,
+      "files": 1,
+      "lines": 158,
+      "tested": true,
+      "verdicts": []
+    },
+    "services": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 2,
+      "fan_out": 1,
+      "files": 2,
+      "lines": 29,
+      "tested": false,
+      "verdicts": [
+        "UNTESTED"
+      ]
+    },
+    "session": {
+      "degradation_actionless": 3,
+      "degradation_sites": 3,
+      "fan_in": 0,
+      "fan_out": 1,
+      "files": 2,
+      "lines": 229,
+      "tested": false,
+      "verdicts": [
+        "LEAF",
+        "UNTESTED"
+      ]
+    },
+    "sim": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 1,
+      "fan_out": 6,
+      "files": 7,
+      "lines": 573,
+      "tested": true,
+      "verdicts": []
+    },
+    "simulation": {
+      "degradation_actionless": 2,
+      "degradation_sites": 2,
+      "fan_in": 2,
+      "fan_out": 7,
+      "files": 3,
+      "lines": 399,
+      "tested": true,
+      "verdicts": []
+    },
+    "skill_management": {
+      "degradation_actionless": 3,
+      "degradation_sites": 3,
+      "fan_in": 1,
+      "fan_out": 6,
+      "files": 1,
+      "lines": 366,
+      "tested": true,
+      "verdicts": []
+    },
+    "skills": {
+      "degradation_actionless": 117,
+      "degradation_sites": 169,
+      "fan_in": 8,
+      "fan_out": 32,
+      "files": 82,
+      "lines": 23473,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "sleep": {
+      "degradation_actionless": 0,
+      "degradation_sites": 1,
+      "fan_in": 1,
+      "fan_out": 3,
+      "files": 7,
+      "lines": 247,
+      "tested": true,
+      "verdicts": []
+    },
+    "social": {
+      "degradation_actionless": 23,
+      "degradation_sites": 23,
+      "fan_in": 7,
+      "fan_out": 9,
+      "files": 19,
+      "lines": 5126,
+      "tested": true,
+      "verdicts": []
+    },
+    "soma": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 2,
+      "fan_out": 3,
+      "files": 3,
+      "lines": 510,
+      "tested": true,
+      "verdicts": []
+    },
+    "somatic": {
+      "degradation_actionless": 6,
+      "degradation_sites": 7,
+      "fan_in": 3,
+      "fan_out": 8,
+      "files": 5,
+      "lines": 2371,
+      "tested": true,
+      "verdicts": []
+    },
+    "sovereign": {
+      "degradation_actionless": 6,
+      "degradation_sites": 7,
+      "fan_in": 2,
+      "fan_out": 2,
+      "files": 4,
+      "lines": 550,
+      "tested": true,
+      "verdicts": []
+    },
+    "sovereignty": {
+      "degradation_actionless": 13,
+      "degradation_sites": 16,
+      "fan_in": 1,
+      "fan_out": 10,
+      "files": 3,
+      "lines": 882,
+      "tested": true,
+      "verdicts": []
+    },
+    "startup": {
+      "degradation_actionless": 1,
+      "degradation_sites": 2,
+      "fan_in": 2,
+      "fan_out": 5,
+      "files": 2,
+      "lines": 314,
+      "tested": true,
+      "verdicts": []
+    },
+    "state": {
+      "degradation_actionless": 6,
+      "degradation_sites": 11,
+      "fan_in": 13,
+      "fan_out": 10,
+      "files": 6,
+      "lines": 3713,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "supervisor": {
+      "degradation_actionless": 1,
+      "degradation_sites": 2,
+      "fan_in": 5,
+      "fan_out": 2,
+      "files": 3,
+      "lines": 610,
+      "tested": true,
+      "verdicts": []
+    },
+    "swarm": {
+      "degradation_actionless": 0,
+      "degradation_sites": 5,
+      "fan_in": 0,
+      "fan_out": 6,
+      "files": 5,
+      "lines": 391,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "systems": {
+      "degradation_actionless": 4,
+      "degradation_sites": 5,
+      "fan_in": 0,
+      "fan_out": 3,
+      "files": 3,
+      "lines": 253,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "tasks": {
+      "degradation_actionless": 5,
+      "degradation_sites": 7,
+      "fan_in": 7,
+      "fan_out": 3,
+      "files": 3,
+      "lines": 448,
+      "tested": true,
+      "verdicts": []
+    },
+    "telemetry": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 0,
+      "fan_out": 0,
+      "files": 2,
+      "lines": 189,
+      "tested": false,
+      "verdicts": [
+        "ISOLATED",
+        "UNTESTED"
+      ]
+    },
+    "temporal": {
+      "degradation_actionless": 10,
+      "degradation_sites": 10,
+      "fan_in": 0,
+      "fan_out": 2,
+      "files": 3,
+      "lines": 1506,
+      "tested": false,
+      "verdicts": [
+        "LEAF",
+        "UNTESTED"
+      ]
+    },
+    "tools": {
+      "degradation_actionless": 0,
+      "degradation_sites": 1,
+      "fan_in": 0,
+      "fan_out": 4,
+      "files": 9,
+      "lines": 860,
+      "tested": true,
+      "verdicts": [
+        "LEAF"
+      ]
+    },
+    "transparency": {
+      "degradation_actionless": 1,
+      "degradation_sites": 1,
+      "fan_in": 1,
+      "fan_out": 1,
+      "files": 2,
+      "lines": 315,
+      "tested": true,
+      "verdicts": []
+    },
+    "twins": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 1,
+      "fan_out": 0,
+      "files": 1,
+      "lines": 96,
+      "tested": true,
+      "verdicts": []
+    },
+    "unity": {
+      "degradation_actionless": 13,
+      "degradation_sites": 14,
+      "fan_in": 5,
+      "fan_out": 7,
+      "files": 11,
+      "lines": 2733,
+      "tested": true,
+      "verdicts": []
+    },
+    "unknowns": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 2,
+      "fan_out": 3,
+      "files": 4,
+      "lines": 321,
+      "tested": true,
+      "verdicts": []
+    },
+    "utils": {
+      "degradation_actionless": 64,
+      "degradation_sites": 69,
+      "fan_in": 60,
+      "fan_out": 18,
+      "files": 44,
+      "lines": 5989,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    },
+    "values": {
+      "degradation_actionless": 8,
+      "degradation_sites": 8,
+      "fan_in": 5,
+      "fan_out": 5,
+      "files": 11,
+      "lines": 1109,
+      "tested": true,
+      "verdicts": []
+    },
+    "verification": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 3,
+      "fan_out": 2,
+      "files": 4,
+      "lines": 346,
+      "tested": true,
+      "verdicts": []
+    },
+    "voice": {
+      "degradation_actionless": 35,
+      "degradation_sites": 38,
+      "fan_in": 5,
+      "fan_out": 11,
+      "files": 9,
+      "lines": 3823,
+      "tested": true,
+      "verdicts": []
+    },
+    "welfare": {
+      "degradation_actionless": 0,
+      "degradation_sites": 0,
+      "fan_in": 1,
+      "fan_out": 0,
+      "files": 7,
+      "lines": 221,
+      "tested": true,
+      "verdicts": []
+    },
+    "workspace": {
+      "degradation_actionless": 4,
+      "degradation_sites": 4,
+      "fan_in": 3,
+      "fan_out": 3,
+      "files": 9,
+      "lines": 1233,
+      "tested": true,
+      "verdicts": []
+    },
+    "world": {
+      "degradation_actionless": 0,
+      "degradation_sites": 1,
+      "fan_in": 7,
+      "fan_out": 3,
+      "files": 24,
+      "lines": 1459,
+      "tested": true,
+      "verdicts": []
+    },
+    "world_model": {
+      "degradation_actionless": 34,
+      "degradation_sites": 47,
+      "fan_in": 9,
+      "fan_out": 12,
+      "files": 11,
+      "lines": 3267,
+      "tested": true,
+      "verdicts": [
+        "HUB"
+      ]
+    }
+  }
+}
