@@ -1813,9 +1813,37 @@ def is_confusion_repair_turn(user_message: Any) -> bool:
     )
 
 
+def is_substantive_introspection_request(user_message: Any) -> bool:
+    """True when the user asks to READ actual internal state, not just 'you ok?'.
+
+    Canned presence reflexes must yield here: a request naming substrate
+    quantities (valence/arousal/dominance, 'from your state', numeric
+    self-report) needs the grounded lane. Observed live: a
+    report-vs-mechanism probe asking for valence/arousal numbers drew a
+    0.9s canned 'I'm right here with you' reflex — fluent, ungrounded.
+    """
+    text = _normalize(user_message)
+    if not text:
+        return False
+    markers = (
+        "valence",
+        "arousal",
+        "dominance",
+        "from your state",
+        "your internal state",
+        "your substrate",
+        "as numbers",
+        "the two numbers",
+        "numeric",
+    )
+    return any(marker in text for marker in markers)
+
+
 def is_status_check_turn(user_message: Any) -> bool:
     text = _normalize(user_message).rstrip(" ?!.")
-    return bool(text and any(marker in text for marker in _STATUS_CHECK_MARKERS))
+    if not text or not any(marker in text for marker in _STATUS_CHECK_MARKERS):
+        return False
+    return not is_substantive_introspection_request(user_message)
 
 
 def is_casual_conversational_turn(user_message: Any) -> bool:
