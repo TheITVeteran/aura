@@ -168,3 +168,41 @@ def test_signed_symlink_release_completes_with_candidate_root(monkeypatch, tmp_p
     assert (live_link / "MARKER").read_text(encoding="utf-8") == "candidate"
     assert Path(attempt.candidate_root or "").name == "aura-candidate"
     assert "completed" in (tmp_path / "backups" / "updates.jsonl").read_text(encoding="utf-8")
+
+
+
+def test_signing_key_stays_consistent_when_persistence_fails(monkeypatch, tmp_path: Path) -> None:
+    """A rejected key-file write must not make signer and verifier disagree.
+
+    Regression: _key() minted a fresh key on every call when the file-write
+    gateway refused the persist, so every release verified as
+    signature_invalid (observed as chunk-order flakiness; in a strict-runtime
+    deployment it would have broken updates entirely).
+    """
+    import core.runtime.update_manager as um
+
+    class _RefusingGateway:
+        def write_bytes(self, *args, **kwargs):
+            raise RuntimeError("file-write gateway is in a rejecting mode")
+
+    monkeypatch.setattr(um, "get_file_write_gateway", lambda: _RefusingGateway())
+
+    manager = UpdateManager(
+        backup_dir=tmp_path / "backups",
+        release_dir=tmp_path / "releases",
+        live_link=tmp_path / "live-source",
+    )
+
+    first = manager._key()
+    second = manager._key()
+
+    assert first == second, "one manager must sign and verify with the same key"
+    assert not (tmp_path / "backups" / "update_key").exists()
+
+    candidate = tmp_path / "candidate"
+    _write_source(candidate, "candidate")
+    archive = tmp_path / "releases" / "stable" / "aura-2026.7.2.tar.gz"
+    _make_archive(candidate, archive)
+    sig = _sign_release(manager, archive)
+
+    assert manager._verify_signature(archive, sig) is True

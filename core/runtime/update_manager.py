@@ -147,21 +147,45 @@ class UpdateManager:
         self.transport = transport or LocalFileTransport(self.release_dir)
         self.require_signatures = bool(require_signatures)
         self._key_path = self.backup_dir / "update_key"
+        self._key_cache: bytes | None = None
 
     def _key(self) -> bytes:
+        # Cache in memory so one manager signs and verifies with the SAME key
+        # even when key-file persistence fails (e.g. the file-write gateway is
+        # in a rejecting/deferred mode). Without the cache, a failed persist
+        # made every call mint a fresh key — signer and verifier permanently
+        # disagreed, and every release verified as signature_invalid.
+        if self._key_cache is not None:
+            return self._key_cache
         if self._key_path.exists():
-            return self._key_path.read_bytes().strip()
+            self._key_cache = self._key_path.read_bytes().strip()
+            return self._key_cache
         import secrets
         raw = secrets.token_bytes(32)
-        get_file_write_gateway().write_bytes(
-            self._key_path,
-            raw,
-            source="runtime.update_manager.key",
-        )
         try:
+            get_file_write_gateway().write_bytes(
+                self._key_path,
+                raw,
+                source="runtime.update_manager.key",
+            )
             os.chmod(self._key_path, 0o600)
-        except (RuntimeError, AttributeError, TypeError, ValueError):
-            pass  # no-op: intentional
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "update_manager",
+                exc,
+                action=(
+                    "continued with an in-memory update signing key after key-file "
+                    "persistence failed; signatures will not survive a restart"
+                ),
+                severity="degraded",
+            )
+        if not self._key_path.exists():
+            logging.getLogger("Aura.UpdateManager").warning(
+                "Update signing key was not persisted to %s; using in-memory key "
+                "for this process lifetime.",
+                self._key_path,
+            )
+        self._key_cache = raw
         return raw
 
     def _verify_signature(self, archive: Path, signature: Path) -> bool:
