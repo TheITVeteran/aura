@@ -62,6 +62,13 @@ def _module_imports(path: Path) -> set[str]:
                     parts = alias.name.split(".")
                     if len(parts) >= 2:
                         found.add(parts[1])
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            # Dynamic imports (async_safe_import, importlib) reference
+            # modules as strings; without this, optionally-loaded
+            # subsystems look dead.
+            value = node.value
+            if value.startswith("core.") and "." in value[5:]:
+                found.add(value.split(".")[1])
     return found
 
 
@@ -120,9 +127,18 @@ def build_census() -> dict:
         for dep in _module_imports(path):
             tested.add(dep)
 
+    # Non-core dependents (interface layer, entrypoints) keep a subsystem
+    # alive even when no core module imports it.
+    external_dependents: dict[str, set[str]] = defaultdict(set)
+    for base, label in ((ROOT / "interface", "interface"), (ROOT / "aura_main.py", "aura_main")):
+        paths = [base] if base.is_file() else list(_iter_py(base))
+        for path in paths:
+            for dep in _module_imports(path):
+                external_dependents[dep].add(label)
+
     census = {}
     for sub, entry in sorted(stats.items()):
-        fan_in = len(deps_in.get(sub, set()))
+        fan_in = len(deps_in.get(sub, set())) + len(external_dependents.get(sub, set()))
         fan_out = len(entry["deps_out"])
         verdicts = []
         if fan_in == 0 and fan_out == 0:

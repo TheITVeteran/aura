@@ -1,13 +1,13 @@
 {
-  "generated_at_unix": 1783029498.36514,
+  "generated_at_unix": 1783029648.791122,
   "schema": "aura.subsystem_census.v1",
-  "subsystem_count": 146,
+  "subsystem_count": 144,
   "subsystems": {
     "(core root)": {
       "degradation_actionless": 332,
       "degradation_sites": 388,
       "fan_in": 0,
-      "fan_out": 101,
+      "fan_out": 110,
       "files": 177,
       "lines": 56913,
       "tested": false,
@@ -41,7 +41,7 @@
     "adaptation": {
       "degradation_actionless": 68,
       "degradation_sites": 72,
-      "fan_in": 14,
+      "fan_in": 15,
       "fan_out": 22,
       "files": 28,
       "lines": 12920,
@@ -53,7 +53,7 @@
     "adapters": {
       "degradation_actionless": 0,
       "degradation_sites": 0,
-      "fan_in": 1,
+      "fan_in": 2,
       "fan_out": 1,
       "files": 4,
       "lines": 446,
@@ -73,7 +73,7 @@
     "affect": {
       "degradation_actionless": 24,
       "degradation_sites": 24,
-      "fan_in": 16,
+      "fan_in": 17,
       "fan_out": 14,
       "files": 10,
       "lines": 3862,
@@ -85,7 +85,7 @@
     "agency": {
       "degradation_actionless": 104,
       "degradation_sites": 129,
-      "fan_in": 20,
+      "fan_in": 25,
       "fan_out": 34,
       "files": 48,
       "lines": 18011,
@@ -107,7 +107,7 @@
     "architect": {
       "degradation_actionless": 0,
       "degradation_sites": 0,
-      "fan_in": 2,
+      "fan_in": 3,
       "fan_out": 10,
       "files": 25,
       "lines": 5718,
@@ -149,7 +149,7 @@
     "autonomy": {
       "degradation_actionless": 43,
       "degradation_sites": 47,
-      "fan_in": 8,
+      "fan_in": 11,
       "fan_out": 18,
       "files": 24,
       "lines": 8458,
@@ -181,7 +181,7 @@
     "brain": {
       "degradation_actionless": 192,
       "degradation_sites": 297,
-      "fan_in": 48,
+      "fan_in": 50,
       "fan_out": 45,
       "files": 152,
       "lines": 57637,
@@ -193,7 +193,7 @@
     "bus": {
       "degradation_actionless": 32,
       "degradation_sites": 44,
-      "fan_in": 4,
+      "fan_in": 6,
       "fan_out": 6,
       "files": 5,
       "lines": 2316,
@@ -203,7 +203,7 @@
     "capabilities": {
       "degradation_actionless": 55,
       "degradation_sites": 62,
-      "fan_in": 5,
+      "fan_in": 6,
       "fan_out": 13,
       "files": 14,
       "lines": 6438,
@@ -213,7 +213,7 @@
     "cognition": {
       "degradation_actionless": 39,
       "degradation_sites": 43,
-      "fan_in": 8,
+      "fan_in": 9,
       "fan_out": 11,
       "files": 16,
       "lines": 5449,
@@ -225,7 +225,7 @@
     "cognitive": {
       "degradation_actionless": 8,
       "degradation_sites": 10,
-      "fan_in": 4,
+      "fan_in": 5,
       "fan_out": 9,
       "files": 12,
       "lines": 9200,
@@ -257,7 +257,7 @@
     "consciousness": {
       "degradation_actionless": 340,
       "degradation_sites": 383,
-      "fan_in": 31,
+      "fan_in": 34,
       "fan_out": 43,
       "files": 140,
       "lines": 65660,
@@ -281,7 +281,7 @@
     "constitution": {
       "degradation_actionless": 0,
       "degradation_sites": 0,
-      "fan_in": 14,
+      "fan_in": 15,
       "fan_out": 0,
       "files": 1,
       "lines": 24,
@@ -303,7 +303,7 @@
     "continuity": {
       "degradation_actionless": 3,
       "degradation_sites": 3,
-      "fan_in": 9,
+      "fan_in": 10,
       "fan_out": 4,
       "files": 7,
       "lines": 231,
@@ -327,7 +327,7 @@
     "conversation": {
       "degradation_actionless": 4,
       "degradation_sites": 9,
-      "fan_in": 8,
+      "fan_in": 9,
       "fan_out": 12,
       "files": 10,
       "lines": 7479,
@@ -430,22 +430,10 @@
       "tested": true,
       "verdicts": []
     },
-    "distributed": {
-      "degradation_actionless": 0,
-      "degradation_sites": 0,
-      "fan_in": 0,
-      "fan_out": 0,
-      "files": 3,
-      "lines": 137,
-      "tested": true,
-      "verdicts": [
-        "ISOLATED"
-      ]
-    },
     "embodiment": {
       "degradation_actionless": 25,
       "degradation_sites": 30,
-      "fan_in": 4,
+      "fan_in": 5,
       "fan_out": 12,
       "files": 15,
       "lines": 2644,
@@ -485,7 +473,7 @@
     "ethics": {
       "degradation_actionless": 1,
       "degradation_sites": 1,
-      "fan_in": 5,
+      "fan_in": 7,
       "fan_out": 6,
       "files": 2,
       "lines": 578,
@@ -516,7 +504,7 @@
       "degradation_actionless": 2,
       "degradation_sites": 5,
       "fan_in": 2,
-      "fan_out": 8,
+      "fan_out": 9,
       "files": 6,
       "lines": 1890,
       "tested": true,
@@ -525,7 +513,7 @@
     "executive": {
       "degradation_actionless": 23,
       "degradation_sites": 24,
-      "fan_in": 11,
+      "fan_in": 12,
       "fan_out": 17,
       "files": 11,
       "lines": 3037,
@@ -559,7 +547,7 @@
     "goals": {
       "degradation_actionless": 5,
       "degradation_sites": 7,
-      "fan_in": 4,
+      "fan_in": 5,
       "fan_out": 11,
       "files": 9,
       "lines": 3383,
@@ -569,7 +557,7 @@
     "governance": {
       "degradation_actionless": 15,
       "degradation_sites": 21,
-      "fan_in": 18,
+      "fan_in": 20,
       "fan_out": 14,
       "files": 10,
       "lines": 3470,
@@ -601,7 +589,7 @@
     "health": {
       "degradation_actionless": 1,
       "degradation_sites": 3,
-      "fan_in": 22,
+      "fan_in": 23,
       "fan_out": 8,
       "files": 4,
       "lines": 955,
@@ -613,7 +601,7 @@
     "identity": {
       "degradation_actionless": 11,
       "degradation_sites": 11,
-      "fan_in": 15,
+      "fan_in": 18,
       "fan_out": 9,
       "files": 17,
       "lines": 2337,
@@ -661,8 +649,8 @@
     "kernel": {
       "degradation_actionless": 3,
       "degradation_sites": 21,
-      "fan_in": 6,
-      "fan_out": 25,
+      "fan_in": 7,
+      "fan_out": 26,
       "files": 11,
       "lines": 6354,
       "tested": true,
@@ -693,13 +681,12 @@
     "latent": {
       "degradation_actionless": 0,
       "degradation_sites": 0,
-      "fan_in": 0,
+      "fan_in": 1,
       "fan_out": 0,
       "files": 1,
       "lines": 56,
       "tested": false,
       "verdicts": [
-        "ISOLATED",
         "UNTESTED"
       ]
     },
@@ -716,7 +703,7 @@
     "learning": {
       "degradation_actionless": 19,
       "degradation_sites": 24,
-      "fan_in": 8,
+      "fan_in": 9,
       "fan_out": 16,
       "files": 31,
       "lines": 8672,
@@ -728,7 +715,7 @@
     "llm": {
       "degradation_actionless": 0,
       "degradation_sites": 0,
-      "fan_in": 2,
+      "fan_in": 3,
       "fan_out": 1,
       "files": 2,
       "lines": 17,
@@ -760,7 +747,7 @@
     "media": {
       "degradation_actionless": 0,
       "degradation_sites": 0,
-      "fan_in": 3,
+      "fan_in": 4,
       "fan_out": 0,
       "files": 2,
       "lines": 334,
@@ -770,7 +757,7 @@
     "memory": {
       "degradation_actionless": 200,
       "degradation_sites": 220,
-      "fan_in": 35,
+      "fan_in": 38,
       "fan_out": 21,
       "files": 94,
       "lines": 22152,
@@ -825,7 +812,7 @@
     "morphogenesis": {
       "degradation_actionless": 10,
       "degradation_sites": 14,
-      "fan_in": 3,
+      "fan_in": 4,
       "fan_out": 7,
       "files": 12,
       "lines": 2849,
@@ -845,14 +832,12 @@
     "multimodal": {
       "degradation_actionless": 1,
       "degradation_sites": 1,
-      "fan_in": 0,
+      "fan_in": 1,
       "fan_out": 1,
       "files": 2,
       "lines": 183,
       "tested": true,
-      "verdicts": [
-        "LEAF"
-      ]
+      "verdicts": []
     },
     "networking": {
       "degradation_actionless": 0,
@@ -880,7 +865,7 @@
     "observability": {
       "degradation_actionless": 0,
       "degradation_sites": 0,
-      "fan_in": 15,
+      "fan_in": 16,
       "fan_out": 4,
       "files": 3,
       "lines": 572,
@@ -893,20 +878,20 @@
       "degradation_actionless": 0,
       "degradation_sites": 0,
       "fan_in": 0,
-      "fan_out": 0,
+      "fan_out": 11,
       "files": 2,
       "lines": 167,
       "tested": false,
       "verdicts": [
-        "ISOLATED",
+        "LEAF",
         "UNTESTED"
       ]
     },
     "ops": {
       "degradation_actionless": 3,
       "degradation_sites": 10,
-      "fan_in": 5,
-      "fan_out": 15,
+      "fan_in": 7,
+      "fan_out": 26,
       "files": 11,
       "lines": 2491,
       "tested": true,
@@ -915,7 +900,7 @@
     "orchestrator": {
       "degradation_actionless": 2,
       "degradation_sites": 34,
-      "fan_in": 9,
+      "fan_in": 11,
       "fan_out": 132,
       "files": 43,
       "lines": 19628,
@@ -927,7 +912,7 @@
     "organism": {
       "degradation_actionless": 20,
       "degradation_sites": 23,
-      "fan_in": 9,
+      "fan_in": 12,
       "fan_out": 17,
       "files": 8,
       "lines": 1867,
@@ -939,8 +924,8 @@
     "perception": {
       "degradation_actionless": 29,
       "degradation_sites": 33,
-      "fan_in": 11,
-      "fan_out": 13,
+      "fan_in": 12,
+      "fan_out": 14,
       "files": 23,
       "lines": 6706,
       "tested": true,
@@ -951,7 +936,7 @@
     "persistence": {
       "degradation_actionless": 0,
       "degradation_sites": 1,
-      "fan_in": 2,
+      "fan_in": 3,
       "fan_out": 3,
       "files": 2,
       "lines": 615,
@@ -961,12 +946,14 @@
     "phases": {
       "degradation_actionless": 10,
       "degradation_sites": 32,
-      "fan_in": 7,
+      "fan_in": 9,
       "fan_out": 35,
       "files": 29,
       "lines": 19505,
       "tested": true,
-      "verdicts": []
+      "verdicts": [
+        "HUB"
+      ]
     },
     "phenomenal_substrate": {
       "degradation_actionless": 1,
@@ -1013,20 +1000,19 @@
     "play": {
       "degradation_actionless": 3,
       "degradation_sites": 3,
-      "fan_in": 0,
+      "fan_in": 1,
       "fan_out": 4,
       "files": 1,
       "lines": 227,
       "tested": false,
       "verdicts": [
-        "LEAF",
         "UNTESTED"
       ]
     },
     "pneuma": {
       "degradation_actionless": 8,
       "degradation_sites": 8,
-      "fan_in": 3,
+      "fan_in": 4,
       "fan_out": 4,
       "files": 7,
       "lines": 1251,
@@ -1036,7 +1022,7 @@
     "predictive": {
       "degradation_actionless": 2,
       "degradation_sites": 2,
-      "fan_in": 2,
+      "fan_in": 3,
       "fan_out": 5,
       "files": 2,
       "lines": 184,
@@ -1058,24 +1044,24 @@
     "providers": {
       "degradation_actionless": 10,
       "degradation_sites": 10,
-      "fan_in": 0,
+      "fan_in": 2,
       "fan_out": 54,
       "files": 6,
       "lines": 1294,
       "tested": true,
-      "verdicts": [
-        "LEAF"
-      ]
+      "verdicts": []
     },
     "reasoning": {
       "degradation_actionless": 4,
       "degradation_sites": 4,
-      "fan_in": 7,
+      "fan_in": 9,
       "fan_out": 3,
       "files": 11,
       "lines": 4968,
       "tested": true,
-      "verdicts": []
+      "verdicts": [
+        "HUB"
+      ]
     },
     "reproducibility": {
       "degradation_actionless": 0,
@@ -1102,7 +1088,7 @@
     "resilience": {
       "degradation_actionless": 102,
       "degradation_sites": 117,
-      "fan_in": 27,
+      "fan_in": 30,
       "fan_out": 17,
       "files": 54,
       "lines": 12636,
@@ -1114,7 +1100,7 @@
     "resource": {
       "degradation_actionless": 0,
       "degradation_sites": 1,
-      "fan_in": 4,
+      "fan_in": 5,
       "fan_out": 3,
       "files": 2,
       "lines": 428,
@@ -1124,7 +1110,7 @@
     "runtime": {
       "degradation_actionless": 64,
       "degradation_sites": 128,
-      "fan_in": 127,
+      "fan_in": 129,
       "fan_out": 46,
       "files": 114,
       "lines": 27712,
@@ -1180,7 +1166,7 @@
     "security": {
       "degradation_actionless": 70,
       "degradation_sites": 70,
-      "fan_in": 13,
+      "fan_in": 15,
       "fan_out": 15,
       "files": 34,
       "lines": 7999,
@@ -1202,7 +1188,7 @@
     "self_improvement": {
       "degradation_actionless": 0,
       "degradation_sites": 0,
-      "fan_in": 2,
+      "fan_in": 3,
       "fan_out": 4,
       "files": 12,
       "lines": 2376,
@@ -1212,7 +1198,7 @@
     "self_modification": {
       "degradation_actionless": 59,
       "degradation_sites": 71,
-      "fan_in": 14,
+      "fan_in": 15,
       "fan_out": 13,
       "files": 32,
       "lines": 12013,
@@ -1224,7 +1210,7 @@
     "senses": {
       "degradation_actionless": 75,
       "degradation_sites": 80,
-      "fan_in": 14,
+      "fan_in": 15,
       "fan_out": 21,
       "files": 25,
       "lines": 5781,
@@ -1258,13 +1244,12 @@
     "session": {
       "degradation_actionless": 3,
       "degradation_sites": 3,
-      "fan_in": 0,
+      "fan_in": 1,
       "fan_out": 1,
       "files": 2,
       "lines": 229,
       "tested": false,
       "verdicts": [
-        "LEAF",
         "UNTESTED"
       ]
     },
@@ -1301,7 +1286,7 @@
     "skills": {
       "degradation_actionless": 117,
       "degradation_sites": 169,
-      "fan_in": 8,
+      "fan_in": 11,
       "fan_out": 32,
       "files": 82,
       "lines": 23473,
@@ -1323,12 +1308,14 @@
     "social": {
       "degradation_actionless": 23,
       "degradation_sites": 23,
-      "fan_in": 7,
+      "fan_in": 10,
       "fan_out": 9,
       "files": 19,
       "lines": 5126,
       "tested": true,
-      "verdicts": []
+      "verdicts": [
+        "HUB"
+      ]
     },
     "soma": {
       "degradation_actionless": 1,
@@ -1343,8 +1330,8 @@
     "somatic": {
       "degradation_actionless": 6,
       "degradation_sites": 7,
-      "fan_in": 3,
-      "fan_out": 8,
+      "fan_in": 4,
+      "fan_out": 9,
       "files": 5,
       "lines": 2371,
       "tested": true,
@@ -1363,7 +1350,7 @@
     "sovereignty": {
       "degradation_actionless": 13,
       "degradation_sites": 16,
-      "fan_in": 1,
+      "fan_in": 2,
       "fan_out": 10,
       "files": 3,
       "lines": 882,
@@ -1395,7 +1382,7 @@
     "supervisor": {
       "degradation_actionless": 1,
       "degradation_sites": 2,
-      "fan_in": 5,
+      "fan_in": 6,
       "fan_out": 2,
       "files": 3,
       "lines": 610,
@@ -1435,19 +1422,6 @@
       "lines": 448,
       "tested": true,
       "verdicts": []
-    },
-    "telemetry": {
-      "degradation_actionless": 0,
-      "degradation_sites": 0,
-      "fan_in": 0,
-      "fan_out": 0,
-      "files": 2,
-      "lines": 189,
-      "tested": false,
-      "verdicts": [
-        "ISOLATED",
-        "UNTESTED"
-      ]
     },
     "temporal": {
       "degradation_actionless": 10,
@@ -1497,7 +1471,7 @@
     "unity": {
       "degradation_actionless": 13,
       "degradation_sites": 14,
-      "fan_in": 5,
+      "fan_in": 6,
       "fan_out": 7,
       "files": 11,
       "lines": 2733,
@@ -1517,7 +1491,7 @@
     "utils": {
       "degradation_actionless": 64,
       "degradation_sites": 69,
-      "fan_in": 60,
+      "fan_in": 62,
       "fan_out": 18,
       "files": 44,
       "lines": 5989,
@@ -1529,7 +1503,7 @@
     "values": {
       "degradation_actionless": 8,
       "degradation_sites": 8,
-      "fan_in": 5,
+      "fan_in": 6,
       "fan_out": 5,
       "files": 11,
       "lines": 1109,
@@ -1549,7 +1523,7 @@
     "voice": {
       "degradation_actionless": 35,
       "degradation_sites": 38,
-      "fan_in": 5,
+      "fan_in": 7,
       "fan_out": 11,
       "files": 9,
       "lines": 3823,
@@ -1569,7 +1543,7 @@
     "workspace": {
       "degradation_actionless": 4,
       "degradation_sites": 4,
-      "fan_in": 3,
+      "fan_in": 4,
       "fan_out": 3,
       "files": 9,
       "lines": 1233,
