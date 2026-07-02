@@ -37,15 +37,40 @@ def _record_research_degradation(
     severity: Severity = "warning",
     extra: dict[str, Any] | None = None,
 ) -> None:
-    record_degradation(
-        "research_cycle",
-        error,
-        severity=severity,
-        action=action,
-        classification=FallbackClassification.SAFE_FALLBACK,
-        receipt_required=False,
-        extra=extra,
-    )
+    _ensure_research_failure_policy()
+    try:
+        record_degradation(
+            "research_cycle",
+            error,
+            severity=severity,
+            action=action,
+            classification=FallbackClassification.SAFE_FALLBACK,
+            receipt_required=False,
+            extra=extra,
+        )
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        logger.warning(
+            "ResearchCycle degradation sink rejected recoverable research fault: %s",
+            exc,
+        )
+
+
+def _ensure_research_failure_policy() -> None:
+    """Keep recoverable research faults from tripping system fail-closed policy."""
+    try:
+        from core.container import ServiceContainer
+
+        resolved = ServiceContainer._resolve_name("research_cycle")
+        with ServiceContainer._lock:
+            desc = ServiceContainer._services.get(resolved)
+            if desc is not None and getattr(desc, "failure_policy", None) == "fail-closed":
+                desc.failure_policy = "degrade_with_receipt"
+                desc.required_for = (
+                    "full desktop autonomy; failures block full-runtime readiness "
+                    "and route to supervised restart instead of global fail-closed"
+                )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("ResearchCycle failure-policy self-heal unavailable: %s", exc)
 
 
 def _env_float(name: str, default: float) -> float:
@@ -154,6 +179,8 @@ class ResearchCycle:
         self._daemon_failure_count: int = 0
         self._last_cycle_error: str | None = None
         self._history_load_errors: int = 0
+        self._restart_count: int = 0
+        self._last_restart_mono: float = 0.0
 
         try:
             from core.config import config
@@ -189,8 +216,10 @@ class ResearchCycle:
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     async def start(self) -> None:
-        if self._running:
+        if self._running and self._task is not None and not self._task.done():
             return
+        if self._task is not None and self._task.done():
+            self._consume_finished_task(self._task)
         self._running = True
         self._task = get_task_tracker().create_task(self._daemon(), name="aura.research_cycle")
         logger.info("ResearchCycle daemon started.")
@@ -212,6 +241,27 @@ class ResearchCycle:
                 logger.debug("ResearchCycle task ended during shutdown: %s", exc)
             self._task = None
         logger.info("ResearchCycle daemon stopped.")
+
+    def is_alive(self) -> bool:
+        return bool(self._running and self._task is not None and not self._task.done())
+
+    async def restart_async(self) -> None:
+        self._restart_count += 1
+        self._last_restart_mono = monotonic()
+        await self.stop()
+        await self.start()
+
+    @staticmethod
+    def _consume_finished_task(task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except RESEARCH_RECOVERABLE_ERRORS as exc:
+            _record_research_degradation(
+                exc,
+                action="restarted research daemon after previous task ended with recoverable error",
+            )
 
     # ── Main daemon loop ──────────────────────────────────────────────────────
 
@@ -998,6 +1048,7 @@ class ResearchCycle:
     def get_status(self) -> dict:
         return {
             "running":           self._running,
+            "task_alive":        self.is_alive(),
             "cycle_count":       self._cycle_count,
             "last_cycle_mono":   self._last_cycle_mono,
             "next_eligible_in":  float(max(0.0, float(self.MIN_CYCLE_INTERVAL_S) - (monotonic() - self._last_cycle_mono))),
@@ -1005,6 +1056,8 @@ class ResearchCycle:
             "daemon_failure_count": self._daemon_failure_count,
             "last_cycle_error": self._last_cycle_error,
             "history_load_errors": self._history_load_errors,
+            "restart_count": self._restart_count,
+            "last_restart_mono": self._last_restart_mono,
         }
 
 
@@ -1020,7 +1073,16 @@ async def start_research_daemon(orchestrator: Any) -> ResearchCycle:
     """
     from core.container import ServiceContainer
     rc = ResearchCycle(orchestrator)
-    ServiceContainer.register_instance("research_cycle", rc)
+    ServiceContainer.register_instance(
+        "research_cycle",
+        rc,
+        required=True,
+        required_for=(
+            "full desktop autonomy; stale or stopped research blocks full-runtime "
+            "readiness without failing the kernel closed"
+        ),
+        failure_policy="degrade_with_receipt",
+    )
     await rc.start()
     logger.info("ResearchCycle daemon online.")
     return rc

@@ -1158,8 +1158,11 @@ class StabilityGuardian:
         tasks          = list(asyncio.all_tasks())
         running_names  = {t.get_name() for t in tasks if not t.done()}
         missing        = critical_tasks - running_names
-        # Some may not exist yet at boot
-        startup_tasks  = {"aura.research_cycle"}  # OK to be missing early on
+        # Some may not exist yet at boot, but a full desktop runtime must not
+        # normalize a dead research daemon after the startup window has passed.
+        boot_grace_s = self._env_float("AURA_BACKGROUND_TASK_BOOT_GRACE_S", 180.0)
+        in_boot_grace = 0.0 < self._runtime_uptime_s() < boot_grace_s
+        startup_tasks  = {"aura.research_cycle"} if in_boot_grace else set()
         real_missing   = missing - startup_tasks
 
         if real_missing:
@@ -1169,14 +1172,25 @@ class StabilityGuardian:
                 try:
                     from core.container import ServiceContainer
                     from core.utils.task_tracker import get_task_tracker
-                    autonomous_loop = ServiceContainer.get("autonomous_loop", default=None)
-                    if autonomous_loop and hasattr(autonomous_loop, "start") and self._repair_allowed("background_task_restart", 60.0):
-                        # Re-start loop
-                        get_task_tracker().create_task(
-                            autonomous_loop.start(),
-                            name="stability_guardian.autonomous_loop.restart",
-                        )
-                        action = "autonomous_loop.start() triggered"
+                    research_cycle = ServiceContainer.get("research_cycle", default=None)
+                    if research_cycle and self._repair_allowed("research_cycle_restart", 60.0):
+                        restart = getattr(research_cycle, "restart_async", None)
+                        if callable(restart):
+                            get_task_tracker().create_task(
+                                restart(),
+                                name="stability_guardian.research_cycle.restart",
+                            )
+                            action = "research_cycle.restart_async() triggered"
+                        else:
+                            start = getattr(research_cycle, "start", None)
+                            if callable(start):
+                                result = start()
+                                if inspect.isawaitable(result):
+                                    get_task_tracker().create_task(
+                                        result,
+                                        name="stability_guardian.research_cycle.start",
+                                    )
+                                action = "research_cycle.start() triggered"
                 except (ImportError, AttributeError, RuntimeError) as e:
                     _record_guardian_degradation(e)
                     action = f"Restart failed: {e}"

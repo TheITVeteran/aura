@@ -10,7 +10,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 84%** based on current live
+- Expanded daily-runtime/product closure: **about 85%** based on current live
   evidence, not documentation. This number is deliberately governed by the live
   desktop path, not by historical proof-profile success. Checkpoint 5 addresses
   two live defects, and the follow-up desktop-mode live proof verified bounded
@@ -25,7 +25,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   startup, adds short-lived negative native-bridge caches, and verifies the
   installed signed Aura.app bridge currently reports Screen Recording,
   Accessibility, Automation, desktop control, screen text, and menu-clock access
-  ready through `com.aura.desktop`. Source-level closure is now **about 83%**.
+  ready through `com.aura.desktop`. Checkpoint 10C source-validates the
+  research-cycle failure-lockdown fix so a recoverable autonomous research
+  timeout no longer poisons unified runtime pressure or disables background
+  cognition.
 - Estimated checkpoints in this expanded program: **11 total**. Checkpoint 1 is
   committed and pushed; Checkpoint 2 is source-committed but live TCC remains
   open; Checkpoint 3 is committed and pushed; Checkpoint 4 is committed and
@@ -45,8 +48,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   background deferrals are logged as state rather than feed floods, and unchanged
   voice threshold pulses no longer dominate the neural stream. The real launched
   Aura.app lane still shows a macOS TCC Accessibility denial for the exact
-  launched identity, so Checkpoint 10 remains open until the visible app proves
-  desktop control, screen text, and general agency are live.
+  launched identity. Checkpoint 10C is source-validated for research-cycle
+  fail-open-with-repair semantics; Checkpoint 10 remains live-open until the
+  visible app proves desktop control, screen text, general agency, and no
+  `failure_lockdown_1.00` background-autonomy suppression after restart.
 
 ### Scope Clarification For The Current Pass
 
@@ -3900,3 +3905,58 @@ Current reopened closeout estimate:
 - Remaining work: launched Aura.app TCC/desktop-control proof, audio hearing
   proof, background autonomy proof, full visible desktop agency proof, and final
   clean proof replay after those live-path defects are closed.
+
+## Checkpoint 2026-07-02-02: Research Cycle Failure-Lockdown Root Fix
+
+Status: source-validated; live Aura.app restart/proof still required.
+
+Scope:
+
+- The launched runtime showed `failure_lockdown_1.00`, background cognition
+  disabled, and `research_cycle` repeatedly logged as a critical fail-closed
+  service even though the originating failure was a recoverable background
+  research timeout.
+- That made health worse than the required probes, suppressed autonomous
+  background work, and let one background organ poison the whole runtime.
+
+Root fix:
+
+- `ResearchCycle` now registers with the service container as
+  `degrade_with_receipt`, while still being required for full desktop runtime
+  readiness. A dead/stale research organ remains visible as a full-runtime
+  blocker, but it no longer trips kernel fail-closed policy.
+- Recoverable research degradation recording self-heals a stale fail-closed
+  descriptor before recording the event.
+- `ResearchCycle.start()` now recovers a completed/dead daemon task instead of
+  returning early because `_running` was still true.
+- `ResearchCycle` now exposes `is_alive()`, `restart_async()`,
+  `task_alive`, `restart_count`, and `last_restart_mono` for supervision and
+  UI/API truth.
+- `StabilityGuardian._check_background_tasks()` now treats
+  `aura.research_cycle` as startup-optional only during boot grace. After boot
+  grace, it restarts the actual `research_cycle` service instead of incorrectly
+  starting `autonomous_loop`.
+
+Evidence:
+
+- `python -m py_compile core/autonomy/research_cycle.py core/resilience/stability_guardian.py`
+  -> passed.
+- `python -m pytest tests/test_research_cycle_runtime_hardening.py tests/test_runtime_hygiene.py::test_stability_guardian_restarts_missing_research_cycle_after_boot_grace tests/test_runtime_hygiene.py::test_stability_guardian_allows_research_cycle_boot_grace tests/test_full_desktop_runtime_contract.py tests/test_runtime_health_truthfulness.py -q`
+  -> `39 passed`.
+
+Live boundary:
+
+- This checkpoint fixes the source/runtime contract that caused autonomous
+  research to lock down the runtime.
+- The live Aura process that exposed this failure was stopped after source
+  validation. The next step is to relaunch from this commit and verify
+  `/api/health`,
+  `/api/health/contract`, `/api/health/heartbeat`, neural stream, background
+  cognition, and desktop-access status from the visible launched lane.
+
+Estimate after this checkpoint:
+
+- Expanded daily-runtime/product closure: about 85%.
+- Remaining consolidated checkpoints: live app permission/control proof,
+  launched full-mind conversation/background-autonomy proof, visible general
+  desktop agency proof, and final clean proof replay.

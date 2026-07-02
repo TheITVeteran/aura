@@ -1539,3 +1539,53 @@ Honest boundary and estimate:
 - Remaining smaller sub-checkpoints: permission/TCC durability verification,
   shutdown verification after longer live use, CAA behavioral A/B
   generalization, and final clean-tree artifact normalization.
+
+## Checkpoint 2026-07-02-02: Research Cycle Failure-Lockdown Root Fix
+
+Status: source repair verified locally; live restart/proof still required.
+
+Why:
+
+- Live `/api/health` showed background cognition disabled by
+  `failure_lockdown_1.00`.
+- The root cause was not a missing required probe; it was a recoverable
+  `research_cycle` timeout being escalated through the ServiceContainer default
+  fail-closed policy, then repeatedly mirrored into the runtime degradation
+  stream.
+- The StabilityGuardian background-task repair path also watched
+  `aura.research_cycle` but restarted `autonomous_loop`, leaving the actual
+  research daemon unrepaired.
+
+What changed:
+
+- `research_cycle` is now registered as a required full-runtime organ with
+  `failure_policy="degrade_with_receipt"` instead of inheriting fail-closed.
+- Recoverable research degradation recording self-heals stale fail-closed
+  descriptors before recording the event.
+- `ResearchCycle.start()` now detects and replaces a completed/dead daemon task.
+- `ResearchCycle` exposes `is_alive()`, `restart_async()`, `task_alive`,
+  restart count, and last restart time for health surfaces and supervisors.
+- StabilityGuardian now treats research-cycle absence as boot-grace-only and
+  restarts the real `research_cycle` service after boot grace.
+
+Evidence:
+
+- `python -m py_compile core/autonomy/research_cycle.py core/resilience/stability_guardian.py`
+  passed.
+- `python -m pytest tests/test_research_cycle_runtime_hardening.py tests/test_runtime_hygiene.py::test_stability_guardian_restarts_missing_research_cycle_after_boot_grace tests/test_runtime_hygiene.py::test_stability_guardian_allows_research_cycle_boot_grace tests/test_full_desktop_runtime_contract.py tests/test_runtime_health_truthfulness.py -q`
+  passed with `39 passed`.
+
+Boundary:
+
+- This closes the source bug that let autonomous research failures globally
+  suppress background cognition.
+- It does not yet close the visible Aura.app live proof. The live process that
+  exposed this failure was stopped after source validation; a relaunch and live
+  `/api/health`/neural-stream proof from this commit is still required.
+
+Estimate:
+
+- Reopened live desktop reliability scope remains approximately 95% for the
+  source-closeout stream, but daily product/runtime closure remains about 85%
+  until live Aura.app proves stable permissions, full-mind chat, background
+  cognition, and general desktop agency after restart.

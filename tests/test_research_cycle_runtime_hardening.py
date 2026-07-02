@@ -1,8 +1,10 @@
+import asyncio
 import time
 from types import SimpleNamespace
 
 import pytest
 
+from core.runtime.errors import get_degradation_tracker
 from core.autonomy import research_cycle as research_module
 from core.autonomy.research_cycle import ResearchCycle, ResearchRecord
 
@@ -142,3 +144,69 @@ async def test_research_cycle_extract_findings_falls_back_when_llm_json_is_malfo
     assert recorded[0][1]["action"] == (
         "used sentence-splitting findings fallback after LLM extraction failed"
     )
+
+
+@pytest.mark.asyncio
+async def test_start_research_daemon_registers_recoverable_service_policy(
+    service_container,
+    monkeypatch,
+):
+    monkeypatch.setenv("AURA_RESEARCH_BOOT_GRACE_S", "300")
+
+    cycle = await research_module.start_research_daemon(SimpleNamespace())
+    try:
+        desc = service_container._services["research_cycle"]
+        assert desc.required is True
+        assert desc.failure_policy == "degrade_with_receipt"
+        assert "full desktop autonomy" in desc.required_for
+        assert cycle.is_alive() is True
+    finally:
+        await cycle.stop()
+
+
+@pytest.mark.asyncio
+async def test_research_cycle_start_recovers_dead_daemon_task(monkeypatch):
+    async def failed_daemon():
+        raise RuntimeError("research timeout")
+
+    old_task = asyncio.create_task(failed_daemon(), name="aura.research_cycle")
+    await asyncio.sleep(0)
+
+    release = asyncio.Event()
+
+    async def replacement_daemon():
+        await release.wait()
+
+    cycle = ResearchCycle.__new__(ResearchCycle)
+    cycle._running = True
+    cycle._task = old_task
+    cycle._daemon = replacement_daemon
+
+    await cycle.start()
+    try:
+        assert cycle._task is not old_task
+        assert cycle.is_alive() is True
+    finally:
+        release.set()
+        await cycle.stop()
+
+
+def test_research_degradation_self_heals_stale_fail_closed_descriptor(service_container):
+    get_degradation_tracker().reset()
+    service_container.register_instance(
+        "research_cycle",
+        object(),
+        required=True,
+        failure_policy="fail-closed",
+    )
+
+    research_module._record_research_degradation(
+        TimeoutError("temporary search timeout"),
+        action="deferred one background research cycle after a bounded timeout",
+    )
+
+    desc = service_container._services["research_cycle"]
+    records = get_degradation_tracker().recent(subsystem="research_cycle", limit=1)
+    assert desc.failure_policy == "degrade_with_receipt"
+    assert records
+    assert records[-1].severity == "warning"

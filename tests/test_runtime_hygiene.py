@@ -872,3 +872,37 @@ def test_stability_guardian_treats_stale_event_loop_lag_as_info():
     assert result.healthy is True
     assert result.severity in {"info", "warning"}
     assert "tick health ok" in result.message.lower()
+
+
+@pytest.mark.asyncio
+async def test_stability_guardian_restarts_missing_research_cycle_after_boot_grace(service_container):
+    restarted = asyncio.Event()
+
+    class ResearchCycleProbe:
+        async def restart_async(self):
+            restarted.set()
+
+    service_container.register_instance(
+        "research_cycle",
+        ResearchCycleProbe(),
+        required=True,
+        failure_policy="degrade_with_receipt",
+    )
+    guardian = StabilityGuardian(SimpleNamespace(start_time=time.time() - 500.0))
+
+    result = await guardian._check_background_tasks()
+    await asyncio.sleep(0)
+
+    assert result.healthy is False
+    assert "aura.research_cycle" in result.message
+    assert result.action_taken == "research_cycle.restart_async() triggered"
+    assert restarted.is_set() is True
+
+
+@pytest.mark.asyncio
+async def test_stability_guardian_allows_research_cycle_boot_grace():
+    guardian = StabilityGuardian(SimpleNamespace(start_time=time.time() - 20.0))
+
+    result = await guardian._check_background_tasks()
+
+    assert result.healthy is True
