@@ -235,6 +235,8 @@ def test_full_runtime_status_exposes_background_cognition():
     )
 
     assert "background_cognition" in system_route
+    assert "subjective_choice" in system_route
+    assert "ambient_life_director" in system_route
     assert "background_activity_reason(" in system_route
     assert "background_loop_start_reason(" in system_route
     assert "running_required_count" in system_route

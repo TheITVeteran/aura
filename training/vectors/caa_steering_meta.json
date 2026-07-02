@@ -1,18 +1,24 @@
 {
   "method": "contrastive_activation_addition",
-  "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-20260628-181638",
+  "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
   "model_identity": {
-    "model_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-20260628-181638",
-    "model_path_input": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-20260628-181638",
+    "model_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+    "model_path_input": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
     "model_config_sha256": "a4054d0840b87c2feabea6fb2014bcd5b672500b2ec4dfec6f63a31d7a6ed785",
-    "model_config_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-20260628-181638/config.json"
+    "model_config_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118/config.json"
   },
-  "adapter": "",
+  "adapter": null,
   "n_model_layers": 64,
   "target_layers": [
     25,
-    30,
-    35
+    27,
+    29,
+    31,
+    33,
+    35,
+    37,
+    39,
+    41
   ],
   "target_layer_fraction": [
     0.4,
@@ -26,8 +32,14 @@
       "n_negative_prompts": 12,
       "layers_extracted": [
         25,
-        30,
-        35
+        27,
+        29,
+        31,
+        33,
+        35,
+        37,
+        39,
+        41
       ],
       "vector_dim": 5120
     },
@@ -38,8 +50,14 @@
       "n_negative_prompts": 10,
       "layers_extracted": [
         25,
-        30,
-        35
+        27,
+        29,
+        31,
+        33,
+        35,
+        37,
+        39,
+        41
       ],
       "vector_dim": 5120
     },
@@ -50,8 +68,14 @@
       "n_negative_prompts": 10,
       "layers_extracted": [
         25,
-        30,
-        35
+        27,
+        29,
+        31,
+        33,
+        35,
+        37,
+        39,
+        41
       ],
       "vector_dim": 5120
     },
@@ -62,8 +86,14 @@
       "n_negative_prompts": 10,
       "layers_extracted": [
         25,
-        30,
-        35
+        27,
+        29,
+        31,
+        33,
+        35,
+        37,
+        39,
+        41
       ],
       "vector_dim": 5120
     },
@@ -74,12 +104,18 @@
       "n_negative_prompts": 8,
       "layers_extracted": [
         25,
-        30,
-        35
+        27,
+        29,
+        31,
+        33,
+        35,
+        37,
+        39,
+        41
       ],
       "vector_dim": 5120
     }
   ],
-  "total_vectors": 15,
-  "timestamp": "2026-06-29T02:32:47Z"
+  "total_vectors": 45,
+  "timestamp": "2026-07-02T06:09:54Z"
 }

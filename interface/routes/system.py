@@ -184,6 +184,16 @@ def _collect_full_runtime_status(
             "autonomous_initiative_loop",
             "get_status",
         ),
+        "subjective_choice": _runtime_component_status(
+            "subjective_choice_engine",
+            "get_status",
+            "status",
+        ),
+        "ambient_life_director": _runtime_component_status(
+            "ambient_life_director",
+            "get_status",
+            "status",
+        ),
         "research": _runtime_component_status("research_cycle", "get_status"),
         "self_healing": _runtime_component_status("self_healing", "get_status"),
         "self_modification": _runtime_component_status(
@@ -235,6 +245,8 @@ def _collect_full_runtime_status(
         "curiosity",
         "proactive_communication",
         "autonomous_initiative",
+        "subjective_choice",
+        "ambient_life_director",
         "research",
         "self_healing",
         "self_modification",

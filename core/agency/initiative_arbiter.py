@@ -8,16 +8,14 @@ This is the decision bottleneck — every autonomous action Aura takes
 flows through this arbiter. No initiative bypasses scoring.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import logging
 import time
 from collections import deque
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from dataclasses import dataclass
 
 from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Agency")
 
@@ -43,7 +41,7 @@ DIMENSION_NAMES = (
 
 # Default weights — each 0-1, sum used as divisor for weighted average.
 # These can be overridden by CanonicalSelf / IdentityKernel values.
-DEFAULT_WEIGHTS: Dict[str, float] = {
+DEFAULT_WEIGHTS: dict[str, float] = {
     "urgency":                1.0,
     "novelty":                0.8,
     "identity_relevance":     0.9,
@@ -58,7 +56,7 @@ DEFAULT_WEIGHTS: Dict[str, float] = {
 @dataclass
 class ScoredInitiative:
     initiative: dict
-    scores: Dict[str, float]          # individual dimension -> 0-1
+    scores: dict[str, float]          # individual dimension -> 0-1
     final_score: float                 # weighted composite
     rationale: str                     # human-readable selection reason
 
@@ -94,7 +92,7 @@ class InitiativeArbiter:
 
     # -- Public API -----------------------------------------------------------
 
-    async def arbitrate(self, state) -> Optional[ScoredInitiative]:
+    async def arbitrate(self, state) -> ScoredInitiative | None:
         """Score ALL pending initiatives and return the single best one.
 
         Returns None if there are no pending initiatives or all score <= 0.
@@ -117,12 +115,24 @@ class InitiativeArbiter:
         if not pending:
             return None
 
-        scored: List[ScoredInitiative] = []
+        scored: list[ScoredInitiative] = []
         for initiative in pending:
             si = await self.score_initiative(initiative, state)
             scored.append(si)
 
-        # Sort descending by final_score
+        # Let the ambient life director apply general motive buckets, pressure
+        # pacing, encounter memory, and background LOD before subjective choice.
+        try:
+            from core.agency.ambient_life_director import get_ambient_life_director
+
+            scored = get_ambient_life_director().prioritize_scored(scored, state)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Ambient-life arbitration skipped: %s", exc)
+
+        # Sort descending by drive/utility score first, then allow the subjective
+        # choice layer to select a different eligible initiative when learned
+        # preference alignment is strong enough.  This is the causal point where
+        # "what she wants" can matter without bypassing governance.
         scored.sort(key=lambda s: s.final_score, reverse=True)
         best = scored[0]
 
@@ -130,12 +140,36 @@ class InitiativeArbiter:
             logger.debug("InitiativeArbiter: all initiatives scored <= 0; doing nothing.")
             return None
 
+        subjective_receipt = None
+        drive_top = best
+        try:
+            from core.agency.subjective_choice import get_subjective_choice_engine
+
+            preferred, subjective_receipt = get_subjective_choice_engine().choose_from_scored_initiatives(
+                scored,
+                context="initiative_arbiter",
+            )
+            if preferred is not None:
+                best = preferred
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Subjective-choice arbitration skipped: %s", exc)
+
         # Build rationale comparing the winner to runners-up
         rationale_parts = [f"Selected '{_goal(best.initiative)}' (score={best.final_score:.3f})"]
         top_dim = max(best.scores, key=best.scores.get)  # type: ignore[arg-type]
         rationale_parts.append(f"strongest dimension: {top_dim}={best.scores[top_dim]:.2f}")
+        if subjective_receipt is not None:
+            metadata = best.initiative.setdefault("metadata", {})
+            if isinstance(metadata, dict):
+                metadata["subjective_choice_id"] = subjective_receipt.choice_id
+                metadata["subjective_preference_override"] = subjective_receipt.preference_override
+            if subjective_receipt.preference_override:
+                rationale_parts.append(
+                    "subjective preference override: "
+                    f"{_goal(drive_top.initiative)} → {_goal(best.initiative)}"
+                )
         if len(scored) > 1:
-            runner = scored[1]
+            runner = next((item for item in scored if item is not best), scored[1])
             rationale_parts.append(
                 f"runner-up '{_goal(runner.initiative)}' scored {runner.final_score:.3f}"
             )
@@ -146,7 +180,7 @@ class InitiativeArbiter:
         self._log_selection(best)
         return best
 
-    def _record_choice_for_learning(self, best: ScoredInitiative, scored: List[ScoredInitiative]) -> None:
+    def _record_choice_for_learning(self, best: ScoredInitiative, scored: list[ScoredInitiative]) -> None:
         """Register this choice with the preference learner so its outcome can later
         author her weighting. Best-effort: never let learning capture break selection."""
         try:
@@ -176,7 +210,7 @@ class InitiativeArbiter:
 
     async def score_initiative(self, initiative: dict, state) -> ScoredInitiative:
         """Score a single initiative across all 8 dimensions."""
-        scores: Dict[str, float] = {}
+        scores: dict[str, float] = {}
 
         scores["urgency"] = self._score_urgency(initiative, state)
         scores["novelty"] = self._score_novelty(initiative)
@@ -195,13 +229,13 @@ class InitiativeArbiter:
             rationale="",  # filled in by arbitrate() for the winner
         )
 
-    def get_selection_history(self) -> List[ScoredInitiative]:
+    def get_selection_history(self) -> list[ScoredInitiative]:
         """Return the last N selections (most recent last)."""
         return list(self._selection_history)
 
     # -- Weighted composite ---------------------------------------------------
 
-    def _compute_weighted_score(self, scores: Dict[str, float]) -> float:
+    def _compute_weighted_score(self, scores: dict[str, float]) -> float:
         """Weighted average across all dimensions.
 
         Drive cross-coupling: DriveEngine modifies weights based on
@@ -504,7 +538,7 @@ def _is_generic_reentry_goal(initiative: dict) -> bool:
 
 # -- Singleton ---------------------------------------------------------------
 
-_instance: Optional[InitiativeArbiter] = None
+_instance: InitiativeArbiter | None = None
 
 
 def get_initiative_arbiter() -> InitiativeArbiter:

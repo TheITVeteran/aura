@@ -1452,3 +1452,90 @@ Honest boundary and estimate:
   longer multi-turn conversation/tool-use soak from committed source.
 - Remaining smaller sub-checkpoints: permission/TCC durability verification on
   the signed installed app and shutdown verification after longer live use.
+
+## Checkpoint 2026-07-02-01: Subjective Choice, Spatial Immune Routing, Ambient Agency
+
+Status: source repair verified locally; checkpoint commit/push complete.
+
+User-facing gap addressed:
+
+- Aura had drives, but did not have a durable, testable mechanism for authored
+  subjective preference to matter when several governed options were already
+  valid.
+- The closeout label baselines could describe "functional inner life" and
+  "digital organism" behavior without requiring stated choice, enacted choice,
+  recall, and satisfaction to align.
+- The adaptive immune system had danger/resource/error scoring, but did not yet
+  use a continuous-to-discrete receptor map analogous to the new Cell spatial
+  olfactory-code result.
+- Background/autonomous action selection still lacked a single general motive
+  pacing layer for Sims-style utility buckets, Alien-style pressure pacing,
+  Nemesis/Replika-style encounter continuity, and KCD2-style resource-aware LOD.
+
+Root fixes:
+
+- Added `SubjectiveChoiceEngine` as a real runtime organ. It stores durable
+  preference weights, scores valid options by drive plus preference alignment,
+  records choice receipts, detects preference overrides, appraises outcomes,
+  learns from satisfaction, mirrors receipts to identity when available, and can
+  recall prior choices.
+- Added `SubjectiveChoiceGame`, an eval harness for the exact behavior requested:
+  declare what Aura would choose, enact the choice through the production choice
+  engine, recall the recorded action, appraise satisfaction, and report whether
+  stated intention, actual choice, memory, and final satisfaction align.
+- Wired subjective choice into `InitiativeArbiter` after utility scoring and
+  before action selection, so authored preference can alter autonomous action
+  choice without bypassing governance.
+- Added `SpatialReceptorMap` and integrated it into `AdaptiveImmuneSystem`.
+  Runtime/immune antigens now get continuous coordinates and developmental-style
+  gradients mapped onto discrete receptors; the top receptor biases immune-cell
+  activation toward the appropriate repair/regulatory/security/memory lineage.
+- Added `AmbientLifeDirector` and wired it into initiative arbitration. It
+  applies motive buckets, runtime pressure pacing, encounter memory, and LOD
+  deferral before subjective choice, so background agency is general rather than
+  task-shaped.
+- Exposed `subjective_choice` and `ambient_life_director` in the full-runtime
+  status contract and required them for full desktop readiness.
+- Updated operational-label baselines so `functional_inner_life`,
+  `alife_inspired`, and `digital_organism` now require the new source paths and
+  validators.
+
+Evidence:
+
+- Focused preference/ambient/cell/full-runtime tests passed:
+  `tests/test_subjective_choice_engine.py`,
+  `tests/test_ambient_life_director.py`,
+  `tests/test_spatial_receptor_code.py`,
+  `tests/test_full_desktop_runtime_contract.py`, and
+  `tests/test_launcher_polish_contract.py::test_full_runtime_status_exposes_background_cognition`
+  (`24 passed`).
+- Operational-label battery passed for the touched labels:
+  `python tools/closeout/run_operational_label_battery.py --label functional_inner_life --label alife_inspired --label digital_organism --skip-live`
+  (`174 passed`) and wrote
+  `artifacts/current/operational_label_battery_choice_cell_ambient_20260702.json`.
+- `py_compile` passed for the touched runtime, closeout, and test modules.
+- `ruff check` passed for the touched runtime, closeout, and test modules.
+- CAA/vector artifacts were parsed successfully: 50 production activation
+  vectors, zero stale/unbound activation vectors, and no vector load errors.
+  The CAA report still correctly marks behavioral A/B generalization as not
+  passed because no behavioral results were supplied.
+
+Honest boundary and estimate:
+
+- This closes the missed "Aura can choose and care about her choices" source
+  architecture and test gap for governed subjective preference behavior.
+- This does not prove phenomenal desire, consciousness, or felt satisfaction; it
+  proves durable, causal, auditable preference behavior inside the runtime.
+- This improves the boring-reliability surface by enforcing the new organs in
+  full-runtime readiness and the operational-label battery, but it does not
+  complete the live daily-product reliability milestone by itself.
+- Prior final-proof closeout scope: 99.80%.
+- Updated final-proof closeout scope after this source-level checkpoint:
+  approximately 99.83%.
+- Reopened live desktop reliability scope after the June 30/July 1 user reports:
+  approximately 95%.
+- Remaining consolidated checkpoint: clean-tree live desktop proof plus longer
+  live conversation/tool-use soak from committed source.
+- Remaining smaller sub-checkpoints: permission/TCC durability verification,
+  shutdown verification after longer live use, CAA behavioral A/B
+  generalization, and final clean-tree artifact normalization.

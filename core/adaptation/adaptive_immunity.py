@@ -35,6 +35,7 @@ from typing import Any
 
 import numpy as np
 
+from core.adaptation.spatial_receptor_code import annotate_antigen_like
 from core.cognitive.anomaly_detector import FeatureExtractor
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
@@ -51,6 +52,7 @@ __all__ = [
     "ImmuneCell",
     "ImmuneResponse",
     "OfflineCoevolutionLab",
+    "annotate_antigen_like",
     "TissueField",
     "get_adaptive_immune_system",
 ]
@@ -1223,6 +1225,7 @@ class AdaptiveImmuneSystem:
                 stack_trace=stack_trace,
                 context=dict(state_snapshot or {}),
             )
+            antigen.context.setdefault("spatial_receptor_code", annotate_antigen_like(antigen))
             return antigen
 
     def dream_consolidate(self) -> dict[str, Any]:
@@ -2828,7 +2831,24 @@ class AdaptiveImmuneSystem:
             activation *= 1.18
         elif cell.kind == CellKind.MEMORY:
             activation *= 1.12
+        activation *= self._spatial_receptor_activation_prior(cell, antigen)
         return float(max(0.0, min(1.20, activation)))
+
+    def _spatial_receptor_activation_prior(self, cell: ImmuneCell, antigen: Antigen) -> float:
+        code = antigen.context.get("spatial_receptor_code") if isinstance(antigen.context, dict) else None
+        if not isinstance(code, dict):
+            return 1.0
+        top = code.get("top_receptor")
+        if not isinstance(top, dict):
+            return 1.0
+        preferred = top.get("preferred_cell_kinds") or []
+        try:
+            confidence = float(top.get("probability", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if cell.kind.value in set(map(str, preferred)):
+            return 1.0 + min(0.18, max(0.0, confidence) * 0.18)
+        return 1.0
 
     def _component_health_pressure(
         self,

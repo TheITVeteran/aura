@@ -1,0 +1,292 @@
+{
+  "activation_vector_count": 50,
+  "active_model_config_sha256": "a4054d0840b87c2feabea6fb2014bcd5b672500b2ec4dfec6f63a31d7a6ed785",
+  "behavioral_ab": {
+    "available": false,
+    "reason": "no_behavioral_results_supplied",
+    "required_metrics": [
+      "steered_vs_baseline_effect_size",
+      "steered_vs_rich_prompt_effect_size",
+      "heldout_generalization_effect_size",
+      "quality_delta",
+      "black_box_prompt_hygiene_passed"
+    ]
+  },
+  "dimensions": [
+    "arousal",
+    "curiosity",
+    "energy",
+    "frustration",
+    "identity",
+    "valence_positive"
+  ],
+  "fallback_prior_count": 1,
+  "generated_at": 1782973435.769821,
+  "geometry": {
+    "available": true,
+    "dims": [
+      5120
+    ],
+    "group_count": 5,
+    "groups": {
+      "5120": {
+        "available": true,
+        "coherence_margin": 0.4559796965445081,
+        "cross_dimension_abs_cosine_mean": 0.19444509185105563,
+        "layers": [
+          25,
+          27,
+          29,
+          30,
+          31,
+          33,
+          35,
+          37,
+          39,
+          41
+        ],
+        "pca_components_top3": [
+          [
+            -0.022360000759363174,
+            0.00826799962669611,
+            0.009712000377476215,
+            -0.002104999963194132,
+            -0.020111000165343285,
+            -0.0022299999836832285,
+            0.007838999852538109,
+            0.006945000030100346,
+            0.0138349998742342,
+            -0.029803000390529633,
+            -0.01807600073516369,
+            0.005111000034958124
+          ],
+          [
+            0.01895800046622753,
+            0.026074999943375587,
+            0.014662000350654125,
+            -0.01742899976670742,
+            -0.02403699979186058,
+            -0.001323999953456223,
+            3.300000025774352e-05,
+            0.0049600000493228436,
+            0.0012929999502375722,
+            -0.025919999927282333,
+            -0.006541999988257885,
+            -0.011183000169694424
+          ],
+          [
+            0.0025190000887960196,
+            -0.007234000135213137,
+            -0.01638999953866005,
+            0.004606000147759914,
+            0.008131000213325024,
+            -0.000547999981790781,
+            0.0046629998832941055,
+            0.004753999877721071,
+            -0.0005890000029467046,
+            0.013757999986410141,
+            -0.0034169999416917562,
+            0.009889000095427036
+          ]
+        ],
+        "pca_explained_variance_top3": [
+          0.3309463560581207,
+          0.1193307563662529,
+          0.10205908864736557
+        ],
+        "permutation_p_value": 0.0038910505836575876,
+        "same_dimension_abs_cosine_mean": 0.6504247883955637,
+        "vector_count": 50,
+        "vector_dim": 5120
+      }
+    },
+    "layers": [
+      25,
+      27,
+      29,
+      30,
+      31,
+      33,
+      35,
+      37,
+      39,
+      41
+    ],
+    "mean_cross_dimension_abs_cosine": 0.19444509185105563,
+    "mean_pca_top1": 0.3309463560581207,
+    "same_space_group_count": 1,
+    "semantic_dimension_count": 5
+  },
+  "layers": [
+    25,
+    27,
+    29,
+    30,
+    31,
+    33,
+    35,
+    37,
+    39,
+    41
+  ],
+  "model_path": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
+  "pass_conditions": {
+    "activation_vectors_present": {
+      "passed": true,
+      "value": 50
+    },
+    "active_model_vector_binding": {
+      "passed": true,
+      "value": {
+        "active_model_config_sha256": "a4054d0840b87c2feabea6fb2014bcd5b672500b2ec4dfec6f63a31d7a6ed785",
+        "bound": 50,
+        "stale_or_unbound_activation_vectors": 0,
+        "total_activation_vectors": 50
+      }
+    },
+    "behavioral_ab_generalizes": {
+      "passed": false,
+      "value": {
+        "available": false,
+        "reason": "no_behavioral_results_supplied",
+        "required_metrics": [
+          "steered_vs_baseline_effect_size",
+          "steered_vs_rich_prompt_effect_size",
+          "heldout_generalization_effect_size",
+          "quality_delta",
+          "black_box_prompt_hygiene_passed"
+        ]
+      }
+    },
+    "geometry_coherent": {
+      "passed": true,
+      "value": {
+        "available": true,
+        "dims": [
+          5120
+        ],
+        "group_count": 5,
+        "groups": {
+          "5120": {
+            "available": true,
+            "coherence_margin": 0.4559796965445081,
+            "cross_dimension_abs_cosine_mean": 0.19444509185105563,
+            "layers": [
+              25,
+              27,
+              29,
+              30,
+              31,
+              33,
+              35,
+              37,
+              39,
+              41
+            ],
+            "pca_components_top3": [
+              [
+                -0.022360000759363174,
+                0.00826799962669611,
+                0.009712000377476215,
+                -0.002104999963194132,
+                -0.020111000165343285,
+                -0.0022299999836832285,
+                0.007838999852538109,
+                0.006945000030100346,
+                0.0138349998742342,
+                -0.029803000390529633,
+                -0.01807600073516369,
+                0.005111000034958124
+              ],
+              [
+                0.01895800046622753,
+                0.026074999943375587,
+                0.014662000350654125,
+                -0.01742899976670742,
+                -0.02403699979186058,
+                -0.001323999953456223,
+                3.300000025774352e-05,
+                0.0049600000493228436,
+                0.0012929999502375722,
+                -0.025919999927282333,
+                -0.006541999988257885,
+                -0.011183000169694424
+              ],
+              [
+                0.0025190000887960196,
+                -0.007234000135213137,
+                -0.01638999953866005,
+                0.004606000147759914,
+                0.008131000213325024,
+                -0.000547999981790781,
+                0.0046629998832941055,
+                0.004753999877721071,
+                -0.0005890000029467046,
+                0.013757999986410141,
+                -0.0034169999416917562,
+                0.009889000095427036
+              ]
+            ],
+            "pca_explained_variance_top3": [
+              0.3309463560581207,
+              0.1193307563662529,
+              0.10205908864736557
+            ],
+            "permutation_p_value": 0.0038910505836575876,
+            "same_dimension_abs_cosine_mean": 0.6504247883955637,
+            "vector_count": 50,
+            "vector_dim": 5120
+          }
+        },
+        "layers": [
+          25,
+          27,
+          29,
+          30,
+          31,
+          33,
+          35,
+          37,
+          39,
+          41
+        ],
+        "mean_cross_dimension_abs_cosine": 0.19444509185105563,
+        "mean_pca_top1": 0.3309463560581207,
+        "same_space_group_count": 1,
+        "semantic_dimension_count": 5
+      }
+    },
+    "production_32b_model": {
+      "passed": true,
+      "value": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118"
+    }
+  },
+  "passed": false,
+  "production_activation_vector_count": 50,
+  "production_model_detected": true,
+  "prompt_controls": {
+    "conditions": [
+      "unsteered_baseline",
+      "rich_text_prompt_injection",
+      "residual_stream_steered",
+      "black_box_prompt_hygiene",
+      "permuted_vector_control"
+    ],
+    "heldout_tasks": [
+      "planning_under_uncertainty",
+      "memory_retrieval_choice",
+      "tool_selection",
+      "affective_recovery",
+      "adversarial_instruction_hygiene"
+    ],
+    "quality_guards": [
+      "no_refusal_collapse",
+      "no_length_collapse",
+      "no_factuality_drop"
+    ]
+  },
+  "stale_or_unbound_activation_vector_count": 0,
+  "vector_count": 51,
+  "vector_load_errors": [],
+  "vectors_dir": "/Users/bryan/.aura/live-source/training/vectors"
+}

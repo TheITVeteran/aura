@@ -31,6 +31,22 @@ def _full_services():
                 "frontier_discovery": True,
             },
         ),
+        "subjective_choice_engine": _status_service(
+            running=True,
+            choice_game_ready=True,
+            preference_count=10,
+            history_count=1,
+        ),
+        "ambient_life_director": _status_service(
+            method="status",
+            running=True,
+            encounter_count=1,
+            context={
+                "lod_mode": "full",
+                "pressure": 0.0,
+                "bucket_priorities": {"curiosity": 0.66},
+            },
+        ),
         "research_cycle": _status_service(running=True),
         "self_healing": _status_service(running=True),
         "self_modification_engine": _status_service(
@@ -115,6 +131,8 @@ def test_full_desktop_runtime_reports_every_canonical_background_organ(monkeypat
     assert status["components"]["self_modification"]["mode"] == "validation_quarantine"
     assert status["components"]["autonomous_initiative"]["core_tasks"]["social"] is True
     assert status["components"]["autonomous_initiative"]["core_tasks"]["frontier_discovery"] is True
+    assert status["components"]["subjective_choice"]["choice_game_ready"] is True
+    assert status["components"]["ambient_life_director"]["running"] is True
     assert status["components"]["overt_action"]["scheduled"] is True
     assert status["components"]["deliberation"]["scheduled"] is True
     assert status["components"]["screen_perception"]["running"] is True

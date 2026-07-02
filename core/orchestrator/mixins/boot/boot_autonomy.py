@@ -427,6 +427,46 @@ class BootAutonomyMixin:
             )
             logger.error("ValueSystem init failed: %s", e)
 
+        # SubjectiveChoiceEngine — durable preferences that can influence action selection
+        try:
+            from core.agency.subjective_choice import get_subjective_choice_engine
+
+            subjective_choice = get_subjective_choice_engine()
+            ServiceContainer.register_instance(
+                "subjective_choice_engine",
+                subjective_choice,
+                required=False,
+                registered_by="boot_autonomy",
+            )
+            logger.info(
+                "SubjectiveChoiceEngine online — authored preference receipts influence arbitration."
+            )
+        except _BOOT_AUTONOMY_BOUNDARY_ERRORS as e:
+            _record_boot_autonomy_degradation(
+                e, "Boot autonomy optional subsystem failed; continuing degraded boot: %s"
+            )
+            logger.error("SubjectiveChoiceEngine init failed: %s", e)
+
+        # AmbientLifeDirector — motive bucketing, pressure pacing, and encounter continuity
+        try:
+            from core.agency.ambient_life_director import get_ambient_life_director
+
+            ambient_life = get_ambient_life_director()
+            ServiceContainer.register_instance(
+                "ambient_life_director",
+                ambient_life,
+                required=False,
+                registered_by="boot_autonomy",
+            )
+            logger.info(
+                "AmbientLifeDirector online — motive buckets and autonomy pacing influence arbitration."
+            )
+        except _BOOT_AUTONOMY_BOUNDARY_ERRORS as e:
+            _record_boot_autonomy_degradation(
+                e, "Boot autonomy optional subsystem failed; continuing degraded boot: %s"
+            )
+            logger.error("AmbientLifeDirector init failed: %s", e)
+
         # DreamProcessor — legacy offline memory consolidation (Disabled)
         logger.debug("DreamProcessor is deprecated. Functionality moved to DreamCoordinator.")
 
