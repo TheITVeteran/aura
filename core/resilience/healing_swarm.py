@@ -7,6 +7,16 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger("Aura.HealingSwarm")
 
+
+def _is_contract_subsystem(name: str) -> bool:
+    """True when `name` is a container key in the runtime health contract."""
+    try:
+        from core.runtime.health_contract import RUNTIME_CONTRACT
+
+        return any(req.container_key == name for req in RUNTIME_CONTRACT)
+    except (ImportError, AttributeError):
+        return False
+
 class HealingSwarmService:
     """
     [PHASE 8] HEALING SWARM SERVICE
@@ -104,12 +114,28 @@ class HealingSwarmService:
             )
             disabled_reason = "background_policy_unavailable"
         if disabled_reason:
-            logger.info(
-                "🛡️ [HEAL] Deferred repair for %s by background policy (%s).",
-                subsystem_name,
-                disabled_reason,
-            )
-            return
+            if disabled_reason.startswith("failure_lockdown") and _is_contract_subsystem(
+                subsystem_name
+            ):
+                # Immune-lane exemption: failure lockdown exists to stop
+                # luxury background work, and it is frequently CAUSED by the
+                # broken contract subsystem this repair targets. Deferring
+                # the repair that would clear the lockdown is a deadlock —
+                # observed live: mind_tick dead for hours, 66 repair
+                # dispatches, every one deferred by failure_lockdown_1.00.
+                logger.warning(
+                    "🛡️ [HEAL] Failure lockdown active (%s) but %s is a "
+                    "runtime-contract subsystem — immune lane proceeds.",
+                    disabled_reason,
+                    subsystem_name,
+                )
+            else:
+                logger.info(
+                    "🛡️ [HEAL] Deferred repair for %s by background policy (%s).",
+                    subsystem_name,
+                    disabled_reason,
+                )
+                return
 
         now = time.time()
         # Cooldown: Don't spam repairs for the same component (5 min)
