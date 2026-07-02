@@ -251,3 +251,26 @@ def test_wedged_loop_actually_force_exits_with_restart_code():
         f"expected force-exit {_LOOP_WEDGE_EXIT_CODE}, got {proc.returncode}; "
         f"stdout={proc.stdout!r} stderr={proc.stderr[-500:]!r}"
     )
+
+
+def test_stall_dump_retention_prunes_oldest_in_bounded_batches(tmp_path):
+    """Stall reports must not accumulate forever (observed 18k live dumps)."""
+    from core.resilience.stall_watchdog import StallWatchdog
+
+    wd = StallWatchdog.__new__(StallWatchdog)
+    keep = StallWatchdog._STALL_DUMP_KEEP
+    batch = StallWatchdog._STALL_DUMP_PRUNE_BATCH
+    total = keep + batch + 25
+    for i in range(total):
+        (tmp_path / f"stall_{1000000 + i}.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "unrelated.log").write_text("keep me", encoding="utf-8")
+
+    wd._prune_stall_dumps(tmp_path)
+    remaining = sorted(p.name for p in tmp_path.glob("stall_*.txt"))
+    # One bounded batch pruned the oldest dumps only.
+    assert len(remaining) == total - batch
+    assert remaining[0] == f"stall_{1000000 + batch}.txt"
+    assert (tmp_path / "unrelated.log").exists()
+
+    wd._prune_stall_dumps(tmp_path)
+    assert len(list(tmp_path.glob("stall_*.txt"))) == keep

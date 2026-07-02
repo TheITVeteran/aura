@@ -6,7 +6,6 @@ high-integrity-risk writes before persistence.
 """
 import asyncio
 import inspect
-import json
 import logging
 import os
 import re
@@ -561,6 +560,13 @@ class MemoryFacade:
             return default
 
     def _search_gateway_records_sync(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
+        """Search gateway records via the shared in-memory index.
+
+        The index keeps this path off the disk in steady state: Will's
+        governance gate calls it synchronously from the event loop on every
+        tool execution, and the original read-and-parse-2000-JSON-files
+        implementation produced multi-second live event-loop stalls.
+        """
         query_text = str(query or "").strip()
         if not query_text:
             return []
@@ -574,60 +580,19 @@ class MemoryFacade:
         if not root.exists():
             return []
 
-        def _mtime(path: Path) -> float:
-            try:
-                return float(path.stat().st_mtime)
-            except OSError:
-                return 0.0
+        from core.memory.gateway_record_index import get_gateway_record_index
 
-        terms = [
-            term
-            for term in re.findall(r"[a-z0-9_'-]{3,}", query_text.lower())
-            if term not in {"what", "that", "this", "with", "from", "about", "memory", "remember"}
-        ][:12]
-        candidates: list[tuple[float, float, dict[str, Any]]] = []
-        paths = sorted(
-            (path for path in root.glob("*/*.json") if path.is_file()),
-            key=_mtime,
-            reverse=True,
-        )[:2000]
-        for path in paths:
-            try:
-                mtime = _mtime(path)
-                envelope = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            payload = envelope.get("payload") if isinstance(envelope, dict) else {}
-            if not isinstance(payload, dict):
-                continue
-            content = str(payload.get("content") or "").strip()
-            metadata = self._safe_metadata(payload.get("metadata"))
-            if not content:
-                continue
-            haystack = f"{content}\n{json.dumps(metadata, sort_keys=True, default=str)}".lower()
-            if terms:
-                hits = sum(1 for term in terms if term in haystack)
-                if hits <= 0:
-                    continue
-                score = hits / max(1, len(terms))
-            else:
-                score = 0.1
-            if metadata.get("session_memory_pin") or metadata.get("explicit_memory_request"):
-                score += 0.25
-            candidates.append(
-                (
-                    min(1.0, score),
-                    float(payload.get("written_at") or mtime),
-                    self._normalize_memory_result(
-                        content=content,
-                        metadata=metadata,
-                        memory_id=path.stem,
-                        score=min(1.0, score),
-                    ),
+        results: list[dict[str, Any]] = []
+        for score, entry in get_gateway_record_index(root).search(query_text, limit=limit):
+            results.append(
+                self._normalize_memory_result(
+                    content=entry.content,
+                    metadata=self._safe_metadata(entry.metadata),
+                    memory_id=entry.memory_id,
+                    score=score,
                 )
             )
-        candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
-        return [item[2] for item in candidates[:limit]]
+        return results
 
     async def _search_gateway_records(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """Search strict-runtime MemoryWriteGateway records.

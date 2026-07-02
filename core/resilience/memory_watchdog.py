@@ -553,7 +553,15 @@ class MemoryWatchdog(threading.Thread):
 
             crash_dir = Path("data/error_logs/crash")
             crash_dir.mkdir(parents=True, exist_ok=True)
-            with open(crash_dir / "memory_spike_stacks.log", "a") as fh:
+            spike_log = crash_dir / "memory_spike_stacks.log"
+            try:
+                # Allocation-light rotation: a stat + rename keeps the log
+                # bounded (observed 54MB unrotated growth in live use).
+                if spike_log.exists() and spike_log.stat().st_size > 16 * 1024 * 1024:
+                    spike_log.replace(spike_log.with_suffix(".log.1"))
+            except OSError:
+                pass
+            with open(spike_log, "a") as fh:
                 fh.write(f"\n===== {why} pid={os.getpid()} at={time.time()} =====\n")
                 fh.flush()
                 faulthandler.dump_traceback(file=fh, all_threads=True)

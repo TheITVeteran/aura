@@ -1,0 +1,276 @@
+"""In-memory index over MemoryWriteGateway JSON records.
+
+Why this exists: strict-runtime recall includes the gateway record store
+(``~/.aura/memory/*/*.json``). The original implementation re-read and
+re-parsed up to 2,000 JSON files on every query — and ``Will.decide()`` calls
+that path synchronously from the event loop on every governed tool execution,
+which produced multi-second event-loop stalls in live use (the stall-report
+storm in ``data/error_logs/stalls``).
+
+This index makes the hot path pure in-memory scoring:
+
+- a daemon thread performs the heavy directory scan / JSON parsing, keeping the
+  newest ``MAX_ENTRIES`` records; searches never block on a full refresh
+- freshly written records are picked up immediately via a bounded "newer than
+  last refresh" mini-scan hinted by subdirectory mtimes (a handful of files at
+  most), so recall-after-write stays correct
+- when the index has never been built (cold start), the search falls back to a
+  strictly bounded scan (``COLD_SCAN_MAX_FILES`` newest files within
+  ``COLD_SCAN_BUDGET_S``) and returns best-effort results while the background
+  build warms the rest
+"""
+from __future__ import annotations
+
+import json
+import logging
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger("Aura.Memory.GatewayIndex")
+
+_STOP_TERMS = {"what", "that", "this", "with", "from", "about", "memory", "remember"}
+
+
+@dataclass(frozen=True)
+class GatewayRecordEntry:
+    path: str
+    mtime: float
+    written_at: float
+    memory_id: str
+    content: str
+    haystack: str
+    metadata: dict[str, Any]
+    pin_boost: bool
+
+
+def _parse_record(path: Path, mtime: float) -> GatewayRecordEntry | None:
+    try:
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    payload = envelope.get("payload") if isinstance(envelope, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    content = str(payload.get("content") or "").strip()
+    if not content:
+        return None
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+    haystack = f"{content}\n{json.dumps(metadata, sort_keys=True, default=str)}".lower()
+    try:
+        written_at = float(payload.get("written_at") or mtime)
+    except (TypeError, ValueError):
+        written_at = mtime
+    return GatewayRecordEntry(
+        path=str(path),
+        mtime=mtime,
+        written_at=written_at,
+        memory_id=path.stem,
+        content=content,
+        haystack=haystack,
+        metadata=metadata,
+        pin_boost=bool(
+            metadata.get("session_memory_pin") or metadata.get("explicit_memory_request")
+        ),
+    )
+
+
+class GatewayRecordIndex:
+    """Thread-safe, incrementally refreshed view of the gateway record store."""
+
+    REFRESH_INTERVAL_S = 15.0
+    MAX_ENTRIES = 2000
+    COLD_SCAN_BUDGET_S = 0.20
+    COLD_SCAN_MAX_FILES = 64
+    WRITE_HINT_MAX_FILES = 16
+    WRITE_HINT_MIN_INTERVAL_S = 2.0
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+        self._entries: dict[str, GatewayRecordEntry] = {}
+        self._built = False
+        self._last_refresh = 0.0
+        self._last_write_hint_scan = 0.0
+        self._refresh_running = threading.Lock()  # held only by the refresher
+        self._swap_lock = threading.Lock()
+
+    # ── refresh machinery ───────────────────────────────────────────────
+
+    def _stat_mtime(self, path: Path) -> float:
+        try:
+            return float(path.stat().st_mtime)
+        except OSError:
+            return 0.0
+
+    def _list_record_files(self) -> list[tuple[float, Path]]:
+        files: list[tuple[float, Path]] = []
+        try:
+            for child in self.root.iterdir():
+                if not child.is_dir():
+                    continue
+                for record in child.glob("*.json"):
+                    mtime = self._stat_mtime(record)
+                    if mtime > 0.0:
+                        files.append((mtime, record))
+        except OSError:
+            return []
+        files.sort(reverse=True)
+        return files
+
+    def _do_refresh(self) -> None:
+        try:
+            files = self._list_record_files()[: self.MAX_ENTRIES]
+            previous = self._entries
+            fresh: dict[str, GatewayRecordEntry] = {}
+            for mtime, path in files:
+                key = str(path)
+                cached = previous.get(key)
+                if cached is not None and cached.mtime == mtime:
+                    fresh[key] = cached
+                    continue
+                entry = _parse_record(path, mtime)
+                if entry is not None:
+                    fresh[key] = entry
+            with self._swap_lock:
+                self._entries = fresh
+                self._built = True
+                self._last_refresh = time.monotonic()
+        except Exception as exc:  # never let the refresher kill its thread loudly
+            logger.warning("Gateway record index refresh failed: %s", exc)
+        finally:
+            self._refresh_running.release()
+
+    def _kick_refresh(self) -> None:
+        """Start a background refresh if one is not already running."""
+        if not self._refresh_running.acquire(blocking=False):
+            return
+        thread = threading.Thread(
+            target=self._do_refresh,
+            name="gateway-record-index-refresh",
+            daemon=True,
+        )
+        thread.start()
+
+    def _stale(self) -> bool:
+        return (time.monotonic() - self._last_refresh) > self.REFRESH_INTERVAL_S
+
+    def _absorb_recent_writes(self) -> None:
+        """Bounded pickup of records written since the last refresh.
+
+        Subdirectory mtimes change when records are added/removed, so a couple
+        of stats tell us whether anything new exists without walking the store.
+        """
+        if not self._built:
+            return
+        now = time.monotonic()
+        if (now - self._last_write_hint_scan) < self.WRITE_HINT_MIN_INTERVAL_S:
+            return
+        self._last_write_hint_scan = now
+        try:
+            hinted: list[tuple[float, Path]] = []
+            wall_last_refresh = time.time() - (time.monotonic() - self._last_refresh)
+            for child in self.root.iterdir():
+                if not child.is_dir():
+                    continue
+                if self._stat_mtime(child) < wall_last_refresh - 1.0:
+                    continue
+                for record in child.glob("*.json"):
+                    mtime = self._stat_mtime(record)
+                    if mtime >= wall_last_refresh - 1.0 and str(record) not in self._entries:
+                        hinted.append((mtime, record))
+            if not hinted:
+                return
+            hinted.sort(reverse=True)
+            absorbed = dict(self._entries)
+            for mtime, path in hinted[: self.WRITE_HINT_MAX_FILES]:
+                entry = _parse_record(path, mtime)
+                if entry is not None:
+                    absorbed[str(path)] = entry
+            with self._swap_lock:
+                self._entries = absorbed
+        except OSError as exc:
+            logger.debug("Gateway record write-hint scan skipped: %s", exc)
+
+    # ── search ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def extract_terms(query_text: str) -> list[str]:
+        import re
+
+        return [
+            term
+            for term in re.findall(r"[a-z0-9_'-]{3,}", query_text.lower())
+            if term not in _STOP_TERMS
+        ][:12]
+
+    @staticmethod
+    def _score(entry: GatewayRecordEntry, terms: list[str]) -> float:
+        if terms:
+            hits = sum(1 for term in terms if term in entry.haystack)
+            if hits <= 0:
+                return 0.0
+            score = hits / max(1, len(terms))
+        else:
+            score = 0.1
+        if entry.pin_boost:
+            score += 0.25
+        return min(1.0, score)
+
+    def _cold_scan_entries(self) -> list[GatewayRecordEntry]:
+        """Bounded direct scan for cold starts: newest files, strict budget."""
+        deadline = time.monotonic() + self.COLD_SCAN_BUDGET_S
+        entries: list[GatewayRecordEntry] = []
+        for mtime, path in self._list_record_files()[: self.COLD_SCAN_MAX_FILES]:
+            if time.monotonic() > deadline:
+                break
+            entry = _parse_record(path, mtime)
+            if entry is not None:
+                entries.append(entry)
+        return entries
+
+    def search(self, query: str, limit: int = 5) -> list[tuple[float, GatewayRecordEntry]]:
+        """Score records against the query; returns (score, entry) best-first.
+
+        Never blocks on a full refresh: warm queries score the in-memory
+        snapshot; cold queries do one strictly bounded direct scan while the
+        background build warms the rest.
+        """
+        query_text = str(query or "").strip()
+        if not query_text or not self.root.exists():
+            return []
+        terms = self.extract_terms(query_text)
+
+        if self._built:
+            self._absorb_recent_writes()
+            if self._stale():
+                self._kick_refresh()
+            candidates = list(self._entries.values())
+        else:
+            self._kick_refresh()
+            candidates = self._cold_scan_entries()
+
+        scored: list[tuple[float, float, GatewayRecordEntry]] = []
+        for entry in candidates:
+            score = self._score(entry, terms)
+            if score <= 0.0:
+                continue
+            scored.append((score, entry.written_at, entry))
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [(score, entry) for score, _ts, entry in scored[:limit]]
+
+
+_INDEX_LOCK = threading.Lock()
+_INDEX: GatewayRecordIndex | None = None
+
+
+def get_gateway_record_index(root: Path) -> GatewayRecordIndex:
+    """Process-wide index for the given gateway root (root changes rebuild it)."""
+    global _INDEX
+    with _INDEX_LOCK:
+        if _INDEX is None or _INDEX.root != Path(root):
+            _INDEX = GatewayRecordIndex(Path(root))
+        return _INDEX

@@ -487,12 +487,40 @@ class StallWatchdog(threading.Thread):
                 return True
         return False
 
+    _STALL_DUMP_KEEP = 500
+    _STALL_DUMP_PRUNE_BATCH = 200
+
+    def _prune_stall_dumps(self, dump_dir: Path) -> None:
+        """Bounded retention: keep the newest dumps, drain backlog gradually.
+
+        Live incidents have accumulated tens of thousands of stall reports;
+        deleting at most one batch per stall keeps this call cheap while the
+        backlog shrinks toward the retention target.
+        """
+        try:
+            names = sorted(
+                entry.name
+                for entry in os.scandir(dump_dir)
+                if entry.name.startswith("stall_") and entry.name.endswith(".txt")
+            )
+            excess = len(names) - self._STALL_DUMP_KEEP
+            if excess <= 0:
+                return
+            for name in names[: min(excess, self._STALL_DUMP_PRUNE_BATCH)]:
+                try:
+                    (dump_dir / name).unlink()
+                except OSError:
+                    continue
+        except OSError as exc:
+            logger.debug("Stall dump pruning skipped: %s", exc)
+
     def _report_stall(self, elapsed: float):
         logger.error("🚨 [WATCHDOG] EVENT LOOP STALL DETECTED! (Elapsed: %.1fs)", elapsed)
 
         # Dump tracebacks of all threads
         dump_dir = Path("data/error_logs/stalls")
         dump_dir.mkdir(parents=True, exist_ok=True)
+        self._prune_stall_dumps(dump_dir)
         dump_file = dump_dir / f"stall_{int(time.time())}.txt"
 
         buffer = io.StringIO()
