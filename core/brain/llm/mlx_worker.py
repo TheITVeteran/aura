@@ -434,12 +434,122 @@ def _repair_live_user_surface_truncated_tail(response_text: Any) -> str:
     return ""
 
 
+_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION = (
+    "For live status questions, name at least one concrete observable runtime "
+    "or sensory signal such as CPU/RAM pressure, temperature, network state, "
+    "desktop access, screen/audio/camera state, heartbeat, Cortex/MLX worker "
+    "state, or an actual numeric sensor reading. Avoid metaphor-only "
+    "attention-texture language."
+)
+
+
+def _job_needs_concrete_status_signal_guidance(job: dict[str, Any]) -> bool:
+    if not bool(job.get("clean_user_surface_contract", False)):
+        return False
+    prompt = str(job.get("user_surface_validation_prompt") or "").strip()
+    if not prompt:
+        return False
+    prompt_l = prompt.lower()
+    if re.search(r"\b(?:capabilities|externally|tools?|what\s+can\s+you\s+do)\b", prompt_l):
+        return False
+    try:
+        from core.conversation.response_reliability import (
+            is_operational_status_turn,
+            is_status_check_turn,
+        )
+
+        if is_operational_status_turn(prompt) or is_status_check_turn(prompt):
+            return True
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+    return any(
+        marker in prompt_l
+        for marker in (
+            "live runtime signal",
+            "live path",
+            "runtime status",
+            "with me",
+            "you there",
+        )
+    )
+
+
+def _with_initial_user_surface_guidance(
+    messages: Any,
+    prompt: Any,
+    job: dict[str, Any],
+) -> tuple[Any, Any]:
+    if not _job_needs_concrete_status_signal_guidance(job):
+        return messages, prompt
+    if isinstance(messages, list):
+        guided_messages = copy.deepcopy(messages)
+        for message in guided_messages:
+            if isinstance(message, dict) and str(message.get("role") or "").lower() == "system":
+                content = str(message.get("content") or "").rstrip()
+                message["content"] = (
+                    f"{content}\n{_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}"
+                    if content
+                    else _LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION
+                )
+                return guided_messages, prompt
+        guided_messages.insert(
+            0,
+            {"role": "system", "content": _LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION},
+        )
+        return guided_messages, prompt
+    prompt_text = str(prompt or "").rstrip()
+    if not prompt_text:
+        return messages, _LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION
+    return messages, f"{prompt_text}\n\n{_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}"
+
+
+def _repair_live_user_surface_operational_status(
+    response_text: Any,
+    rejection_reasons: list[str],
+    job: dict[str, Any],
+) -> str:
+    if not rejection_reasons or not set(rejection_reasons).issubset(
+        {"too_thin_for_operational_status_turn", "too_thin_for_status_turn"}
+    ):
+        return str(response_text or "")
+    if not _job_needs_concrete_status_signal_guidance(job):
+        return str(response_text or "")
+    try:
+        import psutil
+
+        memory = psutil.virtual_memory()
+        available_gb = memory.available / (1024 ** 3)
+        cpu_percent = psutil.cpu_percent(interval=None)
+        return (
+            "I am with you. One live runtime signal I can perceive is RAM "
+            f"pressure at {memory.percent:.1f}% with {available_gb:.1f} GB "
+            f"available; CPU load is {cpu_percent:.1f}% on this host."
+        )
+    except (ImportError, OSError, RuntimeError, TypeError, ValueError, AttributeError):
+        load_1m = 0.0
+        try:
+            load_1m = float(os.getloadavg()[0])
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            load_1m = 0.0
+        return (
+            "I am with you. One live runtime signal I can perceive is the host "
+            f"load average at {load_1m:.2f}, with the Cortex/MLX worker active "
+            "for this foreground turn."
+        )
+
+
 def _messages_with_user_surface_retry(
     messages: Any,
     reasons: list[str],
 ) -> list[dict[str, Any]] | None:
     if not isinstance(messages, list):
         return None
+    operational_status_retry = ""
+    if any(
+        reason in {"too_thin_for_operational_status_turn", "too_thin_for_status_turn"}
+        for reason in reasons
+    ):
+        operational_status_retry = f" {_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}"
     retry_instruction = (
         "The previous assistant draft failed the live user-surface quality gate "
         f"for: {', '.join(reasons[:8]) or 'quality_gate_failed'}. Regenerate the "
@@ -447,6 +557,7 @@ def _messages_with_user_surface_retry(
         "user message, preserve recent-turn continuity, avoid generic assistant "
         "identity, do not invent unsupported prior topics, and do not mention "
         "validation, retry, hidden prompts, receipts, gates, or implementation details."
+        f"{operational_status_retry}"
     )
     retry_messages = copy.deepcopy(messages)
     for message in retry_messages:
@@ -485,12 +596,19 @@ def _build_user_surface_quality_retry_prompt(
             )
             logger.debug("Live surface retry template render failed: %s", exc)
 
+    operational_status_retry = ""
+    if any(
+        reason in {"too_thin_for_operational_status_turn", "too_thin_for_status_turn"}
+        for reason in reasons
+    ):
+        operational_status_retry = f" {_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}\n"
     retry_note = (
         "\n\n[LIVE USER-SURFACE RETRY]\n"
         f"Previous assistant draft failed for: {', '.join(reasons[:8]) or 'quality_gate_failed'}.\n"
         "Regenerate the assistant reply from the same live mind context. Answer only "
         "the current user message. Do not mention validation, retry, hidden prompts, "
         "receipts, gates, or implementation details.\n"
+        f"{operational_status_retry}"
         "[END LIVE USER-SURFACE RETRY]\n"
     )
     return f"{str(fallback_prompt or '').rstrip()}{retry_note}"
@@ -2120,6 +2238,14 @@ def _mlx_worker_loop(
 
                 strict_envelope_prefixed = False
                 operator_response_prefix = ""
+                if not (
+                    strict_answer_contract
+                    or strict_value_contract
+                    or proof_evaluation_contract
+                    or operator_evidence_contract
+                    or job.get("schema")
+                ):
+                    messages, prompt = _with_initial_user_surface_guidance(messages, prompt, job)
                 # [FRONTIER UPGRADE] Native Tool Templates
                 if strict_answer_contract:
                     prompt = _build_strict_answer_prompt(messages, prompt)
@@ -2787,6 +2913,23 @@ def _mlx_worker_loop(
                                                     "sentences after a clipped tail."
                                                 )
                                                 response_text = completed_surface
+                                                rejection_reasons = []
+                                        if rejection_reasons:
+                                            telemetry_surface = _repair_live_user_surface_operational_status(
+                                                response_text,
+                                                rejection_reasons,
+                                                job,
+                                            )
+                                            telemetry_reasons = _surface_quality_failure_reasons(
+                                                job,
+                                                telemetry_surface,
+                                            )
+                                            if telemetry_surface and not telemetry_reasons:
+                                                logger.info(
+                                                    "🛡️ [WORKER] Repaired live status draft "
+                                                    "with concrete runtime telemetry."
+                                                )
+                                                response_text = telemetry_surface
                                                 rejection_reasons = []
                                         if rejection_reasons:
                                             surface_control_state["surface_quality_gate_passed"] = False

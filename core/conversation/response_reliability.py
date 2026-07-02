@@ -743,6 +743,31 @@ _OPERATIONAL_STATUS_SUBSTANCE_MARKERS = (
     "tool",
     "tools",
 )
+_OPERATIONAL_STATUS_TELEMETRY_MARKERS = (
+    "ambient light",
+    "audio",
+    "camera",
+    "cortex",
+    "cpu",
+    "desktop access",
+    "foreground",
+    "gpu",
+    "heartbeat",
+    "light level",
+    "lux",
+    "memory pressure",
+    "microphone",
+    "mlx",
+    "model worker",
+    "network",
+    "ram",
+    "runtime load pressure",
+    "screen",
+    "temperature",
+    "thermal",
+    "voice",
+    "websocket",
+)
 _CAPABILITY_STATUS_REQUEST_RE = re.compile(
     r"\b(?:"
     r"what\s+(?:external\s+)?tools?\s+(?:can|could|would|do)\s+(?:you|aura|she)|"
@@ -2414,7 +2439,26 @@ def _has_operational_status_substance(user_message: Any, reply_text: Any) -> boo
         return False
     if _CAPABILITY_STATUS_REQUEST_RE.search(str(user_message or "")):
         return _has_capability_inventory_substance(reply_text)
-    return any(marker in reply for marker in _OPERATIONAL_STATUS_SUBSTANCE_MARKERS)
+    if any(marker in reply for marker in _OPERATIONAL_STATUS_SUBSTANCE_MARKERS):
+        return True
+    return _has_concrete_operational_telemetry(reply)
+
+
+def _has_concrete_operational_telemetry(reply: str) -> bool:
+    """Accept brief live-status answers only when they name a concrete signal."""
+
+    if not any(marker in reply for marker in _OPERATIONAL_STATUS_TELEMETRY_MARKERS):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:"
+            r"\d+(?:\.\d+)?\s*(?:%|c|gb|mb)|"
+            r"active|available|current|currently|idle|live|low|ok|online|ready|stable|"
+            r"signal|pressure|temperature|thermal|up|working"
+            r")\b",
+            reply,
+        )
+    )
 
 
 def _has_capability_inventory_substance(reply_text: Any) -> bool:

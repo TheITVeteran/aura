@@ -20,6 +20,7 @@ from core.brain.llm.mlx_worker import (
     _messages_with_user_surface_retry,
     _normalize_strict_value_response,
     _repair_live_user_surface_self_claims,
+    _repair_live_user_surface_operational_status,
     _repair_live_user_surface_truncated_tail,
     _restore_surface_generation_controls,
     _surface_control_alpha,
@@ -27,6 +28,7 @@ from core.brain.llm.mlx_worker import (
     _surface_generation_control_receipt,
     _surface_quality_failure_reasons,
     _surface_quality_gate_enabled,
+    _with_initial_user_surface_guidance,
 )
 
 
@@ -301,6 +303,91 @@ def test_live_user_surface_retry_preserves_original_live_context_messages():
     assert messages[0]["content"] == "live mind context stays here"
 
 
+def test_initial_live_status_generation_gets_concrete_signal_guidance():
+    messages = [
+        {"role": "system", "content": "live mind context stays here"},
+        {"role": "user", "content": "Name one live runtime signal you can perceive."},
+    ]
+
+    guided, prompt = _with_initial_user_surface_guidance(
+        messages,
+        "fallback",
+        {
+            "clean_user_surface_contract": True,
+            "user_surface_validation_prompt": "Name one live runtime signal you can perceive.",
+        },
+    )
+
+    assert prompt == "fallback"
+    assert guided is not messages
+    assert "live mind context stays here" in guided[0]["content"]
+    assert "concrete observable runtime or sensory signal" in guided[0]["content"]
+    assert messages[0]["content"] == "live mind context stays here"
+
+
+def test_initial_live_status_generation_leaves_non_status_turn_unchanged():
+    messages = [{"role": "system", "content": "live mind context stays here"}]
+
+    guided, prompt = _with_initial_user_surface_guidance(
+        messages,
+        "fallback",
+        {
+            "clean_user_surface_contract": True,
+            "user_surface_validation_prompt": "Tell me a story about the ocean.",
+        },
+    )
+
+    assert guided is messages
+    assert prompt == "fallback"
+
+
+def test_live_status_repair_uses_concrete_runtime_telemetry():
+    repaired = _repair_live_user_surface_operational_status(
+        "I am with you. One live signal is the texture of conversation.",
+        ["too_thin_for_operational_status_turn"],
+        {
+            "clean_user_surface_contract": True,
+            "user_surface_validation_prompt": "Name one live runtime signal you can perceive.",
+        },
+    )
+
+    assert "I am with you." in repaired
+    assert "RAM pressure" in repaired or "host load average" in repaired
+    assert "conversation" not in repaired.lower()
+
+
+def test_live_status_repair_does_not_touch_non_status_failure():
+    original = "I can use tools."
+
+    repaired = _repair_live_user_surface_operational_status(
+        original,
+        ["too_thin_for_operational_status_turn"],
+        {
+            "clean_user_surface_contract": True,
+            "user_surface_validation_prompt": "What tools can you use externally?",
+        },
+    )
+
+    assert repaired == original
+
+
+def test_live_status_retry_requests_concrete_runtime_signals():
+    messages = [
+        {"role": "system", "content": "live mind context stays here"},
+        {"role": "user", "content": "Name one live runtime signal you can perceive."},
+    ]
+
+    retried = _messages_with_user_surface_retry(
+        messages,
+        ["too_thin_for_operational_status_turn"],
+    )
+
+    assert retried is not None
+    assert "concrete observable runtime or sensory signal" in retried[0]["content"]
+    assert "CPU/RAM pressure" in retried[0]["content"]
+    assert "metaphor-only attention-texture" in retried[0]["content"]
+
+
 def test_live_user_surface_retry_prompt_uses_native_template_when_available():
     class Tokenizer:
         def apply_chat_template(self, messages, tools=None, add_generation_prompt=True, tokenize=False):
@@ -319,3 +406,18 @@ def test_live_user_surface_retry_prompt_uses_native_template_when_available():
     assert "live context" in prompt
     assert "generic_assistant_language" in prompt
     assert "fallback" not in prompt
+
+
+def test_live_status_retry_suffix_requests_concrete_runtime_signals_without_template():
+    prompt = _build_user_surface_quality_retry_prompt(
+        tokenizer=object(),
+        messages="raw prompt",
+        tools=None,
+        fallback_prompt="fallback",
+        reasons=["too_thin_for_operational_status_turn"],
+    )
+
+    assert "fallback" in prompt
+    assert "concrete observable runtime or sensory signal" in prompt
+    assert "CPU/RAM pressure" in prompt
+    assert "metaphor-only attention-texture" in prompt

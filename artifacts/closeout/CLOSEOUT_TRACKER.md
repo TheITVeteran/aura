@@ -1165,7 +1165,7 @@ Honest boundary and estimate:
 
 ## Checkpoint 2026-07-01-02: Stable Desktop Access and Stop/Respawn Control
 
-Status: source repair verified locally; checkpoint commit/push pending.
+Status: source repair committed and pushed as `e9df05aa`.
 
 Observed live-path failures:
 
@@ -1237,5 +1237,72 @@ Honest boundary and estimate:
   approximately 90%.
 - Remaining consolidated checkpoint: clean-tree live desktop proof plus final
   claim validation from committed source.
-- Remaining smaller sub-checkpoints: one short live relaunch/access/chat smoke
-  after this commit is pushed.
+- Remaining smaller sub-checkpoints: live relaunch/access/chat smoke completed
+  in the follow-up checkpoint below.
+
+## Checkpoint 2026-07-01-03: Live Status Reply 503 Root Fix
+
+Status: source repair verified locally; checkpoint commit/push pending.
+
+Observed post-commit live failure:
+
+- After checkpoint `e9df05aa`, a post-commit live `/api/chat` smoke through the
+  desktop UI lane returned HTTP 503.
+- Desktop access stayed ready and health recovered, but the foreground turn
+  failed because the MLX worker repeatedly rejected coherent but metaphor-only
+  live-status drafts as `too_thin_for_operational_status_turn`.
+- The rejection loop consumed the foreground timeout, caused
+  `cognitive_engine` fail-closed incidents, and briefly moved runtime pressure
+  into degraded state.
+
+Root fixes:
+
+- Operational-status reliability now accepts concise answers only when they name
+  concrete runtime/sensory telemetry such as CPU/RAM pressure, temperature,
+  network state, desktop access, screen/audio/camera state, heartbeat, Cortex or
+  MLX worker state, ambient-light/lux readings, or runtime load pressure.
+- Vague metaphor-only answers such as attention texture or conversational hum
+  still fail the user-facing gate.
+- The MLX worker now injects concrete-signal guidance before the first
+  live-status generation, not only after a failed draft.
+- If a live-status draft still ignores that requirement, the worker performs a
+  narrow same-worker repair using local host telemetry instead of spending
+  another heavy Cortex retry or surfacing a 503.
+- Tool/capability inventory prompts are explicitly excluded from this telemetry
+  repair path so desktop-capability answers still require governed capability
+  categories and effect-evidence language.
+
+Evidence:
+
+- Focused reliability/worker tests passed: `30 passed` across
+  `tests/test_chat_reliability_proof.py` live-runtime signal cases and
+  `tests/test_strict_contract_steering_clamp.py`.
+- `py_compile` passed for `core/conversation/response_reliability.py`,
+  `core/brain/llm/mlx_worker.py`, and the touched tests.
+- `ruff --select F,E9` passed for the touched Python/test files.
+- Live relaunch from `/Applications/Aura.app` reached
+  `heartbeat status=healthy`, `conversation_ready=true`, and no blockers.
+- Live desktop `/api/chat` smoke passed in 8.8s with:
+  `status=cognitive_engine`, `full_mind_path=true`, `legacy_fallback_used=false`,
+  `cognitive_engine_reply_accepted=true`, and `required_subsystems_ok=true`.
+- The post-turn stream slice contained no rejected live user-surface draft, no
+  503, no timeout, and no degradation marker for the turn; it recorded
+  `Cortex response received` and `ResponseQuality assessment=ok`.
+- Post-turn heartbeat remained healthy and desktop access remained
+  `overall_status=ready` with no blocking permissions.
+- Final stop contained all live processes and prevented respawn. The process
+  scan showed no Aura, Aura.app launcher, MLX, or uvicorn process after stop.
+
+Honest boundary and estimate:
+
+- This closes the live-status 503 class found by the post-commit smoke.
+- Graceful shutdown after live foreground chat still sometimes escalates to
+  SIGKILL before stopping the native launcher. That is contained, but it remains
+  shutdown polish and should be targeted next.
+- Prior final-proof closeout scope: 99.75%.
+- Reopened live desktop reliability scope after the June 30/July 1 user reports:
+  approximately 91%.
+- Remaining consolidated checkpoint: clean-tree live desktop proof plus final
+  claim validation from committed source.
+- Remaining smaller sub-checkpoints: shutdown-grace repair/verification and a
+  longer multi-turn desktop conversation soak.

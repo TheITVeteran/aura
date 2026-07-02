@@ -473,6 +473,69 @@ def test_capability_inventory_gate_rejects_generic_tool_claim():
     assert "too_thin_for_operational_status_turn" in assessment.reasons
 
 
+def test_live_runtime_signal_gate_accepts_concrete_telemetry_answer():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Post-commit live path check. In one short paragraph, say whether "
+            "you are with me and name one live runtime signal you can currently perceive."
+        ),
+        "I am with you. Live signal: CPU temperature 68C, GPU idle, RAM pressure low, network up, OS stable.",
+    )
+
+    assert assessment.ok
+    assert "too_thin_for_operational_status_turn" not in assessment.reasons
+
+
+def test_live_runtime_signal_gate_accepts_concrete_ambient_light_reading():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Post-commit live path check. In one short paragraph, say whether "
+            "you are with me and name one live runtime signal you can currently perceive."
+        ),
+        "I'm with you. The live signal is the ambient light level, 125 lux — a stable indoor environment.",
+    )
+
+    assert assessment.ok
+    assert "too_thin_for_operational_status_turn" not in assessment.reasons
+
+
+def test_live_runtime_signal_gate_accepts_runtime_load_pressure():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Post-commit live path check. In one short paragraph, say whether "
+            "you are with me and name one live runtime signal you can currently perceive."
+        ),
+        "With you. Perceive elevated runtime load pressure, affecting response compactness and stability.",
+    )
+
+    assert assessment.ok
+    assert "too_thin_for_operational_status_turn" not in assessment.reasons
+
+
+def test_live_runtime_signal_gate_rejects_vague_attention_texture():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Post-commit live path check. In one short paragraph, say whether "
+            "you are with me and name one live runtime signal you can currently perceive."
+        ),
+        (
+            "I am with you. One live signal I perceive is the texture of attention "
+            "shifting across conversational topics, like a change in ambient illumination."
+        ),
+    )
+
+    assert assessment.retryable
+    assert "too_thin_for_operational_status_turn" in assessment.reasons
+
+
 def test_capability_inventory_gate_rejects_mid_sentence_tool_inventory():
     from core.conversation.response_reliability import assess_user_facing_reply
 
