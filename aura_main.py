@@ -834,6 +834,22 @@ async def _boot_runtime_orchestrator(
         initial_readiness=readiness_snapshot,
     )
     logger.info("🛡️ Registry Locked. Aura Ready (%s).", ready_label)
+    try:
+        from core.runtime.boot_profile import get_boot_profiler
+
+        _boot_profiler = get_boot_profiler()
+        _boot_profiler.mark("post_init_to_ready")
+        logger.info("⏱️ [BOOT] %s", _boot_profiler.summary())
+        _profile_path = _boot_profiler.write_artifact()
+        if _profile_path is not None:
+            logger.info("⏱️ [BOOT] Boot profile written: %s", _profile_path)
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation(
+            _AURA_MAIN_DEGRADATION_KEY,
+            exc,
+            action="continued without boot profile summary",
+            severity="warning",
+        )
 
     # ── Wire viability + self-healing + stem cells + boot phases ───────
     # All four subsystems live in core/ and are independent of the
@@ -2077,13 +2093,45 @@ async def run_philosophy_stream(port: int = 8000):
         await asyncio.sleep(interval_s)
     logger.info("🧾 Philosophy stream stopped after shutdown request.")
 
+class _HealthPollAccessLogFilter(logging.Filter):
+    """Drop health-poll noise from the uvicorn access log.
+
+    Boot/health endpoints are polled about once a second by the launcher and
+    dashboard; one live launch log carried 30,298 identical
+    'GET /api/health/boot 503' lines — a third of the file — burying real
+    request traffic. Health state is already reported by the unified pulse.
+    """
+
+    _SUPPRESSED_PREFIXES = ("/api/health", "/health", "/metrics")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = getattr(record, "args", None)
+        if isinstance(args, tuple) and len(args) >= 3:
+            path = str(args[2]).split("?", 1)[0]
+            for prefix in self._SUPPRESSED_PREFIXES:
+                # Segment-boundary match: /api/health and /api/health/boot are
+                # suppressed; /api/healthcheck-report is real traffic.
+                if path == prefix or path.startswith(prefix + "/"):
+                    return False
+        return True
+
+
+def _install_health_access_log_filter() -> None:
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(
+        isinstance(f, _HealthPollAccessLogFilter) for f in access_logger.filters
+    ):
+        access_logger.addFilter(_HealthPollAccessLogFilter())
+
+
 async def run_server_async(host: str, port: int):
     """API Server Mode (Unified Loop)"""
     import uvicorn
 
     from interface.server import app as fastapi_app
     logger.info("🚀 Starting API Server on %s:%s", host, port)
-    
+
+    _install_health_access_log_filter()
     server_config = uvicorn.Config(
         fastapi_app, host=host, port=port, log_level="info"
     )
@@ -2267,6 +2315,7 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
                 record_degradation("aura_main", exc)
 
             from interface.server import app as _app
+            _install_health_access_log_filter()
             server_config = uvicorn.Config(_app, host=host, port=port, log_level="info", loop="asyncio")
             server_config.handle_signals = False
             server = uvicorn.Server(server_config)

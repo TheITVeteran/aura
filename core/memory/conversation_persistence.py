@@ -505,7 +505,9 @@ class ConversationPersistence:
             return True
 
         try:
-            atomic_write_text(
+            from core.runtime.atomic_writer import async_atomic_write_text
+
+            await async_atomic_write_text(
                 self._session_path(record.session_id),
                 json.dumps(record.to_dict(), indent=2, ensure_ascii=False, default=str),
                 encoding="utf-8",

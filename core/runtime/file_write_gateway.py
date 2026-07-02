@@ -86,6 +86,69 @@ class FileWriteGateway:
             )
         atomic_append_text(target, text, encoding=encoding)
 
+    # ── Event-loop-safe lane ─────────────────────────────────────────
+    # Governance is checked inline (fail fast, caller's context); only the
+    # blocking disk write is offloaded. Async callers must use these — an
+    # on-loop fsync froze the live event loop for ~20 minutes under thrash.
+
+    async def write_text_async(
+        self,
+        path: PathLike,
+        text: str,
+        *,
+        encoding: str = "utf-8",
+        source: str = "unknown",
+        durable: bool = True,
+    ) -> None:
+        target = _coerce_target(path)
+        if not isinstance(text, str):
+            raise TypeError("text payload must be a string")
+        if not isinstance(encoding, str) or not encoding:
+            raise ValueError("encoding must be a non-empty string")
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.write_text:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        from core.runtime.atomic_writer import async_atomic_write_text
+
+        await async_atomic_write_text(target, text, encoding=encoding, durable=durable)
+
+    async def write_bytes_async(
+        self, path: PathLike, payload: bytes, *, source: str = "unknown", durable: bool = True
+    ) -> None:
+        target = _coerce_target(path)
+        if not isinstance(payload, (bytes, bytearray, memoryview)):
+            raise TypeError("payload must be bytes-like")
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.write_bytes:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        from core.runtime.atomic_writer import async_atomic_write_bytes
+
+        await async_atomic_write_bytes(target, bytes(payload), durable=durable)
+
+    async def append_text_async(
+        self, path: PathLike, text: str, *, encoding: str = "utf-8", source: str = "unknown"
+    ) -> None:
+        target = _coerce_target(path)
+        if not isinstance(text, str):
+            raise TypeError("text payload must be a string")
+        if not isinstance(encoding, str) or not encoding:
+            raise ValueError("encoding must be a non-empty string")
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.append_text:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        from core.runtime.atomic_writer import async_atomic_append_text
+
+        await async_atomic_append_text(target, text, encoding=encoding)
+
     def delete_file(self, path: PathLike, *, source: str = "unknown") -> bool:
         """Delete a single file through the same governance lane as writes."""
         target = _coerce_target(path)

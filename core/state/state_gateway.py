@@ -66,7 +66,10 @@ class ConcreteStateGateway(StateGatewayBase):
             self._cache[request.key] = request.new_value
         target = self.root / domain / f"{self._safe(request.key)}.json"
         schema_version = SCHEMA_VERSIONS.get(domain, SCHEMA_VERSIONS["default"])
-        atomic_write_json(
+        # Off-loop write: state mutations happen on the live message path.
+        from core.runtime.atomic_writer import async_atomic_write_json
+
+        await async_atomic_write_json(
             target,
             {"key": request.key, "value": request.new_value, "cause": request.cause, "at": time.time()},
             schema_version=schema_version,

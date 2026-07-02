@@ -89,7 +89,9 @@ class SelfModel:
                     "snapshots": {k: asdict(v) for k, v in self.snapshots.items()},
                     "pending_updates": list(self.pending_updates),
                 }
-                atomic_write_text(DATA_FILE, json.dumps(data, indent=2))
+                from core.runtime.atomic_writer import async_atomic_write_text
+
+                await async_atomic_write_text(DATA_FILE, json.dumps(data, indent=2))
             except (json.JSONDecodeError, TypeError, ValueError) as e:
                 record_degradation('self_model', e)
                 logger.error("Failed to persist self model: %s", e)

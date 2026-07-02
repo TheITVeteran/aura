@@ -25,9 +25,9 @@ class EpisodeStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
     async def save_event(self, event: LifeEvent) -> None:
-        """Append event transaction to autobiographical log file."""
+        """Append event transaction to autobiographical log file (off-loop)."""
         try:
-            get_file_write_gateway().append_text(
+            await get_file_write_gateway().append_text_async(
                 self.db_path,
                 json.dumps(event.to_dict(), sort_keys=True) + "\n",
                 source="memory.episode_store",

@@ -369,10 +369,19 @@ class OrchestratorBootMixin(
                     os.environ.get("AURA_FULL_TEST_BOOT")
                 )
 
+                # Boot flight recorder: one mark per phase; summary + artifact
+                # at ready. A 13-minute live boot once left no evidence of
+                # which phase ate the time.
+                from core.runtime.boot_profile import get_boot_profiler
+
+                boot_profiler = get_boot_profiler()
+                boot_profiler.mark("pre_subsystem_init")
+
                 # --- Phase 1: Sync & Threading (FIXES SENTINEL RACE) ---
                 self.setup()
                 if hasattr(self, "_async_init_threading"):
                     self._async_init_threading()
+                boot_profiler.mark("sync_bootstrap_and_threading")
 
                 try:
                     from core.runtime.runtime_hygiene import get_runtime_hygiene
@@ -392,6 +401,7 @@ class OrchestratorBootMixin(
                     )
 
                 await init_enterprise_layer(self)
+                boot_profiler.mark("runtime_hygiene_and_enterprise_layer")
 
                 # --- PHASE 2: Resilience Foundation & State ---
                 await self._start_state_vault_actor()
@@ -405,6 +415,7 @@ class OrchestratorBootMixin(
                 db_coord = get_db_coordinator()
                 await asyncio.wait_for(db_coord.start(), timeout=10.0)
                 ServiceContainer.register_instance("database_coordinator", db_coord)
+                boot_profiler.mark("state_vault_and_databases")
 
                 # --- PHASE 3: Cognitive & Sensory (Modular) ---
                 # PHASE 3.5 MOVED UP: Inference Gate (Isolated MLX Actor)
@@ -440,6 +451,8 @@ class OrchestratorBootMixin(
                     ServiceContainer.register_instance("inference_gate", self._inference_gate)
                     logger.warning("⚠️ [BOOT] InferenceGate running in CLOUD-ONLY mode.")
 
+                boot_profiler.mark("inference_gate")
+
                 # INVARIANT: _inference_gate must NEVER be None after this point
                 if not self._inference_gate:
                     logger.critical(
@@ -456,7 +469,9 @@ class OrchestratorBootMixin(
                 ServiceContainer.register_instance("llm_router", build_router_from_config(config))
 
                 await self._init_voice_subsystem()
+                boot_profiler.mark("voice_subsystem")
                 await self._init_cognitive_architecture()
+                boot_profiler.mark("cognitive_architecture")
 
                 # --- PHASE 3.1: Narrative Thread Activation ---
                 narrative_thread = ServiceContainer.get("narrative_thread", default=None)
@@ -467,6 +482,7 @@ class OrchestratorBootMixin(
                     logger.warning("⚠️ NarrativeThread not found in ServiceContainer.")
 
                 await self._init_language_services()
+                boot_profiler.mark("narrative_and_language_services")
 
                 def _spawn_boot_task(coro: Any, name: str) -> asyncio.Task:
                     from core.utils.task_tracker import get_task_tracker
@@ -497,19 +513,23 @@ class OrchestratorBootMixin(
                 self.identity_service = identity_service
 
                 await self._init_identity_systems()
+                boot_profiler.mark("identity_and_self_model")
 
                 # --- PHASE 5: Resilience Guardians ---
                 await self._init_system_guardians()
                 await self._init_resilience()
                 self._initialize_self_preservation()
+                boot_profiler.mark("guardians_and_resilience")
 
                 # --- PHASE 5.5: Unitary Kernel Interface ---
                 from core.kernel.kernel_interface import KernelInterface
 
                 await KernelInterface.attach_to_orchestrator(self)
+                boot_profiler.mark("kernel_interface")
 
                 # --- PHASE 6: Skill System & Mycelium ---
                 await self._init_skill_system()
+                boot_profiler.mark("skill_system")
 
                 # --- PHASE 6.5: Capability Engine & Desktop Agency Boot ---
                 try:
@@ -564,11 +584,15 @@ class OrchestratorBootMixin(
                         "orchestrator.mycelium.pulse_check",
                     )
 
+                boot_profiler.mark("capabilities_and_mycelium")
+
                 # Phase 5: Supplementary Deep Hardening (Claude Feedback)
                 # Ensure cognitive core is ready before marking initialized
                 await self._init_cognitive_core()
+                boot_profiler.mark("cognitive_core")
 
                 await self._init_sovereign_scanner()
+                boot_profiler.mark("sovereign_scanner")
 
                 if lightweight_test_boot:
                     self.status.initialized = True

@@ -100,6 +100,32 @@ def atomic_write_text(path: PathLike, text: str, *, encoding: str = "utf-8", dur
     atomic_write_bytes(path, text.encode(encoding), durable=durable)
 
 
+async def async_atomic_write_bytes(path: PathLike, payload: bytes, *, durable: bool = True) -> None:
+    """Event-loop-safe atomic write: the fsync happens on a worker thread.
+
+    Under memory-pressure thrash a single on-loop fsync has frozen the live
+    event loop for ~20 minutes (12 recorded crashes). Async callers must use
+    this lane; the sync functions are for threads and sync bootstrap only.
+    """
+    import asyncio
+
+    await asyncio.to_thread(atomic_write_bytes, path, payload, durable=durable)
+
+
+async def async_atomic_write_text(
+    path: PathLike, text: str, *, encoding: str = "utf-8", durable: bool = True
+) -> None:
+    await async_atomic_write_bytes(path, text.encode(encoding), durable=durable)
+
+
+async def async_atomic_append_text(
+    path: PathLike, text: str, *, encoding: str = "utf-8"
+) -> None:
+    import asyncio
+
+    await asyncio.to_thread(atomic_append_text, path, text, encoding=encoding)
+
+
 def atomic_append_text(path: PathLike, text: str, *, encoding: str = "utf-8") -> None:
     """Durably append text without reading or rewriting the existing target."""
     target = Path(path)
@@ -148,6 +174,27 @@ def atomic_write_json(
     }
     text = json.dumps(envelope, indent=indent, sort_keys=True, default=str)
     atomic_write_text(path, text)
+
+
+async def async_atomic_write_json(
+    path: PathLike,
+    obj: Any,
+    *,
+    schema_version: int,
+    schema_name: str | None = None,
+    indent: int | None = 2,
+) -> None:
+    """Event-loop-safe atomic_write_json: serialization + fsync on a worker thread."""
+    import asyncio
+
+    await asyncio.to_thread(
+        atomic_write_json,
+        path,
+        obj,
+        schema_version=schema_version,
+        schema_name=schema_name,
+        indent=indent,
+    )
 
 
 def read_json_envelope(path: PathLike) -> dict[str, Any]:

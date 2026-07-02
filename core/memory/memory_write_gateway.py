@@ -103,7 +103,13 @@ class ConcreteMemoryWriteGateway(MemoryWriteGatewayBase):
             "written_at": time.time(),
         }
         schema_version = SCHEMA_VERSIONS.get(family, SCHEMA_VERSIONS["default"])
-        atomic_write_json(target, payload, schema_version=schema_version, schema_name=f"memory.{family}")
+        # Off-loop write: this is the per-turn durable memory lane; an
+        # on-loop fsync here stalls the whole runtime under disk pressure.
+        from core.runtime.atomic_writer import async_atomic_write_json
+
+        await async_atomic_write_json(
+            target, payload, schema_version=schema_version, schema_name=f"memory.{family}"
+        )
         bytes_written = target.stat().st_size
 
         receipt_store = get_receipt_store()
