@@ -116,11 +116,17 @@ def test_rejected_deep_narrative_backs_off_instead_of_hammering_llm(
     assert stream._deep_narrative_timestamp > 0.0
 
 
-def test_deep_narrative_timeout_is_auxiliary_not_core_stream_failure(
+def test_deep_narrative_timeout_is_backpressure_until_persistently_starved(
     tmp_path,
     monkeypatch,
     service_container,
 ):
+    """Routine timeouts (foreground lane busy) must NOT record degradations —
+    29+ of them held the live runtime "unhealthy" at 48% boot forever. Only
+    persistent starvation (streak + wall-clock floor) records, exactly once
+    per episode, and it stays on the auxiliary subsystem."""
+    import time as _time
+
     class SlowRouter:
         async def think(self, **_kwargs):
             await asyncio.sleep(1.0)
@@ -133,11 +139,31 @@ def test_deep_narrative_timeout_is_auxiliary_not_core_stream_failure(
     stream = stream_module.StreamOfBeing(save_dir=tmp_path)
     moment = stream_module.NowMoment()
     stream._thread.add(moment)
-    get_degradation_tracker().reset()
+    tracker = get_degradation_tracker()
+    tracker.reset()
 
-    asyncio.run(stream._run_deep_narrative(moment))
+    def _attempt():
+        stream._deep_narrative_timestamp = 0.0  # bypass pacing gate
+        asyncio.run(stream._run_deep_narrative(moment))
 
-    assert get_degradation_tracker().count("stream_of_being_auxiliary", "warning") >= 1
+    # Routine backpressure: below the streak threshold, zero degradations.
+    for _ in range(stream_module.DEEP_NARRATIVE_STARVATION_STREAK - 1):
+        _attempt()
+    assert tracker.count("stream_of_being_auxiliary", "warning") == 0
+
+    # Crossing the streak with the wall-clock floor met → exactly one record.
+    stream._deep_narrative_last_success_at = (
+        _time.time() - stream_module.DEEP_NARRATIVE_STARVATION_S - 1.0
+    )
+    _attempt()
+    assert tracker.count("stream_of_being_auxiliary", "warning") == 1
+
+    # Further timeouts in the same episode stay silent (one record per episode).
+    _attempt()
+    assert tracker.count("stream_of_being_auxiliary", "warning") == 1
+
+    # A success resets the streak: core stream subsystem stays clean throughout.
+    assert tracker.count("stream_of_being", "warning") == 0
     assert get_degradation_tracker().count("stream_of_being", "critical") == 0
 
 

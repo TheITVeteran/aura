@@ -54,6 +54,11 @@ MAX_PERSISTED_TEXT_CHARS = 2000
 MAX_STATE_AGE_S = 7200.0
 MAX_REPORTED_GAP_S = 86400.0
 CONTINUOUS_EXPERIENCE_FAILURE_LIMIT = 3
+# Deep-narrative timeouts are backpressure; a degradation is only recorded
+# when the narrative lane is persistently starved (both must hold).
+DEEP_NARRATIVE_STARVATION_STREAK = 10
+DEEP_NARRATIVE_STARVATION_S = 900.0
+
 _AUXILIARY_FAULT_STAGES = frozenset(
     {
         "background_llm_memory_pressure",
@@ -954,6 +959,11 @@ class StreamOfBeing:
         # The deep narrative — LLM-generated interior text
         self._deep_narrative: str = ""
         self._deep_narrative_timestamp: float = 0.0
+        # Timeout backpressure accounting: a deep-narrative timeout while the
+        # foreground lane is busy is EXPECTED (the pacing gate simply delays
+        # the next attempt). Only persistent starvation is a degradation.
+        self._deep_narrative_timeout_streak: int = 0
+        self._deep_narrative_last_success_at: float = time.time()
         
         # The last response opening we generated
         self._last_opening: str = ""
@@ -1395,6 +1405,8 @@ class StreamOfBeing:
                 if narrative and len(narrative) >= NARRATIVE_MIN_CHARS:
                     self._deep_narrative = narrative
                     self._deep_narrative_timestamp = time.time()
+                    self._deep_narrative_timeout_streak = 0
+                    self._deep_narrative_last_success_at = time.time()
                     
                     # Back-fill the current moment with the richer text
                     if self._thread.current_moment:
@@ -1413,13 +1425,30 @@ class StreamOfBeing:
                     
         except TimeoutError:
             self._deep_narrative_timestamp = time.time()
-            _emit_stream_fault(
-                TimeoutError("deep narrative generation timed out"),
-                action="kept synthetic interior text and delayed next narrative attempt",
-                severity="warning",
-                stage="deep_narrative_timeout",
-            )
-            logger.debug("Deep narrative timed out")
+            self._deep_narrative_timeout_streak += 1
+            starved_s = time.time() - self._deep_narrative_last_success_at
+            if (
+                self._deep_narrative_timeout_streak == DEEP_NARRATIVE_STARVATION_STREAK
+                and starved_s >= DEEP_NARRATIVE_STARVATION_S
+            ):
+                # Persistent/total starvation IS a real fault. One record per
+                # starvation episode (streak resets on the next success).
+                _emit_stream_fault(
+                    TimeoutError(
+                        f"deep narrative starved: {self._deep_narrative_timeout_streak} "
+                        f"consecutive timeouts over {starved_s:.0f}s"
+                    ),
+                    action="kept synthetic interior text; narrative lane persistently starved",
+                    severity="warning",
+                    stage="deep_narrative_timeout",
+                )
+            else:
+                # Expected backpressure while the foreground lane is busy —
+                # the pacing gate delays the next attempt. Not a degradation.
+                logger.info(
+                    "🌊 Deep narrative timed out (streak=%d); next attempt delayed.",
+                    self._deep_narrative_timeout_streak,
+                )
         except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as e:
             self._deep_narrative_timestamp = time.time()
             _emit_stream_fault(
