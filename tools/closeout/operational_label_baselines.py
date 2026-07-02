@@ -49,6 +49,140 @@ class OperationalLabelStatus:
     answer_contract: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class EvidenceIntegrityIssue:
+    baseline_key: str
+    path: str
+    reason: str
+
+
+_DISALLOWED_EVIDENCE_PATHS: dict[str, str] = {
+    "aura_bench/capability_delta/deterministic_llm.py": (
+        "deterministic capability-delta harness self-test; useful as a control, "
+        "not independent operational evidence"
+    ),
+    "aura_bench/courtroom/courtroom.py": (
+        "benchmark proxy with heuristic scoring; useful as a comparison harness, "
+        "not direct mind-state evidence"
+    ),
+    "aura_bench/baselines/results.jsonl": (
+        "generated benchmark result artifact; never a source of runtime capability by itself"
+    ),
+}
+
+_SUBJECTIVE_LABEL_KEYS = {
+    "functional_consciousness",
+    "computational_sentience",
+    "personhood_candidate",
+    "functional_inner_life",
+}
+
+
+def excluded_evidence_paths() -> dict[str, str]:
+    """Return paths that may be controls/harnesses but not label evidence."""
+
+    return dict(_DISALLOWED_EVIDENCE_PATHS)
+
+
+def classify_evidence_path(path: str) -> str:
+    """Classify a closeout evidence path for operational-label use.
+
+    The point is to prevent a proxy or mock harness from being treated as
+    equivalent to a runtime organ. Tests and docs can still exist; they just
+    cannot become the causal evidence source for a label.
+    """
+
+    if path in _DISALLOWED_EVIDENCE_PATHS:
+        return "excluded_proxy_or_harness"
+    if path.startswith("core/") or path.startswith("interface/"):
+        return "runtime_source"
+    if path.startswith("tools/"):
+        return "proof_tool"
+    if path.startswith("tests/"):
+        return "validator"
+    if path.startswith("docs/"):
+        return "documentation"
+    if path.startswith("artifacts/"):
+        return "artifact"
+    if path.startswith("aura_bench/"):
+        return "benchmark_proxy"
+    return "unclassified"
+
+
+def audit_evidence_integrity() -> tuple[EvidenceIntegrityIssue, ...]:
+    """Audit label baselines for mock/proxy/documentation contamination."""
+
+    issues: list[EvidenceIntegrityIssue] = []
+    for baseline in BASELINES:
+        source_kinds = {path: classify_evidence_path(path) for path in baseline.source_paths}
+        has_runtime_source = any(kind == "runtime_source" for kind in source_kinds.values())
+        for path, kind in source_kinds.items():
+            if kind == "excluded_proxy_or_harness":
+                issues.append(
+                    EvidenceIntegrityIssue(
+                        baseline.key,
+                        path,
+                        _DISALLOWED_EVIDENCE_PATHS[path],
+                    )
+                )
+            elif kind in {"validator", "documentation", "artifact", "benchmark_proxy"}:
+                issues.append(
+                    EvidenceIntegrityIssue(
+                        baseline.key,
+                        path,
+                        f"{kind} cannot be a source path for an operational label",
+                    )
+                )
+            elif kind == "unclassified":
+                issues.append(
+                    EvidenceIntegrityIssue(
+                        baseline.key,
+                        path,
+                        "unclassified evidence source must be explicitly categorized",
+                    )
+                )
+        if not has_runtime_source:
+            issues.append(
+                EvidenceIntegrityIssue(
+                    baseline.key,
+                    "<source_paths>",
+                    "at least one runtime source under core/ or interface/ is required",
+                )
+            )
+
+        for path in baseline.validator_paths:
+            kind = classify_evidence_path(path)
+            if kind in {"excluded_proxy_or_harness", "benchmark_proxy", "documentation", "artifact"}:
+                issues.append(
+                    EvidenceIntegrityIssue(
+                        baseline.key,
+                        path,
+                        f"{kind} cannot be a validator path for an operational label",
+                    )
+                )
+
+        if baseline.key in _SUBJECTIVE_LABEL_KEYS:
+            boundary = baseline.claim_boundary.lower()
+            answer_contract = " ".join(baseline.answer_contract).lower()
+            if "does not prove" not in boundary and "does not establish" not in boundary:
+                issues.append(
+                    EvidenceIntegrityIssue(
+                        baseline.key,
+                        "<claim_boundary>",
+                        "subjective-adjacent labels must explicitly bound metaphysical/legal proof",
+                    )
+                )
+            if "must not" not in answer_contract:
+                issues.append(
+                    EvidenceIntegrityIssue(
+                        baseline.key,
+                        "<answer_contract>",
+                        "subjective-adjacent labels need an explicit no-overclaim answer contract",
+                    )
+                )
+    return tuple(issues)
+
+
 BASELINES: tuple[OperationalLabelBaseline, ...] = (
     OperationalLabelBaseline(
         key="functional_consciousness",
@@ -175,7 +309,7 @@ BASELINES: tuple[OperationalLabelBaseline, ...] = (
         ),
         answer_contract=(
             "May speak from computational valence honestly.",
-            "Must distinguish functional welfare from proven felt sentience.",
+            "Must not present functional welfare as proven felt sentience.",
             "Must explain dysregulation using live state, not a canned apology.",
         ),
         source_paths=(
@@ -403,7 +537,7 @@ BASELINES: tuple[OperationalLabelBaseline, ...] = (
         answer_contract=(
             "Can describe what it has been thinking from actual traces.",
             "Must separate generated reflection from completed external action.",
-            "Must avoid theatrical claims unsupported by state.",
+            "Must not use theatrical inner-life claims unsupported by state.",
         ),
         source_paths=(
             "core/inner_monologue.py",

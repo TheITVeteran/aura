@@ -19,7 +19,12 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from tools.closeout.operational_label_baselines import BASELINES, ROOT, evaluate
+from tools.closeout.operational_label_baselines import (
+    BASELINES,
+    ROOT,
+    audit_evidence_integrity,
+    evaluate,
+)
 
 # Bounded wall-clock ceiling for the full validator pytest run. The battery is
 # a proof harness, never an unbounded background job.
@@ -105,6 +110,7 @@ def build_report(
     require_live: bool = False,
 ) -> dict[str, Any]:
     status_by_key = {status.key: status for status in evaluate(require_live=require_live)}
+    evidence_issues = audit_evidence_integrity()
     return {
         "total_labels": len(plans),
         "validator_files": unique_validator_paths(plans),
@@ -112,6 +118,10 @@ def build_report(
         "exit_code": exit_code,
         "passed": None if exit_code is None else exit_code == 0,
         "require_live": require_live,
+        "evidence_integrity": {
+            "passed": not evidence_issues,
+            "issues": [asdict(issue) for issue in evidence_issues],
+        },
         "labels": [
             {
                 **asdict(plan),
@@ -166,6 +176,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps(report, indent=2, sort_keys=True))
         return 0
+
+    evidence_issues = audit_evidence_integrity()
+    if evidence_issues:
+        report = build_report(
+            plans,
+            command=command,
+            exit_code=2,
+            stderr="Evidence integrity issues: "
+            + "; ".join(f"{issue.baseline_key}:{issue.path}:{issue.reason}" for issue in evidence_issues),
+            require_live=args.require_live_artifacts,
+        )
+        if args.json_out:
+            args.json_out.parent.mkdir(parents=True, exist_ok=True)
+            args.json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(report["stderr_tail"], file=sys.stderr)
+        return 2
 
     missing = [path for path in unique_validator_paths(plans) if not _existing_path(path)]
     if missing:

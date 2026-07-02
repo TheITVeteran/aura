@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from tools.closeout.frontier_standards_matrix import STANDARDS, report
+from tools.closeout.operational_label_baselines import classify_evidence_path, excluded_evidence_paths
 
 
 def test_frontier_standards_cover_requested_closeout_targets():
@@ -71,3 +72,33 @@ def test_sci_fi_reference_set_keeps_requested_systems_visible():
         "TARS/CASE",
         "The Machine",
     } <= references
+
+
+def test_frontier_standards_do_not_use_mock_or_proxy_paths_as_evidence():
+    excluded = set(excluded_evidence_paths())
+
+    for standard in STANDARDS:
+        cited = set(standard.source_paths) | set(standard.validator_paths)
+        assert not (excluded & cited), standard.key
+        assert all(
+            classify_evidence_path(path) not in {"excluded_proxy_or_harness", "benchmark_proxy"}
+            for path in standard.source_paths
+        ), standard.key
+
+
+def test_frontier_standards_use_runtime_sources_for_capability_claims():
+    runtime_heavy = {
+        "daily_runtime_reliability",
+        "humanlike_conversation",
+        "sci_fi_ai_capability",
+        "phenomenal_building_blocks",
+        "os_control_frontier",
+        "generally_capable_ai",
+    }
+
+    for standard in STANDARDS:
+        if standard.key not in runtime_heavy:
+            continue
+        assert any(
+            classify_evidence_path(path) == "runtime_source" for path in standard.source_paths
+        ), standard.key

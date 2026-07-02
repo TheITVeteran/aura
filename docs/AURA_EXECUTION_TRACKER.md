@@ -3842,3 +3842,61 @@ Estimate update:
 - Remaining smaller sub-checkpoints for this closeout gate: 0.
 - Remaining work: keep the worktree clean, commit, push, and only reopen a new
   checkpoint if a new live-runtime defect or new scope is introduced.
+
+## Checkpoint 2026-07-01-01: Operational Label Evidence Integrity
+
+Status: source-only operational-label battery passed with mock/proxy evidence
+exclusions enforced.
+
+Why this checkpoint was reopened:
+
+- Bryan identified a real risk that deterministic or proxy harnesses could be
+  mistaken for evidence of consciousness, sentience, inner life, or AGI.
+- The prior closeout state proved many gates, but today’s live reports reopened
+  product scope around launched Aura.app permissions, audio/desktop perception,
+  background autonomy, neural-stream hygiene, and live-path reliability.
+
+What changed:
+
+- `tools/closeout/operational_label_baselines.py` now classifies evidence paths
+  as runtime source, proof tool, validator, documentation, artifact, benchmark
+  proxy, or excluded proxy/harness.
+- Deterministic/mock/proxy paths such as
+  `aura_bench/capability_delta/deterministic_llm.py` and
+  `aura_bench/courtroom/courtroom.py` are explicitly disqualified as operational
+  label evidence. They may remain controls or benchmark harnesses, but they
+  cannot silently satisfy label claims.
+- Subjective-adjacent labels now require explicit no-overclaim answer contracts.
+  Computational sentience cannot present functional welfare as proven felt
+  sentience; functional inner life cannot use theatrical claims unsupported by
+  state.
+- `tools/closeout/run_operational_label_battery.py` now includes an
+  `evidence_integrity` gate in the machine-readable report and fails closed if
+  evidence integrity issues exist.
+- Frontier/sci-fi standards tests now reject excluded proxy paths and require
+  runtime sources for capability-heavy standards.
+
+Evidence:
+
+- `python -m pytest -q tests/test_operational_label_baselines.py tests/test_operational_label_battery.py tests/test_frontier_standards_matrix.py`
+  -> `21 passed`.
+- `python -m py_compile` on touched closeout tools and tests -> passed.
+- `python -m ruff check --select F,E9` on touched closeout tools and tests ->
+  passed.
+- `AURA_LABEL_BATTERY_TIMEOUT_S=900 python tools/closeout/run_operational_label_battery.py --skip-live --json-out artifacts/closeout/operational_label_battery_latest.json`
+  -> `552 passed in 242.71s`.
+- `artifacts/closeout/operational_label_battery_latest.json` reports
+  `passed=true`, `exit_code=0`, `total_labels=10`, `validator_files=30`, and
+  `evidence_integrity.passed=true` with zero issues.
+- `python tools/closeout/frontier_standards_matrix.py --strict --out artifacts/closeout/frontier_standards_latest.json`
+  -> mapped `9/9` standards, `0` gaps.
+
+Current reopened closeout estimate:
+
+- Operational label/proxy-proofing: 100% for the source-only gate.
+- Overall reopened daily-runtime/product scope: about 85%.
+- Remaining consolidated checkpoints: 2.
+- Remaining smaller sub-checkpoints: 3-5.
+- Remaining work: launched Aura.app TCC/desktop-control proof, audio hearing
+  proof, background autonomy proof, full visible desktop agency proof, and final
+  clean proof replay after those live-path defects are closed.

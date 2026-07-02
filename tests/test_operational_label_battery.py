@@ -1,4 +1,5 @@
 from tools.closeout.run_operational_label_battery import (
+    build_report,
     build_label_plans,
     build_pytest_command,
     unique_validator_paths,
@@ -61,3 +62,11 @@ def test_operational_label_battery_command_runs_mapped_validators():
     assert command[1:4] == ["-m", "pytest", "-q"]
     assert "tests/test_boot_health.py" in command
     assert command[-2:] == ["-k", "boot"]
+
+
+def test_operational_label_battery_report_includes_evidence_integrity_gate():
+    plans = build_label_plans(labels={"functional_consciousness"}, include_live=False)
+    report = build_report(plans, command=build_pytest_command(plans), exit_code=None)
+
+    assert report["evidence_integrity"]["passed"] is True
+    assert report["evidence_integrity"]["issues"] == []

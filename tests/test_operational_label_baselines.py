@@ -1,4 +1,10 @@
-from tools.closeout.operational_label_baselines import BASELINES, evaluate
+from tools.closeout.operational_label_baselines import (
+    BASELINES,
+    audit_evidence_integrity,
+    classify_evidence_path,
+    evaluate,
+    excluded_evidence_paths,
+)
 
 
 def test_operational_label_baselines_cover_requested_labels():
@@ -60,3 +66,47 @@ def test_subjective_claims_remain_bounded():
     assert "does not prove private phenomenal consciousness" in consciousness.claim_boundary.lower()
     assert "does not prove felt suffering" in sentience.claim_boundary.lower()
     assert "does not establish moral/legal personhood" in personhood.claim_boundary.lower()
+
+
+def test_operational_label_evidence_rejects_mock_and_proxy_layers():
+    excluded = excluded_evidence_paths()
+
+    assert "aura_bench/capability_delta/deterministic_llm.py" in excluded
+    assert "aura_bench/courtroom/courtroom.py" in excluded
+    assert classify_evidence_path("aura_bench/capability_delta/deterministic_llm.py") == (
+        "excluded_proxy_or_harness"
+    )
+    assert classify_evidence_path("aura_bench/courtroom/courtroom.py") == (
+        "excluded_proxy_or_harness"
+    )
+
+    cited_paths = {
+        path
+        for baseline in BASELINES
+        for path in (*baseline.source_paths, *baseline.validator_paths)
+    }
+    assert not (set(excluded) & cited_paths)
+
+
+def test_operational_label_evidence_integrity_has_no_current_contamination():
+    issues = audit_evidence_integrity()
+
+    assert issues == ()
+
+
+def test_subjective_adjacent_labels_use_runtime_sources_not_docs_or_artifacts():
+    subjective_keys = {
+        "functional_consciousness",
+        "computational_sentience",
+        "personhood_candidate",
+        "functional_inner_life",
+    }
+
+    for baseline in BASELINES:
+        if baseline.key not in subjective_keys:
+            continue
+        assert any(classify_evidence_path(path) == "runtime_source" for path in baseline.source_paths)
+        assert all(
+            classify_evidence_path(path) not in {"documentation", "artifact", "benchmark_proxy"}
+            for path in baseline.source_paths
+        )
