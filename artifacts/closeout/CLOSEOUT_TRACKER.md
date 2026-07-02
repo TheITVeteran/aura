@@ -1542,7 +1542,8 @@ Honest boundary and estimate:
 
 ## Checkpoint 2026-07-02-02: Research Cycle Failure-Lockdown Root Fix
 
-Status: source repair verified locally; live restart/proof still required.
+Status: source repair verified locally and live post-boot-grace background
+runtime verified; desktop-control proof still blocked by macOS TCC.
 
 Why:
 
@@ -1574,14 +1575,30 @@ Evidence:
   passed.
 - `python -m pytest tests/test_research_cycle_runtime_hardening.py tests/test_runtime_hygiene.py::test_stability_guardian_restarts_missing_research_cycle_after_boot_grace tests/test_runtime_hygiene.py::test_stability_guardian_allows_research_cycle_boot_grace tests/test_full_desktop_runtime_contract.py tests/test_runtime_health_truthfulness.py -q`
   passed with `39 passed`.
+- Relaunched `/Applications/Aura.app` from pushed commit `1c29fc3c`; the
+  post-boot-grace live sample
+  `artifacts/current/live_debug/api_health_20260702_025902.json` reported
+  `status=ok`, `healthy=true`, `conversation_ready=true`,
+  `full_runtime.ready=true`, no full-runtime blockers,
+  `background_cognition.active=true`, `work_admission=allowed`,
+  `running_required_count=22`, `offline_required=[]`, and
+  `research.running=true`, `task_alive=true`, `daemon_failure_count=0`.
+- `api_health_contract_20260702_025902.json` reported
+  `healthy=true`, `operational=true`, and no critical/important/optional
+  failures.
+- `api_health_heartbeat_20260702_025902.json` reported `status=healthy` and
+  no blockers.
 
 Boundary:
 
 - This closes the source bug that let autonomous research failures globally
   suppress background cognition.
-- It does not yet close the visible Aura.app live proof. The live process that
-  exposed this failure was stopped after source validation; a relaunch and live
-  `/api/health`/neural-stream proof from this commit is still required.
+- It also closes the immediate live background-cognition proof for that bug
+  after relaunch.
+- It does not close visible desktop-control proof. The live desktop-access
+  sample still reports `desktop_control_ready=false`, `overall_status=partial`,
+  and blocking macOS TCC permissions `screen_recording` and `accessibility` for
+  the current `com.aura.desktop` bridge.
 
 Estimate:
 

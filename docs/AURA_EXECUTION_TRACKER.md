@@ -3908,7 +3908,8 @@ Current reopened closeout estimate:
 
 ## Checkpoint 2026-07-02-02: Research Cycle Failure-Lockdown Root Fix
 
-Status: source-validated; live Aura.app restart/proof still required.
+Status: source-validated and live post-boot-grace background runtime verified;
+desktop-control proof still blocked by macOS TCC.
 
 Scope:
 
@@ -3943,16 +3944,31 @@ Evidence:
   -> passed.
 - `python -m pytest tests/test_research_cycle_runtime_hardening.py tests/test_runtime_hygiene.py::test_stability_guardian_restarts_missing_research_cycle_after_boot_grace tests/test_runtime_hygiene.py::test_stability_guardian_allows_research_cycle_boot_grace tests/test_full_desktop_runtime_contract.py tests/test_runtime_health_truthfulness.py -q`
   -> `39 passed`.
+- After relaunching `/Applications/Aura.app` from commit `1c29fc3c`, the
+  post-boot-grace live sample in
+  `artifacts/current/live_debug/api_health_20260702_025902.json` reported:
+  `health_status=ok`, `healthy=true`, `conversation_ready=true`,
+  `full_runtime.ready=true`, `full_runtime.blockers=[]`,
+  `background_cognition.active=true`, `background_cognition.work_admission=allowed`,
+  `background_cognition.running_required_count=22`,
+  `background_cognition.offline_required=[]`, and
+  `research.running=true`, `research.task_alive=true`,
+  `research.daemon_failure_count=0`.
+- `artifacts/current/live_debug/api_health_contract_20260702_025902.json`
+  reported `healthy=true`, `operational=true`, and no critical/important/
+  optional failures.
+- `artifacts/current/live_debug/api_health_heartbeat_20260702_025902.json`
+  reported `status=healthy` with no blockers.
 
 Live boundary:
 
-- This checkpoint fixes the source/runtime contract that caused autonomous
-  research to lock down the runtime.
-- The live Aura process that exposed this failure was stopped after source
-  validation. The next step is to relaunch from this commit and verify
-  `/api/health`,
-  `/api/health/contract`, `/api/health/heartbeat`, neural stream, background
-  cognition, and desktop-access status from the visible launched lane.
+- This checkpoint fixes and live-verifies the source/runtime contract that
+  caused autonomous research to lock down the runtime.
+- The visible app still reports macOS TCC denial for the current
+  `com.aura.desktop` bridge in
+  `artifacts/current/live_debug/api_system_desktop-access_20260702_025902.json`:
+  `desktop_control_ready=false`, `overall_status=partial`, blocking
+  permissions `screen_recording` and `accessibility`.
 
 Estimate after this checkpoint:
 
