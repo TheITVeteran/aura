@@ -274,3 +274,22 @@ def test_stall_dump_retention_prunes_oldest_in_bounded_batches(tmp_path):
 
     wd._prune_stall_dumps(tmp_path)
     assert len(list(tmp_path.glob("stall_*.txt"))) == keep
+
+
+def test_startup_drain_clears_full_backlog_within_budget(tmp_path):
+    """A stall-storm backlog (thousands of dumps) must drain at boot, not at
+    200 per future stall — a healthy instance may never stall again."""
+    from core.resilience.stall_watchdog import StallWatchdog
+
+    for i in range(StallWatchdog._STALL_DUMP_KEEP + 700):
+        (tmp_path / f"stall_{2000000 + i}.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "unrelated.log").write_text("keep", encoding="utf-8")
+
+    wd = StallWatchdog.__new__(StallWatchdog)
+    wd._drain_stall_dump_backlog(tmp_path)
+
+    remaining = sorted(p.name for p in tmp_path.glob("stall_*.txt"))
+    assert len(remaining) == StallWatchdog._STALL_DUMP_KEEP
+    # Newest dumps survive; the unrelated file is untouched.
+    assert remaining[0] == f"stall_{2000000 + 700}.txt"
+    assert (tmp_path / "unrelated.log").exists()

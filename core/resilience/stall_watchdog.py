@@ -205,6 +205,10 @@ class StallWatchdog(threading.Thread):
         self._last_heartbeat = now
         self._last_loop_run = now
         self._write_liveness_heartbeat(loop_state="starting", force=True)
+        # Drain the historical dump backlog at startup (budgeted): a healthy
+        # instance that never stalls again must still shed old dumps, and the
+        # per-stall batch alone would take ~90 boots to clear a storm backlog.
+        self._drain_stall_dump_backlog(Path("data/error_logs/stalls"))
 
         while not self._stop_event.is_set():
             # Schedule a heartbeat on the loop
@@ -489,6 +493,30 @@ class StallWatchdog(threading.Thread):
 
     _STALL_DUMP_KEEP = 500
     _STALL_DUMP_PRUNE_BATCH = 200
+
+    def _drain_stall_dump_backlog(self, dump_dir: Path, *, budget_s: float = 3.0) -> None:
+        """Fully drain the stall-dump backlog to the retention target, bounded
+        by a wall-clock budget. Runs on the watchdog thread at startup."""
+        try:
+            if not dump_dir.exists():
+                return
+            deadline = time.monotonic() + max(0.1, budget_s)
+            while time.monotonic() < deadline:
+                names = sorted(
+                    entry.name
+                    for entry in os.scandir(dump_dir)
+                    if entry.name.startswith("stall_") and entry.name.endswith(".txt")
+                )
+                excess = len(names) - self._STALL_DUMP_KEEP
+                if excess <= 0:
+                    return
+                for name in names[: min(excess, 2000)]:
+                    try:
+                        (dump_dir / name).unlink()
+                    except OSError:
+                        continue
+        except OSError as exc:
+            logger.debug("Startup stall-dump drain skipped: %s", exc)
 
     def _prune_stall_dumps(self, dump_dir: Path) -> None:
         """Bounded retention: keep the newest dumps, drain backlog gradually.
