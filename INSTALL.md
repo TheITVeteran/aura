@@ -20,6 +20,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+For reproducible, supply-chain-pinned installs use the hashed lock
+(regenerate with `pip-compile --allow-unsafe --generate-hashes
+--output-file=requirements_lock.txt requirements.txt`):
+
+```bash
+pip install --require-hashes -r requirements_lock.txt
+```
+
 ## Running
 
 ```bash
