@@ -10,6 +10,12 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "openDesktopWindow" in swift
     assert 'app.setActivationPolicy(.regular)' in swift
     assert "requestUserAttention" in swift
+    assert "claimAppInstanceLock" in swift
+    assert 'desktop-app-instance.lock' in swift
+    assert "activateExistingLauncherInstance" in swift
+    assert "NSRunningApplication.runningApplications(withBundleIdentifier:" in swift
+    assert "NSApp.terminate(nil)" in swift
+    assert "releaseAppInstanceLock" in swift
     assert '--open-gui-window' in swift
     assert "replacementReason(expectedSemver:" in swift
     assert "if launcherReady || systemReady" in swift

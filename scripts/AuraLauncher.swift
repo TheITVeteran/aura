@@ -882,8 +882,10 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private var bootMarkerFile: URL!
     private var terminalHandoffMarkerFile: URL!
     private var spawnLockFile: URL!
+    private var appInstanceLockFile: URL!
     private var nativeBridgeRequestDirectory: URL!
     private var nativeBridgeResponseDirectory: URL!
+    private var appInstanceLockFD: Int32 = -1
 
     private var pollTimer: Timer?
     private var nativeBridgeTimer: Timer?
@@ -909,6 +911,10 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
                 title: "Aura Launcher Error",
                 detail: error.localizedDescription,
             )
+            return
+        }
+
+        guard claimAppInstanceLock() else {
             return
         }
 
@@ -951,6 +957,10 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        releaseAppInstanceLock()
     }
 
     private func configurePaths() throws {
@@ -1003,6 +1013,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         bootMarkerFile = lockDirectory.appendingPathComponent("desktop-app-launch.marker")
         terminalHandoffMarkerFile = lockDirectory.appendingPathComponent("desktop-terminal-launch.marker")
         spawnLockFile = lockDirectory.appendingPathComponent("desktop-app-launch.lock")
+        appInstanceLockFile = lockDirectory.appendingPathComponent("desktop-app-instance.lock")
         let nativeBridgeDirectory = auraHome.appendingPathComponent("native_bridge", isDirectory: true)
         nativeBridgeRequestDirectory = nativeBridgeDirectory.appendingPathComponent("requests", isDirectory: true)
         nativeBridgeResponseDirectory = nativeBridgeDirectory.appendingPathComponent("responses", isDirectory: true)
@@ -1013,6 +1024,47 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         try fileManager.createDirectory(at: nativeBridgeResponseDirectory, withIntermediateDirectories: true)
         if !fileManager.fileExists(atPath: logFile.path) {
             fileManager.createFile(atPath: logFile.path, contents: Data())
+        }
+    }
+
+    private func claimAppInstanceLock() -> Bool {
+        let fd = open(appInstanceLockFile.path, O_CREAT | O_RDWR, 0o644)
+        guard fd != -1 else {
+            return true
+        }
+
+        if flock(fd, LOCK_EX | LOCK_NB) != 0 {
+            close(fd)
+            activateExistingLauncherInstance()
+            NSApp.terminate(nil)
+            return false
+        }
+
+        appInstanceLockFD = fd
+        ftruncate(fd, 0)
+        let payload = "\(getpid())\n"
+        _ = payload.withCString { pointer in
+            write(fd, pointer, strlen(pointer))
+        }
+        fsync(fd)
+        return true
+    }
+
+    private func releaseAppInstanceLock() {
+        if appInstanceLockFD != -1 {
+            flock(appInstanceLockFD, LOCK_UN)
+            close(appInstanceLockFD)
+            appInstanceLockFD = -1
+        }
+    }
+
+    private func activateExistingLauncherInstance() {
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.aura.desktop"
+        let candidates = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != currentPID }
+        if let existing = candidates.first {
+            existing.activate(options: [.activateAllWindows])
         }
     }
 

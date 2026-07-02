@@ -4023,3 +4023,57 @@ Estimate after this checkpoint:
 - Remaining consolidated checkpoints: live app permission/control proof,
   launched full-mind conversation/background-autonomy proof, visible general
   desktop agency proof, and final clean proof replay.
+
+## Checkpoint 2026-07-02-04: Native Launcher Single-Instance Guard
+
+Status: source-validated and installed into `/Applications/Aura.app`.
+
+Scope:
+
+- The Python orchestrator already had a singleton lock, but the Swift
+  `aura-launcher` could still create multiple dock sessions before the Python
+  runtime lock became the visible source of truth.
+- Multiple resident launchers could race, keep bridge timers alive, or each try
+  to hand off boot, which matches the observed three Aura dock icons.
+
+Root fix:
+
+- Added a native app-instance lock at `~/.aura/locks/desktop-app-instance.lock`.
+- The first launcher process holds this lock for its lifetime.
+- A second Aura.app launch now activates the existing launcher instance and
+  exits before spawning a second runtime or bridge loop.
+- The existing narrower spawn lock remains in place for launch handoff
+  serialization.
+
+Evidence:
+
+- `xcrun swiftc -typecheck -framework AppKit -framework CoreGraphics -framework Foundation scripts/AuraLauncher.swift`
+  -> passed with no warnings.
+- `python -m pytest tests/test_launcher_polish_contract.py::test_launcher_exposes_desktop_window_action_and_dock_presence -q`
+  -> passed.
+- `python -m ruff check --select F,E9 tests/test_launcher_polish_contract.py`
+  -> passed.
+- `AURA_INSTALL_PATH=/Applications/Aura.app scripts/bundle_app.sh`
+  -> rebuilt and installed the signed live-source app.
+- Installed-app verification:
+  `plutil -p /Applications/Aura.app/Contents/Info.plist`,
+  `codesign -dv --verbose=4 /Applications/Aura.app`, and
+  `codesign -d --entitlements :- /Applications/Aura.app` confirmed
+  `CFBundleIdentifier=com.aura.desktop`, executable `aura-launcher`, local
+  signing authority `Aura Local Code Signing`, hardened runtime, and camera/
+  mic/screen/automation entitlements.
+- Bounded no-spawn duplicate-launch test with `AURA_LAUNCHER_SKIP_SPAWN=1`:
+  first launcher stayed alive and wrote `desktop-app-instance.lock`, second
+  launcher exited (`alive2=0`) before spawning a Python desktop runtime.
+
+Live boundary:
+
+- This proves installed launcher multiplicity behavior without loading Cortex.
+  Full runtime conversation/tool proof remains separate.
+
+Estimate after this checkpoint:
+
+- Expanded daily-runtime/product closure improves to about 87%.
+- Remaining consolidated checkpoints: live app permission/control proof,
+  launched full-mind conversation/background-autonomy proof, visible general
+  desktop agency proof, and final clean proof replay.

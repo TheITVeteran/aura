@@ -1652,3 +1652,54 @@ Estimate:
 - Daily product/runtime closure remains about 85% until permissions, full-mind
   conversation, background autonomy, and general visible desktop agency are
   proven after a clean restart.
+
+## Checkpoint 2026-07-02-04: Native Launcher Single-Instance Guard
+
+Status: source repair verified and installed into `/Applications/Aura.app`.
+
+Why:
+
+- Aura already had a Python orchestrator singleton, but the native Swift
+  launcher itself could still be opened repeatedly from the Dock.
+- That could produce multiple dock icons and multiple resident launcher
+  processes, even when the Python runtime later refused a duplicate kernel.
+
+What changed:
+
+- The launcher now claims a process-lifetime file lock:
+  `~/.aura/locks/desktop-app-instance.lock`.
+- If a second launcher cannot acquire the lock, it activates the existing
+  Aura.app process and exits before it can spawn Python or start native-bridge
+  polling.
+- The existing `desktop-app-launch.lock` still serializes the actual boot
+  handoff; this new lock controls app-instance multiplicity.
+
+Evidence:
+
+- `xcrun swiftc -typecheck -framework AppKit -framework CoreGraphics -framework Foundation scripts/AuraLauncher.swift`
+  passed with no warnings.
+- `python -m pytest tests/test_launcher_polish_contract.py::test_launcher_exposes_desktop_window_action_and_dock_presence -q`
+  passed.
+- `python -m ruff check --select F,E9 tests/test_launcher_polish_contract.py`
+  passed.
+- `AURA_INSTALL_PATH=/Applications/Aura.app scripts/bundle_app.sh` rebuilt and
+  installed the signed live-source Aura.app bundle.
+- Installed bundle checks confirmed `CFBundleIdentifier=com.aura.desktop`,
+  executable `aura-launcher`, `Aura Local Code Signing`, hardened runtime, and
+  camera/mic/screen/automation entitlements.
+- Bounded no-spawn duplicate-launch test:
+  the first `aura-launcher` stayed alive and held
+  `desktop-app-instance.lock`; the second exited (`alive2=0`) before spawning
+  a Python desktop runtime.
+
+Boundary:
+
+- This proves duplicate launcher suppression without loading Cortex. Full
+  runtime conversation/tool proof remains separate.
+
+Estimate:
+
+- Reopened live desktop reliability source-closeout is approximately 96%.
+- Daily product/runtime closure is about 87% pending permissions proof,
+  full-mind conversation proof, background autonomy proof, and visible desktop
+  agency proof.
