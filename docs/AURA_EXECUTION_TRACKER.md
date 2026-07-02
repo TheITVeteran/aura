@@ -544,7 +544,7 @@ exact launched identity.
 
 ### Checkpoint 10B: Boot Nonblocking And Neural Stream Hygiene
 
-Status: source-validated in the current 2026-07-01 pass; pending commit/push.
+Status: complete in commit `4604766e`, pushed to `origin/main`.
 
 - Scope: Bryan's live neural stream showed repeated voice threshold routing
   cards and repeated HealthRouter foreground quiet-window background deferrals.
