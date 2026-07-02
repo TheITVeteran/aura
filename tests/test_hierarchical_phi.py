@@ -465,6 +465,7 @@ def test_broken_pool_mid_cycle_recovers_to_threads(monkeypatch):
     )
 
     def broken_submit(*a, **k):
+        broken_submit.calls = getattr(broken_submit, "calls", 0) + 1
         raise BrokenExecutor("process pool died")
 
     monkeypatch.setattr(h._executor, "submit", broken_submit)
