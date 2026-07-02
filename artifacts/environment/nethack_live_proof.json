@@ -1,0 +1,547 @@
+{
+  "schema": "aura.nethack_live_proof.v1",
+  "run_id": "nethack-live-proof-1783030344",
+  "mode": "STRICT_REAL",
+  "binary": "/opt/homebrew/bin/nethack",
+  "requested_turns": 60,
+  "turns_executed": 60,
+  "commands_ok": 60,
+  "distinct_screens": 5,
+  "hp_first": null,
+  "hp_last": null,
+  "survived_full_run": true,
+  "elapsed_s": 25.29,
+  "final_screen_tail": [
+    "                                                                                ",
+    "                                                                                ",
+    "                                                                                "
+  ],
+  "steps": [
+    {
+      "turn": 0,
+      "intent": "resolve_modal",
+      "params": {
+        "response": "y"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 1,
+      "intent": "resolve_modal",
+      "params": {
+        "response": "n"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 2,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 3,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 4,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 5,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 6,
+      "intent": "search",
+      "params": {},
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 7,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 8,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 9,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 10,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 11,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 12,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 13,
+      "intent": "search",
+      "params": {},
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 14,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 15,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 16,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 17,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 18,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 19,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 20,
+      "intent": "search",
+      "params": {},
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 21,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 22,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 23,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 24,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 25,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 26,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 27,
+      "intent": "search",
+      "params": {},
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 28,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 29,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 30,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 31,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 32,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 33,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 34,
+      "intent": "search",
+      "params": {},
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 35,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 36,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 37,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 38,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 39,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 40,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 41,
+      "intent": "search",
+      "params": {},
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 42,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 43,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 44,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 45,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 46,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 47,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 48,
+      "intent": "search",
+      "params": {},
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 49,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 50,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 51,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 52,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 53,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 54,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 55,
+      "intent": "search",
+      "params": {},
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 56,
+      "intent": "move",
+      "params": {
+        "direction": "east"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 57,
+      "intent": "move",
+      "params": {
+        "direction": "south"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 58,
+      "intent": "move",
+      "params": {
+        "direction": "west"
+      },
+      "ok": true,
+      "alive": true
+    },
+    {
+      "turn": 59,
+      "intent": "move",
+      "params": {
+        "direction": "north"
+      },
+      "ok": true,
+      "alive": true
+    }
+  ],
+  "at_unix": 1783030370.824799,
+  "passed": true
+}
