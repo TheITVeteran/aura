@@ -1,8 +1,8 @@
 ################################################################################
-
+import logging
 
 import pytest
-import re
+
 from core.mycelium import MycelialNetwork, HardwiredPathway, Hypha
 
 @pytest.fixture
@@ -69,6 +69,21 @@ def test_dormant_hyphae_are_not_monitored_until_they_carry_traffic(network):
 
     h.pulse(success=True)
     assert network._should_monitor_hypha(h) is True
+
+
+def test_route_signal_deduplicates_unchanged_feed_logs(network, caplog):
+    payload = {"event": "threshold_shift", "rms_gate": 0.01, "conf_gate": -0.7}
+
+    with caplog.at_level(logging.INFO, logger="Aura.Mycelium"):
+        network.route_signal("voice_engine", "sensory_gate", payload)
+        network.route_signal("voice_engine", "sensory_gate", payload)
+
+    matching = [
+        record
+        for record in caplog.records
+        if "Signal Routed: voice_engine -> sensory_gate" in record.getMessage()
+    ]
+    assert len(matching) == 1
 
 def test_infrastructure_mapping(network):
     # Seed mapped files for deterministic routing.

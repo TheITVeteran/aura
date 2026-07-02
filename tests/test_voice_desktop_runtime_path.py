@@ -317,6 +317,32 @@ def test_voice_engine_status_reports_missing_capture_backend(monkeypatch, tmp_pa
     assert status["capture_backend"] == "unavailable"
 
 
+def test_voice_threshold_signal_only_on_change_or_heartbeat(monkeypatch, tmp_path) -> None:
+    import core.senses.voice_engine as voice_module
+
+    engine = voice_module.SovereignVoiceEngine(data_dir=str(tmp_path))
+    calls: list[tuple[str, str, dict]] = []
+    now = [1000.0]
+    homeostasis = SimpleNamespace(
+        get_modifiers=lambda: SimpleNamespace(overall_vitality=0.7)
+    )
+
+    monkeypatch.setattr(engine, "_get_homeostasis", lambda: homeostasis)
+    monkeypatch.setattr(
+        engine,
+        "_signal_mycelium",
+        lambda source, target, payload: calls.append((source, target, dict(payload))),
+    )
+    monkeypatch.setattr(voice_module.time, "time", lambda: now[0])
+
+    engine._get_sensory_thresholds()
+    engine._get_sensory_thresholds()
+    now[0] += 31.0
+    engine._get_sensory_thresholds()
+
+    assert [call[2]["event"] for call in calls] == ["threshold_shift", "threshold_shift"]
+
+
 @pytest.mark.asyncio
 async def test_voice_local_playback_uses_gateways(monkeypatch, tmp_path) -> None:
     import core.senses.voice_engine as voice_module

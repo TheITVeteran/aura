@@ -16,13 +16,14 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.container import ServiceContainer
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.CapabilityDiscovery")
 
@@ -31,7 +32,7 @@ logger = logging.getLogger("Aura.CapabilityDiscovery")
 class CapabilityReport:
     """Structured report of machine capabilities."""
     # Apps
-    installed_apps: List[str] = field(default_factory=list)
+    installed_apps: list[str] = field(default_factory=list)
     has_browser: bool = False
     preferred_browser: str = ""
     has_text_editor: bool = False
@@ -46,9 +47,9 @@ class CapabilityReport:
 
     # System
     has_network: bool = False
-    has_python_packages: Dict[str, bool] = field(default_factory=dict)
-    writable_directories: List[str] = field(default_factory=list)
-    available_models: List[str] = field(default_factory=list)
+    has_python_packages: dict[str, bool] = field(default_factory=dict)
+    writable_directories: list[str] = field(default_factory=list)
+    available_models: list[str] = field(default_factory=list)
 
     # Tools
     has_screencapture: bool = True
@@ -90,16 +91,37 @@ class CapabilityDiscovery:
     """Discovers what this machine can do."""
 
     def __init__(self) -> None:
-        self._report: Optional[CapabilityReport] = None
+        self._report: CapabilityReport | None = None
         self._started = False
+        self._scan_task: asyncio.Task[Any] | None = None
 
     async def start(self) -> None:
         if self._started:
             return
         ServiceContainer.register_instance("capability_discovery", self, required=False)
-        self._report = await self.discover()
         self._started = True
-        logger.info("CapabilityDiscovery ONLINE — %s", self._report.summary()[:120])
+        self._report = self._report or CapabilityReport()
+        try:
+            self._scan_task = get_task_tracker().create_task(
+                self._run_initial_scan(),
+                name="capability_discovery.initial_scan",
+            )
+        except (RuntimeError, AttributeError, TypeError):
+            self._scan_task = asyncio.create_task(
+                self._run_initial_scan(),
+                name="capability_discovery.initial_scan",
+            )
+        logger.info("CapabilityDiscovery ONLINE — initial scan scheduled")
+
+    async def _run_initial_scan(self) -> None:
+        try:
+            report = await self.discover()
+        except (ImportError, AttributeError, RuntimeError, OSError, TimeoutError) as exc:
+            record_degradation("capability_discovery.initial_scan", exc)
+            logger.warning("CapabilityDiscovery initial scan failed: %s", exc)
+            return
+        self._report = report
+        logger.info("CapabilityDiscovery scan complete — %s", report.summary()[:120])
 
     async def discover(self) -> CapabilityReport:
         """Run full capability scan."""
@@ -141,23 +163,25 @@ class CapabilityDiscovery:
         # Fallback: scan /Applications directly (directory listing is
         # blocking I/O — keep it off the event loop).
         try:
-            app_dir = Path("/Applications")
-            if app_dir.exists():
-                apps = await asyncio.to_thread(
-                    lambda: [e.stem for e in app_dir.iterdir() if e.suffix == ".app"]
-                )
-                report.installed_apps = sorted(apps)
-                for browser in ["Google Chrome", "Safari", "Firefox"]:
-                    if browser in apps:
-                        report.has_browser = True
-                        report.preferred_browser = browser
-                        break
-                for editor in ["TextEdit", "Notes", "Visual Studio Code"]:
-                    if editor in apps:
-                        report.has_text_editor = True
-                        break
+            apps = await asyncio.to_thread(self._scan_applications_dir_sync)
+            report.installed_apps = apps
+            for browser in ["Google Chrome", "Safari", "Firefox"]:
+                if browser in apps:
+                    report.has_browser = True
+                    report.preferred_browser = browser
+                    break
+            for editor in ["TextEdit", "Notes", "Visual Studio Code"]:
+                if editor in apps:
+                    report.has_text_editor = True
+                    break
         except (OSError, PermissionError) as exc:
             record_degradation("capability_discovery.app_scan", exc)
+
+    def _scan_applications_dir_sync(self) -> list[str]:
+        app_dir = Path("/Applications")
+        if not app_dir.exists():
+            return []
+        return sorted(e.stem for e in app_dir.iterdir() if e.suffix == ".app")
 
     async def _discover_permissions(self, report: CapabilityReport) -> None:
         """Check system permissions."""
@@ -175,13 +199,14 @@ class CapabilityDiscovery:
             )
             await asyncio.wait_for(proc.communicate(), timeout=5.0)
             report.has_accessibility = proc.returncode == 0
-        except (OSError, asyncio.TimeoutError, RuntimeError) as exc:
+        except (OSError, TimeoutError, RuntimeError) as exc:
             record_degradation("capability_discovery.accessibility_probe", exc)
             report.has_accessibility = False
 
         # Screen recording
         try:
-            from core.security.permission_guard import get_permission_guard, PermissionType
+            from core.security.permission_guard import PermissionType, get_permission_guard
+
             guard = get_permission_guard()
             res = await guard.check_permission(PermissionType.SCREEN)
             report.has_screen_recording = res.get("granted", False)
@@ -208,7 +233,7 @@ class CapabilityDiscovery:
             )
             await asyncio.wait_for(proc.communicate(), timeout=5.0)
             report.has_network = proc.returncode == 0
-        except (OSError, asyncio.TimeoutError, RuntimeError) as exc:
+        except (OSError, TimeoutError, RuntimeError) as exc:
             record_degradation("capability_discovery.network_probe", exc)
             report.has_network = False
 
@@ -238,10 +263,10 @@ class CapabilityDiscovery:
             "psutil", "httpx", "numpy",
         ]
 
-        def _availability() -> Dict[str, bool]:
+        def _availability() -> dict[str, bool]:
             import importlib.util
 
-            status: Dict[str, bool] = {}
+            status: dict[str, bool] = {}
             for pkg in packages:
                 try:
                     status[pkg] = importlib.util.find_spec(pkg) is not None
@@ -291,7 +316,7 @@ class CapabilityDiscovery:
                     timeout=30.0,
                 )
                 report.writable_directories.append(str(d))
-            except (OSError, PermissionError, RuntimeError, asyncio.TimeoutError) as exc:
+            except (OSError, PermissionError, RuntimeError, TimeoutError) as exc:
                 record_degradation("capability_discovery.writable_dir_probe", exc)
 
     async def _discover_models(self, report: CapabilityReport) -> None:
@@ -310,7 +335,7 @@ class CapabilityDiscovery:
             self._report = CapabilityReport()
         return self._report
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         r = self._report or CapabilityReport()
         return {
             "discovered": self._report is not None,
@@ -323,7 +348,7 @@ class CapabilityDiscovery:
         }
 
 
-_instance: Optional[CapabilityDiscovery] = None
+_instance: CapabilityDiscovery | None = None
 
 
 def get_capability_discovery() -> CapabilityDiscovery:

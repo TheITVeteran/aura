@@ -557,6 +557,32 @@ async def test_router_defers_background_local_runtime_during_foreground_quiet_wi
 
 
 @pytest.mark.asyncio
+async def test_router_deduplicates_repeated_background_deferral_logs(caplog):
+    router = HealthAwareLLMRouter()
+
+    with caplog.at_level("INFO", logger="Brain.HealthRouter"):
+        router._log_background_deferral(
+            scope="local_endpoint",
+            origin="affect_engine",
+            reason="foreground_quiet_window",
+            endpoint="Brainstem",
+        )
+        router._log_background_deferral(
+            scope="local_endpoint",
+            origin="affect_engine",
+            reason="foreground_quiet_window",
+            endpoint="Brainstem",
+        )
+
+    matching = [
+        record
+        for record in caplog.records
+        if "Deferring background local endpoint Brainstem" in record.getMessage()
+    ]
+    assert len(matching) == 1
+
+
+@pytest.mark.asyncio
 async def test_router_defers_background_local_runtime_during_safe_boot_guard(monkeypatch):
     router = HealthAwareLLMRouter()
     router._created_at = time.monotonic()

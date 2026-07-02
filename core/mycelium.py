@@ -37,13 +37,12 @@ import os
 from core.utils.concurrency import run_io_bound
 import re
 import time
-import collections
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Tuple, TypeVar, Union, ClassVar
 import threading
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("Aura.Mycelium")
 
@@ -217,6 +216,7 @@ class MycelialNetwork:
             # --- Discovery Engine ---
             self._execution_log: List[Dict[str, Any]] = []
             self._discovery_candidates: Dict[str, int] = defaultdict(int)
+            self._route_signal_log_state: Dict[str, Tuple[str, float, int]] = {}
 
             # --- Props ---
             self.ui_callback: Optional[Callable[[str], Coroutine]] = None
@@ -508,10 +508,45 @@ class MycelialNetwork:
             self.establish_connection(source, target)
             hypha = self.hyphae.get(hypha_id)
         
-        logger.info("🍄 [MYCELIUM] 📡 Signal Routed: %s -> %s | Payload: %s", source, target, str(payload)[:100])
+        self._log_route_signal(source, target, payload)
         if hypha:
             hypha.pulse(success=True)
         # For now, it pulses the network connectivity.
+
+    def _log_route_signal(self, source: str, target: str, payload: Dict[str, Any]) -> None:
+        """Emit route-signal telemetry on state change instead of every pulse."""
+        key = f"{source}->{target}"
+        payload_text = str(payload)[:160]
+        now = time.monotonic()
+        previous_payload, previous_at, suppressed = self._route_signal_log_state.get(
+            key,
+            ("", 0.0, 0),
+        )
+        if payload_text == previous_payload and (now - previous_at) < 30.0:
+            self._route_signal_log_state[key] = (previous_payload, previous_at, suppressed + 1)
+            logger.debug(
+                "🍄 [MYCELIUM] Repeated signal pulse suppressed: %s | Payload: %s",
+                key,
+                payload_text,
+            )
+            return
+
+        self._route_signal_log_state[key] = (payload_text, now, 0)
+        if suppressed:
+            logger.info(
+                "🍄 [MYCELIUM] 📡 Signal Routed: %s -> %s | Payload: %s | repeated=%d",
+                source,
+                target,
+                payload_text,
+                suppressed,
+            )
+            return
+        logger.info(
+            "🍄 [MYCELIUM] 📡 Signal Routed: %s -> %s | Payload: %s",
+            source,
+            target,
+            payload_text,
+        )
 
     async def emit_reflex(self, signal_type: str, metadata: Dict = None):
         """Broadcast a critical reflex signal across the mycelial network."""

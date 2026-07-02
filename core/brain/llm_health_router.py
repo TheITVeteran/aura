@@ -779,6 +779,7 @@ class HealthAwareLLMRouter:
         self.last_background_error: str = ""
         self._last_generation_metadata: dict[str, Any] = {}
         self._last_fallback_warning_at: float = 0.0
+        self._background_deferral_log_state: dict[str, tuple[str, float, int]] = {}
         logger.info("HealthAwareLLMRouter initialized (Legacy-Compatible mode)")
 
     def get_last_generation_metadata(self) -> dict[str, Any]:
@@ -1659,10 +1660,10 @@ class HealthAwareLLMRouter:
         if not reason:
             return None
 
-        logger.info(
-            "⏸️ Router: Deferring background inference before generation gate for origin=%s reason=%s.",
-            origin,
-            reason,
+        self._log_background_deferral(
+            scope="generation_gate",
+            origin=origin,
+            reason=reason,
         )
         return {
             "ok": False,
@@ -1671,6 +1672,48 @@ class HealthAwareLLMRouter:
             "tokens": 0,
             "error": f"background_deferred:{reason}",
         }
+
+    def _log_background_deferral(
+        self,
+        scope: str,
+        origin: str,
+        reason: str,
+        endpoint: str | None = None,
+    ) -> None:
+        """Log repeated background deferrals as a state, not as a feed flood."""
+        key = f"{scope}:{endpoint or '*'}:{origin or '*'}"
+        now = time.monotonic()
+        previous_reason, previous_at, suppressed = self._background_deferral_log_state.get(
+            key,
+            ("", 0.0, 0),
+        )
+        if reason == previous_reason and (now - previous_at) < 30.0:
+            self._background_deferral_log_state[key] = (previous_reason, previous_at, suppressed + 1)
+            logger.debug(
+                "Router: repeated background deferral suppressed scope=%s endpoint=%s origin=%s reason=%s.",
+                scope,
+                endpoint or "",
+                origin,
+                reason,
+            )
+            return
+
+        self._background_deferral_log_state[key] = (reason, now, 0)
+        suffix = f" after suppressing {suppressed} repeated notices" if suppressed else ""
+        if endpoint:
+            logger.info(
+                "⏸️ Router: Deferring background local endpoint %s (%s)%s.",
+                endpoint,
+                reason,
+                suffix,
+            )
+            return
+        logger.info(
+            "⏸️ Router: Deferring background inference before generation gate for origin=%s reason=%s%s.",
+            origin,
+            reason,
+            suffix,
+        )
 
     @staticmethod
     def _deterministic_intent_classification(prompt: str) -> str:
@@ -2415,10 +2458,11 @@ class HealthAwareLLMRouter:
                     else "foreground_quiet_window"
                 )
                 self.last_background_error = last_error
-                logger.info(
-                    "⏸️ Router: Deferring background local endpoint %s (%s).",
-                    ep.name,
-                    last_error,
+                self._log_background_deferral(
+                    scope="local_endpoint",
+                    origin=origin,
+                    reason=last_error,
+                    endpoint=ep.name,
                 )
                 continue
             watchdog_aborted = {"value": False}

@@ -10,7 +10,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 83%** based on current live
+- Expanded daily-runtime/product closure: **about 84%** based on current live
   evidence, not documentation. This number is deliberately governed by the live
   desktop path, not by historical proof-profile success. Checkpoint 5 addresses
   two live defects, and the follow-up desktop-mode live proof verified bounded
@@ -39,7 +39,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   TCC cache and UI-probe decoupling; Checkpoint 9 is the detailed
   remaining-contract checkpoint that prevents the final checkpoints from
   collapsing into generic wording; Checkpoint 10A is committed and pushed as
-  the desktop-permission truth reconciliation checkpoint. The real launched
+  the desktop-permission truth reconciliation checkpoint. Checkpoint 10B is
+  source-validated as the boot/nonblocking-neural-stream hygiene checkpoint:
+  capability discovery no longer blocks launch, repeated foreground quiet-window
+  background deferrals are logged as state rather than feed floods, and unchanged
+  voice threshold pulses no longer dominate the neural stream. The real launched
   Aura.app lane still shows a macOS TCC Accessibility denial for the exact
   launched identity, so Checkpoint 10 remains open until the visible app proves
   desktop control, screen text, and general agency are live.
@@ -537,6 +541,44 @@ exact launched identity.
   remains about **83%** because the visible desktop lane is still TCC-blocked;
   source-level permission truth/reconciliation improves to about **90%** for
   this specific defect.
+
+### Checkpoint 10B: Boot Nonblocking And Neural Stream Hygiene
+
+Status: source-validated in the current 2026-07-01 pass; pending commit/push.
+
+- Scope: Bryan's live neural stream showed repeated voice threshold routing
+  cards and repeated HealthRouter foreground quiet-window background deferrals.
+  Those messages were not useful new cognition. They made background autonomy
+  look stalled while obscuring real failures, and they increased frontend
+  stream churn during live use.
+- Source fix: `core/capabilities/capability_discovery.py` no longer blocks
+  startup on full machine scans. `start()` registers the service immediately,
+  schedules the full discovery scan in the tracked background task system, and
+  reports a safe empty capability report until the scan completes. Writable
+  directory and `/Applications` scans now run off the event loop.
+- Source fix: `core/brain/llm_health_router.py` now deduplicates repeated
+  background deferral notices. Foreground quiet-window protection remains
+  active, but repeated identical deferrals are logged as state instead of
+  emitting the same neural-card event every tick.
+- Source fix: `core/senses/voice_engine.py` only publishes sensory-threshold
+  shifts to Mycelium when thresholds change or a 30-second heartbeat is due.
+  `core/mycelium.py` also deduplicates unchanged route-signal feed logs.
+- Focused validation:
+  - `python -m pytest -q tests/test_llm_health_router_timeout.py::test_router_defers_background_local_runtime_during_foreground_quiet_window tests/test_llm_health_router_timeout.py::test_router_deduplicates_repeated_background_deferral_logs tests/test_mycelium_2026.py::test_route_signal_deduplicates_unchanged_feed_logs tests/test_voice_desktop_runtime_path.py::test_voice_threshold_signal_only_on_change_or_heartbeat tests/test_capability_gateway_routing_runtime.py::test_capability_discovery_start_does_not_block_on_full_scan tests/test_capability_gateway_routing_runtime.py::test_capability_discovery_writable_probe_uses_file_gateway`
+    -> 6 passed.
+  - `python -m py_compile` on touched runtime and test files -> passed.
+  - `python -m ruff check --select F,E9` on touched runtime and test files ->
+    passed.
+  - `git diff --check` -> passed.
+- Interpretation: this checkpoint does not close macOS TCC or the full desktop
+  agency proof. It does close two root causes behind noisy/false live-neural
+  stream behavior and one startup barrier that could delay the launched UI
+  before conversation readiness.
+- Estimate after this subcheckpoint: expanded daily-runtime/product closure is
+  about **84%**. Remaining total checkpoints are still **2 major checkpoints**
+  plus likely **3-5 smaller sub-checkpoints**, because live Aura.app desktop
+  control, voice/audio proof, general OS agency, and final clean proof still
+  need direct launched-path evidence.
 
 ### Checkpoint 1: Live Conversation Ownership And Launcher Survival
 

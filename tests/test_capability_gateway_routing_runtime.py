@@ -180,8 +180,8 @@ async def test_screen_perception_active_window_uses_subprocess_gateway(monkeypat
 
 @pytest.mark.asyncio
 async def test_screen_perception_registers_unreaped_timeout_child(monkeypatch) -> None:
-    from core.perception import screen_perception as module
     from core import reaper
+    from core.perception import screen_perception as module
 
     class StuckProcess:
         pid = 4242
@@ -267,6 +267,34 @@ async def test_capability_discovery_writable_probe_uses_file_gateway(monkeypatch
     # Probe files are worthless after a crash; a durable fsync here wedged
     # the live event loop for 20 minutes under disk thrash.
     assert {write["durable"] for write in writer.text_writes} == {False}
+
+
+@pytest.mark.asyncio
+async def test_capability_discovery_start_does_not_block_on_full_scan() -> None:
+    from core.container import ServiceContainer
+
+    class SlowDiscovery(CapabilityDiscovery):
+        def __init__(self) -> None:
+            super().__init__()
+            self.release = asyncio.Event()
+
+        async def discover(self) -> CapabilityReport:
+            await self.release.wait()
+            return CapabilityReport(has_network=True)
+
+    ServiceContainer.clear()
+    discovery = SlowDiscovery()
+    try:
+        await asyncio.wait_for(discovery.start(), timeout=0.2)
+        assert discovery._started is True
+        assert discovery._scan_task is not None
+        assert discovery.get_report().has_network is False
+
+        discovery.release.set()
+        await asyncio.wait_for(discovery._scan_task, timeout=0.5)
+        assert discovery.get_report().has_network is True
+    finally:
+        ServiceContainer.clear()
 
 
 @pytest.mark.asyncio

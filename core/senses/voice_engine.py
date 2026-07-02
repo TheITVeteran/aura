@@ -292,6 +292,8 @@ class SovereignVoiceEngine:
         self._candidate_transcript_callbacks: set[str] = set()
         self._anonymous_transcript_callbacks: list[Callable[[str], Awaitable[None]]] = []
         self._last_audio_source_assessment: dict[str, Any] = {}
+        self._last_threshold_payload: dict[str, Any] = {}
+        self._last_threshold_signal_time = 0.0
         self._on_tts_audio: Callable[[bytes], Awaitable[None]] | None = None
         self._on_state_change: Callable[[VoiceState], Awaitable[None]] | None = None
         self._on_vad_change: Callable[[bool], None] | None = None # Pulse when VAD detection changes
@@ -501,14 +503,17 @@ class SovereignVoiceEngine:
         # Signal Mycelial Roots about sensory gating
         if homeostasis:
             now = time.time()
-            # Debounce to prevent 30Hz mycelial spam loop building RAM infinitely
-            if not hasattr(self, '_last_threshold_time') or (now - self._last_threshold_time) > 2.0:
-                self._last_threshold_time = now
-                self._signal_mycelium("voice_engine", "sensory_gate", {
-                    "event": "threshold_shift",
-                    "rms_gate": round(thresholds["rms"], 4),
-                    "conf_gate": round(thresholds["conf"], 2)
-                })
+            payload = {
+                "event": "threshold_shift",
+                "rms_gate": round(thresholds["rms"], 4),
+                "conf_gate": round(thresholds["conf"], 2),
+            }
+            changed = payload != self._last_threshold_payload
+            heartbeat_due = (now - self._last_threshold_signal_time) > 30.0
+            if changed or heartbeat_due:
+                self._last_threshold_payload = dict(payload)
+                self._last_threshold_signal_time = now
+                self._signal_mycelium("voice_engine", "sensory_gate", payload)
                 
         return thresholds
 
