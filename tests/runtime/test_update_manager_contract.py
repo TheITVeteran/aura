@@ -182,7 +182,10 @@ def test_signing_key_stays_consistent_when_persistence_fails(monkeypatch, tmp_pa
     import core.runtime.update_manager as um
 
     class _RefusingGateway:
+        refused = 0
+
         def write_bytes(self, *args, **kwargs):
+            _RefusingGateway.refused += 1
             raise RuntimeError("file-write gateway is in a rejecting mode")
 
     monkeypatch.setattr(um, "get_file_write_gateway", lambda: _RefusingGateway())
