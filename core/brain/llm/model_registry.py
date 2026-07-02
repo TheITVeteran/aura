@@ -7,6 +7,7 @@ This module is the single source of truth for:
 """
 import copy
 import json
+import logging
 import os
 import re
 import threading
@@ -46,28 +47,38 @@ LEGACY_ENDPOINT_ALIASES = {
 }
 
 
+_EXTERNAL_CORTEX_QUERIED = False
+
+
 def external_llama_cortex_allowed() -> bool:
     """External server Cortex is retired for live Aura.
 
     Normal Aura desktop/runtime operation uses the in-process MLX lane so the
     substrate, affect, steering, memory, and response gates can act on the same
     live model path.  Keep the public function for compatibility, but make the
-    answer permanently false.
+    answer permanently false — and leave a breadcrumb if anything still asks,
+    so a lingering caller of the retired lane is visible instead of silent.
     """
 
+    global _EXTERNAL_CORTEX_QUERIED
+    if not _EXTERNAL_CORTEX_QUERIED:
+        _EXTERNAL_CORTEX_QUERIED = True
+        logging.getLogger("Aura.ModelRegistry").debug(
+            "external_llama_cortex_allowed() queried; the external server Cortex "
+            "lane is retired and permanently disabled."
+        )
     return False
 
 
 def _effective_local_backend() -> str:
-    raw = str(os.getenv("AURA_LOCAL_BACKEND") or LOCAL_BACKEND or "mlx").strip().lower()
-    return "mlx" if raw != "mlx" else "mlx"
+    # MLX is the only supported local backend; any configured value coerces to
+    # it so retired backends can never be resurrected through env/config drift.
+    return "mlx"
 
 
 def _normalize_backend_name(value: str | None) -> str:
-    if value is None:
-        return _effective_local_backend()
-    normalized = str(value or "mlx").strip().lower()
-    return "mlx" if normalized != "mlx" else "mlx"
+    del value  # every backend name normalizes to the sole supported lane
+    return "mlx"
 
 
 def normalize_runtime_model_name(model_name: str | None, *, backend: str | None = None) -> str:

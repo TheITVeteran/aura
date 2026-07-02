@@ -123,13 +123,23 @@ class ReasoningBenchmark:
             )
 
         # Deterministic: grade whether the verifier reached the expected verdict.
-        correct = verified == case.should_pass
+        # The amplifier may legitimately REPAIR a seeded error (the hardened math
+        # verifier derives the exact answer from the question), so a should-fail
+        # case counts as handled when it is either flagged unverified OR verifiably
+        # repaired to the gold answer. Rubber-stamping the seeded wrong answer —
+        # verified=True with a final answer that still misses gold — stays a miss.
+        gold_match = self._gold_match(result.answer, case.gold) if case.gold else None
+        if case.should_pass:
+            correct = verified
+        else:
+            repaired = bool(verified and case.gold and gold_match)
+            correct = (not verified) or repaired
         false_confidence = (not correct) and result.confidence >= self.confidence_floor
         return CaseOutcome(
             case_id=case.case_id, task_type=case.task_type, should_pass=case.should_pass,
             verified=verified, confidence=result.confidence, correct=correct,
             false_confidence=false_confidence, latency_ms=latency, mode="deterministic",
-            known_failures=result.receipt.known_failures,
+            answer_gold_match=gold_match, known_failures=result.receipt.known_failures,
         )
 
     async def run(self, *, generate: GenerateFn | None = None) -> BenchmarkResult:
@@ -150,7 +160,8 @@ class ReasoningBenchmark:
             halluc = [o for o in wrong if o.task_type in {"repo_audit", "factual", "architecture"}]
         else:
             should_catch = [o for o in outcomes if not o.should_pass]
-            caught = [o for o in should_catch if not o.verified]
+            # Caught = flagged unverified OR verifiably repaired to gold.
+            caught = [o for o in should_catch if (not o.verified) or o.answer_gold_match]
             halluc = [o for o in should_catch if o.task_type in {"repo_audit", "factual", "architecture"}]
         halluc_caught = [o for o in halluc if not o.verified]
 

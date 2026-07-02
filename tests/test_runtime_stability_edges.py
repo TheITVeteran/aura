@@ -667,7 +667,6 @@ class TestShutdownCoordination(unittest.TestCase):
     def test_proof_runners_use_normal_exit_after_runtime_shutdown(self):
         root = Path(__file__).resolve().parents[1]
         proof_runners = [
-            root / "tools" / "agi" / "run_dnu_agi_proof_battery.py",
             root / "tools" / "run_aletheia_live_proof.py",
             root / "tools" / "certify_boot.py",
         ]
@@ -675,12 +674,27 @@ class TestShutdownCoordination(unittest.TestCase):
             source = runner.read_text(encoding="utf-8")
             self.assertNotIn("os._exit", source, f"{runner} bypasses multiprocessing cleanup")
 
-        dnu_source = proof_runners[0].read_text(encoding="utf-8")
+        # The DNU battery is allowed a *guarded* fast exit: after runtime
+        # shutdown it must explicitly reap child processes and flush stdio
+        # before os._exit, so multiprocessing cleanup happens by hand instead
+        # of hanging in Py_FinalizeEx on non-daemon helper/native threads.
+        dnu_source = (root / "tools" / "agi" / "run_dnu_agi_proof_battery.py").read_text(
+            encoding="utf-8"
+        )
         self.assertRegex(
             dnu_source,
             r"await shutdown_proof_runtime\(orch\)\n\s+return (?:1|fail_run_status\()",
         )
-        self.assertIn("raise SystemExit(code)", dnu_source)
+        self.assertRegex(
+            dnu_source,
+            r"_reap_proof_child_processes_sync\(\"process_exit\"\)\n"
+            r"\s+sys\.stdout\.flush\(\)\n"
+            r"\s+sys\.stderr\.flush\(\)\n"
+            r"(?:\s+#[^\n]*\n)*"
+            r"\s+os\._exit\(int\(code\)\)",
+            "os._exit in the DNU battery must stay guarded by explicit child "
+            "reaping and stdio flushes",
+        )
 
     def test_agency_shutdown_prefers_final_client_close_before_reboot_fallback(self):
         root = Path(__file__).resolve().parents[1]
@@ -1503,6 +1517,18 @@ class TestLifecycleDeduplication(unittest.IsolatedAsyncioTestCase):
 
 
 class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        super().setUp()
+        # Boot grace keys on the current process incarnation; these isolation
+        # tests model a mature live runtime, not a fresh boot.
+        import core.runtime.background_policy as background_policy
+
+        original_started_at = background_policy._PROCESS_STARTED_AT
+        background_policy._PROCESS_STARTED_AT = time.time() - 1000.0
+        self.addCleanup(
+            setattr, background_policy, "_PROCESS_STARTED_AT", original_started_at
+        )
+
     async def test_event_bus_same_loop_delivery_avoids_threadsafe_self_wakeup(self):
         from core.event_bus import AuraEventBus
 

@@ -18,6 +18,10 @@ TRACE_SOURCES = [
     ROOT / ".aura_runtime" / "data" / "unified_action_log.jsonl",
     ROOT / "data" / "comm_logs.jsonl",
     ROOT / "data" / "internal_monologue.jsonl",
+    # Committed fallback corpus so the STDP validation machinery runs in fresh
+    # clones/worktrees where live runtime traces do not exist yet. Live traces
+    # dominate when present (they load first and the cap is per-source).
+    ROOT / "tests" / "fixtures" / "stdp_trace_seed.jsonl",
 ]
 N_NEURONS = 16
 

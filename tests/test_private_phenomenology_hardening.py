@@ -15,6 +15,17 @@ def clear_services():
     ServiceContainer.clear()
 
 
+@pytest.fixture(autouse=True)
+def mature_process_incarnation(monkeypatch):
+    """Boot grace keys on the current process incarnation (_PROCESS_STARTED_AT);
+    these admission tests model a long-running runtime, not a fresh boot."""
+    import core.runtime.background_policy as background_policy
+
+    monkeypatch.setattr(
+        background_policy, "_PROCESS_STARTED_AT", time.time() - 1000.0
+    )
+
+
 class QuietOrchestrator:
     def __init__(self):
         now = time.time()

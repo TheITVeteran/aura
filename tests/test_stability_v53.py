@@ -486,9 +486,15 @@ class TestChatHandlerResilience:
                             pass
                 break
 
-    def test_protected_foreground_allows_cloud(self):
-        """v53 fix: protected foreground lane must allow cloud fallback."""
-        import ast
+    def test_protected_foreground_stays_local(self):
+        """Protected foreground lane stays on the local live-mind path.
+
+        Superseded policy note: the original v53 fix wanted cloud fallback here
+        so the user always got *some* answer. The live-mind contract now keeps
+        the protected foreground on the in-process local lane (sovereign,
+        local-only posture) and fails closed to the bounded-contract reply
+        instead of silently switching substrates mid-turn.
+        """
         with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "interface", "routes", "chat.py")) as f:
             source = f.read()
         # Find the protected foreground generate call
@@ -497,8 +503,8 @@ class TestChatHandlerResilience:
             if "protected_foreground_lane" in line and "True" in line:
                 in_protected = True
             if in_protected and "allow_cloud_fallback" in line:
-                assert "True" in line, \
-                    "Protected foreground lane must allow cloud fallback"
+                assert "False" in line, \
+                    "Protected foreground lane must stay local (no cloud substrate swap)"
                 break
 
 

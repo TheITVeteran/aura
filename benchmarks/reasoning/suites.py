@@ -46,12 +46,18 @@ def default_suite() -> list[ReasoningCase]:
                       "Working it through: 12 * 12 = 144, so the product is 144.", True, gold="144"),
         ReasoningCase("math_err_1", "Compute 12 multiplied by 12 and show the arithmetic", "math",
                       "Working it through: 12 * 12 = 140, so the product is 140.", False,
-                      run_live=False, note="seeded arithmetic error (deterministic only)"),
+                      gold="144",
+                      run_live=False,
+                      note="seeded arithmetic error; flagging unverified or verifiably "
+                           "repairing to gold both count as caught"),
         ReasoningCase("math_ok_2", "Add 250 and 175 together, showing the step", "math",
                       "First 250 + 175 = 425, then 425 is the total.", True, gold="425"),
         ReasoningCase("math_err_2", "Add 250 and 175 together, showing the step", "math",
                       "First 250 + 175 = 525, then 525 is the total.", False,
-                      run_live=False, note="seeded arithmetic error (deterministic only)"),
+                      gold="425",
+                      run_live=False,
+                      note="seeded arithmetic error; flagging unverified or verifiably "
+                           "repairing to gold both count as caught"),
         # ---- code --------------------------------------------------------
         ReasoningCase("code_ok_1", "Write a Python function `inc` that returns its argument plus one. "
                       "Return only a fenced code block.", "code",

@@ -10616,7 +10616,9 @@ async def test_api_chat_preempts_stale_foreground_lock_and_clears_mlx_owner(monk
     monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: None))
 
     await chat_routes._foreground_chat_lock.acquire()
-    chat_routes._foreground_chat_lock._acquired_at = time.time() - 51.0
+    # held_duration is monotonic-based (sleep-proof), so age the lock on the
+    # monotonic clock.
+    chat_routes._foreground_chat_lock._acquired_at = time.monotonic() - 51.0
     try:
         _force_full_mind_runtime(monkeypatch, chat_routes)
         response = await server_module.api_chat(
