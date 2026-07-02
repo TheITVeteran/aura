@@ -20,7 +20,9 @@ Exit codes: 0 all pass, 1 any check failed, 2 instance unreachable.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import os
 import socket
 import sys
 import time
@@ -112,7 +114,10 @@ def probe(base: str) -> dict:
         started = time.monotonic()
         with socket.create_connection((host, int(port_s or "80")), timeout=HTTP_BUDGET_S) as sock:
             sock.settimeout(HTTP_BUDGET_S)
-            key = "aGVsbG8tYXVyYS1wcm9iZQ=="
+            # RFC 6455: Sec-WebSocket-Key is a random 16-byte nonce, not a
+            # credential — generate per probe (also keeps secret scanners
+            # honest: no base64 literals in source).
+            key = base64.b64encode(os.urandom(16)).decode("ascii")
             handshake = (
                 f"GET /ws HTTP/1.1\r\nHost: {host_port}\r\nUpgrade: websocket\r\n"
                 f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
