@@ -3757,6 +3757,19 @@ class MLXLocalClient:
                 self._record_surface_control_receipt_from_response(res)
                 text = res.get("text", "").strip()
                 self._mark_progress()
+                if res.get("soft_cancelled"):
+                    # Deliberate cooperative preemption: return the partial text
+                    # without empty-generation telemetry, inline retries, or a
+                    # user-facing completion mark — the health machinery must
+                    # not treat a requested cancel as a generation failure.
+                    logger.info(
+                        "✋ [MLX] Generation for %s ended by soft-cancel after partial output (%d chars).",
+                        os.path.basename(self.model_path),
+                        len(text),
+                    )
+                    self._consecutive_empty = 0
+                    self._set_lane_state("ready")
+                    return text or None
                 if not text:
                     # Empty warmup can prove process/shader liveness, but it
                     # cannot prove conversation readiness. Keep the lane out of

@@ -165,3 +165,21 @@ def test_worker_spawn_args_include_cancel_channel():
     # Spawn site passes it positionally after steering_active_flag.
     assert params.index("cancel_seq") == params.index("steering_active_flag") + 1
     assert "self._cancel_seq," in inspect.getsource(mlx_client_mod)
+
+
+# ── parent-side response handling ──────────────────────────────────────
+
+
+def test_soft_cancelled_ok_response_is_handled_before_empty_telemetry():
+    """A requested cancel is not a generation failure: the ok-branch must
+    short-circuit on soft_cancelled before empty-generation telemetry,
+    consecutive-empty escalation, or the inline foreground retry."""
+    import inspect
+
+    source = inspect.getsource(mlx_client_mod)
+    idx_cancel = source.find('if res.get("soft_cancelled")')
+    idx_empty = source.find("Empty warmup can prove process/shader liveness")
+    assert idx_cancel > 0, "ok-branch must handle soft_cancelled responses"
+    assert idx_cancel < idx_empty, (
+        "soft-cancel handling must run before empty-generation telemetry"
+    )
