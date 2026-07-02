@@ -3132,6 +3132,10 @@ class MLXLocalClient:
                             heartbeat_age,
                         )
                         self._deferred_reboot_reason = "recoverable_first_token_sla_exceeded"
+                    # Ask the worker to drop the orphaned generation between
+                    # tokens — the abandoned output then never arrives at all,
+                    # instead of relying solely on a worker recycle.
+                    self.soft_cancel_active_generation("abandoned_first_token_sla")
                     _cancel_shared_future(future)
                     return None
 
@@ -3171,6 +3175,7 @@ class MLXLocalClient:
                             heartbeat_age,
                         )
                         self._deferred_reboot_reason = "recoverable_token_progress_stalled"
+                    self.soft_cancel_active_generation("abandoned_token_stall")
                     _cancel_shared_future(future)
                     return None
 
@@ -3189,6 +3194,7 @@ class MLXLocalClient:
                         foreground_request=foreground_request,
                     )
                     self._deferred_reboot_reason = "heartbeat_stalled_during_generation"
+                    self.soft_cancel_active_generation("abandoned_heartbeat_stall")
                     _cancel_shared_future(future)
                     return None
         raise TimeoutError
@@ -4312,6 +4318,14 @@ class MLXLocalClient:
             self._current_request_started_at = 0.0
             self._current_first_token_at = 0.0
             self._current_request_id = ""
+            self._current_request_seq = 0
+            # A reboot orphans any cooperative-cancel request with the worker.
+            cancel_seq = getattr(self, "_cancel_seq", None)
+            if cancel_seq is not None:
+                try:
+                    cancel_seq.value = 0
+                except (OSError, ValueError):
+                    logger.debug("Cancel channel reset skipped during reboot.")
             if self._listener_task:
                 _cancel_task_threadsafe(self._listener_task)
                 self._listener_task = None
