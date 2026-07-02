@@ -895,9 +895,11 @@ def test_desktop_access_summary_native_bridge_ready_skips_slow_python_tcc_probes
             }
 
         async def check_permission(self, ptype, force=False):
+            self.python_probe_calls = getattr(self, "python_probe_calls", 0) + 1
             raise AssertionError("native-ready bridge should bypass Python TCC probes")
 
         async def check_permission_direct(self, ptype):
+            self.python_probe_calls = getattr(self, "python_probe_calls", 0) + 1
             raise AssertionError("native-ready bridge should bypass direct Python TCC probes")
 
     monkeypatch.setattr(system_routes.sys, "platform", "darwin")
@@ -944,9 +946,11 @@ def test_desktop_access_summary_menu_clock_probe_is_bounded(monkeypatch):
             return {"pid": 789, "bundle_identifier": "org.python.python"}
 
         async def check_permission(self, ptype, force=False):
+            self.python_probe_calls = getattr(self, "python_probe_calls", 0) + 1
             raise AssertionError("native-ready bridge should bypass Python TCC probes")
 
         async def check_permission_direct(self, ptype):
+            self.python_probe_calls = getattr(self, "python_probe_calls", 0) + 1
             raise AssertionError("native-ready bridge should bypass direct Python TCC probes")
 
     original_to_thread = system_routes.asyncio.to_thread

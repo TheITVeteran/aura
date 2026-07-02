@@ -359,6 +359,7 @@ def test_single_job_timeout_is_not_recorded_as_degradation(monkeypatch):
 
     class _TimeoutFuture:
         def result(self, timeout=None):
+            self.result_polls = getattr(self, "result_polls", 0) + 1
             raise TimeoutError("job exceeded slot")
 
     def submit(fn, history, name, idxs):
@@ -388,6 +389,7 @@ def test_fully_starved_cycle_records_one_degradation(monkeypatch):
 
     class _TimeoutFuture:
         def result(self, timeout=None):
+            self.result_polls = getattr(self, "result_polls", 0) + 1
             raise TimeoutError("job exceeded slot")
 
     monkeypatch.setattr(h._executor, "submit", lambda *a, **k: _TimeoutFuture())

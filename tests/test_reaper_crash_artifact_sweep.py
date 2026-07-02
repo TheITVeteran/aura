@@ -118,6 +118,7 @@ class TestSweepRunsOffLoop:
         reaper = _make_reaper(tmp_path, monkeypatch)
 
         def boom():
+            boom.calls = getattr(boom, "calls", 0) + 1
             raise OSError("disk unavailable")
 
         monkeypatch.setattr(reaper, "_hunt_orphans", boom)

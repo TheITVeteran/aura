@@ -37,6 +37,7 @@ def test_soft_cancel_requested_survives_broken_channel():
     class _Broken:
         @property
         def value(self):
+            self.reads = getattr(self, "reads", 0) + 1
             raise OSError("shared memory detached")
 
     assert soft_cancel_requested(_Broken(), 3) is False
