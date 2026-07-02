@@ -323,6 +323,10 @@ def test_aura_main_acquires_singleton_lock_before_port_cleanup_and_reaper_boot()
 
 def test_stop_aura_signals_parent_before_touching_child_actors():
     main_py = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
+    legacy_helper = main_py.split("def _disable_legacy_launchagent(", 1)[1].split(
+        "def _is_reapable_aura_process_command(",
+        1,
+    )[0]
     stop_body = main_py.split("def stop_aura():", 1)[1].split("# ---------------------------------------------------------------------------", 1)[0]
 
     assert "p.send_signal(signal.SIGTERM)" in stop_body
@@ -332,11 +336,17 @@ def test_stop_aura_signals_parent_before_touching_child_actors():
     assert "Aura.app/Contents/MacOS/aura-launcher" in stop_body
     assert '"--desktop", "--gui-window"' in stop_body
     assert '"--stop" not in cmdline' in stop_body
-    assert '["launchctl", "bootout", f"gui/{uid}", str(plist_path)]' in stop_body
-    assert '["launchctl", "disable", f"gui/{uid}/com.aura.sovereign"]' in stop_body
-    assert '["launchctl", "unload", "-w", str(plist_path)]' in stop_body
+    assert "_disable_legacy_launchagent(" in stop_body
+    assert "reason=\"explicit_stop\"" in stop_body
+    assert '["launchctl", "bootout", f"gui/{uid}", str(plist_path)]' in legacy_helper
+    assert '["launchctl", "disable", f"gui/{uid}/com.aura.sovereign"]' in legacy_helper
+    assert '["launchctl", "unload", "-w", str(plist_path)]' in legacy_helper
+    assert "core.orchestrator.main" in legacy_helper
+    assert "legacy_launchagents" in legacy_helper
+    assert "AURA_KEEP_LEGACY_LAUNCHAGENT" in legacy_helper
     assert "Stopped native launcher session(s)" in stop_body
     assert "Stopped post-shutdown revived Aura session(s)" in stop_body
+    assert "reason=\"modern_desktop_launch\"" in main_py
     first_signal = stop_body.index("p.send_signal(signal.SIGTERM)")
     assert "for child in p.children(recursive=True):" not in stop_body[:first_signal]
 
@@ -592,6 +602,7 @@ def test_memory_ui_uses_packaged_fallback_and_visible_error_panel():
     assert 'interface" / "static" / "memory_panel.html"' in root_handler
     assert "AURA_MEMORY_DEV_UI" in root_handler
     assert root_handler.index("memory_panel.html") < root_handler.index("AURA_MEMORY_DEV_UI")
+    assert root_handler.index("memory_panel.html") < root_handler.index("static\" / \"memory\" / \"dist\"")
     assert "source Vite entry is not a valid packaged desktop fallback" in root_handler
     assert "function renderMemoryLoadError(error)" in panel
     assert "const AURA_API_BASE = 'http://127.0.0.1:8000'" in panel

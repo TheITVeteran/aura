@@ -2821,6 +2821,84 @@ def _verified_live_orchestrator_lock_pid() -> int | None:
     return None
 
 
+def _disable_legacy_launchagent(*, quarantine_obsolete: bool, reason: str = "") -> str | None:
+    """Disable Aura's retired launchd agent and optionally quarantine its plist.
+
+    Older builds installed ``com.aura.sovereign`` as a KeepAlive LaunchAgent
+    that starts ``core.orchestrator.main`` directly. The modern desktop path is
+    owned by ``Aura.app`` plus ``aura_main.py`` singleton locks. Leaving the old
+    plist in LaunchAgents can revive a second runtime after reboot/login, so
+    modern launches and explicit stops disable it and move obsolete plists out
+    of launchd's scan path.
+    """
+
+    if sys.platform != "darwin":
+        return None
+    plist_path = Path.home() / "Library/LaunchAgents/com.aura.sovereign.plist"
+    if not plist_path.exists():
+        return None
+
+    logger.info("Unloading launchd daemon to prevent auto-revival...")
+    try:
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        gateway = get_subprocess_gateway()
+        uid = str(os.getuid())
+        launchd_commands = (
+            ["launchctl", "bootout", f"gui/{uid}", str(plist_path)],
+            ["launchctl", "disable", f"gui/{uid}/com.aura.sovereign"],
+            ["launchctl", "unload", "-w", str(plist_path)],
+        )
+        for command in launchd_commands:
+            try:
+                gateway.run(
+                    command,
+                    capture_output=True,
+                    timeout=5,
+                    source="maintenance_tooling:stop_aura",
+                    offline_tooling=True,
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning("launchctl command timed out: %s", command)
+            except _AURA_MAIN_BOUNDARY_ERRORS as e:
+                logger.debug("launchctl command failed during stop (%s): %s", command, e)
+    except subprocess.TimeoutExpired:
+        logger.warning("launchctl unload timed out.")
+    except _AURA_MAIN_BOUNDARY_ERRORS as e:
+        record_degradation('aura_main', e)
+        logger.warning("launchctl unload failed: %s", e)
+
+    if not quarantine_obsolete or _env_flag("AURA_KEEP_LEGACY_LAUNCHAGENT", False):
+        return None
+
+    try:
+        plist_text = plist_path.read_text(encoding="utf-8", errors="replace")
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation("aura_main.legacy_launchagent_read", exc, severity="warning")
+        return None
+    if "core.orchestrator.main" not in plist_text:
+        logger.info("Legacy launchagent left in place because it no longer targets core.orchestrator.main.")
+        return None
+
+    quarantine_dir = Path.home() / ".aura" / "legacy_launchagents"
+    quarantine_dir.mkdir(parents=True, exist_ok=True)
+    suffix = time.strftime("%Y%m%d-%H%M%S")
+    target = quarantine_dir / f"{plist_path.name}.disabled-{suffix}"
+    try:
+        shutil.move(str(plist_path), str(target))
+        logger.warning(
+            "Quarantined obsolete Aura launchagent %s -> %s (%s).",
+            plist_path,
+            target,
+            reason or "modern_runtime_singleton",
+        )
+        return str(target)
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation("aura_main.legacy_launchagent_quarantine", exc, severity="warning")
+        logger.warning("Failed to quarantine obsolete launchagent %s: %s", plist_path, exc)
+        return None
+
+
 def _is_reapable_aura_process_command(command: str) -> bool:
     cmd = str(command or "")
     normalized = " ".join(cmd.split())
@@ -3134,38 +3212,10 @@ def stop_aura():
         return stopped
     
     # 1. Unload Launchd Agent (Prevents auto-revival on macOS)
-    if sys.platform == "darwin":
-        plist_path = Path.home() / "Library/LaunchAgents/com.aura.sovereign.plist"
-        if plist_path.exists():
-            logger.info("Unloading launchd daemon to prevent auto-revival...")
-            try:
-                from core.runtime.subprocess_gateway import get_subprocess_gateway
-
-                gateway = get_subprocess_gateway()
-                uid = str(os.getuid())
-                launchd_commands = (
-                    ["launchctl", "bootout", f"gui/{uid}", str(plist_path)],
-                    ["launchctl", "disable", f"gui/{uid}/com.aura.sovereign"],
-                    ["launchctl", "unload", "-w", str(plist_path)],
-                )
-                for command in launchd_commands:
-                    try:
-                        gateway.run(
-                            command,
-                            capture_output=True,
-                            timeout=5,
-                            source="maintenance_tooling:stop_aura",
-                            offline_tooling=True,
-                        )
-                    except subprocess.TimeoutExpired:
-                        logger.warning("launchctl command timed out: %s", command)
-                    except _AURA_MAIN_BOUNDARY_ERRORS as e:
-                        logger.debug("launchctl command failed during stop (%s): %s", command, e)
-            except subprocess.TimeoutExpired:
-                logger.warning("launchctl unload timed out.")
-            except _AURA_MAIN_BOUNDARY_ERRORS as e:
-                record_degradation('aura_main', e)
-                logger.warning("launchctl unload failed: %s", e)
+    _disable_legacy_launchagent(
+        quarantine_obsolete=True,
+        reason="explicit_stop",
+    )
             
     if not lock_file.exists():
         stopped_launchers = stop_native_desktop_launchers()
@@ -3342,6 +3392,10 @@ def main():
     # Desktop/headless sessions boot the full canonical runtime. Resource
     # protection is independent from the reduced recovery-only safe-boot mode.
     if (args.desktop or args.headless) and "AURA_DESKTOP_RESOURCE_GUARD" not in os.environ:
+        _disable_legacy_launchagent(
+            quarantine_obsolete=True,
+            reason="modern_desktop_launch",
+        )
         os.environ["AURA_DESKTOP_RESOURCE_GUARD"] = "1"
         # Run Aura's OWN in-process fine-tuned mind (MLX) as the desktop Cortex.
         # This matters for identity, not just weights: an external server is a

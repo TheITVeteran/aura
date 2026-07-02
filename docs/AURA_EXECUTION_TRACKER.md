@@ -4297,3 +4297,73 @@ Estimate:
 - Remaining total checkpoints are estimated at 5: TCC/native bridge and
   memory UI, background autonomy plus thermal guard, visible desktop agency
   proof, full-mind conversation/voice proof, and final clean closeout replay.
+
+## Checkpoint 2026-07-02-07: Launch Singleton and Memory Panel Repair
+
+Status: source and installed app verified.
+
+Scope:
+
+- Quarantined the retired `com.aura.sovereign` LaunchAgent path that could
+  revive `core.orchestrator.main` independently of the modern `Aura.app`
+  singleton runtime. The explicit stop path and normal desktop/headless launch
+  path now disable the old launchd service and move obsolete plists out of
+  `~/Library/LaunchAgents` unless `AURA_KEEP_LEGACY_LAUNCHAGENT` is set.
+- Verified the stale LaunchAgent on this machine was moved to
+  `~/.aura/legacy_launchagents/`, removing one concrete cause of multiple Aura
+  app/runtime instances after login or stop/start loops.
+- Fixed the Memory route so `/memory` serves the dependency-free
+  `interface/static/memory_panel.html` by default. The React/Vite memory UI is
+  now opt-in behind `AURA_MEMORY_DEV_UI=1`, preventing the black panel caused
+  by packaged Vite assets or dev-only `/src/*.jsx` references.
+- Rebuilt and reinstalled `/Applications/Aura.app` from the current live source
+  via `scripts/bundle_app.sh`.
+- Re-ran the native desktop bridge probe from source and from
+  `/Applications/Aura.app/Contents/MacOS/aura-launcher`; both report Screen
+  Recording, Accessibility, and Automation as granted for the stable
+  `com.aura.desktop` signed app identity.
+
+Evidence:
+
+- `python -u aura_main.py --stop`
+  -> no live Aura session remained and the obsolete LaunchAgent was
+  quarantined.
+- `launchctl print gui/$(id -u)/com.aura.sovereign`
+  -> service not loaded.
+- Direct native bridge probe through `core.security.native_desktop_bridge`
+  -> `screen_recording=true`, `accessibility=true`, `automation=true`.
+- Direct native bridge probe through
+  `/Applications/Aura.app/Contents/MacOS/aura-launcher --native-desktop-bridge`
+  -> same granted permission set.
+- `AURA_INSTALL_PATH=/Applications/Aura.app scripts/bundle_app.sh`
+  -> rebuilt and installed `/Applications/Aura.app` with live source mode.
+- `plutil -p /Applications/Aura.app/Contents/Info.plist`
+  -> `CFBundleIdentifier=com.aura.desktop`.
+- `codesign -dv --verbose=4 /Applications/Aura.app`
+  -> signed by `Aura Local Code Signing`.
+- `ps aux | rg -i "Aura\\.app|aura_main.py|aura-launcher|uvicorn|interface.server|core.orchestrator.main"`
+  -> no live Aura sessions.
+- `python -m py_compile aura_main.py interface/memory_ui.py tests/test_launcher_polish_contract.py`
+  -> passed.
+- `python -m ruff check --select F,E9 aura_main.py interface/memory_ui.py tests/test_launcher_polish_contract.py`
+  -> passed.
+- `python -m pytest -q tests/test_launcher_polish_contract.py::test_stop_aura_signals_parent_before_touching_child_actors tests/test_launcher_polish_contract.py::test_memory_ui_uses_packaged_fallback_and_visible_error_panel tests/test_launcher_polish_contract.py::test_aura_main_acquires_singleton_lock_before_port_cleanup_and_reaper_boot`
+  -> `3 passed`.
+
+Boundary:
+
+- This fixes the source-level duplicate-launcher guard, rebuilds the installed
+  app, verifies the packaged native bridge identity, and fixes the packaged
+  Memory panel fallback.
+- It does not yet prove live mic/voice recognition, full-mind multi-turn
+  conversation, visible general desktop agency, background autonomy receipts,
+  or final all-clear closeout.
+
+Estimate:
+
+- Launch singleton / stale session prevention: about 96%; a full launched UI
+  replay remains useful but the old LaunchAgent path is removed.
+- Memory panel reliability: about 92%; launched `/memory` route replay remains
+  useful.
+- Overall runtime/daily product closure remains about 78-82%.
+- Remaining total checkpoints: 5.

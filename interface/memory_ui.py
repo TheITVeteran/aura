@@ -143,9 +143,6 @@ async def get_vault_stats():
 @router.get("/")
 async def serve_memory_root():
     from core.config import config
-    dist_path = config.paths.project_root / "interface" / "static" / "memory" / "dist" / "index.html"
-    if dist_path.exists():
-        return FileResponse(str(dist_path))
     # The source Vite entry is not a valid packaged desktop fallback: it points
     # at /src/*.jsx and can render as a black window outside a Vite dev server.
     # Keep /memory on the dependency-free panel unless the operator explicitly
@@ -154,6 +151,9 @@ async def serve_memory_root():
     if static_path.exists():
         return FileResponse(str(static_path))
     if str(os.getenv("AURA_MEMORY_DEV_UI", "") or "").strip().lower() in {"1", "true", "yes", "on"}:
+        dist_path = config.paths.project_root / "interface" / "static" / "memory" / "dist" / "index.html"
+        if dist_path.exists():
+            return FileResponse(str(dist_path))
         react_path = config.paths.project_root / "interface" / "static" / "memory" / "index.html"
         if react_path.exists():
             return FileResponse(str(react_path))

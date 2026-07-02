@@ -1870,3 +1870,59 @@ Estimate:
 - Frontier standards/source mapping: about 92%.
 - Runtime/daily product: about 75-80% until live desktop proofs are clean.
 - Remaining total checkpoints: 5.
+
+## Checkpoint 2026-07-02-07: Launch Singleton and Memory Panel Repair
+
+Status: source and installed app verified.
+
+Scope:
+
+- Disabled and quarantined obsolete `com.aura.sovereign` LaunchAgent plists
+  that still target `core.orchestrator.main`, so stale launchd state cannot
+  create extra Aura sessions beside the modern app singleton.
+- Wired that quarantine through both explicit `aura_main.py --stop` and normal
+  desktop/headless launch.
+- Changed `/memory` to prefer `interface/static/memory_panel.html` by default;
+  React/Vite memory assets are now dev-only behind `AURA_MEMORY_DEV_UI=1`.
+- Rebuilt and reinstalled `/Applications/Aura.app` from the current live source.
+- Confirmed direct native bridge probes from source and installed launcher now
+  report the stable signed app identity with Screen Recording, Accessibility,
+  and Automation granted.
+
+Evidence:
+
+- `python -u aura_main.py --stop`
+  -> quarantined stale LaunchAgent and found no remaining live Aura lock.
+- `launchctl print gui/$(id -u)/com.aura.sovereign`
+  -> service not loaded.
+- Source native bridge probe and installed `aura-launcher` native bridge probe
+  -> `screen_recording=true`, `accessibility=true`, `automation=true`.
+- `AURA_INSTALL_PATH=/Applications/Aura.app scripts/bundle_app.sh`
+  -> rebuilt and installed `/Applications/Aura.app`.
+- `plutil -p /Applications/Aura.app/Contents/Info.plist`
+  -> `CFBundleIdentifier=com.aura.desktop`.
+- `codesign -dv --verbose=4 /Applications/Aura.app`
+  -> signed by `Aura Local Code Signing`.
+- Process scan for Aura app/server/runtime names
+  -> no live Aura sessions.
+- `python -m py_compile aura_main.py interface/memory_ui.py tests/test_launcher_polish_contract.py`
+  -> passed.
+- `python -m ruff check --select F,E9 aura_main.py interface/memory_ui.py tests/test_launcher_polish_contract.py`
+  -> passed.
+- `python -m pytest -q tests/test_launcher_polish_contract.py::test_stop_aura_signals_parent_before_touching_child_actors tests/test_launcher_polish_contract.py::test_memory_ui_uses_packaged_fallback_and_visible_error_panel tests/test_launcher_polish_contract.py::test_aura_main_acquires_singleton_lock_before_port_cleanup_and_reaper_boot`
+  -> `3 passed`.
+
+Boundary:
+
+- This checkpoint addresses the observed multiple-instance source, rebuilds
+  the installed app, verifies the native bridge identity, and fixes the black
+  Memory panel route.
+- Live voice/mic grounding, visible desktop agency, background autonomy
+  artifact, and final closeout artifact remain open.
+
+Estimate:
+
+- Launch singleton reliability: about 96%; full launched UI replay remains.
+- Memory UI reliability: about 92%; full launched route replay remains.
+- Runtime/daily product: about 78-82%.
+- Remaining total checkpoints: 5.
