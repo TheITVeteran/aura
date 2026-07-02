@@ -632,13 +632,22 @@ def main():
 
     output_dir = Path(args.output_dir) if args.output_dir else None
 
-    # Auto-detect adapter if not specified
+    # Auto-detect adapter if not specified — but never for fused artifacts:
+    # a fused model already contains the personality (and any CRSM delta)
+    # baked into its weights, so stacking the adapter again would extract
+    # vectors from a model state that is not what serves live traffic.
     adapter_path = args.adapter_path
-    if adapter_path is None:
+    model_is_fused = "fused-model" in str(args.model_path)
+    if adapter_path is None and not model_is_fused:
         default_adapter = Path(__file__).parent / "adapters" / "aura-personality"
         if default_adapter.exists():
             adapter_path = str(default_adapter)
             logger.info("Auto-detected LoRA adapter: %s", adapter_path)
+    elif adapter_path is None and model_is_fused:
+        logger.info(
+            "Fused model detected; extracting from the fused weights directly "
+            "(no adapter stacking)."
+        )
 
     extract_steering_vectors(
         model_path=args.model_path,
