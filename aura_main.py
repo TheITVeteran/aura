@@ -828,6 +828,11 @@ async def _boot_runtime_orchestrator(
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         logger.warning("⚠️ Failed to write runtime service ownership manifest: %s", exc)
     await _enforce_boot_probes(ready_label)
+    try:
+        from core.runtime.boot_profile import get_boot_profiler as _gbp
+        _gbp().mark("boot_probe_enforcement")
+    except _AURA_MAIN_BOUNDARY_ERRORS:
+        pass
     readiness_snapshot = _refresh_orchestrator_health_before_manifest(orchestrator, ready_label)
     _write_runtime_manifest(
         profile=profile or ready_label.lower(),
@@ -842,6 +847,11 @@ async def _boot_runtime_orchestrator(
         artifact_root=artifact_root,
         initial_readiness=readiness_snapshot,
     )
+    try:
+        from core.runtime.boot_profile import get_boot_profiler as _gbp
+        _gbp().mark("readiness_manifests")
+    except _AURA_MAIN_BOUNDARY_ERRORS:
+        pass
     logger.info("🛡️ Registry Locked. Aura Ready (%s).", ready_label)
     try:
         from core.runtime.boot_profile import get_boot_profiler
