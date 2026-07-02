@@ -2316,7 +2316,21 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
 
             from interface.server import app as _app
             _install_health_access_log_filter()
-            server_config = uvicorn.Config(_app, host=host, port=port, log_level="info", loop="asyncio")
+            try:
+                graceful_shutdown_s = max(
+                    1,
+                    int(float(os.environ.get("AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S", "2"))),
+                )
+            except (TypeError, ValueError):
+                graceful_shutdown_s = 2
+            server_config = uvicorn.Config(
+                _app,
+                host=host,
+                port=port,
+                log_level="info",
+                loop="asyncio",
+                timeout_graceful_shutdown=graceful_shutdown_s,
+            )
             server_config.handle_signals = False
             server = uvicorn.Server(server_config)
             stop_wait = threading.Event()

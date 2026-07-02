@@ -1242,7 +1242,7 @@ Honest boundary and estimate:
 
 ## Checkpoint 2026-07-01-03: Live Status Reply 503 Root Fix
 
-Status: source repair verified locally; checkpoint commit/push pending.
+Status: source repair committed and pushed as `db39d036`.
 
 Observed post-commit live failure:
 
@@ -1296,13 +1296,74 @@ Evidence:
 Honest boundary and estimate:
 
 - This closes the live-status 503 class found by the post-commit smoke.
-- Graceful shutdown after live foreground chat still sometimes escalates to
-  SIGKILL before stopping the native launcher. That is contained, but it remains
-  shutdown polish and should be targeted next.
+- Graceful shutdown after live foreground chat still sometimes escalated to
+  SIGKILL at this checkpoint. That was contained, but is repaired in the
+  follow-up checkpoint below.
 - Prior final-proof closeout scope: 99.75%.
 - Reopened live desktop reliability scope after the June 30/July 1 user reports:
   approximately 91%.
 - Remaining consolidated checkpoint: clean-tree live desktop proof plus final
   claim validation from committed source.
-- Remaining smaller sub-checkpoints: shutdown-grace repair/verification and a
-  longer multi-turn desktop conversation soak.
+- Remaining smaller sub-checkpoints: longer multi-turn desktop conversation
+  soak after the shutdown-grace repair below.
+
+## Checkpoint 2026-07-01-04: Desktop Shutdown Grace After Live Chat
+
+Status: source repair verified locally; checkpoint commit/push pending.
+
+Observed shutdown failure:
+
+- After a successful full-mind desktop chat, `.venv/bin/python aura_main.py
+  --stop` sometimes waited the whole stop grace window and escalated to
+  `Aura is stubborn. Sending SIGKILL...`.
+- The logs showed Aura's internal shutdown completed cleanly: orchestrator
+  stopped, task tracker drained, shutdown coordinator completed, and core
+  services said goodbye.
+- The remaining hang was uvicorn waiting for open GUI/WebSocket connections:
+  `Waiting for connections to close`.
+
+Root fix:
+
+- The desktop API server now sets uvicorn `timeout_graceful_shutdown` from
+  `AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S`, defaulting to 2 seconds.
+- This keeps normal connection drain behavior, but prevents an external GUI
+  WebSocket from keeping the Python runtime alive after Aura itself has already
+  shut down.
+
+Evidence:
+
+- Focused tests passed:
+  `tests/test_launcher_polish_contract.py::test_desktop_api_server_bounds_uvicorn_connection_drain_on_shutdown`,
+  `tests/test_launcher_polish_contract.py::test_stop_aura_signals_parent_before_touching_child_actors`,
+  `tests/test_chat_reliability_proof.py::test_live_runtime_signal_gate_accepts_concrete_telemetry_answer`,
+  and
+  `tests/test_strict_contract_steering_clamp.py::test_live_status_repair_uses_concrete_runtime_telemetry`
+  (`4 passed`).
+- `py_compile` passed for `aura_main.py`,
+  `tests/test_launcher_polish_contract.py`, `core/conversation/response_reliability.py`,
+  and `core/brain/llm/mlx_worker.py`.
+- `ruff --select F,E9` passed for the touched runtime/test files.
+- Live relaunch from `/Applications/Aura.app` reached healthy conversation-ready
+  state.
+- Live desktop `/api/chat` smoke passed in 8.35s with:
+  `status=cognitive_engine`, `full_mind_path=true`, `legacy_fallback_used=false`,
+  `cognitive_engine_reply_accepted=true`, and `required_subsystems_ok=true`.
+- Real stop proof after that chat completed without SIGKILL:
+  `.venv/bin/python aura_main.py --stop` printed `✅ Aura stopped successfully.`
+  and stopped native launcher sessions. A follow-up process scan showed no Aura,
+  Aura.app launcher, MLX, or uvicorn process.
+- Shutdown logs now show `Application shutdown complete`,
+  `API Server thread has exited`, `ShutdownCoordinator: shutdown complete
+  (clean=True ...)`, and `Root runtime shutdown complete; exiting process with
+  code 0`.
+
+Honest boundary and estimate:
+
+- This closes the observed post-chat SIGKILL shutdown path.
+- Prior final-proof closeout scope: 99.77%.
+- Reopened live desktop reliability scope after the June 30/July 1 user reports:
+  approximately 92%.
+- Remaining consolidated checkpoint: clean-tree live desktop proof plus final
+  claim validation from committed source.
+- Remaining smaller sub-checkpoints: longer multi-turn desktop conversation soak
+  and final clean-tree artifact normalization.

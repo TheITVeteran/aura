@@ -206,6 +206,14 @@ def test_aura_main_supports_gui_window_mode():
     assert "launch_gui=None" in main_py
 
 
+def test_desktop_api_server_bounds_uvicorn_connection_drain_on_shutdown():
+    main_py = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
+
+    assert "AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S" in main_py
+    assert "timeout_graceful_shutdown=graceful_shutdown_s" in main_py
+    assert 'os.environ.get("AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S", "2")' in main_py
+
+
 def test_packaged_launcher_parses_structured_runtime_lock():
     swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
 
