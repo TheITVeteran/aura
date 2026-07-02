@@ -222,14 +222,22 @@ class ExperienceBuffer:
             # Persist immediately in background to prevent I/O blocking the hot path
             def _write_record():
                 try:
+                    from core.governance_context import local_internal_governed_scope
                     from core.runtime.file_write_gateway import get_file_write_gateway
 
-                    get_file_write_gateway().append_text(
-                        self.db_path,
-                        json.dumps(record) + "\n",
-                        encoding="utf-8",
-                        source="genuine_learning_pipeline.record_example",
-                    )
+                    # This runs on a fresh thread with no inherited governance
+                    # context; establish the internal scope here or the live
+                    # runtime refuses the append as a governance violation.
+                    with local_internal_governed_scope(
+                        "genuine_learning_pipeline.record_example",
+                        receipt_prefix="learning-example-append",
+                    ):
+                        get_file_write_gateway().append_text(
+                            self.db_path,
+                            json.dumps(record) + "\n",
+                            encoding="utf-8",
+                            source="genuine_learning_pipeline.record_example",
+                        )
                 except _LEARNING_RECOVERABLE_ERRORS as exc:
                     _record_learning_degradation(
                         "genuine_learning_pipeline",

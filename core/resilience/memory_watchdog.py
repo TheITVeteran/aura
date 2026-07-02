@@ -329,6 +329,9 @@ class MemoryWatchdog(threading.Thread):
         self._started_at = time.monotonic()
         self._last_soft_action_at = 0.0
         self._last_hard_action_at = 0.0
+        self._spike_count = 0
+        self._spike_dumps = 0
+        self._last_spike_dump_at = 0.0
         self._lethal_streak = 0
         self._hard_attempted_in_streak = False
         self._last_sample: MemorySample | None = None
@@ -394,6 +397,13 @@ class MemoryWatchdog(threading.Thread):
 
     # ── policy ────────────────────────────────────────────────────────
 
+    # A routine MLX generation wires ~20GB in one sample interval; without
+    # a throttle the spike dumper wrote 1,568 identical stack dumps (55MB)
+    # in one live afternoon. First occurrences keep full diagnostics; the
+    # steady state costs one counter increment.
+    SPIKE_DUMP_MIN_INTERVAL_S = 600.0
+    SPIKE_DUMP_LIFETIME_CAP = 12
+
     def _tick(self) -> None:
         sample = self._sampler()
         previous = self._last_sample
@@ -402,11 +412,36 @@ class MemoryWatchdog(threading.Thread):
             previous is not None
             and (sample.managed_rss_mb - previous.managed_rss_mb) > 8192.0
         ):
-            self._dump_thread_stacks(
-                f"footprint spike {previous.managed_rss_mb:.0f}→"
-                f"{sample.managed_rss_mb:.0f}MB in one interval"
-            )
+            self._record_footprint_spike(previous, sample)
         self._evaluate(sample, time.monotonic())
+
+    def _record_footprint_spike(self, previous: MemorySample, sample: MemorySample) -> None:
+        self._spike_count += 1
+        why = (
+            f"footprint spike {previous.managed_rss_mb:.0f}→"
+            f"{sample.managed_rss_mb:.0f}MB in one interval "
+            f"(spike #{self._spike_count} this process)"
+        )
+        now = time.monotonic()
+        if self._spike_dumps >= self.SPIKE_DUMP_LIFETIME_CAP:
+            if self._spike_dumps == self.SPIKE_DUMP_LIFETIME_CAP:
+                self._spike_dumps += 1
+                logger.warning(
+                    "[MEMWATCH] %s — lifetime stack-dump cap (%d) reached; "
+                    "further spikes are counted but not dumped.",
+                    why,
+                    self.SPIKE_DUMP_LIFETIME_CAP,
+                )
+            return
+        if (
+            self._last_spike_dump_at
+            and (now - self._last_spike_dump_at) < self.SPIKE_DUMP_MIN_INTERVAL_S
+        ):
+            logger.info("[MEMWATCH] %s — stack dump throttled.", why)
+            return
+        self._last_spike_dump_at = now
+        self._spike_dumps += 1
+        self._dump_thread_stacks(why)
 
     def _evaluate(self, sample: MemorySample, now: float) -> str:
         """Apply the escalation ladder to one sample. Returns the tier acted on."""

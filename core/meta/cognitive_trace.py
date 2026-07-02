@@ -33,17 +33,26 @@ class CognitiveTrace:
         filename = f"trace_{self.trace_id}.json"
         path = os.path.join(self.log_dir, filename)
         try:
+            from core.governance_context import local_internal_governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                path,
-                json.dumps({
-                    "id": self.trace_id,
-                    "duration": time.time() - self.start_time,
-                    "steps": self.steps
-                }, indent=2),
-                source="cognitive_trace.save",
-            )
+            # Trace persistence is internal audit bookkeeping; callers arrive
+            # from arbitrary contexts (including bare threads), so the scope
+            # is established here rather than assumed. Without it the live
+            # runtime refused every save as a governance violation.
+            with local_internal_governed_scope(
+                "cognitive_trace.save",
+                receipt_prefix="cognitive-trace-save",
+            ):
+                get_file_write_gateway().write_text(
+                    path,
+                    json.dumps({
+                        "id": self.trace_id,
+                        "duration": time.time() - self.start_time,
+                        "steps": self.steps
+                    }, indent=2),
+                    source="cognitive_trace.save",
+                )
             logger.info("Cognitive Trace saved: %s", path)
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('cognitive_trace', e)

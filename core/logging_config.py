@@ -129,11 +129,23 @@ def setup_logging(
 
     # 2. Configure stdlib logging bridge
     root_logger = logging.getLogger()
-    
-    # If handlers already exist, we might be in a re-init or partial init.
-    # Clear existing handlers to ensure our configuration is the single source of truth.
-    if root_logger.handlers:
-        for handler in list(root_logger.handlers):
+
+    # Remove only handlers this function would duplicate (stdout/stderr
+    # console handlers and a previous aura_json.log file handler). A blanket
+    # clear also destroyed FOREIGN handlers — pytest's log-capture handler,
+    # host-app handlers — whenever the first Aura import happened mid-run,
+    # which surfaced as order-dependent test failures and silent log loss.
+    for handler in list(root_logger.handlers):
+        stream = getattr(handler, "stream", None)
+        is_own_console = (
+            type(handler) is logging.StreamHandler
+            and stream in (sys.stdout, sys.stderr)
+        )
+        is_stale_aura_file = (
+            isinstance(handler, logging.handlers.RotatingFileHandler)
+            and Path(getattr(handler, "baseFilename", "") or "").name == "aura_json.log"
+        )
+        if is_own_console or is_stale_aura_file:
             root_logger.removeHandler(handler)
 
     # Use basicConfig or manual handler addition to root

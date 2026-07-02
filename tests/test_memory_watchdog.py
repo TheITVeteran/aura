@@ -202,6 +202,58 @@ class TestLethalPath(unittest.TestCase):
         self.assertEqual(h.exits, [MEMORY_ABORT_EXIT_CODE])
 
 
+class TestSpikeDumpBounding(unittest.TestCase):
+    """Routine 20GB inference footprint jumps must not flood the crash dir.
+
+    Live evidence: 1,568 identical 'footprint spike' stack dumps (55MB) in
+    one afternoon, one per MLX generation.
+    """
+
+    def test_spike_dumps_are_throttled(self):
+        h = _Harness()
+        dumps: list[str] = []
+        h.dog._dump_thread_stacks = dumps.append
+
+        # Delta > 8192MB while staying below the soft ceiling, so only the
+        # spike path (not the escalation ladder) can dump.
+        samples = iter(
+            [_sample(core_mb=100.0)]
+            + [_sample(core_mb=9_000.0), _sample(core_mb=100.0)] * 6
+        )
+        h.dog._sampler = lambda: next(samples)
+        for _ in range(13):
+            h.dog._tick()
+
+        self.assertEqual(len(dumps), 1, "spikes within the throttle window must not dump")
+        self.assertIn("spike #1", dumps[0])
+        self.assertEqual(h.dog._spike_count, 6, "every spike is still counted")
+
+    def test_spike_dump_lifetime_cap(self):
+        h = _Harness()
+        dumps: list[str] = []
+        h.dog._dump_thread_stacks = dumps.append
+        h.dog._spike_dumps = h.dog.SPIKE_DUMP_LIFETIME_CAP
+
+        h.dog._last_sample = _sample(core_mb=100.0)
+        h.dog._sampler = lambda: _sample(core_mb=9_000.0)
+        h.dog._tick()
+
+        self.assertEqual(dumps, [], "past the lifetime cap no stack dump is written")
+        self.assertEqual(h.dog._spike_count, 1)
+
+    def test_spike_dumps_resume_after_throttle_window(self):
+        h = _Harness()
+        dumps: list[str] = []
+        h.dog._dump_thread_stacks = dumps.append
+
+        h.dog._record_footprint_spike(_sample(core_mb=1000.0), _sample(core_mb=21_000.0))
+        # Pretend the last dump was long ago.
+        h.dog._last_spike_dump_at -= h.dog.SPIKE_DUMP_MIN_INTERVAL_S + 1
+        h.dog._record_footprint_spike(_sample(core_mb=1000.0), _sample(core_mb=21_000.0))
+
+        self.assertEqual(len(dumps), 2)
+
+
 class TestRuntimeSurface(unittest.TestCase):
     def test_tick_survives_sampler_failure(self):
         import time

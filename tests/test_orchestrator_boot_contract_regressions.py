@@ -84,7 +84,12 @@ def test_runtime_manifest_pre_ready_snapshot_gets_bounded_refresh_task():
     assert "readiness_snapshot=snapshot" in refresh_slice
 
 
-def test_runtime_manifest_unready_refresh_logs_on_change_not_every_poll(monkeypatch, capsys):
+def test_runtime_manifest_unready_refresh_logs_on_change_not_every_poll(monkeypatch, caplog):
+    # caplog, not capsys: asserting on stdout couples this test to whichever
+    # root logging handlers earlier tests happened to install (observed as an
+    # order-dependence failure in chunked suite runs).
+    import logging
+
     import aura_main
     import core.runtime.health_contract as health_contract
 
@@ -112,19 +117,24 @@ def test_runtime_manifest_unready_refresh_logs_on_change_not_every_poll(monkeypa
     monkeypatch.setattr(aura_main, "_MANIFEST_UNREADY_LOG_INTERVAL_S", 9999.0)
     aura_main._MANIFEST_UNREADY_LOG_STATE.clear()
 
-    first = aura_main._refresh_orchestrator_health_before_manifest(
-        Orchestrator(),
-        "Server",
-    )
-    second = aura_main._refresh_orchestrator_health_before_manifest(
-        Orchestrator(),
-        "Server",
-    )
-    captured = capsys.readouterr()
+    with caplog.at_level(logging.WARNING, logger="Aura.Main"):
+        first = aura_main._refresh_orchestrator_health_before_manifest(
+            Orchestrator(),
+            "Server",
+        )
+        second = aura_main._refresh_orchestrator_health_before_manifest(
+            Orchestrator(),
+            "Server",
+        )
 
     assert first["ready"] is False
     assert second["ready"] is False
-    assert captured.out.count("Runtime health still not clean before manifest") == 1
+    unready_warnings = [
+        record
+        for record in caplog.records
+        if "Runtime health still not clean before manifest" in record.getMessage()
+    ]
+    assert len(unready_warnings) == 1
 
 
 def test_runtime_manifest_records_pre_ready_boot_contract_snapshot(tmp_path):
