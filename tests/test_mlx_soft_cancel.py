@@ -171,16 +171,19 @@ def test_worker_spawn_args_include_cancel_channel():
 # ── parent-side response handling ──────────────────────────────────────
 
 
-def test_soft_cancelled_ok_response_is_handled_before_empty_telemetry():
-    """A requested cancel is not a generation failure: the ok-branch must
-    short-circuit on soft_cancelled before empty-generation telemetry,
-    consecutive-empty escalation, or the inline foreground retry."""
+def test_soft_cancelled_ok_response_bypasses_empty_telemetry_and_retries():
+    """A requested cancel is not a generation failure: the empty-generation
+    telemetry block must be gated on the response NOT being soft-cancelled,
+    and the soft-cancel branch must return before the user-facing completion
+    mark (single shared _consecutive_empty reset per the runtime contract)."""
     import inspect
 
     source = inspect.getsource(mlx_client_mod)
+    assert 'if not text and not res.get("soft_cancelled"):' in source, (
+        "empty-generation telemetry must skip soft-cancelled responses"
+    )
     idx_cancel = source.find('if res.get("soft_cancelled")')
-    idx_empty = source.find("Empty warmup can prove process/shader liveness")
-    assert idx_cancel > 0, "ok-branch must handle soft_cancelled responses"
-    assert idx_cancel < idx_empty, (
-        "soft-cancel handling must run before empty-generation telemetry"
+    idx_completed = source.find("self._mark_generation_completed(")
+    assert 0 < idx_cancel < idx_completed, (
+        "soft-cancel branch must return before the user-facing completion mark"
     )
