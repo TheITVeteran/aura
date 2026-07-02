@@ -65,3 +65,59 @@ lint) and pushed to main.
    free): `python tests/run_32b_steering_ab_live.py` (~25 min). Until
    then the readiness gate correctly reports the steering behavioral
    claim as unproven.
+
+---
+
+# Phase 2 — July 2, 2026 (same pass, expanded standard)
+
+## Ratchets drained to zero
+- **Async write lane: allowlist EMPTY.** All 66 legacy on-loop write sites
+  across 42 files converted to `*_async`; 18 test fake gateways grew async
+  delegators; the scanner recognizes `to_thread(lambda: ...)`. Any future
+  entry is a regression, not debt.
+- **Enterprise debt baseline: ZERO in every category.** The last baselined
+  findings were the anti-mock auditor flagged for naming its target; the
+  detector now exempts audit/detector vocabulary and the baseline allows
+  nothing.
+
+## Foundation
+- Generated subsystem census (`tools/subsystem_census.py`) with
+  ISOLATED/LEAF/HUB/UNTESTED verdicts, dynamic-import visibility, and
+  degradation-hygiene ranking. ISOLATED subsystems 4 → 0 (two archived
+  with history, two rescued from false-dead by string-import scanning).
+- Deliberate deferral, documented: the 177-file core-root reorganization
+  (breaks thousands of imports for structural aesthetics).
+
+## Live-runtime verification (the real benchmark)
+- `tools/live_surface_probe.py`: read-only live verification (health,
+  pulse, shell, assets, WebSocket, latency). Caught a real degradation on
+  first use: conversation lane cold + mind_tick dead while transport
+  stayed green.
+- **Immune-system deadlock fixed**: the healer deferred mind_tick's repair
+  66 times because failure-lockdown blocked the very repair that would
+  clear the lockdown. Contract-subsystem repairs now proceed through
+  lockdown (cooldown intact; luxury repairs still defer).
+- Live relaunch on fixed code: probe full-PASS, 12.9s boot, authorized
+  chat turn end-to-end in 13.1s with healthy contract.
+- Boot flight recorder sub-marks: the orchestrator tail measures ~0s; the
+  ready-path (model-lane warmup wait + manifests) now reports separately.
+
+## High-end goal pieces (verified, receipted)
+- **NetHack live proof: PASS** — 60/60 turns in the real game through
+  Observation/CommandSpec with per-action receipts
+  (`artifacts/environment/nethack_live_proof.json`).
+- **Report-vs-mechanism consistency probe** built with longitudinal
+  artifact; first honest verdicts: self-reports were NOT substrate-
+  grounded — chat fast paths intercepted introspection. The reflex layer
+  now yields to substrate-read requests
+  (`is_substantive_introspection_request`); the deeper task-intake
+  misclassifier (math questions answered with task tickets) is precisely
+  reproduced and queued as its own fix.
+
+## Ecosystem maturity
+- One hashed lockfile, documented `--require-hashes` install path.
+- Root debris removed; first chat.py decomposition slice landed
+  (`chat_quality.py`) with alias-preserving re-exports.
+- `make restore` refuses to overwrite a running instance's state
+  (FORCE=1 override) — restoring under a live runtime was silent
+  corruption.
