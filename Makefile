@@ -305,6 +305,11 @@ backup:
 restore:
 	@echo "📂 Restoring from backup..."
 	@if [ -z "$(BACKUP)" ]; then echo "❌ Usage: make restore BACKUP=<path>"; exit 1; fi
+	@if lsof -ti :8000 -sTCP:LISTEN >/dev/null 2>&1 && [ "$(FORCE)" != "1" ]; then \
+		echo "❌ Live Aura detected on :8000 — restoring state under a running instance corrupts it."; \
+		echo "   Stop the runtime first (python aura_main.py --stop) or re-run with FORCE=1."; \
+		exit 1; \
+	fi
 	@tar xzf $(BACKUP) 2>/dev/null
 	@echo "✅ Restored from $(BACKUP)"
 
