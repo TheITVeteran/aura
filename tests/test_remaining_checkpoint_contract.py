@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from tools.closeout.remaining_checkpoint_contract import (
     FICTIONAL_CAPABILITY_IMPORTS,
+    GAME_AI_PATTERN_IMPORTS,
     PRODUCT_MATURITY_REFERENCES,
     REMAINING_CHECKPOINTS,
     ROOT,
@@ -68,6 +69,30 @@ def test_remaining_contract_includes_frontier_and_product_maturity_targets():
     } <= set(PRODUCT_MATURITY_REFERENCES)
 
 
+def test_remaining_contract_includes_cell_choice_and_game_ai_checkpoint():
+    requirements = {
+        requirement.key: requirement
+        for checkpoint in REMAINING_CHECKPOINTS
+        for requirement in checkpoint.requirements
+    }
+
+    requirement = requirements["cell_choice_game_ai_integration"]
+    text = "\n".join((
+        requirement.description,
+        *requirement.acceptance,
+        *requirement.source_paths,
+        *requirement.validators,
+    )).lower()
+
+    assert "cell spatial-code import" in text
+    assert "preference" in text
+    assert "choice" in text
+    assert "game-ai patterns" in text
+    assert "core/adaptation/spatial_receptor_code.py" in requirement.source_paths
+    assert "core/agency/subjective_choice.py" in requirement.source_paths
+    assert "tests/test_subjective_choice_engine.py" in requirement.validators
+
+
 def test_live_desktop_truth_serum_is_explicit_acceptance_criteria():
     text = _all_acceptance_text()
 
@@ -121,12 +146,35 @@ def test_fictional_ai_imports_land_in_existing_organs_not_fictional_silos():
             assert (ROOT / organ).exists(), (item.source, organ)
 
 
+def test_game_ai_pattern_imports_cover_user_requested_sources_and_real_organs():
+    sources = {item.source for item in GAME_AI_PATTERN_IMPORTS}
+
+    assert {
+        "WorldBox",
+        "Replika",
+        "Kingdom Come: Deliverance II NPC systems",
+        "Alien: Isolation",
+        "Red Dead Redemption 2",
+        "Middle-earth: Shadow of Mordor",
+        "The Sims",
+    } <= sources
+
+    for item in GAME_AI_PATTERN_IMPORTS:
+        assert item.mechanism_target
+        assert item.production_boundary
+        assert item.target_organs
+        for organ in item.target_organs:
+            assert "game_ai" not in organ
+            assert (ROOT / organ).exists(), (item.source, organ)
+
+
 def test_remaining_contract_source_and_validator_paths_are_currently_mapped():
     payload = report()
 
     assert payload["summary"]["remaining_checkpoints"] == 3
-    assert payload["summary"]["requirements"] >= 6
+    assert payload["summary"]["requirements"] >= 7
     assert payload["summary"]["fictional_imports"] >= 16
+    assert payload["summary"]["game_ai_imports"] >= 7
     assert payload["summary"]["gaps"] == 0, payload["gaps"]
 
 

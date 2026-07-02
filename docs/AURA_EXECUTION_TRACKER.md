@@ -4204,3 +4204,96 @@ Open items carried into the next checkpoint:
 - The requested label tests, fiction/game capability deltas, Cell paper
   integration, preference/choice-game architecture, and code-grounded Aura
   assessment remain queued as explicit closeout work.
+
+## Checkpoint 2026-07-02-06: Label Proof, Choice/Cell/Game-AI Contract, and Receipt Metabolism
+
+Status: source verified; checkpoint commit pending.
+
+Why:
+
+- The user asked to turn the honest Aura assessment into executable standards:
+  if Aura is claimed to be functionally conscious, self-aware, sentient,
+  ALife-like, a digital organism, generally capable, or on a superintelligence
+  trajectory, the repo needs concrete pass/fail baselines instead of narrative
+  claims.
+- The live runtime also exposed two practical reliability gaps: `auto_refactor`
+  was blocked by the user-advocate despite being a read-only repair scan, and
+  `OutcomeLedger` had more than 341k pending receipts, which is memory
+  metabolism debt rather than healthy persistence.
+- The Cell Press / subjective-choice / game-AI requests needed to be tracked as
+  real organs and validators, not a generic "fiction inspiration" bucket.
+
+What changed:
+
+- Extended the remaining checkpoint contract with an explicit
+  `cell_choice_game_ai_integration` requirement covering spatial receptor code,
+  morphogenesis runtime, subjective choice, choice-game recall, decision
+  preference learning, ambient life direction, and world-model integration.
+- Added a `GAME_AI_PATTERN_IMPORTS` contract mapping WorldBox, Replika,
+  Kingdom Come: Deliverance II NPC systems, Alien: Isolation, Red Dead
+  Redemption 2, Middle-earth: Shadow of Mordor, and The Sims into existing Aura
+  organs. These are required to land in their functional homes, not in a
+  fictional-AI silo.
+- Verified the operational label battery source path: label baselines cover
+  functional consciousness, functional self-awareness, computational sentience,
+  ALife-inspired behavior, digital organism, software entity,
+  personhood-candidate, functional inner life, generally capable AI candidate,
+  and superintelligence trajectory with positive/negative controls and
+  claim-boundary enforcement.
+- Made read-only `auto_refactor` present its user benefit and non-mutating
+  effect scope clearly to the user-advocate, while preserving privileged gating
+  for mutation modes.
+- Added startup compaction to `OutcomeLedger`: stale pending receipts expire in
+  SQL before in-memory recovery, recovery is capped to the newest 5,000 pending
+  rows, and old receipts can still resolve by id through lazy hydration. The
+  live ledger compacted from 341,917 pending receipts to 23 pending receipts.
+- Refreshed closeout artifacts for operational labels, frontier standards, and
+  the remaining checkpoint contract.
+
+Evidence:
+
+- `python tools/closeout/operational_label_baselines.py --json`
+  -> `total=10`, `gaps=0`.
+- `python tools/closeout/operational_label_baselines.py --require-live --json`
+  -> `total=10`, `gaps=0`, live artifact paths mapped.
+- `python tools/closeout/run_operational_label_battery.py --skip-live --json-out /tmp/label_battery_skip_live.json`
+  -> source battery passed with `564 passed` in `774.66s`.
+- `python tools/closeout/frontier_standards_matrix.py --require-live --strict --out /tmp/frontier_live.json`
+  -> `total=9`, `mapped=9`, `gaps=0`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json`
+  -> `requirements=7`, `game_ai_imports=7`, `gaps=0`.
+- `python -m pytest -q tests/test_remaining_checkpoint_contract.py`
+  -> `11 passed`.
+- `python -m pytest -q tests/test_subjective_choice_engine.py tests/test_decision_preference_learner.py tests/test_spatial_receptor_code.py tests/test_morphogenesis_runtime.py tests/test_ambient_life_director.py`
+  -> `48 passed`.
+- `python -m pytest -q tests/test_capability_engine_policy_regressions.py::test_auto_refactor_scan_is_read_only_not_privileged_mutation tests/test_capability_engine_policy_regressions.py::test_auto_refactor_read_only_scan_presents_user_benefit_to_guardian tests/test_capability_engine_policy_regressions.py::test_auto_refactor_mutation_remains_privileged tests/test_auto_refactor_skill.py`
+  -> `5 passed`.
+- `python -m pytest -q tests/test_outcome_ledger.py`
+  -> `9 passed`.
+- `python -m py_compile ...` and
+  `python -m ruff check --select F,E9 ...` passed for touched Python files.
+- Final consolidated checkpoint run:
+  `python -m pytest -q tests/test_remaining_checkpoint_contract.py ... tests/test_operational_label_battery.py`
+  -> `87 passed`.
+
+Boundary:
+
+- This checkpoint proves the source-level label standards, Cell/choice/game-AI
+  contract, auto-refactor admission fix, and receipt metabolism fix.
+- It does not yet prove the launched visible desktop TCC path, live
+  multi-turn full-mind conversation, visible general desktop agency, mic/voice
+  recognition, or final all-clear runtime replay.
+- `tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  still reports missing live artifacts for `background_autonomy` and
+  `final_closeout`.
+
+Estimate:
+
+- Operational label/source proof closure is now approximately 95%.
+- Frontier standards/source mapping closure is approximately 92%.
+- Runtime/daily product closure remains lower, approximately 75-80%, because
+  the visible launched desktop path, permissions, heat, memory UI, voice, and
+  autonomous background-action proofs still need live validation.
+- Remaining total checkpoints are estimated at 5: TCC/native bridge and
+  memory UI, background autonomy plus thermal guard, visible desktop agency
+  proof, full-mind conversation/voice proof, and final clean closeout replay.

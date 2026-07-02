@@ -2162,6 +2162,46 @@ class CapabilityEngine(AuraBaseModule):
         )
 
     @staticmethod
+    def _action_description_for_user_advocate(
+        skill_name: str,
+        params: dict[str, Any],
+        effect_scope: str,
+    ) -> str:
+        """Describe the concrete operation, not just the skill's scary name."""
+
+        scope = str(effect_scope or "").lower()
+        if skill_name == "auto_refactor" and scope == "read_only":
+            target = str((params or {}).get("path") or ".").strip() or "."
+            return (
+                "read-only auto_refactor code-health scan "
+                f"for {target!r}; no source writes, no test execution, no promotion"
+            )
+        return f"{skill_name} {str(params)[:200]}"
+
+    @staticmethod
+    def _user_benefit_for_execution(
+        skill_name: str,
+        params: dict[str, Any],
+        ctx: dict[str, Any],
+        exec_source: str,
+        effect_scope: str,
+    ) -> str:
+        explicit = str(params.get("user_benefit") or ctx.get("user_benefit") or "").strip()
+        if explicit:
+            return explicit
+        objective = str(ctx.get("objective") or ctx.get("user_objective") or "").strip()
+        if objective:
+            return objective
+        if skill_name == "auto_refactor" and str(effect_scope or "").lower() == "read_only":
+            return (
+                "maintain Aura's code health by surfacing bounded repair candidates "
+                "without mutating source or consuming a heavy test budget"
+            )
+        if exec_source in _USER_FACING_CONTEXT_ORIGINS:
+            return "requested through the user-facing skill lane"
+        return ""
+
+    @staticmethod
     def _input_summary_for(meta: SkillMetadata) -> str:
         schema = meta.schema_def or {}
         props = schema.get("properties", {}) if isinstance(schema, dict) else {}
@@ -3316,7 +3356,11 @@ class CapabilityEngine(AuraBaseModule):
             # indefensible actions, the Minds hold severe worst cases, Tron protects
             # the user, and the Machine enforces least-privilege external scope.
             try:
-                _action_desc = f"{skill_name} {str(params)[:200]}"
+                _action_desc = self._action_description_for_user_advocate(
+                    skill_name,
+                    params,
+                    effect_scope,
+                )
                 _risk_hint = risk
                 _kokoro = ServiceContainer.get("kokoro", default=None)
                 _escalate = False
@@ -3379,14 +3423,12 @@ class CapabilityEngine(AuraBaseModule):
                             effect_scope,
                         )
                     )
-                    user_benefit = (
-                        str(params.get("user_benefit") or ctx.get("user_benefit") or "").strip()
-                        or str(ctx.get("objective") or ctx.get("user_objective") or "").strip()
-                        or (
-                            "requested through the user-facing skill lane"
-                            if exec_source in _USER_FACING_CONTEXT_ORIGINS
-                            else ""
-                        )
+                    user_benefit = self._user_benefit_for_execution(
+                        skill_name,
+                        params,
+                        ctx,
+                        exec_source,
+                        effect_scope,
                     )
                     _review = _tron.review_action({
                         "description": _action_desc,

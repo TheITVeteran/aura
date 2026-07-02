@@ -18,16 +18,19 @@
     "tests/phenomenal/test_supplementary.py",
     "tests/test_open_ended_evolution.py",
     "tests/test_embodied_dynamics.py",
+    "tests/test_spatial_receptor_code.py",
     "tests/test_boot_health.py",
     "tests/test_full_desktop_runtime_contract.py",
     "tests/test_runtime_health_truthfulness.py",
     "tests/test_mind_tick_runtime_contract.py",
+    "tests/test_ambient_life_director.py",
     "tests/personhood/test_three_great_bottlenecks.py",
     "tests/personhood/test_relationship_graph.py",
     "tests/personhood/test_planning_horizon.py",
     "tests/personhood/test_tool_breadth.py",
     "tests/test_imagination_engine.py",
     "tests/test_timescale_bridge.py",
+    "tests/test_subjective_choice_engine.py",
     "tests/test_frontier_standards_matrix.py",
     "tests/test_desktop_planning_generality.py",
     "tests/test_frontier_discovery_engine.py",
@@ -180,7 +183,8 @@
       "validator_paths": [
         "tests/test_consciousness_conditions.py",
         "tests/test_open_ended_evolution.py",
-        "tests/test_embodied_dynamics.py"
+        "tests/test_embodied_dynamics.py",
+        "tests/test_spatial_receptor_code.py"
       ],
       "validator_paths_exist": true
     },
@@ -216,7 +220,8 @@
         "tests/test_boot_health.py",
         "tests/test_full_desktop_runtime_contract.py",
         "tests/test_runtime_health_truthfulness.py",
-        "tests/test_mind_tick_runtime_contract.py"
+        "tests/test_mind_tick_runtime_contract.py",
+        "tests/test_ambient_life_director.py"
       ],
       "validator_paths_exist": true
     },
@@ -304,6 +309,7 @@
         "Runs background cognition and dream/journal consolidation.",
         "Generates novel imagination/scenario models that feed planning.",
         "Uses introspection and affect to adjust decisions and memory writes.",
+        "Can state, enact, recall, and appraise subjective choices that may diverge from raw drive pressure.",
         "Can recall and explain internal changes across sessions."
       ],
       "negative_controls": [
@@ -321,7 +327,8 @@
         "tests/test_imagination_engine.py",
         "tests/test_timescale_bridge.py",
         "tests/test_live_mind_snapshot.py",
-        "tests/test_consciousness_conditions.py"
+        "tests/test_consciousness_conditions.py",
+        "tests/test_subjective_choice_engine.py"
       ],
       "validator_paths_exist": true
     },
@@ -399,7 +406,7 @@
   "passed": true,
   "require_live": false,
   "stderr_tail": "",
-  "stdout_tail": "........................................................................ [ 13%]\n........................................................................ [ 26%]\n........................................................................ [ 39%]\n........................................................................ [ 52%]\n........................................................................ [ 65%]\n........................................................................ [ 78%]\n........................................................................ [ 91%]\n................................................                         [100%]\n552 passed in 242.71s (0:04:02)",
+  "stdout_tail": "........................................................................ [ 12%]\n........................................................................ [ 25%]\n........................................................................ [ 38%]\n........................................................................ [ 51%]\n........................................................................ [ 63%]\n........................................................................ [ 76%]\n........................................................................ [ 89%]\n............................................................             [100%]\n564 passed in 774.66s (0:12:54)",
   "total_labels": 10,
   "validator_files": [
     "tests/test_consciousness_conditions.py",
@@ -416,16 +423,19 @@
     "tests/phenomenal/test_supplementary.py",
     "tests/test_open_ended_evolution.py",
     "tests/test_embodied_dynamics.py",
+    "tests/test_spatial_receptor_code.py",
     "tests/test_boot_health.py",
     "tests/test_full_desktop_runtime_contract.py",
     "tests/test_runtime_health_truthfulness.py",
     "tests/test_mind_tick_runtime_contract.py",
+    "tests/test_ambient_life_director.py",
     "tests/personhood/test_three_great_bottlenecks.py",
     "tests/personhood/test_relationship_graph.py",
     "tests/personhood/test_planning_horizon.py",
     "tests/personhood/test_tool_breadth.py",
     "tests/test_imagination_engine.py",
     "tests/test_timescale_bridge.py",
+    "tests/test_subjective_choice_engine.py",
     "tests/test_frontier_standards_matrix.py",
     "tests/test_desktop_planning_generality.py",
     "tests/test_frontier_discovery_engine.py",

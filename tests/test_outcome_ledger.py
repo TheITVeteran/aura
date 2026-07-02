@@ -36,7 +36,7 @@ def test_resolve_unknown_receipt_returns_none(ledger):
 
 
 def test_sweep_expires_stale_receipts_as_failures(ledger):
-    rid = ledger.open("slow goal", expected=0.8, horizon_s=10.0, now=1000.0)
+    ledger.open("slow goal", expected=0.8, horizon_s=10.0, now=1000.0)
     # before horizon → not swept
     assert ledger.sweep(now=1005.0) == []
     assert len(ledger.pending()) == 1
@@ -77,8 +77,13 @@ def test_expectation_calibration_tracks_error(ledger):
 
 def test_pending_receipts_survive_reopen(tmp_path):
     path = str(tmp_path / "persist.db")
-    l1 = OutcomeLedger(db_path=path)
-    rid = l1.open("long horizon action", expected=0.6, now=1000.0)
+    l1 = OutcomeLedger(db_path=path, default_horizon_s=1_000_000_000_000.0)
+    rid = l1.open(
+        "long horizon action",
+        expected=0.6,
+        horizon_s=1_000_000_000_000.0,
+        now=1000.0,
+    )
 
     # New ledger instance (simulating a restart) recovers the pending receipt …
     l2 = OutcomeLedger(db_path=path)
@@ -87,6 +92,43 @@ def test_pending_receipts_survive_reopen(tmp_path):
     # … and can resolve it in the "next session".
     resolved = l2.resolve(rid, observed=0.8, now=5000.0)
     assert resolved is not None and resolved.delay == pytest.approx(4000.0)
+
+
+def test_startup_expires_stale_pending_receipts_before_recovery(tmp_path):
+    path = str(tmp_path / "persist.db")
+    l1 = OutcomeLedger(db_path=path)
+    rid = l1.open("expired startup action", expected=0.7, horizon_s=1.0, now=1000.0)
+
+    l2 = OutcomeLedger(db_path=path)
+
+    assert l2.pending() == []
+    assert l2.stats()["startup_expired_count"] == 1
+    assert l2.resolve(rid, observed=1.0) is None
+
+
+def test_pending_load_cap_does_not_prevent_resolution_by_id(tmp_path, monkeypatch):
+    path = str(tmp_path / "persist.db")
+    monkeypatch.setattr(OutcomeLedger, "MAX_PENDING_LOAD", 2)
+    l1 = OutcomeLedger(db_path=path, default_horizon_s=1_000_000_000_000.0)
+    receipt_ids = [
+        l1.open(
+            f"long horizon action {idx}",
+            expected=0.5,
+            horizon_s=1_000_000_000_000.0,
+            now=1000.0 + idx,
+        )
+        for idx in range(5)
+    ]
+
+    l2 = OutcomeLedger(db_path=path, default_horizon_s=1_000_000_000_000.0)
+
+    assert len(l2.pending()) == 2
+    assert l2.stats()["pending_db_count"] == 5
+    assert l2.stats()["pending_load_truncated"] is True
+    resolved = l2.resolve(receipt_ids[0], observed=0.9, now=1010.0)
+    assert resolved is not None
+    assert resolved.receipt_id == receipt_ids[0]
+    assert l2.stats()["pending_db_count"] == 4
 
 
 def test_singleton_is_stable():

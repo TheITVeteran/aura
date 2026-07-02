@@ -98,6 +98,8 @@ class OutcomeReceipt:
 class OutcomeLedger:
     """Delayed-receipt credit assignment with persistence and expectation calibration."""
 
+    MAX_PENDING_LOAD = 5000
+
     def __init__(self, db_path: Optional[str] = None, default_horizon_s: float = 3600.0) -> None:
         self._db_path = db_path or str(config.paths.home_dir / "data/outcome_ledger.db")
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -106,6 +108,9 @@ class OutcomeLedger:
         self._pending: Dict[str, OutcomeReceipt] = {}
         self._calib_err_sum = 0.0
         self._calib_n = 0
+        self._pending_db_count = 0
+        self._startup_expired_count = 0
+        self._pending_load_truncated = False
         self._init_schema()
         self._load_pending()
 
@@ -165,11 +170,32 @@ class OutcomeLedger:
 
     def _load_pending(self) -> None:
         try:
+            now = time.time()
             with self._connect() as conn:
+                expired = conn.execute(
+                    "UPDATE outcome_receipts "
+                    "SET observed = 0.0, resolved_at = ?, status = 'expired', "
+                    "prediction_error = (0.0 - expected) "
+                    "WHERE status = 'pending' AND (? - opened_at) >= horizon_s",
+                    (now, now),
+                ).rowcount
+                if expired:
+                    conn.commit()
+                self._startup_expired_count = int(expired or 0)
+                self._pending_db_count = int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM outcome_receipts WHERE status = 'pending'"
+                    ).fetchone()[0]
+                    or 0
+                )
+                limit = max(1, int(self.MAX_PENDING_LOAD))
                 rows = conn.execute(
                     "SELECT receipt_id, action, category, expected, sources_json, opened_at, "
-                    "horizon_s, context_json FROM outcome_receipts WHERE status = 'pending'"
+                    "horizon_s, context_json FROM outcome_receipts "
+                    "WHERE status = 'pending' ORDER BY opened_at DESC LIMIT ?",
+                    (limit,),
                 ).fetchall()
+            self._pending_load_truncated = self._pending_db_count > len(rows)
             for rid, action, cat, exp, sj, opened, horizon, cj in rows:
                 sources = [CreditSource(**s) for s in json.loads(sj or "[]")]
                 self._pending[rid] = OutcomeReceipt(
@@ -177,10 +203,50 @@ class OutcomeLedger:
                     sources=sources, opened_at=opened, horizon_s=horizon,
                     context=json.loads(cj or "{}"),
                 )
+            if self._startup_expired_count:
+                logger.info(
+                    "📒 [OutcomeLedger] expired %d stale pending receipts during startup compaction",
+                    self._startup_expired_count,
+                )
             if self._pending:
-                logger.info("📒 [OutcomeLedger] recovered %d pending receipts", len(self._pending))
+                suffix = (
+                    f" (loaded newest {len(self._pending)} of {self._pending_db_count})"
+                    if self._pending_load_truncated
+                    else ""
+                )
+                logger.info("📒 [OutcomeLedger] recovered %d pending receipts%s", len(self._pending), suffix)
         except (sqlite3.Error, OSError, ValueError) as e:
             record_degradation("outcome_ledger", e)
+
+    def _hydrate_receipt_row(self, row: tuple[Any, ...]) -> OutcomeReceipt:
+        rid, action, cat, exp, sj, opened, horizon, cj = row
+        sources = [CreditSource(**s) for s in json.loads(sj or "[]")]
+        return OutcomeReceipt(
+            receipt_id=rid,
+            action=action,
+            category=cat,
+            expected=exp,
+            sources=sources,
+            opened_at=opened,
+            horizon_s=horizon,
+            context=json.loads(cj or "{}"),
+        )
+
+    def _fetch_pending_receipt(self, receipt_id: str) -> OutcomeReceipt | None:
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT receipt_id, action, category, expected, sources_json, opened_at, "
+                    "horizon_s, context_json FROM outcome_receipts "
+                    "WHERE status = 'pending' AND receipt_id = ?",
+                    (receipt_id,),
+                ).fetchone()
+            if row is None:
+                return None
+            return self._hydrate_receipt_row(row)
+        except (sqlite3.Error, OSError, ValueError) as e:
+            record_degradation("outcome_ledger", e, severity="debug")
+            return None
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -210,6 +276,7 @@ class OutcomeLedger:
         with self._lock:
             self._pending[receipt.receipt_id] = receipt
             self._persist(receipt)
+            self._pending_db_count += 1
         return receipt.receipt_id
 
     def resolve(
@@ -228,7 +295,9 @@ class OutcomeLedger:
         with self._lock:
             receipt = self._pending.pop(receipt_id, None)
             if receipt is None:
-                return None
+                receipt = self._fetch_pending_receipt(receipt_id)
+                if receipt is None:
+                    return None
             receipt.observed = _clamp(float(observed))
             receipt.resolved_at = now
             receipt.prediction_error = receipt.observed - receipt.expected
@@ -236,6 +305,7 @@ class OutcomeLedger:
             if note:
                 receipt.context.setdefault("notes", []).append(note)
             self._persist(receipt)
+            self._pending_db_count = max(0, self._pending_db_count - 1)
             self._calib_err_sum += abs(receipt.prediction_error)
             self._calib_n += 1
         # Credit distribution happens outside the lock (it calls into other subsystems).
@@ -260,6 +330,7 @@ class OutcomeLedger:
                     r.status = "expired"
                     self._persist(r)
                     self._pending.pop(rid, None)
+                    self._pending_db_count = max(0, self._pending_db_count - 1)
                     self._calib_err_sum += abs(r.prediction_error)
                     self._calib_n += 1
                     expired.append(r)
@@ -360,6 +431,9 @@ class OutcomeLedger:
         with self._lock:
             return {
                 "pending": len(self._pending),
+                "pending_db_count": self._pending_db_count,
+                "startup_expired_count": self._startup_expired_count,
+                "pending_load_truncated": self._pending_load_truncated,
                 "resolved_count": self._calib_n,
                 "expectation_calibration": round(self.expectation_calibration(), 4),
                 "db_path": self._db_path,

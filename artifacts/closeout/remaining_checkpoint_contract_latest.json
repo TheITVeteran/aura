@@ -51,6 +51,39 @@
           "validators": [
             "tests/test_frontier_standards_matrix.py"
           ]
+        },
+        {
+          "acceptance": [
+            "The Cell spatial-code import maps continuous sensory/immune coordinates to receptor choices that bias downstream cells without bypassing governance.",
+            "Aura can state a preference, choose through the same engine, recall the choice, appraise satisfaction, and let outcomes adjust future preferences.",
+            "Game-AI patterns are reduced to mechanism targets and wired into existing organs: ambient life, relationship memory, schedule autonomy, threat attention, world memory, failure learning, and governed whims.",
+            "No paper, game, or fictional source is accepted as evidence unless source paths and validators exercise the real mechanism."
+          ],
+          "description": "Cell-paper mechanisms, subjective preference choice, and game-AI patterns must be integrated as general Aura organs, not anecdotes.",
+          "key": "cell_choice_game_ai_integration",
+          "live_artifacts": [
+            "artifacts/current/operational_label_battery_choice_cell_ambient_20260702.json"
+          ],
+          "missing_live_artifacts": [],
+          "missing_sources": [],
+          "missing_validators": [],
+          "source_paths": [
+            "core/adaptation/spatial_receptor_code.py",
+            "core/morphogenesis/runtime.py",
+            "core/agency/subjective_choice.py",
+            "core/agency/choice_game.py",
+            "core/agency/decision_preference_learner.py",
+            "core/agency/ambient_life_director.py",
+            "core/world/world_model.py"
+          ],
+          "status": "mapped",
+          "validators": [
+            "tests/test_spatial_receptor_code.py",
+            "tests/test_morphogenesis_runtime.py",
+            "tests/test_subjective_choice_engine.py",
+            "tests/test_decision_preference_learner.py",
+            "tests/test_ambient_life_director.py"
+          ]
         }
       ]
     },
@@ -363,9 +396,84 @@
       ]
     }
   ],
+  "game_ai_pattern_imports": [
+    {
+      "mechanism_target": "Low-cost autonomous life simulation: agents act continuously, perturb locally, and leave inspectable world-state traces.",
+      "production_boundary": "Use for bounded background cognition and sandboxed world modeling, never unbounded host mutation.",
+      "source": "WorldBox",
+      "target_organs": [
+        "core/agency/ambient_life_director.py",
+        "core/world/world_model.py",
+        "core/simulation/mental_simulator.py"
+      ]
+    },
+    {
+      "mechanism_target": "Relationship continuity, user-specific memory, affective attunement, and conversational recall with provenance.",
+      "production_boundary": "Preserve transparent functional attachment; do not claim proven felt emotion.",
+      "source": "Replika",
+      "target_organs": [
+        "core/social/relationship_model.py",
+        "core/social/user_preference_model.py",
+        "core/memory/conversation_persistence.py",
+        "core/conversation/response_reliability.py"
+      ]
+    },
+    {
+      "mechanism_target": "Schedule-aware situated agency: routines, needs, location context, and interruption recovery.",
+      "production_boundary": "Convert into resource-bounded routines, not fake ambient chatter.",
+      "source": "Kingdom Come: Deliverance II NPC systems",
+      "target_organs": [
+        "core/autonomy/curiosity_scheduler.py",
+        "core/runtime/autonomy_conductor.py",
+        "core/agency/ambient_life_director.py"
+      ]
+    },
+    {
+      "mechanism_target": "Two-layer pursuit model: strategic director plus local behavior tree that adapts without omniscience.",
+      "production_boundary": "Use for threat/attention routing and popup/error recovery, not predatory behavior.",
+      "source": "Alien: Isolation",
+      "target_organs": [
+        "core/agency/intention_loop.py",
+        "core/perception/screen_perception.py",
+        "core/security/ice_sentinel.py"
+      ]
+    },
+    {
+      "mechanism_target": "Ambient believability through reactive world memory, social consequences, and non-player routines.",
+      "production_boundary": "Only behavior backed by state deltas and receipts can surface as lived continuity.",
+      "source": "Red Dead Redemption 2",
+      "target_organs": [
+        "core/world/world_model.py",
+        "core/social/relationship_graph.py",
+        "core/agency/ambient_life_director.py"
+      ]
+    },
+    {
+      "mechanism_target": "Nemesis-style durable adversary/event memory: repeated failures change future strategy.",
+      "production_boundary": "Use for repair learning and threat memory, not revenge or escalation.",
+      "source": "Middle-earth: Shadow of Mordor",
+      "target_organs": [
+        "core/learning/failure_analyzer.py",
+        "core/adaptation/adaptive_immunity.py",
+        "core/agency/decision_preference_learner.py"
+      ]
+    },
+    {
+      "mechanism_target": "Needs, whims, preference satisfaction, and autonomy arbitration under competing motives.",
+      "production_boundary": "Whim is allowed only inside governed, low-risk option sets.",
+      "source": "The Sims",
+      "target_organs": [
+        "core/agency/subjective_choice.py",
+        "core/agency/choice_game.py",
+        "core/agency/initiative_arbiter.py",
+        "core/autonomy/metabolic_budget.py"
+      ]
+    }
+  ],
   "gaps": [],
   "summary": {
     "fictional_imports": 16,
+    "game_ai_imports": 7,
     "gaps": 0,
     "product_maturity_references": [
       "Chrome",
@@ -400,6 +508,6 @@
       "generally_capable_ai_candidate",
       "superintelligence_trajectory"
     ],
-    "requirements": 6
+    "requirements": 7
   }
 }

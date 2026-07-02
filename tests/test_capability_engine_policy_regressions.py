@@ -4,6 +4,7 @@ import pytest
 
 from core.capability_engine import CapabilityEngine, SkillMetadata
 from core.container import ServiceContainer
+from core.guardians.user_advocate import UserAdvocateWatchdog
 
 
 def _quiet_logger():
@@ -139,6 +140,43 @@ def test_auto_refactor_scan_is_read_only_not_privileged_mutation():
         )
         is False
     )
+
+
+def test_auto_refactor_read_only_scan_presents_user_benefit_to_guardian():
+    params = {"path": ".", "run_tests": False}
+    desc = CapabilityEngine._action_description_for_user_advocate(
+        "auto_refactor",
+        params,
+        "read_only",
+    )
+    benefit = CapabilityEngine._user_benefit_for_execution(
+        "auto_refactor",
+        params,
+        {"origin": "overt_action_loop"},
+        "overt_action_loop",
+        "read_only",
+    )
+
+    review = UserAdvocateWatchdog().review_action(
+        {
+            "description": desc,
+            "irreversible": CapabilityEngine._user_advocate_irreversible_for(
+                "auto_refactor",
+                params,
+                "low",
+                "read_only",
+            ),
+            "confirmed": False,
+            "user_benefit": benefit,
+            "explanation": "skill auto_refactor",
+        }
+    )
+
+    assert "read-only" in desc
+    assert "no source writes" in desc
+    assert benefit
+    assert review.verdict == "for_user"
+    assert review.flags == []
 
 
 def test_auto_refactor_mutation_remains_privileged():

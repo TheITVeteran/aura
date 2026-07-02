@@ -50,6 +50,14 @@ class FictionalCapabilityImport:
     forbidden_shortcut: str = "Do not implement as a themed fictional-AI silo."
 
 
+@dataclass(frozen=True)
+class GameAIPatternImport:
+    source: str
+    mechanism_target: str
+    target_organs: tuple[str, ...]
+    production_boundary: str
+
+
 PRODUCT_MATURITY_REFERENCES: tuple[str, ...] = (
     "Chrome",
     "Kubernetes",
@@ -227,6 +235,82 @@ FICTIONAL_CAPABILITY_IMPORTS: tuple[FictionalCapabilityImport, ...] = (
 )
 
 
+GAME_AI_PATTERN_IMPORTS: tuple[GameAIPatternImport, ...] = (
+    GameAIPatternImport(
+        source="WorldBox",
+        mechanism_target="Low-cost autonomous life simulation: agents act continuously, perturb locally, and leave inspectable world-state traces.",
+        target_organs=(
+            "core/agency/ambient_life_director.py",
+            "core/world/world_model.py",
+            "core/simulation/mental_simulator.py",
+        ),
+        production_boundary="Use for bounded background cognition and sandboxed world modeling, never unbounded host mutation.",
+    ),
+    GameAIPatternImport(
+        source="Replika",
+        mechanism_target="Relationship continuity, user-specific memory, affective attunement, and conversational recall with provenance.",
+        target_organs=(
+            "core/social/relationship_model.py",
+            "core/social/user_preference_model.py",
+            "core/memory/conversation_persistence.py",
+            "core/conversation/response_reliability.py",
+        ),
+        production_boundary="Preserve transparent functional attachment; do not claim proven felt emotion.",
+    ),
+    GameAIPatternImport(
+        source="Kingdom Come: Deliverance II NPC systems",
+        mechanism_target="Schedule-aware situated agency: routines, needs, location context, and interruption recovery.",
+        target_organs=(
+            "core/autonomy/curiosity_scheduler.py",
+            "core/runtime/autonomy_conductor.py",
+            "core/agency/ambient_life_director.py",
+        ),
+        production_boundary="Convert into resource-bounded routines, not fake ambient chatter.",
+    ),
+    GameAIPatternImport(
+        source="Alien: Isolation",
+        mechanism_target="Two-layer pursuit model: strategic director plus local behavior tree that adapts without omniscience.",
+        target_organs=(
+            "core/agency/intention_loop.py",
+            "core/perception/screen_perception.py",
+            "core/security/ice_sentinel.py",
+        ),
+        production_boundary="Use for threat/attention routing and popup/error recovery, not predatory behavior.",
+    ),
+    GameAIPatternImport(
+        source="Red Dead Redemption 2",
+        mechanism_target="Ambient believability through reactive world memory, social consequences, and non-player routines.",
+        target_organs=(
+            "core/world/world_model.py",
+            "core/social/relationship_graph.py",
+            "core/agency/ambient_life_director.py",
+        ),
+        production_boundary="Only behavior backed by state deltas and receipts can surface as lived continuity.",
+    ),
+    GameAIPatternImport(
+        source="Middle-earth: Shadow of Mordor",
+        mechanism_target="Nemesis-style durable adversary/event memory: repeated failures change future strategy.",
+        target_organs=(
+            "core/learning/failure_analyzer.py",
+            "core/adaptation/adaptive_immunity.py",
+            "core/agency/decision_preference_learner.py",
+        ),
+        production_boundary="Use for repair learning and threat memory, not revenge or escalation.",
+    ),
+    GameAIPatternImport(
+        source="The Sims",
+        mechanism_target="Needs, whims, preference satisfaction, and autonomy arbitration under competing motives.",
+        target_organs=(
+            "core/agency/subjective_choice.py",
+            "core/agency/choice_game.py",
+            "core/agency/initiative_arbiter.py",
+            "core/autonomy/metabolic_budget.py",
+        ),
+        production_boundary="Whim is allowed only inside governed, low-risk option sets.",
+    ),
+)
+
+
 REMAINING_CHECKPOINTS: tuple[RemainingCheckpoint, ...] = (
     RemainingCheckpoint(
         number=9,
@@ -267,6 +351,36 @@ REMAINING_CHECKPOINTS: tuple[RemainingCheckpoint, ...] = (
                 source_paths=("tools/closeout/frontier_standards_matrix.py",),
                 validators=("tests/test_frontier_standards_matrix.py",),
                 live_artifacts=("artifacts/closeout/frontier_standards_latest.json",),
+            ),
+            CheckpointRequirement(
+                key="cell_choice_game_ai_integration",
+                description=(
+                    "Cell-paper mechanisms, subjective preference choice, and game-AI "
+                    "patterns must be integrated as general Aura organs, not anecdotes."
+                ),
+                acceptance=(
+                    "The Cell spatial-code import maps continuous sensory/immune coordinates to receptor choices that bias downstream cells without bypassing governance.",
+                    "Aura can state a preference, choose through the same engine, recall the choice, appraise satisfaction, and let outcomes adjust future preferences.",
+                    "Game-AI patterns are reduced to mechanism targets and wired into existing organs: ambient life, relationship memory, schedule autonomy, threat attention, world memory, failure learning, and governed whims.",
+                    "No paper, game, or fictional source is accepted as evidence unless source paths and validators exercise the real mechanism.",
+                ),
+                source_paths=(
+                    "core/adaptation/spatial_receptor_code.py",
+                    "core/morphogenesis/runtime.py",
+                    "core/agency/subjective_choice.py",
+                    "core/agency/choice_game.py",
+                    "core/agency/decision_preference_learner.py",
+                    "core/agency/ambient_life_director.py",
+                    "core/world/world_model.py",
+                ),
+                validators=(
+                    "tests/test_spatial_receptor_code.py",
+                    "tests/test_morphogenesis_runtime.py",
+                    "tests/test_subjective_choice_engine.py",
+                    "tests/test_decision_preference_learner.py",
+                    "tests/test_ambient_life_director.py",
+                ),
+                live_artifacts=("artifacts/current/operational_label_battery_choice_cell_ambient_20260702.json",),
             ),
         ),
     ),
@@ -440,9 +554,11 @@ def report(*, require_live: bool = False) -> dict[str, Any]:
             "required_label_keys": REQUIRED_LABEL_KEYS,
             "required_frontier_keys": REQUIRED_FRONTIER_KEYS,
             "fictional_imports": len(FICTIONAL_CAPABILITY_IMPORTS),
+            "game_ai_imports": len(GAME_AI_PATTERN_IMPORTS),
         },
         "checkpoints": checkpoint_payloads,
         "fictional_capability_imports": [asdict(item) for item in FICTIONAL_CAPABILITY_IMPORTS],
+        "game_ai_pattern_imports": [asdict(item) for item in GAME_AI_PATTERN_IMPORTS],
         "gaps": gaps,
     }
 
