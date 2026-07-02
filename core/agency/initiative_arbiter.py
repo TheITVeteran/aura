@@ -309,14 +309,20 @@ class InitiativeArbiter:
         if continuity_restored:
             base = max(base, 0.45 + (0.35 * continuity_pressure))
 
-        # Urgency field override
+        # Explicit urgency is authoritative when the proposer supplied it.
+        # It must not be max()-ed with freshness: every fresh initiative
+        # scored 0.9 regardless of its declared urgency, erasing the
+        # caller's ranking and promoting whichever arrived first.
         explicit = initiative.get("urgency")
         if explicit is not None:
             try:
-                base = max(base, float(explicit))
+                value = _clamp01(float(explicit))
             except (TypeError, ValueError):
-                logger.debug("Suppressed bare exception")
-                pass  # no-op: intentional
+                logger.debug("Ignored non-numeric explicit urgency: %r", explicit)
+            else:
+                if continuity_restored:
+                    value = max(value, 0.45 + (0.35 * continuity_pressure))
+                return value
 
         return min(1.0, base)
 
