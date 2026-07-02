@@ -4394,7 +4394,7 @@ async function loadMemory(type) {
         const items = d.items || [];
         if (items.length === 0) {
             const icons = { episodic: '🗂', semantic: '🧠', goals: '🎯' };
-            cont.innerHTML = `<div class="mem-empty">${icons[type] || '📁'} No ${type} memories yet</div>`;
+            cont.innerHTML = `<div class="mem-empty">${icons[type] || '📁'} No ${escHtml(type)} memories yet</div>`;
             return;
         }
         cont.innerHTML = items.map(item => {
