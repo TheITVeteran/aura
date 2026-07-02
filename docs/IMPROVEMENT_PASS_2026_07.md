@@ -70,6 +70,13 @@ lint) and pushed to main.
 
 ## Phase 3 (in progress) — full-coverage sweep to closure
 
+### Sweep ledger
+
+| Area | Depth | Findings / actions |
+|---|---|---|
+| core/brain/llm (tier 1) | mlx_client hot paths line-read (init, spawn, listener, wait/SLA ladder, abandonment, reboot, warmup, owner/cancel); mlx_worker token loop + dequeue + emit line-read; AST hunt (bare/broad except, sync sleep/IO in async) over all 40+ brain modules: **zero hits**; substrate ODE NaN/rollback verified | Abandoned generations now soft-cancel the worker (no 32B reload on recoverable SLA breaches); reboot resets cancel channel + request seq; warmup fg/bg duplication adjudicated: keep (stability-annotated). |
+
+
 Scope owned by the improvement pass (tasks tracked in-session):
 evidence-chain closure ✅ · backpressure degradation audit (the
 stream_of_being deep-narrative fix is the template) · tier-1 line sweeps
