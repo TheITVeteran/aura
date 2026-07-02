@@ -134,7 +134,9 @@ def _collect_full_runtime_status(
     """Report whether a normal desktop launch actually started Aura's organs."""
 
     from core.runtime.background_policy import (
+        background_activity_reason,
         background_cognition_disabled_reason,
+        background_loop_start_reason,
         foreground_only_runtime,
     )
     from core.runtime.desktop_boot_safety import (
@@ -250,6 +252,25 @@ def _collect_full_runtime_status(
         "autonomic_reflection_loop",
     )
     blockers = [name for name in required if not components[name].get("running", False)]
+    running_required = [
+        name for name in required if components[name].get("running", False)
+    ]
+    disabled_reason = background_cognition_disabled_reason(
+        allow_desktop_safe_boot=True,
+    )
+    loop_start_reason = background_loop_start_reason(
+        allow_desktop_safe_boot=True,
+    )
+    orchestrator = ServiceContainer.get("orchestrator", default=None)
+    activity_reason = background_activity_reason(
+        orchestrator,
+        min_idle_seconds=0.0,
+        allow_no_user_anchor=True,
+        allow_desktop_safe_boot=True,
+    )
+    background_enabled = bool(
+        resource_guard and not foreground_only_runtime() and not disabled_reason
+    )
     return {
         "profile": (
             "foreground_only"
@@ -266,6 +287,17 @@ def _collect_full_runtime_status(
         "resource_guard_enabled": resource_guard,
         "ready": bool(expected and not blockers),
         "blockers": blockers,
+        "background_cognition": {
+            "enabled": background_enabled,
+            "active": bool(background_enabled and not blockers),
+            "loops_allowed": not bool(loop_start_reason),
+            "loop_start_reason": loop_start_reason,
+            "work_admission": "deferred" if activity_reason else "allowed",
+            "work_defer_reason": activity_reason,
+            "registered_required_count": len(required),
+            "running_required_count": len(running_required),
+            "offline_required": blockers,
+        },
         "components": components,
     }
 

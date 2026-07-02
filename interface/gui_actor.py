@@ -1,5 +1,5 @@
-import logging
 import json
+import logging
 import os
 import site
 import sys
@@ -12,9 +12,9 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.runtime.errors import record_degradation
-from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
-from core.runtime.network_gateway import get_network_gateway
+from core.runtime.errors import record_degradation  # noqa: E402
+from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS  # noqa: E402
+from core.runtime.network_gateway import get_network_gateway  # noqa: E402
 
 
 def _inject_project_venv_site_packages() -> None:
@@ -101,6 +101,23 @@ def _flush_logs_before_forced_exit() -> None:
         logging.shutdown()
     except (RuntimeError, OSError):
         pass
+
+
+def _set_macos_accessory_activation_policy(stage: str) -> None:
+    if sys.platform != "darwin":
+        return
+    try:
+        import AppKit
+
+        app = AppKit.NSApplication.sharedApplication()
+        app.setActivationPolicy_(1)  # NSApplicationActivationPolicyAccessory
+    except _GUI_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "gui_actor",
+            exc,
+            action=f"continued GUI boot after dockless activation policy setup failed ({stage})",
+            severity="warning",
+        )
 
 
 def _heartbeat_response_healthy(resp: Any) -> bool:
@@ -192,12 +209,13 @@ def gui_actor_entry(port: int, token: str = None):
     """Entry point for the GUI process."""
     logger.info("🚀 Aura GUI Actor starting on port %d...", port)
     # The intentional RuntimeError has been removed to allow boot.
-    
+
     # 1. Standardize Environment for macOS/WebKit
     if sys.platform == "darwin":
         os.environ["OPENCV_VIDEOIO_AVFOUNDATION_USE_FRAME_RECEIVER"] = "0"
         os.environ["PYAV_SKIP_AVF_FRAME_RECEIVER"] = "1"
         os.environ["WEBKIT_DISABLE_COMPOSITING_MODE"] = "1"
+        _set_macos_accessory_activation_policy("pre_webview")
     
     # 1.5 Set Proxy Mode Flag (though mostly unused now)
     os.environ["AURA_GUI_PROXY"] = "1"
@@ -229,6 +247,7 @@ def gui_actor_entry(port: int, token: str = None):
             "Aura Zenith", 
             width=1280, height=820, min_size=(800, 600)
         )
+        _set_macos_accessory_activation_policy("post_window_create")
         shutdown_event = threading.Event()
 
         # ISSUE #14 - window closure delay race condition
@@ -242,6 +261,7 @@ def gui_actor_entry(port: int, token: str = None):
 
         def _on_shown():
             logger.info("🎨 WebView Window Shown. Loading boot screen...")
+            _set_macos_accessory_activation_policy("window_shown")
             try:
                 window.load_html(_BOOT_WAITING_HTML)
             except _GUI_RECOVERABLE_ERRORS as e:

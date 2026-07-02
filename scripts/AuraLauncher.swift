@@ -1454,6 +1454,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         env["AURA_DESKTOP_RESOURCE_GUARD"] = "1"
         env["AURA_ENABLE_BACKGROUND_COGNITION"] = "1"
         env["AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM"] = "1"
+        env["AURA_BACKGROUND_BOOT_GRACE_S"] = "60"
         env["AURA_EAGER_LOCAL_SENSORY_BOOT"] = "1"
         env["AURA_AUTO_LISTEN"] = "1"
         env["AURA_EAGER_CORTEX_WARMUP"] = "0"
@@ -1535,6 +1536,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         export AURA_SAFE_BOOT_DESKTOP=0
         export AURA_ENABLE_BACKGROUND_COGNITION=1
         export AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM=1
+        export AURA_BACKGROUND_BOOT_GRACE_S=60
         export AURA_EAGER_LOCAL_SENSORY_BOOT=1
         export AURA_AUTO_LISTEN=1
         export AURA_EXTERNAL_GUI_OWNER=1

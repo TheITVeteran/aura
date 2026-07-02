@@ -115,8 +115,20 @@ class BootSensoryMixin:
             extra={"lane": lane},
         )
 
-    def _register_sensory_service(self, name: str, instance: Any) -> None:
-        ServiceContainer.register_instance(name, instance)
+    def _register_sensory_service(
+        self,
+        name: str,
+        instance: Any,
+        *,
+        required: bool = False,
+        failure_policy: str = "degrade_with_receipt",
+    ) -> None:
+        ServiceContainer.register_instance(
+            name,
+            instance,
+            required=required,
+            failure_policy=failure_policy,
+        )
         self._sensory_boot_report()["registered"][name] = instance.__class__.__name__
 
     async def _maybe_await(self, value: Any) -> Any:

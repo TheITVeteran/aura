@@ -190,7 +190,16 @@ def _should_start_keep_awake_controller() -> bool:
     shutdown, so the controller is root-process only.
     """
 
-    if any(arg in {"-h", "--help", "--stop"} for arg in sys.argv[1:]):
+    helper_modes = {
+        "-h",
+        "--help",
+        "--stop",
+        "--gui-window",
+        "--watchdog",
+        "--cli",
+        "--philosophy",
+    }
+    if any(arg in helper_modes for arg in sys.argv[1:]):
         return False
     try:
         process_name = multiprocessing.current_process().name
@@ -3527,7 +3536,11 @@ def main():
             from interface.gui_actor import gui_actor_entry
 
             logger.info("🪟 Opening Aura desktop window on port %s...", args.port)
-            gui_actor_entry(args.port)
+            acquire_instance_lock(lock_name="desktop_gui_window")
+            try:
+                gui_actor_entry(args.port)
+            finally:
+                release_instance_lock()
         elif args.watchdog:
             asyncio.run(run_watchdog(args))
         elif args.cli:

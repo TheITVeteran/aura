@@ -42,10 +42,12 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert 'env.removeValue(forKey: "AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR")' in swift
     assert 'env["AURA_ENABLE_BACKGROUND_COGNITION"] = "1"' in swift
     assert 'env["AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM"] = "1"' in swift
+    assert 'env["AURA_BACKGROUND_BOOT_GRACE_S"] = "60"' in swift
     assert 'env["AURA_EAGER_LOCAL_SENSORY_BOOT"] = "1"' in swift
     assert 'env["AURA_AUTO_LISTEN"] = "1"' in swift
     assert "AURA_EAGER_CORTEX_WARMUP" in swift
     assert "AURA_DEFERRED_CORTEX_PREWARM" in swift
+    assert "export AURA_BACKGROUND_BOOT_GRACE_S=60" in swift
     assert "AURA_DESKTOP_METAL_CACHE_RATIO" in swift
     assert "AURA_DESKTOP_METAL_CACHE_CAP_GB" in swift
     assert "AURA_DESKTOP_MLX_MEMORY_RATIO" in swift
@@ -106,6 +108,8 @@ def test_launch_script_supports_gui_window_mode():
     assert "AURA_EAGER_CORTEX_WARMUP" in shell
     assert "AURA_DEFERRED_CORTEX_PREWARM" in shell
     assert "export AURA_LOCAL_BACKEND=mlx" in shell
+    assert "AURA_BACKGROUND_BOOT_GRACE_S:=60" in shell
+    assert "export AURA_BACKGROUND_BOOT_GRACE_S" in shell
     assert "AURA_ENABLE_PERMANENT_SWARM:=0" in shell
     assert "AURA_EXTERNAL_GUI_OWNER:=1" in shell
     assert "AURA_DESKTOP_METAL_CACHE_RATIO:=0.16" in shell
@@ -201,9 +205,59 @@ def test_aura_main_supports_gui_window_mode():
 
     assert '--gui-window' in main_py
     assert "gui_actor_entry(args.port)" in main_py
+    assert 'acquire_instance_lock(lock_name="desktop_gui_window")' in main_py
+    assert '"--gui-window",' in main_py
+    assert '"--watchdog",' in main_py
+    assert "helper_modes" in main_py
     assert 'AURA_EXTERNAL_GUI_OWNER' in main_py
     assert 'AURA_LAUNCHED_FROM_APP' in main_py
     assert "launch_gui=None" in main_py
+
+
+def test_gui_window_process_is_dockless_single_visible_aura_app():
+    gui_actor = (PROJECT_ROOT / "interface" / "gui_actor.py").read_text(encoding="utf-8")
+
+    assert "NSApplication.sharedApplication()" in gui_actor
+    assert "setActivationPolicy_(1)" in gui_actor
+    assert "NSApplicationActivationPolicyAccessory" in gui_actor
+    assert "continued GUI boot after dockless activation policy setup failed" in gui_actor
+
+
+def test_full_runtime_status_exposes_background_cognition():
+    system_route = (PROJECT_ROOT / "interface" / "routes" / "system.py").read_text(
+        encoding="utf-8"
+    )
+    index_html = (PROJECT_ROOT / "interface" / "static" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    ui_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "background_cognition" in system_route
+    assert "background_activity_reason(" in system_route
+    assert "background_loop_start_reason(" in system_route
+    assert "running_required_count" in system_route
+    assert "registered_required_count" in system_route
+    assert 'id="fr-background"' in index_html
+    assert "protected_full_desktop" in ui_js
+    assert "Background cognition live:" in ui_js
+    assert "work_defer_reason" in ui_js
+
+
+def test_boot_sensory_services_do_not_escalate_optional_io_to_fail_closed():
+    boot_sensory = (
+        PROJECT_ROOT / "core" / "orchestrator" / "mixins" / "boot" / "boot_sensory.py"
+    ).read_text(encoding="utf-8")
+
+    helper = boot_sensory.split("def _register_sensory_service", 1)[1].split(
+        "async def _maybe_await",
+        1,
+    )[0]
+    assert "required: bool = False" in helper
+    assert 'failure_policy: str = "degrade_with_receipt"' in helper
+    assert "required=required" in helper
+    assert "failure_policy=failure_policy" in helper
 
 
 def test_desktop_api_server_bounds_uvicorn_connection_drain_on_shutdown():
@@ -409,10 +463,14 @@ def test_bundle_script_builds_regular_dock_app_and_embeds_version_metadata():
     assert 'INSTALL_PATH="${AURA_INSTALL_PATH:-}"' in bundle_script
     assert 'ENTITLEMENTS_PLIST="${DIST_DIR}/aura.entitlements"' in bundle_script
     assert 'DEFAULT_CODESIGN_IDENTITY="-"' in bundle_script
+    assert "run_with_timeout()" in bundle_script
     assert "Aura Local Code Signing" in bundle_script
-    assert 'AURA_AUTO_USE_LOCAL_CODESIGN:-0' in bundle_script
+    assert 'AURA_AUTO_USE_LOCAL_CODESIGN:-1' in bundle_script
+    assert "macOS TCC" in bundle_script
+    assert "AURA_CODESIGN_PROBE_TIMEOUT_S:-8" in bundle_script
+    assert "AURA_CODESIGN_TIMEOUT_S:-45" in bundle_script
     assert "aura-codesign-probe" in bundle_script
-    assert 'codesign --force --sign "${LOCAL_AURA_IDENTITY}" "${SIGN_PROBE_DIR}/probe"' in bundle_script
+    assert 'run_with_timeout "${AURA_CODESIGN_PROBE_TIMEOUT_S:-8}" codesign --force --sign "${LOCAL_AURA_IDENTITY}" "${SIGN_PROBE_DIR}/probe"' in bundle_script
     assert "using ad-hoc signing" in bundle_script
     assert 'CODESIGN_IDENTITY="${AURA_CODESIGN_IDENTITY:-${DEFAULT_CODESIGN_IDENTITY}}"' in bundle_script
     assert "info_plist_overrides" in bundle_script
@@ -421,8 +479,9 @@ def test_bundle_script_builds_regular_dock_app_and_embeds_version_metadata():
     assert 'payload.update(info_plist_overrides())' in bundle_script
     assert 'cp -R "${APP_DIR}" "${INSTALL_PATH}"' in bundle_script
     assert 'CODESIGN_ARGS=(--force --sign "${CODESIGN_IDENTITY}" --entitlements "${ENTITLEMENTS_PLIST}")' in bundle_script
-    assert 'codesign "${CODESIGN_ARGS[@]}" "${APP_DIR}"' in bundle_script
-    assert 'codesign "${CODESIGN_ARGS[@]}" "${INSTALL_PATH}"' in bundle_script
+    assert 'sign_bundle "${APP_DIR}"' in bundle_script
+    assert 'sign_bundle "${INSTALL_PATH}"' in bundle_script
+    assert 'run_with_timeout "${timeout_s}" codesign "${CODESIGN_ARGS[@]}" "${target}"' in bundle_script
     assert "CFBundleShortVersionString" in bundle_script
     assert "NSAppleEventsUsageDescription" not in bundle_script
     assert "LSUIElement" not in bundle_script

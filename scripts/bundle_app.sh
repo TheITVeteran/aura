@@ -11,6 +11,42 @@ APP_NAME="${APP_BASENAME}.app"
 APP_DIR="${DIST_DIR}/${APP_NAME}"
 INSTALL_PATH="${AURA_INSTALL_PATH:-}"
 DEFAULT_CODESIGN_IDENTITY="-"
+
+run_with_timeout() {
+    local timeout_s="$1"
+    shift
+    local status_file
+    status_file="$(mktemp "${TMPDIR:-/tmp}/aura-run-timeout-status.XXXXXX")"
+    (
+        set +e
+        "$@"
+        printf '%s\n' "$?" > "${status_file}"
+    ) &
+    local child_pid="$!"
+    local deadline=$((SECONDS + timeout_s))
+    while [ ! -s "${status_file}" ]; do
+        if ! kill -0 "${child_pid}" 2>/dev/null; then
+            break
+        fi
+        if [ "${SECONDS}" -ge "${deadline}" ]; then
+            kill -TERM "${child_pid}" 2>/dev/null || true
+            sleep 0.2
+            kill -KILL "${child_pid}" 2>/dev/null || true
+            wait "${child_pid}" 2>/dev/null || true
+            rm -f "${status_file}"
+            return 124
+        fi
+        sleep 0.2
+    done
+    wait "${child_pid}" 2>/dev/null || true
+    local status="1"
+    if [ -s "${status_file}" ]; then
+        status="$(cat "${status_file}")"
+    fi
+    rm -f "${status_file}"
+    return "${status}"
+}
+
 # Prefer Aura's persistent local code-signing identity when it exists.  macOS TCC
 # grants attach to the app identity, and ad-hoc signatures can drift on rebuilds.
 AURA_AUTO_USE_LOCAL_CODESIGN="${AURA_AUTO_USE_LOCAL_CODESIGN:-1}"
@@ -25,10 +61,10 @@ if [ "${AURA_AUTO_USE_LOCAL_CODESIGN}" = "1" ] && command -v security >/dev/null
         trap 'rm -rf "${SIGN_PROBE_DIR}"' EXIT
         printf '#!/bin/sh\nexit 0\n' > "${SIGN_PROBE_DIR}/probe"
         chmod +x "${SIGN_PROBE_DIR}/probe"
-        if codesign --force --sign "${LOCAL_AURA_IDENTITY}" "${SIGN_PROBE_DIR}/probe" >/dev/null 2>&1; then
+        if run_with_timeout "${AURA_CODESIGN_PROBE_TIMEOUT_S:-8}" codesign --force --sign "${LOCAL_AURA_IDENTITY}" "${SIGN_PROBE_DIR}/probe" >/dev/null 2>&1; then
             DEFAULT_CODESIGN_IDENTITY="${LOCAL_AURA_IDENTITY}"
         else
-            echo "⚠️ Local Aura code-signing identity exists but cannot sign from this shell; using ad-hoc signing." >&2
+            echo "⚠️ Local Aura code-signing identity exists but cannot sign from this shell within ${AURA_CODESIGN_PROBE_TIMEOUT_S:-8}s; using ad-hoc signing." >&2
         fi
     fi
 fi
@@ -155,6 +191,21 @@ echo "✅ Built ${APP_DIR}"
 echo "🧠 Live source link: ${ROOT_DIR}"
 echo "✍️ Edit the repo normally — this launcher always runs the current workspace code."
 
+sign_bundle() {
+    local target="$1"
+    local timeout_s="${AURA_CODESIGN_TIMEOUT_S:-45}"
+    if run_with_timeout "${timeout_s}" codesign "${CODESIGN_ARGS[@]}" "${target}" >/dev/null; then
+        return 0
+    fi
+    if [ "${CODESIGN_IDENTITY}" != "-" ]; then
+        echo "⚠️ Codesigning ${target} with ${CODESIGN_IDENTITY} failed or timed out; falling back to ad-hoc signing." >&2
+        local fallback_args=(--force --sign "-" --entitlements "${ENTITLEMENTS_PLIST}")
+        run_with_timeout "${timeout_s}" codesign "${fallback_args[@]}" "${target}" >/dev/null
+        return $?
+    fi
+    return 1
+}
+
 if command -v codesign >/dev/null 2>&1; then
     CODESIGN_ARGS=(--force --sign "${CODESIGN_IDENTITY}" --entitlements "${ENTITLEMENTS_PLIST}")
     if [ "${CODESIGN_IDENTITY}" != "-" ]; then
@@ -163,7 +214,7 @@ if command -v codesign >/dev/null 2>&1; then
             CODESIGN_ARGS+=(--timestamp)
         fi
     fi
-    codesign "${CODESIGN_ARGS[@]}" "${APP_DIR}" >/dev/null
+    sign_bundle "${APP_DIR}"
 fi
 
 if [ -n "${INSTALL_PATH}" ]; then
@@ -171,7 +222,7 @@ if [ -n "${INSTALL_PATH}" ]; then
     rm -rf "${INSTALL_PATH}"
     cp -R "${APP_DIR}" "${INSTALL_PATH}"
     if command -v codesign >/dev/null 2>&1; then
-        codesign "${CODESIGN_ARGS[@]}" "${INSTALL_PATH}" >/dev/null
+        sign_bundle "${INSTALL_PATH}"
     fi
     echo "✅ Installed ${INSTALL_PATH}"
 fi

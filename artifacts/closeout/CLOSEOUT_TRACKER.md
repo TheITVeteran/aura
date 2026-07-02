@@ -1309,7 +1309,7 @@ Honest boundary and estimate:
 
 ## Checkpoint 2026-07-01-04: Desktop Shutdown Grace After Live Chat
 
-Status: source repair verified locally; checkpoint commit/push pending.
+Status: source repair verified locally; checkpoint commit/push complete.
 
 Observed shutdown failure:
 
@@ -1367,3 +1367,88 @@ Honest boundary and estimate:
   claim validation from committed source.
 - Remaining smaller sub-checkpoints: longer multi-turn desktop conversation soak
   and final clean-tree artifact normalization.
+
+## Checkpoint 2026-07-01-05: Single Visible Aura + Background Runtime Truth
+
+Status: source repair verified locally; checkpoint commit/push complete.
+
+Observed user-facing failure:
+
+- A normal Aura launch could show multiple Aura/Python-looking app icons in the
+  Dock even though only one backend runtime was intended.
+- The Settings/health UI did not clearly prove whether background cognition,
+  autonomous initiative, research, self-healing, self-modification, sensory
+  loops, and reflection loops were actually live.
+- Boot-time local voice warmup could record a recoverable timeout as a global
+  fail-closed failure pressure event, temporarily blocking autonomous
+  background work under `failure_lockdown_*`.
+- GUI helpers could start their own macOS keep-awake `caffeinate` assertion,
+  making helper processes look more like independent app/runtime owners.
+
+Root fixes:
+
+- `--gui-window` now has its own singleton lock
+  (`desktop_gui_window`), so duplicate GUI launches exit with code 75 instead
+  of creating another visible helper.
+- The GUI actor reapplies macOS accessory activation policy before webview
+  startup, after window creation, and when the window is shown. The visible app
+  surface should be the resident `aura-launcher`, not helper Python processes.
+- Full-runtime health now reports a structured `background_cognition` block:
+  enabled/active state, loop-start permission, work-admission state,
+  registered/running required organ counts, and explicit defer reason.
+- The UI now has a `FULL RUNTIME > BACKGROUND` cell and treats both
+  `full_desktop` and `protected_full_desktop` as healthy full-runtime profiles.
+- Boot sensory services now default to `required=False` and
+  `failure_policy="degrade_with_receipt"`, so local I/O/TCC/voice warmup
+  timeouts do not silently promote optional sensory lanes into global
+  fail-closed services.
+- Normal desktop boot grace for background work is now 60 seconds instead of
+  the default 300 seconds, while foreground quiet windows, memory pressure, and
+  failure lockdown still protect the live user lane.
+- `scripts/bundle_app.sh` now bounds codesign probes and final signing calls so
+  keychain/codesign prompts cannot hang the app build and leave orphan
+  processes.
+- Keep-awake startup now excludes helper modes (`--gui-window`, `--watchdog`,
+  `--cli`, `--philosophy`, `--stop`), so only the root desktop backend owns the
+  macOS `caffeinate` assertion.
+
+Evidence:
+
+- Focused launcher/runtime contract tests passed:
+  `tests/test_launcher_polish_contract.py` (`29 passed`).
+- Python compile passed for `aura_main.py`,
+  `core/orchestrator/mixins/boot/boot_sensory.py`,
+  `interface/gui_actor.py`, and `interface/routes/system.py`.
+- `ruff check` passed for the touched Python runtime/test files.
+- `bash -n` passed for `launch_aura.sh` and `scripts/bundle_app.sh`.
+- `/Applications/Aura.app` rebuilt and installed successfully.
+- Real app launch reached `/api/health` with `profile=full_desktop`,
+  `full_runtime_ready=true`, `blockers=[]`, and
+  `background_cognition.running_required_count=20` /
+  `registered_required_count=20`.
+- After the sensory registration fix, background deferral was no longer
+  `failure_lockdown_*`; final observed defer reasons were foreground/boot
+  protection (`foreground_generation_active`, `foreground_quiet_window`).
+- Visible application-process query reported only `aura-launcher`.
+- Process topology after final launch was one `aura-launcher`, one desktop
+  backend, one GUI helper, and one backend-owned `caffeinate`; duplicate
+  `--gui-window` exited with code 75 and did not start another keep-awake
+  assertion.
+- Final stop completed without SIGKILL and removed all Aura, launcher, GUI
+  helper, and keep-awake processes.
+
+Honest boundary and estimate:
+
+- This closes the multiple-visible-Aura-instance class for the verified launch
+  path and makes background/autonomous runtime status explicit in the UI/API.
+- macOS may still require permission re-toggle if the local signing identity is
+  unavailable and the app falls back to ad-hoc signing; the build now fails
+  bounded instead of hanging, but TCC durability still depends on macOS trusting
+  the exact app identity.
+- Prior final-proof closeout scope: 99.80%.
+- Reopened live desktop reliability scope after the June 30/July 1 user reports:
+  approximately 94%.
+- Remaining consolidated checkpoint: clean-tree live desktop proof plus final
+  longer multi-turn conversation/tool-use soak from committed source.
+- Remaining smaller sub-checkpoints: permission/TCC durability verification on
+  the signed installed app and shutdown verification after longer live use.

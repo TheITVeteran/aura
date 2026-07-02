@@ -3920,6 +3920,7 @@ async function pollHealth() {
             const components = (fr.components && typeof fr.components === 'object') ? fr.components : {};
             const initiative = components.autonomous_initiative || {};
             const admission = (initiative.admission && typeof initiative.admission === 'object') ? initiative.admission : {};
+            const background = (fr.background_cognition && typeof fr.background_cognition === 'object') ? fr.background_cognition : {};
             const blockers = Array.isArray(fr.blockers) ? fr.blockers : [];
             const setFullRuntimeCell = (id, value, healthy) => {
                 const el = $(id);
@@ -3928,8 +3929,24 @@ async function pollHealth() {
                 el.style.color = healthy ? 'var(--success)' : 'var(--error)';
                 el.title = blockers.length ? `Blocked: ${blockers.join(', ')}` : 'Full runtime organ is healthy.';
             };
-            setFullRuntimeCell('fr-profile', fr.profile || '--', fr.profile === 'full_desktop');
+            const fullProfile = ['full_desktop', 'protected_full_desktop'].includes(String(fr.profile || ''));
+            setFullRuntimeCell('fr-profile', fr.profile || '--', fullProfile);
             setFullRuntimeCell('fr-ready', fr.ready ? 'READY' : 'BLOCKED', !!fr.ready);
+            if ($('fr-background')) {
+                const backgroundEnabled = !!background.enabled && !!background.active;
+                const admissionState = String(background.work_admission || '').toLowerCase();
+                const backgroundLabel = backgroundEnabled
+                    ? (admissionState === 'deferred' ? 'DEFERRED' : 'ACTIVE')
+                    : 'BLOCKED';
+                $('fr-background').textContent = backgroundLabel;
+                $('fr-background').style.color = backgroundEnabled ? 'var(--success)' : 'var(--error)';
+                const running = background.running_required_count ?? '--';
+                const total = background.registered_required_count ?? '--';
+                const reason = background.work_defer_reason || background.loop_start_reason || blockers.join(', ') || 'none';
+                $('fr-background').title = backgroundEnabled
+                    ? `Background cognition live: ${running}/${total} required organs running; work admission ${background.work_admission || 'allowed'}${reason && reason !== 'none' ? ` (${reason})` : ''}.`
+                    : `Background cognition blocked: ${reason}.`;
+            }
             setFullRuntimeCell('fr-initiative', initiative.running ? 'ACTIVE' : 'BLOCKED', !!initiative.running);
             if ($('fr-selfdev')) {
                 const selfDev = admission.self_development || '--';
