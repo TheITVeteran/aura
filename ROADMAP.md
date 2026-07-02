@@ -31,10 +31,15 @@ The columns are:
   immutable snapshots of core organs. **(shipped)**
 * Formal verifier: `core/self_modification/formal_verifier.py` — Z3 if
   available, AST-pattern fallback. **(shipped)**
-* Multiprocess organ isolation (Chromium-style): see
-  `core/embodiment/world_bridge.py` shell-sandbox for the pattern; the
-  next pass extracts MLX worker, motor cortex, and phi_core into
-  separate IPC processes. **(staged)**
+* Multiprocess organ isolation (Chromium-style): MLX inference runs in an
+  isolated spawn worker (`core/brain/llm/mlx_worker.py`, cooperative
+  soft-cancel included). Hierarchical-phi partition search runs in a spawn
+  process pool (`core/consciousness/hierarchical_phi.py`,
+  `AURA_PHI_PROCESS_ISOLATION`) — it was pure-Python/GIL-bound and stole
+  loop time from the main process. Motor cortex stays in-process BY
+  DESIGN: it is a lightweight token-gated asyncio reflex loop with no
+  native crash surface, and isolating it would sever its Will/capability
+  coupling for no isolation gain. **(shipped)**
 
 ## 2. Agency
 

@@ -45,12 +45,14 @@ from __future__ import annotations
 
 import logging
 import math
+import multiprocessing
+import os
 import random
 import threading
 import time
 from collections import deque
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import BrokenExecutor, ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -223,10 +225,12 @@ class HierarchicalPhi:
         self._null_baseline_phi: float = 0.0
         self._null_baseline_time: float = 0.0
 
-        # Thread pool for per-subsystem parallelism.
-        self._executor = ThreadPoolExecutor(
-            max_workers=4, thread_name_prefix="hphi"
-        )
+        # Per-subsystem parallelism. Default is a spawn PROCESS pool: the
+        # partition search is pure-Python and GIL-bound, so thread workers
+        # steal the GIL from the main event loop — phi compute was a
+        # measurable contributor to steady-state loop lag. Tests and
+        # constrained hosts fall back to threads (AURA_PHI_PROCESS_ISOLATION=0).
+        self._executor, self._executor_kind = self._make_compute_executor()
 
         # Telemetry counters.
         self._n_records: int = 0
@@ -362,8 +366,8 @@ class HierarchicalPhi:
 
     # ── Per-subsystem causal graph + spectral partition ───────────────────────
 
+    @staticmethod
     def _build_causal_graph(
-        self,
         history: list[int],
         node_indices: Sequence[int],
     ) -> np.ndarray:
@@ -501,6 +505,16 @@ class HierarchicalPhi:
     # sources from dominating φ via overconfident 1.0-probability estimates.
     _MIN_SOURCE_OBS: int = 4
 
+    # Minimum evidence before a subset's φ estimate is trusted at all:
+    # a fraction of transition mass AND an absolute transition count whose
+    # sources qualify (≥ _MIN_SOURCE_OBS). Joint sources are the subset's
+    # full projected state, so on sparse histories (e.g. 32-node subsets
+    # where every state is novel) NOTHING qualifies and the estimator used
+    # to return 0.0 — reporting "perfect factorization" from zero evidence.
+    # Unmeasurable is not zero.
+    _MIN_TRUSTED_SOURCE_MASS: float = 0.02
+    _MIN_TRUSTED_TRANSITIONS: int = 12
+
     @classmethod
     def _phi_from_history(
         cls,
@@ -521,7 +535,10 @@ class HierarchicalPhi:
         and the Cartesian product of observed A-destinations and observed
         B-destinations — this ensures we penalise partitions correctly even
         when the independent factorisation predicts states the joint never
-        visits.  φ ≥ 0 is guaranteed by construction (smoothed KL is non-negative).
+        visits.  φ ≥ 0 is guaranteed by construction (smoothed KL is
+        non-negative). Returns ``inf`` when too little transition mass has
+        qualifying sources — an unmeasurable partition, never evidence of
+        zero integration.
 
         Exact on the observed transition history — never materialises 2^N states.
         """
@@ -624,14 +641,70 @@ class HierarchicalPhi:
             phi_accum += w_src * max(0.0, kl)
             total_trusted_weight += w_src
 
-        if total_trusted_weight <= 0.0:
-            return 0.0
+        trusted_transitions = total_trusted_weight * total_weight
+        if (
+            total_trusted_weight < cls._MIN_TRUSTED_SOURCE_MASS
+            or trusted_transitions < cls._MIN_TRUSTED_TRANSITIONS
+        ):
+            # UNMEASURABLE, not "perfectly factorized": too little of the
+            # transition mass has qualifying sources to bound integration
+            # across this cut. Callers take min() over candidates, so inf
+            # simply removes this partition from contention.
+            return float("inf")
         # Renormalise so φ is expressed per unit of trusted source mass —
         # otherwise discarding rare sources systematically shrinks φ.
         return max(0.0, phi_accum / total_trusted_weight)
 
+    @staticmethod
+    def _process_isolation_enabled() -> bool:
+        """Spawn-pool isolation policy.
+
+        Explicit env always wins. Under pytest the default flips to threads
+        so unit tests stay fast and hermetic; live runtimes default to
+        process isolation.
+        """
+        raw = str(os.environ.get("AURA_PHI_PROCESS_ISOLATION", "") or "").strip().lower()
+        if raw in {"1", "true", "yes", "on"}:
+            return True
+        if raw in {"0", "false", "no", "off"}:
+            return False
+        return not bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+    def _make_compute_executor(self):
+        if self._process_isolation_enabled():
+            try:
+                ctx = multiprocessing.get_context("spawn")
+                return (
+                    ProcessPoolExecutor(max_workers=2, mp_context=ctx),
+                    "process",
+                )
+            except (OSError, ValueError, RuntimeError) as exc:
+                record_degradation(
+                    "hierarchical_phi",
+                    exc,
+                    severity="warning",
+                    action="fell back to in-process thread pool for phi compute",
+                )
+        return ThreadPoolExecutor(max_workers=4, thread_name_prefix="hphi"), "thread"
+
+    def _recover_broken_executor(self, exc: BaseException) -> None:
+        """A broken process pool must not take phi telemetry down with it."""
+        record_degradation(
+            "hierarchical_phi",
+            exc if isinstance(exc, Exception) else RuntimeError(str(exc)),
+            severity="warning",
+            action="rebuilt phi compute pool as in-process threads after pool broke",
+        )
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            logger.debug("Broken phi executor shutdown failed; continuing.")
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="hphi")
+        self._executor_kind = "thread"
+
+    @classmethod
     def _compute_subsystem(
-        self,
+        cls,
         history: list[int],
         name: str,
         node_indices: tuple[int, ...],
@@ -641,21 +714,34 @@ class HierarchicalPhi:
         if n_trans < MIN_HISTORY or len(node_indices) < 2:
             return None
 
-        graph = self._build_causal_graph(history, node_indices)
-        base_partition = self._fiedler_partition(graph)
-        candidates = self._neighbor_candidates(
+        graph = cls._build_causal_graph(history, node_indices)
+        base_partition = cls._fiedler_partition(graph)
+        candidates = cls._neighbor_candidates(
             base_partition, len(node_indices), n_random=N_REFINEMENT_CANDIDATES
         )
 
         best_phi = float("inf")
         best_partition = base_partition
         for part in candidates:
-            phi = self._phi_from_history(history, node_indices, part)
+            phi = cls._phi_from_history(history, node_indices, part)
             if phi < best_phi:
                 best_phi = phi
                 best_partition = part
 
-        phi_s = max(0.0, best_phi if best_phi != float("inf") else 0.0)
+        if not math.isfinite(best_phi):
+            # No candidate partition had enough qualifying evidence: this
+            # subset is UNMEASURABLE on the current history (typical for
+            # 32-node subsets whose every projected state is novel).
+            # Reporting φ=0 here would claim perfect factorization from
+            # zero evidence; the exclusion pass simply skips the subset.
+            logger.debug(
+                "HierarchicalPhi subsystem %s unmeasurable on %d transitions; skipped.",
+                name,
+                n_trans,
+            )
+            return None
+
+        phi_s = max(0.0, best_phi)
 
         a_local, b_local = best_partition
         mip_a = tuple(node_indices[i] for i in a_local)
@@ -715,18 +801,28 @@ class HierarchicalPhi:
                 jobs.append((name, idxs))
 
             futures = []
-            for (name, idxs) in jobs:
-                futures.append(
-                    self._executor.submit(self._compute_subsystem, history, name, idxs)
-                )
+            try:
+                for (name, idxs) in jobs:
+                    futures.append(
+                        self._executor.submit(self._compute_subsystem, history, name, idxs)
+                    )
+            except BrokenExecutor as exc:
+                self._recover_broken_executor(exc)
+                return self._last_result
 
             results: list[SubsystemResult] = []
             timed_out_jobs = 0
+            pool_broke = False
             for f in futures:
                 try:
                     r = f.result(timeout=10.0)
                     if r is not None:
                         results.append(r)
+                except BrokenExecutor as exc:
+                    # One recovery per cycle: rebuild as threads, cache serves.
+                    if not pool_broke:
+                        pool_broke = True
+                        self._recover_broken_executor(exc)
                 except TimeoutError:
                     # Backpressure, not breakage: under foreground load a phi
                     # job can exceed its slot; the next cycle self-heals with
@@ -741,7 +837,7 @@ class HierarchicalPhi:
                 except _HIERARCHICAL_PHI_RECOVERABLE_ERRORS as exc:
                     record_degradation('hierarchical_phi', exc)
                     logger.warning("HierarchicalPhi subsystem job failed: %s", exc)
-            if timed_out_jobs and not results:
+            if timed_out_jobs and not results and not pool_broke:
                 record_degradation(
                     'hierarchical_phi',
                     TimeoutError(f"all {timed_out_jobs} phi subsystem jobs timed out"),
@@ -829,7 +925,13 @@ class HierarchicalPhi:
         graph = self._build_causal_graph(shuffled, node_indices)
         base_partition = self._fiedler_partition(graph)
         candidates = self._neighbor_candidates(base_partition, 16, n_random=8)
-        phis = [self._phi_from_history(shuffled, node_indices, p) for p in candidates]
+        phis = [
+            phi
+            for phi in (
+                self._phi_from_history(shuffled, node_indices, p) for p in candidates
+            )
+            if math.isfinite(phi)
+        ]
         null_phi = float(max(0.0, min(phis))) if phis else 0.0
 
         self._null_baseline_phi = null_phi
@@ -852,6 +954,7 @@ class HierarchicalPhi:
             "n_records": self._n_records,
             "n_compute_calls": self._n_compute_calls,
             "mlx_available": _MLX_AVAILABLE,
+            "compute_executor": self._executor_kind,
         }
         if r is not None:
             status.update(r.to_dict())

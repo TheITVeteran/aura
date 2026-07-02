@@ -129,16 +129,21 @@ def test_compute_returns_cached_result_while_refresh_is_in_flight():
     assert h._n_compute_calls == before_calls
 
 
-def test_compute_primary_32_reaches_positive_phi():
+def test_compute_finds_measurable_max_complex():
+    """On a 400-step history every 32-node projected state is novel, so the
+    primary-32 subset is honestly UNMEASURABLE (None) — the old code reported
+    φ=0 'perfect factorization' from zero qualifying evidence. The exclusion
+    pass must still find a measurable complex among the denser subsets."""
     h = HierarchicalPhi()
     _prime_with_coupled_history(h, n_steps=400)
     result = h.compute(force=True)
     assert result is not None, "history should be enough"
-    assert result.primary_32 is not None
-    # The 32-node primary complex should at least estimate φ ≥ 0.
-    assert result.primary_32.phi >= 0.0
-    # Max complex selection should prefer an actual complex if available.
+    assert result.primary_32 is None, (
+        "a subset whose every state is novel must be unmeasurable, not φ=0"
+    )
+    # Max complex selection should prefer an actual measurable complex.
     assert result.max_complex_size >= 2
+    assert result.max_complex_phi > 0.0
 
 
 # ── Null-hypothesis adversarial test ──────────────────────────────────────────
@@ -241,12 +246,15 @@ def test_monotonicity_stronger_coupling_raises_phi():
 
     r_strong = h_strong.compute(force=True)
     r_weak = h_weak.compute(force=True)
-    assert r_strong is not None and r_weak is not None
+    assert r_strong is not None
+    assert r_strong.max_complex_phi > 0.0
 
-    # Coupled history should have strictly greater max-complex φ than noise.
-    assert r_strong.max_complex_phi >= r_weak.max_complex_phi - 1e-4
-    # And the gap should be meaningful.
-    assert r_strong.max_complex_phi > r_weak.max_complex_phi * 0.9
+    # Noise: either honestly unmeasurable (every projected state novel → no
+    # measurable subset at all) or measurable with φ no higher than coupled.
+    if r_weak is not None:
+        assert r_strong.max_complex_phi >= r_weak.max_complex_phi - 1e-4
+        # And the gap should be meaningful.
+        assert r_strong.max_complex_phi > r_weak.max_complex_phi * 0.9
 
 
 # ── Constant-node adversarial test ────────────────────────────────────────────
@@ -400,3 +408,119 @@ def test_fully_starved_cycle_records_one_degradation(monkeypatch):
     args, kwargs = degradations[0]
     assert args[0] == "hierarchical_phi"
     assert "starved" in kwargs.get("action", "")
+
+
+# ── Process isolation (GIL-theft fix) ─────────────────────────────────────────
+# The partition search is pure-Python and GIL-bound; thread workers stole the
+# GIL from the live event loop. Production defaults to a spawn process pool;
+# tests default to threads for speed; both must produce real snapshots.
+
+def test_executor_defaults_to_threads_under_pytest(monkeypatch):
+    monkeypatch.delenv("AURA_PHI_PROCESS_ISOLATION", raising=False)
+    h = HierarchicalPhi()
+    assert h._executor_kind == "thread"
+    assert h.get_status()["compute_executor"] == "thread"
+
+
+def test_explicit_env_enables_process_isolation_and_computes(monkeypatch):
+    monkeypatch.setenv("AURA_PHI_PROCESS_ISOLATION", "1")
+    h = HierarchicalPhi()
+    try:
+        assert h._executor_kind == "process"
+        _prime_with_coupled_history(h, n_steps=400)
+        result = h.compute(force=True)
+        assert result is not None
+        assert result.max_complex_phi > 0.0, (
+            "process-pool phi must reproduce the thread-pool computation"
+        )
+        assert result.max_complex_size >= 2
+    finally:
+        h.shutdown()
+
+
+def test_process_pool_failure_falls_back_to_threads(monkeypatch):
+    monkeypatch.setenv("AURA_PHI_PROCESS_ISOLATION", "1")
+    monkeypatch.setattr(
+        "core.consciousness.hierarchical_phi.ProcessPoolExecutor",
+        lambda *a, **k: (_ for _ in ()).throw(OSError("no more processes")),
+    )
+    h = HierarchicalPhi()
+    assert h._executor_kind == "thread"
+    _prime_with_coupled_history(h, n_steps=400)
+    assert h.compute(force=True) is not None
+
+
+def test_broken_pool_mid_cycle_recovers_to_threads(monkeypatch):
+    from concurrent.futures import BrokenExecutor
+
+    h = HierarchicalPhi()
+    _prime_with_coupled_history(h, n_steps=400)
+    cached = h.compute(force=True)
+    assert cached is not None
+
+    degradations = []
+    monkeypatch.setattr(
+        "core.consciousness.hierarchical_phi.record_degradation",
+        lambda *a, **k: degradations.append((a, k)),
+    )
+
+    def broken_submit(*a, **k):
+        raise BrokenExecutor("process pool died")
+
+    monkeypatch.setattr(h._executor, "submit", broken_submit)
+    result = h.compute(force=True)
+
+    assert result is cached, "cache must serve while the pool is rebuilt"
+    assert h._executor_kind == "thread"
+    assert len(degradations) == 1
+    # The rebuilt executor works on the next cycle.
+    h._last_compute_time = 0.0
+    assert h.compute(force=True) is not None
+
+
+# ── Estimator honesty: unmeasurable ≠ factorized ─────────────────────────────
+# Joint sources are the subset's full projected state, so a subset whose
+# every projected state is novel (32 nodes on a 400-step history) has ZERO
+# sources meeting _MIN_SOURCE_OBS. The estimator used to return φ=0 for
+# every partition of such a subset — the strongest claim (perfect
+# factorization) from zero qualifying evidence — first exposed by unseeded
+# process-pool workers reporting φ=0.0 on coupled histories.
+
+def test_sparse_subset_is_unmeasurable_not_zero():
+    h = HierarchicalPhi()
+    _prime_with_coupled_history(h, n_steps=400)
+    history = h._snapshot_history()
+
+    sparse_subset = tuple(range(32))
+    for partition in [
+        (tuple(range(16)), tuple(range(16, 32))),
+        (tuple(range(28)), (28, 29, 30, 31)),
+    ]:
+        phi = HierarchicalPhi._phi_from_history(history, sparse_subset, partition)
+        assert math.isinf(phi), (
+            "no qualifying evidence must yield UNMEASURABLE (inf), "
+            "not phi=0 'perfect factorization'"
+        )
+
+    # A dense (recurrent) subset stays measurable with positive phi.
+    dense_subset = dict(h._subsystems)["mesh_full_16"]
+    dense_partition = (tuple(range(8)), tuple(range(8, 16)))
+    phi_dense = HierarchicalPhi._phi_from_history(history, dense_subset, dense_partition)
+    assert math.isfinite(phi_dense)
+    assert phi_dense >= 0.0
+
+
+def test_unmeasurable_subsystem_returns_none_not_fake_zero():
+    h = HierarchicalPhi()
+    _prime_with_coupled_history(h, n_steps=400)
+    history = h._snapshot_history()
+
+    sparse = HierarchicalPhi._compute_subsystem(history, "primary_32", tuple(range(32)))
+    assert sparse is None, (
+        "an unmeasurable subset must be skipped, not reported as φ=0"
+    )
+
+    dense_subset = dict(h._subsystems)["mesh_full_16"]
+    dense = HierarchicalPhi._compute_subsystem(history, "mesh_full_16", dense_subset)
+    assert dense is not None
+    assert dense.phi > 0.0, "coupled dense subset must show integration"
