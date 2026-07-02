@@ -1926,3 +1926,61 @@ Estimate:
 - Memory UI reliability: about 92%; full launched route replay remains.
 - Runtime/daily product: about 78-82%.
 - Remaining total checkpoints: 5.
+
+## Checkpoint 2026-07-02-08: Background Autonomy Live Proof And Desktop Bridge Budget
+
+Status: live desktop-mode proof passed; ready for checkpoint commit.
+
+What changed:
+
+- Added `tools/closeout/background_autonomy_proof.py`, an executable proof that
+  boots Aura in desktop mode, samples live health, checks desktop access through
+  the same system route the UI uses, evaluates background autonomy/conductor
+  readiness, writes auditable artifacts, scans runtime stdout for failure
+  markers, and shuts the runtime down.
+- Added `tests/test_background_autonomy_proof.py` to make the proof fail if
+  background cognition is disabled, if required background organs are missing,
+  or if foreground quiet-window/resource deferral incorrectly suppresses the
+  core autonomy loop.
+- Increased the desktop-access native bridge route budget from the stale
+  sub-second value to a realistic bounded window. The route still stays out of
+  `/api/health`, but `/api/system/desktop-access` now allows the signed
+  Aura.app bridge and code-signing probe to complete under launch load.
+- Increased the proof's desktop-access client timeout so the proof does not
+  create a second artificial timeout after the server fix.
+
+Evidence:
+
+- `python -m py_compile interface/routes/system.py tools/closeout/background_autonomy_proof.py tests/test_background_autonomy_proof.py tests/test_live_runtime_surface_regressions.py tests/test_server_runtime_hardening.py`
+  -> passed.
+- `python -m ruff check --select F,E9 interface/routes/system.py tools/closeout/background_autonomy_proof.py tests/test_background_autonomy_proof.py tests/test_live_runtime_surface_regressions.py tests/test_server_runtime_hardening.py`
+  -> passed.
+- `python -m pytest -q tests/test_background_autonomy_proof.py tests/test_live_runtime_surface_regressions.py::test_desktop_access_permission_route_has_ui_bounded_probe_budgets tests/test_server_runtime_hardening.py::test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_grants tests/test_server_runtime_hardening.py::test_desktop_access_summary_native_bridge_ready_skips_slow_python_tcc_probes tests/test_server_runtime_hardening.py::test_desktop_access_summary_reconciles_partial_resident_probe_with_one_shot`
+  -> `7 passed`.
+- `python tools/closeout/background_autonomy_proof.py --mode desktop --boot-timeout 420 --observe-seconds 30 --out-dir artifacts/current/background_autonomy`
+  -> passed.
+- `artifacts/current/background_autonomy/MANIFEST.json`
+  -> `passed=true`, `shutdown_ok=true`, `stream_ok=true`.
+- `artifacts/current/background_autonomy/BACKGROUND_AUTONOMY_REPORT.json`
+  -> `full_runtime_ready=true`, `background_enabled=true`,
+  `background_active=true`, `background_loops_allowed=true`, `22/22`
+  background components running, desktop access `overall_status=ready`,
+  `permission_confidence=direct`, `screen_capture_ready=true`,
+  `desktop_control_ready=true`, `screen_text_ready=true`,
+  `blocking_permissions=[]`, peak RSS about `20778.1MB`.
+- Runtime proof output:
+  boot healthy after about 31 seconds, graceful stop in about 34 seconds, no
+  orphan Aura processes, port released, no runtime-stream failure markers.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> one hard live-artifact gap remains: `artifacts/current/final_closeout`.
+
+Boundary:
+
+- This closes the active evidence gap for background autonomy and fixes the
+  false desktop-access degradation path observed during the prior proof.
+- Final closeout artifact assembly/replay remains open.
+
+Estimate:
+
+- Expanded daily-runtime/product closure: about 88%.
+- Hard remaining live gaps: 1, `artifacts/current/final_closeout`.

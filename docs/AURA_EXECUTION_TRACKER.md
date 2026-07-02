@@ -10,7 +10,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 85%** based on current live
+- Expanded daily-runtime/product closure: **about 88%** based on current live
   evidence, not documentation. This number is deliberately governed by the live
   desktop path, not by historical proof-profile success. Checkpoint 5 addresses
   two live defects, and the follow-up desktop-mode live proof verified bounded
@@ -28,7 +28,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   ready through `com.aura.desktop`. Checkpoint 10C source-validates the
   research-cycle failure-lockdown fix so a recoverable autonomous research
   timeout no longer poisons unified runtime pressure or disables background
-  cognition.
+  cognition. Checkpoint 10D adds a launched desktop-mode background-autonomy
+  proof: full runtime expected and ready, background cognition enabled and
+  active, 22/22 required background organs running, desktop access ready through
+  the signed `com.aura.desktop` bridge, no stream failure markers, clean
+  shutdown, no orphan processes, and port release after stop.
 - Estimated checkpoints in this expanded program: **11 total**. Checkpoint 1 is
   committed and pushed; Checkpoint 2 is source-committed but live TCC remains
   open; Checkpoint 3 is committed and pushed; Checkpoint 4 is committed and
@@ -49,9 +53,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   voice threshold pulses no longer dominate the neural stream. The real launched
   Aura.app lane still shows a macOS TCC Accessibility denial for the exact
   launched identity. Checkpoint 10C is source-validated for research-cycle
-  fail-open-with-repair semantics; Checkpoint 10 remains live-open until the
-  visible app proves desktop control, screen text, general agency, and no
-  `failure_lockdown_1.00` background-autonomy suppression after restart.
+  fail-open-with-repair semantics; Checkpoint 10D live-validates background
+  autonomy and desktop-access truth under a launched desktop-mode proof. The
+  remaining evidence gap is now Checkpoint 11 final closeout artifact assembly
+  and replay, including the final clean worktree/commit/push proof.
 
 ### Scope Clarification For The Current Pass
 
@@ -4367,3 +4372,76 @@ Estimate:
   useful.
 - Overall runtime/daily product closure remains about 78-82%.
 - Remaining total checkpoints: 5.
+
+## Checkpoint 2026-07-02-08: Background Autonomy Live Proof And Desktop Bridge Budget
+
+Status: live desktop-mode proof passed; ready for checkpoint commit.
+
+Scope:
+
+- Added a dedicated background-autonomy proof runner so normal launched Aura can
+  be checked for active background cognition without relying on prose, health
+  assumptions, or foreground chat. The proof boots Aura in desktop mode,
+  samples `/api/health`, queries `/api/system/desktop-access`, evaluates the
+  live autonomy/conductor surface, writes auditable JSON artifacts, scans the
+  runtime stream for failure markers, and shuts Aura down.
+- Fixed the desktop-access route budget that caused false permission-blocked
+  states. The route used a sub-second native-bridge timeout even though the
+  bridge probe includes the signed Aura.app subprocess and signing identity
+  inspection. Under launch pressure that produced warning degradations and let
+  Python TCC probes overwrite the signed app's real grant state. The endpoint
+  now gives the signed bridge a realistic bounded budget while keeping health
+  fast through cached/fast desktop-access summaries.
+- Increased the background proof's client-side desktop-access timeout so the
+  proof itself does not reintroduce an artificial startup-race failure.
+
+Evidence:
+
+- `python -m py_compile interface/routes/system.py tools/closeout/background_autonomy_proof.py tests/test_background_autonomy_proof.py tests/test_live_runtime_surface_regressions.py tests/test_server_runtime_hardening.py`
+  -> passed.
+- `python -m ruff check --select F,E9 interface/routes/system.py tools/closeout/background_autonomy_proof.py tests/test_background_autonomy_proof.py tests/test_live_runtime_surface_regressions.py tests/test_server_runtime_hardening.py`
+  -> passed.
+- `python -m pytest -q tests/test_background_autonomy_proof.py tests/test_live_runtime_surface_regressions.py::test_desktop_access_permission_route_has_ui_bounded_probe_budgets tests/test_server_runtime_hardening.py::test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_grants tests/test_server_runtime_hardening.py::test_desktop_access_summary_native_bridge_ready_skips_slow_python_tcc_probes tests/test_server_runtime_hardening.py::test_desktop_access_summary_reconciles_partial_resident_probe_with_one_shot`
+  -> `7 passed`.
+- `python -u aura_main.py --stop`
+  -> no live Aura lock remained before proof start.
+- `python tools/closeout/background_autonomy_proof.py --mode desktop --boot-timeout 420 --observe-seconds 30 --out-dir artifacts/current/background_autonomy`
+  -> passed.
+- `artifacts/current/background_autonomy/MANIFEST.json`
+  -> `passed=true`, `shutdown_ok=true`, `stream_ok=true`.
+- `artifacts/current/background_autonomy/BACKGROUND_AUTONOMY_REPORT.json`
+  -> `full_runtime_ready=true`, `background_enabled=true`,
+  `background_active=true`, `background_loops_allowed=true`, `22/22`
+  required components running, `missing_components=[]`, `peak_rss_mb=20778.1`.
+- Desktop access inside the same proof:
+  `overall_status=ready`, `permission_confidence=direct`,
+  `screen_capture_ready=true`, `desktop_control_ready=true`,
+  `screen_text_ready=true`, `blocking_permissions=[]`,
+  `native_bridge_probe.ok=true`, `bundle_identifier=com.aura.desktop`,
+  `screen_recording=true`, `accessibility=true`, `automation=true`.
+- Runtime proof output:
+  boot healthy after about 31 seconds, graceful stop completed in about 34
+  seconds, no orphan Aura processes, port released, and no runtime-stream
+  failure markers.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> one hard live-artifact gap remains: `artifacts/current/final_closeout`.
+
+Boundary:
+
+- This proves background cognition/autonomy is active in a launched
+  desktop-mode runtime under resource gates, and that the desktop-access route
+  no longer falsely reports the signed Aura.app bridge as blocked during this
+  proof.
+- It does not replace the final closeout artifact bundle. It also does not
+  claim metaphysical consciousness, ASI, legal personhood, or indefinite
+  unsupervised internet-scale autonomy.
+
+Estimate:
+
+- Background autonomy/live desktop-access proof closure: about 96%.
+- Expanded daily-runtime/product closure: about 88%.
+- Hard remaining live gaps in the current contract: 1,
+  `artifacts/current/final_closeout`.
+- Remaining named checkpoint groups under the contract: 3, with Checkpoint 9
+  and most of Checkpoint 10 mapped by existing evidence and Checkpoint 11 still
+  requiring final closeout artifact assembly and replay.

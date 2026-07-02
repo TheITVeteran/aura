@@ -2720,7 +2720,7 @@ def test_desktop_access_permission_route_has_ui_bounded_probe_budgets():
     src = Path("interface/routes/system.py").read_text(encoding="utf-8")
 
     assert 'AURA_DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S"' in src
-    assert "0.8" in src
+    assert "6.0" in src
     assert "AURA_DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S" in src
     assert "0.6" in src
     assert "timeout=max(0.2, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S)" in src
