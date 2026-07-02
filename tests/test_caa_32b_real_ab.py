@@ -189,6 +189,11 @@ class TestCAA32BBehavioralAB:
             "n_trials": 50,
             "held_out_tasks": HELD_OUT_TASKS,
             "passes_adversarial_control": True,
+            # Injection provenance: the rebuilt runner always records these;
+            # artifacts without them are pre-rebuild theater and the
+            # validator refuses to credit them (see test_steering_injection).
+            "sampling": {"temperature": 0.7, "top_p": 0.95, "paired_seeds": True},
+            "injection_count": 800,
             "analysis": {
                 "n_trials": 50,
                 "steered_vs_terse": {

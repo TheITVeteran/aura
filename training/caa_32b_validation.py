@@ -337,8 +337,24 @@ class CAA32BValidator:
         terse_effect = float(terse.get("effect_size_d", 0.0) or 0.0)
         baseline_distance = float(analysis.get("steered_vs_baseline_mean_distance", 0.0) or 0.0)
         passes_adversarial = bool(data.get("passes_adversarial_control") or analysis.get("passes_adversarial_control"))
+        # Injection provenance: an artifact is behavioral evidence only if
+        # its "steered" condition demonstrably steered. The pre-rebuild
+        # runner never injected (instance __call__ assignment is bypassed by
+        # Python) and decoded greedily, so its artifact is prompt theater —
+        # legacy files carry neither sampling metadata nor an injection
+        # count and must never gate readiness to PRODUCTION.
+        sampling = data.get("sampling") if isinstance(data.get("sampling"), dict) else {}
+        try:
+            injection_count = int(data.get("injection_count", 0) or 0)
+        except (TypeError, ValueError):
+            injection_count = 0
+        injection_provenance_ok = bool(
+            float(sampling.get("temperature", 0.0) or 0.0) > 0.0
+            and injection_count > 0
+        )
         live_hygiene = bool(
             passes_adversarial
+            and injection_provenance_ok
             and "32b" in model.lower()
             and n_trials >= 25
             and len(held_out_tasks) >= 5
@@ -346,6 +362,7 @@ class CAA32BValidator:
         normalized = {
             **data,
             "source_schema": "live_32b_ab",
+            "injection_provenance_ok": injection_provenance_ok,
             "steered_vs_baseline_effect_size": max(baseline_distance, abs(terse_effect)),
             "steered_vs_rich_prompt_effect_size": abs(rich_effect),
             "heldout_generalization_effect_size": abs(rich_delta),

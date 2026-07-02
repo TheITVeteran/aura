@@ -111,22 +111,79 @@ def test_load_production_vectors_filters_and_normalizes(tmp_path):
     assert vectors[5][0] == pytest.approx(vectors[5][1], rel=1e-5)
 
 
-def test_live_ab_artifact_is_not_greedy_theater():
-    """The committed A/B artifact must come from sampled, injected runs:
-    per-condition samples must not be identical (greedy collapse) once the
-    rebuilt runner has produced a fresh artifact with variation metadata."""
+def _validator_credits(artifact: dict) -> bool:
+    """Would the CAA readiness chain accept this artifact as behavioral evidence?"""
+    from training.caa_32b_validation import CAA32BValidator
+
+    normalized = CAA32BValidator._normalize_behavioral_results(artifact)
+    return bool(normalized.get("black_box_prompt_hygiene_passed", False))
+
+
+def _live_ab_artifact(**overrides) -> dict:
+    base = {
+        "model": "models/Qwen2.5-32B-Instruct-4bit",
+        "n_trials": 30,
+        "held_out_tasks": ["a", "b", "c", "d", "e", "f"],
+        "passes_adversarial_control": True,
+        "sampling": {"temperature": 0.7, "top_p": 0.95, "paired_seeds": True},
+        "injection_count": 480,
+        "analysis": {
+            "n_trials": 30,
+            "steered_vs_rich": {"effect_size_d": 0.4, "observed_delta": 0.2},
+            "steered_vs_terse": {"effect_size_d": 0.5, "observed_delta": 0.25},
+            "steered_vs_baseline_mean_distance": 0.3,
+            "passes_adversarial_control": True,
+        },
+    }
+    base.update(overrides)
+    return base
+
+
+def test_validator_refuses_legacy_uninjected_artifact():
+    """The pre-rebuild artifact (no sampling metadata, no injection count)
+    came from a runner whose 'steered' condition never injected. The
+    readiness chain must never credit it as behavioral evidence."""
+    legacy = _live_ab_artifact()
+    del legacy["sampling"]
+    del legacy["injection_count"]
+    assert not _validator_credits(legacy), (
+        "theater artifact credited as behavioral evidence"
+    )
+
+
+def test_validator_refuses_artifact_whose_injection_never_fired():
+    assert not _validator_credits(_live_ab_artifact(injection_count=0))
+
+
+def test_validator_refuses_greedy_artifact():
+    greedy = _live_ab_artifact()
+    greedy["sampling"] = {"temperature": 0.0, "top_p": 1.0}
+    assert not _validator_credits(greedy)
+
+
+def test_validator_credits_injected_sampled_artifact():
+    assert _validator_credits(_live_ab_artifact())
+
+
+def test_committed_artifact_never_credited_without_injection_provenance():
+    """Whatever artifact is committed right now: if it lacks injection
+    provenance, the validator must classify it as non-evidence."""
     from pathlib import Path
 
-    artifact = Path(__file__).resolve().parent / "CAA_32B_AB_LIVE_RESULTS.json"
-    if not artifact.exists():
-        pytest.skip("no live A/B artifact present")
-    data = json.loads(artifact.read_text(encoding="utf-8"))
-    if "sampling" not in data:
-        pytest.xfail(
-            "legacy greedy artifact (pre-rebuild): known theater, superseded "
-            "by the sampled runner; regenerate via tests/run_32b_steering_ab_live.py"
+    artifact_path = Path(__file__).resolve().parent / "CAA_32B_AB_LIVE_RESULTS.json"
+    if not artifact_path.exists():
+        return  # nothing committed; the synthetic cases above pin the logic
+    data = json.loads(artifact_path.read_text(encoding="utf-8"))
+    sampling = data.get("sampling") or {}
+    injected = int(data.get("injection_count", 0) or 0) > 0
+    sampled = float(sampling.get("temperature", 0.0) or 0.0) > 0.0
+    if injected and sampled:
+        steered = ((data.get("analysis") or {}).get("samples") or {}).get(
+            "steered_black_box", []
         )
-    assert data["sampling"].get("temperature", 0.0) > 0.0
-    samples = (data.get("analysis") or {}).get("samples", {})
-    steered = samples.get("steered_black_box", [])
-    assert len(set(steered)) > 1, "steered samples are identical — greedy collapse"
+        assert len(set(steered)) > 1, "steered samples identical — greedy collapse"
+    else:
+        assert not _validator_credits(data), (
+            "committed artifact lacks injection provenance but is still "
+            "credited — regenerate via tests/run_32b_steering_ab_live.py"
+        )
