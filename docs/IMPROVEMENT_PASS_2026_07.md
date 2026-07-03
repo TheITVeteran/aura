@@ -104,6 +104,25 @@ decoding buy test-time compute → best-of-N reasoning → verifiers select →
 verified derivations become weights (flywheel) → better drafts → repeat**,
 and detected regressions route to governed self-repair.
 
+### Phase 5 — expressive agency (does she KNOW to use her mind?)
+
+Bryan's question: does Aura choose to show/demonstrate/ask/model from general
+cognition, not scripts? What existed: real capabilities (FLUX imagination,
+outcome simulator, subjective-choice engine with preference consistency,
+vision client, autonomous task engine, capability_map proprioception) but no
+GENERAL layer letting the mind decide among them mid-conversation — decisions
+were trigger-routed, not reasoned.
+
+- `core/cognition/expressive_affordances.py` + `affordance_realizers.py`: a
+  decide-then-realize layer. The mind reads a menu of its own affordances
+  (framed as self-knowledge, "the way a person knows their own hands are
+  available"), emits an intent tag by its own judgment, and a governed
+  realizer delegates to the existing subsystem. Five built-ins: show_sketch,
+  demonstrate_artifact, request_media (know-to-ask), model_scenarios
+  (sim + preference-consistent choice), deep_examine. Extensible by one
+  register() call — no routing code. Live chat lane wired (env-gated menu
+  injection + post-generation realization), 11 tests.
+
 ### Sweep ledger
 
 | Area | Depth | Findings / actions |
