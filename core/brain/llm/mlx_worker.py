@@ -1950,6 +1950,79 @@ def soft_cancel_requested(cancel_seq: Any, job_seq: int) -> bool:
         return False
 
 
+def _speculative_eligible(draft_model: Any, generation_kwargs: dict, job: dict) -> bool:
+    """Speculative decoding is only safe on the plain generation path.
+
+    The draft model PROPOSES tokens; the steered target model VERIFIES every
+    one, so the output distribution is exactly the target's (steering-safe by
+    construction). But logits processors, external prompt caches, and schema-
+    constrained jobs interact with the speculative loop's internal caching —
+    those jobs take the normal path.
+    """
+    if draft_model is None:
+        return False
+    if job.get("schema"):
+        return False
+    if "logits_processors" in generation_kwargs:
+        return False
+    if "prompt_cache" in generation_kwargs:
+        return False
+    return True
+
+
+def _load_speculative_draft(model_path: str, target_tokenizer: Any) -> Any:
+    """Load the small draft model for speculative decoding (heavy lanes only).
+
+    Returns None (never raises) when disabled, missing, or incompatible —
+    generation falls back to the normal path.
+    """
+    enabled = str(os.environ.get("AURA_SPECULATIVE_DECODING", "1")).strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+    if not enabled:
+        return None
+    lowered = str(model_path).lower()
+    if not any(k in lowered for k in ("32b", "72b", "zenith", "solver", "cortex")):
+        return None  # drafting for a small model is pointless
+    draft_candidates = [
+        Path(__file__).resolve().parents[3] / "models" / "Qwen2.5-1.5B-Instruct-4bit",
+        Path.home() / ".aura" / "live-source" / "models" / "Qwen2.5-1.5B-Instruct-4bit",
+    ]
+    default_draft = next((str(c) for c in draft_candidates if c.is_dir()), str(draft_candidates[0]))
+    draft_path = os.environ.get("AURA_SPECULATIVE_DRAFT_PATH", default_draft)
+    if not os.path.isdir(draft_path):
+        logger.info("Speculative decoding: no draft model at %s; normal path.", draft_path)
+        return None
+    try:
+        from mlx_lm import load as _load
+
+        draft_model, draft_tokenizer = _load(draft_path)
+        # Vocabulary compatibility: the draft must tokenize identically or the
+        # accept/reject loop is meaningless.
+        probe = "Aura verifies every proposed token."
+        if draft_tokenizer.encode(probe) != target_tokenizer.encode(probe):
+            _record_mlx_degradation(
+                RuntimeError(f"draft tokenizer mismatch: {os.path.basename(draft_path)}"),
+                action="continued without speculative decoding after tokenizer mismatch",
+                severity="warning",
+            )
+            return None
+        logger.info(
+            "🚀 Speculative decoding ONLINE: draft=%s (target verifies every token; "
+            "steering semantics preserved).",
+            os.path.basename(draft_path),
+        )
+        return draft_model
+    except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        _record_mlx_degradation(
+            exc,
+            action="continued without speculative decoding after draft load failed",
+            severity="warning",
+        )
+        logger.warning("Speculative draft load failed (%s); normal path.", exc)
+        return None
+
+
 def _mlx_worker_loop(
     model_path: str,
     request_queue: mp.Queue,
@@ -2074,6 +2147,8 @@ def _mlx_worker_loop(
         else:
             model, tokenizer = load(model_path)
             logger.info("Model loaded (no compatible LoRA adapter).")
+
+        draft_model = _load_speculative_draft(model_path, tokenizer)
 
         # Attach Affective Steering
         engine = None
@@ -2680,6 +2755,13 @@ def _mlx_worker_loop(
                                                 **generation_kwargs,
                                             )
 
+                                    use_speculative = _speculative_eligible(
+                                        draft_model, clean_kwargs, job
+                                    )
+                                    if use_speculative:
+                                        clean_kwargs["draft_model"] = draft_model
+                                    draft_accepted_tokens = 0
+
                                     for response in _gen_stream(
                                         _np_tap,
                                         gen_prompt,
@@ -2705,6 +2787,8 @@ def _mlx_worker_loop(
 
                                         token_count += 1
                                         progress_now = time.time()
+                                        if use_speculative and getattr(response, "from_draft", False):
+                                            draft_accepted_tokens += 1
 
                                         tokens.append(response.token)
                                         # Snag the prompt cache from the response if supported to save for next turn
@@ -3167,6 +3251,10 @@ def _mlx_worker_loop(
                         "text": response_text.strip(),
                         "tokens_used": total_generated_tokens,
                         "soft_cancelled": bool(soft_cancelled),
+                        "speculative": {
+                            "enabled": bool(use_speculative),
+                            "draft_tokens_accepted": int(draft_accepted_tokens),
+                        } if use_speculative else None,
                         "surface_control_receipt": _surface_generation_control_receipt(
                             job,
                             surface_control_state,
@@ -3300,6 +3388,8 @@ def _mlx_worker_loop(
                                 # [STABILITY v60] Definitive scrub of legacy kwargs.
                                 clean_keys = {"temperature", "top_p", "min_p", "repetition_penalty", "repetition_context_size", "stop_words"}
                                 clean_kwargs = {k: v for k, v in kwargs.items() if k not in clean_keys}
+                                if _speculative_eligible(draft_model, clean_kwargs, job):
+                                    clean_kwargs["draft_model"] = draft_model
 
                                 watchdog.activity()
                                 for response in stream_generate(model, tokenizer, prompt=prompt, **clean_kwargs):
