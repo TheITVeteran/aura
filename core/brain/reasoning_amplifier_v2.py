@@ -847,6 +847,21 @@ class ReasoningAmplifierV2:
     async def _generate_candidates(self, problem: ProblemRepresentation, guard_text: str, n: int, deadline: float) -> list[str]:
         sys_block = self._build_prompt(problem, guard_text)
 
+        # Batched lane first: N candidates in ONE decoding pass when the live
+        # MLX client supports it. Falls back to serial sampling on any miss.
+        if n >= 2:
+            try:
+                from core.brain.llm.batch_candidates import generate_candidates_batched
+
+                remaining = max(10.0, deadline - time.monotonic())
+                batched = await generate_candidates_batched(
+                    sys_block, n, timeout_s=remaining
+                )
+                if batched:
+                    return batched
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("amplifier_v2_batch_lane", exc, severity="debug")
+
         async def _one(i: int) -> str:
             if time.monotonic() >= deadline:
                 return ""

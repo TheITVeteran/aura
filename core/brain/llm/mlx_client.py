@@ -2094,6 +2094,52 @@ class MLXLocalClient:
         self._req_q = None
         self._res_q = None
 
+    async def generate_batch_async(
+        self,
+        prompt: str,
+        *,
+        n: int = 4,
+        max_tokens: int = 512,
+        temperature: float = 0.8,
+        timeout_s: float = 180.0,
+    ) -> list[str]:
+        """Decode N sampled candidates in ONE batched worker pass.
+
+        Built for verifier-selection reasoning (best-of-N): candidates come
+        back raw; the caller's verifiers do the choosing. Returns [] on any
+        failure — callers fall back to serial sampling.
+        """
+        if self._req_q is None or self._closed:
+            return []
+        alive = await self._ensure_worker_alive(request_is_background=True)
+        if not alive:
+            return []
+        req_id = uuid.uuid4().hex
+        req = {
+            "id": req_id,
+            "action": "generate_batch",
+            "prompt": str(prompt or ""),
+            "n": max(1, min(16, int(n))),
+            "max_tokens": max(16, min(2048, int(max_tokens))),
+            "temperature": float(temperature),
+        }
+        fut = _new_shared_future()
+        self._pending_generations[req_id] = fut
+        try:
+            await run_io_bound(self._req_q.put, req, True, 2.0)
+            res = await _await_shared_future(fut, timeout_s=max(10.0, float(timeout_s)))
+        except (TimeoutError, BrokenPipeError, OSError) as exc:
+            self._pending_generations.pop(req_id, None)
+            _record_mlx_degradation(
+                exc,
+                action="returned empty batch after batched generation failed; caller falls back to serial",
+                severity="warning",
+            )
+            return []
+        if not res or res.get("status") != "ok":
+            return []
+        return [str(t) for t in (res.get("texts") or []) if str(t or "").strip()]
+
     def soft_cancel_active_generation(self, reason: str = "foreground_preemption") -> dict[str, Any]:
         """Ask the ACTIVE generation to stop between tokens (cooperative).
 
@@ -2430,7 +2476,7 @@ class MLXLocalClient:
                         self._mark_progress()
                         _set_shared_future_result(self._init_future, res)
                         continue
-                elif action in ("generate", "stream_done"):
+                elif action in ("generate", "generate_batch", "stream_done"):
                     future = self._pending_generations.pop(req_id, None) if req_id else None
                     if future and not future.done():
                         self._mark_progress()

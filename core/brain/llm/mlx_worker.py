@@ -3274,6 +3274,67 @@ def _mlx_worker_loop(
                     if mx and device != "cpu":
                         _clear_mlx_cache(mx)
 
+            elif action == "generate_batch":
+                # Batched best-of-N candidate generation: N sequences decoded
+                # in ONE batched pass — the raw-reasoning multiplier for the
+                # verifier-selection amplifier. Candidates are intentionally
+                # RAW (no sentinel/quality gates): the truth-engine verifiers
+                # on the parent side are the selection mechanism.
+                try:
+                    if engine is not None and not engine.is_active():
+                        ipc_writer.put({
+                            "id": job.get("id"),
+                            "action": "generate_batch",
+                            "status": "error",
+                            "message": "Affective steering is inactive; batch generation blocked.",
+                        })
+                        continue
+                    from mlx_lm import batch_generate
+                    from mlx_lm.sample_utils import make_sampler
+
+                    watchdog.start_job()
+                    try:
+                        batch_prompt = str(job.get("prompt") or "")
+                        n = max(1, min(16, _safe_int(job.get("n"), 4)))
+                        batch_max_tokens = max(16, min(2048, _safe_int(job.get("max_tokens"), 512)))
+                        batch_temp = _safe_float(job.get("temperature"), 0.8)
+                        token_ids = tokenizer.encode(batch_prompt)
+                        watchdog.activity()
+                        batch_result = batch_generate(
+                            model,
+                            tokenizer,
+                            prompts=[list(token_ids) for _ in range(n)],
+                            max_tokens=batch_max_tokens,
+                            sampler=make_sampler(temp=batch_temp, top_p=0.95),
+                        )
+                        watchdog.activity()
+                        texts = [str(t or "").strip() for t in getattr(batch_result, "texts", [])]
+                        ipc_writer.put({
+                            "id": job.get("id"),
+                            "action": "generate_batch",
+                            "status": "ok",
+                            "texts": texts,
+                            "tokens_used": sum(len(tokenizer.encode(t)) for t in texts if t),
+                        })
+                    finally:
+                        watchdog.stop_job()
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+                    _record_mlx_degradation(
+                        e,
+                        action="returned generate_batch error after batched decoding failure",
+                        severity="degraded",
+                    )
+                    logger.error("Batched generation failed: %s", e)
+                    ipc_writer.put({
+                        "id": job.get("id"),
+                        "action": "generate_batch",
+                        "status": "error",
+                        "message": str(e),
+                    })
+                finally:
+                    if mx and device != "cpu":
+                        _clear_mlx_cache(mx)
+
             elif action == "stream":
                 try:
                     if engine is not None and not engine.is_active():
