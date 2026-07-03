@@ -2777,3 +2777,45 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 72-78% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-29: Provider Lifetime and Safety/Morality Registry Batch
+
+Status: ready to commit.
+
+What changed:
+
+- Added registry lifetime constants and string-lifetime normalization inside
+  `ServiceContainer.register()` so callers can avoid importing the container
+  enum without changing singleton semantics.
+- Converted cognitive, consciousness, memory, ops, and sensory provider modules
+  away from `ServiceLifetime` imports.
+- Converted another service lookup/publication batch across clipboard,
+  identity guard, recovery, ears, ontology genesis, conversation memory,
+  sandbox affect updates, honesty/aggregate morality registration, dream
+  cycle, repair phase, safe backup, organism status, self-report, and soul.
+- Added regression coverage for singleton lifetime preservation and the new
+  registry seam batch.
+- Refreshed the architecture-quality baseline after the largest import SCC
+  dropped from `575` modules to `564` modules and dependency edges dropped from
+  `7510` to `7508`.
+
+Evidence:
+
+- Provider/safety/morality focused tests -> `2 passed`.
+- Runtime/architecture/audit/reliability focused tests -> `128 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=45.30`,
+  `largest_cycle_size=564`, `cycle_count=7`, `dependency_edges=7508`,
+  `god_file_count=37`, `module_count=2245`.
+- Remaining-checkpoint contract -> refreshed
+  `artifacts/closeout/remaining_checkpoint_contract_latest.json`.
+
+Tracker:
+
+- Architecture-regression-control closure: about 97%.
+- Existing architecture-debt reduction closure: about 57-63%.
+- Local reliability-control closure: about 94%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 73-79% locally.
+- Remaining total checkpoint groups: 3.

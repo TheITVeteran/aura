@@ -13,8 +13,8 @@ from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
-import time
 from typing import Any, Dict, List, Optional
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.OntologyGenesis")
 
@@ -35,8 +35,7 @@ class OntologyGenesisEngine:
 
     def _get_resource_anxiety(self) -> float:
         """Calculate system resource pressure (0.0 to 1.0)."""
-        from core.container import ServiceContainer
-        homeostasis = ServiceContainer.get("homeostasis", default=None)
+        homeostasis = get_runtime_service("homeostasis", default=None)
         if homeostasis and hasattr(homeostasis, "anxiety"):
             return homeostasis.anxiety
         return 0.0  # Safe default if unavailable
@@ -46,8 +45,7 @@ class OntologyGenesisEngine:
         Triggers a discovery cycle.
         Restored via Volition Level 3 or manual deep_research.
         """
-        from core.container import ServiceContainer
-        kernel = ServiceContainer.get("aura_kernel", default=None)
+        kernel = get_runtime_service("aura_kernel", default=None)
         volition = getattr(kernel, 'volition_level', 0) if kernel else 0
 
         # Level 1+ grants autonomous deep_research access
@@ -107,10 +105,8 @@ class OntologyGenesisEngine:
 
 def register_ontology_genesis(orchestrator: Optional[Any] = None) -> OntologyGenesisEngine:
     """Legacy registration helper expected by boot code."""
-    from core.container import ServiceContainer
-
     engine = OntologyGenesisEngine()
-    ServiceContainer.register_instance("ontology_genesis", engine)
+    register_runtime_service("ontology_genesis", engine)
     if orchestrator is not None:
         try:
             setattr(orchestrator, "ontology_genesis", engine)

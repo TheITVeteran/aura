@@ -10,8 +10,8 @@ The difference between:
 """
 
 from typing import Optional, Dict, Any
-from core.container import ServiceContainer
 from core.consciousness.free_energy import get_free_energy_engine
+from core.runtime.service_registry import get_runtime_service
 
 
 class SelfReportEngine:
@@ -32,8 +32,8 @@ class SelfReportEngine:
         Returns a first-person report of current internal state.
         """
         try:
-            unity_state = ServiceContainer.get("unity_state", default=None)
-            unity_report = ServiceContainer.get("unity_fragmentation_report", default=None)
+            unity_state = get_runtime_service("unity_state", default=None)
+            unity_report = get_runtime_service("unity_fragmentation_report", default=None)
         except (ImportError, AttributeError, RuntimeError):
             unity_state = None
             unity_report = None
@@ -115,8 +115,7 @@ class SelfReportEngine:
         # Calculate global epistemic uncertainty from BeliefGraph
         epistemic_uncertainty = 0.5
         try:
-            from core.container import ServiceContainer
-            bg = ServiceContainer.get("belief_graph", default=None)
+            bg = get_runtime_service("belief_graph", default=None)
             if bg and hasattr(bg, 'get_summary'):
                 summary = bg.get_summary()
                 total = max(1, summary.get("total_beliefs", 1))

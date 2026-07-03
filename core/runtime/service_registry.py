@@ -25,6 +25,10 @@ _RuntimeFlagResolver = Callable[[], bool]
 _MetricCounterSink = Callable[[str, int], None]
 _FileWriteBytesSink = Callable[[object, bytes, str], None]
 _FileWriteTextSink = Callable[[object, str, str, str], None]
+
+SERVICE_LIFETIME_SINGLETON = "singleton"
+SERVICE_LIFETIME_TRANSIENT = "transient"
+
 _resolver_lock = threading.Lock()
 _failure_policy_resolver: _Resolver | None = None
 _service_resolver: _ServiceResolver | None = None

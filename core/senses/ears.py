@@ -10,6 +10,7 @@ import logging
 from typing import Callable
 
 from core.utils.task_tracker import get_task_tracker
+from core.runtime.service_registry import get_runtime_service
 
 from .sensory_registry import get_capabilities
 
@@ -28,8 +29,7 @@ class SovereignEars:
         if engine:
             self._engine = engine
         else:
-            from ..container import ServiceContainer
-            self._engine = ServiceContainer.get("voice_engine", default=None)
+            self._engine = get_runtime_service("voice_engine", default=None)
         
         if not self.capabilities.hearing_enabled:
             logger.warning("👂 SovereignEars: Hearing is DISABLED (Capability Flag Off)")
@@ -40,9 +40,7 @@ class SovereignEars:
         if self._engine:
             return self._engine
         try:
-            from ..container import ServiceContainer
-
-            self._engine = ServiceContainer.get("voice_engine", default=None)
+            self._engine = get_runtime_service("voice_engine", default=None)
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('ears', e)
             logger.debug("👂 SovereignEars: voice engine lookup deferred: %s", e)

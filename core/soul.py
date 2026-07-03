@@ -4,7 +4,8 @@ import logging
 import random
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.Soul")
 
@@ -49,8 +50,7 @@ class Soul:
         # Pull surprise signal from Self-Prediction Loop
         surprise_boost = 0.0
         try:
-            from core.container import ServiceContainer
-            spl = ServiceContainer.get("self_prediction", default=None)
+            spl = get_runtime_service("self_prediction", default=None)
             if spl and hasattr(spl, "get_surprise_signal"):
                 surprise_boost = spl.get_surprise_signal() * 0.5 # Boost curiosity by 50% of surprise
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -106,8 +106,7 @@ class Soul:
         elif drive.name == "connection":
             # Proactive Message -> Spatial Empathy Routing
             try:
-                from core.container import ServiceContainer
-                workspace = ServiceContainer.get("global_workspace", default=None)
+                workspace = get_runtime_service("global_workspace", default=None)
                 if workspace:
                     logger.info("✨ SOUL: Publishing spatial empathy request to Global Workspace.")
                     from core.consciousness.global_workspace import CognitiveCandidate

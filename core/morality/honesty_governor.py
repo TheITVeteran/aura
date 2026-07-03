@@ -23,6 +23,7 @@ import os
 from typing import Any
 
 from core.morality.deception_guard import DeceptionGuard
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Morality.HonestyGovernor")
 
@@ -112,12 +113,11 @@ def get_honesty_governor() -> HonestyGovernor:
 
 
 def register_honesty_governor(orchestrator: Any = None) -> HonestyGovernor:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.DATA, default=None) or get_honesty_governor()
-    ServiceContainer.register_instance(ServiceNames.DATA, inst, required=False)
-    ServiceContainer.register_instance("data", inst, required=False)
+    inst = get_runtime_service(ServiceNames.DATA, default=None) or get_honesty_governor()
+    register_runtime_service(ServiceNames.DATA, inst, required=False)
+    register_runtime_service("data", inst, required=False)
     return inst
 
 

@@ -5552,3 +5552,62 @@ Estimate:
 - Remaining total checkpoint groups: 3, focused on remaining SCC cuts,
   provider/lifecycle seam cleanup, live desktop findings, and longer
   soak/runtime evidence.
+
+## Checkpoint 2026-07-03-29: Provider Lifetime and Safety/Morality Registry Batch
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Added registry-level service lifetime constants and taught
+  `ServiceContainer.register()` to normalize string lifetimes before descriptor
+  creation, preserving singleton caching semantics for callers that no longer
+  import `ServiceLifetime`.
+- Converted provider modules away from importing `core.container` only for
+  `ServiceLifetime`: cognitive, consciousness, memory, ops, and sensory
+  providers now use registry lifetime constants.
+- Converted another service seam batch across clipboard management, identity
+  guard, orchestrator recovery, ears, ontology genesis, conversation memory,
+  sandbox affect updates, honesty governor, dream cycle, repair phase,
+  safe backup integration, aggregate harm, organism status, self-report, and
+  soul drive lookup.
+- Added regression coverage proving string-lifetime singleton caching and
+  representative registry behavior/source ownership for the converted seams.
+- Refreshed the architecture-quality baseline after reducing the largest import
+  SCC from `575` modules to `564` modules and dependency edges from `7510` to
+  `7508`.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_error_architecture.py::test_runtime_registry_provider_lifetime_bridge_removes_container_imports tests/test_runtime_error_architecture.py::test_runtime_registry_batch_five_safety_memory_morality_seams`
+  -> `2 passed`.
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `128 passed`.
+- `python -m ruff check --select F,E9 ...`
+  over touched batch modules and architecture tests -> passed.
+- `python -m py_compile ...`
+  over touched batch modules and architecture tests -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=45.30`,
+  `largest_cycle_size=564`, `cycle_count=7`, `dependency_edges=7508`,
+  `god_file_count=37`, `module_count=2245`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> completed and refreshed
+  `artifacts/closeout/remaining_checkpoint_contract_latest.json`.
+
+Boundary:
+
+- Provider factories still participate in the large SCC through their concrete
+  factory imports. This checkpoint removes the lifecycle enum dependency and a
+  second runtime seam batch; provider factory ownership can be split further in
+  the next SCC cuts.
+
+Estimate:
+
+- Architecture-regression-control closure: about 97%.
+- Existing architecture-debt reduction closure: about 57-63%.
+- Local reliability-control closure: about 94%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 73-79% locally.
+- Remaining total checkpoint groups: 3, focused on remaining SCC cuts,
+  provider/factory ownership splits, live desktop findings, and longer
+  soak/runtime evidence.

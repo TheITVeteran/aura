@@ -234,6 +234,16 @@ class ServiceContainer:
         """Register a service factory."""
         if cls._registration_locked:
             raise ContainerError(f"Registration locked: Cannot register '{name}'")
+        if isinstance(lifetime, str):
+            try:
+                lifetime = ServiceLifetime(lifetime)
+            except ValueError:
+                logger.warning(
+                    "Unknown service lifetime '%s' for '%s'; defaulting to singleton.",
+                    lifetime,
+                    name,
+                )
+                lifetime = ServiceLifetime.SINGLETON
         if not callable(factory):
             logger.debug(
                 "Normalizing legacy non-callable registration for '%s' into a pre-built instance.",

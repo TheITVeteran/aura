@@ -1,7 +1,7 @@
 from __future__ import annotations
 from core.runtime.errors import record_degradation
 
-from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text
 
 import asyncio
 import json
@@ -10,6 +10,7 @@ import shutil
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+from core.runtime.service_registry import register_runtime_service
 
 logger = logging.getLogger("Aura.SafeBackup")
 
@@ -121,8 +122,7 @@ def integrate_safe_backup(orchestrator: Any) -> SafeBackupSystem:
     system = SafeBackupSystem()
     orchestrator.backup_system = system
 
-    from core.container import ServiceContainer
-    ServiceContainer.register_instance("backup_system", system)
+    register_runtime_service("backup_system", system)
 
     logger.info("SafeBackupSystem integrated; unsafe legacy self-preservation runtime is absent.")
     return system

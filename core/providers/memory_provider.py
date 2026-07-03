@@ -3,7 +3,7 @@
 
 import logging
 
-from core.container import ServiceLifetime
+from core.runtime.service_registry import SERVICE_LIFETIME_SINGLETON
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Providers.Memory")
@@ -16,7 +16,7 @@ def register_memory_services(container):
         db_path = config.paths.data_dir / "memory" / "atomic_knowledge.db"
         db_path.parent.mkdir(parents=True, exist_ok=True)
         return SQLiteMemory(storage_file=str(db_path))
-    container.register('memory', create_memory, lifetime=ServiceLifetime.SINGLETON, required=True)
+    container.register('memory', create_memory, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_persistent_state():
         try:
@@ -40,7 +40,7 @@ def register_memory_services(container):
     container.register(
         'persistent_state',
         create_persistent_state,
-        lifetime=ServiceLifetime.SINGLETON,
+        lifetime=SERVICE_LIFETIME_SINGLETON,
         required=False,
     )
 
@@ -50,7 +50,7 @@ def register_memory_services(container):
         memory = container.get("memory")
         vector = container.get("memory_vector", None)
         return MemoryManager(sqlite_memory=memory, vector_memory=vector)
-    container.register('memory_manager', create_memory_manager, lifetime=ServiceLifetime.SINGLETON, required=True)
+    container.register('memory_manager', create_memory_manager, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     # 24. Black Hole Vault (The Unified Semantic Memory)
     def create_vector_memory():
@@ -65,10 +65,10 @@ def register_memory_services(container):
             record_degradation('memory_provider', e)
             logger.warning("BlackHoleVault registration failed: %s", e)
             return None
-    container.register('memory_vector', create_vector_memory, lifetime=ServiceLifetime.SINGLETON, required=False)
-    container.register('vector_memory', lambda: container.get("memory_vector"), lifetime=ServiceLifetime.SINGLETON, required=False)
-    container.register('semantic_memory', lambda: container.get("memory_vector"), lifetime=ServiceLifetime.SINGLETON, required=False)
-    container.register('vector_memory_engine', lambda: container.get("memory_vector"), lifetime=ServiceLifetime.SINGLETON, required=False)
+    container.register('memory_vector', create_vector_memory, lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
+    container.register('vector_memory', lambda: container.get("memory_vector"), lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
+    container.register('semantic_memory', lambda: container.get("memory_vector"), lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
+    container.register('vector_memory_engine', lambda: container.get("memory_vector"), lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
 
     # 23. Knowledge Graph
     def create_knowledge_graph():
@@ -87,7 +87,7 @@ def register_memory_services(container):
             record_degradation("memory_provider", exc)
             logger.warning("Knowledge graph unavailable: %s", exc)
             return None
-    container.register('knowledge_graph', create_knowledge_graph, lifetime=ServiceLifetime.SINGLETON, required=False)
+    container.register('knowledge_graph', create_knowledge_graph, lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
 
     # 23.5 Dreamer V2 (idle consolidation). Keep this registered so the
     # SleepTrigger does real consolidation instead of quietly skipping.
@@ -108,24 +108,24 @@ def register_memory_services(container):
             record_degradation("memory_provider", exc)
             logger.warning("DreamerV2 unavailable: %s", exc)
             return None
-    container.register('dreamer_v2', create_dreamer_v2, lifetime=ServiceLifetime.SINGLETON, required=False)
+    container.register('dreamer_v2', create_dreamer_v2, lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
 
     # 25. Memory Subsystem (Lifecycle Manager)
     def create_memory_subsystem():
         from core.memory.memory_subsystem import MemorySubsystem
         # Note: orchestrator will be auto-wired or resolved later if available
         return MemorySubsystem()
-    container.register('memory_subsystem', create_memory_subsystem, lifetime=ServiceLifetime.SINGLETON, required=False)
+    container.register('memory_subsystem', create_memory_subsystem, lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
 
     # 26. Episodic Memory
     def create_episodic_memory():
         from core.memory.episodic_memory import get_episodic_memory
         vector = container.get("memory_vector", None)
         return get_episodic_memory(vector_memory=vector)
-    container.register('episodic_memory', create_episodic_memory, lifetime=ServiceLifetime.SINGLETON, required=True)
+    container.register('episodic_memory', create_episodic_memory, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     # 27. Memory Facade
     def create_memory_facade():
         from core.memory.memory_facade import MemoryFacade
         return MemoryFacade()
-    container.register('memory_facade', create_memory_facade, lifetime=ServiceLifetime.SINGLETON, required=True)
+    container.register('memory_facade', create_memory_facade, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)

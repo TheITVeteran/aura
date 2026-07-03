@@ -1,12 +1,11 @@
 from core.runtime.errors import record_degradation
-import asyncio
 import logging
 from core.utils.exceptions import capture_and_log
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 from core.dual_memory import DualMemorySystem
-from core.config import config
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.MemoryBridge")
 
@@ -33,8 +32,7 @@ class EnhancedMemorySystem:
         importance = context.get("importance")
         
         if valence is None or importance is None:
-            from core.container import ServiceContainer
-            affect = ServiceContainer.get("affect_engine", default=None)
+            affect = get_runtime_service("affect_engine", default=None)
             if affect and hasattr(affect, 'get_state'):
                 # Heuristic: Higher intensity = Higher importance
                 current_state = affect.get_state() if hasattr(affect, 'get_state') else {}
@@ -87,8 +85,7 @@ Output ONLY a JSON list of facts:
 If no facts found, return [].
 """
         try:
-            from core.container import get_container
-            brain = get_container().get_service("cognitive_engine")
+            brain = get_runtime_service("cognitive_engine", default=None)
             if not brain: return
             
             # Use Fast mode for extraction
@@ -96,7 +93,6 @@ If no facts found, return [].
             thought = await brain.think(prompt, mode=ThinkingMode.FAST)
             content = thought.content
             
-            import json
             import re
             json_match = re.search(r'\[.*\]', content, re.DOTALL)
             if json_match:

@@ -6,6 +6,7 @@ import time
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.Maintenance")
 
@@ -45,9 +46,7 @@ async def run_dream_cycle() -> dict[str, Any]:
     }
 
     try:
-        from core.container import ServiceContainer
-
-        memory = ServiceContainer.get("episodic_memory", default=None)
+        memory = get_runtime_service("episodic_memory", default=None)
     except (ImportError, AttributeError, RuntimeError) as e:
         memory = None
         result["ok"] = False

@@ -4,8 +4,8 @@ import logging
 import re
 import time
 import asyncio
-from typing import Optional, Tuple
-from core.container import ServiceContainer
+from typing import Tuple
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("aura.identity_guard")
 
@@ -43,7 +43,7 @@ class PersonaEnforcementGate:
         
         # 2. Narrative Alignment check (Bridge to AuraState)
         try:
-            aura_state = ServiceContainer.get("aura_state", default=None)
+            aura_state = get_runtime_service("aura_state", default=None)
             if aura_state:
                 # [CLAUDE AUDIT] Hardened: Ensure identity name is consistent
                 # If Aura claims to be something else, it's a breach.
@@ -99,7 +99,7 @@ class PersonaEnforcementGate:
     def _emit_identity_reflex(self, reason: str, snippet: str):
         """Emit a reflex to the Mycelial network when identity is compromised."""
         try:
-            mycelium = ServiceContainer.get("mycelial_network", default=None)
+            mycelium = get_runtime_service("mycelial_network", default=None)
             if mycelium:
                 task = get_task_tracker().create_task(mycelium.emit_reflex(
                     "NEURAL_OOC", 

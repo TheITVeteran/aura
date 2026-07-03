@@ -12,6 +12,7 @@ import sys
 import logging
 from typing import Dict, Any
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.runtime.service_registry import get_runtime_service
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.SandboxOperator")
@@ -102,8 +103,7 @@ class SandboxOperator:
                 
             # Asynchronously update LiquidSubstrate
             import asyncio
-            from core.container import ServiceContainer
-            substrate = ServiceContainer.get("liquid_substrate", default=None)
+            substrate = get_runtime_service("liquid_substrate", default=None)
             if substrate:
                 try:
                     get_task_tracker().create_task(substrate.update(

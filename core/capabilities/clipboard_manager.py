@@ -6,12 +6,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections import deque
 from typing import Any, Deque, Dict, Optional
 
-from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import register_runtime_service
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.ClipboardManager")
@@ -27,7 +26,7 @@ class ClipboardManager:
     async def start(self) -> None:
         if self._started:
             return
-        ServiceContainer.register_instance("clipboard_manager", self, required=False)
+        register_runtime_service("clipboard_manager", self, required=False)
         self._started = True
         logger.info("ClipboardManager ONLINE")
 

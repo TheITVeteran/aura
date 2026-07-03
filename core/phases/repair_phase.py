@@ -1,10 +1,9 @@
 from __future__ import annotations
 import logging
 import re
-from typing import Any, List, Optional
+from typing import Any, Optional
 from core.kernel.bridge import Phase
 from core.state.aura_state import AuraState
-from core.container import ServiceContainer
 
 logger = logging.getLogger("Aura.RepairPhase")
 
@@ -57,7 +56,7 @@ class RepairPhase(Phase):
 
     def __init__(self, container: Any = None):
         super().__init__(kernel=container)
-        self.container = container or ServiceContainer
+        self.container = container
 
     async def execute(self, state: AuraState, objective: Optional[str] = None, **kwargs) -> AuraState:
         """

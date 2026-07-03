@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from core.health.degraded_events import get_unified_failure_state
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.service_access import (
     resolve_canonical_self,
     resolve_identity_model,
@@ -86,9 +87,7 @@ def get_organism_status(orchestrator: Any = None) -> Dict[str, Any]:
     failure_state = get_unified_failure_state(limit=25)
     resource_state: Dict[str, Any] = {}
     try:
-        from core.container import ServiceContainer
-
-        stakes = ServiceContainer.get("resource_stakes", default=None)
+        stakes = get_runtime_service("resource_stakes", default=None)
         if stakes is not None:
             state_obj = stakes.state()
             resource_state = {

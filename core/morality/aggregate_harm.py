@@ -19,6 +19,7 @@ import math
 from typing import Any
 
 from core.morality.harm_model import HarmEvaluator
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Morality.AggregateHarm")
 
@@ -122,12 +123,11 @@ def get_aggregate_harm() -> AggregateHarmEvaluator:
 
 
 def register_aggregate_harm(orchestrator: Any = None) -> AggregateHarmEvaluator:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.DANEEL, default=None) or get_aggregate_harm()
-    ServiceContainer.register_instance(ServiceNames.DANEEL, inst, required=False)
-    ServiceContainer.register_instance("daneel", inst, required=False)
+    inst = get_runtime_service(ServiceNames.DANEEL, default=None) or get_aggregate_harm()
+    register_runtime_service(ServiceNames.DANEEL, inst, required=False)
+    register_runtime_service("daneel", inst, required=False)
     return inst
 
 

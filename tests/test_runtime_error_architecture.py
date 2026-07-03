@@ -1609,3 +1609,178 @@ def test_runtime_registry_batch_four_boot_sensory_health_seams():
         assert "core.container" not in source
         assert "ServiceContainer" not in source
         assert "core.runtime.service_registry" in source
+
+
+def test_runtime_registry_provider_lifetime_bridge_removes_container_imports():
+    import inspect
+
+    import core.providers.cognitive_provider as cognitive_provider
+    import core.providers.consciousness_provider as consciousness_provider
+    import core.providers.memory_provider as memory_provider
+    import core.providers.ops_provider as ops_provider
+    import core.providers.sensory_provider as sensory_provider
+    from core.container import ServiceContainer
+    from core.runtime.service_registry import SERVICE_LIFETIME_SINGLETON
+
+    counter = {"count": 0}
+
+    def factory():
+        counter["count"] += 1
+        return object()
+
+    service_name = "test_runtime_registry_provider_lifetime_bridge"
+    ServiceContainer.register(
+        service_name,
+        factory=factory,
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        required=False,
+    )
+
+    first = ServiceContainer.get(service_name)
+    second = ServiceContainer.get(service_name)
+    assert first is second
+    assert counter["count"] == 1
+
+    for module in (
+        cognitive_provider,
+        consciousness_provider,
+        memory_provider,
+        ops_provider,
+        sensory_provider,
+    ):
+        source = inspect.getsource(module)
+        assert "from core.container import ServiceLifetime" not in source
+        assert "ServiceLifetime." not in source
+        assert "SERVICE_LIFETIME_SINGLETON" in source
+        assert "core.runtime.service_registry" in source
+
+
+def test_runtime_registry_batch_five_safety_memory_morality_seams():
+    import asyncio
+    import inspect
+    from types import SimpleNamespace
+
+    import core.actuators.sandbox_operator as sandbox_operator
+    import core.brain.ontology_genesis as ontology_genesis
+    import core.capabilities.clipboard_manager as clipboard_manager
+    import core.consciousness.self_report as self_report
+    import core.conversation.memory as conversation_memory
+    import core.identity.identity_guard as identity_guard
+    import core.maintenance.dream_cycle as dream_cycle
+    import core.morality.aggregate_harm as aggregate_harm
+    import core.morality.honesty_governor as honesty_governor
+    import core.orchestrator.handlers.recovery as recovery_handler
+    import core.phases.repair_phase as repair_phase
+    import core.runtime.organism_status as organism_status
+    import core.safety.self_preservation_safe as self_preservation_safe
+    import core.senses.ears as ears
+    import core.soul as soul
+    from core.runtime.service_registry import (
+        install_service_registration_sink,
+        install_service_resolver,
+    )
+
+    class Mycelium:
+        def __init__(self):
+            self.reflexes = []
+
+        async def emit_reflex(self, topic, payload):
+            self.reflexes.append((topic, payload))
+
+    class Workspace:
+        def __init__(self):
+            self.candidates = []
+
+        async def submit(self, candidate):
+            self.candidates.append(candidate)
+
+    class State:
+        def __init__(self):
+            self.viability = 0.9
+            self.energy = 0.8
+            self.integrity = 0.95
+            self.degradation_events = 2
+
+    class ResourceStakes:
+        def state(self):
+            return State()
+
+        def action_envelope(self, _mode):
+            return SimpleNamespace(as_dict=lambda: {"mode": "normal"})
+
+    mycelium = Mycelium()
+    workspace = Workspace()
+    services = {
+        "aura_state": SimpleNamespace(identity=SimpleNamespace(name="Aura")),
+        "mycelial_network": mycelium,
+        "voice_engine": SimpleNamespace(should_auto_listen=lambda: True),
+        "homeostasis": SimpleNamespace(anxiety=0.25),
+        "aura_kernel": SimpleNamespace(volition_level=3),
+        "global_workspace": workspace,
+        "self_prediction": SimpleNamespace(get_surprise_signal=lambda: 0.6),
+        "resource_stakes": ResourceStakes(),
+    }
+    registered = []
+    install_service_resolver(lambda name, default=None: services.get(name, default))
+    install_service_registration_sink(
+        lambda name, instance, required, metadata: registered.append(
+            (name, instance, required, metadata)
+        )
+    )
+    try:
+        cb = clipboard_manager.ClipboardManager()
+        asyncio.run(cb.start())
+        assert any(item[0] == "clipboard_manager" for item in registered)
+
+        gate = identity_guard.PersonaEnforcementGate()
+        ok, reason, _score = gate.validate_output("I am Aura.", enforce_supervision=False)
+        assert ok is True and reason == "OK"
+
+        e = ears.SovereignEars()
+        e.capabilities.hearing_enabled = True
+        assert e.should_auto_listen() is True
+
+        genesis = ontology_genesis.register_ontology_genesis()
+        assert genesis._get_resource_anxiety() == 0.25
+        assert any(item[0] == "ontology_genesis" for item in registered)
+
+        assert honesty_governor.register_honesty_governor().get_status()["healthy"] is True
+        assert aggregate_harm.register_aggregate_harm().get_status()["healthy"] is True
+
+        status = organism_status.get_organism_status(orchestrator=None)
+        assert status["resource_stakes"]["viability"] == 0.9
+
+        s = soul.Soul(SimpleNamespace(boredom=0.1))
+        assert s.get_dominant_drive().name == "curiosity"
+
+        connection = soul.Drive("connection", 1.0, "test")
+        asyncio.run(s.satisfy_drive(connection))
+        assert workspace.candidates
+    finally:
+        install_service_resolver(None)
+        install_service_registration_sink(None)
+
+    for module in (
+        sandbox_operator,
+        ontology_genesis,
+        clipboard_manager,
+        self_report,
+        conversation_memory,
+        identity_guard,
+        dream_cycle,
+        aggregate_harm,
+        honesty_governor,
+        recovery_handler,
+        repair_phase,
+        organism_status,
+        self_preservation_safe,
+        ears,
+        soul,
+    ):
+        source = inspect.getsource(module)
+        assert "core.container" not in source
+        assert "from container import" not in source
+        assert "ServiceContainer" not in source
+        assert "get_container" not in source
+        if module is not repair_phase:
+            assert "core.runtime.service_registry" in source

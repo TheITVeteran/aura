@@ -8,6 +8,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 if TYPE_CHECKING:
     from core.orchestrator.main import RobustOrchestrator
@@ -29,20 +30,18 @@ async def retry_cognitive_connection(orch: RobustOrchestrator) -> bool:
     """Manually retry connecting to the cognitive brain (LLM).
     Forces a full re-wire of the Cognitive Engine AND resets the circuit breaker.
     """
-    from core.container import ServiceContainer
-
     logger.info("🧠 Manual Cognitive Retry Initiated...")
 
     # Reset the Cognitive Circuit Breakers
     try:
         # 1. Reset LLM Router rate limits & health (includes local & remote)
-        router = ServiceContainer.get("llm_router", default=None)
+        router = get_runtime_service("llm_router", default=None)
         if router and hasattr(router, "clear_rate_limits"):
             router.clear_rate_limits()
             logger.info("⚡ LLM Router health and rate limits RESET")
 
         # 2. Reset specific Local MLX Client if it exists
-        mlx = ServiceContainer.get("mlx_client", default=None)
+        mlx = get_runtime_service("mlx_client", default=None)
         if mlx and hasattr(mlx, "_circuit_open"):
             try:
                 mlx._circuit_open = False
@@ -84,7 +83,7 @@ async def retry_cognitive_connection(orch: RobustOrchestrator) -> bool:
             logger.error("Setup failed: %s", exc)
 
         if not ce.lobotomized:
-            ServiceContainer.register_instance("cognitive_engine", ce)
+            register_runtime_service("cognitive_engine", ce)
             logger.info("✅ Cognitive Engine ONLINE — Safe Mode deactivated")
 
             try:
