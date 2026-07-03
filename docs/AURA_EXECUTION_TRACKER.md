@@ -5258,3 +5258,52 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
 - Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
   desktop findings, and longer soak/runtime evidence.
+
+## Checkpoint 2026-07-03-24: Startup Boot Validator Registry Presence
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Moved `core.startup.boot_validator`'s implicit service-presence checks from
+  the global container to `has_runtime_service`.
+- Preserved the explicit-container argument path for legacy callers and tests
+  that intentionally pass a service container object.
+- Added regression coverage for all-required-services-present, missing-service
+  failures, explicit-container validation, and source ownership.
+- Refreshed the architecture-quality baseline after reducing the largest import
+  SCC from `613` modules to `612` modules.
+- Kept the standard general-purpose: boot readiness probes now use reusable
+  service-presence semantics rather than any domain-specific quality branch.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `121 passed`.
+- `python -m ruff check --select F,E9 core/startup/boot_validator.py tests/test_runtime_error_architecture.py`
+  -> passed.
+- `python -m py_compile core/startup/boot_validator.py tests/test_runtime_error_architecture.py`
+  -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=44.83`,
+  `largest_cycle_size=612`, `cycle_count=7`, `dependency_edges=7512`,
+  `god_file_count=37`, `module_count=2245`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=0`, `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check`
+  -> passed.
+
+Boundary:
+
+- This hardens boot-readiness ownership and reduces the import SCC by one
+  module. It does not by itself solve live app permission/TCC behavior or
+  multi-instance launch behavior; those remain live-runtime validation items.
+
+Estimate:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 42-46%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
+- Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
+  desktop findings, and longer soak/runtime evidence.

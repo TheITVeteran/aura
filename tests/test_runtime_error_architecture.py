@@ -688,3 +688,41 @@ def test_meta_cognition_structural_review_uses_runtime_registry():
     assert "core.container" not in source
     assert "ServiceContainer" not in source
     assert "core.runtime.service_registry" in source
+
+
+def test_startup_boot_validator_uses_runtime_registry_presence():
+    import inspect
+    import core.startup.boot_validator as boot_validator
+    from core.runtime.service_registry import install_service_presence_resolver
+
+    required = {"event_bus", "orchestrator", "llm_interface", "state_repo"}
+    install_service_presence_resolver(lambda name: name in required)
+    try:
+        result = boot_validator.BootValidator.validate_boot()
+    finally:
+        install_service_presence_resolver(None)
+
+    assert result.passed is True
+    assert result.failures == []
+
+    install_service_presence_resolver(lambda name: name == "event_bus")
+    try:
+        result = boot_validator.BootValidator.validate_boot()
+    finally:
+        install_service_presence_resolver(None)
+
+    assert result.passed is False
+    assert "Core Orchestrator Ready" in result.failures
+    assert "LLM Interface Bound" in result.failures
+    assert "State Repository (Persistence) Ready" in result.failures
+
+    class ExplicitContainer:
+        def has(self, name):
+            return name in required
+
+    assert boot_validator.BootValidator.validate_boot(ExplicitContainer()).passed is True
+
+    source = inspect.getsource(boot_validator)
+    assert "core.container" not in source
+    assert "ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source

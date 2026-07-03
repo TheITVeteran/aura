@@ -560,7 +560,6 @@
       "core.somatic.motor_cortex",
       "core.soul",
       "core.sovereignty.integrity_guard",
-      "core.startup.boot_validator",
       "core.state.state_gateway",
       "core.state.state_repository",
       "core.state.vault",
@@ -651,7 +650,7 @@
   "findings": [
     {
       "code": "import_cycle",
-      "message": "Import cycle across 613 modules",
+      "message": "Import cycle across 612 modules",
       "modules": [
         "core.actuators.actuator_registry",
         "core.actuators.code_execution_actuator",
@@ -1212,7 +1211,6 @@
         "core.somatic.motor_cortex",
         "core.soul",
         "core.sovereignty.integrity_guard",
-        "core.startup.boot_validator",
         "core.state.state_gateway",
         "core.state.state_repository",
         "core.state.vault",
@@ -1269,7 +1267,7 @@
       ],
       "path": null,
       "severity": "high",
-      "value": 613
+      "value": 612
     },
     {
       "code": "import_cycle",
@@ -3504,7 +3502,7 @@
     "core/sovereignty/integrity_guard.py": 212,
     "core/sovereignty/migration.py": 362,
     "core/sovereignty/wallet.py": 308,
-    "core/startup/boot_validator.py": 44,
+    "core/startup/boot_validator.py": 46,
     "core/startup/validator.py": 270,
     "core/state/aura_state.py": 1161,
     "core/state/cellular_substrate.py": 122,
@@ -3866,7 +3864,7 @@
     "dependency_concentration_pct": 30.0186,
     "dependency_edges": 7512,
     "god_file_count": 37,
-    "largest_cycle_size": 613,
+    "largest_cycle_size": 612,
     "max_file_lines": 15933,
     "max_in_degree": 1011,
     "max_out_degree": 94,
@@ -6120,5 +6118,5 @@
     "tools.wedge_recovery_supervisor": "tools/wedge_recovery_supervisor.py"
   },
   "root": "/Users/bryan/.aura/live-source",
-  "score": 44.82
+  "score": 44.83
 }

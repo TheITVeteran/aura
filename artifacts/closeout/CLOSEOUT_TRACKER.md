@@ -2572,3 +2572,42 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-24: Startup Boot Validator Registry Presence
+
+Status: ready to commit.
+
+What changed:
+
+- Moved Startup BootValidator's implicit readiness checks through
+  `has_runtime_service`.
+- Preserved explicit-container validation for callers that intentionally pass a
+  container-like object.
+- Added regression coverage for registry-backed successful boot validation,
+  missing-service failures, explicit-container compatibility, and source
+  ownership.
+- Refreshed the architecture-quality baseline after the largest import SCC
+  dropped from `613` modules to `612` modules.
+- Kept the quality target general: boot readiness uses reusable service
+  presence checks, not aerospace-domain logic.
+
+Evidence:
+
+- Runtime/architecture/audit/reliability focused tests -> `121 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=44.83`,
+  `largest_cycle_size=612`, `cycle_count=7`, `dependency_edges=7512`,
+  `module_count=2245`.
+- Remaining-checkpoint contract -> `gaps=0`,
+  `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check` -> passed.
+
+Tracker:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 42-46%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
+- Remaining total checkpoint groups: 3.
