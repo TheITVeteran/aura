@@ -114,6 +114,18 @@ class DialecticalCrucible:
         priority: float,
         concept: str,
     ) -> str | None:
+        from core.runtime.backpressure import (
+            clear_backpressure,
+            foreground_inference_active,
+            record_expected_backpressure,
+        )
+
+        if foreground_inference_active():
+            # An internal debate never outranks the user's live turn. Yield
+            # before generating; the belief stays pending for the next cycle.
+            logger.debug("Crucible yielded %s stage to foreground inference.", stage)
+            return None
+
         engine = ServiceContainer.get("cognitive_engine", default=None)
         think = getattr(engine, "think", None)
         if not callable(think):
@@ -124,6 +136,17 @@ class DialecticalCrucible:
 
         try:
             response = await asyncio.wait_for(_invoke(), timeout=self.stage_timeout_s)
+        except (TimeoutError, asyncio.TimeoutError, ConnectionError) as exc:
+            # A bounded background debate stage losing the model under load is
+            # expected backpressure, not a critical incident (observed live:
+            # INC-1783068780-0002 was exactly this as a fail-closed CRITICAL).
+            record_expected_backpressure(
+                "dialectical_crucible",
+                exc,
+                action=f"aborted {stage} stage; belief retried next crucible cycle",
+                extra={"stage": stage, "concept_preview": concept[:120]},
+            )
+            return None
         except _CRUCIBLE_RECOVERABLE_ERRORS as exc:
             _record_crucible_degradation(
                 "dialectical_crucible",
@@ -133,6 +156,7 @@ class DialecticalCrucible:
             )
             return None
 
+        clear_backpressure("dialectical_crucible")
         content = response.content if hasattr(response, "content") else response
         text = str(content or "").strip()
         return text or None

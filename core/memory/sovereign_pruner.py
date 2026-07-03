@@ -148,6 +148,12 @@ class SovereignPruner:
         return memories
 
     async def _consolidate(self, mem: MemoryRecord) -> str | None:
+        from core.runtime.backpressure import foreground_inference_active
+
+        if foreground_inference_active():
+            # Yield instead of competing with the user's turn and timing out.
+            logger.debug("[PRUNER] Yielded consolidation of %s to foreground inference.", mem.id[:8])
+            return None
         brain = self._get_brain()
         if not brain:
             return None
@@ -185,9 +191,20 @@ class SovereignPruner:
                     )
                 ).strip()
 
+            from core.runtime.backpressure import clear_backpressure
+
+            clear_backpressure("sovereign_pruner")
             return None if not result or result.lower() == "null" else result
         except TimeoutError as e:
-            record_degradation("sovereign_pruner", e)
+            # A 5s-bounded background consolidation losing the model to the
+            # foreground lane is routine yield, not a critical incident.
+            from core.runtime.backpressure import record_expected_backpressure
+
+            record_expected_backpressure(
+                "sovereign_pruner",
+                e,
+                action="kept memory unconsolidated; retried next prune pass",
+            )
             logger.debug("Consolidation for %s timed out: %s", mem.id[:8], e)
             return None
         except (ImportError, AttributeError, RuntimeError) as e:
