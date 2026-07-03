@@ -554,6 +554,37 @@ async def request_id_middleware(request: Request, call_next):
     return response
 
 
+# ── Reliability: HTTP trace root spans ─────────────────────────
+# Every /api request gets a (sampled) root span; downstream spans —
+# inference, Will refusals — nest under it via contextvars, so a slow or
+# failing turn reads as one connected trace at /api/diagnostics/reliability/traces.
+
+@app.middleware("http")
+async def trace_root_middleware(request: Request, call_next):
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    try:
+        from core.observability.tracing import get_tracer
+        tracer = get_tracer()
+    except (ImportError, AttributeError, RuntimeError):
+        return await call_next(request)
+    if not tracer.enabled:
+        return await call_next(request)
+    with tracer.span(
+        "http.request",
+        attributes={
+            "http.method": request.method,
+            "http.path": request.url.path,
+            "request.id": getattr(request.state, "request_id", ""),
+        },
+    ) as span:
+        response = await call_next(request)
+        span.set_attribute("http.status_code", response.status_code)
+        if response.status_code >= 500:
+            span.set_status("ERROR", f"HTTP {response.status_code}")
+        return response
+
+
 # ── Magnum Opus: Global Exception Handler ─────────────────────
 
 from datetime import UTC, datetime

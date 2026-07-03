@@ -3544,15 +3544,33 @@ class MLXLocalClient:
             if not request_is_background:
                 self._emit_steering_status(origin_label)
 
-            result = await self._generate_inner(
-                prompt,
-                _retry=True,
-                request_is_background=request_is_background,
-                foreground_request=foreground_request,
-                owner_label=owner_label,
-                **kwargs,
-            )
-            return result
+            # Reliability tracing: inference nests under the HTTP root span
+            # (contextvars), so a slow turn reads as one connected trace.
+            try:
+                from core.observability.tracing import get_tracer
+                _span_cm = get_tracer().span(
+                    "inference.generate",
+                    attributes={
+                        "model": os.path.basename(self.model_path),
+                        "origin": origin_label,
+                        "purpose": purpose_label,
+                        "background": request_is_background,
+                    },
+                )
+            except (ImportError, AttributeError, RuntimeError):
+                _span_cm = contextlib.nullcontext(None)
+            with _span_cm as _span:
+                result = await self._generate_inner(
+                    prompt,
+                    _retry=True,
+                    request_is_background=request_is_background,
+                    foreground_request=foreground_request,
+                    owner_label=owner_label,
+                    **kwargs,
+                )
+                if _span is not None:
+                    _span.set_attribute("result_chars", len(result) if result else 0)
+                return result
         finally:
             _deferred_reboot = self._deferred_reboot_reason
             self._deferred_reboot_reason = None

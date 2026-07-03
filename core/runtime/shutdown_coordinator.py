@@ -18,9 +18,6 @@ remaining phases.
 """
 from __future__ import annotations
 
-from core.runtime.atomic_writer import atomic_write_text
-from core.utils.task_tracker import get_task_tracker
-
 import asyncio
 import inspect
 import json
@@ -28,16 +25,19 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable, Dict, List, Optional, Tuple, Union
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ShutdownCoordinator")
 
-ShutdownHandler = Callable[[], Union[None, Awaitable[None]]]
+ShutdownHandler = Callable[[], None | Awaitable[None]]
 
 
 # Canonical phases. Order matters.
-SHUTDOWN_PHASES: Tuple[str, ...] = (
+SHUTDOWN_PHASES: tuple[str, ...] = (
     "output_flush",
     "memory_commit",
     "state_vault",
@@ -58,9 +58,9 @@ class _RegisteredHandler:
 
 @dataclass
 class ShutdownReport:
-    completed_phases: List[str] = field(default_factory=list)
-    failed_phases: List[str] = field(default_factory=list)
-    handler_failures: Dict[str, str] = field(default_factory=dict)
+    completed_phases: list[str] = field(default_factory=list)
+    failed_phases: list[str] = field(default_factory=list)
+    handler_failures: dict[str, str] = field(default_factory=dict)
 
     @property
     def clean(self) -> bool:
@@ -70,11 +70,52 @@ class ShutdownReport:
 class ShutdownCoordinator:
     """Single owner of teardown ordering."""
 
-    def __init__(self, phases: Tuple[str, ...] = SHUTDOWN_PHASES):
+    # Coordinator phase → verified-lifecycle state entered when that phase
+    # begins. The FSM formalizes the coarse teardown arc (drain → stop
+    # services → flush) on top of the fine-grained phase loop, and turns a
+    # re-entrant shutdown() into a formal illegal transition instead of a
+    # double-run of every teardown handler.
+    _LIFECYCLE_BOUNDARIES: dict[str, str] = {
+        "actors": "STOPPING_SERVICES",
+        "task_supervisor": "FLUSHING_STATE",
+    }
+
+    def __init__(self, phases: tuple[str, ...] = SHUTDOWN_PHASES):
         self._phases = phases
-        self._handlers: Dict[str, List[_RegisteredHandler]] = {p: [] for p in phases}
+        self._handlers: dict[str, list[_RegisteredHandler]] = {p: [] for p in phases}
         self._lock = threading.RLock()
         self._running = False
+        self._lifecycle = self._build_lifecycle()
+
+    @staticmethod
+    def _build_lifecycle():
+        try:
+            from core.resilience.verified_state_machine import (
+                create_shutdown_lifecycle_machine,
+            )
+            return create_shutdown_lifecycle_machine()
+        except (ImportError, RuntimeError, ValueError) as exc:
+            # Lifecycle bookkeeping must never block teardown.
+            logger.debug("Shutdown lifecycle machine unavailable: %s", exc)
+            return None
+
+    def lifecycle_state(self) -> str:
+        """Current verified-lifecycle state (for diagnostics)."""
+        return self._lifecycle.current if self._lifecycle is not None else "UNTRACKED"
+
+    def _lifecycle_transition(self, to_state: str) -> None:
+        """Advance the lifecycle machine; F17 is recorded on illegal moves,
+        and teardown continues regardless — bookkeeping never blocks it."""
+        if self._lifecycle is None:
+            return
+        try:
+            from core.resilience.verified_state_machine import IllegalTransitionError
+            try:
+                self._lifecycle.transition(to_state)
+            except IllegalTransitionError:
+                pass  # already recorded as F17 by the machine
+        except ImportError as exc:
+            logger.debug("Lifecycle transition skipped: %s", exc)
 
     # --- Registration ---------------------------------------------------
 
@@ -83,7 +124,7 @@ class ShutdownCoordinator:
         handler: ShutdownHandler,
         *,
         phase: str,
-        name: Optional[str] = None,
+        name: str | None = None,
         timeout: float = 15.0,
     ) -> None:
         if phase not in self._handlers:
@@ -106,30 +147,49 @@ class ShutdownCoordinator:
             for phase in self._handlers:
                 self._handlers[phase] = []
 
-    def phases(self) -> Tuple[str, ...]:
+    def phases(self) -> tuple[str, ...]:
         return self._phases
 
-    def handler_names(self, phase: str) -> List[str]:
+    def handler_names(self, phase: str) -> list[str]:
         with self._lock:
             return [h.name for h in self._handlers.get(phase, [])]
 
     # --- Execution ------------------------------------------------------
 
-    async def shutdown(self, *, timeout_per_phase: Optional[float] = None) -> ShutdownReport:
+    async def shutdown(self, *, timeout_per_phase: float | None = None) -> ShutdownReport:
         request_shutdown("coordinator")
         report = ShutdownReport()
-        if self._running:
-            logger.warning("ShutdownCoordinator.shutdown() invoked re-entrantly")
+        if self._running or (
+            self._lifecycle is not None and self._lifecycle.current != "RUNNING"
+        ):
+            # Re-entrant / repeated shutdown: refuse to double-run teardown
+            # handlers (double-closing services is worse than a no-op). The
+            # attempt is recorded as an F17 illegal transition for forensics.
+            logger.error(
+                "ShutdownCoordinator.shutdown() re-entered (lifecycle=%s); "
+                "refusing duplicate teardown",
+                self.lifecycle_state(),
+            )
+            self._lifecycle_transition("DRAINING")  # records F17
+            report.failed_phases.append("lifecycle")
+            report.handler_failures["lifecycle"] = (
+                f"duplicate shutdown refused from state {self.lifecycle_state()}"
+            )
+            return report
         self._running = True
+        self._lifecycle_transition("DRAINING")
         try:
             for phase in self._phases:
+                boundary = self._LIFECYCLE_BOUNDARIES.get(phase)
+                if boundary:
+                    self._lifecycle_transition(boundary)
                 with self._lock:
                     handlers = list(self._handlers.get(phase, []))
                 if not handlers:
                     report.completed_phases.append(phase)
                     continue
                 phase_failed = False
-                coros: List[asyncio.Future] = []
+                coros: list[asyncio.Future] = []
                 for record in handlers:
                     coros.append(
                         get_task_tracker().track(
@@ -146,7 +206,7 @@ class ShutdownCoordinator:
                         asyncio.gather(*coros, return_exceptions=True),
                         timeout=effective_timeout,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     for fut in coros:
                         if not fut.done():
                             fut.cancel()
@@ -170,6 +230,7 @@ class ShutdownCoordinator:
                 else:
                     report.completed_phases.append(phase)
         finally:
+            self._lifecycle_transition("TERMINATED")
             self._running = False
 
         if not report.clean and os.environ.get("AURA_STRICT_RUNTIME") == "1":
@@ -199,7 +260,7 @@ class ShutdownCoordinator:
 
 # Singleton accessor ---------------------------------------------------------
 
-_shutdown_coordinator: Optional[ShutdownCoordinator] = None
+_shutdown_coordinator: ShutdownCoordinator | None = None
 _singleton_lock = threading.RLock()
 _shutdown_requested = threading.Event()
 

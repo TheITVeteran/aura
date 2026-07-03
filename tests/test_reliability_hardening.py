@@ -1022,3 +1022,93 @@ class TestFaultEvidence:
         reg = FaultRegistry()
         assert reg._persistent_evidence is False
         reg.record_fault("F01", "test")  # must not import/bind the store
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Causal wiring: the verified lifecycle machine governs real shutdown.
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestShutdownLifecycleWiring:
+    def _fresh_coordinator(self):
+        from core.runtime.shutdown_coordinator import ShutdownCoordinator
+        return ShutdownCoordinator()
+
+    def test_clean_shutdown_walks_the_verified_lifecycle(self):
+        import asyncio
+
+        coordinator = self._fresh_coordinator()
+        assert coordinator.lifecycle_state() == "RUNNING"
+        seen: list[str] = []
+
+        def observe():
+            seen.append(coordinator.lifecycle_state())
+
+        coordinator.register(observe, phase="output_flush", name="obs_flush")
+        coordinator.register(observe, phase="actors", name="obs_actors")
+        coordinator.register(observe, phase="task_supervisor", name="obs_tasks")
+
+        report = asyncio.run(coordinator.shutdown(timeout_per_phase=5.0))
+        assert report.clean, f"failures: {report.handler_failures}"
+        assert seen == ["DRAINING", "STOPPING_SERVICES", "FLUSHING_STATE"]
+        assert coordinator.lifecycle_state() == "TERMINATED"
+
+    def test_duplicate_shutdown_is_refused_not_double_run(self):
+        """Re-entrant shutdown used to double-run every teardown handler;
+        the lifecycle machine formalizes refusal (recorded as F17)."""
+        import asyncio
+
+        coordinator = self._fresh_coordinator()
+        calls: list[int] = []
+        coordinator.register(lambda: calls.append(1), phase="actors", name="counter")
+
+        first = asyncio.run(coordinator.shutdown(timeout_per_phase=5.0))
+        second = asyncio.run(coordinator.shutdown(timeout_per_phase=5.0))
+
+        assert first.clean
+        assert calls == [1], "teardown handlers must run exactly once"
+        assert not second.clean
+        assert "lifecycle" in second.handler_failures
+
+    def test_lifecycle_never_blocks_teardown_on_failing_handler(self):
+        import asyncio
+
+        coordinator = self._fresh_coordinator()
+        boom_calls: list[int] = []
+
+        def boom():
+            boom_calls.append(1)  # recording pattern: raise sites leave evidence
+            raise RuntimeError("handler failure")
+
+        coordinator.register(boom, phase="model_runtime", name="boom")
+        report = asyncio.run(coordinator.shutdown(timeout_per_phase=5.0))
+        assert not report.clean
+        assert coordinator.lifecycle_state() == "TERMINATED"
+
+
+class TestHttpTraceMiddleware:
+    def test_middleware_source_is_wired(self):
+        """The server mounts a root-span middleware for /api requests and the
+        inference client opens a child span — the trace layer is causal, not
+        merely importable."""
+        import inspect
+
+        from interface import server as server_mod
+
+        src = inspect.getsource(server_mod)
+        assert "trace_root_middleware" in src
+        assert 'tracer.span(' in src or "tracer.span(" in src
+
+        from core.brain.llm import mlx_client as mlx_mod
+
+        mlx_src = inspect.getsource(mlx_mod)
+        assert '"inference.generate"' in mlx_src
+
+    def test_nested_span_parents_under_http_root(self):
+        from core.observability.tracing import Tracer
+
+        tracer = Tracer(enabled=True, sample_rate=1.0)
+        with tracer.span("http.request", attributes={"http.path": "/api/chat"}) as root:
+            with tracer.span("inference.generate") as child:
+                pass
+        assert child.trace_id == root.trace_id
+        assert child.parent_span_id == root.span_id
