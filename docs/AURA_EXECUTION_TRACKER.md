@@ -4770,3 +4770,59 @@ Estimate:
 - Expanded daily-runtime/product closure: about 93%.
 - Remaining total checkpoint groups: 1-2, centered on any further live user
   observations or non-duplicative consolidation found in future passes.
+
+## Checkpoint 2026-07-03-15: Reliability And Chrome/Kubernetes Maturity Gate
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Added a reusable mixed-situation preference tournament bank covering
+  heartwarming, exciting, funny, serious, intellectual, creative, reflective,
+  and protective scenarios.
+- Extended the tournament report with the seeded candidate rank and favorite
+  labels so preference proofs are auditable instead of opaque.
+- Added independent repeated tournament tests that pit seeded favorites against
+  each other across multiple runs, alternating A/B presentation order and
+  asserting stable champions, stable pair majorities, zero transitivity
+  violations, and no left/right position bias.
+- Folded the reliability / Chrome / Kubernetes maturity standard into live
+  runtime hardening: formal fault taxonomy, FMEA coverage, SLO burn-rate
+  monitoring, design-by-contract tracking, verified state machines, TMR voting,
+  distributed tracing, canary and rollback controllers, chaos framework,
+  runbooks, and CI workflow.
+- Wired live runtime events into the reliability layer: degradation records feed
+  the fault registry and error-event SLO, Will decisions feed latency SLOs and
+  refusal traces, mind-tick metrics feed tick-duration SLOs, and the server
+  exposes `/api/diagnostics/reliability`.
+
+Evidence:
+
+- `python -m pytest -q tests/test_reliability_hardening.py tests/test_subjective_choice_engine.py`
+  -> `80 passed`.
+- `python -m compileall -q core/resilience slo infrastructure tools/chaos core/observability core/agency/choice_game.py tests/test_reliability_hardening.py tests/test_subjective_choice_engine.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/observability/tracing.py core/resilience/contracts.py core/resilience/fault_taxonomy.py core/resilience/fmea_registry.py core/resilience/tmr.py core/resilience/verified_state_machine.py core/resilience/diagnostics_dashboard.py infrastructure/canary.py infrastructure/rollback.py slo/slo_monitor.py tools/chaos/chaos_framework.py tests/test_reliability_hardening.py core/agency/choice_game.py tests/test_subjective_choice_engine.py`
+  -> passed.
+- `python - <<'PY' ... collect_reliability_diagnostics() ... PY`
+  -> `overall_status=HEALTHY`, `6/6` diagnostics subsystems healthy.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=0`, `requirements=7`.
+
+Boundary:
+
+- This raises the operational reliability floor and makes fault behavior
+  inspectable, classifiable, tested, and regression-gated. It does not mean Aura
+  has Chrome or Kubernetes deployment scale history; it means the codebase now
+  carries the matching control-plane primitives and CI evidence for this local
+  product stage.
+
+Estimate:
+
+- Final closeout evidence assembly closure: about 99%.
+- Expanded daily-runtime/product closure: about 94-95%.
+- Chrome/Kubernetes-style operational maturity closure: about 60-65% locally,
+  with the remaining gap mainly long-duration soak history, multi-machine
+  compatibility data, and production telemetry volume.
+- Remaining total checkpoint groups: 1-2, centered on long-run soak,
+  architecture-quality regression gating, and any new live desktop findings.

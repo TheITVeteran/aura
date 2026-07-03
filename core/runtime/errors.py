@@ -449,6 +449,42 @@ def record_degradation(
             metrics_exc,
         )
 
+    # ── Reliability: fault taxonomy integration ───────────────────
+    # Every degradation feeds into the formal fault registry so the
+    # FMEA system has live occurrence data for RPN recalculation.
+    try:
+        from core.resilience.fault_taxonomy import FaultSeverity, get_fault_registry
+        _sev_map = {
+            "critical": FaultSeverity.CRITICAL,
+            "degraded": FaultSeverity.MARGINAL,
+            "warning": FaultSeverity.MARGINAL,
+            "debug": FaultSeverity.NEGLIGIBLE,
+        }
+        get_fault_registry().record_fault(
+            fault_id=f"RUNTIME-{subsystem[:20].upper().replace('.', '-')}",
+            subsystem=subsystem,
+            details=f"{error_type}: {error_msg[:120]}",
+            error=error if isinstance(error, Exception) else None,
+            severity=_sev_map.get(severity, FaultSeverity.MARGINAL),
+        )
+    except (ImportError, AttributeError, RuntimeError) as _ft_exc:
+        logger.debug(
+            "Fault taxonomy unavailable for degradation %s: %s",
+            subsystem,
+            _ft_exc,
+        )
+
+    # ── Reliability: SLO monitor integration ──────────────────────
+    # Critical/degraded events feed the windowed error-event SLO; the
+    # tracker counts events in its window against the target (each call
+    # here is one event, not a rate sample).
+    if severity in ("critical", "degraded"):
+        try:
+            from slo.slo_monitor import get_slo_monitor
+            get_slo_monitor().record("error_events_per_hour", 1.0)
+        except (ImportError, AttributeError, RuntimeError):
+            pass
+
     if failure_policy_violation and enforce_failure_policy:
         raise RuntimeError(failure_policy_error)
 

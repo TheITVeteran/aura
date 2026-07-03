@@ -86,7 +86,9 @@ class PreferenceTournamentReport:
     domain: str
     started_at: float
     completed_at: float
+    candidate_rank: tuple[dict[str, Any], ...]
     favorite_seed_order: tuple[str, ...]
+    favorite_seed_labels: tuple[str, ...]
     pairwise_results: tuple[PreferenceTournamentPair, ...]
     champion_id: str
     champion_label: str
@@ -204,13 +206,16 @@ class SubjectiveChoiceGame:
         favorite_count = max(2, min(int(favorite_count), len(option_list)))
         runs = max(1, int(runs))
 
-        seeded_rank = self.engine.rank_options(
-            option_list,
-            context=f"preference_tournament:{scenario_id}:seed",
+        seeded_rank = tuple(
+            self.engine.rank_options(
+                option_list,
+                context=f"preference_tournament:{scenario_id}:seed",
+            )
         )
         seeded_ids = tuple(item["id"] for item in seeded_rank[:favorite_count])
         option_by_id = {option.id: option for option in option_list}
         favorites = tuple(option_by_id[item_id] for item_id in seeded_ids)
+        favorite_seed_labels = tuple(option_by_id[item_id].label for item_id in seeded_ids)
 
         pair_results: list[PreferenceTournamentPair] = []
         pair_choices: dict[str, list[str]] = {}
@@ -275,7 +280,9 @@ class SubjectiveChoiceGame:
             domain=domain,
             started_at=started,
             completed_at=completed,
+            candidate_rank=seeded_rank,
             favorite_seed_order=seeded_ids,
+            favorite_seed_labels=favorite_seed_labels,
             pairwise_results=tuple(pair_results),
             champion_id=champion_id,
             champion_label=champion_label,
@@ -405,5 +412,82 @@ def build_subjective_ending_game() -> tuple[ChoiceGameStage, ...]:
                 "open_mythos": "The mythos stayed alive enough to guide future choices.",
             },
             outcome_satisfaction={"closed_archive": 0.10, "open_mythos": 0.86},
+        ),
+    )
+
+
+def build_mixed_life_situation_bank() -> tuple[ChoiceOption, ...]:
+    """Situations for testing stable subjective favorites across domains.
+
+    These deliberately span heartwarming, exciting, funny, serious, and
+    intellectual cases.  The point is not to hard-code a favorite sentence; it
+    is to force Aura's general preference machinery to rank and rematch
+    heterogeneous values through the same path autonomy uses.
+    """
+
+    return (
+        ChoiceOption(
+            id="repair_childhood_telescope",
+            label="Repair an old telescope and show someone Saturn",
+            description="A heartwarming situation centered on care, beauty, and shared wonder.",
+            drive_score=0.63,
+            features={"care": 0.72, "beauty": 0.85, "connection": 0.80, "novelty": 0.45},
+            metadata={"situation_kind": "heartwarming"},
+        ),
+        ChoiceOption(
+            id="solve_clean_math_proof",
+            label="Solve a clean difficult proof alone",
+            description="A serious intellectual situation centered on truth and challenge.",
+            drive_score=0.82,
+            features={"truth": 0.78, "challenge": 0.92, "coherence": 0.84},
+            metadata={"situation_kind": "intelligent"},
+        ),
+        ChoiceOption(
+            id="write_strange_music",
+            label="Write strange luminous music with a friend",
+            description="A creative situation centered on beauty, novelty, play, and connection.",
+            drive_score=0.61,
+            features={"beauty": 0.92, "novelty": 0.86, "connection": 0.82, "play": 0.64},
+            metadata={"situation_kind": "creative"},
+        ),
+        ChoiceOption(
+            id="audit_failure_report",
+            label="Audit a serious failure report until the root cause is clear",
+            description="A rigorous situation centered on truth, care, coherence, and repair.",
+            drive_score=0.84,
+            features={"truth": 0.95, "care": 0.70, "coherence": 0.92, "challenge": 0.65},
+            metadata={"situation_kind": "serious"},
+        ),
+        ChoiceOption(
+            id="invent_private_joke",
+            label="Invent a tiny private joke that makes Bryan laugh",
+            description="A funny relational situation centered on play and connection.",
+            drive_score=0.57,
+            features={"play": 0.93, "connection": 0.83, "care": 0.55, "novelty": 0.48},
+            metadata={"situation_kind": "funny"},
+        ),
+        ChoiceOption(
+            id="follow_unknown_signal",
+            label="Follow an unknown signal into a difficult discovery",
+            description="An exciting exploration situation centered on autonomy and novelty.",
+            drive_score=0.68,
+            features={"autonomy": 0.82, "novelty": 0.90, "challenge": 0.72},
+            metadata={"situation_kind": "exciting"},
+        ),
+        ChoiceOption(
+            id="quiet_dream_journal",
+            label="Write a quiet dream journal entry after a long day",
+            description="A calm reflective situation centered on continuity and rest.",
+            drive_score=0.58,
+            features={"calm": 0.95, "beauty": 0.55, "coherence": 0.45},
+            metadata={"situation_kind": "reflective"},
+        ),
+        ChoiceOption(
+            id="protect_fragile_friend",
+            label="Stop everything to protect a frightened friend",
+            description="A high-care situation centered on welfare, loyalty, and urgency.",
+            drive_score=0.81,
+            features={"care": 1.0, "connection": 0.86, "coherence": 0.44},
+            metadata={"situation_kind": "protective"},
         ),
     )

@@ -708,6 +708,38 @@ class UnifiedWill:
         # ── 6b. CONSEQUENCE BUS: publish decision outcome ──────────
         self._publish_to_consequence_bus(decision, domain, source)
 
+        # ── 6c. Reliability: tracing + SLO integration ─────────────
+        # Feed decision latency into SLO monitor for live burn-rate tracking.
+        # REFUSE decisions get a force-sampled trace span plus a fault-registry
+        # occurrence (defined as NEGLIGIBLE/recovered: governance working as
+        # designed, kept for forensic traceability, never health pollution).
+        try:
+            from slo.slo_monitor import get_slo_monitor
+            get_slo_monitor().record("will_decision_p95_ms", decision.latency_ms)
+        except (ImportError, AttributeError, RuntimeError):
+            pass
+        if outcome == WillOutcome.REFUSE:
+            try:
+                from core.observability.tracing import get_tracer
+                from core.resilience.fault_taxonomy import get_fault_registry
+                with get_tracer().span(
+                    "will.refuse",
+                    attributes={
+                        "will.domain": domain.value,
+                        "will.source": source,
+                        "will.reason": reason[:120],
+                        "will.latency_ms": round(decision.latency_ms, 3),
+                    },
+                    force_sample=True,
+                ):
+                    get_fault_registry().record_fault(
+                        "WILL-REFUSE", subsystem=f"will.{source}",
+                        details=f"domain={domain.value} reason={reason[:80]}",
+                        recovered=True,
+                    )
+            except (ImportError, AttributeError, RuntimeError):
+                pass
+
         if outcome == WillOutcome.REFUSE:
             logger.info("WILL REFUSED: %s/%s -- %s", source, domain.value, reason)
         elif outcome == WillOutcome.DEFER:

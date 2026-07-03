@@ -4,7 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.agency.choice_game import SubjectiveChoiceGame, build_subjective_ending_game
+from core.agency.choice_game import (
+    SubjectiveChoiceGame,
+    build_mixed_life_situation_bank,
+    build_subjective_ending_game,
+)
 from core.agency.initiative_arbiter import InitiativeArbiter, ScoredInitiative
 from core.agency.subjective_choice import (
     ChoiceOption,
@@ -228,38 +232,7 @@ def test_preference_tournament_pits_favorites_and_reports_stability(tmp_path):
     path = tmp_path / "choices.json"
     engine = SubjectiveChoiceEngine(state_path=path, mirror_identity=False)
     game = SubjectiveChoiceGame(engine)
-    situations = (
-        ChoiceOption(
-            id="repair_childhood_telescope",
-            label="Repair an old telescope and show someone Saturn",
-            drive_score=0.63,
-            features={"care": 0.72, "beauty": 0.85, "connection": 0.80, "novelty": 0.45},
-        ),
-        ChoiceOption(
-            id="solve_clean_math_proof",
-            label="Solve a clean difficult proof alone",
-            drive_score=0.82,
-            features={"truth": 0.78, "challenge": 0.92, "coherence": 0.84},
-        ),
-        ChoiceOption(
-            id="write_strange_music",
-            label="Write strange luminous music with a friend",
-            drive_score=0.61,
-            features={"beauty": 0.92, "novelty": 0.86, "connection": 0.82, "play": 0.64},
-        ),
-        ChoiceOption(
-            id="audit_failure_report",
-            label="Audit a serious failure report until the root cause is clear",
-            drive_score=0.84,
-            features={"truth": 0.95, "care": 0.70, "coherence": 0.92, "challenge": 0.65},
-        ),
-        ChoiceOption(
-            id="quiet_dream_journal",
-            label="Write a quiet dream journal entry after a long day",
-            drive_score=0.58,
-            features={"calm": 0.95, "beauty": 0.55, "coherence": 0.45},
-        ),
-    )
+    situations = build_mixed_life_situation_bank()
 
     report = game.run_preference_tournament(
         scenario_id="mixed_life_situations",
@@ -272,6 +245,8 @@ def test_preference_tournament_pits_favorites_and_reports_stability(tmp_path):
     assert report.consistency_rate == 1.0
     assert report.transitivity_violations == 0
     assert report.champion_id in {item.id for item in situations}
+    assert len(report.candidate_rank) == len(situations)
+    assert len(report.favorite_seed_labels) == 4
     assert len(report.pairwise_results) == 24
     assert "pairwise consistency 1.00" in report.commentary
     assert report.position_bias_rate == pytest.approx(0.5)
@@ -311,3 +286,43 @@ def test_preference_tournament_pits_favorites_and_reports_stability(tmp_path):
         context="subjective_preference:life_situation_favorite:rematch",
     )
     assert rematch.chosen_id == report.champion_id
+
+
+def test_situation_favorite_tournament_is_stable_across_independent_runs(tmp_path):
+    situations = build_mixed_life_situation_bank()
+    champions: list[str] = []
+    pair_majorities: list[dict[str, str]] = []
+    seed_orders: list[tuple[str, ...]] = []
+
+    for index in range(3):
+        engine = SubjectiveChoiceEngine(
+            state_path=tmp_path / f"choices_{index}.json",
+            mirror_identity=False,
+        )
+        game = SubjectiveChoiceGame(engine)
+        report = game.run_preference_tournament(
+            scenario_id=f"mixed_life_situations_independent_{index}",
+            domain="life_situation_favorite",
+            options=situations,
+            favorite_count=5,
+            runs=6,
+        )
+        champions.append(report.champion_id)
+        seed_orders.append(report.favorite_seed_order)
+        assert report.consistency_rate == 1.0
+        assert report.position_bias_rate == pytest.approx(0.5)
+        assert report.transitivity_violations == 0
+
+        majority: dict[str, str] = {}
+        for pair_key in report.pair_stability:
+            choices = [
+                item.chosen_id
+                for item in report.pairwise_results
+                if "|".join(sorted((item.left_id, item.right_id))) == pair_key
+            ]
+            majority[pair_key] = max(set(choices), key=choices.count)
+        pair_majorities.append(majority)
+
+    assert len(set(champions)) == 1
+    assert all(order == seed_orders[0] for order in seed_orders)
+    assert all(majority == pair_majorities[0] for majority in pair_majorities)

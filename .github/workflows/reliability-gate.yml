@@ -1,0 +1,102 @@
+name: Operational Reliability Gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reliability-gate:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m venv .venv
+        source .venv/bin/activate
+        pip install -U pip wheel
+        pip install -r requirements/core.txt || pip install -r requirements.txt
+        pip install -e ".[dev]"
+
+    - name: Phase 1 — Fault taxonomy integrity
+      run: |
+        source .venv/bin/activate
+        python -c "
+        from core.resilience.fault_taxonomy import get_fault_registry
+        reg = get_fault_registry()
+        defns = reg.all_definitions()
+        assert len(defns) >= 20, f'Expected >=20 fault definitions, got {len(defns)}'
+        for d in defns:
+            assert d.rpn > 0, f'{d.fault_id} has zero RPN'
+        print(f'✅ Fault taxonomy: {len(defns)} definitions, all valid')
+        "
+
+    - name: Phase 1 — FMEA coverage check
+      run: |
+        source .venv/bin/activate
+        python -c "
+        from core.resilience.fmea_registry import get_fmea_registry
+        fmea = get_fmea_registry()
+        summary = fmea.coverage_summary()
+        assert summary['coverage_pct'] >= 95, f'FMEA coverage {summary[\"coverage_pct\"]}% < 95%'
+        print(f'✅ FMEA coverage: {summary[\"coverage_pct\"]}% ({summary[\"mitigated\"]} mitigated)')
+        "
+
+    - name: Phase 5 — State machine verification
+      run: |
+        source .venv/bin/activate
+        python -c "
+        from core.resilience.verified_state_machine import (
+            create_component_health_machine,
+            create_boot_lifecycle_machine,
+            create_shutdown_lifecycle_machine,
+        )
+        for factory, name in [
+            (create_component_health_machine, 'component_health'),
+            (create_boot_lifecycle_machine, 'boot_lifecycle'),
+            (create_shutdown_lifecycle_machine, 'shutdown_lifecycle'),
+        ]:
+            sm = factory()
+            warnings = sm.verify()
+            print(f'✅ {name}: {len(sm.states)} states, {len(sm._transitions)} transitions, {len(warnings)} warnings')
+        "
+
+    - name: Phase 4 — SLO definitions check
+      run: |
+        source .venv/bin/activate
+        python -c "
+        from slo.slo_monitor import get_slo_monitor
+        mon = get_slo_monitor()
+        status = mon.status()
+        assert status['slo_count'] >= 25, f'Expected >=25 SLOs, got {status[\"slo_count\"]}'
+        print(f'✅ SLO monitor: {status[\"slo_count\"]} SLOs defined')
+        "
+
+    - name: Compile check
+      run: |
+        source .venv/bin/activate
+        python -m compileall -q core/resilience/ slo/ infrastructure/ tools/chaos/ core/observability/
+
+    - name: Reliability hardening test suite
+      run: |
+        source .venv/bin/activate
+        python -m pytest tests/test_reliability_hardening.py -q
+
+    - name: Existing quality gates
+      run: |
+        source .venv/bin/activate
+        make lint
+        make smoke

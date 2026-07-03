@@ -2213,3 +2213,41 @@ Tracker:
 - Final closeout evidence assembly closure: about 99%.
 - Expanded daily-runtime/product closure: about 93%.
 - Remaining total checkpoint groups: 1-2.
+
+## Checkpoint 2026-07-03-15: Reliability And Chrome/Kubernetes Maturity Gate
+
+Status: ready to commit.
+
+What changed:
+
+- Added a broad mixed-situation preference tournament fixture and stronger
+  repeat-run tests for subjective choice consistency, favorite retention,
+  pairwise rematches, transitivity, and presentation-order bias.
+- Added the reliability control plane: fault taxonomy, FMEA registry,
+  SLO monitor, design-by-contract tracker, verified state machines, TMR voter,
+  distributed tracing, diagnostics dashboard, canary controller, rollback
+  controller, chaos framework, runbooks, and GitHub reliability gate.
+- Connected live runtime events to the reliability layer: degradations,
+  Will decisions, and mind-tick metrics now feed fault/SLO/tracing surfaces.
+- Exposed `/api/diagnostics/reliability` as the local runtime inspection surface.
+
+Evidence:
+
+- `python -m pytest -q tests/test_reliability_hardening.py tests/test_subjective_choice_engine.py`
+  -> `80 passed`.
+- `python -m compileall -q core/resilience slo infrastructure tools/chaos core/observability core/agency/choice_game.py tests/test_reliability_hardening.py tests/test_subjective_choice_engine.py`
+  -> passed.
+- Focused `ruff --select F,E9` over the new/changed reliability and preference
+  files -> passed.
+- Direct diagnostics collection -> `overall_status=HEALTHY`, `6/6` subsystems
+  healthy.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=0`.
+
+Tracker:
+
+- Preference/choice proof closure: about 98%.
+- Local reliability-control closure: about 88%.
+- Chrome/Kubernetes-style operational maturity closure: about 60-65% locally.
+- Expanded daily-runtime/product closure: about 94-95%.
+- Remaining total checkpoint groups: 1-2.

@@ -66,6 +66,12 @@ class MetricsCollector:
         self._tick_count += 1
         self._tick_durations.append(duration_ms)
         self._last_tick_time = time.time()
+        # Reliability: feed tick duration into SLO monitor for live burn-rate tracking.
+        try:
+            from slo.slo_monitor import get_slo_monitor
+            get_slo_monitor().record("tick_duration_p95_ms", duration_ms)
+        except (ImportError, AttributeError, RuntimeError):
+            pass
 
     def record_will_decision(self, outcome: str) -> None:
         outcome_key = outcome.lower()

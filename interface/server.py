@@ -660,6 +660,16 @@ app.include_router(multimodal_routes.router, prefix="/api", tags=["multimodal"])
 app.include_router(performance_routes.router, prefix="/api", tags=["performance"])
 app.include_router(mission_control_routes.router, prefix="/api", tags=["mission_control"])
 
+# ── Reliability diagnostics ────────────────────────────────────────
+# Live at /api/diagnostics/reliability — exposes fault taxonomy, SLO burn
+# rates, FMEA coverage, contract violations, and tracing statistics.
+try:
+    from core.resilience.diagnostics_dashboard import create_diagnostics_router
+    app.include_router(create_diagnostics_router(), prefix="/api/diagnostics", tags=["reliability-diagnostics"])
+except (ImportError, RuntimeError) as _reliability_exc:
+    import logging as _logging
+    _logging.getLogger("Aura.Server").debug("Reliability diagnostics unavailable: %s", _reliability_exc)
+
 _system_collect_liquid_state_payload = system_routes._collect_liquid_state_payload
 
 
