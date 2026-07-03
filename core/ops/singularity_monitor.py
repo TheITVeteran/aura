@@ -2,9 +2,9 @@
 Tracks the rate of self-improvement and enables Accelerated Cognition.
 """
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 import logging
-import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 logger = logging.getLogger("Aura.Singularity")
 
@@ -23,8 +23,7 @@ class SingularityMonitor:
             # 1. Fetch Mirror Health
             metacognition = getattr(self.orchestrator, 'metacognition', None)
             if not metacognition and hasattr(self.orchestrator, 'container'):
-                 from core.container import ServiceContainer
-                 metacognition = ServiceContainer.get("metacognition", default=None)
+                 metacognition = get_runtime_service("metacognition", default=None)
             
             if metacognition and hasattr(metacognition, "mirror"):
                 summary = metacognition.mirror.get_audit_summary()

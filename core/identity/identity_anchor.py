@@ -1,8 +1,6 @@
 from core.runtime.errors import record_degradation
-import uuid
+from core.runtime.service_registry import get_runtime_service
 import logging
-from typing import Optional
-from core.container import ServiceContainer
 
 logger = logging.getLogger("Aura.IdentityAnchor")
 
@@ -26,7 +24,7 @@ class IdentityAnchor:
         
         # Try to resolve from state
         try:
-            repo = ServiceContainer.get("state_repo", default=None)
+            repo = get_runtime_service("state_repo", default=None)
             if repo and getattr(repo, "_current", None):
                 state = repo._current
                 # If IdentityKernel has no specific ID, use state_id as the anchor

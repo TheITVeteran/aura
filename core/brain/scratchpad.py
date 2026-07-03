@@ -3,12 +3,10 @@
 Provides a deliberate 'inner monologue' where Aura can plan, critique, 
 and refine her reasoning before generating a final response.
 """
-import asyncio
-import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from core.base_module import AuraBaseModule
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 
 class ScratchpadEngine(AuraBaseModule):
     """Engine for recursive 'System 2' thinking."""
@@ -29,7 +27,7 @@ class ScratchpadEngine(AuraBaseModule):
         @self.error_boundary
         async def _think_wrapped():
             if not self.cognitive_engine:
-                self.cognitive_engine = ServiceContainer.get("cognitive_engine", default=None)
+                self.cognitive_engine = get_runtime_service("cognitive_engine", default=None)
             
             if not self.cognitive_engine:
                 return "Cognitive engine unavailable for scratchpad."

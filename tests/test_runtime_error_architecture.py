@@ -726,3 +726,114 @@ def test_startup_boot_validator_uses_runtime_registry_presence():
     assert "core.container" not in source
     assert "ServiceContainer" not in source
     assert "core.runtime.service_registry" in source
+
+
+def test_small_runtime_service_batch_uses_registry():
+    import asyncio
+    import inspect
+    from types import SimpleNamespace
+
+    import core.affect.affect_facade as affect_facade
+    import core.agency.latent_distiller as latent_distiller
+    import core.brain.personality_bridge as personality_bridge
+    import core.brain.scratchpad as scratchpad
+    import core.identity.identity_anchor as identity_anchor
+    import core.ops.singularity_monitor as singularity_monitor
+    import core.resilience.hotfix_engine as hotfix_engine
+    from core.brain.types import ThinkingMode, Thought
+    from core.runtime.service_registry import install_service_resolver
+    from core.state.aura_state import AuraState
+
+    class AffectEngine:
+        def get_status(self):
+            return {
+                "mood": "steady",
+                "energy": 60,
+                "curiosity": 55,
+                "frustration": 0,
+                "stability": 100,
+                "valence": 0.2,
+                "arousal": 0.3,
+            }
+
+    class CognitiveEngine:
+        async def think(self, objective, **_kwargs):
+            return Thought(
+                id="registry-thought",
+                content=f"summary:{objective[:20]}",
+                mode=ThinkingMode.FAST,
+            )
+
+    class Memory:
+        def __init__(self):
+            self.records = []
+
+        async def store_memory(self, **kwargs):
+            self.records.append(kwargs)
+
+    class Repo:
+        def __init__(self):
+            self._current = AuraState.default()
+            self._current.identity.name = "Aura"
+            self._current.state_id = "abcdefgh1234"
+
+        async def get_current(self):
+            return self._current
+
+    class Mirror:
+        def get_audit_summary(self):
+            return {"health_score": 0.95}
+
+    class MetaCognition:
+        mirror = Mirror()
+
+    repo = Repo()
+    memory = Memory()
+    services = {
+        "affect_engine": AffectEngine(),
+        "cognitive_engine": CognitiveEngine(),
+        "state_repo": repo,
+        "state_repository": repo,
+        "metacognition": MetaCognition(),
+    }
+    install_service_resolver(lambda name, default=None: services.get(name, default))
+    try:
+        anchor = identity_anchor.IdentityAnchor()
+        assert anchor.get_identity() == "Aura-abcdefgh"
+
+        facade = affect_facade.AffectFacade()
+        assert facade.is_ready() is True
+        assert facade.get_status()["mood"] == "steady"
+
+        bridge = personality_bridge.PersonalityBridge()
+        assert asyncio.run(bridge.sync_embodiment(SimpleNamespace(model=None)))["damping_mult"] > 0
+
+        pad = scratchpad.ScratchpadEngine()
+        plan = asyncio.run(pad.think_recursive("plan carefully", {"history": []}, depth=0))
+        assert plan.startswith("[Plan] summary:")
+
+        monitor = singularity_monitor.SingularityMonitor(orchestrator=SimpleNamespace(container=True))
+        monitor.pulse()
+        assert monitor.is_accelerated is True
+        assert monitor.acceleration_factor == 1.5
+
+        distiller = latent_distiller.LatentSpaceDistiller(memory_provider=memory)
+        long_history = [{"content": "This session produced a useful design insight. " * 8}]
+        asyncio.run(distiller.distill_session(long_history))
+        assert memory.records
+        assert memory.records[0]["metadata"]["type"] == "distilled_wisdom"
+    finally:
+        install_service_resolver(None)
+
+    for module in (
+        identity_anchor,
+        affect_facade,
+        personality_bridge,
+        scratchpad,
+        singularity_monitor,
+        latent_distiller,
+        hotfix_engine,
+    ):
+        source = inspect.getsource(module)
+        assert "core.container" not in source
+        assert "ServiceContainer" not in source

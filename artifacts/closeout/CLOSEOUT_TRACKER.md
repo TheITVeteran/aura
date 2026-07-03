@@ -2611,3 +2611,42 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-25: Batched Runtime Service Lookup Decoupling
+
+Status: ready to commit.
+
+What changed:
+
+- Batched straightforward container lookups behind the runtime service registry
+  in identity anchor, affect facade, personality bridge, scratchpad,
+  singularity monitor, and latent distiller.
+- Removed an unused hotfix-engine global-container dependency and stale imports.
+- Added batch regression coverage for behavior and source ownership across the
+  converted modules.
+- Refreshed the architecture-quality baseline after the largest import SCC
+  dropped from `612` modules to `606` modules and dependency edges dropped from
+  `7512` to `7511`.
+- Kept the quality target general: reusable service ownership and dependency
+  hygiene, not aerospace-domain behavior.
+
+Evidence:
+
+- Runtime/architecture/audit/reliability focused tests -> `122 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=44.89`,
+  `largest_cycle_size=606`, `cycle_count=7`, `dependency_edges=7511`,
+  `module_count=2245`.
+- Remaining-checkpoint contract -> `gaps=0`,
+  `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check` -> passed.
+
+Tracker:
+
+- Architecture-regression-control closure: about 96%.
+- Existing architecture-debt reduction closure: about 45-50%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 70-75% locally.
+- Remaining total checkpoint groups: 3.

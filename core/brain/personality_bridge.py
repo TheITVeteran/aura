@@ -3,9 +3,8 @@ Links LLM-driven PsychState to MuJoCo Physical Dynamics.
 """
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 import logging
-import numpy as np
-from core.container import ServiceContainer
 from core.state.aura_state import AffectVector
 
 logger = logging.getLogger("Aura.PersonalityBridge")
@@ -53,7 +52,7 @@ class PersonalityBridge:
         Pull state from repository and apply to MuJoCo model data.
         """
         try:
-            repo = ServiceContainer.get("state_repository", default=None)
+            repo = get_runtime_service("state_repository", default=None)
             if not repo: return
             
             state = await repo.get_current()

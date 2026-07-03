@@ -10,12 +10,10 @@ insights, beliefs, and vector memories.
 """
 
 from core.runtime.errors import record_degradation
-import asyncio
-import json
+from core.runtime.service_registry import get_runtime_service
 import logging
 import time
-from typing import List, Dict, Any, Optional
-from pathlib import Path
+from typing import List, Dict, Any
 
 logger = logging.getLogger("Aura.LatentDistiller")
 
@@ -43,8 +41,7 @@ class LatentSpaceDistiller:
             summary = None
             if len(full_text) > 200:
                 try:
-                    from core.container import ServiceContainer
-                    brain = ServiceContainer.get("cognitive_engine", default=None)
+                    brain = get_runtime_service("cognitive_engine", default=None)
                     if brain and hasattr(brain, "think"):
                         summary = await brain.think(
                             f"Summarize the key insights and decisions from this conversation in 2-3 sentences:\n\n{full_text[:3000]}"

@@ -5,6 +5,7 @@ for use by the Orchestrator's boot sequence and coordinator layer.
 """
 import logging
 from typing import Any, Dict, Optional
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.AffectFacade")
 
@@ -25,8 +26,7 @@ class AffectFacade:
     @property
     def engine(self):
         if self._engine is None:
-            from core.container import ServiceContainer
-            self._engine = ServiceContainer.get("affect_engine", default=None)
+            self._engine = get_runtime_service("affect_engine", default=None)
         return self._engine
 
     # ── public API ─────────────────────────────────────────────────
