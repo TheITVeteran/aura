@@ -70,6 +70,23 @@ lint) and pushed to main.
 
 ## Phase 3 (in progress) — full-coverage sweep to closure
 
+### Phase 3 closure (July 2, 17:15 PDT)
+
+Final full-suite verification at the closing tree: **6/6 chunks, ~9,900
+tests, zero real failures** (one statistical order-dependence in the STDP
+external-validation test — fails under sibling RNG/state in-chunk, passes in
+isolation; auto-registered by the runner). All gates green: lint, typecheck,
+smoke, governance-lint, security (passed=true), enterprise ratchet (zero
+debt), production readiness. Evidence chains closed: CRSM→LoRA (real weight
+delta serving live), CAA extraction→geometry→behavioral A/B (passed=true,
+provenance-enforced). Every subsystem swept or adjudicated per the table
+below; consolidations and deferrals recorded.
+
+What lands only on the next Bryan-initiated restart: deep-narrative
+backpressure semantics, windowed integrity recovery, numeric-introspection
+grounding (verify with tools/report_mechanism_consistency_probe.py),
+abandonment soft-cancel, and the stable-identity signed app bundle.
+
 ### Sweep ledger
 
 | Area | Depth | Findings / actions |
