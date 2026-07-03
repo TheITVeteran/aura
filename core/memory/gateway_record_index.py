@@ -159,42 +159,30 @@ class GatewayRecordIndex:
     def _stale(self) -> bool:
         return (time.monotonic() - self._last_refresh) > self.REFRESH_INTERVAL_S
 
-    def _absorb_recent_writes(self) -> None:
-        """Bounded pickup of records written since the last refresh.
+    def _write_hint_due(self) -> bool:
+        """Cheap freshness hint: a handful of directory stats, nothing more.
 
-        Subdirectory mtimes change when records are added/removed, so a couple
-        of stats tell us whether anything new exists without walking the store.
+        The previous implementation globbed every *.json in any
+        recently-touched subdirectory ON THE CALLER THREAD — inside
+        Will.decide on the live event loop, that scan ran 5.8s under load
+        (stall dump 2026-07-03 00:51) and killed a user's chat turn.
+        Callers may only pay O(#subdirs) stat calls; all real filesystem
+        work belongs to the background refresher.
         """
         if not self._built:
-            return
+            return False
         now = time.monotonic()
         if (now - self._last_write_hint_scan) < self.WRITE_HINT_MIN_INTERVAL_S:
-            return
+            return False
         self._last_write_hint_scan = now
         try:
-            hinted: list[tuple[float, Path]] = []
             wall_last_refresh = time.time() - (time.monotonic() - self._last_refresh)
             for child in self.root.iterdir():
-                if not child.is_dir():
-                    continue
-                if self._stat_mtime(child) < wall_last_refresh - 1.0:
-                    continue
-                for record in child.glob("*.json"):
-                    mtime = self._stat_mtime(record)
-                    if mtime >= wall_last_refresh - 1.0 and str(record) not in self._entries:
-                        hinted.append((mtime, record))
-            if not hinted:
-                return
-            hinted.sort(reverse=True)
-            absorbed = dict(self._entries)
-            for mtime, path in hinted[: self.WRITE_HINT_MAX_FILES]:
-                entry = _parse_record(path, mtime)
-                if entry is not None:
-                    absorbed[str(path)] = entry
-            with self._swap_lock:
-                self._entries = absorbed
+                if child.is_dir() and self._stat_mtime(child) >= wall_last_refresh - 1.0:
+                    return True
         except OSError as exc:
-            logger.debug("Gateway record write-hint scan skipped: %s", exc)
+            logger.debug("Gateway record write-hint stat skipped: %s", exc)
+        return False
 
     # ── search ──────────────────────────────────────────────────────────
 
@@ -221,18 +209,6 @@ class GatewayRecordIndex:
             score += 0.25
         return min(1.0, score)
 
-    def _cold_scan_entries(self) -> list[GatewayRecordEntry]:
-        """Bounded direct scan for cold starts: newest files, strict budget."""
-        deadline = time.monotonic() + self.COLD_SCAN_BUDGET_S
-        entries: list[GatewayRecordEntry] = []
-        for mtime, path in self._list_record_files()[: self.COLD_SCAN_MAX_FILES]:
-            if time.monotonic() > deadline:
-                break
-            entry = _parse_record(path, mtime)
-            if entry is not None:
-                entries.append(entry)
-        return entries
-
     def search(self, query: str, limit: int = 5) -> list[tuple[float, GatewayRecordEntry]]:
         """Score records against the query; returns (score, entry) best-first.
 
@@ -246,13 +222,16 @@ class GatewayRecordIndex:
         terms = self.extract_terms(query_text)
 
         if self._built:
-            self._absorb_recent_writes()
-            if self._stale():
+            if self._stale() or self._write_hint_due():
                 self._kick_refresh()
             candidates = list(self._entries.values())
         else:
+            # Cold: serve empty and warm in the background. The old bounded
+            # cold scan still paid its listing cost (a stat per record file)
+            # on the caller thread; Will's memory check is advisory and must
+            # never buy freshness with event-loop time.
             self._kick_refresh()
-            candidates = self._cold_scan_entries()
+            candidates = []
 
         scored: list[tuple[float, float, GatewayRecordEntry]] = []
         for entry in candidates:

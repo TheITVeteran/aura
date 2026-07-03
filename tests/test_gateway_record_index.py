@@ -43,7 +43,13 @@ def _wait_until_built(index: GatewayRecordIndex, timeout_s: float = 5.0) -> None
     assert index._built, "background index build did not complete"
 
 
-def test_cold_search_returns_bounded_results_and_kicks_background_build(tmp_path):
+def test_cold_search_serves_empty_instantly_and_warms_in_background(tmp_path):
+    """Cold searches must cost the caller ZERO filesystem work.
+
+    The old bounded cold scan still paid a stat per record file on the
+    caller thread — inside Will.decide on the live event loop that scan
+    ran 5.8s under load and killed a chat turn (stall dump 2026-07-03).
+    """
     for i in range(10):
         _write_record(tmp_path, f"rec{i}", f"note number {i} about voltage plasticity")
     index = GatewayRecordIndex(tmp_path)
@@ -52,9 +58,11 @@ def test_cold_search_returns_bounded_results_and_kicks_background_build(tmp_path
     results = index.search("voltage plasticity", limit=3)
     elapsed = time.monotonic() - t0
 
-    assert results, "cold search should still return best-effort matches"
-    assert elapsed < 1.0, f"cold search must stay bounded, took {elapsed:.2f}s"
+    assert results == [], "cold search serves empty; freshness never costs loop time"
+    assert elapsed < 0.05, f"cold search must be near-instant, took {elapsed:.3f}s"
     _wait_until_built(index)
+    warm = index.search("voltage plasticity", limit=3)
+    assert warm, "background build must make records searchable"
 
 
 def test_warm_search_uses_index_without_reparsing(tmp_path, monkeypatch):
@@ -85,9 +93,18 @@ def test_fresh_write_is_visible_before_next_full_refresh(tmp_path):
     _wait_until_built(index)
 
     _write_record(tmp_path, "new", "brand new fact about the lighthouse keeper")
-    results = index.search("lighthouse keeper", limit=2)
+    index.WRITE_HINT_MIN_INTERVAL_S = 0.0  # allow an immediate hint kick
+    index._last_write_hint_scan = 0.0
 
-    assert results, "a just-written record must be recallable immediately"
+    deadline = time.monotonic() + 5.0
+    results = []
+    while time.monotonic() < deadline:
+        results = index.search("lighthouse keeper", limit=2)
+        if results:
+            break
+        time.sleep(0.05)
+
+    assert results, "a just-written record must become recallable within seconds"
     assert "lighthouse" in results[0][1].content
 
 
@@ -124,6 +141,12 @@ def test_facade_search_sync_routes_through_index(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "_INDEX", None)
 
     facade = MemoryFacade()
+    # Warm the index first: cold searches intentionally serve empty.
+    from core.memory.gateway_record_index import get_gateway_record_index
+
+    shared_index = get_gateway_record_index(tmp_path)
+    shared_index.search("warmup", limit=1)  # kick the background build
+    _wait_until_built(shared_index)
     results = facade._search_gateway_records_sync("crsm delta fused", limit=3)
     assert results
     assert "crsm delta" in results[0]["content"]
