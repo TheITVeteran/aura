@@ -245,19 +245,18 @@ def _read_compute_pressure_reason() -> str:
         pass
 
     try:
-        sensors = getattr(psutil, "sensors_temperatures", None)
-        if callable(sensors):
-            temps = sensors() or {}
-            max_temp_c = _env_float("AURA_BACKGROUND_MAX_TEMP_C", 78.0)
-            for entries in temps.values():
-                for entry in list(entries or []):
-                    current = getattr(entry, "current", None)
-                    if current is None:
-                        continue
-                    temp_c = float(current)
-                    if temp_c >= max_temp_c:
-                        return f"thermal_pressure_{temp_c:.1f}"
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        # psutil.sensors_temperatures does not exist on macOS — the primary
+        # deployment host — so the old gate here was a silent no-op while
+        # sustained background load cooked the machine. core.runtime.thermal
+        # reads NSProcessInfo.thermalState (canonical, no sudo) with pmset
+        # and psutil fallbacks for other platforms.
+        from core.runtime.thermal import thermal_state
+
+        reading = thermal_state()
+        max_level = int(_env_float("AURA_BACKGROUND_MAX_THERMAL_LEVEL", 2.0))
+        if reading.level >= max_level:
+            return f"thermal_pressure_level_{reading.level}_{reading.source}"
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
         pass
 
     return ""
