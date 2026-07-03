@@ -2251,3 +2251,42 @@ Tracker:
 - Chrome/Kubernetes-style operational maturity closure: about 60-65% locally.
 - Expanded daily-runtime/product closure: about 94-95%.
 - Remaining total checkpoint groups: 1-2.
+
+## Checkpoint 2026-07-03-16: Architecture Quality Regression Gate
+
+Status: ready to commit.
+
+What changed:
+
+- Added `core/architecture_quality` with AST-based dependency scoring, cycle
+  detection, oversized-module tracking, fanout/concentration metrics, and
+  before/after regression comparison.
+- Added `tools/closeout/architecture_quality_gate.py` and a checked-in baseline
+  at `config/aura_architecture_quality_baseline.json`.
+- Wired the architecture gate into the GitHub reliability workflow.
+- Wired the same gate into the self-modification promotion path so candidate
+  repair bytes are checked before they can promote into live source.
+- Kept the quality target general-purpose: no aerospace-specific behavior or
+  terminology remains in the source/control paths touched by the reliability
+  pass.
+
+Evidence:
+
+- `python -m pytest -q tests/test_architecture_quality_gate.py`
+  -> `6 passed`.
+- Focused `ruff --select F,E9` over the architecture gate, tool, tests, and
+  self-modification hook -> passed.
+- Focused `compileall` over the architecture gate, tool, tests, and
+  self-modification hook -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=46.2`,
+  `cycle_count=5`, `dependency_edges=7512`, `god_file_count=37`.
+- Remaining-checkpoint contract -> `gaps=0`.
+- `git diff --check` -> passed.
+
+Tracker:
+
+- Architecture-regression-control closure: about 90%.
+- Local reliability-control closure: about 90%.
+- Chrome/Kubernetes-style operational maturity closure: about 65-70% locally.
+- Expanded daily-runtime/product closure: about 95%.
+- Remaining total checkpoint groups: 1-2.

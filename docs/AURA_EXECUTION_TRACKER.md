@@ -4826,3 +4826,59 @@ Estimate:
   compatibility data, and production telemetry volume.
 - Remaining total checkpoint groups: 1-2, centered on long-run soak,
   architecture-quality regression gating, and any new live desktop findings.
+
+## Checkpoint 2026-07-03-16: Architecture Quality Regression Gate
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Added a deterministic architecture-quality scorer for Python source roots.
+  It builds a project-local import graph from AST imports, detects import
+  cycles, tracks dependency fanout/concentration, counts oversized modules,
+  and produces a stable score plus concrete findings.
+- Added a regression gate that compares baseline/current or before/after
+  candidate overlays. The gate rejects new import cycles, oversized-module
+  creep, large-file growth, excessive dependency-edge growth, and score drops.
+- Wired the gate into `SafeSelfModification` after quarantined bytes pass the
+  canonical promotion harness and before live source promotion. Aura's repair
+  loop now blocks patches that solve a local issue by worsening structural
+  coupling.
+- Added `tools/closeout/architecture_quality_gate.py` and
+  `config/aura_architecture_quality_baseline.json`, then wired the check into
+  the GitHub reliability workflow.
+- Generalized the prior quality-standard language: this is a product/reliability
+  maturity gate for any subsystem, not an aerospace-specific feature.
+
+Evidence:
+
+- `python -m pytest -q tests/test_architecture_quality_gate.py`
+  -> `6 passed`.
+- `python -m ruff check --select F,E9 core/architecture_quality tools/closeout/architecture_quality_gate.py tests/test_architecture_quality_gate.py core/self_modification/safe_modification.py`
+  -> passed.
+- `python -m compileall -q core/architecture_quality tools/closeout/architecture_quality_gate.py tests/test_architecture_quality_gate.py core/self_modification/safe_modification.py`
+  -> passed.
+- `python tools/closeout/architecture_quality_gate.py --root . --baseline config/aura_architecture_quality_baseline.json --json`
+  -> `passed=true`, `score=46.2`, `cycle_count=5`,
+  `dependency_edges=7512`, `god_file_count=37`, `module_count=2244`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=0`, `requirements=7`.
+- `git diff --check`
+  -> passed.
+
+Boundary:
+
+- The current baseline explicitly records existing architecture debt: large
+  cycle groups, oversized modules, and dependency concentration remain. The
+  improvement here is that those issues are now measurable and future changes
+  cannot quietly make them worse through CI or autonomous source promotion.
+
+Estimate:
+
+- Architecture-regression-control closure: about 90%.
+- Local reliability-control closure: about 90%.
+- Chrome/Kubernetes-style operational maturity closure: about 65-70% locally.
+- Expanded daily-runtime/product closure: about 95%.
+- Remaining total checkpoint groups: 1-2, centered on reducing existing
+  architecture debt rather than only ratcheting it, plus any live desktop
+  findings that appear during real runtime use.

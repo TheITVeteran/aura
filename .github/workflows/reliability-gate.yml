@@ -90,6 +90,14 @@ jobs:
         source .venv/bin/activate
         python -m compileall -q core/resilience/ slo/ infrastructure/ tools/chaos/ core/observability/
 
+    - name: Architecture quality regression gate
+      run: |
+        source .venv/bin/activate
+        python tools/closeout/architecture_quality_gate.py \
+          --root . \
+          --baseline config/aura_architecture_quality_baseline.json \
+          --json
+
     - name: Reliability hardening test suite
       run: |
         source .venv/bin/activate

@@ -902,7 +902,21 @@ class SafeSelfModification:
                 await self.git.delete_branch(branch_name)
             return False, f"Safe modification harness failed: {harness_msg}"
 
-        # Stage 4b: Parse the remaining repository Python tree. The exact
+        # Stage 4b: Architecture-quality regression gate. Aura's repair loop
+        # must not solve one local bug by creating new cycles, oversized-module
+        # creep, or broad dependency fanout in the surrounding system.
+        architecture_passed, architecture_msg = await self._run_architecture_quality_gate(
+            target_rel,
+            staged_content,
+        )
+        if not architecture_passed:
+            logger.error("✗ Stage 4b: Architecture quality gate failed: %s", architecture_msg)
+            if branch_created:
+                await self.git.checkout_main()
+                await self.git.delete_branch(branch_name)
+            return False, f"Architecture quality gate failed: {architecture_msg}"
+
+        # Stage 4c: Parse the remaining repository Python tree. The exact
         # candidate bytes and related tests already ran in the isolated
         # promotion harness above; this catches unrelated syntax damage
         # without pretending to be a second behavioral test suite.
@@ -1014,6 +1028,31 @@ class SafeSelfModification:
         if result.passed:
             return True, result.summary()
         return False, "; ".join(result.errors) or result.summary()
+
+    async def _run_architecture_quality_gate(
+        self,
+        target_rel: str,
+        staged_content: str,
+    ) -> tuple[bool, str]:
+        """Reject repair patches that regress architecture quality."""
+        if not target_rel.endswith(".py"):
+            return True, "architecture quality gate skipped for non-Python target"
+        try:
+            from core.architecture_quality.gate import ArchitectureQualityGate
+
+            result = await asyncio.to_thread(
+                lambda: ArchitectureQualityGate(self.code_base).evaluate_overlay(
+                    {target_rel: staged_content},
+                    changed_paths=(target_rel,),
+                )
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("safe_modification.architecture_quality", exc)
+            return False, f"architecture quality gate unavailable: {exc}"
+
+        if result.passed:
+            return True, result.summary()
+        return False, "; ".join(result.reasons)
 
     async def _apply_code_change(self, fix) -> bool:
         """Actually modify the file using robust line-based patching (Async)."""
