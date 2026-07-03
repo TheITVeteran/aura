@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from core.runtime.skill_task_bridge import (
     looks_like_execution_report,
     looks_like_explanatory_dialogue_request,
+    looks_like_inline_answer_request,
     looks_like_multi_step_skill_request,
     normalize_matched_skills,
 )
@@ -271,15 +272,22 @@ def analyze_turn(text: str, *, matched_skills: bool | list[str] = False) -> Turn
         intent_type = "CHAT"
     elif looks_like_explanatory_dialogue_request(normalized):
         intent_type = "CHAT"
+    elif requires_live_voice and looks_like_inline_answer_request(normalized):
+        # State/stance/identity turns want Aura's live voice in this
+        # reply — never a skill run or a background-task receipt.
+        intent_type = "CHAT"
     elif looks_like_multi_step_skill_request(normalized, matched_skill_list):
         intent_type = "TASK"
     elif has_matched_skills or _matches_any(lower, _SKILL_PATTERNS):
         intent_type = "SKILL"
-    elif _matches_any(lower, _TASK_PATTERNS) or (
-        word_count > 14
-        and not normalized.endswith("?")
-        and normalized[:12].lower().startswith(("create ", "build ", "write ", "implement ", "design "))
-    ):
+    elif (
+        _matches_any(lower, _TASK_PATTERNS)
+        or (
+            word_count > 14
+            and not normalized.endswith("?")
+            and normalized[:12].lower().startswith(("create ", "build ", "write ", "implement ", "design "))
+        )
+    ) and not looks_like_inline_answer_request(normalized):
         intent_type = "TASK"
     else:
         intent_type = "CHAT"

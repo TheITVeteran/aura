@@ -21,6 +21,7 @@ from core.runtime.desktop_objective_intent import looks_like_desktop_objective
 from core.runtime.errors import record_degradation
 from core.runtime.skill_task_bridge import (
     looks_like_explanatory_dialogue_request,
+    looks_like_inline_answer_request,
     looks_like_multi_step_skill_request,
     normalize_matched_skills,
 )
@@ -1193,10 +1194,15 @@ class GodModeToolPhase(Phase):
                 "desktop_task chokepoint owns execution."
             )
             return state
-        if intent_type == "TASK" and _looks_like_simple_dialogue_request(objective):
+        if intent_type == "TASK" and (
+            _looks_like_simple_dialogue_request(objective)
+            or looks_like_inline_answer_request(canonical_turn_text(objective) or objective)
+        ):
+            # Backstop for every upstream TASK setter: a question wants its
+            # answer in this reply, not a task-ledger receipt (observed live).
             state.response_modifiers["intent_type"] = "CHAT"
             state.response_modifiers.pop("matched_skills", None)
-            logger.info("⚡ GodMode: simple dialogue request kept out of TaskEngine.")
+            logger.info("⚡ GodMode: inline-answer request kept out of TaskEngine.")
             return state
 
         cap = self._get_cap_engine()

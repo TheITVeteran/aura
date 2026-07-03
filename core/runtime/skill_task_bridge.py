@@ -57,7 +57,10 @@ _CHAIN_PATTERNS = (
 
 _REPORT_PATTERNS = (
     r"\bcome back\b",
-    r"\breport\b",
+    # "report back"-style chain markers only. A bare \breport\b hijacked
+    # "Report your current valence…" into the TaskEngine (observed live).
+    r"\breport\s+back\b",
+    r"\breport\b[^.?!\n]{0,40}\b(?:what happened|results?|findings|outcome)\b",
     r"\btell me what happened\b",
     r"\blet me know\b",
     r"\bshow me\b",
@@ -147,6 +150,45 @@ _CAPABILITY_INVENTORY_RE = re.compile(
     r"\b(?:tools?|skills?|capabilit(?:y|ies)|external(?:ly)?|desktop|computer|browser|files?|apps?|notes?|pdf|search|web|terminal)\b",
     re.IGNORECASE,
 )
+# Explicit reply contracts: the user is telling us where the answer goes.
+_INLINE_REPLY_CONTRACT_RE = re.compile(
+    r"\bnot as a (?:background )?task\b|"
+    r"\bwithout (?:starting|creating|filing|opening|spawning) a task\b|"
+    r"\bdon'?t (?:start|create|file|open|spawn) a (?:background )?task\b|"
+    r"\bin this (?:very )?reply\b|"
+    r"\bin your (?:next )?reply\b|"
+    r"\banswer(?:ed)?(?:\s+\S+){0,2}\s+right here\b",
+    re.IGNORECASE,
+)
+
+# First-person state check-ins — these want Aura's live voice, never a ticket.
+_INTROSPECTIVE_STATE_RE = re.compile(
+    r"\bvalence\b|\barousal\b|"
+    r"\byour (?:internal|current|felt|emotional|affective) state\b|"
+    r"\bfrom your state\b|"
+    r"\bhow (?:are you|do you) feel(?:ing)?\b|"
+    r"\byour mood\b|"
+    r"\bthe two numbers\b|"
+    r"\bfelt[- ]sense\b",
+    re.IGNORECASE,
+)
+
+# An action verb aimed at something outside the reply (files, apps, web,
+# desktop). Presence of one means the turn genuinely wants execution.
+_EXTERNAL_EFFECT_RE = re.compile(
+    r"\b(?:open|launch|run|execute|install|download|save|create|build|make|"
+    r"write|draft|generate|compose|organize|automate|set\s+up|fix|refactor|"
+    r"rename|move|delete|remove|clean\s+up|sort|schedule|send|email|browse|"
+    r"navigate|visit|click|type|edit|update|research)\b"
+    r"[^.?!\n]{0,50}?"
+    r"\b(?:files?|folders?|director(?:y|ies)|apps?|applications?|scripts?|"
+    r"notes?|documents?|docs?|repos?|repositor(?:y|ies)|projects?|"
+    r"screenshots?|downloads?|desktop|computer|browsers?|tabs?|windows?|"
+    r"emails?|calendar|terminal|websites?|pages?|urls?|spreadsheets?|"
+    r"presentations?|reminders?)\b",
+    re.IGNORECASE,
+)
+
 _NEGATED_ACTION_SPAN_RE = re.compile(
     r"\b(?:do\s+not|don't|dont|never|without|no)\b"
     r"(?:\s+[a-z0-9_'/-]+){0,10}\s+"
@@ -250,6 +292,36 @@ def looks_like_explanatory_dialogue_request(text: str) -> bool:
     return False
 
 
+def looks_like_inline_answer_request(text: str) -> bool:
+    """True when the turn's deliverable is words in the current reply.
+
+    A question — a math problem, a feeling check-in, a "what do you
+    think" — wants an answer here and now. Routing such a turn into the
+    background TaskEngine answers a question with a ticket receipt
+    (observed live, July 2026: a numeric introspection check-in and a
+    train catch-up problem both got "Task accepted into governed
+    background execution"). A demand for external effects — files, apps,
+    web, desktop — is never inline; an explicit reply contract like
+    "not as a task" always is.
+    """
+    normalized = normalize_memory_intent_text(text)
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if _INLINE_REPLY_CONTRACT_RE.search(lowered):
+        return True
+    sanitized = strip_negated_action_spans(normalized).lower()
+    if (
+        _EXTERNAL_EFFECT_RE.search(sanitized)
+        or _DIRECT_EXECUTION_PREFIX_RE.search(sanitized)
+        or any(re.search(pattern, sanitized, re.IGNORECASE) for pattern in _DESKTOP_PATTERNS)
+    ):
+        return False
+    if _INTROSPECTIVE_STATE_RE.search(lowered):
+        return True
+    return "?" in lowered and bool(_QUESTION_WORD_RE.search(lowered))
+
+
 def looks_like_multi_step_skill_request(
     text: str,
     matched_skills: object = None,
@@ -260,6 +332,8 @@ def looks_like_multi_step_skill_request(
     if looks_like_execution_report(normalized):
         return False
     if looks_like_explanatory_dialogue_request(normalized):
+        return False
+    if looks_like_inline_answer_request(normalized):
         return False
 
     lowered = strip_negated_action_spans(normalized).lower()
