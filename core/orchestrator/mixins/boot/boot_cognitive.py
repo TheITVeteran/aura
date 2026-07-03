@@ -572,6 +572,15 @@ class BootCognitiveMixin:
             ServiceContainer.register_instance("consciousness_integration", integration)
             logger.info("🌟 Layer 8: Phenomenological Experiencer active")
 
+            from core.initializers.self_knowing import initialize_self_knowing
+
+            self_knowing = initialize_self_knowing(self)
+            if self_knowing:
+                logger.info(
+                    "✓ Self-knowing bridges registered (%s)",
+                    ", ".join(sorted(self_knowing.keys())),
+                )
+
         except (ImportError, AttributeError, RuntimeError) as e:
             _record_boot_cognitive_degradation(
                 e,

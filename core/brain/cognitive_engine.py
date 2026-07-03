@@ -134,6 +134,21 @@ def _live_mind_generation_controls(live_mind_context: Any) -> dict[str, Any]:
     pain = _nested_float(snapshot, ("nociception", "nociceptive_pressure"), 0.0)
     integration = _nested_float(snapshot, ("phenomenal_engine", "integration"), 0.0)
     self_presence = _nested_float(snapshot, ("phenomenal_engine", "self_presence"), 0.5)
+    self_knowing_pressure = _nested_float(
+        snapshot,
+        ("automatic_self_knowing", "controls", "self_knowing_pressure"),
+        0.0,
+    )
+    second_order_strength = _nested_float(
+        snapshot,
+        ("recursive_self_knowing", "latest", "second_order_strength"),
+        0.0,
+    )
+    phenomenal_knowing = _nested_float(
+        snapshot,
+        ("phenomenal_knowing", "controls", "phenomenal_knowing"),
+        0.0,
+    )
     expectation_error = _nested_float(
         snapshot, ("outcome_ledger", "expectation_calibration"), 0.0
     )
@@ -166,6 +181,11 @@ def _live_mind_generation_controls(live_mind_context: Any) -> dict[str, Any]:
         recurrent_loops = 2
     if curiosity >= 0.65 and distress < 0.20:
         recurrent_loops = 2
+    if self_knowing_pressure >= 0.50 or phenomenal_knowing >= 0.60:
+        recurrent_loops = max(recurrent_loops, 2)
+        steering_alpha += 0.04
+    if second_order_strength >= 0.75:
+        temperature -= 0.02
 
     return {
         "temperature": round(max(0.22, min(0.82, temperature)), 4),
@@ -1946,6 +1966,10 @@ class CognitiveEngine:
             or context.get("grounded_runtime_status_contract", False)
         )
         capability_inventory_contract = bool(context.get("capability_inventory_contract", False))
+        identity_continuity_contract = bool(
+            context.get("identity_continuity_contract", False)
+            or context.get("grounded_identity_continuity_context")
+        )
         prompt_shape = context.get("prompt_shape")
         if not isinstance(prompt_shape, dict):
             prompt_shape = {}
@@ -2084,6 +2108,33 @@ class CognitiveEngine:
                         "live_mind_controls_worker_applied": bool(live_mind_controls_bound),
                         "response_path": "cognitive_engine_capability_catalog_grounding",
                     },
+                )
+        if identity_continuity_contract:
+            grounded_identity = str(
+                context.get("grounded_identity_continuity_context") or ""
+            ).strip()
+            if grounded_identity:
+                metadata = self._live_mind_structured_floor_metadata(
+                    context,
+                    source="cognitive_engine_identity_continuity_grounding",
+                )
+                metadata.update(
+                    {
+                        "response_path": "cognitive_engine_identity_continuity_grounding",
+                        "identity_continuity_contract": True,
+                        "grounded_identity_continuity": True,
+                    }
+                )
+                return Thought(
+                    id=str(uuid.uuid4()),
+                    content=grounded_identity,
+                    mode=mode,
+                    confidence=0.88,
+                    reasoning=[
+                        "Identity and continuity were answered from canonical live identity grounding inside CognitiveEngine.",
+                        "The route had already bound live mind context and generation controls, so no recovery model cycle was needed.",
+                    ],
+                    metadata=metadata,
                 )
         live_runtime_required = bool(
             context.get("live_runtime_payload_required", False)

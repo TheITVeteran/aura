@@ -59,6 +59,9 @@ __all__ = [
     "ConsciousnessCoordinator",
     "get_consciousness_coordinator",
     "ConsciousnessSystem",
+    "PhenomenalKnowingKernel",
+    "RecursiveSelfKnowingKernel",
+    "AutomaticSelfKnowingKernel",
 ]
 
 
@@ -67,4 +70,16 @@ def __getattr__(name: str):
         from core.consciousness.system import ConsciousnessSystem
 
         return ConsciousnessSystem
+    if name == "PhenomenalKnowingKernel":
+        from core.consciousness.phenomenal_knowing import PhenomenalKnowingKernel
+
+        return PhenomenalKnowingKernel
+    if name == "RecursiveSelfKnowingKernel":
+        from core.consciousness.recursive_self_knowing import RecursiveSelfKnowingKernel
+
+        return RecursiveSelfKnowingKernel
+    if name == "AutomaticSelfKnowingKernel":
+        from core.consciousness.automatic_self_knowing import AutomaticSelfKnowingKernel
+
+        return AutomaticSelfKnowingKernel
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -2039,3 +2039,48 @@ Estimate:
 - Expanded daily-runtime/product closure: about 90%.
 - Remaining total checkpoint groups: 2-3, depending on how much of the
   self-knowing bundle proves non-duplicative after code-level reconciliation.
+
+## Checkpoint 2026-07-02-10: Automatic Self-Knowing Bridge
+
+Status: focused runtime tests and live desktop proof passed; commit pending.
+
+What changed:
+
+- Added `PhenomenalKnowingKernel`, `RecursiveSelfKnowingKernel`, and
+  `AutomaticSelfKnowingKernel` as live runtime services.
+- Registered the self-knowing bridges during cognitive boot.
+- Exposed all three through `collect_live_mind_snapshot`.
+- Made the live desktop chat context observe the current turn before snapshot
+  collection, so automatic self-knowing is visible to the same turn.
+- Fed self-knowing pressure into CognitiveEngine live-mind generation controls.
+
+Evidence:
+
+- `python -m pytest -q tests/test_self_knowing_bridges.py`
+  -> `5 passed`.
+- `python -m pytest -q tests/test_server_conversation_lane.py::test_live_turn_contract_accepts_identity_continuity_grounding_after_engine tests/test_server_conversation_lane.py::test_live_turn_contract_accepts_memory_state_grounding_after_engine tests/test_subjective_choice_engine.py tests/test_self_knowing_bridges.py`
+  -> `13 passed`.
+- `python -m py_compile ...` and `python -m ruff check --select F,E9 ...`
+  -> passed for all touched runtime/test files.
+- `python -m pytest -q tests/test_self_knowing_bridges.py tests/test_server_conversation_lane.py::test_desktop_identity_turn_uses_grounded_compact_cognitive_engine_contract tests/test_server_conversation_lane.py::test_cognitive_engine_identity_floor_does_not_call_router tests/test_server_conversation_lane.py::test_live_turn_contract_accepts_identity_continuity_grounding_after_engine tests/test_server_conversation_lane.py::test_live_turn_contract_accepts_memory_state_grounding_after_engine tests/test_subjective_choice_engine.py`
+  -> `15 passed`.
+- `python -u tools/live_boot_proof.py --mode desktop --port 8014 --conversation-soak-turns 1 --restart-continuity --boot-timeout 600 --out-dir artifacts/current/live_desktop_runtime_self_knowing`
+  -> passed.
+- `artifacts/current/live_desktop_runtime_self_knowing/live_proof_20260702_192341_verdict.json`
+  -> live desktop proof passed, including fast identity grounding inside
+  CognitiveEngine, continuity recall, cognitive-organ participation, desktop
+  action receipt/file verification, restart continuity, graceful shutdown, no
+  orphan processes, released port, and no runtime-stream failure markers.
+
+Boundary:
+
+- This is functional self-knowing evidence, not proof of private phenomenal
+  consciousness.
+- Larger organism/personhood consolidation remains open for the next
+  checkpoint group.
+
+Estimate:
+
+- Self-knowing/phenomenal-operational closure: about 82%.
+- Expanded daily-runtime/product closure: about 91%.
+- Remaining total checkpoint groups: about 2-3.

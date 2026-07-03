@@ -33,6 +33,9 @@ _SERVICE_NAMES = (
     "scientific_engine",
     "unified_world_model",
     "phenomenal_engine",
+    "phenomenal_knowing",
+    "recursive_self_knowing",
+    "automatic_self_knowing",
     "screen_perception",
     "perceptual_pump",
 )
@@ -165,6 +168,9 @@ def collect_live_mind_snapshot(*, lane: dict[str, Any] | None = None) -> dict[st
     snapshot["scientific_engine"] = _compact(_call(services["scientific_engine"], "stats"))
     snapshot["world_model"] = _compact(_call(services["unified_world_model"], "status"))
     snapshot["phenomenal_engine"] = _compact(_phenomenal_state(services["phenomenal_engine"]))
+    snapshot["phenomenal_knowing"] = _compact(_call(services["phenomenal_knowing"], "snapshot"))
+    snapshot["recursive_self_knowing"] = _compact(_call(services["recursive_self_knowing"], "snapshot"))
+    snapshot["automatic_self_knowing"] = _compact(_call(services["automatic_self_knowing"], "snapshot"))
     snapshot["screen_perception"] = _compact(_call(services["screen_perception"], "get_status"))
     snapshot["perceptual_pump"] = _compact(_call(services["perceptual_pump"], "get_status"))
     snapshot["frontmost_app_fast"] = _frontmost_app_fast()

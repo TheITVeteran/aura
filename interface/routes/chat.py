@@ -3227,10 +3227,13 @@ def _is_compact_desktop_chat_contract(
     *,
     desktop_execution_contract: bool,
     capability_inventory_contract: bool,
+    identity_continuity_contract: bool = False,
 ) -> bool:
     if desktop_execution_contract:
         return False
     if capability_inventory_contract:
+        return True
+    if identity_continuity_contract:
         return True
     shape = analyze_prompt_shape(user_message)
     text = _normalize_user_message(user_message)
@@ -3563,6 +3566,9 @@ def _assess_live_mind_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any
             "scientific_engine",
             "world_model",
             "phenomenal_engine",
+            "phenomenal_knowing",
+            "recursive_self_knowing",
+            "automatic_self_knowing",
         )
         if bool(snapshot.get(name))
     ]
@@ -3859,6 +3865,33 @@ def _build_live_mind_context_payload(
         record_degradation("chat", exc)
         logger.debug("Live mind context substrate snapshot unavailable: %s", exc)
 
+    automatic_self_knowing: dict[str, Any] = {}
+    try:
+        from core.consciousness.automatic_self_knowing import AutoEventKind
+
+        ask = ServiceContainer.get("automatic_self_knowing", default=None)
+        if ask is not None:
+            frame = ask.observe_event(
+                AutoEventKind.CHAT_TURN,
+                {
+                    "message": _bounded_text(user_message, 600),
+                    "claim": "live desktop chat turn entered full-mind context",
+                    "confidence": 0.64,
+                    "evidence": (
+                        "live_mind_context_build",
+                        f"required_engine={bool(require_engine)}",
+                    ),
+                },
+                source="interface.routes.chat",
+            )
+            automatic_self_knowing = {
+                "frame": frame.as_dict() if hasattr(frame, "as_dict") else {},
+                "controls": ask.controls() if hasattr(ask, "controls") else {},
+            }
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Live mind context automatic self-knowing unavailable: %s", exc)
+
     mind_snapshot: dict[str, Any] = {}
     try:
         from core.runtime.live_mind_snapshot import collect_live_mind_snapshot
@@ -3912,6 +3945,7 @@ def _build_live_mind_context_payload(
         "mind_snapshot_quality": mind_snapshot_quality,
         "derived_runtime_context": derived_runtime_context,
         "timescale_reconciliation": timescale_reconciliation,
+        "automatic_self_knowing": automatic_self_knowing,
         "governance": {
             "tool_governance_available": bool(required.get("tool_governance")),
             "legacy_fallback_allowed": False,
@@ -4519,6 +4553,13 @@ async def _run_cognitive_engine_chat_turn(
     private_cognitive_model_contract = bool(
         require_engine and _is_private_cognitive_model_request(visible)
     )
+    identity_continuity_contract = bool(
+        require_engine
+        and (
+            _is_identity_request(visible)
+            or _identity_request_asks_future_memory(visible)
+        )
+    )
     runtime_fact_status_contract = _is_runtime_fact_status_request(visible)
     grounded_runtime_status_context = (
         _ground_runtime_fact_status_reply(
@@ -4570,6 +4611,7 @@ async def _run_cognitive_engine_chat_turn(
         effective_user_message,
         desktop_execution_contract=desktop_execution_contract,
         capability_inventory_contract=capability_inventory_contract,
+        identity_continuity_contract=identity_continuity_contract,
     )
     # Required live desktop turns must exercise CognitiveEngine, but they do not
     # all need the heavyweight phase stack. Simple conversation uses the compact
@@ -4638,6 +4680,7 @@ async def _run_cognitive_engine_chat_turn(
         "bounded_planning_reply": bounded_planning_reply or "",
         "failure_mode_contract": failure_mode_contract,
         "private_cognitive_model_contract": private_cognitive_model_contract,
+        "identity_continuity_contract": identity_continuity_contract,
         "runtime_fact_status_contract": runtime_fact_status_contract,
         "grounded_runtime_status_contract": runtime_fact_status_contract,
         "grounded_runtime_status_context": grounded_runtime_status_context,
@@ -4674,6 +4717,10 @@ async def _run_cognitive_engine_chat_turn(
         context["grounded_private_model_context"] = (
             _build_grounded_introspection_reply(visible) or ""
         )[:4000]
+    if identity_continuity_contract:
+        context["grounded_identity_continuity_context"] = (
+            _build_identity_reply(visible) or ""
+        )[:3000]
     if capability_inventory_contract:
         context["grounded_capability_inventory_context"] = (
             _build_grounded_capability_inventory_reply(visible) or ""
@@ -4736,6 +4783,7 @@ async def _run_cognitive_engine_chat_turn(
                 "bounded_planning_contract": bounded_planning_contract,
                 "failure_mode_contract": failure_mode_contract,
                 "private_cognitive_model_contract": private_cognitive_model_contract,
+                "identity_continuity_contract": identity_continuity_contract,
                 "runtime_fact_status_contract": runtime_fact_status_contract,
                 "memory_state_contract": memory_state_contract,
             }
@@ -4844,6 +4892,13 @@ async def _run_cognitive_engine_chat_turn(
                 "answer from evidence_bound_self_claim_context: include evidence/uncertainty language, "
                 "distinguish functional self-modeling from phenomenal consciousness or private qualia, "
                 "and do not reduce Aura to a generic text prediction engine."
+            )
+        if identity_continuity_contract:
+            context["response_style_contract"] = (
+                str(context.get("response_style_contract") or "")
+                + " The user is asking who or what Aura is. Answer from "
+                "grounded_identity_continuity_context exactly enough to be correct; "
+                "do not invent generic assistant identity and do not use a delayed repair path."
             )
         if conversation_recall_context:
             context["conversation_recall_contract"] = True

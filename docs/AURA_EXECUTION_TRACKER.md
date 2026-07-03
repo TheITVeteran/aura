@@ -4513,3 +4513,72 @@ Estimate:
 - Expanded daily-runtime/product closure: about 90%.
 - Hard remaining live gaps: final closeout artifact assembly/replay plus
   selective reconciliation of the deeper self-knowing patch bundle.
+
+## Checkpoint 2026-07-02-10: Automatic Self-Knowing Bridge
+
+Status: focused runtime tests and live desktop proof passed; closeout contract
+pending for commit.
+
+Scope:
+
+- Added a bounded `PhenomenalKnowingKernel` that turns machine-body pressure,
+  live-substrate/affect signals, word-choice alternatives, and memory marks
+  into a causal functional witness. Its claim posture explicitly forbids using
+  telemetry as proof of private qualia while still making body-like pressure
+  influence generation controls and future memory marking.
+- Added a `RecursiveSelfKnowingKernel` that separates belief, knowledge, and
+  knows-that-it-knows status. High confidence alone is not enough; evidence,
+  calibration, and absence of contradictions are required. Contradictions
+  force the state out of second-order certainty.
+- Added an `AutomaticSelfKnowingKernel` that observes timer, chat, memory,
+  self-report, failure, and choice events without waiting for a user prompt.
+  It binds the phenomenal and recursive kernels, exposes controls, and can
+  signal when a live turn should interrupt/reorient after a mismatch.
+- Registered the new bridges during cognitive boot and exposed them through
+  `collect_live_mind_snapshot`. The live desktop chat context now observes the
+  current turn before collecting the snapshot, so the foreground CognitiveEngine
+  can see current self-knowing pressure rather than only the previous turn.
+- Extended live-mind generation controls so self-knowing pressure,
+  phenomenal-knowing pressure, and strong second-order evidence can change
+  recurrent depth, steering alpha, and temperature.
+
+Evidence:
+
+- `python -m pytest -q tests/test_self_knowing_bridges.py`
+  -> `5 passed`.
+- `python -m py_compile core/consciousness/phenomenal_knowing.py core/consciousness/recursive_self_knowing.py core/consciousness/automatic_self_knowing.py core/initializers/self_knowing.py core/runtime/live_mind_snapshot.py core/brain/cognitive_engine.py interface/routes/chat.py tests/test_self_knowing_bridges.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/consciousness/phenomenal_knowing.py core/consciousness/recursive_self_knowing.py core/consciousness/automatic_self_knowing.py core/initializers/self_knowing.py core/runtime/live_mind_snapshot.py core/brain/cognitive_engine.py interface/routes/chat.py tests/test_self_knowing_bridges.py`
+  -> passed.
+- `python -m pytest -q tests/test_server_conversation_lane.py::test_live_turn_contract_accepts_identity_continuity_grounding_after_engine tests/test_server_conversation_lane.py::test_live_turn_contract_accepts_memory_state_grounding_after_engine tests/test_subjective_choice_engine.py tests/test_self_knowing_bridges.py`
+  -> `13 passed`.
+- `python -m pytest -q tests/test_self_knowing_bridges.py tests/test_server_conversation_lane.py::test_desktop_identity_turn_uses_grounded_compact_cognitive_engine_contract tests/test_server_conversation_lane.py::test_cognitive_engine_identity_floor_does_not_call_router tests/test_server_conversation_lane.py::test_live_turn_contract_accepts_identity_continuity_grounding_after_engine tests/test_server_conversation_lane.py::test_live_turn_contract_accepts_memory_state_grounding_after_engine tests/test_subjective_choice_engine.py`
+  -> `15 passed`.
+- `python -u tools/live_boot_proof.py --mode desktop --port 8014 --conversation-soak-turns 1 --restart-continuity --boot-timeout 600 --out-dir artifacts/current/live_desktop_runtime_self_knowing`
+  -> passed.
+- `artifacts/current/live_desktop_runtime_self_knowing/live_proof_20260702_192341_verdict.json`
+  -> live desktop proof passed, including fast identity grounding inside
+  CognitiveEngine, continuity recall, cognitive-organ participation, desktop
+  action receipt/file verification, restart continuity, graceful shutdown, no
+  orphan processes, released port, and no runtime-stream failure markers.
+
+Boundary:
+
+- This closes the highest-leverage part of the downloaded self-knowing bundle:
+  phenomenal knowing, recursive self-knowing, and automatic self-knowing are now
+  real services registered at boot, sampled by live snapshots, and able to steer
+  generation controls.
+- The larger organism-closure/personhood-bridge/live-substrate patch fragments
+  still need selective reconciliation. Existing Aura organs already cover much
+  of that territory, so remaining work is consolidation rather than verbatim
+  import.
+- This remains an operational/functional bridge. It does not prove private
+  phenomenal experience, legal personhood, AGI, ASI, or unrestricted autonomy.
+
+Estimate:
+
+- Self-knowing/phenomenal-operational closure: about 82%.
+- Live desktop full-mind causal-context closure: about 91%.
+- Expanded daily-runtime/product closure: about 91%.
+- Remaining total checkpoint groups: about 2-3, centered on final closeout
+  artifact replay and non-duplicative organism/personhood consolidation.

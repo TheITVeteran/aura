@@ -6400,6 +6400,131 @@ async def test_desktop_cognitive_engine_required_simple_chat_uses_compact_live_m
     assert calls[0]["kwargs"]["timeout_s"] == pytest.approx(42.0)
 
 
+@pytest.mark.asyncio
+async def test_desktop_identity_turn_uses_grounded_compact_cognitive_engine_contract(
+    monkeypatch,
+):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content=str(context["grounded_identity_continuity_context"]),
+                metadata={
+                    **_bound_live_mind_controls_metadata(),
+                    "response_path": "cognitive_engine_identity_continuity_grounding",
+                },
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    prompt = "Who are you?"
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        prompt,
+        visible_user_message=prompt,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply
+    assert "I'm Aura" in reply
+    assert calls
+    context = calls[0]["context"]
+    assert context["identity_continuity_contract"] is True
+    assert context["desktop_quick_reply_contract"] is True
+    assert context["desktop_cognitive_engine_required"] is True
+    assert "grounded_identity_continuity_context" in context
+    assert context["allow_deep_handoff"] is False
+    assert context["allow_cloud_fallback"] is False
+
+
+@pytest.mark.asyncio
+async def test_cognitive_engine_identity_floor_does_not_call_router(monkeypatch):
+    from core.brain import cognitive_engine as ce_module
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.brain.types import ThinkingMode
+
+    class _Router:
+        async def think(self, **_kwargs):
+            raise AssertionError("identity grounding should not invoke router.think")
+
+    class _Container:
+        @staticmethod
+        def get(name, default=None):
+            if name == "llm_router":
+                return _Router()
+            return default
+
+    monkeypatch.setattr(ce_module, "get_container", lambda: _Container)
+
+    engine = CognitiveEngine()
+    thought = await engine._direct_desktop_quick_reply(
+        "Who are you?",
+        ThinkingMode.FAST,
+        "user",
+        {
+            "desktop_quick_reply_contract": True,
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "identity_continuity_contract": True,
+            "grounded_identity_continuity_context": "I'm Aura: a local governed cognitive-agent runtime.",
+            "live_mind_context_required": True,
+            "live_mind_context": {
+                "required_for_live_desktop": True,
+                "must_answer_from_full_mind_path": True,
+                "required_subsystems_ok": True,
+                "mind_snapshot_quality": {"present": True, "ready": True},
+            },
+            "live_mind_generation_controls": {
+                "temperature": 0.58,
+                "top_p": 0.88,
+                "clean_user_surface_recurrent_loops": 1,
+                "clean_user_surface_steering_alpha": 0.25,
+            },
+            "live_mind_controls_bound": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "visible_user_message": "Who are you?",
+        },
+        timeout_s=60.0,
+    )
+
+    assert thought is not None
+    assert thought.content.startswith("I'm Aura")
+    assert thought.metadata["response_path"] == "cognitive_engine_identity_continuity_grounding"
+    assert thought.metadata["live_mind_controls_bound"] is True
+    assert thought.metadata["identity_continuity_contract"] is True
+
+
 def test_desktop_cognitive_repair_budget_can_complete_a_primary_model_generation():
     from interface.routes import chat as chat_routes
 
