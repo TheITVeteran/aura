@@ -568,10 +568,17 @@ class SkillMetadata(BaseModel):
                         try:
                             return self.input_model.model_validate(minimal).model_dump()
                         except _SCHEMA_RECOVERY_ERRORS as final_err:
+                            # Classifier/user-supplied params that can't satisfy a
+                            # skill schema (e.g. an image-gen dispatch with no
+                            # prompt) is bad INPUT, not a capability_engine fault —
+                            # the engine correctly rejected it. Recording it as a
+                            # fail-closed degradation minted a CRITICAL incident and
+                            # spiked existential threat (observed live, July 2026).
                             _record_capability_degradation(
                                 final_err,
-                                action="returned fallback sanitized parameters after strict schema recovery failed",
+                                action="rejected unfillable skill parameters; returned sanitized fallback",
                                 severity="warning",
+                                enforce_failure_policy=False,
                             )
                             fallback_dict = {k: v for k, v in params.items() if k in fields}
                             fallback_dict["_error"] = f"Validation failed: {final_err}"
@@ -3014,10 +3021,15 @@ class CapabilityEngine(AuraBaseModule):
                             try:
                                 params = meta.input_model.model_validate(minimal).model_dump()
                             except _SCHEMA_RECOVERY_ERRORS as final_err:
+                                # Bad classifier/user input (e.g. image-gen with no
+                                # prompt), not a subsystem fault — don't escalate a
+                                # fail-closed CRITICAL for input the engine correctly
+                                # rejected (observed live: INC image-gen missing prompt).
                                 _record_capability_degradation(
                                     final_err,
-                                    action="returned fallback sanitized parameters in execute after strict schema recovery failed",
+                                    action="rejected unfillable skill parameters in execute; returned sanitized fallback",
                                     severity="warning",
+                                    enforce_failure_policy=False,
                                 )
                                 fallback_dict = {k: v for k, v in params.items() if k in fields}
                                 fallback_dict["_error"] = f"Validation failed: {final_err}"
