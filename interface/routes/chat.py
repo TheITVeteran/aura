@@ -15922,35 +15922,6 @@ async def api_chat(
             "status": "error",
             "response_confidence": "degraded",
         }, status_code=status_code)
-    except BaseException as _uncaught:  # noqa: BLE001 - chat must never 500
-        # Absolute backstop: any exception outside the recoverable set (or
-        # raised inside a handler) would otherwise become a raw 500 / a None
-        # return ("No response returned"). Chat must never appear broken —
-        # serve a graceful degraded reply and preserve the turn.
-        try:
-            await _cancel_kernel_task_if_pending("chat_uncaught")
-        except BaseException:  # noqa: BLE001 - cleanup must not mask the reply
-            pass
-        record_degradation(
-            "chat",
-            _uncaught if isinstance(_uncaught, Exception) else RuntimeError(str(_uncaught)),
-            severity="error",
-            action="served graceful degraded reply after an uncaught chat exception",
-        )
-        logger.error("Chat uncaught exception (backstopped): %s", _uncaught, exc_info=True)
-        if not isinstance(_uncaught, Exception):
-            raise  # never swallow KeyboardInterrupt / SystemExit / CancelledError
-        return JSONResponse(
-            {
-                "response": (
-                    "Something went wrong before I could finish that reply. I logged it "
-                    "and kept our thread — say the word and I'll pick it right back up."
-                ),
-                "status": "error",
-                "response_confidence": "degraded",
-            },
-            status_code=200,
-        )
     finally:
         if foreground_slot_acquired:
             _foreground_chat_lock.release(foreground_lock_token)

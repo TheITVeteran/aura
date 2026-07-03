@@ -3157,7 +3157,46 @@ def _mlx_worker_loop(
                                             logger.warning(
                                                 "🚨 [WORKER] Live user-surface quality gate exhausted retries."
                                             )
-                                            response_text = ""
+                                            # Salvage over empty: an empty reply is the worst outcome
+                                            # (it triggers the parent's inline-retry storm and sustained
+                                            # lag). If the ONLY defect was servile generic-assistant
+                                            # language, strip it and keep the good part — "You're welcome!
+                                            # Is there anything else I can help with?" becomes
+                                            # "You're welcome!" for a brief social turn.
+                                            salvaged = ""
+                                            if "generic_assistant_language" in (rejection_reasons or []):
+                                                try:
+                                                    from core.conversation.response_reliability import (
+                                                        repair_generic_assistant_language,
+                                                    )
+
+                                                    _, _user_parts = _extract_message_parts(
+                                                        original_messages, original_prompt
+                                                    )
+                                                    _user_turn = _user_parts[-1] if _user_parts else ""
+                                                    candidate = repair_generic_assistant_language(
+                                                        _user_turn, response_text
+                                                    )
+                                                    if (
+                                                        candidate.strip()
+                                                        and candidate.strip() != str(response_text or "").strip()
+                                                        and not _surface_quality_failure_reasons(
+                                                            job, candidate
+                                                        )
+                                                    ):
+                                                        salvaged = candidate.strip()
+                                                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _salvage_exc:
+                                                    logger.debug("Generic-language salvage skipped: %s", _salvage_exc)
+                                            if salvaged:
+                                                logger.info(
+                                                    "🛡️ [WORKER] Salvaged a clean brief reply after generic-language "
+                                                    "retries instead of yielding zero tokens."
+                                                )
+                                                response_text = salvaged
+                                                surface_control_state["surface_quality_gate_passed"] = True
+                                                surface_control_state["surface_quality_gate_reasons"] = []
+                                            else:
+                                                response_text = ""
                                             break
                                         surface_control_state["surface_quality_gate_passed"] = True
                                         surface_control_state["surface_quality_gate_reasons"] = []

@@ -1748,8 +1748,15 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
 
 
 def repair_generic_assistant_language(user_message: Any, reply_text: Any) -> str:
-    """Remove known assistant-boilerplate sentences without lowering the quality gate."""
-    del user_message  # reserved for future context-aware live-voice repair
+    """Remove known assistant-boilerplate sentences without lowering the quality gate.
+
+    A brief social turn (a thanks, a greeting) warrants a brief reply: stripping
+    the servile tail off "You're welcome! Is there anything else I can help
+    with?" correctly leaves "You're welcome!", and for a short user turn that
+    short reply is the RIGHT answer — not something to discard back to the
+    servile original. The 8-word floor only applies to substantive turns, where
+    a too-short salvage would be a non-answer.
+    """
     original = str(reply_text or "").strip()
     if not original or not _GENERIC_ASSISTANT_RE.search(original) or _is_code_response(original):
         return original
@@ -1761,7 +1768,12 @@ def repair_generic_assistant_language(user_message: Any, reply_text: Any) -> str
     if not kept:
         return original
     repaired = " ".join(kept).strip()
-    if len(repaired.split()) < 8:
+    # Brief social turns get a brief clean reply; substantive turns keep the
+    # floor so a stripped fragment never masquerades as a real answer.
+    user_words = len(str(user_message or "").split())
+    brief_social_turn = 0 < user_words <= 6
+    min_words = 1 if brief_social_turn else 8
+    if len(repaired.split()) < min_words:
         return original
     return repaired
 
