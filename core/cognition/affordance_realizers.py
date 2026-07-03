@@ -138,8 +138,22 @@ async def realize_model_scenarios(args: dict[str, str], context: dict[str, Any])
             idx = int(chosen_id)
             chosen = options[idx] if 0 <= idx < len(options) else None
         reasoning = getattr(receipt, "rationale", "") or getattr(receipt, "explanation", "")
+        # preference_override is the strongest evidence of a preference-CONSISTENT
+        # choice: it's True exactly when her learned preferences overrode the
+        # obvious drive-pick — she chose what she values, not just what pulls.
+        preference_override = bool(getattr(receipt, "preference_override", False))
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, IndexError) as exc:
         logger.debug("subjective choice degraded: %s", exc)
+        preference_override = False
+
+    spoken = "I modeled these out; here's how they compare."
+    if chosen:
+        spoken = f"I modeled these out. I'd go with {chosen}"
+        if reasoning:
+            spoken += f" — {reasoning}"
+        if preference_override:
+            spoken += " (that's my preference talking, not just the easy pick)"
+        spoken += "."
 
     return {
         "ok": True,
@@ -148,10 +162,8 @@ async def realize_model_scenarios(args: dict[str, str], context: dict[str, Any])
         "simulations": sims,
         "chosen": chosen,
         "reasoning": reasoning,
-        "spoken": (
-            f"I modeled these out. I'd go with {chosen}." if chosen
-            else "I modeled these out; here's how they compare."
-        ),
+        "preference_override": preference_override,
+        "spoken": spoken,
     }
 
 

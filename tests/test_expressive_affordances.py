@@ -134,3 +134,33 @@ def test_chat_lane_passes_through_plain_replies():
     )
     assert clean == "Just a normal answer."
     assert realized == []
+
+
+def test_model_scenarios_makes_preference_consistent_choice():
+    """model_scenarios must model options, commit to one, and surface reasoning
+    grounded in the subjective-choice engine (Bryan's preference-consistency ask)."""
+    from core.cognition.affordance_realizers import realize_model_scenarios
+
+    out = asyncio.run(
+        realize_model_scenarios(
+            {"options": "organize my notes vs play an experimental game"},
+            {"last_user_message": "what should I do tonight"},
+        )
+    )
+    assert out["ok"] is True
+    assert out["kind"] == "scenario_model"
+    assert len(out["options"]) == 2
+    assert out["chosen"] in out["options"]
+    # A real receipt was consulted: reasoning cites alignment scores.
+    assert out["reasoning"]
+    assert "alignment" in out["reasoning"].lower()
+    assert "preference_override" in out  # the consistency signal is exposed
+    assert out["chosen"] in out["spoken"]
+
+
+def test_model_scenarios_needs_two_options():
+    from core.cognition.affordance_realizers import realize_model_scenarios
+
+    out = asyncio.run(realize_model_scenarios({"options": "just one thing"}, {}))
+    assert out["ok"] is False
+    assert out["reason"] == "need_two_options"
