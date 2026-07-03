@@ -6042,6 +6042,44 @@ def _evaluate_reply_topicality(
     return True, "foreign_topic_burst"
 
 
+async def _realize_expressive_affordances(
+    reply_text: str, user_message: str = ""
+) -> tuple[str, list[dict[str, Any]]]:
+    """Realize any affordance intents the mind emitted in its reply.
+
+    Returns (clean_reply, realized_results). The tags are stripped from the
+    user-visible prose and each chosen affordance is realized through its
+    governed subsystem; the caller attaches results (image paths, artifacts,
+    media requests, scenario models) to the response payload. Fail-open: on
+    any error the original reply passes through unchanged.
+    """
+    if not reply_text or "⟦affordance:" not in reply_text:
+        return reply_text, []
+    try:
+        from core.cognition.expressive_affordances import get_affordance_registry
+
+        registry = get_affordance_registry()
+        intents = registry.parse_intents(reply_text)
+        if not intents:
+            return reply_text, []
+        realized: list[dict[str, Any]] = []
+        ctx = {"last_user_message": user_message}
+        for intent in intents[:3]:  # bounded: at most three actions per turn
+            result = await registry.realize(intent, ctx)
+            realized.append(result)
+        clean = registry.strip_intents(reply_text)
+        # Fold each affordance's spoken line into the reply so the voice
+        # narrates what it did ("does it look like this?").
+        spoken = [str(r.get("spoken") or "").strip() for r in realized if r.get("spoken")]
+        if spoken:
+            clean = (clean + "\n\n" + "\n".join(spoken)).strip()
+        return clean, realized
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat", exc)
+        logger.debug("Affordance realization skipped: %s", exc)
+        return reply_text, []
+
+
 def _record_recent_response(text: str, user_message: str = "") -> None:
     fp = _response_fingerprint(text)
     if fp:
@@ -12897,7 +12935,7 @@ async def api_chat(
             # Inject evidence-bounded operational self context
             try:
                 from core.conversation.chat_preflight import inject_operational_self_context
-                
+
                 _self_context = await inject_operational_self_context()
                 if _self_context:
                     body.message = f"{_self_context}{body.message}"
@@ -12905,6 +12943,25 @@ async def api_chat(
             except _CHAT_RECOVERABLE_ERRORS as _self_context_exc:
                 record_degradation('chat', _self_context_exc)
                 logger.debug("Chat operational self preflight skipped: %s", _self_context_exc)
+
+            # Inject the expressive-affordance menu so the mind reasons WITH its
+            # own capabilities present — it decides, by context and judgment,
+            # when to show/demonstrate/ask/model rather than following scripts.
+            # Env-gated: the mechanism is always live, but folding the menu into
+            # every turn's context is opt-in (AURA_EXPRESSIVE_AFFORDANCES=1).
+            try:
+                import os as _os
+
+                if str(_os.environ.get("AURA_EXPRESSIVE_AFFORDANCES", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+                    from core.cognition.expressive_affordances import get_affordance_registry
+
+                    _affordance_menu = get_affordance_registry().menu_text()
+                    if _affordance_menu:
+                        body.message = f"{_affordance_menu}\n{body.message}"
+                        logger.info("Chat preflight: injected expressive-affordance menu.")
+            except _CHAT_RECOVERABLE_ERRORS as _affordance_exc:
+                record_degradation('chat', _affordance_exc)
+                logger.debug("Chat affordance-menu preflight skipped: %s", _affordance_exc)
 
             body.message = clamp_composed_chat_context(
                 body.message,
