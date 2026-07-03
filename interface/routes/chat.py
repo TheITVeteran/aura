@@ -12968,7 +12968,7 @@ async def api_chat(
             try:
                 import os as _os
 
-                if str(_os.environ.get("AURA_EXPRESSIVE_AFFORDANCES", "0")).strip().lower() in {"1", "true", "yes", "on"}:
+                if str(_os.environ.get("AURA_EXPRESSIVE_AFFORDANCES", "1")).strip().lower() in {"1", "true", "yes", "on"}:
                     from core.cognition.expressive_affordances import get_affordance_registry
 
                     _affordance_menu = get_affordance_registry().menu_text()
@@ -15135,6 +15135,23 @@ async def api_chat(
                 reply_text = repaired_recall_reply
 
         # ── Response confidence assessment ────────────────────────
+        _pending_affordance_intents: list[Any] = []
+        _affordance_registry = None
+        if "⟦affordance:" in (reply_text or ""):
+            try:
+                from core.cognition.expressive_affordances import get_affordance_registry
+
+                _affordance_registry = get_affordance_registry()
+                _pending_affordance_intents = _affordance_registry.parse_intents(reply_text)
+                if _pending_affordance_intents:
+                    reply_text = _affordance_registry.strip_intents(reply_text)
+                    if len(reply_text.strip()) < 5:
+                        reply_text = "Here —"
+            except _CHAT_RECOVERABLE_ERRORS as _aff_exc:
+                record_degradation("chat", _aff_exc)
+                logger.debug("Affordance intent parse skipped: %s", _aff_exc)
+                _pending_affordance_intents = []
+
         global _consecutive_degraded_count
         response_confidence = "high"
         is_stale = _is_stale_repeated_response(reply_text)
@@ -15514,6 +15531,21 @@ async def api_chat(
         _final_reply, _final_status = await _apply_desktop_objective_chokepoint(
             _final_reply, _final_status
         )
+
+        _affordance_results: list[dict[str, Any]] = []
+        if _pending_affordance_intents and _affordance_registry is not None:
+            _affordance_ctx = {"last_user_message": _semantic_user_message, "session_id": _chat_session_id}
+            for _intent in _pending_affordance_intents[:3]:
+                try:
+                    _aff_result = await _affordance_registry.realize(_intent, _affordance_ctx)
+                except _CHAT_RECOVERABLE_ERRORS as _aff_realize_exc:
+                    record_degradation("chat", _aff_realize_exc)
+                    logger.debug("Affordance realize skipped: %s", _aff_realize_exc)
+                    continue
+                _affordance_results.append(_aff_result)
+            _spoken = [str(r.get("spoken") or "").strip() for r in _affordance_results if r.get("spoken")]
+            if _spoken:
+                _final_reply = (_final_reply + "\n\n" + "\n".join(_spoken)).strip()
         if _resume_prefix_for_response:
             _final_reply = _resume_prefix_for_response + _final_reply
 
@@ -15562,6 +15594,8 @@ async def api_chat(
             response_data["data"] = {
                 "desktop_result": _json_safe_payload(_desktop_exec_state["result"])
             }
+        if _affordance_results:
+            response_data.setdefault("data", {})["affordances"] = [_json_safe_payload(r) for r in _affordance_results]
 
         _record_recent_response(_final_reply or "…", _semantic_user_message)
         if pending_exchange_id:
