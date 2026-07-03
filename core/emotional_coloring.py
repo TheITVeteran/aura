@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service, register_runtime_factory
 
 logger = logging.getLogger("Aura.EmotionalColoring")
 
@@ -45,10 +46,8 @@ class EmotionalColoring:
 
     async def get_texture_for_topic(self, topic: str) -> EmotionalTexture:
         """Retrieve emotional residue for a specific topic string."""
-        from core.container import ServiceContainer
-
-        memory = ServiceContainer.get("memory", default=None)
-        liquid_state = ServiceContainer.get("liquid_state", default=None)
+        memory = get_runtime_service("memory", default=None)
+        liquid_state = get_runtime_service("liquid_state", default=None)
 
         episodes: list[Any] = []
         if memory:
@@ -160,10 +159,10 @@ def _clamp(value: float, low: float = -1.0, high: float = 1.0) -> float:
 # Service Registration
 def register_emotional_coloring():
     """Register the emotional coloring service."""
-    from core.container import ServiceContainer, ServiceLifetime
-
-    ServiceContainer.register(
+    register_runtime_factory(
         "emotional_coloring",
         factory=lambda: EmotionalColoring(),
-        lifetime=ServiceLifetime.SINGLETON,
+        lifetime="singleton",
+        owner="core/emotional_coloring.py",
+        registered_by="register_emotional_coloring",
     )

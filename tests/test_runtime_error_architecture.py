@@ -837,3 +837,258 @@ def test_small_runtime_service_batch_uses_registry():
         source = inspect.getsource(module)
         assert "core.container" not in source
         assert "ServiceContainer" not in source
+
+
+def test_runtime_service_registry_supports_lazy_factory_publication():
+    from core.runtime.service_registry import (
+        install_service_factory_registration_sink,
+        register_runtime_factory,
+    )
+
+    captured = []
+    factory = lambda: "ready"
+    install_service_factory_registration_sink(
+        lambda name, fn, lifetime, required, metadata: captured.append(
+            (name, fn, lifetime, required, metadata)
+        )
+    )
+    try:
+        assert register_runtime_factory(
+            "demo_factory",
+            factory,
+            lifetime="singleton",
+            required=False,
+            owner="tests",
+            registered_by="test_runtime_service_registry_supports_lazy_factory_publication",
+            metadata={"extra": "value"},
+        )
+    finally:
+        install_service_factory_registration_sink(None)
+
+    assert captured == [
+        (
+            "demo_factory",
+            factory,
+            "singleton",
+            False,
+            {
+                "owner": "tests",
+                "registered_by": "test_runtime_service_registry_supports_lazy_factory_publication",
+                "required_for": None,
+                "failure_policy": None,
+                "extra": "value",
+            },
+        )
+    ]
+
+
+def test_runtime_registry_batch_two_service_seams():
+    import asyncio
+    import inspect
+    from types import SimpleNamespace
+
+    import core.capabilities.source_summarizer as source_summarizer
+    import core.emotional_coloring as emotional_coloring
+    import core.evals.adaptive_test_chamber as adaptive_test_chamber
+    import core.memory.provenance as provenance
+    import core.orchestrator.coordinators.affect as affect_coordinator
+    import core.plasticity_controller as plasticity_controller
+    import core.senses.voice_socket_logic as voice_socket_logic
+    import core.skill_evolution as skill_evolution
+    import core.utils.telemetry_enrichment as telemetry_enrichment
+    from core.brain import concept_vector_bridge
+    from core.runtime.service_registry import (
+        install_service_factory_registration_sink,
+        install_service_registration_sink,
+        install_service_resolver,
+    )
+
+    class EventBus:
+        def __init__(self):
+            self.events = []
+
+        async def publish(self, event, payload):
+            self.events.append((event, payload))
+
+    class Client:
+        async def generate_embedding(self, text):
+            return [float(len(text)), 1.0]
+
+    class Router:
+        async def route(self, **_kwargs):
+            return SimpleNamespace(text="synthesized summary")
+
+        def get_health_report(self):
+            return {"foreground_tier": "primary"}
+
+    class Browser:
+        async def extract_article_text(self, url):
+            return SimpleNamespace(
+                url=url,
+                title="Article",
+                body="Useful article body.",
+                author="Reporter",
+                source_domain="example.com",
+                word_count=3,
+            )
+
+    class LiquidState:
+        def get_status(self):
+            return {
+                "energy": 0.6,
+                "curiosity": 0.7,
+                "frustration": 0.1,
+                "confidence": 0.8,
+            }
+
+        def get_valence(self):
+            return 0.25
+
+    class Homeostasis:
+        def get_health(self):
+            return {"will_to_live": 0.9}
+
+    class Memory:
+        def search(self, _topic, limit=5):
+            return [{"emotion": "joy", "arousal": 0.4}]
+
+    class BeliefGraph:
+        def get_all_beliefs(self):
+            return [1, 2, 3]
+
+    class InsightJournal:
+        def get_highest_confidence_insights(self, limit=10):
+            return list(range(8))
+
+    class Omni:
+        _execution_logs = {"web_search": [{"status": "error"}] * 4}
+
+    class Swarm:
+        def __init__(self):
+            self.objectives = []
+
+        async def spawn_shard(self, **kwargs):
+            self.objectives.append(kwargs)
+
+    class Reflex:
+        def __init__(self):
+            self.commands = []
+
+        async def process_emergency_interrupt(self, command, context):
+            self.commands.append((command, context))
+
+    class FakeWhisper:
+        def transcribe(self, _audio_np, beam_size=1):
+            return [SimpleNamespace(text=" stop ")], None
+
+    event_bus = EventBus()
+    swarm = Swarm()
+    reflex = Reflex()
+    services = {
+        "event_bus": event_bus,
+        "cognitive_engine": SimpleNamespace(client=Client()),
+        "llm_router": Router(),
+        "browser_controller": Browser(),
+        "liquid_state": LiquidState(),
+        "homeostasis": Homeostasis(),
+        "memory": Memory(),
+        "free_energy_engine": SimpleNamespace(current=SimpleNamespace(free_energy=0.2)),
+        "belief_graph": BeliefGraph(),
+        "insight_journal": InsightJournal(),
+        "omni_tool": Omni(),
+        "sovereign_swarm": swarm,
+        "orchestrator": SimpleNamespace(reflex_engine=reflex),
+        "affect_engine": SimpleNamespace(
+            get_mood=lambda: "Curious",
+            get_status=lambda: {"mood": "Curious"},
+        ),
+    }
+    registered = []
+    factories = []
+    install_service_resolver(lambda name, default=None: services.get(name, default))
+    install_service_registration_sink(
+        lambda name, instance, required, metadata: registered.append(
+            (name, instance, required, metadata)
+        )
+    )
+    install_service_factory_registration_sink(
+        lambda name, factory, lifetime, required, metadata: factories.append(
+            (name, factory, lifetime, required, metadata)
+        )
+    )
+    try:
+        bridge = concept_vector_bridge.register_concept_bridge()
+        assert ("concept_bridge", bridge, True, registered[-1][3]) == registered[-1]
+        assert asyncio.run(bridge.transmit("a", "b", [1.0])) .startswith("latent_")
+        assert event_bus.events[0][0] == "cryptolalia_transmission"
+        assert asyncio.run(bridge.generate_concept_vector("cat")) == [3.0, 1.0]
+
+        summarizer = source_summarizer.SourceSummarizer()
+        asyncio.run(summarizer.start())
+        assert any(item[0] == "source_summarizer" for item in registered)
+        result = asyncio.run(
+            summarizer.summarize_urls(["https://example.com"], objective="brief")
+        )
+        assert result.summary == "synthesized summary"
+
+        stamped = provenance.wrap({"fact": "sample"})
+        assert round(stamped.provenance.confidence, 2) == 0.8
+
+        enriched = telemetry_enrichment.enrich_telemetry({})
+        assert enriched["energy"] == 60.0
+        assert enriched["llm_tier"] == "primary"
+
+        emotional_coloring.register_emotional_coloring()
+        assert any(item[0] == "emotional_coloring" for item in factories)
+        texture = asyncio.run(emotional_coloring.EmotionalColoring().get_texture_for_topic("cat"))
+        assert texture.tone_hint == "warm/exploratory"
+
+        plasticity_controller.register_plasticity_controller()
+        assert any(item[0] == "plasticity_controller" for item in factories)
+        plasticity = plasticity_controller.PlasticityController()
+        assert asyncio.run(plasticity.update_plasticity()) == 0.8
+
+        skill_evolution.register_skill_evolution()
+        assert any(item[0] == "skill_evolution" for item in factories)
+        engine = skill_evolution.SkillEvolutionEngine()
+        assert asyncio.run(engine.identify_evolution_targets()) == ["web_search"]
+        asyncio.run(engine.spawn_evolution_shard("web_search"))
+        assert swarm.objectives[0]["context"] == {"target_skill": "web_search"}
+
+        chamber = adaptive_test_chamber.register_test_chamber()
+        assert chamber.get_status()["healthy"] is True
+        assert [item[0] for item in registered if item[0] in {"glados_test_chamber", "glados"}] == [
+            "glados_test_chamber",
+            "glados",
+        ]
+
+        processor = voice_socket_logic.VoiceStreamProcessor(model_instance=FakeWhisper())
+        processor.speech_buffer = [(b"\0\0" * 160)]
+        assert asyncio.run(processor.get_transcript()) == "stop"
+        assert reflex.commands == [("STOP", "audio_stream")]
+
+        coordinator = affect_coordinator.AffectCoordinator(
+            orchestrator=SimpleNamespace(_get_service=lambda _name: None)
+        )
+        assert coordinator.get_mood() == "Curious"
+    finally:
+        install_service_resolver(None)
+        install_service_registration_sink(None)
+        install_service_factory_registration_sink(None)
+
+    for module in (
+        concept_vector_bridge,
+        source_summarizer,
+        provenance,
+        telemetry_enrichment,
+        emotional_coloring,
+        plasticity_controller,
+        skill_evolution,
+        adaptive_test_chamber,
+        voice_socket_logic,
+        affect_coordinator,
+    ):
+        source = inspect.getsource(module)
+        assert "core.container" not in source
+        assert "ServiceContainer" not in source
+        assert "core.runtime.service_registry" in source

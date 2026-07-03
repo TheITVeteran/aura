@@ -4,8 +4,10 @@ Uses distributed agency (SovereignSwarm) to research and refine its own skills.
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from dataclasses import dataclass
+
+from core.runtime.service_registry import get_runtime_service, register_runtime_factory
 
 logger = logging.getLogger("Aura.SkillEvolution")
 
@@ -26,8 +28,7 @@ class SkillEvolutionEngine:
 
     async def identify_evolution_targets(self) -> List[str]:
         """Identify skills that need improvement based on [OMNI] execution logs."""
-        from core.container import ServiceContainer
-        omni = ServiceContainer.get("omni_tool", default=None)
+        omni = get_runtime_service("omni_tool", default=None)
         if not omni:
             return []
             
@@ -40,7 +41,7 @@ class SkillEvolutionEngine:
         
         # Fallback to general skill list if no active errors detected via Omni
         if not targets:
-            capability_engine = ServiceContainer.get("capability_engine", default=None)
+            capability_engine = get_runtime_service("capability_engine", default=None)
             all_skills = list(getattr(capability_engine, "skills", {}) or {})
             if all_skills:
                 import random
@@ -52,8 +53,7 @@ class SkillEvolutionEngine:
 
     async def spawn_evolution_shard(self, skill_name: str):
         """Spawn a SovereignSwarm shard to research a skill optimization."""
-        from core.container import ServiceContainer
-        swarm = ServiceContainer.get("sovereign_swarm", default=None)
+        swarm = get_runtime_service("sovereign_swarm", default=None)
         if not swarm:
             logger.warning("No SovereignSwarm available for skill evolution.")
             return
@@ -82,9 +82,10 @@ class SkillEvolutionEngine:
 # Service Registration
 def register_skill_evolution():
     """Register the skill evolution engine."""
-    from core.container import ServiceContainer, ServiceLifetime
-    ServiceContainer.register(
+    register_runtime_factory(
         "skill_evolution",
         factory=lambda: SkillEvolutionEngine(),
-        lifetime=ServiceLifetime.SINGLETON
+        lifetime="singleton",
+        owner="core/skill_evolution.py",
+        registered_by="register_skill_evolution",
     )

@@ -22,6 +22,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
+
 logger = logging.getLogger("Aura.TestChamber")
 
 MIN_DIFFICULTY = 1
@@ -124,12 +126,23 @@ def get_test_chamber() -> AdaptiveTestChamber:
 
 
 def register_test_chamber(orchestrator: Any = None) -> AdaptiveTestChamber:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.GLADOS, default=None) or get_test_chamber()
-    ServiceContainer.register_instance(ServiceNames.GLADOS, inst, required=False)
-    ServiceContainer.register_instance("glados", inst, required=False)
+    inst = get_runtime_service(ServiceNames.GLADOS, default=None) or get_test_chamber()
+    register_runtime_service(
+        ServiceNames.GLADOS,
+        inst,
+        required=False,
+        owner="core/evals/adaptive_test_chamber.py",
+        registered_by="register_test_chamber",
+    )
+    register_runtime_service(
+        "glados",
+        inst,
+        required=False,
+        owner="core/evals/adaptive_test_chamber.py",
+        registered_by="register_test_chamber",
+    )
     return inst
 
 

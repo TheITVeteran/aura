@@ -2650,3 +2650,43 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 70-75% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-26: Batched Runtime Registry Factory and Service Seam Decoupling
+
+Status: ready to commit.
+
+What changed:
+
+- Added lazy factory publication to the runtime service registry and bridged it
+  through the container installer so factory-registered singleton services can
+  leave the global container cycle without becoming eager instances.
+- Converted ten runtime/service seams to registry access across plasticity,
+  latent concept vectors, emotional coloring, source summarization, memory
+  provenance, telemetry enrichment, skill evolution, adaptive evals, voice
+  reflex routing, and affect coordination.
+- Added representative batch tests for the converted seams and source ownership.
+- Refreshed the architecture-quality baseline after the largest import SCC
+  dropped from `606` modules to `596` modules.
+- Kept the quality target general: service ownership, dependency hygiene, and
+  live-path reliability, not aerospace-domain logic.
+
+Evidence:
+
+- Runtime/architecture focused test -> `27 passed`.
+- Runtime/architecture/audit/reliability focused tests -> `124 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=44.99`,
+  `largest_cycle_size=596`, `cycle_count=7`, `dependency_edges=7511`,
+  `god_file_count=37`, `module_count=2245`.
+- Remaining-checkpoint contract -> refreshed
+  `artifacts/closeout/remaining_checkpoint_contract_latest.json`.
+
+Tracker:
+
+- Architecture-regression-control closure: about 96%.
+- Existing architecture-debt reduction closure: about 48-53%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 70-76% locally.
+- Remaining total checkpoint groups: 3.

@@ -928,6 +928,7 @@ def _install_runtime_service_registry_bridge() -> None:
         from core.runtime.service_registry import (
             install_failure_policy_resolver,
             install_registration_locked_resolver,
+            install_service_factory_registration_sink,
             install_service_presence_resolver,
             install_service_registration_sink,
             install_service_resolver,
@@ -966,10 +967,38 @@ def _install_runtime_service_registry_bridge() -> None:
                 failure_policy=metadata.get("failure_policy"),
             )
 
+        def _register_factory(
+            service_name: str,
+            factory: Callable[..., object],
+            lifetime: object | None,
+            required: bool,
+            metadata: dict[str, str | None],
+        ) -> None:
+            resolved_lifetime = lifetime
+            if resolved_lifetime is None:
+                resolved_lifetime = ServiceLifetime.SINGLETON
+            elif isinstance(resolved_lifetime, str):
+                try:
+                    resolved_lifetime = ServiceLifetime(resolved_lifetime)
+                except ValueError:
+                    resolved_lifetime = ServiceLifetime.SINGLETON
+
+            ServiceContainer.register(
+                service_name,
+                factory=factory,
+                lifetime=resolved_lifetime,
+                required=required,
+                owner=metadata.get("owner"),
+                registered_by=metadata.get("registered_by"),
+                required_for=metadata.get("required_for"),
+                failure_policy=metadata.get("failure_policy"),
+            )
+
         install_failure_policy_resolver(_failure_policy_for)
         install_service_resolver(_service_for)
         install_service_presence_resolver(_has_service)
         install_service_registration_sink(_register_service)
+        install_service_factory_registration_sink(_register_factory)
         install_registration_locked_resolver(_registration_locked)
     except (ImportError, RuntimeError, AttributeError) as exc:
         logger.debug("Runtime service registry bridge unavailable: %s", exc)

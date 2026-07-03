@@ -16,6 +16,10 @@ _Resolver = Callable[[str], str | None]
 _ServiceResolver = Callable[[str, object | None], object | None]
 _ServicePresenceResolver = Callable[[str], bool]
 _ServiceRegistrationSink = Callable[[str, object, bool, dict[str, str | None]], None]
+_ServiceFactoryRegistrationSink = Callable[
+    [str, Callable[..., object], object | None, bool, dict[str, str | None]],
+    None,
+]
 _RuntimeFlagResolver = Callable[[], bool]
 _MetricCounterSink = Callable[[str, int], None]
 _FileWriteBytesSink = Callable[[object, bytes, str], None]
@@ -25,6 +29,7 @@ _failure_policy_resolver: _Resolver | None = None
 _service_resolver: _ServiceResolver | None = None
 _service_presence_resolver: _ServicePresenceResolver | None = None
 _service_registration_sink: _ServiceRegistrationSink | None = None
+_service_factory_registration_sink: _ServiceFactoryRegistrationSink | None = None
 _registration_locked_resolver: _RuntimeFlagResolver | None = None
 _metric_counter_sink: _MetricCounterSink | None = None
 _file_write_bytes_sink: _FileWriteBytesSink | None = None
@@ -57,6 +62,15 @@ def install_service_registration_sink(sink: _ServiceRegistrationSink | None) -> 
     global _service_registration_sink
     with _resolver_lock:
         _service_registration_sink = sink
+
+
+def install_service_factory_registration_sink(
+    sink: _ServiceFactoryRegistrationSink | None,
+) -> None:
+    """Install or clear the process-local service factory registration sink."""
+    global _service_factory_registration_sink
+    with _resolver_lock:
+        _service_factory_registration_sink = sink
 
 
 def install_registration_locked_resolver(resolver: _RuntimeFlagResolver | None) -> None:
@@ -138,6 +152,36 @@ def register_runtime_service(
         for key, value in metadata.items():
             service_metadata[str(key)] = None if value is None else str(value)
     sink(service_name, instance, bool(required), service_metadata)
+    return True
+
+
+def register_runtime_factory(
+    service_name: str,
+    factory: Callable[..., object],
+    *,
+    lifetime: object | None = None,
+    required: bool = True,
+    owner: str | None = None,
+    registered_by: str | None = None,
+    required_for: str | None = None,
+    failure_policy: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> bool:
+    """Publish a lazy runtime service factory without importing the container."""
+    with _resolver_lock:
+        sink = _service_factory_registration_sink
+    if sink is None:
+        return False
+    service_metadata: dict[str, str | None] = {
+        "owner": owner,
+        "registered_by": registered_by,
+        "required_for": required_for,
+        "failure_policy": failure_policy,
+    }
+    if metadata:
+        for key, value in metadata.items():
+            service_metadata[str(key)] = None if value is None else str(value)
+    sink(service_name, factory, lifetime, bool(required), service_metadata)
     return True
 
 

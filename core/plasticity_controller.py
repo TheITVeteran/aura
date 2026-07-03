@@ -5,9 +5,11 @@ Coordinates high-plasticity learning phases with low-plasticity consolidation ph
 
 import logging
 import time
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
+
+from core.runtime.service_registry import get_runtime_service, register_runtime_factory
 
 logger = logging.getLogger("Aura.Plasticity")
 
@@ -35,19 +37,13 @@ class PlasticityController:
 
     async def update_plasticity(self) -> float:
         """Compute current plasticity based on belief deltas and insight flow."""
-        from core.container import ServiceContainer
-        belief_system = ServiceContainer.get("belief_graph", default=None)
-        insight_journal = ServiceContainer.get("insight_journal", default=None)
+        belief_system = get_runtime_service("belief_graph", default=None)
+        insight_journal = get_runtime_service("insight_journal", default=None)
         
         if not (belief_system and insight_journal):
             return 0.5
 
-        # 1. Delta check
-        current_beliefs = len(belief_system.get_all_beliefs())
-        # We'd compare vs history.
-        # Logic: If many new beliefs/insights in last hour -> high plasticity.
-        
-        # 2. Heuristic for now
+        # Insight flow is the current live proxy for learning-phase pressure.
         recent_insights = len(insight_journal.get_highest_confidence_insights(limit=10))
         
         score = min(1.0, recent_insights * 0.1) # Simplified score
@@ -80,9 +76,10 @@ class PlasticityController:
 # Service Registration
 def register_plasticity_controller():
     """Register the plasticity controller."""
-    from core.container import ServiceContainer, ServiceLifetime
-    ServiceContainer.register(
+    register_runtime_factory(
         "plasticity_controller",
         factory=lambda: PlasticityController(),
-        lifetime=ServiceLifetime.SINGLETON
+        lifetime="singleton",
+        owner="core/plasticity_controller.py",
+        registered_by="register_plasticity_controller",
     )

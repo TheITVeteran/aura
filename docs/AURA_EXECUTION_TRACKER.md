@@ -5367,3 +5367,69 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 70-75% locally.
 - Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
   desktop findings, and longer soak/runtime evidence.
+
+## Checkpoint 2026-07-03-26: Batched Runtime Registry Factory and Service Seam Decoupling
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Added a lazy factory-publication bridge to `core.runtime.service_registry` and
+  wired `core.container` to install it, preserving singleton factory semantics
+  while removing direct container imports from leaf/runtime modules.
+- Converted a larger batch of service seams to runtime registry access:
+  - `core.plasticity_controller`
+  - `core.brain.concept_vector_bridge`
+  - `core.emotional_coloring`
+  - `core.capabilities.source_summarizer`
+  - `core.memory.provenance`
+  - `core.utils.telemetry_enrichment`
+  - `core.skill_evolution`
+  - `core.evals.adaptive_test_chamber`
+  - `core.senses.voice_socket_logic`
+  - `core.orchestrator.coordinators.affect`
+- Added batch regression coverage for lazy factory publication, latent concept
+  transmission, source summarization, memory provenance confidence,
+  telemetry enrichment, emotional coloring, plasticity pressure, skill
+  evolution, adaptive test chamber publication, voice emergency reflex
+  routing, and affect coordinator resolution.
+- Refreshed the architecture-quality baseline after reducing the largest import
+  SCC from `606` modules to `596` modules.
+- Kept the standard general-purpose: reusable dependency ownership,
+  runtime-publication hygiene, and live-path support seams, not
+  aerospace-domain behavior.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_error_architecture.py`
+  -> `27 passed`.
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `124 passed`.
+- `python -m ruff check --select F,E9 ...`
+  over touched batch modules and architecture tests -> passed.
+- `python -m py_compile ...`
+  over touched batch modules and architecture tests -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=44.99`,
+  `largest_cycle_size=596`, `cycle_count=7`, `dependency_edges=7511`,
+  `god_file_count=37`, `module_count=2245`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> completed and refreshed
+  `artifacts/closeout/remaining_checkpoint_contract_latest.json`.
+
+Boundary:
+
+- This checkpoint does not claim the remaining architecture debt is gone. It
+  proves the larger-batch approach is working and that lazy factory registration
+  can be decoupled without changing singleton behavior. Next batches should
+  continue grouped service seams, then move into explicit interfaces for larger
+  ownership anchors.
+
+Estimate:
+
+- Architecture-regression-control closure: about 96%.
+- Existing architecture-debt reduction closure: about 48-53%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 70-76% locally.
+- Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
+  desktop findings, and longer soak/runtime evidence.

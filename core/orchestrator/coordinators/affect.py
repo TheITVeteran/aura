@@ -5,7 +5,9 @@ Handles emotional regulation, drive maintenance, and homeostasis.
 import inspect
 import logging
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any, Dict
+
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +32,7 @@ class AffectCoordinator:
     @property
     def emotion_engine(self):
         if self._emotion_engine is None:
-            from core.container import ServiceContainer
-            self._emotion_engine = ServiceContainer.get("affect_engine", default=None)
+            self._emotion_engine = get_runtime_service("affect_engine", default=None)
         return self._emotion_engine
 
     def get_mood(self) -> str:

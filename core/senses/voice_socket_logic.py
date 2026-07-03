@@ -1,9 +1,10 @@
 from core.runtime.errors import record_degradation
 import asyncio
 import logging
-from typing import List, Optional
 
 import numpy as np
+
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.VoiceProcessor")
 
@@ -120,8 +121,7 @@ class VoiceStreamProcessor:
             text = await asyncio.to_thread(_sync_transcribe)
             
             # Phase 4: Spinal Cord Reflex Engine (Audio Interrupts)
-            from core.container import ServiceContainer
-            orch = ServiceContainer.get("orchestrator", default=None)
+            orch = get_runtime_service("orchestrator", default=None)
             if orch and hasattr(orch, "reflex_engine") and orch.reflex_engine:
                 clean_t = text.upper().strip()
                 # Remove punctuation for emergency matching

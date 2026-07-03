@@ -30,6 +30,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.MemoryProvenance")
 
@@ -98,8 +99,7 @@ def mark_reviewed(rec: StampedMemory) -> None:
 
 def _read_confidence_from_substrate() -> float:
     try:
-        from core.container import ServiceContainer
-        fe = ServiceContainer.get("free_energy_engine", default=None)
+        fe = get_runtime_service("free_energy_engine", default=None)
         if fe is not None and getattr(fe, "current", None) is not None:
             cur = fe.current
             # Lower free energy → higher subjective confidence

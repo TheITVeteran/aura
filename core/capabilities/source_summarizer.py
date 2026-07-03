@@ -12,8 +12,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.SourceSummarizer")
 
@@ -72,7 +72,13 @@ Do NOT just list facts from each source separately. Weave them into a narrative.
     async def start(self) -> None:
         if self._started:
             return
-        ServiceContainer.register_instance("source_summarizer", self, required=False)
+        register_runtime_service(
+            "source_summarizer",
+            self,
+            required=False,
+            owner="core/capabilities/source_summarizer.py",
+            registered_by="SourceSummarizer.start",
+        )
         self._started = True
         logger.info("SourceSummarizer ONLINE")
 
@@ -121,7 +127,7 @@ Do NOT just list facts from each source separately. Weave them into a narrative.
     ) -> str:
         """Use LLM for abstractive summarization."""
         try:
-            router = ServiceContainer.get("llm_router", default=None)
+            router = get_runtime_service("llm_router", default=None)
             if not router:
                 return ""
 
@@ -183,7 +189,7 @@ Do NOT just list facts from each source separately. Weave them into a narrative.
         """Fetch and summarize multiple URLs."""
         sources = []
         try:
-            browser = ServiceContainer.get("browser_controller", default=None)
+            browser = get_runtime_service("browser_controller", default=None)
             if browser:
                 for url in urls[:5]:
                     extract = await browser.extract_article_text(url)

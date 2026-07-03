@@ -14,9 +14,9 @@ import logging
 import time
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.Cryptolalia")
 
@@ -58,7 +58,7 @@ class ConceptVectorBridge:
         logger.debug("🌌 [Cryptolalia] %s -> %s (Vector dim: %s)", source, target, len(semantic_vector))
         
         # Fire event for the decoder or monitoring
-        event_bus = ServiceContainer.get("event_bus", default=None)
+        event_bus = get_runtime_service("event_bus", default=None)
         if event_bus:
             await event_bus.publish("cryptolalia_transmission", {
                 "source": source,
@@ -88,7 +88,7 @@ class ConceptVectorBridge:
         if text_concept in self._concept_cache:
             return self._concept_cache[text_concept]
             
-        cognition = ServiceContainer.get("cognitive_engine", default=None)
+        cognition = get_runtime_service("cognitive_engine", default=None)
         if not cognition or not hasattr(cognition, "client"):
             # Fallback mock for testing if no provider
             logger.warning("No embedding provider found for vector creation. Using pseudo-random semantic hash.")
@@ -108,5 +108,10 @@ class ConceptVectorBridge:
 
 def register_concept_bridge(orchestrator=None):
     bridge = ConceptVectorBridge(orchestrator)
-    ServiceContainer.register_instance("concept_bridge", bridge)
+    register_runtime_service(
+        "concept_bridge",
+        bridge,
+        owner="core/brain/concept_vector_bridge.py",
+        registered_by="register_concept_bridge",
+    )
     return bridge

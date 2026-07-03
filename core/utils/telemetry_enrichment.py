@@ -6,6 +6,7 @@ _event_bridge(), and orchestrator _publish_telemetry().
 """
 from __future__ import annotations
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 
 import logging
@@ -40,9 +41,6 @@ def enrich_telemetry(data: Dict[str, Any]) -> Dict[str, Any]:
 
     This is the ONLY place these enrichments should happen.
     """
-    # Lazy import to avoid circular dependency at module load
-    from core.container import ServiceContainer
-
     data.setdefault("type", "telemetry")
     data.setdefault("timestamp", time.time())
 
@@ -72,7 +70,7 @@ def enrich_telemetry(data: Dict[str, Any]) -> Dict[str, Any]:
     # ── Liquid State Gauges ───────────────────────────────────────────
     if "energy" not in data or "curiosity" not in data:
         try:
-            ls = ServiceContainer.get("liquid_state", default=None)
+            ls = get_runtime_service("liquid_state", default=None)
             if ls and hasattr(ls, "get_status"):
                 ls_vals = ls.get_status()
                 energy = _normalize_percentish(ls_vals.get("energy", 0))
@@ -88,7 +86,7 @@ def enrich_telemetry(data: Dict[str, Any]) -> Dict[str, Any]:
                 if confidence is not None:
                     data.setdefault("confidence", round(confidence, 1))
             if "confidence" not in data:
-                homeostasis = ServiceContainer.get("homeostasis", default=None)
+                homeostasis = get_runtime_service("homeostasis", default=None)
                 if homeostasis and hasattr(homeostasis, "get_health"):
                     confidence = _normalize_percentish(homeostasis.get_health().get("will_to_live", 0))
                     if confidence is not None:
@@ -100,7 +98,7 @@ def enrich_telemetry(data: Dict[str, Any]) -> Dict[str, Any]:
     # ── LLM Tier ──────────────────────────────────────────────────────
     if "llm_tier" not in data:
         try:
-            llm_router = ServiceContainer.get("llm_router", default=None)
+            llm_router = get_runtime_service("llm_router", default=None)
             if llm_router:
                 tier = None
                 if hasattr(llm_router, "get_health_report"):
