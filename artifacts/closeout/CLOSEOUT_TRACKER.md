@@ -2184,3 +2184,32 @@ Tracker:
 - Final closeout evidence assembly closure: about 98%.
 - Expanded daily-runtime/product closure: about 92-93%.
 - Remaining total checkpoint groups: 2-3.
+
+## Checkpoint 2026-07-02-14: Final Closeout Evidence Assembly
+
+Status: ready to commit.
+
+What changed:
+
+- The canonical launched-desktop proof was rerun from clean commit `19426189`.
+- Artifact consistency and final claim validation were rerun against the fresh
+  current evidence.
+- `tools/closeout/final_closeout_assembler.py` passed with validators enabled.
+
+Evidence:
+
+- `python -u tools/live_boot_proof.py --mode desktop --port 8016 --conversation-soak-turns 3 --restart-continuity --boot-timeout 600 --out-dir artifacts/current/live_desktop_runtime`
+  -> passed; `git_dirty=false`, peak RSS about `20.6GB`, no runtime-stream
+  failure markers, shutdown clean.
+- `python tools/artifact_consistency_validator.py --artifacts artifacts/current`
+  -> `passed=true`.
+- `python tools/final_claim_validator.py --claims CLAIMS_MATRIX.md --artifacts artifacts/current`
+  -> `passed=true`.
+- `python tools/closeout/final_closeout_assembler.py`
+  -> `passed=true`, `failed_evidence=[]`, `failed_validators=[]`.
+
+Tracker:
+
+- Final closeout evidence assembly closure: about 99%.
+- Expanded daily-runtime/product closure: about 93%.
+- Remaining total checkpoint groups: 1-2.

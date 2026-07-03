@@ -4728,3 +4728,45 @@ Estimate:
 - Final closeout evidence assembly closure: about 98%.
 - Expanded daily-runtime/product closure: about 92-93%.
 - Remaining total checkpoint groups: 2-3.
+
+## Checkpoint 2026-07-02-14: Final Closeout Evidence Assembly
+
+Status: final closeout bundle passed; tracker commit pending.
+
+Scope:
+
+- Reran the canonical launched-desktop proof from clean commit `19426189`.
+- Reran artifact consistency and final claim validation against the refreshed
+  current evidence.
+- Rebuilt `artifacts/current/final_closeout` with validators enabled.
+
+Evidence:
+
+- `python -u tools/live_boot_proof.py --mode desktop --port 8016 --conversation-soak-turns 3 --restart-continuity --boot-timeout 600 --out-dir artifacts/current/live_desktop_runtime`
+  -> live proof passed; `git_dirty=false`, commit `19426189`, peak RSS about
+  `20.6GB`, conversation soak `3/3`, desktop action verified, restart
+  continuity passed, graceful shutdown, no runtime-stream failure markers.
+- `python tools/artifact_consistency_validator.py --artifacts artifacts/current`
+  -> `passed=true`, `proof_steps_consistent=true`, `dnu_status_complete=true`.
+- `python tools/final_claim_validator.py --claims CLAIMS_MATRIX.md --artifacts artifacts/current`
+  -> `passed=true`, `claims_analyzed=22`, no overclaim-language findings.
+- `python tools/closeout/final_closeout_assembler.py`
+  -> `passed=true`, `failed_evidence=[]`, `failed_validators=[]`.
+- `artifacts/current/final_closeout/FINAL_CLOSEOUT.json`
+  -> `passed=true`, `git.clean=true`, commit `19426189`.
+
+Boundary:
+
+- The final bundle verifies the configured local evidence profile and
+  daily-runtime artifacts. It still does not prove private phenomenal
+  consciousness, legal personhood, ASI, or unrestricted autonomy.
+- Runtime code did not change after the live proof; this tracker update records
+  the evidence. The final assembler will be rerun after this tracker commit so
+  the bundle records the final pushed checkpoint commit as clean.
+
+Estimate:
+
+- Final closeout evidence assembly closure: about 99%.
+- Expanded daily-runtime/product closure: about 93%.
+- Remaining total checkpoint groups: 1-2, centered on any further live user
+  observations or non-duplicative consolidation found in future passes.
