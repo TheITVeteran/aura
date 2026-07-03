@@ -4654,3 +4654,32 @@ Estimate:
 - Frontier-standards mapping closure: about 96%.
 - Expanded daily-runtime/product closure: about 92%.
 - Remaining total checkpoint groups: 2-3.
+
+## Checkpoint 2026-07-02-12: Remaining Contract Artifact Refresh
+
+Status: prerequisite artifact refreshed; commit pending before final closeout
+assembly.
+
+Scope:
+
+- Regenerated `artifacts/closeout/remaining_checkpoint_contract_latest.json`
+  after the operational-label and frontier-standard proof checkpoint.
+- The tracked contract artifact now matches the live `--require-live` result:
+  all mapped source paths, validators, and live artifacts are present.
+
+Evidence:
+
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live > artifacts/closeout/remaining_checkpoint_contract_latest.json`
+  -> `gaps=0`, `remaining_checkpoints=3`, `requirements=7`.
+
+Boundary:
+
+- This is a prerequisite evidence refresh so the final closeout assembler can
+  run from a clean committed baseline. It does not itself add new runtime
+  behavior.
+
+Estimate:
+
+- Closeout evidence-consistency closure: about 97%.
+- Expanded daily-runtime/product closure: about 92%.
+- Remaining total checkpoint groups: 2-3.

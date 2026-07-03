@@ -197,9 +197,7 @@
             "artifacts/current/agi_live",
             "artifacts/current/final_closeout"
           ],
-          "missing_live_artifacts": [
-            "artifacts/current/final_closeout"
-          ],
+          "missing_live_artifacts": [],
           "missing_sources": [],
           "missing_validators": [],
           "source_paths": [
@@ -209,7 +207,7 @@
             "tools/live_boot_proof.py",
             "Makefile"
           ],
-          "status": "gap",
+          "status": "mapped",
           "validators": [
             "tests/test_crsm_loop_monitor.py",
             "tests/test_preference_trainer.py",
@@ -472,21 +470,11 @@
       ]
     }
   ],
-  "gaps": [
-    {
-      "checkpoint": 11,
-      "missing_live_artifacts": [
-        "artifacts/current/final_closeout"
-      ],
-      "missing_sources": [],
-      "missing_validators": [],
-      "requirement": "learning_substrate_and_final_artifacts"
-    }
-  ],
+  "gaps": [],
   "summary": {
     "fictional_imports": 16,
     "game_ai_imports": 7,
-    "gaps": 1,
+    "gaps": 0,
     "product_maturity_references": [
       "Chrome",
       "Kubernetes",

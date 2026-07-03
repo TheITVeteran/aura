@@ -2131,3 +2131,24 @@ Tracker:
 - Operational labels/frontier proof closure: about 96%.
 - Expanded daily-runtime/product closure: about 92%.
 - Remaining total checkpoint groups: 2-3.
+
+## Checkpoint 2026-07-02-12: Remaining Contract Artifact Refresh
+
+Status: ready to commit.
+
+What changed:
+
+- Refreshed `artifacts/closeout/remaining_checkpoint_contract_latest.json`
+  from the current `--require-live` contract after the label/frontier proof
+  checkpoint.
+
+Evidence:
+
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live > artifacts/closeout/remaining_checkpoint_contract_latest.json`
+  -> `gaps=0`, `remaining_checkpoints=3`, `requirements=7`.
+
+Tracker:
+
+- Closeout evidence-consistency closure: about 97%.
+- Expanded daily-runtime/product closure: about 92%.
+- Remaining total checkpoint groups: 2-3.
