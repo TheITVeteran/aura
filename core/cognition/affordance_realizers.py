@@ -69,19 +69,67 @@ async def realize_demonstrate_artifact(args: dict[str, str], context: dict[str, 
             context={"origin": "expressive_affordance", "affordance": "demonstrate_artifact", "kind": kind},
         )
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-        logger.debug("demonstrate_artifact unavailable: %s", exc)
+        logger.debug("demonstrate_artifact task engine unavailable: %s", exc)
+        result = None
+    ok = bool(
+        result is not None
+        and (getattr(result, "success", None) or getattr(result, "status", "") in {"completed", "success"})
+    )
+    if ok:
         return {
-            "ok": False,
-            "reason": f"artifact_engine_unavailable:{type(exc).__name__}",
-            "spoken": f"I'd build you a {kind} to show what I mean, but my artifact tools aren't reachable right now.",
+            "ok": True,
+            "kind": "artifact",
+            "artifact_kind": kind,
+            "status": getattr(result, "status", "unknown"),
+            "spoken": "I built a quick example — something like this?",
         }
-    ok = bool(getattr(result, "success", None) or getattr(result, "status", "") in {"completed", "success"})
+
+    # Deterministic backbone: always produce a real, openable artifact in a
+    # portable format so 'something like this?' works even when the task engine
+    # is unavailable or no spreadsheet app is installed. This is the floor that
+    # always succeeds — Bryan's 'build one herself and export it in a showable
+    # format' requirement.
+    try:
+        from core.actuators.artifact_builder import (
+            build_doc,
+            build_program,
+            build_table,
+            open_artifact,
+        )
+
+        if kind in {"table", "spreadsheet"}:
+            built = build_table(
+                [["Example row 1", "value"], ["Example row 2", "value"]],
+                headers=["Column A", "Column B"],
+                title=(spec[:60] or "Example table"),
+            )
+        elif kind in {"program", "script", "code"}:
+            _prog_header = spec[:80] or "Example program"
+            built = build_program(
+                f"# {_prog_header}\nprint('Aura built this as a starting point.')\n"
+            )
+        else:
+            built = build_doc(spec or "An example to react to.", title=(spec[:60] or "Example document"))
+        if built.ok:
+            await open_artifact(built.primary)
+            return {
+                "ok": True,
+                "kind": "artifact",
+                "artifact_kind": kind,
+                "path": built.primary,
+                "paths": built.paths,
+                "spoken": (
+                    f"I built a starter {kind} and opened it for you — something like this? "
+                    "Tell me what to change and I'll refine it."
+                ),
+            }
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as build_exc:
+        logger.debug("deterministic artifact build failed: %s", build_exc)
+
     return {
-        "ok": ok,
-        "kind": "artifact",
-        "artifact_kind": kind,
-        "status": getattr(result, "status", "unknown"),
-        "spoken": "I built a quick example — something like this?" if ok else "I started building an example; here's where it stands.",
+        "ok": False,
+        "reason": "artifact_unavailable",
+        "spoken": f"I'd build you a {kind} to show what I mean, but my artifact tools aren't reachable right now.",
     }
 
 
