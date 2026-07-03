@@ -41,6 +41,49 @@ def test_gate_rejects_overlay_that_introduces_cycle(tmp_path: Path):
     assert any("new import cycle" in reason for reason in result.reasons)
 
 
+def test_gate_allows_cycle_shrinkage_even_when_membership_changes(tmp_path: Path):
+    _write(tmp_path / "core" / "__init__.py", "")
+    _write(tmp_path / "core" / "a.py", "import core.b\nVALUE = 1\n")
+    _write(tmp_path / "core" / "b.py", "import core.c\nVALUE = 2\n")
+    _write(tmp_path / "core" / "c.py", "import core.a\nVALUE = 3\n")
+
+    gate = ArchitectureQualityGate(tmp_path, include_roots=("core",))
+    result = gate.evaluate_overlay(
+        {"core/c.py": "import core.b\nVALUE = 3\n"},
+        changed_paths=("core/c.py",),
+    )
+
+    assert result.passed
+    assert result.after.metrics.largest_cycle_size < result.before.metrics.largest_cycle_size
+
+
+def test_gate_allows_large_cycle_decomposition_into_smaller_cycles(tmp_path: Path):
+    _write(tmp_path / "core" / "__init__.py", "")
+    for idx in range(12):
+        current = chr(ord("a") + idx)
+        nxt = chr(ord("a") + ((idx + 1) % 12))
+        _write(tmp_path / "core" / f"{current}.py", f"import core.{nxt}\n")
+
+    overlay = {}
+    for idx in range(12):
+        current = chr(ord("a") + idx)
+        if idx < 3:
+            nxt = chr(ord("a") + ((idx + 1) % 3))
+        elif idx < 6:
+            nxt = chr(ord("a") + 3 + ((idx - 3 + 1) % 3))
+        else:
+            nxt = None
+        overlay[f"core/{current}.py"] = f"import core.{nxt}\n" if nxt else "VALUE = 1\n"
+
+    gate = ArchitectureQualityGate(tmp_path, include_roots=("core",))
+    result = gate.evaluate_overlay(overlay, changed_paths=overlay.keys())
+
+    assert result.passed
+    assert result.before.metrics.cycle_count == 1
+    assert result.after.metrics.cycle_count == 2
+    assert result.after.metrics.largest_cycle_size == 3
+
+
 def test_gate_rejects_large_file_growth(tmp_path: Path):
     _write(tmp_path / "core" / "__init__.py", "")
     base_content = "\n".join(f"BASE_{idx} = {idx}" for idx in range(25)) + "\n"

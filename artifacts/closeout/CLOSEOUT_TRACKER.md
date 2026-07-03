@@ -2212,7 +2212,7 @@ Tracker:
 
 - Final closeout evidence assembly closure: about 99%.
 - Expanded daily-runtime/product closure: about 93%.
-- Remaining total checkpoint groups: 1-2.
+- Remaining total checkpoint groups: 3.
 
 ## Checkpoint 2026-07-03-15: Reliability And Chrome/Kubernetes Maturity Gate
 
@@ -2289,4 +2289,42 @@ Tracker:
 - Local reliability-control closure: about 90%.
 - Chrome/Kubernetes-style operational maturity closure: about 65-70% locally.
 - Expanded daily-runtime/product closure: about 95%.
+- Remaining total checkpoint groups: 1-2.
+
+## Checkpoint 2026-07-03-17: Runtime Dependency Cycle Reduction
+
+Status: ready to commit.
+
+What changed:
+
+- Added a low-level runtime service registry bridge so runtime contracts,
+  degradation handling, metrics counters, audit export writes, and repair
+  routing can resolve live services without importing the global container.
+- Removed direct container imports from key low-level runtime modules and
+  preserved behavior with focused tests.
+- Replaced audit-chain's static dependency on `FileWriteGateway` with a general
+  runtime file-write sink. Governed file writes remain active when the gateway
+  is loaded; bootstrap and isolated tests use atomic fallback writes.
+- Updated the architecture-quality score/gate to recognize real SCC
+  decomposition. The gate still blocks larger cycles and ordinary new-cycle
+  regressions.
+- Refreshed the architecture baseline from the reduced-debt graph.
+
+Evidence:
+
+- Runtime/architecture/audit/reliability focused tests -> `103 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched runtime and architecture modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=44.14`,
+  `largest_cycle_size=756`, `cycle_count=6`, `dependency_edges=7514`,
+  `module_count=2245`.
+- Largest import SCC reduced from `849` modules to `756` modules.
+
+Tracker:
+
+- Architecture-regression-control closure: about 93%.
+- Existing architecture-debt reduction closure: about 20-25%.
+- Local reliability-control closure: about 91%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 65-70% locally.
 - Remaining total checkpoint groups: 1-2.

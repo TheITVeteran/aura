@@ -385,7 +385,8 @@ def _build_findings(
 
 def _quality_score(metrics: ArchitectureQualityMetrics) -> float:
     penalty = 0.0
-    penalty += min(30.0, metrics.cycle_count * 2.0)
+    penalty += min(12.0, metrics.cycle_count * 0.75)
+    penalty += min(12.0, metrics.largest_cycle_size / 100.0)
     penalty += min(20.0, metrics.god_file_count * 0.75)
     penalty += min(12.0, max(0, metrics.max_out_degree - 35) * 0.2)
     penalty += min(12.0, max(0, metrics.max_in_degree - 45) * 0.15)

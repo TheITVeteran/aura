@@ -921,5 +921,34 @@ class ServiceContainer:
         cls._emit_absent_event(service_name)
 
 
+def _install_runtime_service_registry_bridge() -> None:
+    """Expose read-only service policy metadata to low-level runtime modules."""
+
+    try:
+        from core.runtime.service_registry import (
+            install_failure_policy_resolver,
+            install_service_resolver,
+        )
+
+        def _failure_policy_for(service_name: str) -> str | None:
+            resolved = ServiceContainer._resolve_name(service_name)
+            with ServiceContainer._lock:
+                desc = ServiceContainer._services.get(resolved)
+            if desc is None:
+                return None
+            return getattr(desc, "failure_policy", None)
+
+        def _service_for(service_name: str, default: object | None = None) -> object | None:
+            return ServiceContainer.get(service_name, default=default)
+
+        install_failure_policy_resolver(_failure_policy_for)
+        install_service_resolver(_service_for)
+    except (ImportError, RuntimeError, AttributeError) as exc:
+        logger.debug("Runtime service registry bridge unavailable: %s", exc)
+
+
+_install_runtime_service_registry_bridge()
+
+
 def get_container() -> type[ServiceContainer]:
     return ServiceContainer

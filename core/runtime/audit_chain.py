@@ -39,7 +39,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.service_registry import runtime_write_bytes, runtime_write_text
 
 logger = logging.getLogger("core.runtime.audit_chain")
 
@@ -524,13 +524,12 @@ class AuditChain:
             f"head_hash={head}\n"
             f"source_path={self.path}\n"
         )
-        file_gateway = get_file_write_gateway()
-        file_gateway.write_bytes(
+        runtime_write_bytes(
             chain_dst,
             chain_payload,
             source="core.runtime.audit_chain.export_chain",
         )
-        file_gateway.write_text(
+        runtime_write_text(
             manifest_dst,
             manifest,
             encoding="utf-8",

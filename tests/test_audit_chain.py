@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import core.runtime.audit_chain as audit_chain_mod
 from core.runtime.audit_chain import (
     GENESIS_PREV_HASH,
     AuditChain,
@@ -262,39 +261,31 @@ def test_export_produces_portable_bundle(tmp_path):
     assert src == dst
 
 
-def test_export_writes_portable_bundle_through_file_gateway(tmp_path, monkeypatch):
+def test_export_writes_portable_bundle_through_runtime_write_sink(tmp_path):
     file_calls: list[tuple[str, str]] = []
+    from core.runtime.service_registry import install_file_write_sinks
 
-    class FakeFileWriteGateway:
-        def write_bytes(self, path, payload, *, source="unknown"):
-            target = Path(path)
-            file_calls.append((target.name, source))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(bytes(payload))
+    def write_bytes(path, payload, source):
+        target = Path(path)
+        file_calls.append((target.name, source))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(bytes(payload))
 
-        def write_text(self, path, text, *, encoding="utf-8", source="unknown"):
-            target = Path(path)
-            file_calls.append((target.name, source))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(text, encoding=encoding)
+    def write_text(path, text, encoding, source):
+        target = Path(path)
+        file_calls.append((target.name, source))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding=encoding)
 
-        # Async lane delegators: production code now calls *_async; fakes
-        # must mirror the gateway surface or every governed write breaks.
-        async def write_text_async(self, *args, **kwargs):
-            return self.write_text(*args, **kwargs)
-        async def write_bytes_async(self, *args, **kwargs):
-            return self.write_bytes(*args, **kwargs)
+    install_file_write_sinks(write_bytes=write_bytes, write_text=write_text)
+    try:
+        store = _fresh_store(tmp_path)
+        _emit_three(store)
 
-    monkeypatch.setattr(
-        audit_chain_mod,
-        "get_file_write_gateway",
-        lambda: FakeFileWriteGateway(),
-    )
-    store = _fresh_store(tmp_path)
-    _emit_three(store)
-
-    dest = tmp_path / "audit_export"
-    info = store.export_chain(dest)
+        dest = tmp_path / "audit_export"
+        info = store.export_chain(dest)
+    finally:
+        install_file_write_sinks()
 
     assert Path(info["chain_path"]).exists()
     assert Path(info["manifest_path"]).exists()

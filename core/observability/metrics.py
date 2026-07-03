@@ -263,8 +263,8 @@ class MetricsCollector:
 
         # Substrate state
         try:
-            from core.container import ServiceContainer
-            substrate = ServiceContainer.get("continuous_substrate", default=None)
+            from core.runtime.service_registry import get_runtime_service
+            substrate = get_runtime_service("continuous_substrate", default=None)
             if substrate and hasattr(substrate, "get_state_summary"):
                 summary = substrate.get_state_summary()
                 for key in ("valence", "arousal", "dominance", "phi", "curiosity", "energy"):
@@ -308,8 +308,8 @@ class MetricsCollector:
 
         # Drive levels
         try:
-            from core.container import ServiceContainer
-            drive_engine = ServiceContainer.get("drive_engine", default=None)
+            from core.runtime.service_registry import get_runtime_service
+            drive_engine = get_runtime_service("drive_engine", default=None)
             if drive_engine and hasattr(drive_engine, "get_state"):
                 drive_state = drive_engine.get_state()
                 drives = drive_state.get("drives", {})
@@ -412,6 +412,18 @@ def get_metrics() -> MetricsCollector:
     return _metrics_instance
 
 
+def _increment_runtime_counter_sink(name: str, amount: int = 1) -> None:
+    get_metrics().increment_counter(name, amount)
+
+
+try:
+    from core.runtime.service_registry import install_metric_counter_sink
+
+    install_metric_counter_sink(_increment_runtime_counter_sink)
+except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+    logger.debug("Runtime metric counter bridge unavailable: %s", exc)
+
+
 # ---------------------------------------------------------------------------
 # Health check functions
 # ---------------------------------------------------------------------------
@@ -454,8 +466,8 @@ def check_readiness() -> Dict[str, Any]:
 
     # Check substrate
     try:
-        from core.container import ServiceContainer
-        substrate = ServiceContainer.get("continuous_substrate", default=None)
+        from core.runtime.service_registry import get_runtime_service
+        substrate = get_runtime_service("continuous_substrate", default=None)
         if substrate and hasattr(substrate, "get_state_vector"):
             import numpy as np
             state = substrate.get_state_vector()

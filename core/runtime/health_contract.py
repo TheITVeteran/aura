@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.HealthContract")
 
@@ -614,7 +614,7 @@ def _float_env(name: str, default: float) -> float:
 def _process_uptime_seconds() -> float:
     """Seconds since the runtime booted, or 0.0 if unknown.
 
-    Reads the orchestrator's start_time from the container. Returns 0.0 when
+    Reads the orchestrator's start_time from the runtime registry. Returns 0.0 when
     no orchestrator is registered (e.g. unit tests), so the boot-grace
     exemption below applies ONLY to a live runtime that is genuinely warming
     up — never to a bare-probe unit test. Used to suppress runtime-pressure
@@ -623,7 +623,7 @@ def _process_uptime_seconds() -> float:
     the freeze watchdog already exempts).
     """
     try:
-        orch = ServiceContainer.get("orchestrator", default=None)
+        orch = get_runtime_service("orchestrator", default=None)
     except (RuntimeError, AttributeError, TypeError, ValueError):
         return 0.0
     for candidate in (
@@ -729,7 +729,7 @@ def _runtime_pressure_status() -> ServiceStatus:
     boot_grace_active = _runtime_pressure_boot_grace_active()
 
     try:
-        stakes = ServiceContainer.get("existential_stakes", default=None)
+        stakes = get_runtime_service("existential_stakes", default=None)
         status_getter = getattr(stakes, "get_status", None)
         if callable(status_getter):
             status = status_getter()
@@ -766,7 +766,7 @@ def _runtime_pressure_status() -> ServiceStatus:
 
     for key in ("event_loop_monitor", "hypervisor"):
         try:
-            monitor = ServiceContainer.get(key, default=None)
+            monitor = get_runtime_service(key, default=None)
             status_getter = getattr(monitor, "get_status", None)
             if not callable(status_getter):
                 continue
@@ -847,7 +847,7 @@ def _tier_summary(services: list[ServiceStatus], tier: ServiceTier) -> dict[str,
 
 
 def evaluate_health() -> HealthVerdict:
-    """Evaluate the runtime health contract against the live ServiceContainer.
+    """Evaluate the runtime health contract against the live runtime service registry.
 
     This is safe to call from any context — it never throws.
     """
@@ -855,7 +855,7 @@ def evaluate_health() -> HealthVerdict:
 
     for req in RUNTIME_CONTRACT:
         try:
-            svc = ServiceContainer.get(req.container_key, default=None)
+            svc = get_runtime_service(req.container_key, default=None)
             present = svc is not None
 
             liveness_ok = None

@@ -4882,3 +4882,53 @@ Estimate:
 - Remaining total checkpoint groups: 1-2, centered on reducing existing
   architecture debt rather than only ratcheting it, plus any live desktop
   findings that appear during real runtime use.
+
+## Checkpoint 2026-07-03-17: Runtime Dependency Cycle Reduction
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Added `core.runtime.service_registry`, a low-level bridge that lets runtime
+  contracts, degradation recording, metrics, file-write sinks, and repair
+  routing resolve live services without importing `core.container`.
+- Removed direct `ServiceContainer` dependencies from low-level runtime paths:
+  `core.runtime.errors`, `core.runtime.health_contract`,
+  `core.observability.metrics`, and `core.resilience.degradation_repair`.
+- Inverted audit-chain export writes through a general runtime file-write sink.
+  When `FileWriteGateway` is active the export remains governed; during isolated
+  bootstrap/tests it falls back to atomic local writes without pulling
+  governance/container into the audit-chain import graph.
+- Updated the architecture-quality score/gate so splitting a giant import SCC
+  into smaller SCCs counts as structural progress while larger/new cycle
+  regressions remain blocked.
+- Refreshed the architecture baseline after reducing the largest import cycle
+  from `849` modules to `756` modules.
+
+Evidence:
+
+- `python -m pytest -q tests/test_architecture_quality_gate.py tests/test_runtime_error_architecture.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `103 passed`.
+- `python -m ruff check --select F,E9 ...`
+  over touched runtime/architecture/test files -> passed.
+- `python -m py_compile ...`
+  over touched runtime/architecture files -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=44.14`,
+  `largest_cycle_size=756`, `cycle_count=6`, `dependency_edges=7514`,
+  `god_file_count=37`, `module_count=2245`.
+
+Boundary:
+
+- This checkpoint reduces the biggest runtime/container cycle but does not
+  eliminate all architecture debt. The remaining largest cycle is still large
+  (`756` modules), so the tracker keeps architecture consolidation open.
+
+Estimate:
+
+- Architecture-regression-control closure: about 93%.
+- Existing architecture-debt reduction closure: about 20-25%.
+- Local reliability-control closure: about 91%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 65-70% locally.
+- Remaining total checkpoint groups: 3, focused on additional SCC cuts,
+  live desktop findings, and long-run soak evidence.

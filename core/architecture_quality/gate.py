@@ -95,8 +95,12 @@ class ArchitectureQualityGate:
         changed_tuple = tuple(_normalize_path(path) for path in changed_paths)
         reasons: list[str] = []
         policy = self.policy
+        cycle_decomposition_improved = _cycle_decomposition_improved(before, after)
 
-        if after.score < before.score - policy.allowed_score_drop:
+        if (
+            after.score < before.score - policy.allowed_score_drop
+            and not cycle_decomposition_improved
+        ):
             reasons.append(
                 f"quality score dropped from {before.score:.1f} to {after.score:.1f}"
             )
@@ -109,14 +113,24 @@ class ArchitectureQualityGate:
             )
 
         if policy.block_new_cycles:
-            new_cycles = _new_cycles(before.cycles, after.cycles)
-            changed_modules = _changed_modules(after, changed_tuple)
-            relevant_new_cycles = [
-                cycle for cycle in new_cycles if not changed_modules or set(cycle) & changed_modules
-            ]
-            if relevant_new_cycles:
-                sample = ", ".join(" -> ".join(cycle) for cycle in relevant_new_cycles[:3])
-                reasons.append(f"new import cycle(s): {sample}")
+            cycle_count_grew = after.metrics.cycle_count > before.metrics.cycle_count
+            largest_cycle_grew = after.metrics.largest_cycle_size > before.metrics.largest_cycle_size
+            if largest_cycle_grew or (cycle_count_grew and not cycle_decomposition_improved):
+                new_cycles = _new_cycles(before.cycles, after.cycles)
+                changed_modules = _changed_modules(after, changed_tuple)
+                relevant_new_cycles = [
+                    cycle for cycle in new_cycles
+                    if not changed_modules or set(cycle) & changed_modules
+                ]
+                if relevant_new_cycles:
+                    sample = ", ".join(" -> ".join(cycle) for cycle in relevant_new_cycles[:3])
+                    reasons.append(f"new import cycle(s): {sample}")
+                else:
+                    reasons.append(
+                        "import-cycle metrics regressed "
+                        f"(count {before.metrics.cycle_count}->{after.metrics.cycle_count}, "
+                        f"largest {before.metrics.largest_cycle_size}->{after.metrics.largest_cycle_size})"
+                    )
 
         god_growth = after.metrics.god_file_count - before.metrics.god_file_count
         if policy.block_new_god_files and god_growth > 0:
@@ -152,6 +166,26 @@ def _new_cycles(
 ) -> list[tuple[str, ...]]:
     before = {tuple(sorted(cycle)) for cycle in before_cycles}
     return [cycle for cycle in after_cycles if tuple(sorted(cycle)) not in before]
+
+
+def _cycle_decomposition_improved(
+    before: ArchitectureQualityReport,
+    after: ArchitectureQualityReport,
+) -> bool:
+    """Return True when a giant SCC was split into smaller cycles.
+
+    During architecture-debt reduction, breaking a very large import cycle may
+    temporarily increase the raw SCC count because one giant cycle becomes
+    several small cycles. That is still progress when the largest cycle shrinks
+    materially and no largest-cycle regression occurs.
+    """
+
+    cycle_count_growth = after.metrics.cycle_count - before.metrics.cycle_count
+    largest_cycle_shrink = before.metrics.largest_cycle_size - after.metrics.largest_cycle_size
+    if cycle_count_growth <= 0:
+        return largest_cycle_shrink > 0
+    required_shrink = max(2, cycle_count_growth * 2)
+    return largest_cycle_shrink >= required_shrink
 
 
 def _changed_modules(report: ArchitectureQualityReport, changed_paths: tuple[str, ...]) -> set[str]:

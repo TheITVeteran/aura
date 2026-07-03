@@ -276,13 +276,11 @@ def record_degradation(
     failure_policy_violation = False
     failure_policy_error = ""
     try:
-        from core.container import ServiceContainer
         from core.runtime.mode import AuraMode, get_mode
         if not _shutting_down and get_mode() in (AuraMode.PRODUCTION, AuraMode.LIVE):
-            resolved = ServiceContainer._resolve_name(subsystem)
-            with ServiceContainer._lock:
-                desc = ServiceContainer._services.get(resolved)
-            if desc and getattr(desc, "failure_policy", "") == "fail-closed":
+            from core.runtime.service_registry import get_service_failure_policy
+
+            if get_service_failure_policy(subsystem) == "fail-closed":
                 if severity in ("critical", "degraded", "warning"):
                     failure_policy_violation = True
                     failure_policy_error = (
@@ -440,9 +438,10 @@ def record_degradation(
 
     # ── Metrics integration ───────────────────────────────────────
     try:
-        from core.observability.metrics import get_metrics
-        get_metrics().increment_counter(f"degradation_{subsystem}_{severity}")
-    except (ImportError, AttributeError, RuntimeError) as metrics_exc:
+        from core.runtime.service_registry import increment_runtime_counter
+
+        increment_runtime_counter(f"degradation_{subsystem}_{severity}")
+    except (AttributeError, RuntimeError, TypeError, ValueError) as metrics_exc:
         logger.debug(
             "Metrics unavailable for degradation %s: %s",
             subsystem,

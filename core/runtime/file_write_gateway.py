@@ -244,4 +244,23 @@ def get_file_write_gateway() -> FileWriteGateway:
     return _gateway
 
 
+def _registry_write_bytes(path: PathLike, payload: bytes, source: str) -> None:
+    get_file_write_gateway().write_bytes(path, payload, source=source)
+
+
+def _registry_write_text(path: PathLike, text: str, encoding: str, source: str) -> None:
+    get_file_write_gateway().write_text(path, text, encoding=encoding, source=source)
+
+
+try:
+    from core.runtime.service_registry import install_file_write_sinks
+
+    install_file_write_sinks(
+        write_bytes=_registry_write_bytes,
+        write_text=_registry_write_text,
+    )
+except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+    logger.debug("Runtime file-write bridge unavailable: %s", exc)
+
+
 __all__ = ["FileWriteGateway", "get_file_write_gateway"]

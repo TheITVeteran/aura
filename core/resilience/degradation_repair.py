@@ -35,9 +35,9 @@ class DegradationRepairAction:
 
 def _service_get(name: str) -> Any | None:
     try:
-        from core.container import ServiceContainer
+        from core.runtime.service_registry import get_runtime_service
 
-        return ServiceContainer.get(name, default=None)
+        return get_runtime_service(name, default=None)
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return None
 
