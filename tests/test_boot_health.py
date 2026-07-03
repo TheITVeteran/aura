@@ -177,13 +177,47 @@ def test_boot_health_treats_active_foreground_generation_as_working_not_unhealth
     assert status_code == 200
     assert payload["status"] == "working"
     assert payload["system_ready"] is True
-    assert payload["ready"] is False
+    # A functional lane actively answering a turn is READY. Reporting a busy
+    # lane as not-ready made the desktop shell sit at "Connecting to runtime"
+    # for the length of a long turn or a run of back-to-back turns (live,
+    # July 2026). Readiness is Kubernetes-style: serving a request is ready.
+    assert payload["ready"] is True
     assert payload["launcher_ready"] is True
     assert payload["conversation_ready"] is False
     assert payload["conversation_busy"] is True
     assert payload["boot_phase"] == "conversation_working"
     assert payload["status_message"] == "Aura is answering through the live conversation lane."
     assert "conversation_ready" not in payload["blockers"]
+
+
+def test_boot_health_warming_lane_busy_is_not_ready_unlike_serving_lane():
+    """The two 'busy' states must not collapse: serving ⇒ ready, warming ⇒ not."""
+    _register_runtime_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+    status = SimpleNamespace(
+        initialized=True,
+        running=True,
+        healthy=True,
+        last_error="",
+        cycle_count=12,
+        start_time=time.time() - 5,
+    )
+    orchestrator = SimpleNamespace(status=status, health_check=lambda: True)
+    runtime = {"state": {"process_id": 1234}, "sha256": "abc123", "signature": "sig"}
+
+    warming, _ = build_boot_health_snapshot(
+        orchestrator,
+        runtime,
+        is_gui_proxy=False,
+        conversation_lane={
+            "conversation_ready": False,
+            "state": "spawning",
+            "active_generations": 0,
+            "warmup_in_flight": True,
+        },
+    )
+    assert warming["conversation_busy"] is True
+    assert warming["ready"] is False, "a lane busy *warming up* is not yet ready"
+    assert warming["boot_phase"] == "conversation_working"
 
 
 def test_boot_health_treats_handshaking_warmup_as_working():

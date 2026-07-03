@@ -5,7 +5,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from core.brain.llm.model_registry import PRIMARY_ENDPOINT
-from core.health.conversation_lane import conversation_lane_is_busy
+from core.health.conversation_lane import (
+    conversation_lane_is_busy,
+    conversation_lane_is_serving,
+)
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.health_contract import (
     evaluate_health,
@@ -310,7 +313,13 @@ def build_boot_health_snapshot(
         elif system_ready and conversation_busy:
             boot_phase = "conversation_working"
             status_text = "working"
-            user_ready = False
+            # A functional lane actively answering a turn is READY — the desktop
+            # must connect and show the streaming reply, not fall back to
+            # "Connecting to runtime" for the length of a long turn or a run of
+            # back-to-back turns (observed live: a busy lane reported ready=false
+            # and the shell sat at "Initializing"). A lane that is busy *warming
+            # up* (handshaking/spawning) is genuinely not-ready and stays so.
+            user_ready = conversation_lane_is_serving(conversation_lane)
             launcher_ready = True
             http_status = 200
         elif system_ready and not conversation_ready:
