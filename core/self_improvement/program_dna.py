@@ -36,20 +36,53 @@ AUTHORIZED_SCOPES = frozenset(
         "internal",
         "educational",
         "user_owned",
+        "defensive_analysis",
+        "external_observation",
+        "host_observation",
+        "public_observation",
+        "security_research",
     }
 )
 
-PROHIBITED_MARKERS = (
+ALWAYS_PROHIBITED_MARKERS = (
     "bypass drm",
     "crack license",
     "steal source",
     "exfiltrate",
-    "credential",
+    "steal credential",
+    "dump credential",
     "pirate",
-    "malware",
     "keygen",
     "activation bypass",
 )
+
+DUAL_USE_SECURITY_MARKERS = (
+    "malware",
+    "worm",
+    "trojan",
+    "spyware",
+    "ddos",
+    "botnet",
+    "exploit",
+    "payload",
+)
+
+DEFENSIVE_INTENT_MARKERS = (
+    "defensive",
+    "study",
+    "analyze",
+    "analyse",
+    "audit",
+    "protect",
+    "detect",
+    "forensic",
+    "understand",
+    "my host",
+    "owned host",
+    "authorized",
+)
+
+STUDY_MODES = frozenset({"study", "observe", "monitor", "defensive_analysis"})
 
 SOURCE_EXTENSIONS = {
     ".py",
@@ -133,6 +166,7 @@ class ProgramDNABlueprint:
 
 @dataclass(slots=True)
 class ProgramDNAGenome:
+    analysis_mode: str
     purpose: str
     phenotype_sources: list[str]
     feature_map: list[dict[str, Any]]
@@ -144,6 +178,13 @@ class ProgramDNAGenome:
     permission_model: list[dict[str, Any]]
     error_behaviors: list[dict[str, Any]]
     background_services: list[dict[str, Any]]
+    interaction_surfaces: list[dict[str, Any]]
+    aura_interaction_surface: list[dict[str, Any]]
+    host_touchpoints: list[dict[str, Any]]
+    network_surface: list[dict[str, Any]]
+    hardware_surface: list[dict[str, Any]]
+    defensive_observations: list[dict[str, Any]]
+    study_questions: list[str]
     compatibility_targets: list[str]
     hidden_state_risks: list[str]
     reconstruction_unknowns: list[str]
@@ -155,6 +196,7 @@ class ProgramDNAVerificationPlan:
     ui_tests: list[dict[str, Any]]
     golden_file_tests: list[dict[str, Any]]
     api_tests: list[dict[str, Any]]
+    interaction_tests: list[dict[str, Any]]
     edge_case_tests: list[dict[str, Any]]
     performance_checks: list[dict[str, Any]]
     security_checks: list[dict[str, Any]]
@@ -221,6 +263,7 @@ class ProgramDNAReconstructionEngine:
 
         target = str(payload.get("target") or payload.get("name") or "unknown_program").strip()
         authorization = str(payload.get("authorization") or "unspecified").strip().lower()
+        analysis_mode = str(payload.get("analysis_mode") or payload.get("mode") or "reconstruct").strip().lower()
         objective = str(payload.get("objective") or target).lower()
         blocked = self._policy_blocks(authorization, objective)
         if blocked:
@@ -244,6 +287,18 @@ class ProgramDNAReconstructionEngine:
         test_notes = self._string_list(payload.get("tests") or payload.get("test_notes"))
         workflow_notes = self._string_list(payload.get("workflow_notes") or payload.get("workflows"))
         permission_notes = self._string_list(payload.get("permissions") or payload.get("permission_notes"))
+        study_questions = self._string_list(payload.get("study_questions") or payload.get("questions"))
+        interaction_observations = self._string_list(
+            payload.get("interaction_observations")
+            or payload.get("interaction_notes")
+            or payload.get("interactions")
+        )
+        aura_interactions = self._string_list(payload.get("aura_interactions") or payload.get("aura_notes"))
+        host_interactions = self._string_list(payload.get("host_interactions") or payload.get("host_notes"))
+        network_observations = self._string_list(payload.get("network_observations") or payload.get("network_notes"))
+        hardware_observations = self._string_list(payload.get("hardware_observations") or payload.get("hardware_notes"))
+        process_observations = self._string_list(payload.get("process_observations") or payload.get("process_notes"))
+        security_observations = self._string_list(payload.get("security_observations") or payload.get("security_notes"))
         compatibility_targets = self._string_list(
             payload.get("compatibility_targets") or payload.get("platforms") or ["local-first replacement"]
         )
@@ -267,18 +322,30 @@ class ProgramDNAReconstructionEngine:
         evidence.extend(self._notes_to_evidence("test_observation", test_notes, confidence=0.76))
         evidence.extend(self._notes_to_evidence("workflow_observation", workflow_notes, confidence=0.74))
         evidence.extend(self._notes_to_evidence("permission_observation", permission_notes, confidence=0.72))
+        evidence.extend(self._notes_to_evidence("study_question", study_questions, confidence=0.78))
+        evidence.extend(self._notes_to_evidence("interaction_observation", interaction_observations, confidence=0.72))
+        evidence.extend(self._notes_to_evidence("aura_interaction", aura_interactions, confidence=0.80))
+        evidence.extend(self._notes_to_evidence("host_interaction", host_interactions, confidence=0.76))
+        evidence.extend(self._notes_to_evidence("network_observation", network_observations, confidence=0.74))
+        evidence.extend(self._notes_to_evidence("hardware_observation", hardware_observations, confidence=0.74))
+        evidence.extend(self._notes_to_evidence("process_observation", process_observations, confidence=0.72))
+        evidence.extend(self._notes_to_evidence("security_observation", security_observations, confidence=0.76))
 
         if bool(payload.get("enable_binary_static_analysis", False)):
             evidence.extend(self._binary_static_analysis_plan(source_paths))
+        if bool(payload.get("capture_live_host_snapshot", False)):
+            evidence.extend(self._collect_live_host_snapshot())
 
         features = self._infer_features(evidence)
         genome = self._extract_genome(
             target_name=target,
+            analysis_mode=analysis_mode,
+            authorization=authorization,
             evidence=evidence,
             features=features,
             compatibility_targets=compatibility_targets,
         )
-        blueprint = self._build_blueprint(target, evidence, features)
+        blueprint = self._build_blueprint(target, evidence, features, analysis_mode=analysis_mode, authorization=authorization)
         verification_plan = self._build_verification_plan(features, evidence, genome)
 
         scaffold_path = None
@@ -312,8 +379,13 @@ class ProgramDNAReconstructionEngine:
         blocks: list[str] = []
         if authorization not in AUTHORIZED_SCOPES:
             blocks.append("authorization_required_for_program_reconstruction")
-        if any(marker in objective for marker in PROHIBITED_MARKERS):
+        if any(marker in objective for marker in ALWAYS_PROHIBITED_MARKERS):
             blocks.append("prohibited_reverse_engineering_or_abuse_intent")
+        has_dual_use = any(marker in objective for marker in DUAL_USE_SECURITY_MARKERS)
+        has_defensive_intent = any(marker in objective for marker in DEFENSIVE_INTENT_MARKERS)
+        defensive_scope = authorization in {"defensive_analysis", "host_observation", "security_research"}
+        if has_dual_use and not (defensive_scope and has_defensive_intent):
+            blocks.append("dual_use_security_intent_requires_defensive_authorization")
         return blocks
 
     def _inspect_path(self, path: Path) -> list[ProgramDNAEvidence]:
@@ -529,6 +601,24 @@ class ProgramDNAReconstructionEngine:
             "background_service": ("daemon", "background", "worker", "queue", "async", "scheduler"),
             "permissions_model": ("permission", "accessibility", "camera", "microphone", "scope", "entitlement"),
             "legacy_migration": ("legacy", "abandoned", "modernize", "port", "migration"),
+            "study_model": ("study", "how does", "mechanism", "architecture", "trace", "understand"),
+            "interaction_surface": ("interact", "touchpoint", "calls into", "input", "output", "handoff"),
+            "aura_interaction_surface": ("aura", "/api/chat", "/api/skill", "websocket", "aura_json", "kernel"),
+            "host_hardware_interaction": ("camera", "microphone", "screen", "keyboard", "mouse", "gpu", "battery", "thermal", "usb"),
+            "network_interaction": ("socket", "port", "dns", "tcp", "udp", "network", "localhost", "websocket"),
+            "process_observation": ("process", "pid", "daemon", "launchagent", "child process", "worker"),
+            "defensive_security_analysis": (
+                "defensive",
+                "security",
+                "threat",
+                "malware",
+                "sandbox",
+                "quarantine",
+                "forensic",
+                "suspicious",
+                "blocked",
+                "credential",
+            ),
         }
         features: list[ProgramDNAFeature] = []
         for name, markers in feature_rules.items():
@@ -562,6 +652,8 @@ class ProgramDNAReconstructionEngine:
         self,
         *,
         target_name: str,
+        analysis_mode: str,
+        authorization: str,
         evidence: list[ProgramDNAEvidence],
         features: list[ProgramDNAFeature],
         compatibility_targets: list[str],
@@ -645,20 +737,81 @@ class ProgramDNAReconstructionEngine:
                 "required": "background_service" in feature_names,
             }
         ]
+        interaction_surfaces = self._surface_entries(
+            evidence,
+            kinds={
+                "interaction_observation",
+                "aura_interaction",
+                "host_interaction",
+                "network_observation",
+                "hardware_observation",
+                "process_observation",
+                "security_observation",
+                "log_trace",
+            },
+            markers=("interact", "call", "send", "receive", "input", "output", "hook", "event"),
+        )
+        aura_interaction_surface = self._surface_entries(
+            evidence,
+            kinds={"aura_interaction", "log_trace", "api_observation"},
+            markers=("aura", "/api/chat", "/api/skill", "websocket", "kernel", "orchestrator", "aura_json"),
+        )
+        host_touchpoints = self._surface_entries(
+            evidence,
+            kinds={"host_interaction", "process_observation", "permission_observation", "app_metadata"},
+            markers=("host", "process", "pid", "filesystem", "permission", "launchagent", "daemon"),
+        )
+        network_surface = self._surface_entries(
+            evidence,
+            kinds={"network_observation", "api_observation", "log_trace"},
+            markers=("network", "socket", "port", "dns", "tcp", "udp", "http", "websocket", "localhost"),
+        )
+        hardware_surface = self._surface_entries(
+            evidence,
+            kinds={"hardware_observation", "permission_observation", "app_metadata"},
+            markers=("camera", "microphone", "screen", "keyboard", "mouse", "gpu", "battery", "thermal", "usb"),
+        )
+        defensive_observations = self._surface_entries(
+            evidence,
+            kinds={"security_observation", "network_observation", "process_observation", "permission_observation"},
+            markers=("threat", "malware", "blocked", "sandbox", "quarantine", "forensic", "suspicious"),
+        )
+        study_questions = [
+            item.summary
+            for item in evidence
+            if item.kind == "study_question"
+        ][:20]
+        if analysis_mode in STUDY_MODES and not study_questions:
+            study_questions = [
+                "What visible behaviors define this program?",
+                "What interfaces does it expose to users, Aura, the host, hardware, and the network?",
+                "What can be inferred clean-room from observation, and what remains unknown?",
+            ]
         hidden_state_risks = [
             "business rules may depend on undiscovered server state",
             "undocumented file-format edge cases may require golden samples",
             "plugin/extension ecosystems can add behavior absent from baseline observations",
             "timing, caching, and async workflows can hide non-obvious state transitions",
         ]
+        if authorization in {"public_observation", "external_observation"}:
+            hidden_state_risks.append(
+                "public observation cannot prove hidden algorithms, private APIs, training data, proprietary internals, or exact equivalence"
+            )
         reconstruction_unknowns = [
             "obtain additional UI traces for low-confidence workflows",
             "collect golden input/output files for file-format compatibility",
             "run black-box differential tests against the authorized original when available",
         ]
+        if analysis_mode in STUDY_MODES:
+            reconstruction_unknowns.append("study mode should preserve unanswered mechanism questions instead of forcing a rebuild")
+        if authorization in {"public_observation", "external_observation"}:
+            reconstruction_unknowns.append(
+                "public-observation rebuilds must be labeled inspired/compatible until independently verified against visible behavior"
+            )
         if not evidence:
             reconstruction_unknowns.append("no evidence supplied")
         return ProgramDNAGenome(
+            analysis_mode=analysis_mode,
             purpose=purpose,
             phenotype_sources=[item.source for item in evidence],
             feature_map=[asdict(feature) for feature in features],
@@ -670,6 +823,13 @@ class ProgramDNAReconstructionEngine:
             permission_model=permission_model,
             error_behaviors=error_behaviors,
             background_services=background_services,
+            interaction_surfaces=interaction_surfaces,
+            aura_interaction_surface=aura_interaction_surface,
+            host_touchpoints=host_touchpoints,
+            network_surface=network_surface,
+            hardware_surface=hardware_surface,
+            defensive_observations=defensive_observations,
+            study_questions=study_questions,
             compatibility_targets=compatibility_targets,
             hidden_state_risks=hidden_state_risks,
             reconstruction_unknowns=reconstruction_unknowns,
@@ -680,6 +840,9 @@ class ProgramDNAReconstructionEngine:
         target_name: str,
         evidence: list[ProgramDNAEvidence],
         features: list[ProgramDNAFeature],
+        *,
+        analysis_mode: str,
+        authorization: str,
     ) -> ProgramDNABlueprint:
         feature_names = {feature.name for feature in features}
         components = [
@@ -704,6 +867,33 @@ class ProgramDNAReconstructionEngine:
                 "features": [feature.name for feature in features],
             },
         ]
+        interaction_features = feature_names & {
+            "interaction_surface",
+            "aura_interaction_surface",
+            "host_hardware_interaction",
+            "network_interaction",
+            "process_observation",
+            "defensive_security_analysis",
+        }
+        if interaction_features:
+            components.append(
+                {
+                    "name": "interaction_surface_model",
+                    "purpose": (
+                        "Model how the observed software touches Aura, the host process tree, "
+                        "hardware permissions, and network surfaces without stealing private internals."
+                    ),
+                    "features": sorted(interaction_features),
+                }
+            )
+        if analysis_mode in STUDY_MODES:
+            components.append(
+                {
+                    "name": "mechanism_study_model",
+                    "purpose": "Preserve study questions, observed mechanisms, unknowns, and clean-room hypotheses.",
+                    "features": sorted(feature_names),
+                }
+            )
         ux_flows = [
             {
                 "name": feature.name,
@@ -749,12 +939,15 @@ class ProgramDNAReconstructionEngine:
             unknowns.append("No evidence was provided; reconstruction would be speculative.")
         if any(item.kind in {"similar_program", "research_note"} for item in evidence):
             unknowns.append("Analog/research-derived requirements must be verified against the real target.")
+        if analysis_mode in STUDY_MODES:
+            unknowns.append("Study mode does not imply rebuild completeness; unanswered mechanism questions remain first-class.")
+        if authorization in {"public_observation", "external_observation"}:
+            unknowns.append(
+                "Public observation supports inspired/compatible reconstruction only; hidden proprietary internals remain unknown."
+            )
         return ProgramDNABlueprint(
             target_name=target_name,
-            reconstruction_strategy=(
-                "authorized clean-room reconstruction from source/metadata/observable behavior; "
-                "gap filling is receipt-tagged and must be verified by tests before promotion"
-            ),
+            reconstruction_strategy=self._strategy_for(analysis_mode, authorization),
             components=components,
             ux_flows=ux_flows,
             data_models=data_models,
@@ -766,7 +959,25 @@ class ProgramDNAReconstructionEngine:
                 "Do not claim proprietary source recovery from binaries.",
                 "Only reconstruct behavior Aura is authorized to inspect or implement.",
                 "Keep analogy-derived features separate from observed target facts.",
+                "Public-observation rebuilds must be labeled inspired/compatible until held-out behavior tests pass.",
+                "Defensive study of suspicious software must not produce deployable offensive payloads.",
             ],
+        )
+
+    def _strategy_for(self, analysis_mode: str, authorization: str) -> str:
+        if analysis_mode in STUDY_MODES:
+            return (
+                "authorized mechanism study from observable/public/owner-provided evidence; "
+                "build hypotheses and interaction maps first, then emit rebuild artifacts only when requested"
+            )
+        if authorization in {"public_observation", "external_observation"}:
+            return (
+                "clean-room inspired reconstruction from visible behavior and public resources; "
+                "unknown internals stay unknown and exact equivalence requires held-out black-box tests"
+            )
+        return (
+            "authorized clean-room reconstruction from source/metadata/observable behavior; "
+            "gap filling is receipt-tagged and must be verified by tests before promotion"
         )
 
     def _build_verification_plan(
@@ -811,6 +1022,36 @@ class ProgramDNAReconstructionEngine:
             }
             for idx, surface in enumerate(genome.api_surface, start=1)
         ]
+        interaction_tests = [
+            {
+                "name": f"interaction_surface_{idx}",
+                "source": surface.get("source"),
+                "category": surface.get("category"),
+                "assertion": "observed interaction is reproduced, blocked, or explained according to its governed contract",
+            }
+            for idx, surface in enumerate(genome.interaction_surfaces, start=1)
+        ]
+        if genome.aura_interaction_surface:
+            interaction_tests.append(
+                {
+                    "name": "aura_touchpoints_governed",
+                    "assertion": "all Aura-facing calls use documented local routes, receipts, and authorization checks",
+                }
+            )
+        if genome.network_surface:
+            interaction_tests.append(
+                {
+                    "name": "network_surface_bounded",
+                    "assertion": "network behavior is allowlisted, rate-limited, logged, and safe under offline conditions",
+                }
+            )
+        if genome.hardware_surface:
+            interaction_tests.append(
+                {
+                    "name": "hardware_permission_boundary",
+                    "assertion": "camera, microphone, screen, keyboard, mouse, GPU, and sensor access stay permission-gated",
+                }
+            )
         edge_case_tests = [
             {"name": "unknown_feature_fails_closed", "assertion": "unsupported behavior does not fabricate success"},
             {"name": "partial_write_recovery", "assertion": "state remains recoverable after interrupted write/export"},
@@ -842,6 +1083,7 @@ class ProgramDNAReconstructionEngine:
             ui_tests=ui_tests,
             golden_file_tests=golden_file_tests,
             api_tests=api_tests,
+            interaction_tests=interaction_tests,
             edge_case_tests=edge_case_tests,
             performance_checks=performance_checks,
             security_checks=security_checks,
@@ -982,6 +1224,105 @@ class ProgramDNAReconstructionEngine:
                     confidence=0.42 if ghidra else 0.25,
                     details={"ghidra_available": bool(ghidra), "tool": ghidra},
                     sha256=self._sha256(path),
+                )
+            )
+        return evidence
+
+    def _surface_entries(
+        self,
+        evidence: list[ProgramDNAEvidence],
+        *,
+        kinds: set[str],
+        markers: tuple[str, ...],
+    ) -> list[dict[str, Any]]:
+        surfaces: list[dict[str, Any]] = []
+        for item in evidence:
+            text = f"{item.summary} {json.dumps(item.details, sort_keys=True)}".lower()
+            if item.kind not in kinds and not any(marker in text for marker in markers):
+                continue
+            surfaces.append(
+                {
+                    "category": item.kind,
+                    "source": item.source,
+                    "summary": item.summary,
+                    "confidence": item.confidence,
+                    "observed": item.kind in kinds,
+                    "markers": [marker for marker in markers if marker in text][:8],
+                }
+            )
+        return surfaces[:40]
+
+    def _collect_live_host_snapshot(self) -> list[ProgramDNAEvidence]:
+        """Collect a bounded local host snapshot for explicit defensive study.
+
+        This is intentionally shallow: it records process/network shape, not
+        memory contents, credentials, packet payloads, or private app internals.
+        """
+
+        evidence: list[ProgramDNAEvidence] = []
+        try:
+            psutil = importlib.import_module("psutil")
+        except ImportError as exc:
+            self._record_degradation("program_dna_reconstruction.host_snapshot", exc, severity="debug")
+            return evidence
+
+        processes: list[dict[str, Any]] = []
+        try:
+            for proc in psutil.process_iter(["pid", "name", "cmdline", "username"]):
+                try:
+                    info = proc.info or {}
+                except (psutil.Error, RuntimeError, TypeError, ValueError):
+                    continue
+                cmdline = " ".join(str(part) for part in (info.get("cmdline") or [])[:8])
+                processes.append(
+                    {
+                        "pid": info.get("pid"),
+                        "name": info.get("name"),
+                        "username": info.get("username"),
+                        "cmdline_hint": cmdline[:240],
+                    }
+                )
+                if len(processes) >= 40:
+                    break
+        except (psutil.Error, RuntimeError, TypeError, ValueError) as exc:
+            self._record_degradation("program_dna_reconstruction.process_snapshot", exc, severity="debug")
+        if processes:
+            evidence.append(
+                ProgramDNAEvidence(
+                    kind="process_observation",
+                    source="live_host_snapshot:processes",
+                    summary=f"Bounded process snapshot captured {len(processes)} visible process record(s).",
+                    confidence=0.58,
+                    details={"processes": processes},
+                )
+            )
+
+        connections: list[dict[str, Any]] = []
+        try:
+            for conn in psutil.net_connections(kind="inet")[:80]:
+                laddr = getattr(conn, "laddr", None)
+                raddr = getattr(conn, "raddr", None)
+                connections.append(
+                    {
+                        "fd": getattr(conn, "fd", None),
+                        "family": str(getattr(conn, "family", "")),
+                        "type": str(getattr(conn, "type", "")),
+                        "local": f"{getattr(laddr, 'ip', '')}:{getattr(laddr, 'port', '')}" if laddr else "",
+                        "remote_present": bool(raddr),
+                        "status": getattr(conn, "status", ""),
+                        "pid": getattr(conn, "pid", None),
+                    }
+                )
+        except (psutil.Error, RuntimeError, TypeError, ValueError) as exc:
+            self._record_degradation("program_dna_reconstruction.network_snapshot", exc, severity="debug")
+        if connections:
+            evidence.append(
+                ProgramDNAEvidence(
+                    kind="network_observation",
+                    source="live_host_snapshot:inet_connections",
+                    summary=f"Bounded network socket snapshot captured {len(connections)} visible connection record(s).",
+                    confidence=0.54,
+                    details={"connections": connections},
                 )
             )
         return evidence

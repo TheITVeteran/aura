@@ -5781,3 +5781,71 @@ Estimate:
   replacement generation.
 - Remaining total checkpoint groups: 3, focused on live desktop proof,
   background autonomy/repair/learning closure, and final evidence packaging.
+
+## Checkpoint 2026-07-03-33: Program DNA Study Surfaces and Hidden-Source Equivalence
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Expanded Program DNA beyond direct reconstruction into governed study of how
+  software works from public/owned/authorized observation, including software
+  that interacts with Aura, the host process tree, filesystem, network, and
+  hardware permission surfaces.
+- Added `analysis_mode` and explicit study/interacting-software evidence
+  fields to the live skill contract: study questions, generic interaction
+  observations, Aura interactions, host interactions, network observations,
+  hardware observations, process observations, security observations, and
+  optional bounded host snapshots.
+- Policy now permits public/external observation and defensive/security study
+  while still blocking DRM/license bypass, proprietary-source theft,
+  credential extraction, piracy/keygen language, and offensive dual-use payload
+  construction without defensive authorization.
+- Program DNA genomes now preserve interaction surfaces, Aura-facing
+  touchpoints, host touchpoints, network surfaces, hardware surfaces,
+  defensive observations, and study questions as first-class evidence rather
+  than collapsing everything into a generic rebuild request.
+- The live runtime Program DNA probe now requires study mode, interaction
+  surfaces, Aura/host/network/hardware/process/security feature inference, and
+  interaction verification tests.
+- Added a hidden-source behavioral equivalence battery for the next proof tier:
+  CLI utility, small GUI app, file-format converter, simple web app, local
+  database-backed tool, mocked-auth app, and intentionally missing-docs app.
+  The engine receives docs, examples, and observations only; private originals
+  remain held-out oracles.
+
+Evidence:
+
+- `python -m py_compile core/self_improvement/program_dna.py core/skills/program_dna_reconstruct.py tools/live_runtime_probe.py tools/program_dna/behavioral_equivalence_battery.py tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_runtime_polish.py`
+  -> passed.
+- `python -m pytest -q tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_skill_contract`
+  -> `10 passed`.
+- `python tools/program_dna/behavioral_equivalence_battery.py --out artifacts/current/program_dna_behavioral_equivalence_latest.json`
+  -> passed with `scenario_count=7`, `passed_scenarios=7`,
+  `passed_cases=14`, `held_out_cases=14`, `equivalence=1.0`.
+- `python -m ruff check --select F,E9 ...` over Program DNA, live probe,
+  and new tests -> passed.
+- `git diff --check` -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=46.38`,
+  `largest_cycle_size=532`, `cycle_count=6`, `dependency_edges=7537`,
+  `god_file_count=37`, `module_count=2256`.
+
+Boundary:
+
+- This checkpoint proves representative clean-room behavioral equivalence
+  archetypes, not arbitrary closed-source cloning or exact proprietary
+  algorithm recovery.
+- Public-observation rebuilds must remain labeled inspired/compatible until
+  held-out black-box tests against visible behavior pass.
+- Suspicious or potentially malicious software can be studied defensively for
+  protection, forensics, and host/Aura safety, but the lane must not produce
+  deployable offensive payloads.
+
+Estimate:
+
+- Program DNA reconstruction closure: about 86-90% for authorized/public
+  clean-room study and representative replacement generation.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 77-83% locally.
+- Remaining total checkpoint groups: 3, focused on live desktop proof,
+  background autonomy/repair/learning closure, and final evidence packaging.

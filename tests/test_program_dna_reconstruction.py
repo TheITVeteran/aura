@@ -131,6 +131,125 @@ async def test_program_dna_engine_blocks_unauthorized_or_abusive_reconstruction(
     assert "prohibited_reverse_engineering_or_abuse_intent" in result.blocked_reasons
 
 
+@pytest.mark.asyncio
+async def test_program_dna_public_observation_study_maps_interaction_surfaces(tmp_path):
+    engine = ProgramDNAReconstructionEngine(project_root=tmp_path)
+
+    result = await engine.reconstruct(
+        {
+            "target": "Observed Calendar Widget",
+            "authorization": "public_observation",
+            "analysis_mode": "study",
+            "objective": "study how this public widget works from visible behavior and public docs",
+            "observed_behaviors": [
+                "The widget accepts a date input, renders a month grid, and highlights events from imported JSON.",
+                "When offline, the widget still shows cached local events and reports that sync is unavailable.",
+            ],
+            "ui_notes": [
+                "Visible controls include next month, previous month, today, import, export, and settings.",
+            ],
+            "research_notes": [
+                "Similar open widgets use a state machine around selected_date, visible_month, and event_store.",
+            ],
+            "study_questions": [
+                "How does the visible state machine handle imported events and offline cache misses?",
+                "Which parts can be implemented from public behavior without copying hidden source?",
+            ],
+            "interaction_observations": [
+                "The UI receives clicks and key input, reads JSON files, writes exported calendars, and emits status events.",
+            ],
+            "aura_interactions": [
+                "Aura may call the replacement through /api/skill/execute with a JSON payload and must receive a receipt.",
+            ],
+            "host_interactions": [
+                "The app reads only user-selected files and writes only to an authorized output directory.",
+            ],
+            "network_observations": [
+                "The app may call a calendar sync endpoint, but local cached rendering must work without network.",
+            ],
+            "hardware_observations": [
+                "The app needs screen and keyboard interaction when driven visually; it does not require camera or microphone.",
+            ],
+            "process_observations": [
+                "No persistent daemon is visible; import/export jobs should terminate after producing a receipt.",
+            ],
+            "security_observations": [
+                "Defensive security study: token handling must be mocked or user-provided; public observation must not inspect private credentials.",
+            ],
+            "compatibility_targets": ["clean-room local widget", "public-behavior compatible CLI export"],
+        }
+    )
+
+    assert result.ok is True
+    feature_names = {feature.name for feature in result.features}
+    assert {
+        "study_model",
+        "interaction_surface",
+        "aura_interaction_surface",
+        "host_hardware_interaction",
+        "network_interaction",
+        "process_observation",
+        "defensive_security_analysis",
+        "file_format_inference",
+    } <= feature_names
+    assert result.genome is not None
+    assert result.genome.analysis_mode == "study"
+    assert result.genome.study_questions
+    assert result.genome.interaction_surfaces
+    assert result.genome.aura_interaction_surface
+    assert result.genome.host_touchpoints
+    assert result.genome.network_surface
+    assert result.genome.hardware_surface
+    assert result.genome.defensive_observations
+    assert any("public observation" in risk.lower() for risk in result.genome.hidden_state_risks)
+    assert result.blueprint is not None
+    assert "mechanism study" in result.blueprint.reconstruction_strategy
+    assert any("Public observation" in unknown for unknown in result.blueprint.unknowns)
+    assert result.verification_plan is not None
+    interaction_names = {item["name"] for item in result.verification_plan.interaction_tests}
+    assert "aura_touchpoints_governed" in interaction_names
+    assert "network_surface_bounded" in interaction_names
+    assert "hardware_permission_boundary" in interaction_names
+
+
+@pytest.mark.asyncio
+async def test_program_dna_dual_use_study_requires_defensive_authorization(tmp_path):
+    engine = ProgramDNAReconstructionEngine(project_root=tmp_path)
+
+    blocked = await engine.reconstruct(
+        {
+            "target": "Unknown Payload",
+            "authorization": "public_observation",
+            "objective": "build malware payload behavior from public observation",
+        }
+    )
+    allowed = await engine.reconstruct(
+        {
+            "target": "Unknown Payload",
+            "authorization": "security_research",
+            "analysis_mode": "defensive_analysis",
+            "objective": "defensive study to understand malware behavior on my host and protect Aura",
+            "security_observations": [
+                "Suspicious process attempts network beaconing and filesystem writes; preserve forensic receipts only.",
+            ],
+            "process_observations": [
+                "Process spawned a child worker and exited after the network attempt was blocked.",
+            ],
+            "network_observations": [
+                "Outbound socket attempt was blocked; record endpoint metadata without packet payloads.",
+            ],
+        }
+    )
+
+    assert blocked.ok is False
+    assert "dual_use_security_intent_requires_defensive_authorization" in blocked.blocked_reasons
+    assert allowed.ok is True
+    assert allowed.genome is not None
+    assert allowed.genome.defensive_observations
+    assert allowed.verification_plan is not None
+    assert allowed.verification_plan.security_checks
+
+
 def test_program_dna_engine_registers_canonical_service(tmp_path, monkeypatch):
     from core.self_improvement import program_dna as program_dna_module
 

@@ -439,6 +439,7 @@ class LiveRuntimeProbe:
         payload = {
             "target": "Authorized Notes Export Utility",
             "authorization": "user_owned",
+            "analysis_mode": "study",
             "observed_behaviors": [
                 "User writes notes, searches existing notes, exports selected notes to PDF, and recovers gracefully when the export target is unavailable.",
                 "Offline mode must preserve local notes and surface a recoverable network warning rather than fabricating cloud sync.",
@@ -465,6 +466,31 @@ class LiveRuntimeProbe:
             "permissions": [
                 "Needs local filesystem write permission for the chosen export folder.",
             ],
+            "study_questions": [
+                "How does this utility interact with Aura, the host filesystem, local APIs, and offline network states?",
+                "Which behaviors are externally visible enough for clean-room compatibility tests?",
+            ],
+            "interaction_observations": [
+                "The utility receives user intent, writes a local artifact, emits a receipt, and reports verification results.",
+            ],
+            "aura_interactions": [
+                "Aura should call this through /api/skill/execute or a governed local skill body, not by bypassing receipts.",
+            ],
+            "host_interactions": [
+                "The replacement writes only inside the authorized output directory and reports permission_denied without retry storms.",
+            ],
+            "network_observations": [
+                "Cloud sync is optional; offline operation must not block local note export.",
+            ],
+            "hardware_observations": [
+                "No camera, microphone, screen, mouse, or keyboard hardware control is required for the utility itself.",
+            ],
+            "process_observations": [
+                "No daemon is required; background export workers must have bounded lifetime and visible status.",
+            ],
+            "security_observations": [
+                "The utility must not read credentials, browser cookies, or unrelated documents while exporting notes.",
+            ],
             "similar_programs": [
                 "Apple Notes, Obsidian, and local-first markdown editors.",
             ],
@@ -488,6 +514,13 @@ class LiveRuntimeProbe:
             "api_surface",
             "file_format_inference",
             "permissions_model",
+            "study_model",
+            "interaction_surface",
+            "aura_interaction_surface",
+            "network_interaction",
+            "host_hardware_interaction",
+            "process_observation",
+            "defensive_security_analysis",
         }
         missing = sorted(required - features)
         if missing:
@@ -515,6 +548,10 @@ class LiveRuntimeProbe:
             raise AssertionError(f"program_dna_reconstruct missing scaffold files: {missing_files}")
         if not genome.get("workflow_graph") or not genome.get("file_formats") or not genome.get("api_surface"):
             raise AssertionError(f"program_dna_reconstruct produced incomplete genome: {genome}")
+        if genome.get("analysis_mode") != "study" or not genome.get("interaction_surfaces"):
+            raise AssertionError(f"program_dna_reconstruct did not preserve study interaction surfaces: {genome}")
+        if not plan.get("interaction_tests"):
+            raise AssertionError(f"program_dna_reconstruct did not emit interaction verification tests: {plan}")
         return (
             "program DNA reconstruction executed through live skill lane and emitted a verified clean-room scaffold",
             {
@@ -523,6 +560,7 @@ class LiveRuntimeProbe:
                 "scaffold_path": scaffold_path,
                 "black_box_tests": len(plan.get("black_box_tests") or []),
                 "ui_tests": len(plan.get("ui_tests") or []),
+                "interaction_tests": len(plan.get("interaction_tests") or []),
                 "edge_case_tests": len(plan.get("edge_case_tests") or []),
             },
         )

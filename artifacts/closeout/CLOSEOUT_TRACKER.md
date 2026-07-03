@@ -25,6 +25,57 @@ profile and what remains outside those evidence limits.
   long-duration 24h/72h/7d soaks, broader product hardening on other machines,
   and any metaphysical/personhood/ASI claims.
 
+## Checkpoint 2026-07-03-33: Program DNA Study and Equivalence Proof
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- The Program DNA lane needed to cover "how does this work?" study, not only
+  user-owned source ingestion or direct replacement scaffolds.
+- Bryan explicitly wanted observation of software that touches Aura, host
+  hardware, process trees, local/network surfaces, and public/third-party apps
+  without stealing private code or bypassing controls.
+- The next proof tier needed hidden-source behavioral equivalence tests across
+  representative software archetypes rather than only a generated scaffold.
+
+What changed:
+
+- Added study/public-observation/host-observation/security-research surfaces
+  to the Program DNA authorization and genome model.
+- Added Aura, host, network, hardware, process, security, and generic
+  interaction surfaces to the genome and verification plan.
+- Updated the live Program DNA skill and live runtime probe to require those
+  surfaces and their interaction tests.
+- Added `tools/program_dna/behavioral_equivalence_battery.py`, which gives the
+  engine docs/examples/observations only, synthesizes clean-room replacements,
+  and compares them against private held-out original behavior.
+
+Evidence:
+
+- `python -m py_compile core/self_improvement/program_dna.py core/skills/program_dna_reconstruct.py tools/live_runtime_probe.py tools/program_dna/behavioral_equivalence_battery.py tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_runtime_polish.py`
+  -> passed.
+- `python -m pytest -q tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_skill_contract`
+  -> `10 passed`.
+- `artifacts/current/program_dna_behavioral_equivalence_latest.json`:
+  `ok=true`, `scenario_count=7`, `passed_scenarios=7`,
+  `passed_cases=14`, `held_out_cases=14`, `equivalence=1.0`.
+- `python -m ruff check --select F,E9 ...` over Program DNA, live probe,
+  and new tests -> passed.
+- `git diff --check` -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=46.38`,
+  `largest_cycle_size=532`, `cycle_count=6`, `dependency_edges=7537`,
+  `god_file_count=37`, `module_count=2256`.
+
+Claim boundary:
+
+- This proves representative hidden-source behavioral equivalence for a CLI
+  utility, small GUI state machine, file-format converter, web app,
+  DB-backed tool, mocked-auth app, and intentionally underdocumented app.
+- It does not prove arbitrary closed-source program cloning, proprietary source
+  recovery, exact hidden algorithm equivalence, credential extraction,
+  DRM/license bypass, or offensive malware/payload generation.
+
 ## Checkpoint 2026-06-30-02: Final Local Proof Closure
 
 Status: verified locally, ready for commit.

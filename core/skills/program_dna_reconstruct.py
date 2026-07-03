@@ -1,8 +1,8 @@
 """Program DNA reconstruction skill.
 
-Live capability surface for authorized clean-room reconstruction of programs
-from observable behavior, open/user-owned source, metadata, UI notes, and
-research evidence.
+Live capability surface for authorized clean-room reconstruction and mechanism
+study of programs from observable behavior, open/user-owned source, metadata,
+UI notes, host/Aura interaction traces, and research evidence.
 """
 from __future__ import annotations
 
@@ -21,7 +21,15 @@ class ProgramDNAInput(BaseModel):
     target: str = Field(..., description="Program/app/library name or target path label.")
     authorization: str = Field(
         "unspecified",
-        description="open_source | owner_authorized | explicit_permission | internal | educational | user_owned",
+        description=(
+            "open_source | owner_authorized | explicit_permission | internal | educational | "
+            "user_owned | public_observation | external_observation | host_observation | "
+            "defensive_analysis | security_research"
+        ),
+    )
+    analysis_mode: str = Field(
+        "reconstruct",
+        description="reconstruct | study | observe | monitor | defensive_analysis",
     )
     source_paths: list[str] = Field(default_factory=list)
     observed_behaviors: list[str] = Field(default_factory=list)
@@ -34,9 +42,18 @@ class ProgramDNAInput(BaseModel):
     tests: list[str] = Field(default_factory=list)
     workflows: list[str] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
+    study_questions: list[str] = Field(default_factory=list)
+    interaction_observations: list[str] = Field(default_factory=list)
+    aura_interactions: list[str] = Field(default_factory=list)
+    host_interactions: list[str] = Field(default_factory=list)
+    network_observations: list[str] = Field(default_factory=list)
+    hardware_observations: list[str] = Field(default_factory=list)
+    process_observations: list[str] = Field(default_factory=list)
+    security_observations: list[str] = Field(default_factory=list)
     compatibility_targets: list[str] = Field(default_factory=list)
     target_stack: str = "python"
     enable_binary_static_analysis: bool = False
+    capture_live_host_snapshot: bool = False
     emit_scaffold: bool = False
     output_dir: str | None = None
 
@@ -44,8 +61,9 @@ class ProgramDNAInput(BaseModel):
 class ProgramDNAReconstructSkill(BaseSkill):
     name = "program_dna_reconstruct"
     description = (
-        "Authorized clean-room reconstruction of a program's behavior DNA from "
-        "source, metadata, UI/UX observations, research notes, and similar-program hints."
+        "Authorized clean-room reconstruction and mechanism study of a program's behavior DNA "
+        "from source, metadata, UI/UX observations, Aura/host/network/hardware interactions, "
+        "research notes, and similar-program hints."
     )
     input_model = ProgramDNAInput
     timeout_seconds = 45.0

@@ -1019,7 +1019,13 @@ async def test_live_runtime_probe_checks_program_dna_skill_contract(tmp_path):
         async def _skill(self, skill_name, params):
             assert skill_name == "program_dna_reconstruct"
             assert params["authorization"] == "user_owned"
+            assert params["analysis_mode"] == "study"
             assert params["emit_scaffold"] is True
+            assert params["study_questions"]
+            assert params["aura_interactions"]
+            assert params["host_interactions"]
+            assert params["network_observations"]
+            assert params["hardware_observations"]
             scaffold = tmp_path / "program-dna-scaffold"
             for rel in (
                 "PROGRAM_DNA_BLUEPRINT.json",
@@ -1042,20 +1048,30 @@ async def test_live_runtime_probe_checks_program_dna_skill_contract(tmp_path):
                     "api_surface",
                     "file_format_inference",
                     "permissions_model",
+                    "study_model",
+                    "interaction_surface",
+                    "aura_interaction_surface",
+                    "network_interaction",
+                    "host_hardware_interaction",
+                    "process_observation",
+                    "defensive_security_analysis",
                 ],
                 "result": {
                     "ok": True,
                     "target_name": "Authorized Notes Export Utility",
                     "scaffold_path": str(scaffold),
                     "genome": {
+                        "analysis_mode": "study",
                         "workflow_graph": [{"feature": "document_creation"}],
                         "file_formats": [{"format": "pdf"}],
                         "api_surface": [{"name": "create_note"}],
+                        "interaction_surfaces": [{"source": "aura_interaction:1"}],
                     },
                     "verification_plan": {
                         "scaffold_syntax_ok": True,
                         "black_box_tests": [{"name": "black_box_document_creation"}],
                         "ui_tests": [{"name": "ui_document_creation"}],
+                        "interaction_tests": [{"name": "aura_touchpoints_governed"}],
                         "edge_case_tests": [{"name": "offline_mode"}],
                     },
                 },
@@ -1069,6 +1085,7 @@ async def test_live_runtime_probe_checks_program_dna_skill_contract(tmp_path):
     assert data["target"] == "Authorized Notes Export Utility"
     assert data["black_box_tests"] == 1
     assert data["ui_tests"] == 1
+    assert data["interaction_tests"] == 1
     assert data["edge_case_tests"] == 1
     assert "document_creation" in data["features"]
 
