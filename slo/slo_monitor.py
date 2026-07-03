@@ -334,7 +334,15 @@ class SLOMonitor:
             SLODefinition("recovery_circuit_breaker_s", "Circuit breaker recovery", 30, "s"),
             SLODefinition("recovery_worker_restart_s", "Worker restart time", 15, "s"),
             # Governance SLOs
-            SLODefinition("will_decision_p95_ms", "Will decision latency", 5, "ms"),
+            # will_decision latency is the FULL end-to-end decide(): felt-state
+            # read, policy evaluation, evidence, substrate receipt, and the
+            # consequence-bus publish. The old 5ms target was never achievable
+            # for that — measured healthy p95 is ~80-100ms — so it burned at
+            # ~16-20x continuously and fired a CRITICAL every minute, burying
+            # real criticals (a genuine capability_engine failure was lost in the
+            # spam, July 2026). 250ms is realistic headroom over the healthy
+            # baseline while still tripping on a true 2.5x+ regression.
+            SLODefinition("will_decision_p95_ms", "Will decision latency", 250, "ms"),
             SLODefinition("receipt_verification_p95_ms", "Receipt verification latency", 1, "ms"),
             # Audit SLOs (existing, expanded)
             SLODefinition("audit_chain_append_p95_ms", "Audit chain append", 0.55, "ms",
