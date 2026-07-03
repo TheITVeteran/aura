@@ -9,6 +9,8 @@ and checks that live surfaces do real work:
 * Capability-inventory chat stays bounded, descriptive, and non-executing.
 * Creative/self-reflective chat uses bounded internal modeling without overclaiming.
 * `/api/skill/execute` drives governed skills instead of dead buttons.
+* Program DNA reconstruction is callable through the live skill lane and emits
+  a governed clean-room scaffold from authorized evidence.
 * Chat can trigger Aura's own coding/file skills to create a runnable artifact.
 * Chat maintains continuity on a novel topic without reset boilerplate.
 * Computer-use can perform a safe local app action through Aura's skill body.
@@ -47,6 +49,7 @@ DEFAULT_PROBES: tuple[str, ...] = (
     "chat_capability_inventory",
     "chat_creative_self_reflection",
     "skill_button_file_write",
+    "program_dna_reconstruct",
     "chat_coding_snake",
     "novel_topic_continuity",
     "computer_use_local_app",
@@ -119,6 +122,7 @@ class LiveRuntimeProbe:
             "chat_capability_inventory": self._chat_capability_inventory,
             "chat_creative_self_reflection": self._chat_creative_self_reflection,
             "skill_button_file_write": self._skill_button_file_write,
+            "program_dna_reconstruct": self._program_dna_reconstruct,
             "chat_coding_snake": self._chat_coding_snake,
             "novel_topic_continuity": self._novel_topic_continuity,
             "computer_use_local_app": self._computer_use_local_app,
@@ -428,6 +432,100 @@ class LiveRuntimeProbe:
         if not read.get("ok") or marker not in str(read.get("content", "")):
             raise AssertionError(f"file_operation read did not verify write: {read}")
         return "skill button path wrote and read a real file", {"path": path, "write": write}
+
+    async def _program_dna_reconstruct(self) -> tuple[str, dict[str, Any]]:
+        stamp = int(time.time())
+        output_dir = f"artifacts/current/live_program_dna_probe/{stamp}"
+        payload = {
+            "target": "Authorized Notes Export Utility",
+            "authorization": "user_owned",
+            "observed_behaviors": [
+                "User writes notes, searches existing notes, exports selected notes to PDF, and recovers gracefully when the export target is unavailable.",
+                "Offline mode must preserve local notes and surface a recoverable network warning rather than fabricating cloud sync.",
+            ],
+            "ui_notes": [
+                "Primary screen has an editor, search field, note list, export action, and settings/preferences panel.",
+                "The export flow confirms the destination folder and verifies that the PDF exists before reporting completion.",
+            ],
+            "api_observations": [
+                "Local API shape: create_note(title, body), search_notes(query), export_pdf(note_id, destination).",
+            ],
+            "file_formats": [
+                "Input notes are markdown/plain text; exported artifacts are PDF files with metadata.",
+            ],
+            "logs": [
+                "Export errors include permission_denied, partial_write, and unavailable_destination.",
+            ],
+            "tests": [
+                "Golden files compare markdown input against exported PDF text extraction.",
+            ],
+            "workflows": [
+                "create note -> edit body -> save locally -> export to PDF -> verify artifact -> record receipt",
+            ],
+            "permissions": [
+                "Needs local filesystem write permission for the chosen export folder.",
+            ],
+            "similar_programs": [
+                "Apple Notes, Obsidian, and local-first markdown editors.",
+            ],
+            "compatibility_targets": ["macOS local-first desktop utility", "portable Python scaffold"],
+            "target_stack": "python",
+            "emit_scaffold": True,
+            "output_dir": output_dir,
+        }
+        result = await self._skill("program_dna_reconstruct", payload)
+        if not result.get("ok"):
+            raise AssertionError(f"program_dna_reconstruct failed: {result}")
+        body = result.get("result") if isinstance(result.get("result"), dict) else result
+        if not isinstance(body, dict) or not body.get("ok"):
+            raise AssertionError(f"program_dna_reconstruct returned malformed body: {result}")
+        features = {str(item) for item in result.get("features") or []}
+        required = {
+            "document_creation",
+            "export_pipeline",
+            "search_and_retrieval",
+            "persistence",
+            "api_surface",
+            "file_format_inference",
+            "permissions_model",
+        }
+        missing = sorted(required - features)
+        if missing:
+            raise AssertionError(f"program_dna_reconstruct missing feature(s): {missing}; result={result}")
+        genome = body.get("genome") or {}
+        plan = body.get("verification_plan") or {}
+        scaffold_path = str(body.get("scaffold_path") or "")
+        if not scaffold_path:
+            raise AssertionError(f"program_dna_reconstruct did not emit scaffold: {result}")
+        if plan.get("scaffold_syntax_ok") is not True:
+            raise AssertionError(f"program_dna_reconstruct scaffold syntax not verified: {plan}")
+        scaffold_root = Path(scaffold_path)
+        required_files = (
+            "PROGRAM_DNA_BLUEPRINT.json",
+            "PROGRAM_GENOME.json",
+            "VERIFICATION_PLAN.json",
+            "src/program.py",
+            "tests/test_program_contract.py",
+            "README.md",
+        )
+        missing_files = [
+            rel for rel in required_files if not (scaffold_root / rel).exists()
+        ]
+        if missing_files:
+            raise AssertionError(f"program_dna_reconstruct missing scaffold files: {missing_files}")
+        if not genome.get("workflow_graph") or not genome.get("file_formats") or not genome.get("api_surface"):
+            raise AssertionError(f"program_dna_reconstruct produced incomplete genome: {genome}")
+        return (
+            "program DNA reconstruction executed through live skill lane and emitted a verified clean-room scaffold",
+            {
+                "target": body.get("target_name"),
+                "features": sorted(features),
+                "scaffold_path": scaffold_path,
+                "black_box_tests": len(plan.get("black_box_tests") or []),
+                "ui_tests": len(plan.get("ui_tests") or []),
+                "edge_case_tests": len(plan.get("edge_case_tests") or []),
+            },
+        )
 
     async def _chat_coding_snake(self) -> tuple[str, dict[str, Any]]:
         path = "artifacts/live_runtime/generated/live_snake.html"

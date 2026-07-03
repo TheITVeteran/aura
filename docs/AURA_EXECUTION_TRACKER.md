@@ -5738,3 +5738,46 @@ Estimate:
   replacement generation.
 - Remaining total checkpoint groups: 3, focused on live desktop proof,
   background autonomy/repair/learning closure, and final evidence packaging.
+
+## Checkpoint 2026-07-03-32: Program DNA Live Capability Probe
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Added `program_dna_reconstruct` to the live runtime probe registry so Program
+  DNA can be proven through the same `/api/skill/execute` surface used by live
+  Aura capabilities.
+- The probe uses authorized user-owned evidence, asks for a clean-room
+  replacement scaffold, verifies feature extraction, requires workflow/API/
+  file-format genome surfaces, checks test-plan counts, and confirms scaffold
+  files exist.
+- Added backend regression coverage for the probe contract so this remains an
+  effect-verifying live proof rather than a catalog-only assertion.
+
+Evidence:
+
+- `python -m py_compile tools/live_runtime_probe.py tests/test_runtime_polish.py`
+  -> passed.
+- `python -m ruff check --select F,E9 tools/live_runtime_probe.py tests/test_runtime_polish.py`
+  -> passed.
+- `python -m pytest -q tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_skill_contract tests/test_runtime_polish.py::test_live_runtime_probe_can_run_focused_probe_sets`
+  -> `2 passed`.
+- Bounded live Aura server started on `127.0.0.1:8017`; focused probe
+  `python tools/live_runtime_probe.py --base-url http://127.0.0.1:8017 --only program_dna_reconstruct --probe-timeout 45 --timeout 90 --max-rss-mb 32000 --out artifacts/current/live_program_dna_probe/latest_probe.json`
+  -> `PASS`, elapsed `0.3s`, `events_collected=10`.
+- `python aura_main.py --stop` stopped the temporary live server; process check
+  found no lingering Aura kernel/model workers.
+
+Boundary:
+
+- This live proof establishes reachable governed skill execution and scaffold
+  generation on a live Aura server. It does not yet prove a full real-app
+  reconstruction with a long build-test-repair loop.
+
+Estimate:
+
+- Program DNA reconstruction closure: about 78-82% for authorized clean-room
+  replacement generation.
+- Remaining total checkpoint groups: 3, focused on live desktop proof,
+  background autonomy/repair/learning closure, and final evidence packaging.

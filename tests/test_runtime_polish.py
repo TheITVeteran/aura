@@ -1011,6 +1011,68 @@ async def test_live_runtime_probe_checks_creative_self_reflection_contract():
     assert probe.messages and "private mental model" in probe.messages[0]
 
 
+@pytest.mark.asyncio
+async def test_live_runtime_probe_checks_program_dna_skill_contract(tmp_path):
+    from tools.live_runtime_probe import LiveRuntimeProbe
+
+    class Probe(LiveRuntimeProbe):
+        async def _skill(self, skill_name, params):
+            assert skill_name == "program_dna_reconstruct"
+            assert params["authorization"] == "user_owned"
+            assert params["emit_scaffold"] is True
+            scaffold = tmp_path / "program-dna-scaffold"
+            for rel in (
+                "PROGRAM_DNA_BLUEPRINT.json",
+                "PROGRAM_GENOME.json",
+                "VERIFICATION_PLAN.json",
+                "src/program.py",
+                "tests/test_program_contract.py",
+                "README.md",
+            ):
+                path = scaffold / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("{}", encoding="utf-8")
+            return {
+                "ok": True,
+                "features": [
+                    "document_creation",
+                    "export_pipeline",
+                    "search_and_retrieval",
+                    "persistence",
+                    "api_surface",
+                    "file_format_inference",
+                    "permissions_model",
+                ],
+                "result": {
+                    "ok": True,
+                    "target_name": "Authorized Notes Export Utility",
+                    "scaffold_path": str(scaffold),
+                    "genome": {
+                        "workflow_graph": [{"feature": "document_creation"}],
+                        "file_formats": [{"format": "pdf"}],
+                        "api_surface": [{"name": "create_note"}],
+                    },
+                    "verification_plan": {
+                        "scaffold_syntax_ok": True,
+                        "black_box_tests": [{"name": "black_box_document_creation"}],
+                        "ui_tests": [{"name": "ui_document_creation"}],
+                        "edge_case_tests": [{"name": "offline_mode"}],
+                    },
+                },
+            }
+
+    probe = Probe("http://127.0.0.1:8000")
+
+    detail, data = await probe._program_dna_reconstruct()
+
+    assert "program DNA reconstruction" in detail
+    assert data["target"] == "Authorized Notes Export Utility"
+    assert data["black_box_tests"] == 1
+    assert data["ui_tests"] == 1
+    assert data["edge_case_tests"] == 1
+    assert "document_creation" in data["features"]
+
+
 def test_input_bus_normalizes_external_priority_values():
     bus = InputBus(maxsize=4)
     try:

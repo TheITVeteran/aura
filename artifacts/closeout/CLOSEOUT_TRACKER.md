@@ -2917,3 +2917,40 @@ Tracker:
   replacement generation; remaining proof is long-running real-app
   reconstruction and live desktop invocation.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-32: Program DNA Live Capability Probe
+
+Status: implementation validated; commit pending.
+
+What changed:
+
+- Extended `tools/live_runtime_probe.py` with a focused
+  `program_dna_reconstruct` probe that exercises the live
+  `/api/skill/execute` route.
+- The probe submits authorized, user-owned evidence for a toy notes/export
+  utility, requires a real feature genome, requires a verification plan, and
+  verifies that a clean-room scaffold was emitted with all expected files.
+- Added a regression test so the live probe remains a substantive effect check
+  rather than a shallow "skill exists" check.
+
+Evidence:
+
+- `python -m py_compile tools/live_runtime_probe.py tests/test_runtime_polish.py`
+  -> passed.
+- `python -m ruff check --select F,E9 tools/live_runtime_probe.py tests/test_runtime_polish.py`
+  -> passed.
+- `python -m pytest -q tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_skill_contract tests/test_runtime_polish.py::test_live_runtime_probe_can_run_focused_probe_sets`
+  -> `2 passed`.
+- Bounded headless live server launched on `127.0.0.1:8017` at commit
+  `a6428d22`; `python tools/live_runtime_probe.py --base-url http://127.0.0.1:8017 --only program_dna_reconstruct --probe-timeout 45 --timeout 90 --max-rss-mb 32000 --out artifacts/current/live_program_dna_probe/latest_probe.json`
+  -> `PASS`, elapsed `0.3s`, `events_collected=10`.
+- Temporary live server stopped with `python aura_main.py --stop`; process check
+  showed no lingering Aura server/model workers.
+
+Tracker:
+
+- Program DNA reconstruction closure: about 78-82% for authorized clean-room
+  replacement generation.
+- Remaining Program DNA proof: real application reconstruction against an
+  authorized/open/user-owned target with a longer build-test-repair loop.
+- Remaining total checkpoint groups: 3.
