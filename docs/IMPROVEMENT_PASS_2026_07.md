@@ -123,6 +123,20 @@ were trigger-routed, not reasoned.
   register() call — no routing code. Live chat lane wired (env-gated menu
   injection + post-generation realization), 11 tests.
 
+### Phase 5 regression caught (live-path reliability)
+
+Re-verifying the conversation lane after the affordance wiring surfaced a
+real defect introduced by an earlier commit (e7aa6efe's identity-continuity
+grounding): `_is_identity_request` matched "what are you talking about?" (a
+contextual-relevance CHALLENGE) via a bare "what are you" substring, so the
+desktop quality gate rebound a hallucinatory "voices whispering in my ear"
+reply to a canonical identity answer and returned 200 instead of failing
+closed with 503. Fixed at the source — a relevance challenge is not an
+identity request, and "what are you <gerund>" is topical, not identity.
+Conversation lane green (228 tests). This is exactly the "no incoherent
+output escapes the gate" reliability goal; caught only because the monolith
+was re-verified after editing.
+
 ### Sweep ledger
 
 | Area | Depth | Findings / actions |
