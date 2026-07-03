@@ -33,13 +33,13 @@ def resolve_brain(orchestrator: Any = None) -> Any:
     if orchestrator is not None and getattr(orchestrator, "brain", None) is not None:
         return orchestrator.brain
     try:
-        from core.container import ServiceContainer
+        from core.runtime.service_registry import get_runtime_service
         from core.service_names import ServiceNames
 
-        orch = ServiceContainer.get("orchestrator", default=None)
+        orch = get_runtime_service("orchestrator", default=None)
         if orch is not None and getattr(orch, "brain", None) is not None:
             return orch.brain
-        return ServiceContainer.get(ServiceNames.BRAIN, default=None)
+        return get_runtime_service(ServiceNames.BRAIN, default=None)
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_engine_degradation(
             "engine_support",

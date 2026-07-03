@@ -264,8 +264,9 @@ class ScientificEngine:
     def _publish_belief(self, h: Hypothesis) -> None:
         """Best-effort push of the revised belief to whatever belief sink the runtime exposes."""
         try:
-            from core.container import ServiceContainer
-            ws = ServiceContainer.get("world_state", default=None)
+            from core.runtime.service_registry import get_runtime_service
+
+            ws = get_runtime_service("world_state", default=None)
             if ws is not None and hasattr(ws, "set_belief"):
                 ws.set_belief(
                     f"hypothesis:{h.claim}",

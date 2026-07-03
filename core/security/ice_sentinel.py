@@ -193,12 +193,12 @@ def get_ice_sentinel() -> IntrusionSentinel:
 
 
 def register_ice_sentinel(orchestrator: Any = None) -> IntrusionSentinel:
-    from core.container import ServiceContainer
+    from core.runtime.service_registry import get_runtime_service, register_runtime_service
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.ICE, default=None) or get_ice_sentinel()
-    ServiceContainer.register_instance(ServiceNames.ICE, inst, required=False)
-    ServiceContainer.register_instance("ice", inst, required=False)
+    inst = get_runtime_service(ServiceNames.ICE, default=None) or get_ice_sentinel()
+    register_runtime_service(ServiceNames.ICE, inst, required=False)
+    register_runtime_service("ice", inst, required=False)
     return inst
 
 

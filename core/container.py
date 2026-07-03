@@ -929,6 +929,7 @@ def _install_runtime_service_registry_bridge() -> None:
             install_failure_policy_resolver,
             install_registration_locked_resolver,
             install_service_presence_resolver,
+            install_service_registration_sink,
             install_service_resolver,
         )
 
@@ -949,9 +950,26 @@ def _install_runtime_service_registry_bridge() -> None:
         def _registration_locked() -> bool:
             return bool(getattr(ServiceContainer, "_registration_locked", False))
 
+        def _register_service(
+            service_name: str,
+            instance: object,
+            required: bool,
+            metadata: dict[str, str | None],
+        ) -> None:
+            ServiceContainer.register_instance(
+                service_name,
+                instance,
+                required=required,
+                owner=metadata.get("owner"),
+                registered_by=metadata.get("registered_by"),
+                required_for=metadata.get("required_for"),
+                failure_policy=metadata.get("failure_policy"),
+            )
+
         install_failure_policy_resolver(_failure_policy_for)
         install_service_resolver(_service_for)
         install_service_presence_resolver(_has_service)
+        install_service_registration_sink(_register_service)
         install_registration_locked_resolver(_registration_locked)
     except (ImportError, RuntimeError, AttributeError) as exc:
         logger.debug("Runtime service registry bridge unavailable: %s", exc)

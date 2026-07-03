@@ -291,3 +291,200 @@ def test_terminal_monitor_world_state_publish_uses_runtime_registry():
     source = inspect.getsource(terminal_monitor.TerminalMonitor._ingest_error)
     assert "from core.world_state import get_world_state" not in source
     assert "core.runtime.service_registry" in source
+
+
+def test_world_state_registration_uses_runtime_registry(monkeypatch):
+    import inspect
+    import core.world_state as world_state
+    from core.runtime.service_registry import (
+        install_service_presence_resolver,
+        install_service_registration_sink,
+    )
+
+    registered: list[tuple[str, object, bool, dict[str, str | None]]] = []
+    monkeypatch.setattr(world_state, "_ws_instance", None)
+    install_service_presence_resolver(lambda _name: False)
+    install_service_registration_sink(
+        lambda name, instance, required, metadata: registered.append(
+            (name, instance, required, metadata)
+        )
+    )
+    try:
+        instance = world_state.get_world_state()
+    finally:
+        install_service_presence_resolver(None)
+        install_service_registration_sink(None)
+        monkeypatch.setattr(world_state, "_ws_instance", None)
+
+    assert registered
+    name, registered_instance, required, metadata = registered[0]
+    assert name == "world_state"
+    assert registered_instance is instance
+    assert required is False
+    assert metadata["owner"] == "core/world_state.py"
+
+    source = inspect.getsource(world_state)
+    assert "from core.container import ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source
+
+
+def test_ice_sentinel_registration_uses_runtime_registry(monkeypatch):
+    import inspect
+    import core.security.ice_sentinel as ice_sentinel
+    from core.runtime.service_registry import (
+        install_service_registration_sink,
+        install_service_resolver,
+    )
+
+    registered: list[tuple[str, object, bool, dict[str, str | None]]] = []
+    monkeypatch.setattr(ice_sentinel, "_INSTANCE", None)
+    install_service_resolver(lambda _name, default=None: default)
+    install_service_registration_sink(
+        lambda name, instance, required, metadata: registered.append(
+            (name, instance, required, metadata)
+        )
+    )
+    try:
+        instance = ice_sentinel.register_ice_sentinel()
+    finally:
+        install_service_resolver(None)
+        install_service_registration_sink(None)
+        monkeypatch.setattr(ice_sentinel, "_INSTANCE", None)
+
+    names = [item[0] for item in registered]
+    assert "ice" in names
+    assert any(item[1] is instance and item[2] is False for item in registered)
+
+    source = inspect.getsource(ice_sentinel.register_ice_sentinel)
+    assert "from core.container import ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source
+
+
+def test_engine_support_brain_resolution_uses_runtime_registry():
+    import inspect
+    import core.utils.engine_support as engine_support
+    from core.runtime.service_registry import install_service_resolver
+
+    class Brain:
+        pass
+
+    class Orchestrator:
+        brain = Brain()
+
+    install_service_resolver(lambda name, default=None: Orchestrator() if name == "orchestrator" else default)
+    try:
+        assert isinstance(engine_support.resolve_brain(), Brain)
+    finally:
+        install_service_resolver(None)
+
+    source = inspect.getsource(engine_support.resolve_brain)
+    assert "from core.container import ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source
+
+
+def test_hierarchical_agency_handlers_use_runtime_registry():
+    import inspect
+    import core.agency.hierarchical_agency as hierarchical_agency
+    from core.runtime.service_registry import install_service_resolver
+
+    class GoalEngine:
+        pass
+
+    signals: list[tuple[str, str]] = []
+
+    class RsiLoop:
+        def record_signal(self, source, kind, **_kwargs):
+            signals.append((source, kind))
+
+    def resolver(name, default=None):
+        if name == "goal_engine":
+            return GoalEngine()
+        if name == "recursive_self_improvement":
+            return RsiLoop()
+        return default
+
+    agency = hierarchical_agency.HierarchicalAgency(ledger_enabled=False)
+    install_service_resolver(resolver)
+    try:
+        strategic = agency._strategic(hierarchical_agency.Situation("plan", goal_horizon=0.8))
+        self_improve = agency._self_improvement(
+            hierarchical_agency.Situation("missing skill", capability_gap=0.9)
+        )
+    finally:
+        install_service_resolver(None)
+
+    assert strategic.detail["routed_to"] == "goal_engine"
+    assert self_improve.detail["recorded"] == "capability_gap_signal"
+    assert signals == [("hierarchical_agency", "capability_gap")]
+
+    source = inspect.getsource(hierarchical_agency.HierarchicalAgency._strategic)
+    source += inspect.getsource(hierarchical_agency.HierarchicalAgency._self_improvement)
+    assert "from core.container import ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source
+
+
+def test_emergency_protocol_minimal_mode_uses_runtime_registry():
+    import inspect
+    import core.security.emergency_protocol as emergency_protocol
+    from core.runtime.service_registry import install_service_resolver
+
+    class BackgroundService:
+        running = True
+
+    services = {
+        "curiosity_explorer": BackgroundService(),
+        "skill_synthesizer": BackgroundService(),
+    }
+    install_service_resolver(lambda name, default=None: services.get(name, default))
+    try:
+        protocol = emergency_protocol.EmergencyProtocol()
+        protocol._enter_minimal_mode()
+    finally:
+        install_service_resolver(None)
+
+    assert services["curiosity_explorer"].running is False
+    assert services["skill_synthesizer"].running is False
+
+    source = inspect.getsource(emergency_protocol.EmergencyProtocol._enter_minimal_mode)
+    assert "from core.container import ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source
+
+
+def test_scientific_engine_belief_publish_uses_runtime_registry():
+    import inspect
+    import core.cognition.scientific_engine as scientific_engine
+    from core.runtime.service_registry import install_service_resolver
+
+    beliefs: list[tuple[str, object, float, str]] = []
+
+    class WorldState:
+        def set_belief(self, key, value, *, confidence, source):
+            beliefs.append((key, value, confidence, source))
+
+    engine = scientific_engine.ScientificEngine.__new__(scientific_engine.ScientificEngine)
+    hypothesis = scientific_engine.Hypothesis(
+        hypothesis_id="hyp-test",
+        claim="runtime registry routes belief updates",
+        predicted_observable="belief_written",
+        expected=1.0,
+        confidence=0.8,
+        status="supported",
+    )
+    install_service_resolver(lambda name, default=None: WorldState() if name == "world_state" else default)
+    try:
+        engine._publish_belief(hypothesis)
+    finally:
+        install_service_resolver(None)
+
+    assert beliefs == [
+        (
+            "hypothesis:runtime registry routes belief updates",
+            {"status": "supported", "expected": 1.0},
+            0.8,
+            "scientific_engine",
+        )
+    ]
+
+    source = inspect.getsource(scientific_engine.ScientificEngine._publish_belief)
+    assert "from core.container import ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source

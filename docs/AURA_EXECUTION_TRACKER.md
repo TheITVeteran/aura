@@ -4990,3 +4990,60 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 67-72% locally.
 - Remaining total checkpoint groups: 3, focused on continued SCC reduction,
   live desktop findings, and longer soak/runtime evidence.
+
+## Checkpoint 2026-07-03-19: Runtime Service Publication Decoupling
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Extended the low-level runtime service registry with a general service
+  registration sink. Runtime modules can now publish service instances without
+  importing `core.container`.
+- Moved `WorldState` service publication through the registry sink while
+  preserving its live environment-grounding behavior.
+- Moved ICE sentinel registration through the registry and removed the shared
+  cognitive helper's direct brain lookup through the container.
+- Moved the agency ladder's strategic and self-improvement service lookups
+  through the registry while preserving goal-engine and RSI signaling behavior.
+- Moved emergency minimal-mode service throttling and scientific-engine belief
+  publication through the registry.
+- Added regression tests for each cut so these back-edges cannot quietly return.
+- Refreshed the architecture baseline after reducing the largest import SCC
+  from `621` modules to `616` modules.
+- Kept this as general reliability engineering: service publication, service
+  lookup, emergency response, belief publishing, and defensive registration all
+  use the same reusable runtime bridge instead of domain-specific logic.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `114 passed`.
+- `python -m ruff check --select F,E9 ...`
+  over touched runtime/security/agency/cognition/test files -> passed.
+- `python -m py_compile ...`
+  over touched runtime/security/agency/cognition/test files -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=44.79`,
+  `largest_cycle_size=616`, `cycle_count=7`, `dependency_edges=7512`,
+  `god_file_count=37`, `module_count=2245`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=0`, `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check`
+  -> passed.
+
+Boundary:
+
+- This continues dismantling runtime/container back-edges but does not yet
+  eliminate the dominant architecture SCC. The next consolidation work should
+  target larger direct container import clusters, especially governance/Will and
+  core brain/service ownership paths, with the same low-risk interface pattern.
+
+Estimate:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 35-40%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 68-73% locally.
+- Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
+  desktop findings, and longer soak/runtime evidence.

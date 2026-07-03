@@ -10,10 +10,12 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 _Resolver = Callable[[str], str | None]
 _ServiceResolver = Callable[[str, object | None], object | None]
 _ServicePresenceResolver = Callable[[str], bool]
+_ServiceRegistrationSink = Callable[[str, object, bool, dict[str, str | None]], None]
 _RuntimeFlagResolver = Callable[[], bool]
 _MetricCounterSink = Callable[[str, int], None]
 _FileWriteBytesSink = Callable[[object, bytes, str], None]
@@ -22,6 +24,7 @@ _resolver_lock = threading.Lock()
 _failure_policy_resolver: _Resolver | None = None
 _service_resolver: _ServiceResolver | None = None
 _service_presence_resolver: _ServicePresenceResolver | None = None
+_service_registration_sink: _ServiceRegistrationSink | None = None
 _registration_locked_resolver: _RuntimeFlagResolver | None = None
 _metric_counter_sink: _MetricCounterSink | None = None
 _file_write_bytes_sink: _FileWriteBytesSink | None = None
@@ -47,6 +50,13 @@ def install_service_presence_resolver(resolver: _ServicePresenceResolver | None)
     global _service_presence_resolver
     with _resolver_lock:
         _service_presence_resolver = resolver
+
+
+def install_service_registration_sink(sink: _ServiceRegistrationSink | None) -> None:
+    """Install or clear the process-local service registration sink."""
+    global _service_registration_sink
+    with _resolver_lock:
+        _service_registration_sink = sink
 
 
 def install_registration_locked_resolver(resolver: _RuntimeFlagResolver | None) -> None:
@@ -100,6 +110,35 @@ def has_runtime_service(service_name: str) -> bool:
     if resolver is not None:
         return bool(resolver(service_name))
     return get_runtime_service(service_name, default=None) is not None
+
+
+def register_runtime_service(
+    service_name: str,
+    instance: object,
+    *,
+    required: bool = True,
+    owner: str | None = None,
+    registered_by: str | None = None,
+    required_for: str | None = None,
+    failure_policy: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> bool:
+    """Publish a runtime service without importing the concrete container."""
+    with _resolver_lock:
+        sink = _service_registration_sink
+    if sink is None:
+        return False
+    service_metadata: dict[str, str | None] = {
+        "owner": owner,
+        "registered_by": registered_by,
+        "required_for": required_for,
+        "failure_policy": failure_policy,
+    }
+    if metadata:
+        for key, value in metadata.items():
+            service_metadata[str(key)] = None if value is None else str(value)
+    sink(service_name, instance, bool(required), service_metadata)
+    return True
 
 
 def is_runtime_registration_locked() -> bool:

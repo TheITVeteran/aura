@@ -22,8 +22,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import has_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.WorldState")
 
@@ -164,7 +164,7 @@ class WorldState:
     async def start(self) -> None:
         if self._started:
             return
-        ServiceContainer.register_instance("world_state", self, required=False)
+        register_runtime_service("world_state", self, required=False)
         self._update_time_of_day()
         self._started = True
         logger.info("WorldState ONLINE -- live perceptual feed active")
@@ -431,8 +431,8 @@ def get_world_state() -> WorldState:
         if _ws_instance is None:
             _ws_instance = WorldState()
         instance = _ws_instance
-        if not ServiceContainer.has("world_state"):
-            ServiceContainer.register_instance(
+        if not has_runtime_service("world_state"):
+            register_runtime_service(
                 "world_state",
                 instance,
                 required=False,

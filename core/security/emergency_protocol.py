@@ -504,10 +504,11 @@ class EmergencyProtocol:
         logger.warning("EmergencyProtocol: entering MINIMAL MODE (threat=%.2f)", self._threat_score)
 
         try:
-            from core.container import ServiceContainer
+            from core.runtime.service_registry import get_runtime_service
+
             # Stop non-essential background systems
             for svc_name in ["curiosity_explorer", "skill_synthesizer"]:
-                svc = ServiceContainer.get(svc_name, default=None)
+                svc = get_runtime_service(svc_name, default=None)
                 if svc and hasattr(svc, "running"):
                     svc.running = False
         except _EMERGENCY_RECOVERABLE_ERRORS as exc:

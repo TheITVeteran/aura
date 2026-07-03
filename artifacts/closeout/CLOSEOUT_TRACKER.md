@@ -2369,3 +2369,45 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 67-72% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-19: Runtime Service Publication Decoupling
+
+Status: ready to commit.
+
+What changed:
+
+- Added a general runtime service registration sink to the low-level service
+  registry so runtime modules can publish services without importing the global
+  container.
+- Moved world-state publication, ICE sentinel registration, cognitive helper
+  brain lookup, agency-ladder service lookups, emergency minimal-mode service
+  throttling, and scientific-engine belief publishing onto the runtime registry
+  bridge.
+- Added regression tests for the world-state, ICE, engine-support,
+  hierarchical-agency, emergency-protocol, and scientific-engine back-edges.
+- Refreshed the architecture-quality baseline after the largest import SCC
+  dropped from `621` modules to `616` modules.
+- Kept the quality standard general-purpose: reusable service ownership,
+  runtime publication, emergency behavior, and belief-publishing interfaces, not
+  aerospace-domain behavior.
+
+Evidence:
+
+- Runtime/architecture/audit/reliability focused tests -> `114 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=44.79`,
+  `largest_cycle_size=616`, `cycle_count=7`, `dependency_edges=7512`,
+  `module_count=2245`.
+- Remaining-checkpoint contract -> `gaps=0`,
+  `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check` -> passed.
+
+Tracker:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 35-40%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 68-73% locally.
+- Remaining total checkpoint groups: 3.

@@ -289,8 +289,9 @@ class HierarchicalAgency:
         # *whose* goal it is serving and what that agent is actually trying to get.
         social = self._social_context(s)
         try:
-            from core.container import ServiceContainer
-            ge = ServiceContainer.get("goal_engine", default=None)
+            from core.runtime.service_registry import get_runtime_service
+
+            ge = get_runtime_service("goal_engine", default=None)
             if ge is not None:
                 detail = {"routed_to": "goal_engine", "horizon": round(s.goal_horizon, 3)}
                 if social:
@@ -327,8 +328,9 @@ class HierarchicalAgency:
 
     def _self_improvement(self, s: Situation) -> TierResult:
         try:
-            from core.container import ServiceContainer
-            loop = ServiceContainer.get("recursive_self_improvement", default=None)
+            from core.runtime.service_registry import get_runtime_service
+
+            loop = get_runtime_service("recursive_self_improvement", default=None)
             if loop is not None and hasattr(loop, "record_signal"):
                 loop.record_signal(
                     "hierarchical_agency", "capability_gap",
