@@ -27,6 +27,7 @@ gracefully without pretending the failed request was healthy.
 from __future__ import annotations
 import inspect
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 
 
@@ -242,13 +243,12 @@ def build_envelope(
 
 def _notify_substrate(state: PhenomenalState, *, source: str = "phenomenal_error_map") -> None:
     try:
-        from core.container import ServiceContainer
-        affect = ServiceContainer.get("affect_engine", default=None)
+        affect = get_runtime_service("affect_engine", default=None)
         if affect is not None and hasattr(affect, "apply_signal"):
             affect.apply_signal(source=source, signal=dict(state.substrate_signal))
             return
         # Fallback to neurochemical regulator if affect engine is missing
-        nc = ServiceContainer.get("neurochemical_regulator", default=None)
+        nc = get_runtime_service("neurochemical_regulator", default=None)
         if nc is not None and hasattr(nc, "nudge"):
             for k, v in state.substrate_signal.items():
                 try:

@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.skills.fluid_executor import Step
 
 logger = logging.getLogger("Aura.DesktopPlanner")
@@ -48,9 +49,7 @@ class DesktopAdapter:
 
     async def _dispatch(self, action: str, **params: Any) -> None:
         try:
-            from core.container import ServiceContainer
-
-            skill = ServiceContainer.get("skill:computer_use", default=None)
+            skill = get_runtime_service("skill:computer_use", default=None)
             if skill is None or not hasattr(skill, "execute"):
                 logger.debug("🖥️ [Desktop] computer_use unavailable; '%s' is a no-op edge.", action)
                 return

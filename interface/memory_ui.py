@@ -5,7 +5,8 @@ import os
 import time
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, FileResponse
-from core.container import ServiceContainer
+
+from core.runtime.service_registry import get_runtime_service
 
 router = APIRouter()
 logger = logging.getLogger("Aura.UI.Memory")
@@ -31,7 +32,7 @@ async def get_vault_stats():
     degradations: list[str] = []
 
     # Use DI to get BlackHoleVault via MemoryFacade
-    facade = ServiceContainer.get("memory_facade", default=None)
+    facade = get_runtime_service("memory_facade", default=None)
     if facade and hasattr(facade, "setup"):
         try:
             facade.setup()

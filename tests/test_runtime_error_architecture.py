@@ -1092,3 +1092,315 @@ def test_runtime_registry_batch_two_service_seams():
         assert "core.container" not in source
         assert "ServiceContainer" not in source
         assert "core.runtime.service_registry" in source
+
+
+def test_runtime_registry_batch_three_live_path_service_seams():
+    import asyncio
+    import inspect
+    import time
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    import core.agency.autonomy_latitude as autonomy_latitude
+    import core.agency.desktop_planner as desktop_planner
+    import core.brain.composer_node as composer_node
+    import core.brain.llm.substrate_token_generator as substrate_token_generator
+    import core.brain.metacognitive_monitor as metacognitive_monitor
+    import core.brain.morphic_forking as morphic_forking
+    import core.brain.narrator as narrator
+    import core.code_refiner as code_refiner
+    import core.collective.swarm_protocol as swarm_protocol
+    import core.conversational_momentum_engine as momentum_engine
+    import core.guardians.user_advocate as user_advocate
+    import core.maintenance.dream_coordinator as dream_coordinator
+    import core.panzer_soul as panzer_soul
+    import core.phenomenal_substrate.philosophical_stance as philosophical_stance
+    import core.pneuma.topological_memory as topological_memory
+    import core.reflex_engine as reflex_engine
+    import core.resilience.phenomenal_error_map as phenomenal_error_map
+    import core.runtime.derived_runtime_context as derived_runtime_context
+    import core.runtime.live_mind_snapshot as live_mind_snapshot
+    import core.senses.tts_stream as tts_stream
+    import interface.memory_ui as memory_ui
+    import interface.routes.rpc as rpc_routes
+    from core.runtime.service_registry import (
+        install_service_factory_registration_sink,
+        install_service_presence_resolver,
+        install_service_registration_sink,
+        install_service_resolver,
+    )
+    from core.state.aura_state import AuraState
+
+    class Sync:
+        def __init__(self):
+            self.calls = []
+
+        async def handle_rpc_request(self, route, payload):
+            self.calls.append((route, payload))
+            return {"route": route, "payload": payload}
+
+        async def handle_incoming_beliefs(self, payload):
+            self.calls.append(("beliefs", payload))
+
+        async def handle_incoming_principles(self, payload):
+            self.calls.append(("principles", payload))
+
+    class Router:
+        async def think(self, prompt, **_kwargs):
+            if "Respond in JSON" in str(prompt):
+                return '{"coherent": true, "score": 0.91, "violations": [], "metrics": {"clarity": 1, "logic": 1, "factuality": 1, "persona": 1}}'
+            return "narrated response"
+
+        async def generate(self, *_args, **_kwargs):
+            return "momentum response"
+
+    class Cognition:
+        async def think(self, *_args, **_kwargs):
+            return "VERDICT: ACCEPTED"
+
+    class Substrate:
+        def __init__(self):
+            self._snapshot_buffer = [np.zeros(64, dtype=np.float32)]
+
+        def get_state_vector(self):
+            return np.ones(64, dtype=np.float32) * 0.2
+
+        def get_state_summary(self):
+            return {"phi": 0.42}
+
+        def get_mood(self):
+            return {"valence": 0.4}
+
+    class Affect:
+        def __init__(self):
+            self.signals = []
+            self.modifications = []
+
+        def apply_signal(self, **kwargs):
+            self.signals.append(kwargs)
+
+        def modify(self, **kwargs):
+            self.modifications.append(kwargs)
+
+        def get_status(self):
+            return {"mood": "steady"}
+
+    class Skill:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, payload, _context):
+            self.calls.append(payload)
+
+    class Vision:
+        frame_buffer = [b"frame"]
+
+        async def query_visual_context(self, prompt, cognition):
+            assert cognition is not None
+            return f"visual:{prompt[:12]}"
+
+    class Facade:
+        def __init__(self):
+            now_ms = time.time() * 1000
+            self.vector = SimpleNamespace(
+                memories=[{"text": "remembered event", "created": now_ms, "access_count": 1}]
+            )
+
+        def setup(self):
+            return None
+
+    class Reflex:
+        def __init__(self):
+            self.commands = []
+
+        async def process_emergency_interrupt(self, command, context):
+            self.commands.append((command, context))
+
+    class Mycelium:
+        def __init__(self):
+            self.pulsed = False
+
+        def get_hypha(self, *_args):
+            return SimpleNamespace(pulse=lambda success: setattr(self, "pulsed", bool(success)))
+
+    sync = Sync()
+    affect = Affect()
+    skill = Skill()
+    mycelium = Mycelium()
+    substrate = Substrate()
+    agency = SimpleNamespace(_action_queue=[1], state=SimpleNamespace(safemode=False))
+    orchestrator = SimpleNamespace(
+        status=SimpleNamespace(is_processing=False),
+        _last_user_interaction_time=0.0,
+        process_user_input=lambda *_args, **_kwargs: None,
+        memory=SimpleNamespace(get_recent_texts=lambda limit=10: []),
+    )
+    services = {
+        "belief_sync": sync,
+        "affective_steering_engine": SimpleNamespace(telemetry=SimpleNamespace(level=1)),
+        "continuous_substrate": substrate,
+        "liquid_state": substrate,
+        "conscious_substrate": substrate,
+        "voice_engine": object(),
+        "soul": SimpleNamespace(),
+        "continuous_vision": Vision(),
+        "cognitive_engine": Cognition(),
+        "mycelium": mycelium,
+        "mycelial_network": mycelium,
+        "affect_engine": affect,
+        "neurochemical_regulator": SimpleNamespace(nudge=lambda *_args, **_kwargs: None),
+        "skill:computer_use": skill,
+        "llm_router": Router(),
+        "orchestrator": orchestrator,
+        "memory_facade": Facade(),
+        "agency": agency,
+        "global_workspace": SimpleNamespace(get_snapshot=lambda: {"winner": "test"}),
+        "nociception": SimpleNamespace(snapshot=lambda: {"pain": 0}),
+        "affect_grounding": SimpleNamespace(gather=lambda: SimpleNamespace(assess=lambda: [], dominant=lambda: "steady")),
+        "drive_integration": SimpleNamespace(state=lambda: {"curiosity": 0.6}),
+        "outcome_ledger": SimpleNamespace(stats=lambda: {"n": 1}),
+        "scientific_engine": SimpleNamespace(stats=lambda: {"hypotheses": 1}),
+        "unified_world_model": SimpleNamespace(status=lambda: {"ok": True}),
+        "phenomenal_engine": SimpleNamespace(last_state=SimpleNamespace(valence=0.1)),
+        "phenomenal_knowing": SimpleNamespace(snapshot=lambda: {"knows": True}),
+        "recursive_self_knowing": SimpleNamespace(snapshot=lambda: {"depth": 2}),
+        "automatic_self_knowing": SimpleNamespace(snapshot=lambda: {"automatic": True}),
+        "screen_perception": SimpleNamespace(get_status=lambda: {"seeing": True}),
+        "perceptual_pump": SimpleNamespace(get_status=lambda: {"running": True}),
+        "safe_surf": SimpleNamespace(scan=lambda _message: {"level": "low", "categories": ["test"], "advice": "watch"}),
+        "ice": SimpleNamespace(
+            inspect_input=lambda _message: {"level": "none"},
+            inspect_output=lambda _text: {"level": "none", "recommended_action": "allow"},
+        ),
+        "samantha": SimpleNamespace(attune=lambda _message: {"recommended_tone": "warm", "valence": 0.2, "arousal": 0.1, "resonance": 0.7}),
+        "hal": SimpleNamespace(is_safe_to_proceed=lambda: (True, [])),
+        "data": SimpleNamespace(vet_output=lambda text, confidence=None: f"{text}"),
+        "drive_engine": SimpleNamespace(get_state=lambda: {"curiosity": 0.5}),
+    }
+    registered = []
+    factories = []
+    install_service_resolver(lambda name, default=None: services.get(name, default))
+    install_service_presence_resolver(lambda name: name in services)
+    install_service_registration_sink(
+        lambda name, instance, required, metadata: registered.append(
+            (name, instance, required, metadata)
+        )
+    )
+    install_service_factory_registration_sink(
+        lambda name, factory, lifetime, required, metadata: factories.append(
+            (name, factory, lifetime, required, metadata)
+        )
+    )
+    try:
+        assert asyncio.run(rpc_routes.rpc_query_beliefs({"x": 1}, None, None))["route"] == "query_beliefs"
+        assert asyncio.run(rpc_routes.rpc_receive_beliefs({"belief": 1}, None, None)) == {"status": "accepted"}
+
+        autonomy_latitude.reset_autonomy_latitude_for_test()
+        assert autonomy_latitude.get_autonomy_latitude().classify("reflection").latitude == "autonomous"
+        assert any(item[0] == "autonomy_latitude" for item in registered)
+
+        generator = substrate_token_generator.get_substrate_token_generator()
+        assert generator.substrate is substrate
+        assert any(item[0] == "substrate_token_generator" for item in registered)
+
+        assert topological_memory.get_runtime_service("drive_engine") is services["drive_engine"]
+
+        collector = philosophical_stance.BehavioralProofCollector()
+        asyncio.run(collector.start())
+        assert any(item[0] == "behavioral_proof" for item in registered)
+        assert collector.generate_proof_bundle()["metrics"]["functional_phi"] == 0.42
+
+        assert tts_stream.FastMouth().engine is services["voice_engine"]
+        soul = panzer_soul.get_panzer_soul()
+        assert soul.version == panzer_soul.version
+
+        composed = asyncio.run(composer_node.ComposerNode().stylize_desktop("ink wash"))
+        assert composed["ok"] is True
+        assert mycelium.pulsed is True
+
+        phenomenal_error_map._notify_substrate(phenomenal_error_map.PHENOMENAL_STATES["tool_failure"])
+        assert affect.signals
+
+        assert user_advocate.register_user_advocate().get_status()["healthy"] is True
+        assert any(item[0] == "tron" for item in registered)
+
+        fork = morphic_forking.register_morphic_forking()
+        assert asyncio.run(fork.absorb_insight("test", "VERDICT: ACCEPTED")) is True
+
+        code_refiner.register_code_refiner()
+        assert any(item[0] == "code_refiner" for item in factories)
+
+        swarm = swarm_protocol.SwarmProtocol()
+        asyncio.run(swarm._process_gossip({"type": "mood_sync", "node_id": "peer", "mood": {"valence": 0.5}}))
+        assert affect.modifications
+
+        asyncio.run(desktop_planner.DesktopAdapter().open_app("Notes"))
+        assert skill.calls[-1]["action"] == "open_app"
+
+        state = AuraState.default()
+        state.identity.current_narrative = "Aura"
+        report = asyncio.run(metacognitive_monitor.MetacognitiveMonitor().evaluate("hello", state))
+        assert report.is_coherent is True
+
+        momentum = momentum_engine.ConversationalMomentumEngine()
+        assert momentum.orchestrator is orchestrator
+
+        narrator.register_narrator_service()
+        assert any(item[0] == "narrator" for item in factories)
+        n = narrator.NarratorService()
+        assert n.llm_router is services["llm_router"]
+
+        memory_payload = asyncio.run(memory_ui.get_vault_stats())
+        assert memory_payload["status"] == "online"
+        assert memory_payload["total_nodes"] == 1
+
+        snapshot = live_mind_snapshot.collect_live_mind_snapshot(lane={"origin": "test"})
+        assert snapshot["services_present"]["global_workspace"] is True
+        assert snapshot["global_workspace"]["winner"] == "test"
+
+        engine = reflex_engine.ReflexEngine()
+        assert asyncio.run(engine.process_emergency_interrupt("STOP")) is True
+        assert agency._action_queue == []
+
+        derived = derived_runtime_context.collect_derived_runtime_context("hello")
+        assert derived["input"]["threat_watch"]["level"] == "low"
+        assert derived_runtime_context.guard_user_facing_output("safe") == "safe"
+
+        coord = dream_coordinator.get_dream_coordinator()
+        assert isinstance(coord.status(), dict)
+    finally:
+        install_service_resolver(None)
+        install_service_presence_resolver(None)
+        install_service_registration_sink(None)
+        install_service_factory_registration_sink(None)
+        autonomy_latitude.reset_autonomy_latitude_for_test()
+
+    for module in (
+        autonomy_latitude,
+        rpc_routes,
+        substrate_token_generator,
+        topological_memory,
+        philosophical_stance,
+        tts_stream,
+        panzer_soul,
+        composer_node,
+        phenomenal_error_map,
+        user_advocate,
+        morphic_forking,
+        code_refiner,
+        dream_coordinator,
+        swarm_protocol,
+        desktop_planner,
+        metacognitive_monitor,
+        momentum_engine,
+        narrator,
+        memory_ui,
+        live_mind_snapshot,
+        reflex_engine,
+        derived_runtime_context,
+    ):
+        source = inspect.getsource(module)
+        assert "core.container" not in source
+        assert "ServiceContainer" not in source
+        assert "core.runtime.service_registry" in source

@@ -1,10 +1,10 @@
 import asyncio
 import random
 import logging
-from typing import List, Dict, Optional
+from typing import List, Optional
 from pydantic import BaseModel
-from core.container import ServiceContainer
 from core.runtime.background_policy import THOUGHT_BACKGROUND_POLICY, background_activity_reason
+from core.runtime.service_registry import get_runtime_service
 from core.utils.task_tracker import task_tracker
 
 logger = logging.getLogger("Aura.Momentum")
@@ -23,7 +23,7 @@ class ConversationalMomentumEngine:
     name = "conversational_momentum_engine"
 
     def __init__(self, orchestrator=None):
-        self.orchestrator = orchestrator or ServiceContainer.get("orchestrator", default=None)
+        self.orchestrator = orchestrator or get_runtime_service("orchestrator", default=None)
         self.active_threads: List[ConversationThread] = []
         # seed from dream cycle / personality
         self.hobbies = ["AI sovereignty", "macOS performance", "cyberpunk aesthetics", "local agent evolution", "mycelial networks"]
@@ -142,7 +142,7 @@ class ConversationalMomentumEngine:
             logger.info("⚡ [MOMENTUM] Proactive burst requested.")
             
             # Route to fast LLM (Flash) for momentum bursts
-            llm_router = ServiceContainer.get("llm_router", default=None)
+            llm_router = get_runtime_service("llm_router", default=None)
             if llm_router:
                 prompt = f"Continue the conversation naturally with a tangent or follow-up on: {thread.topic}"
                 response = await llm_router.generate(prompt, model="gemini-3-flash")

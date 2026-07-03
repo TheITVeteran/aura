@@ -15,16 +15,14 @@ This module provides:
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Deque, Dict, Optional
 
-from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.PhilosophicalStance")
 
@@ -80,7 +78,7 @@ class FunctionalPhiMetric:
         }
 
         try:
-            substrate = ServiceContainer.get("conscious_substrate", default=None)
+            substrate = get_runtime_service("conscious_substrate", default=None)
             if substrate:
                 summary = substrate.get_state_summary()
                 # Use the existing variance-based phi estimate
@@ -141,7 +139,13 @@ class BehavioralProofCollector:
     async def start(self) -> None:
         if self._started:
             return
-        ServiceContainer.register_instance("behavioral_proof", self, required=False)
+        register_runtime_service(
+            "behavioral_proof",
+            self,
+            required=False,
+            owner="core/phenomenal_substrate/philosophical_stance.py",
+            registered_by="BehavioralProofCollector.start",
+        )
         self._started = True
         logger.info("BehavioralProofCollector ONLINE (Path A functionalist)")
 
@@ -192,8 +196,6 @@ class BehavioralProofCollector:
 
         # Affect variation
         valences = [o.affect_after.get("valence", 0) for o in recent if o.affect_after]
-        arousals = [o.affect_after.get("arousal", 0) for o in recent if o.affect_after]
-
         affect_variation = 0.0
         if valences:
             affect_variation = max(valences) - min(valences)

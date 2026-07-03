@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.morality.action_markers import IRREVERSIBLE_MARKERS, scan_markers
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.UserAdvocate")
 
@@ -98,12 +99,23 @@ def get_user_advocate() -> UserAdvocateWatchdog:
 
 
 def register_user_advocate(orchestrator: Any = None) -> UserAdvocateWatchdog:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.TRON, default=None) or get_user_advocate()
-    ServiceContainer.register_instance(ServiceNames.TRON, inst, required=False)
-    ServiceContainer.register_instance("tron", inst, required=False)
+    inst = get_runtime_service(ServiceNames.TRON, default=None) or get_user_advocate()
+    register_runtime_service(
+        ServiceNames.TRON,
+        inst,
+        required=False,
+        owner="core/guardians/user_advocate.py",
+        registered_by="register_user_advocate",
+    )
+    register_runtime_service(
+        "tron",
+        inst,
+        required=False,
+        owner="core/guardians/user_advocate.py",
+        registered_by="register_user_advocate",
+    )
     return inst
 
 

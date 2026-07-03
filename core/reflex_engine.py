@@ -5,6 +5,8 @@ import re
 from typing import List, Dict, Tuple, Optional
 import time
 
+from core.runtime.service_registry import get_runtime_service
+
 logger = logging.getLogger("Aura.ReflexEngine")
 
 class NgramVoiceGenerator:
@@ -144,9 +146,8 @@ class ReflexEngine:
         logger.warning("⚡ [SPINAL CORD] Emergency Interrupt Received: %s (Context: %s)", signal, context)
         
         try:
-            from core.container import ServiceContainer
-            agency = ServiceContainer.get("agency", default=None)
-            mycelium = ServiceContainer.get("mycelial_network", default=None)
+            agency = get_runtime_service("agency", default=None)
+            mycelium = get_runtime_service("mycelial_network", default=None)
             
             if signal in ("STOP", "HALT", "ABORT", "CANCEL", "SHUT UP", "STOP TALKING", "QUIET"):
                 logger.critical("⚡ [SPINAL CORD] Executing INSTANT HALT reflex.")

@@ -5,8 +5,8 @@ import socket
 import time
 from typing import Any, Dict
 
-from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Mycelium.Swarm")
@@ -95,8 +95,7 @@ class SwarmProtocol:
 
             # Mood contagion: nudge local affect toward swarm average
             try:
-                from core.container import ServiceContainer
-                affect = ServiceContainer.get("affect_engine", default=None)
+                affect = get_runtime_service("affect_engine", default=None)
                 if affect is not None and hasattr(affect, "modify"):
                     # Weak contagion factor — peers influence but don't override
                     contagion_weight = 0.05
@@ -130,7 +129,7 @@ class SwarmProtocol:
 
     async def _broadcast_loop(self):
         while self.running:
-            substrate = ServiceContainer.get("liquid_substrate", default=None)
+            substrate = get_runtime_service("liquid_substrate", default=None)
             if substrate:
                 mood = substrate.get_mood()
                 await self.broadcast({"type": "mood_sync", "mood": mood})

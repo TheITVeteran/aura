@@ -18,6 +18,8 @@ from typing import Any, Optional
 
 import numpy as np
 
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
+
 
 PROTO_TOKENS = (
     "notice", "hold", "verify", "repair", "continue", "care", "check",
@@ -147,8 +149,7 @@ class SubstrateTokenGenerator:
 
         telemetry = None
         try:
-            from core.container import ServiceContainer
-            engine = ServiceContainer.get("affective_steering_engine", default=None)
+            engine = get_runtime_service("affective_steering_engine", default=None)
             if engine and hasattr(engine, "telemetry"):
                 import dataclasses
                 telemetry = dataclasses.asdict(engine.telemetry)
@@ -191,14 +192,12 @@ class SubstrateTokenGenerator:
 
 
 def get_substrate_token_generator(substrate: Any | None = None) -> SubstrateTokenGenerator:
-    from core.container import ServiceContainer
-
     if substrate is None:
         substrate = (
-            ServiceContainer.get("continuous_substrate", default=None)
-            or ServiceContainer.get("liquid_state", default=None)
+            get_runtime_service("continuous_substrate", default=None)
+            or get_runtime_service("liquid_state", default=None)
         )
-    existing = ServiceContainer.get("substrate_token_generator", default=None)
+    existing = get_runtime_service("substrate_token_generator", default=None)
     if existing is not None and (substrate is None or getattr(existing, "substrate", None) is substrate):
         return existing
     if substrate is None:
@@ -207,7 +206,13 @@ def get_substrate_token_generator(substrate: Any | None = None) -> SubstrateToke
         substrate = ContinuousSubstrate()
     generator = SubstrateTokenGenerator(substrate)
     try:
-        ServiceContainer.register_instance("substrate_token_generator", generator, required=False)
+        register_runtime_service(
+            "substrate_token_generator",
+            generator,
+            required=False,
+            owner="core/brain/llm/substrate_token_generator.py",
+            registered_by="get_substrate_token_generator",
+        )
     except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
         logger.debug("Suppressed %s in core.brain.llm.substrate_token_generator: %s", type(_exc).__name__, _exc)
     return generator

@@ -1,12 +1,11 @@
 import json
 import re
-import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Optional
 from ..state.aura_state import AuraState
-from ..container import ServiceContainer
 from core.brain.llm.llm_router import LLMTier
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.MetacognitiveMonitor")
 
@@ -29,7 +28,7 @@ class MetacognitiveMonitor:
 
     def _get_router(self):
         if self.router is None:
-            self.router = ServiceContainer.get("llm_router", default=None)
+            self.router = get_runtime_service("llm_router", default=None)
         return self.router
 
     async def evaluate(

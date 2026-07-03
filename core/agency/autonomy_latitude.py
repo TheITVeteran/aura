@@ -35,6 +35,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from core.runtime.service_registry import has_runtime_service, register_runtime_service
+
 logger = logging.getLogger("Aura.AutonomyLatitude")
 
 # Reversible / internal-only cognitive domains: effects stay inside Aura and are
@@ -201,13 +203,14 @@ def get_autonomy_latitude() -> AutonomyLatitude:
 
 def _register_in_container(engine: AutonomyLatitude) -> None:
     try:
-        from core.container import ServiceContainer
-
-        if not ServiceContainer.has(AutonomyLatitude.SERVICE_NAME):
-            reg = getattr(ServiceContainer, "register_instance", None)
-            if callable(reg):
-                reg(AutonomyLatitude.SERVICE_NAME, engine,
-                    required=False, registered_by="autonomy_latitude")
+        if not has_runtime_service(AutonomyLatitude.SERVICE_NAME):
+            register_runtime_service(
+                AutonomyLatitude.SERVICE_NAME,
+                engine,
+                required=False,
+                owner="core/agency/autonomy_latitude.py",
+                registered_by="autonomy_latitude",
+            )
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
         pass
 

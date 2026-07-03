@@ -1,8 +1,8 @@
 from core.runtime.errors import record_degradation
-import asyncio
 import logging
 from typing import Any, Dict, Optional
-from core.container import ServiceContainer
+
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Brain.Composer")
 
@@ -12,7 +12,7 @@ class ComposerNode:
     Specializes in Style Transfer, Image-to-Image, and Layout-aware generation.
     """
     
-    def __init__(self, container: Optional[ServiceContainer] = None):
+    def __init__(self, container: Optional[Any] = None):
         self._container = container
         self.vision_buffer = None
         self.capability_engine = None
@@ -21,10 +21,13 @@ class ComposerNode:
     def _setup(self) -> None:
         if self._is_setup:
             return
-        container = self._container or ServiceContainer
         try:
-            self.vision_buffer = container.get("continuous_vision", default=None)
-            self.capability_engine = container.get("capability_engine", default=None)
+            if self._container is not None and hasattr(self._container, "get"):
+                self.vision_buffer = self._container.get("continuous_vision", default=None)
+                self.capability_engine = self._container.get("capability_engine", default=None)
+            else:
+                self.vision_buffer = get_runtime_service("continuous_vision", default=None)
+                self.capability_engine = get_runtime_service("capability_engine", default=None)
             self._is_setup = True
             logger.info("🎨 Composer Node Online (Style Transfer Enabled).")
         except (OSError, ConnectionError, TimeoutError) as e:
@@ -46,8 +49,6 @@ class ComposerNode:
         if not frames:
             return {"ok": False, "error": "No frames captured."}
             
-        input_image = frames[-1] # bytes
-        
         # 2. Prepare Img2Img Prompt
         # We need a skill that supports Image-to-Image.
         # local_media_generation currently only supports Text-to-Image.
@@ -65,7 +66,7 @@ class ComposerNode:
             
             description = await self.vision_buffer.query_visual_context(
                 f"Describe this screen capture in detail for a style transfer to: {style_prompt}",
-                ServiceContainer.get("cognitive_engine", default=None)
+                get_runtime_service("cognitive_engine", default=None)
             )
             
             # c) Trigger generation
@@ -73,7 +74,7 @@ class ComposerNode:
             # Real high-fidelity would use a proper Img2Img pipeline.
             
             # Evolution 8: Pulse Mycelium
-            mycelium = ServiceContainer.get("mycelium", default=None)
+            mycelium = get_runtime_service("mycelium", default=None)
             if mycelium:
                 hypha = mycelium.get_hypha("vision", "composer")
                 if hypha: hypha.pulse(success=True)

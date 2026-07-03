@@ -10,8 +10,8 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 _SNAPSHOT_RECOVERABLE_ERRORS = (
     AttributeError,
@@ -84,7 +84,7 @@ def _compact(value: Any, *, depth: int = 3, items: int = 16, text: int = 420) ->
 
 def _service(name: str) -> Any:
     try:
-        return ServiceContainer.get(name, default=None)
+        return get_runtime_service(name, default=None)
     except _SNAPSHOT_RECOVERABLE_ERRORS as exc:
         record_degradation("live_mind_snapshot", exc, severity="debug")
         return None

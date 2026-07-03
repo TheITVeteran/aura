@@ -12,8 +12,8 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 
 _BRIDGE_ERRORS = (ImportError, AttributeError, RuntimeError, TypeError, ValueError)
@@ -31,7 +31,7 @@ def _dataclass_dict(value: Any) -> dict[str, Any]:
 
 def _safe_get(name: str) -> Any:
     try:
-        return ServiceContainer.get(name, default=None)
+        return get_runtime_service(name, default=None)
     except _BRIDGE_ERRORS as exc:
         record_degradation(
             "derived_runtime_context",

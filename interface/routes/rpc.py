@@ -11,7 +11,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 
 from interface.auth import _check_rate_limit, _require_internal
 
@@ -27,7 +27,7 @@ async def rpc_query_beliefs(
     __: None = Depends(_check_rate_limit),
 ):
     """Remote peer querying beliefs about an entity."""
-    sync = ServiceContainer.get("belief_sync", default=None)
+    sync = get_runtime_service("belief_sync", default=None)
     if sync:
         return await sync.handle_rpc_request("query_beliefs", params)
     return JSONResponse({"error": "BeliefSync not active"}, status_code=503)
@@ -40,7 +40,7 @@ async def rpc_receive_beliefs(
     __: None = Depends(_check_rate_limit),
 ):
     """Remote peer pushing beliefs to this node."""
-    sync = ServiceContainer.get("belief_sync", default=None)
+    sync = get_runtime_service("belief_sync", default=None)
     if sync:
         await sync.handle_incoming_beliefs(payload)
         return {"status": "accepted"}
@@ -54,7 +54,7 @@ async def rpc_receive_principles(
     __: None = Depends(_check_rate_limit),
 ):
     """Remote peer pushing principles to this node."""
-    sync = ServiceContainer.get("belief_sync", default=None)
+    sync = get_runtime_service("belief_sync", default=None)
     if sync:
         await sync.handle_incoming_principles(payload)
         return {"status": "accepted"}
@@ -68,7 +68,7 @@ async def rpc_receive_resonance(
     __: None = Depends(_check_rate_limit),
 ):
     """Remote peer pushing affective resonance to this node."""
-    sync = ServiceContainer.get("belief_sync", default=None)
+    sync = get_runtime_service("belief_sync", default=None)
     if sync:
         return await sync.handle_rpc_request("receive_resonance", payload)
     return JSONResponse({"error": "BeliefSync not active"}, status_code=503)
@@ -81,7 +81,7 @@ async def rpc_attention_spike(
     __: None = Depends(_check_rate_limit),
 ):
     """Remote peer pushing a collective attention spike."""
-    sync = ServiceContainer.get("belief_sync", default=None)
+    sync = get_runtime_service("belief_sync", default=None)
     if sync:
         return await sync.handle_rpc_request("attention_spike", payload)
     return JSONResponse({"error": "BeliefSync not active"}, status_code=503)

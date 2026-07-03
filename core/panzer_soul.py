@@ -3,7 +3,9 @@
 The Identity Core of Aura.
 Provides the version and metadata required by PersonalityEngine.
 """
-from typing import Dict, List, Any
+from typing import Dict
+
+from core.runtime.service_registry import get_runtime_service
 
 # Metadata used by PersonalityEngine for identity verification and UI
 version: str = "3.5.5-INDEPENDENT"
@@ -26,11 +28,8 @@ protocols: Dict[str, bool] = {
 
 def get_panzer_soul():
     """Returns the singleton soul instance for the PersonalityEngine."""
-    from core.container import ServiceContainer
-    from core.soul import Soul
-    
     # Try to get from container first
-    soul = ServiceContainer.get("soul", default=None)
+    soul = get_runtime_service("soul", default=None)
     if not soul:
         # Create a proxy if not registered
         # Note: PersonalityEngine expects an object with certain attributes

@@ -6,11 +6,9 @@ volitional intents and internal affective states into linguistic expression.
 
 from core.runtime.errors import record_degradation
 import logging
-import asyncio
-import time
-import random
-from typing import Any, Dict, Optional, List
-from core.container import ServiceContainer
+from typing import Any, Dict
+
+from core.runtime.service_registry import get_runtime_service, register_runtime_factory
 
 logger = logging.getLogger("Brain.Narrator")
 
@@ -33,22 +31,19 @@ class NarratorService:
     @property
     def llm_router(self):
         if self._llm_router is None:
-            from core.container import ServiceContainer
-            self._llm_router = ServiceContainer.get("llm_router", default=None)
+            self._llm_router = get_runtime_service("llm_router", default=None)
         return self._llm_router
 
     @property
     def personality(self):
         if self._personality is None:
-            from core.container import ServiceContainer
-            self._personality = ServiceContainer.get("personality", default=None)
+            self._personality = get_runtime_service("personality", default=None)
         return self._personality
 
     @property
     def compiler(self):
         if self._compiler is None:
-            from core.container import ServiceContainer
-            self._compiler = ServiceContainer.get("prompt_compiler", default=None)
+            self._compiler = get_runtime_service("prompt_compiler", default=None)
         return self._compiler
 
     async def narrate_action(self, action: Dict[str, Any]) -> str:
@@ -149,9 +144,10 @@ RESPONSE:
 # Service Registration
 def register_narrator_service():
     """Register the narrator service in the global container."""
-    from core.container import ServiceLifetime
-    ServiceContainer.register(
+    register_runtime_factory(
         "narrator",
         factory=lambda: NarratorService(),
-        lifetime=ServiceLifetime.SINGLETON
+        lifetime="singleton",
+        owner="core/brain/narrator.py",
+        registered_by="register_narrator_service",
     )

@@ -20,6 +20,8 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
+from core.runtime.service_registry import get_runtime_service
+
 logger = logging.getLogger("PNEUMA.TopologicalMemory")
 
 
@@ -179,8 +181,7 @@ class TopologicalMemoryEngine:
         try:
             # Drive-Aware Gating: Defer heavy topology math if low energy/curiosity
             try:
-                from core.container import ServiceContainer
-                de = ServiceContainer.get("drive_engine", default=None)
+                de = get_runtime_service("drive_engine", default=None)
                 if de and hasattr(de, "get_drive_vector"):
                     drive = de.get_drive_vector()
                     if drive.get("energy", 1.0) < 0.4 or drive.get("curiosity", 1.0) < 0.3:

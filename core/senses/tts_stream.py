@@ -1,6 +1,7 @@
 import logging
 
 # Issue 30: Unused dead imports removed
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker
 
@@ -9,8 +10,7 @@ logger = logging.getLogger("Senses.Mouth")
 class FastMouth:
     """Shim for backward compatibility."""
     def __init__(self):
-        from core.container import ServiceContainer
-        self.engine = ServiceContainer.get("voice_engine", default=None)
+        self.engine = get_runtime_service("voice_engine", default=None)
         self._speak_task = None
         self._stream_task = None
     

@@ -15,6 +15,8 @@ import logging
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
+
 logger = logging.getLogger("Aura.MorphicForking")
 
 
@@ -52,8 +54,7 @@ class MorphicForkingEngine:
         1. Hallucination check.
         2. WorldModel consistency check.
         """
-        from core.container import ServiceContainer
-        cognition = ServiceContainer.get("cognitive_engine", default=None)
+        cognition = get_runtime_service("cognitive_engine", default=None)
         
         if not cognition:
             logger.warning("No cognitive engine for CriticGate. Insight quarantined by default.")
@@ -114,10 +115,13 @@ class MorphicForkingEngine:
 
 def register_morphic_forking(orchestrator: Optional[Any] = None) -> MorphicForkingEngine:
     """Legacy registration helper expected by boot code."""
-    from core.container import ServiceContainer
-
     engine = MorphicForkingEngine()
-    ServiceContainer.register_instance("morphic_forking", engine)
+    register_runtime_service(
+        "morphic_forking",
+        engine,
+        owner="core/brain/morphic_forking.py",
+        registered_by="register_morphic_forking",
+    )
     if orchestrator is not None:
         try:
             setattr(orchestrator, "morphic_forking", engine)

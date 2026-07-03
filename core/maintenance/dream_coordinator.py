@@ -17,6 +17,7 @@ import time
 from typing import Any, Callable, Coroutine, Dict, Optional
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.DreamCoordinator")
 
@@ -62,9 +63,8 @@ class DreamCoordinator:
                 MAINTENANCE_BACKGROUND_POLICY,
                 background_activity_reason,
             )
-            from core.container import ServiceContainer
 
-            orchestrator = ServiceContainer.get("orchestrator", default=None)
+            orchestrator = get_runtime_service("orchestrator", default=None)
             allow_no_user_anchor = name in {"dlq_recovery"}
 
             reason = background_activity_reason(

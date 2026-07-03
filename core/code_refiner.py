@@ -3,8 +3,10 @@ import asyncio
 import logging
 import ast
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from dataclasses import dataclass
+
+from core.runtime.service_registry import register_runtime_factory
 
 logger = logging.getLogger("Aura.CodeRefiner")
 
@@ -123,9 +125,10 @@ class CodeRefinerService:
 # Service Registration
 def register_code_refiner() -> None:
     """Register the code refiner service."""
-    from core.container import ServiceContainer, ServiceLifetime
-    ServiceContainer.register(
+    register_runtime_factory(
         "code_refiner",
         factory=CodeRefinerService,
-        lifetime=ServiceLifetime.SINGLETON,
+        lifetime="singleton",
+        owner="core/code_refiner.py",
+        registered_by="register_code_refiner",
     )
