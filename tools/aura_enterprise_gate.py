@@ -358,6 +358,28 @@ def is_not_implemented_only(node: ast.FunctionDef | ast.AsyncFunctionDef) -> boo
     return isinstance(exc, ast.Name) and exc.id == "NotImplementedError"
 
 
+# Pickle/serialization guards are a legitimate raise-only idiom: a dunder that
+# raises to declare "this live-runtime object is not serializable identity"
+# (__getstate__/__setstate__/__reduce__/__reduce_ex__/__deepcopy__). These are
+# intentional protection, not unimplemented debt.
+_SERIALIZATION_GUARD_DUNDERS = frozenset({
+    "__getstate__", "__setstate__", "__reduce__", "__reduce_ex__",
+    "__deepcopy__", "__copy__",
+})
+
+
+def is_serialization_guard(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    if node.name not in _SERIALIZATION_GUARD_DUNDERS:
+        return False
+    body = body_without_docstring(node)
+    if len(body) != 1 or not isinstance(body[0], ast.Raise):
+        return False
+    exc = body[0].exc
+    if isinstance(exc, ast.Call):
+        exc = exc.func
+    return isinstance(exc, ast.Name) and exc.id in {"TypeError", "RuntimeError", "PicklingError"}
+
+
 class AstGate(ast.NodeVisitor):
     def __init__(self, rel: str, report: GateReport):
         self.rel = rel
@@ -413,6 +435,7 @@ class AstGate(ast.NodeVisitor):
             len(body) == 1
             and isinstance(body[0], ast.Raise)
             and not (is_abstract_function(node) and is_not_implemented_only(node))
+            and not is_serialization_guard(node)
         ):
             self.add(
                 "high" if is_production(self.rel) else "medium",
@@ -437,6 +460,7 @@ class AstGate(ast.NodeVisitor):
             len(body) == 1
             and isinstance(body[0], ast.Raise)
             and not (is_abstract_function(node) and is_not_implemented_only(node))
+            and not is_serialization_guard(node)
         ):
             self.add(
                 "high" if is_production(self.rel) else "medium",

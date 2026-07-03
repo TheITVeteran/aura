@@ -6474,7 +6474,10 @@ async def test_cognitive_engine_identity_floor_does_not_call_router(monkeypatch)
     from core.brain.types import ThinkingMode
 
     class _Router:
+        think_calls = []
+
         async def think(self, **_kwargs):
+            _Router.think_calls.append(_kwargs)
             raise AssertionError("identity grounding should not invoke router.think")
 
     class _Container:
