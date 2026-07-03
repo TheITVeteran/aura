@@ -4,9 +4,8 @@ import time
 import logging
 import hashlib
 from dataclasses import dataclass
-from typing import Optional, Any
 from ..state.aura_state import AuraState
-from ..container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 from core.brain.llm.llm_router import LLMTier
 
 logger = logging.getLogger("Aura.PredictiveEngine")
@@ -37,7 +36,7 @@ class PredictiveEngine:
 
     def _get_router(self):
         if self.router is None:
-            self.router = ServiceContainer.get("llm_router", default=None)
+            self.router = get_runtime_service("llm_router", default=None)
         return self.router
 
     async def predict(self, state: AuraState, **kwargs) -> Prediction:
@@ -121,7 +120,7 @@ Respond with only a float."""
         surprise_signal = error_magnitude * prediction.confidence
         
         # CROSSWIRE-03: Feed surprise signal to AffectStateManager
-        affect = ServiceContainer.get("affect_engine", default=None)
+        affect = get_runtime_service("affect_engine", default=None)
         if affect and surprise_signal > 0.0:
             stimulus = "intrigue" if surprise_signal > 0.5 else "calm"
             intensity = surprise_signal * 10.0

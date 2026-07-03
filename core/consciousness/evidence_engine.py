@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from statistics import mean
 from typing import Any
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.Evidence")
@@ -51,17 +51,17 @@ class ConsciousnessEvidenceEngine:
             record_degradation('evidence_engine', exc)
             logger.debug("Audit evidence unavailable: %s", exc)
 
-        orch = ServiceContainer.get("orchestrator", default=None)
-        personality = ServiceContainer.get("personality_engine", default=None)
-        self_report = ServiceContainer.get("self_report_engine", default=None)
-        phenomenology = ServiceContainer.get("phenomenological_experiencer", default=None)
-        self_model = ServiceContainer.get("self_model", default=None)
-        global_workspace = ServiceContainer.get("global_workspace", default=None)
-        homeostasis = ServiceContainer.get("homeostasis", default=None)
-        opinion_engine = ServiceContainer.get("opinion_engine", default=None)
-        spine = ServiceContainer.get("spine", default=None)
-        volition_engine = ServiceContainer.get("volition_engine", default=None)
-        executive_closure = ServiceContainer.get("executive_closure", default=None)
+        orch = get_runtime_service("orchestrator", default=None)
+        personality = get_runtime_service("personality_engine", default=None)
+        self_report = get_runtime_service("self_report_engine", default=None)
+        phenomenology = get_runtime_service("phenomenological_experiencer", default=None)
+        self_model = get_runtime_service("self_model", default=None)
+        global_workspace = get_runtime_service("global_workspace", default=None)
+        homeostasis = get_runtime_service("homeostasis", default=None)
+        opinion_engine = get_runtime_service("opinion_engine", default=None)
+        spine = get_runtime_service("spine", default=None)
+        volition_engine = get_runtime_service("volition_engine", default=None)
+        executive_closure = get_runtime_service("executive_closure", default=None)
 
         conversation_history = list(getattr(orch, "conversation_history", []) or [])
         reply_queue = getattr(orch, "reply_queue", None)
@@ -132,7 +132,7 @@ class ConsciousnessEvidenceEngine:
         continuity = _avg(continuity_factors)
         embodiment = _avg([
             1.0 if homeostasis else 0.0,
-            1.0 if ServiceContainer.get("liquid_state", default=None) else 0.0,
+            1.0 if get_runtime_service("liquid_state", default=None) else 0.0,
             1.0 if dominant_emotions else 0.35,
         ])
         agency = _avg([

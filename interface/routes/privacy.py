@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from core.config import config
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 
 from interface.auth import _require_internal
 
@@ -76,8 +76,8 @@ class PrivacyPayload(BaseModel):
 async def api_privacy_camera(payload: PrivacyPayload, _: None = Depends(_require_internal)):
     """Toggle the visual cortex camera processing."""
     enabled = payload.enabled
-    smc = ServiceContainer.get("sensory_motor_cortex", default=None)
-    vision_buffer = ServiceContainer.get("continuous_vision", default=None)
+    smc = get_runtime_service("sensory_motor_cortex", default=None)
+    vision_buffer = get_runtime_service("continuous_vision", default=None)
 
     if not smc and not vision_buffer:
         return JSONResponse({"error": "Camera systems unavailable"}, status_code=503)

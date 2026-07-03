@@ -1,12 +1,10 @@
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 import base64
 import io
 import logging
 import os
-import time
 
-import requests
-from PIL import Image
 
 # Aura Imports
 try:
@@ -59,10 +57,9 @@ class LocalVision:
     async def capture_screen(self):
         """Take a screenshot of the primary monitor."""
         try:
-            from core.container import ServiceContainer
             from core.security.permission_guard import PermissionType
 
-            guard = ServiceContainer.get("permission_guard", default=None)
+            guard = get_runtime_service("permission_guard", default=None)
             if guard:
                 check = await guard.check_permission(PermissionType.SCREEN)
                 if not check.get("granted", False):
@@ -97,16 +94,14 @@ class LocalVision:
         """The visual cortex loop.
         Captures screen -> Sends to primary Brain -> Returns description.
         """
-        from core.container import ServiceContainer
         from core.security.permission_guard import PermissionType
         from core.utils.executor import run_in_process
-        from core.resilience.resilience import SmartCircuitBreaker # Use standardized breaker
         
         # v7.0 HARDENING: Formally wrap Vision in a SmartCircuitBreaker
 
         async def _vision_payload():
             # 1. Pre-flight Permission Check
-            guard = ServiceContainer.get("permission_guard", default=None)
+            guard = get_runtime_service("permission_guard", default=None)
             if guard:
                 check = await guard.check_permission(PermissionType.SCREEN)
                 if not check["granted"]:
@@ -122,7 +117,7 @@ class LocalVision:
             img_str = await run_in_process(_process_image_for_vlm, image)
 
             # 3. Analyze using primary Brain (Cognitive Engine)
-            brain = ServiceContainer.get("cognitive_engine", default=None)
+            brain = get_runtime_service("cognitive_engine", default=None)
             if not brain:
                 return "Vision brain unavailable."
 

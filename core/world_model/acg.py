@@ -4,10 +4,13 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 
-from core.container import ServiceContainer
 from core.config import config
+from core.runtime.service_registry import (
+    has_runtime_service,
+    is_runtime_registration_locked,
+)
 
 logger = logging.getLogger("WorldModel.ACG")
 
@@ -38,7 +41,6 @@ class ActionConsequenceGraph:
         params = {} if isinstance(action, str) else (action.get("params", {}) if hasattr(action, "get") else {})
 
         try:
-            from core.container import ServiceContainer
             from core.constitution import get_constitutional_core
 
             approved, reason = get_constitutional_core().approve_memory_write_sync(
@@ -55,10 +57,10 @@ class ActionConsequenceGraph:
             record_degradation('acg', exc)
             logger.debug("ACG constitutional gate skipped: %s", exc)
             runtime_live = bool(
-                getattr(ServiceContainer, "_registration_locked", False)
-                or ServiceContainer.has("executive_core")
-                or ServiceContainer.has("aura_kernel")
-                or ServiceContainer.has("kernel_interface")
+                is_runtime_registration_locked()
+                or has_runtime_service("executive_core")
+                or has_runtime_service("aura_kernel")
+                or has_runtime_service("kernel_interface")
             )
             if runtime_live:
                 logger.warning("🚫 ACG write blocked: constitutional gate unavailable")

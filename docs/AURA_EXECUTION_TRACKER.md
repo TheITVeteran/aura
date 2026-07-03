@@ -5672,3 +5672,69 @@ Estimate:
 - Remaining total checkpoint groups: 3, focused on remaining SCC cuts,
   provider/factory ownership splits, live desktop findings, and longer
   soak/runtime evidence.
+
+## Checkpoint 2026-07-03-31: Program DNA Reconstruction Engine and SCC Registry Batch
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Converted another broad SCC family to runtime registry seams across
+  consciousness, world-modeling, affect, prediction, autonomy, pneuma,
+  strategy, self-modification, privacy, hardening, narrative memory, and
+  runtime-error architecture coverage.
+- Added the Program DNA Reconstruction Engine as a governed clean-room
+  reconstruction pipeline for authorized/open/user-owned software evidence.
+  It collects source, docs, UI notes, workflows, API observations, logs, file
+  formats, tests, compatibility targets, and optional binary-analysis planning
+  without executing unsafe decompilation inline.
+- Extracts a functional genome: purpose, feature map, data contracts, workflow
+  graph, state-machine hints, API/file-format surfaces, permission model,
+  hidden-state risks, unknowns, and reconstruction constraints.
+- Generates clean-room blueprints, verification plans, and optional runnable
+  scaffold artifacts with syntax checks.
+- Published the capability through `program_dna_reconstruct` so live Aura can
+  route reconstruction requests through the general capability engine.
+- Preserved the existing repair-lab pathway while preventing the Program DNA
+  alias from reintroducing package-level SCC coupling.
+
+Evidence:
+
+- `python -m pytest -q tests/test_program_dna_reconstruction.py tests/test_reconstruction_deep_repair.py`
+  -> `16 passed`.
+- `python -m pytest -q tests/test_program_dna_reconstruction.py tests/test_reconstruction_deep_repair.py tests/self_improvement/test_blinded_module_reconstruction.py`
+  -> `65 passed`.
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py tests/test_program_dna_reconstruction.py tests/test_reconstruction_deep_repair.py`
+  -> `160 passed`.
+- `python -m ruff check --select F,E9 ...`
+  over Program DNA, service registration, capability routing, self-healing,
+  repair-lab, and tests -> passed.
+- `python -m py_compile ...`
+  over Program DNA, service registration, capability routing, self-healing,
+  repair-lab, and tests -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=46.38`,
+  `largest_cycle_size=532`, `cycle_count=6`, `dependency_edges=7536`,
+  `god_file_count=37`, `module_count=2255`.
+
+Boundary:
+
+- This is not a license to clone proprietary products. The implemented lane is
+  for authorized/open/user-owned clean-room reconstruction and refuses missing
+  authorization, DRM bypass, credential theft, malware-adjacent behavior,
+  piracy, keygen language, and proprietary-source theft.
+- The checkpoint proves pipeline extraction, scaffold generation, capability
+  routing, and repair-lab separation. Remaining proof is a real application
+  reconstruction run through the live desktop path and longer repair-loop
+  validation.
+
+Estimate:
+
+- Architecture-regression-control closure: about 98%.
+- Existing architecture-debt reduction closure: about 64-70%.
+- Local reliability-control closure: about 94-95%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 76-82% locally.
+- Program DNA reconstruction closure: about 72-78% for authorized clean-room
+  replacement generation.
+- Remaining total checkpoint groups: 3, focused on live desktop proof,
+  background autonomy/repair/learning closure, and final evidence packaging.

@@ -16,6 +16,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 from core.utils.engine_support import coerce_text, record_engine_degradation, resolve_brain
 
@@ -131,12 +132,11 @@ def get_deep_deliberation(orchestrator: Any = None) -> DeepDeliberationEngine:
 
 
 def register_deep_deliberation(orchestrator: Any = None) -> DeepDeliberationEngine:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.DEEP_THOUGHT, default=None) or get_deep_deliberation(orchestrator)
-    ServiceContainer.register_instance(ServiceNames.DEEP_THOUGHT, inst, required=False)
-    ServiceContainer.register_instance("deep_thought", inst, required=False)
+    inst = get_runtime_service(ServiceNames.DEEP_THOUGHT, default=None) or get_deep_deliberation(orchestrator)
+    register_runtime_service(ServiceNames.DEEP_THOUGHT, inst, required=False, owner="core/brain/deep_deliberation.py", registered_by="register_deep_deliberation")
+    register_runtime_service("deep_thought", inst, required=False, owner="core/brain/deep_deliberation.py", registered_by="register_deep_deliberation")
     return inst
 
 

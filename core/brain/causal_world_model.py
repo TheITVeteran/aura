@@ -16,13 +16,11 @@ from core.runtime.errors import record_degradation
 import json
 import logging
 import math
-import random
 import time
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import register_runtime_service
 
 logger = logging.getLogger("Aura.CausalWorldModel")
 
@@ -239,5 +237,5 @@ class CausalWorldModel:
 
 def register_causal_world_model(orchestrator=None):
     model = CausalWorldModel()
-    ServiceContainer.register_instance("causal_world_model", model)
+    register_runtime_service("causal_world_model", model, owner="core/brain/causal_world_model.py", registered_by="register_causal_world_model")
     return model

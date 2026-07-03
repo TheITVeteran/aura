@@ -36,6 +36,8 @@ from core.self_improvement.discrepancy_attributor import DiscrepancyAttributor
 from core.self_improvement.hardcoding_auditor import HardcodingAuditor
 from core.self_improvement.guardrail_auditor import GuardrailAuditor
 from core.self_improvement.promotion_gate import LabPromotionGate
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
+from core.service_names import ServiceNames
 
 logger = logging.getLogger("Aura.ReimplementationLab")
 
@@ -228,4 +230,72 @@ class ReimplementationLab:
                 logger.debug("Workspace cleaned up")
 
 
-__all__ = ["ReimplementationLab"]
+_INSTANCE: ReimplementationLab | None = None
+
+
+def get_reimplementation_lab(
+    *,
+    project_root: Optional[str] = None,
+    generator: Optional[CodeGenerator] = None,
+    max_attempts: int = 3,
+    test_timeout: int = 30,
+    min_pass_rate: float = 1.0,
+) -> ReimplementationLab:
+    """Return the process-local program-DNA reconstruction engine.
+
+    The lab is Aura's clean-room code/spec reconstruction path. It is kept as a
+    singleton because the component owns no per-call mutable safety state, while
+    construction wires several auditors and comparators that should remain
+    consistent across repair attempts.
+    """
+
+    global _INSTANCE
+    if _INSTANCE is None:
+        _INSTANCE = ReimplementationLab(
+            project_root=project_root,
+            generator=generator,
+            max_attempts=max_attempts,
+            test_timeout=test_timeout,
+            min_pass_rate=min_pass_rate,
+        )
+    return _INSTANCE
+
+
+def register_reimplementation_lab(
+    *,
+    project_root: Optional[str] = None,
+    generator: Optional[CodeGenerator] = None,
+    max_attempts: int = 3,
+    test_timeout: int = 30,
+    min_pass_rate: float = 1.0,
+) -> ReimplementationLab:
+    """Publish the clean-room reconstruction engine under canonical aliases."""
+
+    lab = (
+        get_runtime_service(ServiceNames.REIMPLEMENTATION_LAB, default=None)
+        or get_runtime_service(ServiceNames.PROGRAM_DNA_RECONSTRUCTION, default=None)
+        or get_reimplementation_lab(
+            project_root=project_root,
+            generator=generator,
+            max_attempts=max_attempts,
+            test_timeout=test_timeout,
+            min_pass_rate=min_pass_rate,
+        )
+    )
+    register_runtime_service(
+        ServiceNames.REIMPLEMENTATION_LAB,
+        lab,
+        required=False,
+        owner="core/self_improvement/reimplementation_lab.py",
+        registered_by="register_reimplementation_lab",
+        required_for="autonomous repair and clean-room Aura module reconstruction",
+        failure_policy="degrade_with_receipt",
+    )
+    return lab
+
+
+__all__ = [
+    "ReimplementationLab",
+    "get_reimplementation_lab",
+    "register_reimplementation_lab",
+]

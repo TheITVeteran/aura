@@ -18,12 +18,11 @@ INTEGRATION FLOW:
 """
 
 from core.runtime.errors import record_degradation
-import asyncio
 import logging
 from typing import Any, Dict, Optional
 
 from core.consciousness.phenomenological_experiencer import get_experiencer
-from core.container import ServiceContainer
+from core.runtime.service_registry import register_runtime_service
 
 logger = logging.getLogger("Aura.ConsciousnessIntegration")
 
@@ -91,7 +90,7 @@ class ConsciousnessIntegration:
     async def initialize(self):
         """Perform initialization and cross-wiring."""
         # Register the experiencer so others can find it
-        ServiceContainer.register_instance("phenomenological_experiencer", self.experiencer)
+        register_runtime_service("phenomenological_experiencer", self.experiencer, owner="core/consciousness/integration.py", registered_by="ConsciousnessIntegration.initialize")
         
         try:
             # Wire references if orchestrator is available

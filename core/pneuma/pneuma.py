@@ -20,6 +20,7 @@ Public API (used by InferenceGate):
 
 from core.runtime.background_policy import constitutive_compute_budget
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
@@ -107,9 +108,7 @@ class PNEUMA:
                 # 4. Push to topological memory
                 self.topo_memory.push(belief_state.vector)
                 self._tick_count += 1
-                from core.container import ServiceContainer
-
-                healer = ServiceContainer.get("self_healing", default=None)
+                healer = get_runtime_service("self_healing", default=None)
                 if healer is not None:
                     healer.heartbeat("pneuma")
 

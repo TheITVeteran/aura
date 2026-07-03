@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 from .ast_analyzer import ASTAnalyzer
@@ -835,8 +836,7 @@ class AutonomousCodeRepair:
 
         """
         # v40: Growth Ladder Veto
-        from core.container import ServiceContainer
-        ladder = ServiceContainer.get("growth_ladder", default=None)
+        ladder = get_runtime_service("growth_ladder", default=None)
         if ladder:
             proposal_id = f"repair_{file_path}_{line_number}"
             # Level 2 or 3 depending on file path

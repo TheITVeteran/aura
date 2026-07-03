@@ -16,6 +16,7 @@ Guards:
 This is what makes idle time productive instead of dead time.
 """
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
@@ -174,17 +175,15 @@ class AutonomousSleepTrigger:
         if self.orchestrator:
             return self.orchestrator
         try:
-            from core.container import ServiceContainer
-            return ServiceContainer.get("orchestrator", default=None)
+            return get_runtime_service("orchestrator", default=None)
         except (ImportError, AttributeError, RuntimeError):
             return None
 
     @staticmethod
     def _find_dreamer(orch):
-        """Locate DreamerV2 via ServiceContainer or orchestrator attributes."""
+        """Locate DreamerV2 via runtime registry or orchestrator attributes."""
         try:
-            from core.container import ServiceContainer
-            dreamer = ServiceContainer.get("dreamer_v2", default=None)
+            dreamer = get_runtime_service("dreamer_v2", default=None)
             if dreamer:
                 return dreamer
         except (ImportError, AttributeError, RuntimeError) as _exc:
@@ -199,12 +198,11 @@ class AutonomousSleepTrigger:
 
         # Last resort: instantiate with available services
         try:
-            from core.container import ServiceContainer
             from core.dreamer_v2 import DreamerV2
-            brain = ServiceContainer.get("brain", default=None) or getattr(orch, "brain", None)
-            kg    = ServiceContainer.get("knowledge_graph", default=None) or getattr(orch, "knowledge_graph", None)
-            vm    = ServiceContainer.get("vector_memory", default=None) or getattr(orch, "vector_memory", None)
-            bg    = ServiceContainer.get("belief_graph", default=None)
+            brain = get_runtime_service("brain", default=None) or getattr(orch, "brain", None)
+            kg    = get_runtime_service("knowledge_graph", default=None) or getattr(orch, "knowledge_graph", None)
+            vm    = get_runtime_service("vector_memory", default=None) or getattr(orch, "vector_memory", None)
+            bg    = get_runtime_service("belief_graph", default=None)
             if brain and kg:
                 return DreamerV2(brain=brain, knowledge_graph=kg, vector_memory=vm, belief_graph=bg)
         except (ImportError, AttributeError, RuntimeError) as e:

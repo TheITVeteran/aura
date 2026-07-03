@@ -19,6 +19,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.AffectiveResonance")
 
@@ -134,12 +135,11 @@ def get_affective_resonance() -> AffectiveResonance:
 
 
 def register_affective_resonance(orchestrator: Any = None) -> AffectiveResonance:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.SAMANTHA, default=None) or get_affective_resonance()
-    ServiceContainer.register_instance(ServiceNames.SAMANTHA, inst, required=False)
-    ServiceContainer.register_instance("samantha", inst, required=False)
+    inst = get_runtime_service(ServiceNames.SAMANTHA, default=None) or get_affective_resonance()
+    register_runtime_service(ServiceNames.SAMANTHA, inst, required=False, owner="core/affect/affective_resonance.py", registered_by="register_affective_resonance")
+    register_runtime_service("samantha", inst, required=False, owner="core/affect/affective_resonance.py", registered_by="register_affective_resonance")
     return inst
 
 

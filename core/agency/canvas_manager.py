@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.utils.exceptions import capture_and_log
@@ -127,7 +127,7 @@ class CanvasManager:
             return {"ok": False, "reason": "unsafe_project_name"}
 
         try:
-            engine = ServiceContainer.get("cognitive_engine", default=None)
+            engine = get_runtime_service("cognitive_engine", default=None)
         except _CANVAS_RECOVERABLE_ERRORS as exc:
             _record_canvas_degradation(
                 exc,

@@ -5,15 +5,14 @@ Hunts for bottlenecks, redundant logic, and regex ulcers.
 """
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 import ast
 import logging
 import os
-import time
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 import asyncio
-import hashlib
 
 logger = logging.getLogger("SelfModification.KernelRefiner")
 
@@ -75,8 +74,7 @@ class KernelRefiner:
     def _perform_static_audit(self, content: str) -> List[Dict[str, Any]]:
         """Static pattern matching for known 'code ulcers'."""
         issues = []
-        lines = content.splitlines()
-        
+
         # A. Large pattern lists (potential latency hit)
         pattern_matches = re.finditer(r'(_DOMAIN_PATTERNS|_CHALLENGE_TRIGGERS|_INQUIRY_TRIGGERS)\s*=\s*\[', content)
         for match in pattern_matches:
@@ -196,11 +194,10 @@ If no refinement is needed, return {{"found": false}}.
         
         # Phase 15 Integration: Delegate to SelfModificationEngine
         # We need the SME instance to apply the fix safely (testing, swarm review, etc.)
-        from core.container import ServiceContainer
-        sme = ServiceContainer.get("self_modification_engine", default=None)
+        sme = get_runtime_service("self_modification_engine", default=None)
         
         if not sme:
-            logger.error("Refinement failed: SelfModificationEngine not found in ServiceContainer.")
+            logger.error("Refinement failed: SelfModificationEngine not found in runtime registry.")
             return False
             
         try:

@@ -114,6 +114,15 @@ def register_all_services(is_proxy: bool = False):
             generator=generator
         )
 
+    def create_program_dna_reconstruction():
+        import importlib
+
+        program_dna = importlib.import_module("core.self_improvement.program_dna")
+        return program_dna.ProgramDNAReconstructionEngine(
+            project_root=str(config.paths.base_dir),
+            internal_lab=container.get("reimplementation_lab", default=None),
+        )
+
     def create_being_runtime():
         from core.being.runtime import get_being_runtime
 
@@ -286,6 +295,18 @@ def register_all_services(is_proxy: bool = False):
     container.register('self_awareness_suite', create_self_awareness_suite, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('identity_chronicle', create_identity_chronicle, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('reimplementation_lab', create_reimplementation_lab, lifetime=ServiceLifetime.SINGLETON, required=False)
+    container.register(
+        'program_dna_reconstruction_engine',
+        create_program_dna_reconstruction,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
+    container.register(
+        'program_dna',
+        lambda: container.get("program_dna_reconstruction_engine"),
+        lifetime=ServiceLifetime.SINGLETON,
+        required=False,
+    )
     container.register(
         'being_runtime',
         create_being_runtime,

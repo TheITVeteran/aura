@@ -20,10 +20,9 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field, asdict
-from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Optional
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.EpistemicHumility")
 
@@ -106,7 +105,7 @@ class EpistemicHumility:
             logger.info("Analyzing %s recent failures for patterns...", len(recent_failures))
             
             # 1. Lower confidence in Epistemic Tracker
-            tracker = ServiceContainer.get("epistemic_tracker", default=None)
+            tracker = get_runtime_service("epistemic_tracker", default=None)
             if tracker:
                 # Penalize confidence for the sources that failed
                 for f in recent_failures:
@@ -139,7 +138,7 @@ class EpistemicHumility:
         
         try:
             # We use the raw LLM router if available to avoid polluting the main chat stream
-            llm = ServiceContainer.get("llm_router", default=None)
+            llm = get_runtime_service("llm_router", default=None)
             if not llm: return
             
             from core.schemas import Message
@@ -225,5 +224,5 @@ class EpistemicHumility:
 
 def register_epistemic_humility(orchestrator):
     eh = EpistemicHumility(orchestrator)
-    ServiceContainer.register_instance("epistemic_humility", eh)
+    register_runtime_service("epistemic_humility", eh, owner="core/adaptation/epistemic_humility.py", registered_by="register_epistemic_humility")
     return eh

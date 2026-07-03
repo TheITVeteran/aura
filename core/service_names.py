@@ -60,6 +60,8 @@ class ServiceNames:
     CONTINUOUS_LEARNER = "continuous_learner"
     RESEARCH = "research_cycle"
     GOVERNOR = "memory_governor"
+    REIMPLEMENTATION_LAB = "reimplementation_lab"
+    PROGRAM_DNA_RECONSTRUCTION = "program_dna_reconstruction_engine"
     
     # Interfaces
     SERVER = "server"

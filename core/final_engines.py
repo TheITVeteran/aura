@@ -21,14 +21,13 @@ Wire these from orchestrator._init_autonomous_evolution():
 """
 
 from core.runtime.atomic_writer import atomic_write_text
-import asyncio
+from core.runtime.service_registry import register_runtime_service
 import json
 import logging
 import time
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("Aura.FinalEngines")
 
@@ -207,17 +206,31 @@ class MetacognitiveCalibrator:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def register_final_engines(orchestrator=None) -> Dict[str, Any]:
-    from core.container import ServiceContainer
     engines: Dict[str, Any] = {}
 
     engines["world"] = WorldModelEngine()
-    ServiceContainer.register_instance("world_model", engines["world"])
+    register_runtime_service(
+        "world_model",
+        engines["world"],
+        owner="core/final_engines.py",
+        registered_by="register_final_engines",
+    )
 
     engines["identity"] = NarrativeIdentityEngine()
-    ServiceContainer.register_instance("narrative_identity", engines["identity"])
+    register_runtime_service(
+        "narrative_identity",
+        engines["identity"],
+        owner="core/final_engines.py",
+        registered_by="register_final_engines",
+    )
 
     engines["metacognition"] = MetacognitiveCalibrator()
-    ServiceContainer.register_instance("metacognitive_calibrator", engines["metacognition"])
+    register_runtime_service(
+        "metacognitive_calibrator",
+        engines["metacognition"],
+        owner="core/final_engines.py",
+        registered_by="register_final_engines",
+    )
 
     logger.info("✅ Final engines registered.")
     return engines

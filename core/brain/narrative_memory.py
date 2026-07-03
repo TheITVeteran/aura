@@ -3,9 +3,9 @@ from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
 import time
-from typing import List, Optional
-from core.memory.episodic_memory import Episode, get_episodic_memory
-from core.container import ServiceContainer
+from typing import Optional
+from core.memory.episodic_memory import get_episodic_memory
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Cognition.Narrative")
 
@@ -61,7 +61,7 @@ class NarrativeEngine:
         to give the response generator awareness of Aura's ongoing story.
         """
         try:
-            vector_mem = ServiceContainer.get("memory_facade", default=None)
+            vector_mem = get_runtime_service("memory_facade", default=None)
             if not vector_mem or not hasattr(vector_mem, "query_memory_sync"):
                 return ""
             # Try narrative arc first, fall back to journal
@@ -122,7 +122,7 @@ class NarrativeEngine:
 
             if journal_entry and journal_entry.content:
                 # Store Journal Entry
-                vector_mem = ServiceContainer.get("memory_facade", default=None)
+                vector_mem = get_runtime_service("memory_facade", default=None)
                 if vector_mem:
                     await vector_mem.add_memory(
                         text=journal_entry.content,

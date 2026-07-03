@@ -37,6 +37,7 @@ from typing import Any
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.task_ownership import create_tracked_task
 
@@ -508,11 +509,20 @@ class SelfHealing:
             await self._append_record_async(record)
             return record
         try:
-            from core.container import ServiceContainer
+            from core.service_names import ServiceNames
 
-            lab = ServiceContainer.get("reimplementation_lab", default=None)
+            lab = (
+                get_runtime_service(ServiceNames.REIMPLEMENTATION_LAB, default=None)
+                or get_runtime_service(ServiceNames.PROGRAM_DNA_RECONSTRUCTION, default=None)
+            )
             if lab is None:
-                record["result"] = "deep_repair_failed_no_lab"
+                from core.self_improvement.reimplementation_lab import (
+                    register_reimplementation_lab,
+                )
+
+                lab = register_reimplementation_lab()
+            if lab is None:
+                record["result"] = "deep_repair_failed_no_program_dna_lab"
                 return record
 
             lab_metadata = {

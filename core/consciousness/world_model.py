@@ -1,7 +1,7 @@
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 import re
 import time
-from collections import Counter
 from typing import Any, Dict, List, Optional
 
 import networkx as nx
@@ -46,9 +46,7 @@ class EpistemicState:
         Crucially: If a new belief contradicts an old one, it triggers Dissonance.
         """
         try:
-            from core.container import ServiceContainer
-
-            belief_authority = ServiceContainer.get("belief_authority", default=None)
+            belief_authority = get_runtime_service("belief_authority", default=None)
             if belief_authority is not None:
                 belief_authority.review_update(
                     "consciousness_world_model",

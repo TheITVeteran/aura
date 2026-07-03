@@ -14,12 +14,13 @@ Design principles:
 """
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.utils.task_tracker import get_task_tracker
 from core.utils.exceptions import capture_and_log
 import asyncio
 import logging
 import time
-from typing import Any, Callable, Coroutine, Dict, Optional
+from typing import Coroutine, Dict, Optional
 
 logger = logging.getLogger("Aura.AutonomyGuardian")
 
@@ -181,8 +182,7 @@ class AutonomyGuardian:
         logger.info("🛡️ Guardian: Dread Watcher active.")
         while self._is_monitoring:
             try:
-                from core.container import ServiceContainer
-                homeostasis = ServiceContainer.get("homeostatic_coupling", default=None)
+                homeostasis = get_runtime_service("homeostatic_coupling", default=None)
                 if homeostasis:
                     snap = homeostasis.get_snapshot()
                     dread = snap.get("prospective_dread", 0.0)

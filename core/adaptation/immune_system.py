@@ -5,14 +5,13 @@ Ensures core identity, kinship data, and lore bibles are immune to memory decay.
 Proactively scans for silent errors, dormant services, and broken interfaces.
 """
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 import asyncio
 import logging
-import json
-import os
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger("Aura.ImmuneSystem")
 
@@ -70,8 +69,6 @@ class ImmuneSystem:
         
         Returns a health report dict with 'healthy', 'degraded', and 'failed' lists.
         """
-        from core.container import ServiceContainer
-
         report = {
             "timestamp": time.time(),
             "healthy": [],
@@ -88,7 +85,7 @@ class ImmuneSystem:
         for service_list, tier in all_checks:
             for service_name, expected_methods in service_list:
                 try:
-                    instance = ServiceContainer.get(service_name, default=None)
+                    instance = get_runtime_service(service_name, default=None)
                     if instance is None:
                         entry = {
                             "service": service_name,

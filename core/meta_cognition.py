@@ -4,14 +4,12 @@ Orchestrates the 'Self-Evolution Loop' by coordinating audit,
 patch generation, and safe application of core logic improvements.
 """
 from core.runtime.errors import record_degradation
-import asyncio
 import logging
 import time
 from typing import Any, Dict, List, Optional
 
 from core.base_module import AuraBaseModule
-from core.container import ServiceContainer
-from core.self_modification.self_modification_engine import AutonomousSelfModificationEngine
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Cognition.Meta")
 
@@ -59,7 +57,7 @@ class MetaEvolutionEngine(AuraBaseModule):
 
         self._is_optimizing = True
         try:
-            mycelium = ServiceContainer.get("mycelial_network", default=None)
+            mycelium = get_runtime_service("mycelial_network", default=None)
             if not mycelium:
                 self._is_optimizing = False
                 return {"ok": False, "error": "Mycelial Network unavailable."}
@@ -75,9 +73,9 @@ class MetaEvolutionEngine(AuraBaseModule):
                 start_time = time.time()
                 
                 # Subsystem Resolution
-                scratchpad = ServiceContainer.get("scratchpad_engine", default=None)
-                sme = ServiceContainer.get("self_modification_engine", default=None)
-                hephaestus = ServiceContainer.get("hephaestus_engine", default=None)
+                scratchpad = get_runtime_service("scratchpad_engine", default=None)
+                sme = get_runtime_service("self_modification_engine", default=None)
+                hephaestus = get_runtime_service("hephaestus_engine", default=None)
                 
                 if not all([scratchpad, sme, hephaestus]):
                     self._is_optimizing = False
@@ -85,7 +83,7 @@ class MetaEvolutionEngine(AuraBaseModule):
 
                 # ISSUE-95: Metacognitive Review Efficiency
                 # 1. Self-Audit (Transcendence: Incorporate Curiosity Gaps)
-                curiosity = ServiceContainer.get("curiosity_engine", default=None)
+                curiosity = get_runtime_service("curiosity_engine", default=None)
                 if curiosity:
                     gap = await curiosity.identify_knowledge_gap()
                     if gap:
@@ -97,7 +95,7 @@ class MetaEvolutionEngine(AuraBaseModule):
                 
                 # Optimized depth based on mode
                 audit_depth = 1
-                cog_engine = ServiceContainer.get("cognitive_engine", default=None)
+                cog_engine = get_runtime_service("cognitive_engine", default=None)
                 if cog_engine and getattr(cog_engine, "current_mode", None) == "deliberate":
                     audit_depth = 2
                 
@@ -186,8 +184,8 @@ class MetaEvolutionEngine(AuraBaseModule):
         
         self._is_optimizing = True
         try:
-            audit = ServiceContainer.get("audit_log", default=None)
-            hephaestus = ServiceContainer.get("hephaestus_engine", default=None)
+            audit = get_runtime_service("audit_log", default=None)
+            hephaestus = get_runtime_service("hephaestus_engine", default=None)
             if not audit or not hephaestus:
                 return {"ok": False, "error": "Required optimization services missing."}
             

@@ -10,6 +10,7 @@ Example synthesized heuristics:
   - "Web search results older than 7 days should be re-verified."
 """
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.exceptions import capture_and_log
 import json
@@ -78,8 +79,6 @@ class HeuristicSynthesizer:
         
         This should run during sleep cycles (dreamer_v2).
         """
-        from core.container import ServiceContainer
-
         # 1. Gather error signals
         error_signals = []
         
@@ -96,7 +95,7 @@ class HeuristicSynthesizer:
 
         # Check dead letter queue
         try:
-            dlq = ServiceContainer.get("dead_letter_queue", default=None)
+            dlq = get_runtime_service("dead_letter_queue", default=None)
             if dlq and hasattr(dlq, "recent_failures"):
                 for f in dlq.recent_failures[-10:]:
                     error_signals.append(f"DLQ: {f.get('error', '')[:150]}")
@@ -108,7 +107,7 @@ class HeuristicSynthesizer:
             return {"ok": True, "new_heuristics": 0, "reason": "no_error_signals"}
 
         # 2. Ask brain to synthesize heuristics
-        brain = ServiceContainer.get("cognitive_engine", default=None)
+        brain = get_runtime_service("cognitive_engine", default=None)
         if not brain:
             return {"ok": False, "error": "No cognitive_engine"}
 
@@ -164,7 +163,7 @@ class HeuristicSynthesizer:
                     
                     # Mycelial pulse: rules extracted and injected into cognition
                     try:
-                        mycelium = ServiceContainer.get("mycelial_network", default=None)
+                        mycelium = get_runtime_service("mycelial_network", default=None)
                         if mycelium:
                             h = mycelium.get_hypha("adaptation", "cognition")
                             if h: h.pulse(success=True)

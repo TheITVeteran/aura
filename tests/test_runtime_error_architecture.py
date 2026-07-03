@@ -2017,3 +2017,297 @@ def test_runtime_registry_batch_six_large_scc_service_seams(monkeypatch):
         assert "ServiceLifetime" not in source
         assert "get_container" not in source
         assert "core.runtime.service_registry" in source
+
+
+def test_runtime_registry_batch_seven_consciousness_adaptation_seams(monkeypatch):
+    import asyncio
+    import inspect
+    from types import SimpleNamespace
+
+    import core.adaptation.abstraction_engine as abstraction_engine
+    import core.adaptation.epistemic_humility as epistemic_humility
+    import core.adaptation.heuristic_synthesizer as heuristic_synthesizer
+    import core.adaptation.immune_system as immune_system
+    import core.affect.affective_resonance as affective_resonance
+    import core.agency.canvas_manager as canvas_manager
+    import core.autonomy.sleep_trigger as sleep_trigger
+    import core.autonomy_guardian as autonomy_guardian
+    import core.brain.causal_world_model as causal_world_model
+    import core.brain.deep_deliberation as deep_deliberation
+    import core.brain.discourse_tracker as discourse_tracker
+    import core.brain.narrative_memory as narrative_memory
+    import core.brain.predictive_engine as predictive_engine
+    import core.consciousness.evidence_engine as evidence_engine
+    import core.consciousness.integration as integration
+    import core.consciousness.liquid_substrate_bridge as liquid_substrate_bridge
+    import core.consciousness.resource_stakes as resource_stakes
+    import core.consciousness.world_model as consciousness_world_model
+    import core.final_engines as final_engines
+    import core.meta_cognition as meta_cognition
+    import core.orchestrator.initializers.hardening as hardening
+    import core.orchestrator.mixins.cognitive_background as cognitive_background
+    import core.pneuma.pneuma as pneuma
+    import core.pneuma.precision_engine as precision_engine
+    import core.self_modification.kernel_refiner as kernel_refiner
+    import core.senses.screen_vision as screen_vision
+    import core.sovereignty.integrity_guard as integrity_guard
+    import core.strategic_planner as strategic_planner
+    import core.world_model.acg as acg
+    import interface.routes.privacy as privacy
+    from core.runtime.service_registry import (
+        SERVICE_LIFETIME_SINGLETON,
+        install_registration_locked_resolver,
+        install_service_factory_registration_sink,
+        install_service_presence_resolver,
+        install_service_registration_sink,
+        install_service_resolver,
+    )
+    from core.service_names import ServiceNames
+    from core.state.aura_state import AuraState
+
+    registered: list[tuple[str, object, bool, dict[str, str | None]]] = []
+    factories: list[tuple[str, object, object, bool, dict[str, str | None]]] = []
+
+    class Router:
+        async def think(self, *args, **kwargs):
+            prompt = kwargs.get("prompt") or (args[0] if args else "")
+            if "Compare these two" in str(prompt):
+                return "0.25"
+            return "topic response"
+
+    class CognitiveEngine:
+        async def think(self, **_kwargs):
+            return SimpleNamespace(content="first principle")
+
+    class MemoryFacade:
+        def __init__(self):
+            self.stored: list[tuple[str, dict[str, str]]] = []
+
+        def query_memory_sync(self, query, limit=1):
+            if query == "type:narrative_arc":
+                return [{"text": "Aura learned from a prior exchange."}]
+            return []
+
+        def store(self, *, content, metadata):
+            self.stored.append((content, metadata))
+
+    class AffectEngine:
+        def __init__(self):
+            self.applied: list[tuple[str, float]] = []
+
+        async def apply_stimulus(self, stimulus, intensity):
+            self.applied.append((stimulus, intensity))
+
+    class Workspace:
+        ignition_level = 0.7
+        ignited = True
+        current_phi = 0.4
+
+    class FakeExperiencer:
+        phenomenal_context_string = "felt continuity marker"
+
+        def __init__(self):
+            self.started = False
+            self.refs = None
+            self.broadcasts = []
+
+        def set_refs(self, **kwargs):
+            self.refs = kwargs
+
+        async def start(self):
+            self.started = True
+
+        async def stop(self):
+            self.started = False
+
+        def on_broadcast(self, snap):
+            self.broadcasts.append(snap)
+
+        def get_status(self):
+            return {"started": self.started}
+
+    class GlobalWorkspace:
+        def __init__(self):
+            self.subscribers = []
+
+        def subscribe(self, callback):
+            self.subscribers.append(callback)
+
+    services = {
+        "llm_router": Router(),
+        "cognitive_engine": CognitiveEngine(),
+        "memory_facade": MemoryFacade(),
+        "affect_engine": AffectEngine(),
+        "orchestrator": SimpleNamespace(
+            conversation_history=[{"role": "user", "content": "hello"}],
+            reply_queue=SimpleNamespace(__class__=SimpleNamespace(__name__="TaggedReplyQueue")),
+            _inference_gate=SimpleNamespace(is_inference_ready=lambda: True),
+            agency=True,
+            status=SimpleNamespace(last_error=None),
+        ),
+        "personality_engine": SimpleNamespace(
+            get_emotional_context_for_response=lambda: {"dominant_emotions": ["curiosity"]}
+        ),
+        "self_report_engine": SimpleNamespace(generate_state_report=lambda: "state report"),
+        "phenomenological_experiencer": SimpleNamespace(
+            phenomenal_context_string="phenomenal fragment",
+            to_dict=lambda: {"is_stale": False},
+        ),
+        "self_model": object(),
+        "global_workspace": Workspace(),
+        "homeostasis": object(),
+        "opinion_engine": object(),
+        "spine": object(),
+        "volition_engine": object(),
+        "executive_closure": SimpleNamespace(get_status=lambda: {"closure_score": 0.8}),
+        "liquid_state": object(),
+    }
+
+    monkeypatch.setattr(
+        final_engines,
+        "WorldModelEngine",
+        lambda: SimpleNamespace(name="world"),
+    )
+    monkeypatch.setattr(
+        final_engines,
+        "NarrativeIdentityEngine",
+        lambda: SimpleNamespace(name="identity"),
+    )
+    monkeypatch.setattr(
+        final_engines,
+        "MetacognitiveCalibrator",
+        lambda: SimpleNamespace(name="metacognition"),
+    )
+    monkeypatch.setattr(
+        causal_world_model,
+        "CausalWorldModel",
+        lambda: SimpleNamespace(name="causal"),
+    )
+    monkeypatch.setattr(
+        epistemic_humility,
+        "EpistemicHumility",
+        lambda orchestrator: SimpleNamespace(orchestrator=orchestrator),
+    )
+
+    install_service_resolver(lambda name, default=None: services.get(name, default))
+    install_service_presence_resolver(lambda name: name in services)
+    install_registration_locked_resolver(lambda: False)
+    install_service_registration_sink(
+        lambda name, instance, required, metadata: registered.append(
+            (name, instance, required, metadata)
+        )
+    )
+    install_service_factory_registration_sink(
+        lambda name, factory, lifetime, required, metadata: factories.append(
+            (name, factory, lifetime, required, metadata)
+        )
+    )
+    try:
+        aff = affective_resonance.register_affective_resonance()
+        deep = deep_deliberation.register_deep_deliberation()
+        epistemic_humility.register_epistemic_humility(SimpleNamespace(name="orch"))
+        final_engines.register_final_engines()
+        causal_world_model.register_causal_world_model()
+        abstraction_engine.register_abstraction_engine()
+
+        registered_names = [item[0] for item in registered]
+        assert ServiceNames.SAMANTHA in registered_names
+        assert "samantha" in registered_names
+        assert ServiceNames.DEEP_THOUGHT in registered_names
+        assert "deep_thought" in registered_names
+        assert "epistemic_humility" in registered_names
+        assert "world_model" in registered_names
+        assert "narrative_identity" in registered_names
+        assert "metacognitive_calibrator" in registered_names
+        assert "causal_world_model" in registered_names
+        assert aff.get_status()["healthy"] is True
+        assert deep.refine_question("fix this").startswith("fix this")
+
+        assert factories[0][0] == "abstraction_engine"
+        assert factories[0][2] == SERVICE_LIFETIME_SINGLETON
+
+        pred = predictive_engine.PredictiveEngine()
+        assert pred._get_router() is services["llm_router"]
+        state = AuraState.default()
+        state.cognition.working_memory.append({"role": "user", "content": "hello"})
+        prediction = asyncio.run(pred.predict(state))
+        error = asyncio.run(pred.evaluate(prediction, "actual answer", state))
+        assert error.error_magnitude == 0.25
+
+        tracker = discourse_tracker.DiscourseTracker()
+        assert tracker._get_brain() is services["cognitive_engine"]
+
+        narrative = narrative_memory.NarrativeEngine(SimpleNamespace(cognitive_engine=None))
+        assert "Aura learned" in narrative.get_narrative_context()
+
+        snapshot = evidence_engine.ConsciousnessEvidenceEngine().snapshot()
+        assert snapshot["subjectivity_evidence"] > 0.0
+        assert snapshot["dimensions"]["reliability"] > 0.0
+
+        fake_experiencer = FakeExperiencer()
+        monkeypatch.setattr(integration, "get_experiencer", lambda: fake_experiencer)
+        global_workspace = GlobalWorkspace()
+        consciousness = integration.ConsciousnessIntegration(
+            SimpleNamespace(
+                affect_module="affect",
+                liquid_substrate="substrate",
+                drive_engine="drives",
+                credit_engine="credit",
+                global_workspace=global_workspace,
+            )
+        )
+        asyncio.run(consciousness.initialize())
+        assert fake_experiencer.started is True
+        assert fake_experiencer.refs["substrate"] == "substrate"
+        assert len(global_workspace.subscribers) == 1
+
+        graph = acg.ActionConsequenceGraph(persist_path="/tmp/aura-test-acg.json")
+        graph._save = lambda *args, **kwargs: None
+        graph.record_outcome({"tool": "inspect", "params": {"path": "x"}}, "ctx", "ok", True)
+        assert graph.query_consequences("inspect", {"path": "x"})
+    finally:
+        install_service_resolver(None)
+        install_service_presence_resolver(None)
+        install_registration_locked_resolver(None)
+        install_service_registration_sink(None)
+        install_service_factory_registration_sink(None)
+
+    for module in (
+        liquid_substrate_bridge,
+        screen_vision,
+        acg,
+        affective_resonance,
+        deep_deliberation,
+        predictive_engine,
+        integrity_guard,
+        discourse_tracker,
+        autonomy_guardian,
+        evidence_engine,
+        cognitive_background,
+        consciousness_world_model,
+        final_engines,
+        pneuma,
+        kernel_refiner,
+        strategic_planner,
+        sleep_trigger,
+        meta_cognition,
+        epistemic_humility,
+        resource_stakes,
+        canvas_manager,
+        immune_system,
+        integration,
+        hardening,
+        abstraction_engine,
+        precision_engine,
+        privacy,
+        heuristic_synthesizer,
+        causal_world_model,
+        narrative_memory,
+    ):
+        source = inspect.getsource(module)
+        assert "core.container" not in source
+        assert "from container import" not in source
+        assert "ServiceContainer" not in source
+        assert "ServiceLifetime" not in source
+        assert "get_container" not in source
+        assert "core.runtime.service_registry" in source

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from core.config import config
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 from core.event_bus import get_event_bus
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
@@ -137,7 +137,7 @@ class IntegrityGuard:
         """Background loop for continuous environment verification."""
         # Initial heartbeat for immediate visibility
         try:
-            audit = ServiceContainer.get("subsystem_audit", default=None)
+            audit = get_runtime_service("subsystem_audit", default=None)
             if audit:
                 audit.heartbeat("sovereign_scanner")
         except (ImportError, AttributeError, RuntimeError, OSError) as _exc:
@@ -147,13 +147,13 @@ class IntegrityGuard:
         while self.active:
             try:
                 # Re-resolve audit inside loop to handle early boot timing
-                audit = ServiceContainer.get("subsystem_audit", default=None)
+                audit = get_runtime_service("subsystem_audit", default=None)
                 if audit:
                     audit.heartbeat("sovereign_scanner")
                 
                 score = self.verify_sovereignty()
                 if score < 0.9:
-                    mycelium = ServiceContainer.get("mycelial_network", default=None)
+                    mycelium = get_runtime_service("mycelial_network", default=None)
                     if mycelium:
                         await mycelium.emit_reflex("ENV_BREACH", {"score": score})
             except (ImportError, AttributeError, RuntimeError, OSError) as e:

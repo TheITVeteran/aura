@@ -1,11 +1,9 @@
 from core.runtime.errors import record_degradation
 import logging
-import json
-import time
 import asyncio
 from typing import List, Dict, Any, Optional
 from core.data.project_store import ProjectStore, Project, StrategicTask
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.StrategicPlanner")
 
@@ -64,7 +62,7 @@ Return the response as a valid JSON object with the following structure:
             logger.info("🎯 Strategic Plan Accepted: '%s' (%d components)", project.name, len(tasks))
             
             # 4. Integrate with Neural Feed (Phase 17.1)
-            feed = ServiceContainer.get("neural_feed", default=None)
+            feed = get_runtime_service("neural_feed", default=None)
             if feed:
                 feed.push(f"STRATEGIC_PLAN: Decomposed mega-goal into project '{project.name}' with {len(tasks)} tasks.", 
                           category="STRATEGY")
@@ -160,7 +158,7 @@ Return as JSON as before:
             from core.utils.json_utils import extract_json
             plan_data = extract_json(content, brain=self.brain)
             
-            new_tasks = await asyncio.to_thread(
+            await asyncio.to_thread(
                 self._replan_project_sync,
                 project_id,
                 pending,
@@ -168,7 +166,7 @@ Return as JSON as before:
                 plan_data,
             )
             
-            feed = ServiceContainer.get("neural_feed", default=None)
+            feed = get_runtime_service("neural_feed", default=None)
             if feed:
                 feed.push(f"REFLECTION_LOOP: Replanned project '{project.name}' after failure: {reason}", category="STRATEGY")
             

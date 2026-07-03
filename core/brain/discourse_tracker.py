@@ -12,13 +12,13 @@ Updates AuraState.cognition discourse fields after each user message:
 Uses a fast heuristic path for every message + occasional LLM deep analysis
 (every 6th message or on significant topic shift).
 
-Register in ServiceContainer as "discourse_tracker".
+Register in the runtime registry as "discourse_tracker".
 Call update(state, user_message) after each incoming message.
 """
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 import logging
-import time
 from typing import Optional
 
 logger = logging.getLogger("Aura.DiscourseTracker")
@@ -48,8 +48,7 @@ class DiscourseTracker:
         if self._brain:
             return self._brain
         try:
-            from core.container import ServiceContainer
-            return ServiceContainer.get("cognitive_engine", default=None)
+            return get_runtime_service("cognitive_engine", default=None)
         except (ImportError, AttributeError, RuntimeError):
             return None
 
@@ -124,8 +123,7 @@ class DiscourseTracker:
         )
 
         try:
-            from core.container import ServiceContainer
-            router = ServiceContainer.get("llm_router", default=None)
+            router = get_runtime_service("llm_router", default=None)
             if router:
                 from core.brain.llm.llm_router import LLMTier
                 result = await router.think(

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.utils.task_tracker import get_task_tracker
 
 if TYPE_CHECKING:
@@ -45,11 +46,10 @@ def encode_message_to_stimulus(text: str, neuron_count: int = 512) -> np.ndarray
 
 def bridge_to_orchestrator(orchestrator: "RobustOrchestrator"):
     """Wire LiquidSubstrate into the orchestrator lifecycle."""
-    from core.container import ServiceContainer
-    substrate = ServiceContainer.get("liquid_substrate", default=None)
+    substrate = get_runtime_service("liquid_substrate", default=None)
 
     if substrate is None:
-        logger.warning("LiquidSubstrate not in ServiceContainer — bridge skipped.")
+        logger.warning("LiquidSubstrate not in runtime registry — bridge skipped.")
         return
 
     if hasattr(substrate, 'running') and not substrate.running:

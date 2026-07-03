@@ -16,11 +16,11 @@ Where:
 """
 
 from core.runtime.errors import record_degradation
-import math
+from core.runtime.service_registry import get_runtime_service
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import numpy as np
 
@@ -205,8 +205,7 @@ class PrecisionEngine:
 
     def _get_somatic_stress(self) -> float:
         try:
-            from core.container import ServiceContainer
-            soma = ServiceContainer.get("soma", default=None)
+            soma = get_runtime_service("soma", default=None)
             if soma:
                 snap = soma.get_body_snapshot()
                 return snap.get("affects", {}).get("stress", 0.0)

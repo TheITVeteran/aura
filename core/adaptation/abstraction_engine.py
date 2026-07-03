@@ -6,12 +6,16 @@ universal, generalized rules for zero-shot application in novel domains.
 """
 from core.runtime.errors import record_degradation
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.service_registry import (
+    SERVICE_LIFETIME_SINGLETON,
+    get_runtime_service,
+    register_runtime_factory,
+)
 import asyncio
 import logging
 import json
 import time
 from pathlib import Path
-from core.container import ServiceContainer
 
 logger = logging.getLogger("Aura.AbstractionEngine")
 
@@ -36,7 +40,7 @@ class AbstractionEngine:
         Takes a specific solved problem and forces the local model to extract 
         the generalized underlying logic.
         """
-        engine = ServiceContainer.get("cognitive_engine", default=None)
+        engine = get_runtime_service("cognitive_engine", default=None)
         if not engine:
             logger.warning("AbstractionEngine: No cognitive engine found.")
             return ""
@@ -133,7 +137,7 @@ Example: "When a specialized resource is abruptly depleted, systemic adaptation 
                     logger.debug("AbstractionEngine receipt emit skipped: %s", _rcpt_exc)
                 
                 # Optionally: Inject into the BlackHoleVault for semantic retrieval
-                memory_facade = ServiceContainer.get("memory_facade", default=None)
+                memory_facade = get_runtime_service("memory_facade", default=None)
                 if memory_facade and hasattr(memory_facade, 'store'):
                     import inspect
                     if inspect.iscoroutinefunction(memory_facade.store):
@@ -149,7 +153,7 @@ Example: "When a specialized resource is abruptly depleted, systemic adaptation 
                         )
                 
                 # Phase 15.2: Instant Swarm Propagation
-                belief_sync = ServiceContainer.get("belief_sync", default=None)
+                belief_sync = get_runtime_service("belief_sync", default=None)
                 if belief_sync and hasattr(belief_sync, 'broadcast_attention_spike'):
                     # Using attention spike as a proxy for "everyone look at this new principle"
                     # Or we could call a specific broadcast method if we add it
@@ -232,5 +236,10 @@ Example: "When a specialized resource is abruptly depleted, systemic adaptation 
 
 def register_abstraction_engine():
     """Register the abstraction engine in the service container."""
-    from core.container import ServiceContainer
-    ServiceContainer.register("abstraction_engine", lambda: AbstractionEngine(), singleton=True)
+    register_runtime_factory(
+        "abstraction_engine",
+        lambda: AbstractionEngine(),
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        owner="core/adaptation/abstraction_engine.py",
+        registered_by="register_abstraction_engine",
+    )

@@ -47,11 +47,26 @@ from core.self_improvement.discrepancy_attributor import DiscrepancyAttributor
 from core.self_improvement.hardcoding_auditor import HardcodingAuditor
 from core.self_improvement.guardrail_auditor import GuardrailAuditor
 from core.self_improvement.promotion_gate import LabPromotionGate
-from core.self_improvement.reimplementation_lab import ReimplementationLab
+from core.self_improvement.reimplementation_lab import (
+    ReimplementationLab,
+    get_reimplementation_lab,
+    register_reimplementation_lab,
+)
 
 __all__ = [
     # Pipeline
     "ReimplementationLab",
+    "get_reimplementation_lab",
+    "register_reimplementation_lab",
+    "ProgramDNABlueprint",
+    "ProgramDNAEvidence",
+    "ProgramDNAFeature",
+    "ProgramDNAGenome",
+    "ProgramDNAReconstructionEngine",
+    "ProgramDNAResult",
+    "ProgramDNAVerificationPlan",
+    "get_program_dna_reconstruction_engine",
+    "register_program_dna_reconstruction_engine",
     # Components
     "SpecExtractor",
     "BlindedWorkspace",
@@ -83,3 +98,27 @@ __all__ = [
     "TestVerdict",
     "TraceExample",
 ]
+
+
+_PROGRAM_DNA_EXPORTS = {
+    "ProgramDNABlueprint",
+    "ProgramDNAEvidence",
+    "ProgramDNAFeature",
+    "ProgramDNAGenome",
+    "ProgramDNAReconstructionEngine",
+    "ProgramDNAResult",
+    "ProgramDNAVerificationPlan",
+    "get_program_dna_reconstruction_engine",
+    "register_program_dna_reconstruction_engine",
+}
+
+
+def __getattr__(name: str):
+    if name in _PROGRAM_DNA_EXPORTS:
+        import importlib
+
+        program_dna = importlib.import_module("core.self_improvement.program_dna")
+        value = getattr(program_dna, name)
+        globals()[name] = value
+        return value
+    raise AttributeError(name)

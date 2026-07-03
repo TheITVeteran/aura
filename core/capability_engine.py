@@ -896,6 +896,7 @@ class CapabilityEngine(AuraBaseModule):
             "train_self",
             "cognitive_trainer",
             "evolution_status",
+            "program_dna_reconstruct",
             # OS & computer control
             "computer_use",
             "desktop_task",
@@ -1140,6 +1141,15 @@ class CapabilityEngine(AuraBaseModule):
                 r"improve (?:your|own) (?:intelligence|reasoning|capabilities)",
                 r"self.?learn",
                 r"train (?:yourself|on this)",
+            ],
+            "program_dna_reconstruct": [
+                r"program dna",
+                r"reconstruct (?:this |that |the )?(?:program|app|application|software|tool)",
+                r"reverse engineer (?:this |that |the )?(?:program|app|application|software|tool)",
+                r"clean.?room (?:clone|rebuild|implementation|reconstruction)",
+                r"rebuild (?:this |that |the )?(?:program|app|application|software|tool)",
+                r"copy (?:the )?(?:behavior|features|ui|ux) of (?:this |that |the )?(?:program|app|application|software|tool)",
+                r"extract (?:the )?(?:behavior|affordances|features|dna) (?:from|of)",
             ],
             # ── Screen / Vision ───────────────────────────────────────
             "query_visual_context": [

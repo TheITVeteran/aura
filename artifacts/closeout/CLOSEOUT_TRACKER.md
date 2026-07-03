@@ -2862,3 +2862,58 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 74-80% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-31: Program DNA Reconstruction Engine and SCC Registry Batch
+
+Status: implementation validated; commit pending.
+
+What changed:
+
+- Converted another SCC batch across substrate bridging, screen vision, world
+  modeling, affect, deliberation, prediction, sovereignty, discourse,
+  autonomy, consciousness evidence/integration, orchestrator background
+  cognition, final engines, pneuma, kernel refinement, strategy, sleep,
+  metacognition, epistemic humility, resource stakes, canvas management,
+  immunity, hardening, abstraction, privacy, heuristic synthesis, causal world
+  modeling, and narrative memory.
+- Added an authorized Program DNA Reconstruction Engine for clean-room rebuilds
+  of user-owned/open/authorized software from behavior, docs, UI flows, source,
+  APIs, logs, file formats, tests, and platform evidence.
+- Added structured program-genome extraction, gap tracking, clean-room
+  blueprint generation, black-box/UI/golden/API/edge/security/compatibility
+  test planning, scaffold emission, and syntax verification.
+- Added a live `program_dna_reconstruct` capability skill and intent routing
+  through the general capability engine instead of a one-off demo path.
+- Kept the legal/governance boundary explicit: missing authorization, DRM
+  bypass, credential theft, malware-adjacent behavior, piracy/keygen language,
+  and proprietary-source theft are refused before evidence collection.
+- Separated `ReimplementationLab` from the Program DNA alias so self-repair can
+  bootstrap the lab without widening the architecture SCC.
+
+Evidence:
+
+- `python -m pytest -q tests/test_program_dna_reconstruction.py tests/test_reconstruction_deep_repair.py`
+  -> `16 passed`.
+- `python -m pytest -q tests/test_program_dna_reconstruction.py tests/test_reconstruction_deep_repair.py tests/self_improvement/test_blinded_module_reconstruction.py`
+  -> `65 passed`.
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py tests/test_program_dna_reconstruction.py tests/test_reconstruction_deep_repair.py`
+  -> `160 passed`.
+- Focused `ruff --select F,E9` over Program DNA, self-healing, service
+  registration, capability routing, and related tests -> passed.
+- Focused `py_compile` over Program DNA, self-healing, service registration,
+  capability routing, and related tests -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=46.38`,
+  `largest_cycle_size=532`, `cycle_count=6`, `dependency_edges=7536`,
+  `god_file_count=37`, `module_count=2255`.
+
+Tracker:
+
+- Architecture-regression-control closure: about 98%.
+- Existing architecture-debt reduction closure: about 64-70%.
+- Local reliability-control closure: about 94-95%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 76-82% locally.
+- Program DNA reconstruction closure: about 72-78% for authorized clean-room
+  replacement generation; remaining proof is long-running real-app
+  reconstruction and live desktop invocation.
+- Remaining total checkpoint groups: 3.

@@ -30,6 +30,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Consciousness.ResourceStakes")
 
@@ -160,8 +161,7 @@ class ResourceStakesEngine:
     def _signal_reward(self, source: str):
         """Signal neurochemical reward on success."""
         try:
-            from core.container import ServiceContainer
-            nchem = ServiceContainer.get("neurochemical_system", default=None)
+            nchem = get_runtime_service("neurochemical_system", default=None)
             if nchem and hasattr(nchem, "apply_event"):
                 nchem.apply_event("prediction_success", intensity=0.2)
         except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
@@ -171,8 +171,7 @@ class ResourceStakesEngine:
     def _signal_stress(self, source: str, severity: float):
         """Signal neurochemical stress on failure."""
         try:
-            from core.container import ServiceContainer
-            nchem = ServiceContainer.get("neurochemical_system", default=None)
+            nchem = get_runtime_service("neurochemical_system", default=None)
             if nchem and hasattr(nchem, "apply_event"):
                 nchem.apply_event("resource_threat", intensity=severity * 0.3)
         except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:

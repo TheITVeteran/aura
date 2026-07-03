@@ -8,6 +8,7 @@ import logging
 import time
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger(__name__)
@@ -175,9 +176,7 @@ class CognitiveBackgroundMixin:
                             _dispose_awaitable(curiosity_result)
 
             try:
-                from core.container import ServiceContainer
-
-                belief_engine = ServiceContainer.get("belief_revision_engine", default=None)
+                belief_engine = get_runtime_service("belief_revision_engine", default=None)
                 update_belief = getattr(belief_engine, "update_belief_from_conversation", None)
                 if callable(update_belief):
                     world_context = (
