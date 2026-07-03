@@ -86,6 +86,23 @@ def _slug(value: str) -> str:
     return cleaned[:96] or "unknown"
 
 
+def _stable_top_id(ids: Iterable[str], primary: dict[str, float], *secondary: dict[str, float]) -> str:
+    """Return the best id without leaking option presentation order into ties."""
+
+    id_list = list(ids)
+    if not id_list:
+        raise ValueError("stable top id requires at least one id")
+
+    def key(item_id: str) -> tuple[Any, ...]:
+        numeric = tuple(
+            round(float(score_map.get(item_id, 0.0) or 0.0), 8)
+            for score_map in (primary, *secondary)
+        )
+        return (*numeric, _slug(item_id))
+
+    return max(id_list, key=key)
+
+
 def infer_preference_features(text: str, metadata: dict[str, Any] | None = None) -> dict[str, float]:
     """Infer coarse preference features from a goal/option description.
 
@@ -339,9 +356,10 @@ class SubjectiveChoiceEngine:
             preference_scores[option.id] = pref
             final_scores[option.id] = _clamp(final)
 
-        drive_top_id = max(drive_scores, key=drive_scores.get)
-        preference_top_id = max(preference_scores, key=preference_scores.get)
-        chosen_id = max(final_scores, key=final_scores.get)
+        option_ids = [option.id for option in option_list]
+        drive_top_id = _stable_top_id(option_ids, drive_scores, preference_scores, final_scores)
+        preference_top_id = _stable_top_id(option_ids, preference_scores, drive_scores, final_scores)
+        chosen_id = _stable_top_id(option_ids, final_scores, preference_scores, drive_scores)
         chosen = next(option for option in option_list if option.id == chosen_id)
         preference_override = (
             chosen_id != drive_top_id
@@ -409,7 +427,15 @@ class SubjectiveChoiceEngine:
                 "final_score": final,
                 "features": features,
             })
-        ranked.sort(key=lambda item: item["final_score"], reverse=True)
+        ranked.sort(
+            key=lambda item: (
+                item["final_score"],
+                item["preference_score"],
+                item["drive_score"],
+                _slug(str(item["id"])),
+            ),
+            reverse=True,
+        )
         return ranked
 
     def choose_from_scored_initiatives(self, scored: list[Any], *, context: str) -> tuple[Any | None, SubjectiveChoiceReceipt | None]:

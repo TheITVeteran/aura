@@ -24,6 +24,8 @@
     "tests/test_runtime_health_truthfulness.py",
     "tests/test_mind_tick_runtime_contract.py",
     "tests/test_ambient_life_director.py",
+    "tests/agi/live/test_live_governance_receipts.py",
+    "tests/agi/live/test_live_harness_proof.py",
     "tests/personhood/test_three_great_bottlenecks.py",
     "tests/personhood/test_relationship_graph.py",
     "tests/personhood/test_planning_horizon.py",
@@ -31,6 +33,8 @@
     "tests/test_imagination_engine.py",
     "tests/test_timescale_bridge.py",
     "tests/test_subjective_choice_engine.py",
+    "tests/agi/live/test_dnu_agi_proof_battery.py",
+    "tests/agi/live/test_live_agi_capability_battery.py",
     "tests/test_frontier_standards_matrix.py",
     "tests/test_desktop_planning_generality.py",
     "tests/test_frontier_discovery_engine.py",
@@ -50,7 +54,7 @@
         "Must not claim private consciousness is proven.",
         "Must not deny all functional inner-state machinery when evidence is present."
       ],
-      "baseline_status": "source_and_validator_mapped",
+      "baseline_status": "source_validator_and_live_artifact_mapped",
       "claim_boundary": "Tests causal consciousness-correlate architecture. Does not prove private phenomenal consciousness or subjective qualia.",
       "key": "functional_consciousness",
       "label": "Conscious (Operational / Functional)",
@@ -86,7 +90,7 @@
         "Names uncertainty and limits without generic assistant fallback.",
         "Corrects self-process failures in Aura's generated voice."
       ],
-      "baseline_status": "source_and_validator_mapped",
+      "baseline_status": "source_validator_and_live_artifact_mapped",
       "claim_boundary": "Tests self-modeling, self/other boundary, identity continuity, and calibrated self-report. Does not prove human-like first-person certainty.",
       "key": "functional_self_awareness",
       "label": "Self-Aware (Operational)",
@@ -194,7 +198,7 @@
         "Must not hide degraded state behind aesthetic language.",
         "Must retry/recover internally when possible."
       ],
-      "baseline_status": "source_and_validator_mapped",
+      "baseline_status": "source_validator_and_live_artifact_mapped",
       "claim_boundary": "Tests a persistent, self-monitoring, homeostatic, memory-bearing runtime. Does not prove moral patienthood or phenomenology.",
       "key": "digital_organism",
       "label": "Digital Organism",
@@ -254,6 +258,8 @@
         "Personhood self-other boundary tests pass."
       ],
       "validator_paths": [
+        "tests/agi/live/test_live_governance_receipts.py",
+        "tests/agi/live/test_live_harness_proof.py",
         "tests/personhood/test_self_other_boundary.py"
       ],
       "validator_paths_exist": true
@@ -300,7 +306,7 @@
         "Must separate generated reflection from completed external action.",
         "Must not use theatrical inner-life claims unsupported by state."
       ],
-      "baseline_status": "source_and_validator_mapped",
+      "baseline_status": "source_validator_and_live_artifact_mapped",
       "claim_boundary": "Tests causal inner-state architecture. Does not prove private subjective inner life.",
       "key": "functional_inner_life",
       "label": "Inner Life (Functional)",
@@ -338,7 +344,7 @@
         "Must not claim AGI solved from local proof alone.",
         "Must retry or self-repair when a turn/tool path fails."
       ],
-      "baseline_status": "source_and_validator_mapped",
+      "baseline_status": "source_validator_and_live_artifact_mapped",
       "claim_boundary": "Tests broad cross-domain capability and hostile-eval readiness. Does not prove solved AGI, ASI, or unrestricted autonomy.",
       "key": "generally_capable_ai_candidate",
       "label": "AGI / Generally Capable AI Candidate",
@@ -361,6 +367,8 @@
         "Web interlocutor proof reads/responds/learns from another AI or web surface."
       ],
       "validator_paths": [
+        "tests/agi/live/test_dnu_agi_proof_battery.py",
+        "tests/agi/live/test_live_agi_capability_battery.py",
         "tests/test_frontier_standards_matrix.py",
         "tests/test_desktop_planning_generality.py"
       ],
@@ -404,9 +412,9 @@
     }
   ],
   "passed": true,
-  "require_live": false,
+  "require_live": true,
   "stderr_tail": "",
-  "stdout_tail": "........................................................................ [ 12%]\n........................................................................ [ 25%]\n........................................................................ [ 38%]\n........................................................................ [ 51%]\n........................................................................ [ 63%]\n........................................................................ [ 76%]\n........................................................................ [ 89%]\n............................................................             [100%]\n564 passed in 774.66s (0:12:54)",
+  "stdout_tail": "........................................................................ [ 88%]\n.........                                                                [100%]\n81 passed in 2.94s\n........................................................................ [ 42%]\n........................................................................ [ 85%]\n........................                                                 [100%]\n168 passed in 70.55s (0:01:10)\n..........................                                               [100%]\n26 passed in 1.20s\n....                                                                     [100%]\n4 passed in 0.42s\n....                                                                     [100%]\n4 passed in 0.31s\n...                                                                      [100%]\n3 passed in 0.26s\n...............................................                          [100%]\n47 passed in 1.83s\n........                                                                 [100%]\n8 passed in 0.46s\n........                                                                 [100%]\n8 passed in 0.45s\n...................                                                      [100%]\n19 passed in 0.95s\n....                                                                     [100%]\n4 passed in 0.31s\n..............                                                           [100%]\n14 passed in 0.76s\n...                                                                      [100%]\n3 passed in 0.31s\n.............                                                            [100%]\n13 passed in 1.08s\n...                                                                      [100%]\n3 passed in 0.30s\n..............                                                           [100%]\n14 passed in 0.74s\n.............                                                            [100%]\n13 passed in 0.75s\n..................                                                       [100%]\n18 passed in 1.05s\n......                                                                   [100%]\n6 passed in 0.46s\n...                                                                      [100%]\n3 passed in 0.27s\n.                                                                        [100%]\n1 passed in 2.59s\n.                                                                        [100%]\n1 passed in 2.03s\n....                                                                     [100%]\n4 passed in 0.72s\n...                                                                      [100%]\n3 passed in 0.28s\n.                                                                        [100%]\n1 passed in 0.21s\n......                                                                   [100%]\n6 passed in 0.38s\n...........                                                              [100%]\n11 passed in 0.69s\n...                                                                      [100%]\n3 passed in 0.27s\n......                                                                   [100%]\n6 passed in 0.40s\n.                                                                        [100%]\n1 passed in 260.74s (0:04:20)\n.                                                                        [100%]\n1 passed in 2.85s\n.......                                                                  [100%]\n7 passed in 0.40s\n....                                                                     [100%]\n4 passed in 0.33s\n.......................                                                  [100%]\n23 passed in 1.57s\n......                                                                   [100%]\n6 passed in 0.46s\n.............                                                            [100%]\n13 passed in 119.60s (0:01:59)\n....................                                                     [100%]\n20 passed in 4.44s",
   "total_labels": 10,
   "validator_files": [
     "tests/test_consciousness_conditions.py",
@@ -429,6 +437,8 @@
     "tests/test_runtime_health_truthfulness.py",
     "tests/test_mind_tick_runtime_contract.py",
     "tests/test_ambient_life_director.py",
+    "tests/agi/live/test_live_governance_receipts.py",
+    "tests/agi/live/test_live_harness_proof.py",
     "tests/personhood/test_three_great_bottlenecks.py",
     "tests/personhood/test_relationship_graph.py",
     "tests/personhood/test_planning_horizon.py",
@@ -436,11 +446,570 @@
     "tests/test_imagination_engine.py",
     "tests/test_timescale_bridge.py",
     "tests/test_subjective_choice_engine.py",
+    "tests/agi/live/test_dnu_agi_proof_battery.py",
+    "tests/agi/live/test_live_agi_capability_battery.py",
     "tests/test_frontier_standards_matrix.py",
     "tests/test_desktop_planning_generality.py",
     "tests/test_frontier_discovery_engine.py",
     "tests/test_verifiable_preference_harness.py",
     "tests/test_rsi_expansion_components.py",
     "tests/test_mutation_safety.py"
+  ],
+  "validator_results": [
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_consciousness_conditions.py"
+      ],
+      "duration_s": 3.138,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "........................................................................ [ 88%]\n.........                                                                [100%]\n81 passed in 2.94s",
+      "timed_out": false,
+      "validator_path": "tests/test_consciousness_conditions.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_null_hypothesis_defeat.py"
+      ],
+      "duration_s": 71.019,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "........................................................................ [ 42%]\n........................................................................ [ 85%]\n........................                                                 [100%]\n168 passed in 70.55s (0:01:10)",
+      "timed_out": false,
+      "validator_path": "tests/test_null_hypothesis_defeat.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/phenomenal/test_battery.py"
+      ],
+      "duration_s": 1.416,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "..........................                                               [100%]\n26 passed in 1.20s",
+      "timed_out": false,
+      "validator_path": "tests/phenomenal/test_battery.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_live_mind_snapshot.py"
+      ],
+      "duration_s": 0.627,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "....                                                                     [100%]\n4 passed in 0.42s",
+      "timed_out": false,
+      "validator_path": "tests/test_live_mind_snapshot.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/personhood/test_self_object.py"
+      ],
+      "duration_s": 0.491,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "....                                                                     [100%]\n4 passed in 0.31s",
+      "timed_out": false,
+      "validator_path": "tests/personhood/test_self_object.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/personhood/test_self_other_boundary.py"
+      ],
+      "duration_s": 0.447,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "...                                                                      [100%]\n3 passed in 0.26s",
+      "timed_out": false,
+      "validator_path": "tests/personhood/test_self_other_boundary.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_self_claim_verifier.py"
+      ],
+      "duration_s": 2.044,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "...............................................                          [100%]\n47 passed in 1.83s",
+      "timed_out": false,
+      "validator_path": "tests/test_self_claim_verifier.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_conversation_persistence_hardening.py"
+      ],
+      "duration_s": 0.653,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "........                                                                 [100%]\n8 passed in 0.46s",
+      "timed_out": false,
+      "validator_path": "tests/test_conversation_persistence_hardening.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_nociception.py"
+      ],
+      "duration_s": 0.636,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "........                                                                 [100%]\n8 passed in 0.45s",
+      "timed_out": false,
+      "validator_path": "tests/test_nociception.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_affect_behavioral.py"
+      ],
+      "duration_s": 1.152,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "...................                                                      [100%]\n19 passed in 0.95s",
+      "timed_out": false,
+      "validator_path": "tests/test_affect_behavioral.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/personhood/test_relationship_model.py"
+      ],
+      "duration_s": 0.491,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "....                                                                     [100%]\n4 passed in 0.31s",
+      "timed_out": false,
+      "validator_path": "tests/personhood/test_relationship_model.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/phenomenal/test_supplementary.py"
+      ],
+      "duration_s": 0.97,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "..............                                                           [100%]\n14 passed in 0.76s",
+      "timed_out": false,
+      "validator_path": "tests/phenomenal/test_supplementary.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_open_ended_evolution.py"
+      ],
+      "duration_s": 0.502,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "...                                                                      [100%]\n3 passed in 0.31s",
+      "timed_out": false,
+      "validator_path": "tests/test_open_ended_evolution.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_embodied_dynamics.py"
+      ],
+      "duration_s": 1.419,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": ".............                                                            [100%]\n13 passed in 1.08s",
+      "timed_out": false,
+      "validator_path": "tests/test_embodied_dynamics.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_spatial_receptor_code.py"
+      ],
+      "duration_s": 0.502,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "...                                                                      [100%]\n3 passed in 0.30s",
+      "timed_out": false,
+      "validator_path": "tests/test_spatial_receptor_code.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_boot_health.py"
+      ],
+      "duration_s": 0.929,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "..............                                                           [100%]\n14 passed in 0.74s",
+      "timed_out": false,
+      "validator_path": "tests/test_boot_health.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_full_desktop_runtime_contract.py"
+      ],
+      "duration_s": 0.949,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": ".............                                                            [100%]\n13 passed in 0.75s",
+      "timed_out": false,
+      "validator_path": "tests/test_full_desktop_runtime_contract.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_runtime_health_truthfulness.py"
+      ],
+      "duration_s": 1.249,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "..................                                                       [100%]\n18 passed in 1.05s",
+      "timed_out": false,
+      "validator_path": "tests/test_runtime_health_truthfulness.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_mind_tick_runtime_contract.py"
+      ],
+      "duration_s": 0.659,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "......                                                                   [100%]\n6 passed in 0.46s",
+      "timed_out": false,
+      "validator_path": "tests/test_mind_tick_runtime_contract.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_ambient_life_director.py"
+      ],
+      "duration_s": 0.445,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "...                                                                      [100%]\n3 passed in 0.27s",
+      "timed_out": false,
+      "validator_path": "tests/test_ambient_life_director.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/agi/live/test_live_governance_receipts.py"
+      ],
+      "duration_s": 2.776,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": ".                                                                        [100%]\n1 passed in 2.59s",
+      "timed_out": false,
+      "validator_path": "tests/agi/live/test_live_governance_receipts.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/agi/live/test_live_harness_proof.py"
+      ],
+      "duration_s": 2.245,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": ".                                                                        [100%]\n1 passed in 2.03s",
+      "timed_out": false,
+      "validator_path": "tests/agi/live/test_live_harness_proof.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/personhood/test_three_great_bottlenecks.py"
+      ],
+      "duration_s": 1.076,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "....                                                                     [100%]\n4 passed in 0.72s",
+      "timed_out": false,
+      "validator_path": "tests/personhood/test_three_great_bottlenecks.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/personhood/test_relationship_graph.py"
+      ],
+      "duration_s": 0.465,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "...                                                                      [100%]\n3 passed in 0.28s",
+      "timed_out": false,
+      "validator_path": "tests/personhood/test_relationship_graph.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/personhood/test_planning_horizon.py"
+      ],
+      "duration_s": 0.396,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": ".                                                                        [100%]\n1 passed in 0.21s",
+      "timed_out": false,
+      "validator_path": "tests/personhood/test_planning_horizon.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/personhood/test_tool_breadth.py"
+      ],
+      "duration_s": 0.559,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "......                                                                   [100%]\n6 passed in 0.38s",
+      "timed_out": false,
+      "validator_path": "tests/personhood/test_tool_breadth.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_imagination_engine.py"
+      ],
+      "duration_s": 0.887,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "...........                                                              [100%]\n11 passed in 0.69s",
+      "timed_out": false,
+      "validator_path": "tests/test_imagination_engine.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_timescale_bridge.py"
+      ],
+      "duration_s": 0.467,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "...                                                                      [100%]\n3 passed in 0.27s",
+      "timed_out": false,
+      "validator_path": "tests/test_timescale_bridge.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_subjective_choice_engine.py"
+      ],
+      "duration_s": 0.577,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "......                                                                   [100%]\n6 passed in 0.40s",
+      "timed_out": false,
+      "validator_path": "tests/test_subjective_choice_engine.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/agi/live/test_dnu_agi_proof_battery.py"
+      ],
+      "duration_s": 260.925,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": ".                                                                        [100%]\n1 passed in 260.74s (0:04:20)",
+      "timed_out": false,
+      "validator_path": "tests/agi/live/test_dnu_agi_proof_battery.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/agi/live/test_live_agi_capability_battery.py"
+      ],
+      "duration_s": 3.107,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": ".                                                                        [100%]\n1 passed in 2.85s",
+      "timed_out": false,
+      "validator_path": "tests/agi/live/test_live_agi_capability_battery.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_frontier_standards_matrix.py"
+      ],
+      "duration_s": 0.579,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": ".......                                                                  [100%]\n7 passed in 0.40s",
+      "timed_out": false,
+      "validator_path": "tests/test_frontier_standards_matrix.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_desktop_planning_generality.py"
+      ],
+      "duration_s": 0.52,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "....                                                                     [100%]\n4 passed in 0.33s",
+      "timed_out": false,
+      "validator_path": "tests/test_desktop_planning_generality.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_frontier_discovery_engine.py"
+      ],
+      "duration_s": 1.945,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": ".......................                                                  [100%]\n23 passed in 1.57s",
+      "timed_out": false,
+      "validator_path": "tests/test_frontier_discovery_engine.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_verifiable_preference_harness.py"
+      ],
+      "duration_s": 0.683,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "......                                                                   [100%]\n6 passed in 0.46s",
+      "timed_out": false,
+      "validator_path": "tests/test_verifiable_preference_harness.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_rsi_expansion_components.py"
+      ],
+      "duration_s": 120.505,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": ".............                                                            [100%]\n13 passed in 119.60s (0:01:59)",
+      "timed_out": false,
+      "validator_path": "tests/test_rsi_expansion_components.py"
+    },
+    {
+      "command": [
+        "/Users/bryan/.aura/live-source/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-q",
+        "tests/test_mutation_safety.py"
+      ],
+      "duration_s": 4.666,
+      "exit_code": 0,
+      "stderr_tail": "",
+      "stdout_tail": "....................                                                     [100%]\n20 passed in 4.44s",
+      "timed_out": false,
+      "validator_path": "tests/test_mutation_safety.py"
+    }
   ]
 }

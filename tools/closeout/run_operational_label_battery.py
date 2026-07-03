@@ -10,7 +10,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,7 @@ from tools.closeout.operational_label_baselines import (
 # Bounded wall-clock ceiling for the full validator pytest run. The battery is
 # a proof harness, never an unbounded background job.
 _BATTERY_TIMEOUT_S = float(os.environ.get("AURA_LABEL_BATTERY_TIMEOUT_S", "5400"))
+_VALIDATOR_TIMEOUT_S = float(os.environ.get("AURA_LABEL_VALIDATOR_TIMEOUT_S", "900"))
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,25 @@ def build_pytest_command(
     return [sys.executable, "-m", "pytest", "-q", *paths, *(extra_args or [])]
 
 
+def build_pytest_commands(
+    plans: list[LabelValidatorPlan],
+    *,
+    extra_args: list[str] | None = None,
+) -> list[list[str]]:
+    """Build one bounded pytest command per validator file.
+
+    The all-in-one command is useful for display and backwards compatibility,
+    but closeout proof tooling should identify the exact validator that stalls
+    or fails. Per-file commands make the proof battery auditable and prevent a
+    single quiet subprocess from looking like progress.
+    """
+
+    return [
+        [sys.executable, "-m", "pytest", "-q", path, *(extra_args or [])]
+        for path in unique_validator_paths(plans)
+    ]
+
+
 def _existing_path(path: str) -> bool:
     return (ROOT / path).exists()
 
@@ -108,6 +130,7 @@ def build_report(
     stdout: str = "",
     stderr: str = "",
     require_live: bool = False,
+    validator_results: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     status_by_key = {status.key: status for status in evaluate(require_live=require_live)}
     evidence_issues = audit_evidence_integrity()
@@ -115,6 +138,7 @@ def build_report(
         "total_labels": len(plans),
         "validator_files": unique_validator_paths(plans),
         "command": command,
+        "validator_results": validator_results or [],
         "exit_code": exit_code,
         "passed": None if exit_code is None else exit_code == 0,
         "require_live": require_live,
@@ -135,6 +159,103 @@ def build_report(
         "stdout_tail": "\n".join(stdout.splitlines()[-80:]),
         "stderr_tail": "\n".join(stderr.splitlines()[-80:]),
     }
+
+
+def _tail(text: str, lines: int = 80) -> str:
+    return "\n".join((text or "").splitlines()[-lines:])
+
+
+def _result_exit_code(results: list[dict[str, Any]]) -> int:
+    for result in results:
+        code = result.get("exit_code")
+        if code not in (0, None):
+            return int(code)
+    return 0
+
+
+def run_validator_commands(
+    commands: list[list[str]],
+    *,
+    timeout_s: float,
+) -> tuple[int, list[dict[str, Any]], str, str]:
+    """Run validator commands with per-file timeout and progress accounting."""
+
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+    results: list[dict[str, Any]] = []
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    deadline = time.monotonic() + max(float(_BATTERY_TIMEOUT_S), 1.0)
+    for index, command in enumerate(commands, start=1):
+        validator_path = command[4] if len(command) > 4 else "unknown"
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            result = {
+                "validator_path": validator_path,
+                "command": command,
+                "exit_code": 124,
+                "timed_out": True,
+                "duration_s": 0.0,
+                "stdout_tail": "",
+                "stderr_tail": "Full operational label battery exceeded wall-clock deadline.",
+            }
+            results.append(result)
+            stderr_parts.append(result["stderr_tail"])
+            break
+
+        effective_timeout = max(1.0, min(float(timeout_s), remaining))
+        print(
+            f"[label-battery] {index}/{len(commands)} {validator_path} "
+            f"(timeout={effective_timeout:.0f}s)",
+            flush=True,
+        )
+        started = time.monotonic()
+        try:
+            completed = get_subprocess_gateway().run(
+                command,
+                cwd=ROOT,
+                timeout=effective_timeout,
+                offline_tooling=True,
+                check=False,
+                source="proof_tooling:run_operational_label_battery",
+            )
+            duration = time.monotonic() - started
+            result = {
+                "validator_path": validator_path,
+                "command": command,
+                "exit_code": completed.returncode,
+                "timed_out": False,
+                "duration_s": round(duration, 3),
+                "stdout_tail": _tail(completed.stdout),
+                "stderr_tail": _tail(completed.stderr),
+            }
+            if completed.stdout:
+                stdout_parts.append(completed.stdout)
+                print(completed.stdout, end="")
+            if completed.stderr:
+                stderr_parts.append(completed.stderr)
+                print(completed.stderr, end="", file=sys.stderr)
+        except subprocess.TimeoutExpired as exc:
+            duration = time.monotonic() - started
+            stdout = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode("utf-8", "replace")
+            stderr = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"").decode("utf-8", "replace")
+            timeout_msg = f"Validator timed out after {effective_timeout:.0f}s: {validator_path}"
+            result = {
+                "validator_path": validator_path,
+                "command": command,
+                "exit_code": 124,
+                "timed_out": True,
+                "duration_s": round(duration, 3),
+                "stdout_tail": _tail(stdout),
+                "stderr_tail": _tail((stderr + "\n" + timeout_msg).strip()),
+            }
+            stdout_parts.append(stdout)
+            stderr_parts.append((stderr + "\n" + timeout_msg).strip())
+            print(timeout_msg, file=sys.stderr, flush=True)
+        results.append(result)
+        if result["exit_code"] != 0:
+            break
+    return _result_exit_code(results), results, "".join(stdout_parts), "".join(stderr_parts)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -208,33 +329,25 @@ def main(argv: list[str] | None = None) -> int:
         print(report["stderr_tail"], file=sys.stderr)
         return 2
 
-    from core.runtime.subprocess_gateway import get_subprocess_gateway
-
-    completed = get_subprocess_gateway().run(
-        command,
-        cwd=ROOT,
-        timeout=_BATTERY_TIMEOUT_S,
-        offline_tooling=True,
-        check=False,
-        source="proof_tooling:run_operational_label_battery",
+    validator_commands = build_pytest_commands(plans, extra_args=args.pytest_arg)
+    exit_code, validator_results, stdout, stderr = run_validator_commands(
+        validator_commands,
+        timeout_s=_VALIDATOR_TIMEOUT_S,
     )
     report = build_report(
         plans,
         command=command,
-        exit_code=completed.returncode,
-        stdout=completed.stdout,
-        stderr=completed.stderr,
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
         require_live=args.require_live_artifacts,
+        validator_results=validator_results,
     )
     if args.json_out:
         args.json_out.parent.mkdir(parents=True, exist_ok=True)
         args.json_out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    if completed.stdout:
-        print(completed.stdout, end="")
-    if completed.stderr:
-        print(completed.stderr, end="", file=sys.stderr)
-    return completed.returncode
+    return exit_code
 
 
 if __name__ == "__main__":

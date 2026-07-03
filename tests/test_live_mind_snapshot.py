@@ -91,6 +91,33 @@ class LiquidSubstrateReadout:
         return {"coherence": 0.91, "thermal_pressure": "nominal"}
 
 
+class PhenomenalKnowingReadout:
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "active": True,
+            "latest": {"event_kind": "desktop_context", "control_updates": {"phenomenal_knowing": 0.72}},
+        }
+
+
+class RecursiveSelfKnowingReadout:
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "active": True,
+            "latest": {"calibration_delta": 0.08, "confidence": 0.79},
+        }
+
+
+class AutomaticSelfKnowingReadout:
+    def snapshot(self) -> dict[str, object]:
+        return {
+            "active": True,
+            "latest": {
+                "event_kind": "runtime_tick",
+                "controls": {"automatic_self_knowing_active": True},
+            },
+        }
+
+
 class RuntimeServices:
     services = {
         "global_workspace": GlobalWorkspaceReadout(),
@@ -105,6 +132,9 @@ class RuntimeServices:
         "perceptual_pump": PerceptualPumpReadout(),
         "liquid_substrate": LiquidSubstrateReadout(),
         "liquid_state": LiquidSubstrateReadout(),
+        "phenomenal_knowing": PhenomenalKnowingReadout(),
+        "recursive_self_knowing": RecursiveSelfKnowingReadout(),
+        "automatic_self_knowing": AutomaticSelfKnowingReadout(),
     }
 
     @classmethod
@@ -132,6 +162,9 @@ def test_live_mind_snapshot_collects_deep_runtime_state(monkeypatch):
     assert snapshot["scientific_engine"]["by_status"]["testing"] == 2
     assert snapshot["world_model"]["facets"]["learned"]["available"] is True
     assert snapshot["phenomenal_engine"]["intentional_object"] == "desktop conversation"
+    assert snapshot["phenomenal_knowing"]["latest"]["event_kind"] == "desktop_context"
+    assert snapshot["recursive_self_knowing"]["latest"]["confidence"] == 0.79
+    assert snapshot["automatic_self_knowing"]["latest"]["controls"]["automatic_self_knowing_active"] is True
     assert snapshot["screen_perception"]["last_hash"] == "screen-hash"
     assert snapshot["perceptual_pump"]["latest_frame"]["active_app"] == "Notes"
     assert snapshot["frontmost_app_fast"] == "Notes"

@@ -2,6 +2,7 @@ from tools.closeout.run_operational_label_battery import (
     build_report,
     build_label_plans,
     build_pytest_command,
+    build_pytest_commands,
     unique_validator_paths,
 )
 
@@ -64,9 +65,41 @@ def test_operational_label_battery_command_runs_mapped_validators():
     assert command[-2:] == ["-k", "boot"]
 
 
+def test_operational_label_battery_builds_bounded_command_per_validator():
+    plans = build_label_plans(labels={"digital_organism"}, include_live=False)
+    commands = build_pytest_commands(plans, extra_args=["-k", "boot"])
+
+    paths = unique_validator_paths(plans)
+    assert len(commands) == len(paths)
+    assert all(command[1:4] == ["-m", "pytest", "-q"] for command in commands)
+    assert [command[4] for command in commands] == paths
+    assert all(command[-2:] == ["-k", "boot"] for command in commands)
+
+
 def test_operational_label_battery_report_includes_evidence_integrity_gate():
     plans = build_label_plans(labels={"functional_consciousness"}, include_live=False)
     report = build_report(plans, command=build_pytest_command(plans), exit_code=None)
 
     assert report["evidence_integrity"]["passed"] is True
     assert report["evidence_integrity"]["issues"] == []
+
+
+def test_operational_label_battery_report_includes_per_validator_results():
+    plans = build_label_plans(labels={"functional_consciousness"}, include_live=False)
+    result = {
+        "validator_path": "tests/test_consciousness_conditions.py",
+        "exit_code": 0,
+        "timed_out": False,
+        "duration_s": 1.0,
+        "stdout_tail": ".",
+        "stderr_tail": "",
+    }
+    report = build_report(
+        plans,
+        command=build_pytest_command(plans),
+        exit_code=0,
+        validator_results=[result],
+    )
+
+    assert report["validator_results"] == [result]
+    assert report["passed"] is True

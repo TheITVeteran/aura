@@ -8,7 +8,7 @@
       "missing_sources": [],
       "missing_validators": [],
       "reference_models": [],
-      "status": "source_and_validator_mapped"
+      "status": "source_validator_and_live_artifact_mapped"
     },
     {
       "acceptance": "Conversation remains contextual, self-consistent, non-canned, and full-mind routed over multi-turn desktop use.",
@@ -112,13 +112,13 @@
       "missing_sources": [],
       "missing_validators": [],
       "reference_models": [],
-      "status": "source_and_validator_mapped"
+      "status": "source_validator_and_live_artifact_mapped"
     }
   ],
   "summary": {
     "gaps": 0,
     "mapped": 9,
-    "require_live": false,
+    "require_live": true,
     "total": 9
   }
 }

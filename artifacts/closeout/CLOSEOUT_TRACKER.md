@@ -2084,3 +2084,50 @@ Estimate:
 - Self-knowing/phenomenal-operational closure: about 82%.
 - Expanded daily-runtime/product closure: about 91%.
 - Remaining total checkpoint groups: about 2-3.
+
+## Checkpoint 2026-07-02-11: Position-Invariant Preference Tournament And Label Battery Reliability
+
+Status: ready to commit.
+
+What changed:
+
+- Preference tournaments now alternate A/B presentation order across runs and
+  report `position_bias_rate`, so favorite selection is tested against position
+  bias rather than only repeated same-order choices.
+- Subjective choice tie resolution no longer leaks presentation order when
+  final scores clamp or tie. Stable choice ranking now considers final score,
+  preference score, drive score, and canonical option id.
+- The operational label battery now runs one bounded pytest command per
+  validator file, prints progress, writes per-validator JSON results, and
+  names timeout/failure causes. The old full command remains in the report for
+  compatibility, but execution is now auditable and non-silent.
+- Live-mind snapshot tests now include the self-knowing bridge services as
+  required runtime fixtures.
+- Current live frontier and operational-label artifacts were regenerated.
+
+Evidence:
+
+- `python -m pytest -q tests/test_subjective_choice_engine.py`
+  -> `6 passed`.
+- `python -m pytest -q tests/test_subjective_choice_engine.py tests/test_operational_label_battery.py tests/test_operational_label_baselines.py tests/test_frontier_standards_matrix.py`
+  -> `29 passed`.
+- `python -m pytest -q tests/test_live_mind_snapshot.py tests/test_self_knowing_bridges.py tests/test_operational_label_battery.py tests/test_subjective_choice_engine.py`
+  -> `23 passed`.
+- `python -m py_compile core/agency/subjective_choice.py core/agency/choice_game.py tools/closeout/run_operational_label_battery.py tests/test_subjective_choice_engine.py tests/test_operational_label_battery.py tests/test_live_mind_snapshot.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/agency/subjective_choice.py core/agency/choice_game.py tools/closeout/run_operational_label_battery.py tests/test_subjective_choice_engine.py tests/test_operational_label_battery.py tests/test_live_mind_snapshot.py`
+  -> passed.
+- `python tools/closeout/frontier_standards_matrix.py --require-live --strict --out artifacts/closeout/frontier_standards_latest.json`
+  -> passed.
+- `AURA_LABEL_VALIDATOR_TIMEOUT_S=300 python tools/closeout/run_operational_label_battery.py --require-live-artifacts --json-out artifacts/closeout/operational_label_battery_latest.json`
+  -> passed: `37/37` validator files, `10` label baselines,
+  no failures, no timeouts.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=[]`.
+
+Tracker:
+
+- Subjective choice/preference/habit closure: about 96%.
+- Operational labels/frontier proof closure: about 96%.
+- Expanded daily-runtime/product closure: about 92%.
+- Remaining total checkpoint groups: 2-3.

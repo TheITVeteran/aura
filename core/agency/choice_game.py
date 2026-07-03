@@ -92,6 +92,7 @@ class PreferenceTournamentReport:
     champion_label: str
     pair_stability: dict[str, float]
     consistency_rate: float
+    position_bias_rate: float
     transitivity_violations: int
     commentary: str
 
@@ -214,25 +215,31 @@ class SubjectiveChoiceGame:
         pair_results: list[PreferenceTournamentPair] = []
         pair_choices: dict[str, list[str]] = {}
         pair_wins: dict[str, int] = {option.id: 0 for option in favorites}
+        left_position_picks = 0
         for run_index in range(runs):
             for left_index, left in enumerate(favorites):
                 for right in favorites[left_index + 1:]:
                     pair_key = "|".join(sorted((left.id, right.id)))
+                    presented_left, presented_right = (
+                        (left, right) if run_index % 2 == 0 else (right, left)
+                    )
                     receipt = self.engine.choose(
                         (
-                            self._with_tournament_metadata(left, domain=domain),
-                            self._with_tournament_metadata(right, domain=domain),
+                            self._with_tournament_metadata(presented_left, domain=domain),
+                            self._with_tournament_metadata(presented_right, domain=domain),
                         ),
                         context=f"preference_tournament:{scenario_id}:pair:{pair_key}:run:{run_index}",
                         record=True,
                     )
                     pair_choices.setdefault(pair_key, []).append(receipt.chosen_id)
                     pair_wins[receipt.chosen_id] = pair_wins.get(receipt.chosen_id, 0) + 1
+                    if receipt.chosen_id == presented_left.id:
+                        left_position_picks += 1
                     pair_results.append(
                         PreferenceTournamentPair(
                             run_index=run_index,
-                            left_id=left.id,
-                            right_id=right.id,
+                            left_id=presented_left.id,
+                            right_id=presented_right.id,
                             chosen_id=receipt.chosen_id,
                             chosen_label=receipt.chosen_label,
                             preference_override=receipt.preference_override,
@@ -247,13 +254,15 @@ class SubjectiveChoiceGame:
             if choices
         }
         consistency_rate = statistics.fmean(pair_stability.values()) if pair_stability else 0.0
+        position_bias_rate = left_position_picks / len(pair_results) if pair_results else 0.0
         champion_id = max(pair_wins, key=lambda item: (pair_wins[item], item))
         champion_label = option_by_id[champion_id].label
         transitivity_violations = self._count_transitivity_violations(pair_choices)
         completed = time.time()
         commentary = (
             f"Preference tournament {scenario_id} produced champion {champion_label!r} "
-            f"with pairwise consistency {consistency_rate:.2f} over {runs} run(s)."
+            f"with pairwise consistency {consistency_rate:.2f} over {runs} run(s) "
+            f"and left-position pick rate {position_bias_rate:.2f}."
         )
         if transitivity_violations:
             commentary += f" Detected {transitivity_violations} transitivity tension(s) to revisit."
@@ -272,6 +281,7 @@ class SubjectiveChoiceGame:
             champion_label=champion_label,
             pair_stability=pair_stability,
             consistency_rate=consistency_rate,
+            position_bias_rate=position_bias_rate,
             transitivity_violations=transitivity_violations,
             commentary=commentary,
         )

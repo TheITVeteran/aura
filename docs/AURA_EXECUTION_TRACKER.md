@@ -4582,3 +4582,75 @@ Estimate:
 - Expanded daily-runtime/product closure: about 91%.
 - Remaining total checkpoint groups: about 2-3, centered on final closeout
   artifact replay and non-duplicative organism/personhood consolidation.
+
+## Checkpoint 2026-07-02-11: Position-Invariant Preference Tournament And Label Battery Reliability
+
+Status: operational label battery, frontier matrix, focused tests, compile, and
+Ruff passed; checkpoint commit pending.
+
+Scope:
+
+- Hardened the requested multi-situation preference tournament so pairwise
+  favorites are presented in alternating left/right order across runs. The
+  report now records a `position_bias_rate`, proving the engine is not merely
+  choosing whatever appears first.
+- Fixed subjective-choice tie handling so clamped score ties are resolved by a
+  stable, presentation-order-independent ranking over final score, preference
+  score, drive score, and canonical option id. This closed a real issue where
+  A/B presentation order could leak into choices when multiple options reached
+  the same final score.
+- Upgraded `tools/closeout/run_operational_label_battery.py` from one silent
+  all-in-one pytest subprocess to per-validator commands with progress,
+  per-file timeout, JSON `validator_results`, timeout reporting, and exact
+  failure localization. The proof harness can no longer sit quietly at 0 CPU
+  without naming the validator responsible.
+- Updated the live-mind snapshot fixture so the automatic self-knowing,
+  recursive self-knowing, and phenomenal-knowing services are part of the
+  tested snapshot contract instead of accidental missing mocks.
+- Refreshed `artifacts/closeout/frontier_standards_latest.json` with
+  `--require-live --strict`, so all frontier standards are source, validator,
+  and live-artifact mapped.
+- Refreshed `artifacts/closeout/operational_label_battery_latest.json` with the
+  full live-artifact label battery.
+
+Evidence:
+
+- `python -m pytest -q tests/test_subjective_choice_engine.py`
+  -> `6 passed`.
+- `python -m pytest -q tests/test_subjective_choice_engine.py tests/test_operational_label_battery.py tests/test_operational_label_baselines.py tests/test_frontier_standards_matrix.py`
+  -> `29 passed`.
+- `python -m pytest -q tests/test_live_mind_snapshot.py tests/test_self_knowing_bridges.py tests/test_operational_label_battery.py tests/test_subjective_choice_engine.py`
+  -> `23 passed`.
+- `python -m py_compile core/agency/subjective_choice.py core/agency/choice_game.py tools/closeout/run_operational_label_battery.py tests/test_subjective_choice_engine.py tests/test_operational_label_battery.py tests/test_live_mind_snapshot.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/agency/subjective_choice.py core/agency/choice_game.py tools/closeout/run_operational_label_battery.py tests/test_subjective_choice_engine.py tests/test_operational_label_battery.py tests/test_live_mind_snapshot.py`
+  -> passed.
+- `python tools/closeout/frontier_standards_matrix.py --require-live --strict --out artifacts/closeout/frontier_standards_latest.json`
+  -> passed with `gaps=0`, `mapped=9`, `require_live=true`.
+- `AURA_LABEL_VALIDATOR_TIMEOUT_S=300 python tools/closeout/run_operational_label_battery.py --require-live-artifacts --json-out artifacts/closeout/operational_label_battery_latest.json`
+  -> passed with `37/37` validator files, `10` operational labels,
+  `timed_out=[]`, `failed=[]`. The DNU live validator passed in `260.74s`
+  under the explicit `300s` per-validator budget.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=[]`; all live artifacts for the mapped label/frontier and current
+  live-runtime requirements are present.
+
+Boundary:
+
+- This proves Bryan's requested choice-consistency pattern at the engine level:
+  Aura can pick favorites, pit them against each other, preserve preferences
+  across reload, and avoid position-order bias in repeated A/B tournament runs.
+- This also turns the operational-label battery into a bounded, auditable proof
+  harness. It does not claim metaphysical proof of private phenomenal
+  consciousness, legal personhood, solved AGI, ASI, or unrestricted autonomy.
+- Remaining closeout work is now concentrated in final artifact assembly/replay,
+  continued daily-runtime reliability validation, and non-duplicative
+  consolidation of any remaining organism/personhood pieces.
+
+Estimate:
+
+- Subjective preference/choice/habit closure: about 96%.
+- Operational-label proof closure: about 96%.
+- Frontier-standards mapping closure: about 96%.
+- Expanded daily-runtime/product closure: about 92%.
+- Remaining total checkpoint groups: 2-3.

@@ -274,6 +274,14 @@ def test_preference_tournament_pits_favorites_and_reports_stability(tmp_path):
     assert report.champion_id in {item.id for item in situations}
     assert len(report.pairwise_results) == 24
     assert "pairwise consistency 1.00" in report.commentary
+    assert report.position_bias_rate == pytest.approx(0.5)
+
+    presentation_orders = {}
+    for pair in report.pairwise_results:
+        key = "|".join(sorted((pair.left_id, pair.right_id)))
+        presentation_orders.setdefault(key, set()).add((pair.left_id, pair.right_id))
+    assert presentation_orders
+    assert all(len(orders) == 2 for orders in presentation_orders.values())
 
     reloaded = SubjectiveChoiceEngine(state_path=path, mirror_identity=False)
     champion_pref = reloaded.recall_item_preference(
