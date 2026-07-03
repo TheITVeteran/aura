@@ -164,3 +164,36 @@ def test_model_scenarios_needs_two_options():
     out = asyncio.run(realize_model_scenarios({"options": "just one thing"}, {}))
     assert out["ok"] is False
     assert out["reason"] == "need_two_options"
+
+
+def test_menu_enabled_by_default_and_realize_wired():
+    """The action menu is on by default AND the realize path is wired into the
+    response flow (not merely defined) — strip-before-gate, realize-after."""
+    import inspect
+
+    from interface.routes import chat as chat_routes
+
+    src = inspect.getsource(chat_routes)
+    assert '"AURA_EXPRESSIVE_AFFORDANCES", "1"' in src  # on by default
+    assert "_pending_affordance_intents" in src          # stashed before gate
+    assert "_affordance_registry.realize(" in src        # realized after assembly
+    assert 'setdefault("data", {})["affordances"]' in src  # surfaced on the wire
+
+
+def test_strip_before_gate_keeps_prose_topical():
+    """A reply with an affordance tag, once stripped, reads as clean on-topic
+    prose the quality gate accepts — not a raw-tag off-topic burst."""
+    from core.cognition.expressive_affordances import get_affordance_registry
+    from interface.routes import chat as chat_routes
+
+    tagged = (
+        "That sounds like a shelf bracket. "
+        '⟦affordance:show_sketch prompt="an L-shaped steel shelf bracket"⟧ '
+        "Does that match what you're picturing?"
+    )
+    clean = get_affordance_registry().strip_intents(tagged)
+    assert "⟦affordance:" not in clean
+    off_topic, _reason = chat_routes._evaluate_reply_topicality(
+        "I have a broken metal thing that holds up a shelf", clean, recent_user_messages=[]
+    )
+    assert off_topic is False
