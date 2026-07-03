@@ -264,3 +264,62 @@ evidence-grounded qualitative assessment.
 - `make restore` refuses to overwrite a running instance's state
   (FORCE=1 override) — restoring under a live runtime was silent
   corruption.
+
+## Reliability stack: audit → zero-debt → learning → causal (July 3)
+
+Bryan built the aerospace/reliability hardening layer (fault taxonomy,
+FMEA, TMR, contracts, SLO monitor, verified state machines, tracing,
+chaos/canary/rollback, diagnostics endpoint, CI gate). Audited to the
+standard it names, defects fixed wholesale, then extended:
+
+### Audit findings fixed (commit 44805209 + prior fixes in 3ed7e668)
+- **Two guaranteed self-deadlocks**: `FaultRegistry.status()` →
+  `rpn_report()` and `ChaosFramework.status()` → `pass_rate()` re-acquired
+  their own non-reentrant locks. Empirically pinned: the test suite hung
+  at test 8 (`test_status`), and one GET of the diagnostics endpoint would
+  have wedged the live event loop thread.
+- **Severity fidelity**: `record_degradation`'s severity map was built and
+  dropped — critical degradations recorded as MARGINAL faults. Explicit
+  severity override added to `record_fault`.
+- **Dead SLOs**: `error_rate_per_1k_requests`/`substrate_resets_per_hour`
+  compared each event's value (1.0) to a count target — mathematically
+  unable to violate. New `count_per_window` aggregation makes occurrence
+  SLOs real (renamed `error_events_per_hour`).
+- **Alert storms**: persistent SLO violation fired a CRITICAL alert per
+  sample on hot paths (Will decisions target 5ms). 60s per-SLO cooldown.
+- **Thread-safety**: SLO tracker deque mutated during status() iteration
+  (RuntimeError under load) — per-tracker lock; VSM ran guards/actions
+  under a non-reentrant lock (reentrant guard = deadlock) — RLock.
+- **Mock rollback**: `rollback()` loaded state, logged "restored", applied
+  nothing, returned True. Now: registered state applier or fail closed.
+- **Broken traces**: per-span sampling re-rolls orphaned children; now
+  head-based (root decides, descendants inherit, force_sample survives).
+- **Traceability theater**: all 8 runbook references pointed at
+  nonexistent files; 3 FMEA mitigation paths were wrong. Fixed + 3 new
+  runbooks written (worker-crash, shutdown-hang, orphaned-tasks) + a test
+  that fails if any catalog reference stops resolving.
+- Full gate sweep to zero-debt: every broad except narrowed to the
+  explicit guarded-callable envelope; tracing records in-flight
+  exceptions via sys.exc_info in finally (catches CancelledError too,
+  no false ERROR when a span opens inside an except block).
+
+### FMEA that learns (68b1538e)
+`core/resilience/fault_evidence.py`: cross-boot occurrence evidence
+(governed atomic persistence, O(1) hot-path recording), MIL-STD-882E
+band mapping from observed rates with a sufficiency gate, and a
+probability-drift report with recalibrated RPNs —
+`/api/diagnostics/reliability/drift`. The static hazard catalog is now
+checked against measurement instead of staying a frozen guess.
+
+### Causal wiring (857cc629)
+- ShutdownCoordinator walks the verified shutdown lifecycle FSM; a
+  re-entrant shutdown() (previously: warning + double-running every
+  teardown handler) is now a recorded F17 and a refused duplicate.
+- HTTP root spans on every /api request (middleware) with
+  inference.generate child spans in mlx_client — slow turns read as one
+  connected trace at /reliability/traces.
+
+Remaining in this arc: recovery executor (faults actuate their
+RecoveryStrategy) — deliberately deferred to integrate with the immune
+system rather than duplicate it, blocked on the parallel agent's
+in-flight immune_system.py edits.
