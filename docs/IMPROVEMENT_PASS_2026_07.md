@@ -87,6 +87,23 @@ backpressure semantics, windowed integrity recovery, numeric-introspection
 grounding (verify with tools/report_mechanism_consistency_probe.py),
 abandonment soft-cancel, and the stable-identity signed app bundle.
 
+### Phase 4 — raw-capability tier (test-time compute + agency)
+
+Frontier-style capability on fixed local weights, all env-gated and
+fail-open to the prior path:
+
+| Capability | Mechanism | Verification |
+|---|---|---|
+| Speculative decoding | 1.5B draft proposes, steered 32B verifies every token — output distribution & steering semantics belong to the target by construction. Heavy lanes only; schema/logits-processor/prompt-cache jobs excluded (both generate + stream paths). | 9 tests; measured 62→70 tok/s (1.13x) on a 7B target despite an unfavorable 4.7x ratio — the 32B's 21x ratio is where it pays. bench tool for the 32B window. |
+| Batched best-of-N | N reasoning candidates decode in ONE batched worker pass (mlx_lm batch_generate); raw candidates by design, the truth-engine verifiers select. Amplifier tries batch first, serial fallback intact. | 7 tests; verifier-filter + self-consistency + DPO harvest all operate on the cheaper pool. |
+| RFT flywheel | Verifier-clean derivations (from the amplifier's RLVR harvest) → SFT dataset → proven train/fuse pipeline. SFT-on-chosen (verifier = ground truth) over DPO (mlx_lm has no DPO mode). | 4 tests; gate fails closed on <64 rows OR failed preflight (live-instance/memory) — never a 32B train beside live Aura. |
+| Self-repair backlog | Chunk runner writes a machine-readable defect register; ingestor turns it into approval-gated, shadow-planned repair goals for the (already mature) autonomous task engine. | 6 tests; requires_approval=True + is_shadow=True, idempotent, read-only ingestion. Aura's regression detector now feeds her own governed self-repair. |
+
+The compounding loop is now closed end-to-end: **speculative + batched
+decoding buy test-time compute → best-of-N reasoning → verifiers select →
+verified derivations become weights (flywheel) → better drafts → repeat**,
+and detected regressions route to governed self-repair.
+
 ### Sweep ledger
 
 | Area | Depth | Findings / actions |
