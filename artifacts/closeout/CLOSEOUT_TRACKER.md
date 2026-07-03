@@ -2534,3 +2534,41 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-23: Meta-Cognition Registry Decoupling
+
+Status: ready to commit.
+
+What changed:
+
+- Moved the meta-cognition loop's `meta_evolution` lookup through the runtime
+  service registry.
+- Preserved the structural-review behavior for recurring cognitive failures:
+  queue optimization, keep the last two failures, and avoid rapid retriggering.
+- Added regression coverage for registry-backed structural review and source
+  ownership.
+- Refreshed the architecture-quality baseline after the largest import SCC
+  dropped from `614` modules to `613` modules.
+- Kept the quality target general: recurring-failure handling and self-repair
+  routing use reusable runtime service ownership, not aerospace-domain logic.
+
+Evidence:
+
+- Runtime/architecture/audit/reliability focused tests -> `120 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=44.82`,
+  `largest_cycle_size=613`, `cycle_count=7`, `dependency_edges=7512`,
+  `module_count=2245`.
+- Remaining-checkpoint contract -> `gaps=0`,
+  `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check` -> passed.
+
+Tracker:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 41-45%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
+- Remaining total checkpoint groups: 3.

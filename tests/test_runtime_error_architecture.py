@@ -651,3 +651,40 @@ def test_cryptolalia_decoder_uses_runtime_registry():
     assert "core.container" not in source
     assert "ServiceContainer" not in source
     assert "core.runtime.service_registry" in source
+
+
+def test_meta_cognition_structural_review_uses_runtime_registry():
+    import asyncio
+    import inspect
+    import core.meta.meta_cognition as meta_cognition
+    from core.runtime.service_registry import install_service_resolver
+
+    queued: list[tuple[str, str]] = []
+
+    class MetaEvolution:
+        def queue_optimization(self, *, target_area, context):
+            queued.append((target_area, context))
+
+    loop = meta_cognition.MetaCognition()
+    loop.error_history = [
+        {"decision": f"failure-{idx}", "outcome": "failure", "context": {}, "timestamp": 1.0}
+        for idx in range(6)
+    ]
+
+    install_service_resolver(
+        lambda name, default=None: MetaEvolution() if name == "meta_evolution" else default
+    )
+    try:
+        asyncio.run(loop._trigger_structural_review())
+    finally:
+        install_service_resolver(None)
+
+    assert queued
+    assert queued[0][0] == "cognitive_patterns"
+    assert "failure-5" in queued[0][1]
+    assert len(loop.error_history) == 2
+
+    source = inspect.getsource(meta_cognition)
+    assert "core.container" not in source
+    assert "ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source

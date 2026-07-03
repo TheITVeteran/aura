@@ -347,7 +347,6 @@
       "core.memory.sovereign_pruner",
       "core.memory.sqlite_storage",
       "core.memory_synthesizer",
-      "core.meta.meta_cognition",
       "core.meta_cognition",
       "core.mind_tick",
       "core.moral_reasoning",
@@ -652,7 +651,7 @@
   "findings": [
     {
       "code": "import_cycle",
-      "message": "Import cycle across 614 modules",
+      "message": "Import cycle across 613 modules",
       "modules": [
         "core.actuators.actuator_registry",
         "core.actuators.code_execution_actuator",
@@ -1000,7 +999,6 @@
         "core.memory.sovereign_pruner",
         "core.memory.sqlite_storage",
         "core.memory_synthesizer",
-        "core.meta.meta_cognition",
         "core.meta_cognition",
         "core.mind_tick",
         "core.moral_reasoning",
@@ -1271,7 +1269,7 @@
       ],
       "path": null,
       "severity": "high",
-      "value": 614
+      "value": 613
     },
     {
       "code": "import_cycle",
@@ -3868,7 +3866,7 @@
     "dependency_concentration_pct": 30.0186,
     "dependency_edges": 7512,
     "god_file_count": 37,
-    "largest_cycle_size": 614,
+    "largest_cycle_size": 613,
     "max_file_lines": 15933,
     "max_in_degree": 1011,
     "max_out_degree": 94,
@@ -6122,5 +6120,5 @@
     "tools.wedge_recovery_supervisor": "tools/wedge_recovery_supervisor.py"
   },
   "root": "/Users/bryan/.aura/live-source",
-  "score": 44.81
+  "score": 44.82
 }

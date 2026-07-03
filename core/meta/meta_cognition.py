@@ -1,7 +1,7 @@
 import time
 import logging
 from typing import List, Dict, Any, Optional
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.MetaCognition")
 
@@ -62,7 +62,7 @@ class MetaCognition:
         Calls the MetaEvolutionEngine to address recurring issues.
         """
         logger.info("🌀 Structural failure threshold met. Initiating Meta-Evolution reflex...")
-        mee = ServiceContainer.get("meta_evolution", default=None)
+        mee = get_runtime_service("meta_evolution", default=None)
         if mee:
             mee.queue_optimization(
                 target_area="cognitive_patterns",

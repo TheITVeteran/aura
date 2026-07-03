@@ -5207,3 +5207,54 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
 - Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
   desktop findings, and longer soak/runtime evidence.
+
+## Checkpoint 2026-07-03-23: Meta-Cognition Registry Decoupling
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Moved `core.meta.meta_cognition` structural-review lookup of
+  `meta_evolution` from the global container to the runtime service registry.
+- Preserved repeated-failure behavior: once the meta-cognition loop sees enough
+  failures, it queues a structural optimization and trims the retained error
+  history.
+- Added regression coverage that verifies the optimization is still queued
+  through a registered `meta_evolution` service and that direct container
+  imports stay out of `core.meta.meta_cognition`.
+- Refreshed the architecture-quality baseline after reducing the largest import
+  SCC from `614` modules to `613` modules.
+- Kept the standard general-purpose: recurring-failure review and self-repair
+  routing use the same runtime registry boundary as other subsystems.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `120 passed`.
+- `python -m ruff check --select F,E9 core/meta/meta_cognition.py tests/test_runtime_error_architecture.py`
+  -> passed.
+- `python -m py_compile core/meta/meta_cognition.py tests/test_runtime_error_architecture.py`
+  -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=44.82`,
+  `largest_cycle_size=613`, `cycle_count=7`, `dependency_edges=7512`,
+  `god_file_count=37`, `module_count=2245`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=0`, `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check`
+  -> passed.
+
+Boundary:
+
+- This is another small SCC reduction. It improves service ownership but does
+  not close the broader overdetermination problem; larger module consolidation
+  and live-runtime evidence remain.
+
+Estimate:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 41-45%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
+- Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
+  desktop findings, and longer soak/runtime evidence.
