@@ -5156,3 +5156,54 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
 - Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
   desktop findings, and longer soak/runtime evidence.
+
+## Checkpoint 2026-07-03-22: Cryptolalia Decoder Registry Decoupling
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Moved `core.brain.cryptolalia_decoder` concept-bridge lookup from the global
+  container to the runtime service registry.
+- Moved `cryptolalia_decoder` service publication through the runtime registry
+  registration sink while preserving required-service semantics.
+- Removed stale typing imports from the decoder.
+- Added regression coverage that verifies latent-vector translation still reads
+  the registered concept bridge and that decoder publication goes through the
+  registry.
+- Refreshed the architecture-quality baseline after reducing the largest import
+  SCC from `615` modules to `614` modules.
+- Kept the standard general-purpose: this is service ownership and dependency
+  hygiene for any reliability bar, not aerospace-domain behavior.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `119 passed`.
+- `python -m ruff check --select F,E9 core/brain/cryptolalia_decoder.py core/brain/cognitive_engine.py tests/test_runtime_error_architecture.py`
+  -> passed.
+- `python -m py_compile core/brain/cryptolalia_decoder.py core/brain/cognitive_engine.py tests/test_runtime_error_architecture.py`
+  -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=44.81`,
+  `largest_cycle_size=614`, `cycle_count=7`, `dependency_edges=7512`,
+  `god_file_count=37`, `module_count=2245`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=0`, `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check`
+  -> passed.
+
+Boundary:
+
+- This is a small but measured SCC reduction. The dominant SCC remains large,
+  so the next architecture-debt checkpoint should keep cutting simple service
+  lookups/publications before attempting riskier Will/governance surgery.
+
+Estimate:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 40-44%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
+- Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
+  desktop findings, and longer soak/runtime evidence.

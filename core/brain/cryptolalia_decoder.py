@@ -10,8 +10,8 @@ while she runs efficiently entirely in latent space.
 
 import logging
 import numpy as np
-from typing import Dict, List, Tuple
-from core.container import ServiceContainer
+from typing import List
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.CryptolaliaDecoder")
 
@@ -25,7 +25,7 @@ class CryptolaliaDecoder:
         self.bridge = None 
 
     def init_routes(self):
-        self.bridge = ServiceContainer.get("concept_bridge", default=None)
+        self.bridge = get_runtime_service("concept_bridge", default=None)
 
     def cosine_similarity(self, v1: List[float], v2: List[float]) -> float:
         """Calculate similarity between two vectors."""
@@ -75,5 +75,11 @@ class CryptolaliaDecoder:
 
 def register_cryptolalia_decoder(orchestrator=None):
     decoder = CryptolaliaDecoder(orchestrator)
-    ServiceContainer.register_instance("cryptolalia_decoder", decoder)
+    register_runtime_service(
+        "cryptolalia_decoder",
+        decoder,
+        required=True,
+        owner="cognitive",
+        registered_by="cryptolalia_decoder",
+    )
     return decoder

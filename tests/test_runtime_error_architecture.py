@@ -606,3 +606,48 @@ def test_cognitive_engine_service_lookup_uses_runtime_registry_adapter():
     assert "core.container" not in source
     assert "ServiceContainer" not in source
     assert "core.runtime.service_registry" in source
+
+
+def test_cryptolalia_decoder_uses_runtime_registry():
+    import inspect
+    import core.brain.cryptolalia_decoder as cryptolalia_decoder
+    from core.runtime.service_registry import (
+        install_service_registration_sink,
+        install_service_resolver,
+    )
+
+    class ConceptBridge:
+        _concept_cache = {
+            "alpha": [1.0, 0.0],
+            "beta": [0.0, 1.0],
+        }
+
+    install_service_resolver(
+        lambda name, default=None: ConceptBridge() if name == "concept_bridge" else default
+    )
+    try:
+        decoder = cryptolalia_decoder.CryptolaliaDecoder()
+        assert decoder.approximate_translation([1.0, 0.0], top_n=1) == "[alpha]"
+    finally:
+        install_service_resolver(None)
+
+    registered: list[tuple[str, object, bool, dict[str, str | None]]] = []
+    install_service_registration_sink(
+        lambda name, instance, required, metadata: registered.append(
+            (name, instance, required, metadata)
+        )
+    )
+    try:
+        instance = cryptolalia_decoder.register_cryptolalia_decoder()
+    finally:
+        install_service_registration_sink(None)
+
+    assert registered
+    assert registered[0][0] == "cryptolalia_decoder"
+    assert registered[0][1] is instance
+    assert registered[0][2] is True
+
+    source = inspect.getsource(cryptolalia_decoder)
+    assert "core.container" not in source
+    assert "ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source

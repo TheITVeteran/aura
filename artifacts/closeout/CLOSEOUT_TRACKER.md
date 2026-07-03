@@ -2495,3 +2495,42 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-22: Cryptolalia Decoder Registry Decoupling
+
+Status: ready to commit.
+
+What changed:
+
+- Moved CryptolaliaDecoder's concept-bridge lookup through the runtime service
+  registry.
+- Moved cryptolalia decoder publication through the runtime service
+  registration sink with required-service semantics preserved.
+- Removed stale unused typing imports from the decoder.
+- Added regression coverage for decoder lookup, translation behavior, and
+  service publication.
+- Refreshed the architecture-quality baseline after the largest import SCC
+  dropped from `615` modules to `614` modules.
+- Kept the quality target general: reusable service ownership and dependency
+  hygiene, not aerospace-domain behavior.
+
+Evidence:
+
+- Runtime/architecture/audit/reliability focused tests -> `119 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=44.81`,
+  `largest_cycle_size=614`, `cycle_count=7`, `dependency_edges=7512`,
+  `module_count=2245`.
+- Remaining-checkpoint contract -> `gaps=0`,
+  `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check` -> passed.
+
+Tracker:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 40-44%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
+- Remaining total checkpoint groups: 3.

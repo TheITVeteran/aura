@@ -93,7 +93,6 @@
       "core.brain.composer_node",
       "core.brain.concept_vector_bridge",
       "core.brain.conversational_amplifier",
-      "core.brain.cryptolalia_decoder",
       "core.brain.deep_deliberation",
       "core.brain.deliberation",
       "core.brain.discourse_tracker",
@@ -653,7 +652,7 @@
   "findings": [
     {
       "code": "import_cycle",
-      "message": "Import cycle across 615 modules",
+      "message": "Import cycle across 614 modules",
       "modules": [
         "core.actuators.actuator_registry",
         "core.actuators.code_execution_actuator",
@@ -747,7 +746,6 @@
         "core.brain.composer_node",
         "core.brain.concept_vector_bridge",
         "core.brain.conversational_amplifier",
-        "core.brain.cryptolalia_decoder",
         "core.brain.deep_deliberation",
         "core.brain.deliberation",
         "core.brain.discourse_tracker",
@@ -1273,7 +1271,7 @@
       ],
       "path": null,
       "severity": "high",
-      "value": 615
+      "value": 614
     },
     {
       "code": "import_cycle",
@@ -1455,11 +1453,11 @@
     },
     {
       "code": "oversized_module",
-      "message": "core/brain/cognitive_engine.py has 3068 lines (threshold 1500)",
+      "message": "core/brain/cognitive_engine.py has 3079 lines (threshold 1500)",
       "modules": [],
       "path": "core/brain/cognitive_engine.py",
       "severity": "medium",
-      "value": 3068
+      "value": 3079
     },
     {
       "code": "oversized_module",
@@ -1891,7 +1889,7 @@
     "core/brain/cognitive/memory_management.py": 227,
     "core/brain/cognitive_amplification.py": 101,
     "core/brain/cognitive_context_manager.py": 159,
-    "core/brain/cognitive_engine.py": 3068,
+    "core/brain/cognitive_engine.py": 3079,
     "core/brain/cognitive_interface.py": 25,
     "core/brain/cognitive_manager.py": 77,
     "core/brain/cognitive_patch.py": 105,
@@ -1907,7 +1905,7 @@
     "core/brain/conversational_amplifier.py": 169,
     "core/brain/courtroom.py": 215,
     "core/brain/cross_tier_verifier.py": 108,
-    "core/brain/cryptolalia_decoder.py": 79,
+    "core/brain/cryptolalia_decoder.py": 85,
     "core/brain/debate.py": 31,
     "core/brain/decomposition.py": 25,
     "core/brain/deep_deliberation.py": 148,
@@ -3870,7 +3868,7 @@
     "dependency_concentration_pct": 30.0186,
     "dependency_edges": 7512,
     "god_file_count": 37,
-    "largest_cycle_size": 615,
+    "largest_cycle_size": 614,
     "max_file_lines": 15933,
     "max_in_degree": 1011,
     "max_out_degree": 94,
@@ -6124,5 +6122,5 @@
     "tools.wedge_recovery_supervisor": "tools/wedge_recovery_supervisor.py"
   },
   "root": "/Users/bryan/.aura/live-source",
-  "score": 44.8
+  "score": 44.81
 }
