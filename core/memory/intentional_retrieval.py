@@ -26,9 +26,10 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -54,6 +55,7 @@ class MemoryStoreType(str, Enum):
     WORLD_STATE = "world_state"     # current beliefs about the world
     RECEIPT = "receipt"             # action receipts / outcomes
     AUTOBIOGRAPHY = "autobiography"  # compressed life narrative
+    REFERENCE = "reference"         # external reference knowledge (local corpora), provenance-tagged
 
 
 # Adapter: query text + limit → an iterable of raw results (str / dict / object). The router
@@ -67,9 +69,9 @@ class MemoryHit:
     score: float
     store_type: str
     source: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "content": self.content,
             "score": round(self.score, 4),
@@ -100,11 +102,11 @@ class RetrievalIntent:
 @dataclass
 class RetrievalPlan:
     intent: RetrievalIntent
-    weights: Dict[str, float]        # store_type value → weight, only those above threshold
-    allocations: Dict[str, int]      # store_type value → per-store fetch budget
-    rationale: List[str] = field(default_factory=list)
+    weights: dict[str, float]        # store_type value → weight, only those above threshold
+    allocations: dict[str, int]      # store_type value → per-store fetch budget
+    rationale: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "task": self.intent.task,
             "kind": self.intent.kind,
@@ -116,12 +118,12 @@ class RetrievalPlan:
 
 @dataclass
 class RetrievalResult:
-    hits: List[MemoryHit]
+    hits: list[MemoryHit]
     plan: RetrievalPlan
-    stores_queried: List[str]
-    stores_missing: List[str]
+    stores_queried: list[str]
+    stores_missing: list[str]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "hits": [h.to_dict() for h in self.hits],
             "plan": self.plan.to_dict(),
@@ -133,7 +135,7 @@ class RetrievalResult:
 _T = MemoryStoreType
 
 # Per-task-kind base store weights — "what kind of memory matters" for this kind of task.
-_KIND_WEIGHTS: Dict[str, Dict[MemoryStoreType, float]] = {
+_KIND_WEIGHTS: dict[str, dict[MemoryStoreType, float]] = {
     "debug": {_T.PROCEDURAL: 0.9, _T.FAILURE: 0.9, _T.TOOL: 0.8, _T.CAUSAL: 0.7,
               _T.EPISODIC: 0.6, _T.SEMANTIC: 0.4},
     "plan": {_T.PROJECT: 0.9, _T.SEMANTIC: 0.7, _T.CAUSAL: 0.7, _T.VALUE: 0.6,
@@ -144,12 +146,13 @@ _KIND_WEIGHTS: Dict[str, Dict[MemoryStoreType, float]] = {
                _T.PROJECT: 0.6, _T.SEMANTIC: 0.5},
     "act_irreversible": {_T.VALUE: 1.0, _T.FAILURE: 0.9, _T.RECEIPT: 0.8, _T.CAUSAL: 0.7,
                          _T.WORLD_STATE: 0.6, _T.PROJECT: 0.5},
-    "recall_fact": {_T.SEMANTIC: 1.0, _T.EPISODIC: 0.7, _T.AUTOBIOGRAPHY: 0.5,
-                    _T.WORLD_STATE: 0.4},
-    "learn": {_T.SEMANTIC: 0.8, _T.CAUSAL: 0.8, _T.FAILURE: 0.7, _T.PROCEDURAL: 0.6,
-              _T.EPISODIC: 0.6},
+    "recall_fact": {_T.SEMANTIC: 1.0, _T.REFERENCE: 0.8, _T.EPISODIC: 0.7,
+                    _T.AUTOBIOGRAPHY: 0.5, _T.WORLD_STATE: 0.4},
+    "learn": {_T.SEMANTIC: 0.8, _T.CAUSAL: 0.8, _T.REFERENCE: 0.7, _T.FAILURE: 0.7,
+              _T.PROCEDURAL: 0.6, _T.EPISODIC: 0.6},
     "social": {_T.SOCIAL: 1.0, _T.VALUE: 0.7, _T.EPISODIC: 0.6, _T.AUTOBIOGRAPHY: 0.3},
-    "general": {_T.EPISODIC: 0.7, _T.SEMANTIC: 0.7, _T.SOCIAL: 0.5, _T.PROJECT: 0.5},
+    "general": {_T.EPISODIC: 0.7, _T.SEMANTIC: 0.7, _T.SOCIAL: 0.5, _T.PROJECT: 0.5,
+                _T.REFERENCE: 0.4},
 }
 
 _SELECT_THRESHOLD = 0.25
@@ -159,7 +162,7 @@ class IntentionalRetriever:
     """Routes a retrieval intent across a registry of typed memory-store adapters."""
 
     def __init__(self, *, select_threshold: float = _SELECT_THRESHOLD) -> None:
-        self._adapters: Dict[MemoryStoreType, StoreAdapter] = {}
+        self._adapters: dict[MemoryStoreType, StoreAdapter] = {}
         self._threshold = select_threshold
 
     # ── store registry ────────────────────────────────────────────────────
@@ -168,7 +171,7 @@ class IntentionalRetriever:
         """Plug an existing store in as ``(query, limit) -> iterable`` of results."""
         self._adapters[MemoryStoreType(store_type)] = adapter
 
-    def registered_types(self) -> List[str]:
+    def registered_types(self) -> list[str]:
         return [t.value for t in self._adapters]
 
     # ── planning: intent → weighted store selection ───────────────────────
@@ -176,8 +179,8 @@ class IntentionalRetriever:
     def plan(self, intent: RetrievalIntent) -> RetrievalPlan:
         """Turn an intent into weighted stores + fetch allocations, with a rationale."""
         base = _KIND_WEIGHTS.get(intent.kind, _KIND_WEIGHTS["general"])
-        weights: Dict[MemoryStoreType, float] = dict(base)
-        rationale: List[str] = [f"task kind '{intent.kind}' → {self._fmt(base)}"]
+        weights: dict[MemoryStoreType, float] = dict(base)
+        rationale: list[str] = [f"task kind '{intent.kind}' → {self._fmt(base)}"]
 
         def boost(t: MemoryStoreType, amount: float) -> None:
             weights[t] = _clamp(weights.get(t, 0.0) + amount)
@@ -214,11 +217,11 @@ class IntentionalRetriever:
         return RetrievalPlan(intent=intent, weights=selected, allocations=allocations,
                              rationale=rationale)
 
-    def _allocate(self, weights: Dict[str, float], limit: int) -> Dict[str, int]:
+    def _allocate(self, weights: dict[str, float], limit: int) -> dict[str, int]:
         # Over-fetch from each store in proportion to its weight, then the merge step trims to
         # the final limit — so a high-weight store can dominate the result if it's rich.
         total = sum(weights.values()) or 1.0
-        out: Dict[str, int] = {}
+        out: dict[str, int] = {}
         for store, w in weights.items():
             out[store] = max(2, min(limit, math.ceil(limit * (w / total) * 2)))
         return out
@@ -229,9 +232,9 @@ class IntentionalRetriever:
         """Execute a plan across registered stores; merge + rank; fault-isolated per store."""
         plan = self.plan(intent)
         query = intent.effective_query()
-        hits: List[MemoryHit] = []
-        queried: List[str] = []
-        missing: List[str] = []
+        hits: list[MemoryHit] = []
+        queried: list[str] = []
+        missing: list[str] = []
 
         for store, weight in plan.weights.items():
             adapter = self._adapters.get(MemoryStoreType(store))
@@ -254,14 +257,14 @@ class IntentionalRetriever:
                                stores_missing=missing)
 
     @staticmethod
-    def _normalize(raw: Iterable[Any], store: str, weight: float) -> List[MemoryHit]:
+    def _normalize(raw: Iterable[Any], store: str, weight: float) -> list[MemoryHit]:
         """Coerce a store's heterogeneous output into weighted MemoryHits.
 
         Scores: an explicit score/similarity/relevance/confidence if present, otherwise a
         rank-decayed base (stores that return a ranked list but no scores). Every score is
         multiplied by the store's plan weight so cross-store merging respects intent.
         """
-        out: List[MemoryHit] = []
+        out: list[MemoryHit] = []
         items = list(raw or [])
         for rank, item in enumerate(items):
             base = 1.0 / (1.0 + rank)
@@ -290,9 +293,9 @@ class IntentionalRetriever:
         return out
 
     @staticmethod
-    def _merge(hits: List[MemoryHit], limit: int) -> List[MemoryHit]:
+    def _merge(hits: list[MemoryHit], limit: int) -> list[MemoryHit]:
         # Highest weighted score wins; dedupe identical content, keeping the strongest.
-        best: Dict[str, MemoryHit] = {}
+        best: dict[str, MemoryHit] = {}
         for h in hits:
             key = h.content.strip().lower()[:200]
             if key not in best or h.score > best[key].score:
@@ -301,19 +304,19 @@ class IntentionalRetriever:
         return ranked[:limit]
 
     @staticmethod
-    def _fmt(weights: Dict[MemoryStoreType, float]) -> str:
+    def _fmt(weights: dict[MemoryStoreType, float]) -> str:
         return ", ".join(f"{t.value}:{w:.1f}" for t, w in
                          sorted(weights.items(), key=lambda kv: kv[1], reverse=True))
 
     # ── opt-in default wiring over existing stores ────────────────────────
 
-    def wire_default_stores(self) -> List[str]:
+    def wire_default_stores(self) -> list[str]:
         """Best-effort registration of adapters for stores that exist and query synchronously.
 
         Opt-in (not called at import) so registration stays cheap and surprise-free. Returns the
         store-type values successfully wired. Other store types register via ``register_store``.
         """
-        wired: List[str] = []
+        wired: list[str] = []
 
         # SEMANTIC — distilled facts via the memory synthesizer.
         try:
@@ -340,7 +343,7 @@ class IntentionalRetriever:
             from core.memory.social_memory import SocialMemory
             sm = SocialMemory()
 
-            def _social(q: str, n: int) -> List[Dict[str, Any]]:
+            def _social(q: str, n: int) -> list[dict[str, Any]]:
                 toks = {t for t in q.lower().split() if len(t) > 2}
                 scored = []
                 for m in sm.milestones:
@@ -357,10 +360,27 @@ class IntentionalRetriever:
             record_degradation("intentional_retrieval", exc, severity="debug",
                                action="social store not wired")
 
+        # REFERENCE — external knowledge from the local corpus (FTS5/BM25),
+        # provenance-tagged so answers cite instead of confabulate. Only
+        # wired when a non-empty corpus exists: an empty lane would spend
+        # plan budget on guaranteed misses.
+        try:
+            from core.knowledge.local_corpus import get_local_corpus_store
+            corpus = get_local_corpus_store()
+            if corpus.document_count() > 0:
+                self.register_store(
+                    _T.REFERENCE,
+                    lambda q, n: [h.to_memory_dict() for h in corpus.search(q, limit=n)],
+                )
+                wired.append(_T.REFERENCE.value)
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            record_degradation("intentional_retrieval", exc, severity="debug",
+                               action="reference store not wired")
+
         return wired
 
 
-_instance: Optional[IntentionalRetriever] = None
+_instance: IntentionalRetriever | None = None
 
 
 def get_intentional_retriever() -> IntentionalRetriever:

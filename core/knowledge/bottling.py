@@ -23,7 +23,12 @@ from typing import Any
 
 from core.runtime.atomic_writer import async_atomic_write_text
 from core.runtime.service_registry import get_runtime_service, register_runtime_service
-from core.utils.engine_support import coerce_text, data_root, record_engine_degradation, resolve_brain
+from core.utils.engine_support import (
+    coerce_text,
+    data_root,
+    record_engine_degradation,
+    resolve_brain,
+)
 
 logger = logging.getLogger("Aura.KnowledgeBottling")
 

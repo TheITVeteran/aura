@@ -19,7 +19,7 @@ class ExtractedRule:
 
 
 def make_rule(*, domain: str, condition: str, recommendation: str, risk: str, confidence: float, source_id: str, grounding_tests: list[str]) -> ExtractedRule:
-    rid = "rule_" + hashlib.sha256(f"{domain}:{condition}:{recommendation}:{source_id}".encode("utf-8")).hexdigest()[:16]
+    rid = "rule_" + hashlib.sha256(f"{domain}:{condition}:{recommendation}:{source_id}".encode()).hexdigest()[:16]
     return ExtractedRule(
         rule_id=rid,
         domain=domain,
