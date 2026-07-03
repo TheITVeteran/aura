@@ -5,8 +5,8 @@ from core.runtime.errors import record_degradation
 import logging
 from typing import Any, Optional
 
-from core.container import ServiceContainer
 from core.consciousness.executive_closure import ExecutiveClosureEngine
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 from . import BasePhase
 from ..state.aura_state import AuraState
@@ -25,11 +25,11 @@ class ExecutiveClosurePhase(BasePhase):
         if self._engine is not None:
             return self._engine
 
-        engine = ServiceContainer.get("executive_closure", default=None)
+        engine = get_runtime_service("executive_closure", default=None)
         if engine is None:
             engine = ExecutiveClosureEngine()
             try:
-                ServiceContainer.register_instance("executive_closure", engine)
+                register_runtime_service("executive_closure", engine)
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('executive_closure', exc)
                 logger.debug("ExecutiveClosurePhase: registration skipped: %s", exc)

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from core.runtime import background_policy
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker
 
@@ -79,8 +80,7 @@ def clear_background_generation(state: Any, objective: Any) -> None:
         # ── Drive satisfaction on objective completion ──
         # Close the homeostatic loop: completing a goal satisfies the drive
         try:
-            from core.container import ServiceContainer
-            drive = ServiceContainer.get("drive_engine", default=None)
+            drive = get_runtime_service("drive_engine", default=None)
             if drive:
                 # Satisfy competence (completed a task) and curiosity (learned something)
                 try:

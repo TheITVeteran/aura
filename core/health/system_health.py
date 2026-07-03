@@ -3,9 +3,9 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 from core.runtime.health_contract import evaluate_health, runtime_health_report
+from core.runtime.service_registry import get_runtime_container_health_report, get_runtime_service
 
 router = APIRouter()
 
@@ -20,7 +20,7 @@ _SYSTEM_HEALTH_ERRORS = (
 
 def _current_state_for_scan() -> object:
     """Return the best available state object for health scans."""
-    repo = ServiceContainer.get("state_repository", default=None)
+    repo = get_runtime_service("state_repository", default=None)
     state = getattr(repo, "_current", None) if repo is not None else None
     if state is not None:
         return state
@@ -35,7 +35,7 @@ async def get_full_health_report() -> JSONResponse:
     """Comprehensive health report gated by the canonical runtime contract."""
     try:
         contract = runtime_health_report()
-        container_report = ServiceContainer.get_health_report()
+        container_report = get_runtime_container_health_report()
     except _SYSTEM_HEALTH_ERRORS as exc:
         record_degradation("system_health", exc)
         return JSONResponse(
@@ -83,7 +83,7 @@ async def get_thread_summary() -> JSONResponse:
 async def get_health_v2() -> JSONResponse:
     """Extended system health endpoints via the [ZENITH] Tricorder."""
     contract = runtime_health_report()
-    tricorder = ServiceContainer.get("tricorder", default=None)
+    tricorder = get_runtime_service("tricorder", default=None)
     if not tricorder:
         return JSONResponse(
             {

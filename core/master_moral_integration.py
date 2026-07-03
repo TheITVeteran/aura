@@ -2,8 +2,6 @@
 Combines all components into a cohesive whole.
 """
 import logging
-import os
-import sys
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(name)s - %(levelname)s - %(message)s')
@@ -16,6 +14,7 @@ from core.brain.personality_engine import (
     integrate_personality_into_conversation,
 )
 from core.moral_reasoning import get_moral_reasoning
+from core.runtime.service_registry import register_runtime_service
 from core.sensory_integration import integrate_sensory_system
 from core.consciousness.theory_of_mind import get_theory_of_mind
 
@@ -32,12 +31,11 @@ def integrate_complete_moral_and_sensory_systems(orchestrator):
     
     # 1. Initialize Core Systems
     # --------------------------
-    from core.container import ServiceContainer
     tom = get_theory_of_mind()
-    ServiceContainer.register_instance("theory_of_mind", tom)
+    register_runtime_service("theory_of_mind", tom)
     
     moral = get_moral_reasoning()
-    ServiceContainer.register_instance("moral_reasoning", moral)
+    register_runtime_service("moral_reasoning", moral)
     
     # 2. Integrate Sensory Capabilities
     # ---------------------------------
@@ -45,7 +43,7 @@ def integrate_complete_moral_and_sensory_systems(orchestrator):
     integrate_sensory_system(orchestrator)
     
     p_engine = get_personality_engine()
-    ServiceContainer.register_instance("personality_engine", p_engine)
+    register_runtime_service("personality_engine", p_engine)
     
     # Uses hooks instead of patching
     integrate_personality_into_conversation(orchestrator)

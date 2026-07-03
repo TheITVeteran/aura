@@ -1,9 +1,8 @@
 from core.runtime.errors import record_degradation
-import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-from core.container import get_container
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.CognitiveManager")
 
@@ -21,11 +20,12 @@ class CognitiveManager:
     async def on_start_async(self):
         """Initialize the cognitive infrastructure."""
         logger.info("Initializing Cognitive Manager...")
-        container = get_container()
         
         try:
-            self.engine = container.get("cognitive_engine")
-            self.router = container.get("skill_router")
+            self.engine = get_runtime_service("cognitive_engine", default=None)
+            self.router = get_runtime_service("skill_router", default=None)
+            if self.engine is None or self.router is None:
+                raise RuntimeError("cognitive_engine or skill_router unavailable")
             # Assume health monitor is available via container later or init here
             self.initialized = True
             logger.info("Cognitive Manager online.")

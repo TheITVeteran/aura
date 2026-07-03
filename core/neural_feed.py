@@ -3,11 +3,11 @@ Phase 17.1: Neural Feed for Strategic progress.
 Provides a unified interface for emitting strategic and sensory updates.
 """
 import logging
-from typing import Any, Dict, Optional
 from core.thought_stream import get_emitter
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.NeuralFeed")
+_local_feed = None
 
 class NeuralFeed:
     """Standardized event bus for high-level cognitive and strategic pulses."""
@@ -44,9 +44,11 @@ class NeuralFeed:
 
 # Singleton registration handled in boot, but helper provided
 def get_feed() -> NeuralFeed:
-    feed = ServiceContainer.get("neural_feed", default=None)
+    global _local_feed
+    feed = get_runtime_service("neural_feed", default=None)
     if not feed:
         # Emergency init if not in container
-        feed = NeuralFeed()
-        ServiceContainer.register_instance("neural_feed", feed)
+        feed = _local_feed or NeuralFeed()
+        _local_feed = feed
+        register_runtime_service("neural_feed", feed)
     return feed

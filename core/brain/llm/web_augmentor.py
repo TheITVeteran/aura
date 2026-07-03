@@ -4,6 +4,7 @@ import time
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.utils.task_tracker import get_task_tracker
 
 from ..cognitive_interface import AbstractCognitiveAugmentor
@@ -53,8 +54,7 @@ Internet Awareness:
             self._is_updating = True
             logger.info("🌐 SovereignWebAugmentor: Refreshing world state...")
             try:
-                from core.container import ServiceContainer
-                registry = ServiceContainer.get("capability_engine", default=None)
+                registry = get_runtime_service("capability_engine", default=None)
                 
                 if not self.search_skill:
                     # Fix: Use 'search_web' to match web_search_skill.py

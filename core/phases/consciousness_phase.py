@@ -3,6 +3,7 @@ from typing import Any, Optional
 from . import BasePhase
 from ..state.aura_state import AuraState
 from core.consciousness.integration import get_consciousness_integration
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,7 @@ class ConsciousnessPhase(BasePhase):
             logger.debug("🌅 ConsciousnessPhase: Layer 8 phenomenal context injected.")
         
         # Causal Simulation
-        from core.container import ServiceContainer
-        causal_model = ServiceContainer.get("causal_world_model", default=None)
+        causal_model = get_runtime_service("causal_world_model", default=None)
         if causal_model:
             causal_context = causal_model.get_prompt_context()
             if causal_context:

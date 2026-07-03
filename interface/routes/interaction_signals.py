@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from core.container import ServiceContainer
 from core.senses.interaction_signals import decode_data_url_image
+from core.runtime.service_registry import get_runtime_service
 from interface.auth import _require_internal
 from interface.routes.privacy import get_browser_camera_privacy
 
@@ -52,14 +52,14 @@ class VisionSignalPayload(BaseModel):
 
 
 def _get_engine():
-    engine = ServiceContainer.get("interaction_signals", default=None)
+    engine = get_runtime_service("interaction_signals", default=None)
     if engine is None:
         raise HTTPException(status_code=503, detail="Interaction signal engine unavailable")
     return engine
 
 
 def _microphone_signal_allowed() -> bool:
-    voice_engine = ServiceContainer.get("voice_engine", default=None)
+    voice_engine = get_runtime_service("voice_engine", default=None)
     if voice_engine is None:
         return True
     return bool(getattr(voice_engine, "microphone_enabled", True))

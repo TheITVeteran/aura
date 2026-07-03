@@ -6,7 +6,7 @@ The "Presence Patch" that wires the v30 components into the Orchestrator.
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 import logging
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.PresenceIntegration")
 
@@ -21,19 +21,18 @@ def apply_presence_patch(orchestrator):
     # 1. Initialize & Register OpinionEngine
     from core.opinion_engine import OpinionEngine
     opinion_engine = OpinionEngine(orchestrator)
-    ServiceContainer.register_instance("opinion_engine", opinion_engine)
+    register_runtime_service("opinion_engine", opinion_engine)
     orchestrator.opinion_engine = opinion_engine
     logger.info("✅ OpinionEngine registered.")
 
     # 2. Initialize & Register ProactivePresence
     from core.proactive_presence import ProactivePresence
     presence = ProactivePresence(orchestrator)
-    ServiceContainer.register_instance("proactive_presence", presence)
+    register_runtime_service("proactive_presence", presence)
     orchestrator.proactive_presence = presence
     logger.info("✅ ProactivePresence registered.")
 
     # 3. Start ProactivePresence background task
-    import asyncio
     get_task_tracker().create_task(presence.start())
     logger.info("🚀 ProactivePresence loop started.")
 
@@ -51,7 +50,7 @@ def apply_presence_patch(orchestrator):
     try:
         from core.memory.shared_ground import get_shared_ground
         sg = get_shared_ground()
-        ServiceContainer.register_instance("shared_ground", sg)
+        register_runtime_service("shared_ground", sg)
         logger.info("✅ SharedGroundBuffer registered (%d entries).", len(sg.entries))
     except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('presence_integration', e)
@@ -60,10 +59,10 @@ def apply_presence_patch(orchestrator):
     # 6. SocialMemory (relationship depth & milestones)
     try:
         # Only register if not already present (another boot path may have registered it)
-        if not ServiceContainer.get("social_memory", default=None):
+        if not get_runtime_service("social_memory", default=None):
             from core.memory.social_memory import SocialMemory
             social_mem = SocialMemory()
-            ServiceContainer.register_instance("social_memory", social_mem)
+            register_runtime_service("social_memory", social_mem)
             logger.info("✅ SocialMemory registered.")
     except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('presence_integration', e)
@@ -71,11 +70,11 @@ def apply_presence_patch(orchestrator):
 
     # 7. TheoryOfMind (user model: rapport, trust, emotional state)
     try:
-        if not ServiceContainer.get("theory_of_mind", default=None):
+        if not get_runtime_service("theory_of_mind", default=None):
             from core.consciousness.theory_of_mind import get_theory_of_mind
             ce = getattr(orchestrator, "cognitive_engine", None)
             tom = get_theory_of_mind(ce)
-            ServiceContainer.register_instance("theory_of_mind", tom)
+            register_runtime_service("theory_of_mind", tom)
             logger.info("✅ TheoryOfMind registered.")
     except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('presence_integration', e)
@@ -86,7 +85,7 @@ def apply_presence_patch(orchestrator):
         from core.brain.discourse_tracker import DiscourseTracker
         ce = getattr(orchestrator, "cognitive_engine", None)
         discourse_tracker = DiscourseTracker(ce)
-        ServiceContainer.register_instance("discourse_tracker", discourse_tracker)
+        register_runtime_service("discourse_tracker", discourse_tracker)
         logger.info("✅ DiscourseTracker registered.")
     except (ImportError, AttributeError, RuntimeError) as e:
         record_degradation('presence_integration', e)

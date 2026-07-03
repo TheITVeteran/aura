@@ -5492,3 +5492,63 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 71-77% locally.
 - Remaining total checkpoint groups: 3, focused on remaining SCC cuts,
   live desktop findings, and longer soak/runtime evidence.
+
+## Checkpoint 2026-07-03-28: Boot, Sensory, Health, and Presence Registry Batch
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Converted another larger set of boot/live-path seams from direct global
+  container access to the runtime registry across executive closure,
+  consciousness phase causal context, neural feed, self-knowing initialization,
+  moral/sensory integration, enterprise baseline registration, Lazarus
+  recovery, cognitive manager startup, dream coordination, interface
+  user-spoke hooks, sensory instincts, attention summarization,
+  presence integration, background response policy, web augmentation,
+  system monitoring, health routes, and interaction-signal routes.
+- Added a low-level container-health-report resolver to
+  `core.runtime.service_registry` so health routes can read container health
+  without importing `core.container`.
+- Preserved provider singleton lifetime behavior by deliberately leaving
+  provider `ServiceLifetime` imports out of this batch until a dedicated
+  lifecycle-typing bridge is added.
+- Added batch regression coverage for the new registry seams and representative
+  behavior through recovery, sensory spikes, web augmentation, health report
+  reads, interaction-signal lookup, and system monitor publication.
+- Refreshed the architecture-quality baseline after reducing the largest import
+  SCC from `581` modules to `575` modules.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_error_architecture.py::test_runtime_registry_batch_four_boot_sensory_health_seams`
+  -> `1 passed`.
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `126 passed`.
+- `python -m ruff check --select F,E9 ...`
+  over touched batch modules and architecture tests -> passed.
+- `python -m py_compile ...`
+  over touched batch modules and architecture tests -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=45.19`,
+  `largest_cycle_size=575`, `cycle_count=7`, `dependency_edges=7510`,
+  `god_file_count=37`, `module_count=2245`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> completed and refreshed
+  `artifacts/closeout/remaining_checkpoint_contract_latest.json`.
+
+Boundary:
+
+- This checkpoint continues the SCC cleanup with larger batches. It does not
+  remove provider lifetime coupling yet because that needs a dedicated lifecycle
+  compatibility bridge to avoid changing singleton semantics.
+
+Estimate:
+
+- Architecture-regression-control closure: about 97%.
+- Existing architecture-debt reduction closure: about 54-60%.
+- Local reliability-control closure: about 94%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 72-78% locally.
+- Remaining total checkpoint groups: 3, focused on remaining SCC cuts,
+  provider/lifecycle seam cleanup, live desktop findings, and longer
+  soak/runtime evidence.

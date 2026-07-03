@@ -4,10 +4,11 @@ Monitoring system health, technical debt, and recursive stability.
 """
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service, register_runtime_factory
 from core.utils.task_tracker import get_task_tracker
 import logging
 import time
-from typing import List, Dict, Any, Optional
+from typing import List
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("Aura.SystemMonitor")
@@ -31,10 +32,8 @@ class SystemStateMonitor:
 
     async def audit_stability(self) -> SystemHealthState:
         """Perform a deep audit of current system state."""
-        import asyncio
-        from core.container import ServiceContainer
-        swarm = ServiceContainer.get("sovereign_swarm", default=None)
-        refiner = ServiceContainer.get("code_refiner", default=None)
+        swarm = get_runtime_service("sovereign_swarm", default=None)
+        refiner = get_runtime_service("code_refiner", default=None)
         
         # Heuristic for stability: inverse of pending refinements and active shards
         active_shards = len(swarm.shards) if swarm and hasattr(swarm, 'shards') else 0
@@ -96,9 +95,7 @@ class SystemStateMonitor:
 # Service Registration
 def register_system_monitor():
     """Register the system monitor."""
-    from core.container import ServiceContainer, ServiceLifetime
-    ServiceContainer.register(
+    register_runtime_factory(
         "system_monitor",
         factory=lambda: SystemStateMonitor(),
-        lifetime=ServiceLifetime.SINGLETON
     )

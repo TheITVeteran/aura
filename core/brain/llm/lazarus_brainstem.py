@@ -1,7 +1,7 @@
 from core.runtime.errors import record_degradation
 import logging
 import random
-from typing import Dict, Any, Optional
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.Lazarus")
 
@@ -43,10 +43,8 @@ class LazarusBrainstem:
             
         logger.critical("🚨 LAZARUS: Initiating emergency cognitive recovery...")
         try:
-            from core.container import ServiceContainer
-            
             # 1. Attempt to re-initialize the Cognitive Integration Layer
-            cil = ServiceContainer.get("cognitive_integration_layer", default=None)
+            cil = get_runtime_service("cognitive_integration_layer", default=None)
             if cil:
                 logger.info("LAZARUS: Restarting Cognitive Integration Layer...")
                 await cil.initialize()
@@ -58,7 +56,7 @@ class LazarusBrainstem:
                 self.orchestrator.status.brain_connected = True
                 
             # 3. Inform the event bus
-            bus = ServiceContainer.get("mycelium", default=None)
+            bus = get_runtime_service("mycelium", default=None)
             if bus:
                 await bus.emit("aura.system.recovery", {
                     "source": "lazarus",

@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 
 def initialize_self_knowing(orchestrator: Any | None = None) -> dict[str, Any]:
@@ -14,19 +14,19 @@ def initialize_self_knowing(orchestrator: Any | None = None) -> dict[str, Any]:
         from core.consciousness.phenomenal_knowing import get_phenomenal_knowing_kernel
         from core.consciousness.recursive_self_knowing import get_recursive_self_knowing_kernel
 
-        phenomenal = ServiceContainer.get("phenomenal_knowing", default=None)
+        phenomenal = get_runtime_service("phenomenal_knowing", default=None)
         if phenomenal is None:
             phenomenal = get_phenomenal_knowing_kernel()
-            ServiceContainer.register_instance("phenomenal_knowing", phenomenal, required=False)
+            register_runtime_service("phenomenal_knowing", phenomenal, required=False)
 
-        recursive = ServiceContainer.get("recursive_self_knowing", default=None)
+        recursive = get_runtime_service("recursive_self_knowing", default=None)
         if recursive is None:
             recursive = get_recursive_self_knowing_kernel()
-            ServiceContainer.register_instance("recursive_self_knowing", recursive, required=False)
+            register_runtime_service("recursive_self_knowing", recursive, required=False)
 
-        automatic = ServiceContainer.get("automatic_self_knowing", default=None)
+        automatic = get_runtime_service("automatic_self_knowing", default=None)
         if automatic is None:
-            substrate = ServiceContainer.get("live_substrate", default=None) or ServiceContainer.get(
+            substrate = get_runtime_service("live_substrate", default=None) or get_runtime_service(
                 "liquid_substrate", default=None
             )
             automatic = AutomaticSelfKnowingKernel(
@@ -34,7 +34,7 @@ def initialize_self_knowing(orchestrator: Any | None = None) -> dict[str, Any]:
                 phenomenal_knowing=phenomenal,
                 live_substrate=substrate,
             )
-            ServiceContainer.register_instance("automatic_self_knowing", automatic, required=False)
+            register_runtime_service("automatic_self_knowing", automatic, required=False)
 
         if orchestrator is not None:
             setattr(orchestrator, "phenomenal_knowing", phenomenal)

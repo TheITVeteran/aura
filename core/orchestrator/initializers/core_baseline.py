@@ -1,6 +1,6 @@
 import logging
 from typing import Any
-from core.container import ServiceContainer
+from core.runtime.service_registry import register_runtime_service
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +11,7 @@ async def init_enterprise_layer(orchestrator: Any):
     from core.observability.metrics import get_metrics
     setup_logging()
     metrics = get_metrics()
-    ServiceContainer.register_instance("metrics", metrics)
+    register_runtime_service("metrics", metrics)
     orchestrator.metrics = metrics
 
     # 2. Secrets Management
@@ -27,37 +27,37 @@ async def init_enterprise_layer(orchestrator: Any):
     from core.conversation.persistence import get_persistence
     orchestrator.persistence = get_persistence()
     orchestrator.persistence.start_session()
-    ServiceContainer.register_instance("persistence", orchestrator.persistence)
+    register_runtime_service("persistence", orchestrator.persistence)
     if hasattr(orchestrator.persistence, "on_start_async"):
         await orchestrator.persistence.on_start_async()
 
     # 5. Automated Backups & Vacuum
     from core.backup import BackupManager
     orchestrator.backup_manager = BackupManager()
-    ServiceContainer.register_instance("backup_manager", orchestrator.backup_manager)
+    register_runtime_service("backup_manager", orchestrator.backup_manager)
     if hasattr(orchestrator.backup_manager, "on_start_async"):
         await orchestrator.backup_manager.on_start_async()
 
     # 6. Dead Letter Queue
     from core.dead_letter_queue import get_dlq
     orchestrator.dlq = get_dlq()
-    ServiceContainer.register_instance("dlq", orchestrator.dlq)
+    register_runtime_service("dlq", orchestrator.dlq)
 
     # 7. Immutable Audit Trail
     from core.audit import get_audit
     orchestrator.audit = get_audit()
-    ServiceContainer.register_instance("audit", orchestrator.audit)
+    register_runtime_service("audit", orchestrator.audit)
     orchestrator.audit.record("system_boot", "RobustOrchestrator Enterprise Layer initialized")
 
     # 8. LLM Guards & Context Manager
     from core.context_manager import ContextWindowManager
     from core.config import config
     orchestrator.context_manager = ContextWindowManager(model_name=config.llm.chat_model)
-    ServiceContainer.register_instance("context_manager", orchestrator.context_manager)
+    register_runtime_service("context_manager", orchestrator.context_manager)
 
     # 9. Core Messaging
     from core.event_bus import get_event_bus
     orchestrator.event_bus = get_event_bus()
-    ServiceContainer.register_instance("event_bus", orchestrator.event_bus)
+    register_runtime_service("event_bus", orchestrator.event_bus)
     
     logger.info("✓ [BOOT] Enterprise Layer Baseline initialized.")

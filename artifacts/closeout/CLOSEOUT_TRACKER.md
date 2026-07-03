@@ -2734,3 +2734,46 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 71-77% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-28: Boot, Sensory, Health, and Presence Registry Batch
+
+Status: ready to commit.
+
+What changed:
+
+- Converted boot/live-path service seams to runtime registry access across
+  executive closure, consciousness causal context, neural feed, self-knowing,
+  moral/sensory integration, enterprise baseline registration, Lazarus
+  recovery, cognitive manager startup, dream coordination, user-spoke hooks,
+  sensory instincts, attention summarization, presence integration, background
+  response policy, web augmentation, system monitoring, health routes, and
+  interaction-signal routes.
+- Added a low-level runtime resolver for container health reports, removing the
+  health route's direct dependency on the global container module.
+- Added representative source-ownership and behavior coverage for the converted
+  batch.
+- Refreshed the architecture-quality baseline after the largest import SCC
+  dropped from `581` modules to `575` modules.
+- Kept provider lifetime imports for a separate lifecycle bridge because raw
+  string lifetimes would silently break singleton semantics.
+
+Evidence:
+
+- Runtime/architecture focused batch-four test -> `1 passed`.
+- Runtime/architecture/audit/reliability focused tests -> `126 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=45.19`,
+  `largest_cycle_size=575`, `cycle_count=7`, `dependency_edges=7510`,
+  `god_file_count=37`, `module_count=2245`.
+- Remaining-checkpoint contract -> refreshed
+  `artifacts/closeout/remaining_checkpoint_contract_latest.json`.
+
+Tracker:
+
+- Architecture-regression-control closure: about 97%.
+- Existing architecture-debt reduction closure: about 54-60%.
+- Local reliability-control closure: about 94%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 72-78% locally.
+- Remaining total checkpoint groups: 3.

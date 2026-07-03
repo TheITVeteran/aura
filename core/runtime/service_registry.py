@@ -20,6 +20,7 @@ _ServiceFactoryRegistrationSink = Callable[
     [str, Callable[..., object], object | None, bool, dict[str, str | None]],
     None,
 ]
+_ContainerHealthReportResolver = Callable[[], dict[str, object]]
 _RuntimeFlagResolver = Callable[[], bool]
 _MetricCounterSink = Callable[[str, int], None]
 _FileWriteBytesSink = Callable[[object, bytes, str], None]
@@ -30,6 +31,7 @@ _service_resolver: _ServiceResolver | None = None
 _service_presence_resolver: _ServicePresenceResolver | None = None
 _service_registration_sink: _ServiceRegistrationSink | None = None
 _service_factory_registration_sink: _ServiceFactoryRegistrationSink | None = None
+_container_health_report_resolver: _ContainerHealthReportResolver | None = None
 _registration_locked_resolver: _RuntimeFlagResolver | None = None
 _metric_counter_sink: _MetricCounterSink | None = None
 _file_write_bytes_sink: _FileWriteBytesSink | None = None
@@ -71,6 +73,15 @@ def install_service_factory_registration_sink(
     global _service_factory_registration_sink
     with _resolver_lock:
         _service_factory_registration_sink = sink
+
+
+def install_container_health_report_resolver(
+    resolver: _ContainerHealthReportResolver | None,
+) -> None:
+    """Install or clear the process-local container health-report resolver."""
+    global _container_health_report_resolver
+    with _resolver_lock:
+        _container_health_report_resolver = resolver
 
 
 def install_registration_locked_resolver(resolver: _RuntimeFlagResolver | None) -> None:
@@ -124,6 +135,15 @@ def has_runtime_service(service_name: str) -> bool:
     if resolver is not None:
         return bool(resolver(service_name))
     return get_runtime_service(service_name, default=None) is not None
+
+
+def get_runtime_container_health_report() -> dict[str, object]:
+    """Return the live container health report without importing the container."""
+    with _resolver_lock:
+        resolver = _container_health_report_resolver
+    if resolver is None:
+        return {}
+    return dict(resolver() or {})
 
 
 def register_runtime_service(

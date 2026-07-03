@@ -7,9 +7,9 @@ from __future__ import annotations
 import logging
 import time
 
-from core.container import ServiceContainer
 from core.exceptions import ContainerError
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.Server.Helpers")
 _USER_SPOKE_HOOK_ERRORS = (
@@ -44,7 +44,7 @@ def _notify_user_spoke(message: str = ""):
         _record_user_spoke_hook_failure("foreground_guard", _e)
 
     try:
-        orch = ServiceContainer.get("orchestrator", default=None)
+        orch = get_runtime_service("orchestrator", default=None)
     except _USER_SPOKE_HOOK_ERRORS as _e:
         _record_user_spoke_hook_failure("orchestrator_lookup", _e)
         return

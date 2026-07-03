@@ -1404,3 +1404,208 @@ def test_runtime_registry_batch_three_live_path_service_seams():
         assert "core.container" not in source
         assert "ServiceContainer" not in source
         assert "core.runtime.service_registry" in source
+
+
+def test_runtime_registry_batch_four_boot_sensory_health_seams():
+    import asyncio
+    import inspect
+    from types import SimpleNamespace
+
+    import core.brain.cognitive_manager as cognitive_manager
+    import core.brain.llm.lazarus_brainstem as lazarus_brainstem
+    import core.brain.llm.web_augmentor as web_augmentor
+    import core.coordinators.dream_coordinator as dream_coordinator
+    import core.health.system_health as system_health
+    import core.initializers.self_knowing as self_knowing
+    import core.master_moral_integration as master_moral_integration
+    import core.memory.attention as attention
+    import core.neural_feed as neural_feed
+    import core.orchestrator.initializers.core_baseline as core_baseline
+    import core.phases.consciousness_phase as consciousness_phase
+    import core.phases.executive_closure as executive_closure
+    import core.presence_integration as presence_integration
+    import core.runtime.response_policy as response_policy
+    import core.senses.sensory_instincts as sensory_instincts
+    import core.system_monitor as system_monitor
+    import interface.helpers as interface_helpers
+    import interface.routes.interaction_signals as interaction_signals
+    from core.runtime.service_registry import (
+        get_runtime_container_health_report,
+        install_container_health_report_resolver,
+        install_service_factory_registration_sink,
+        install_service_registration_sink,
+        install_service_resolver,
+    )
+
+    class RecoveryLayer:
+        def __init__(self):
+            self.initialized = False
+
+        async def initialize(self):
+            self.initialized = True
+
+    class AsyncBus:
+        def __init__(self):
+            self.events = []
+
+        async def emit(self, topic, payload):
+            self.events.append((topic, payload))
+
+    class LiquidState:
+        def __init__(self):
+            self.updates = []
+
+        def update(self, **kwargs):
+            self.updates.append(kwargs)
+
+    class CapabilityEngine:
+        def get(self, name):
+            return object() if name == "search_web" else None
+
+        async def execute(self, *_args, **_kwargs):
+            return {
+                "ok": True,
+                "answer": "world signal",
+                "citations": [{"title": "source", "url": "https://example.test"}],
+            }
+
+    class SignalEngine:
+        async def publish_typing(self, payload):
+            self.typing = payload
+
+        async def publish_voice(self, payload):
+            self.voice = payload
+
+        async def publish_vision_frame(self, frame, metadata=None):
+            self.vision = (frame, metadata)
+
+        def get_status(self):
+            return {"typing": hasattr(self, "typing")}
+
+    class Brain:
+        async def think(self, *_args, **_kwargs):
+            return SimpleNamespace(content="seed thought")
+
+    class Graph:
+        def __init__(self):
+            self.beliefs = []
+
+        def update_belief(self, **kwargs):
+            self.beliefs.append(kwargs)
+
+    recovery = RecoveryLayer()
+    bus = AsyncBus()
+    liquid = LiquidState()
+    graph = Graph()
+    workspace = SimpleNamespace(
+        history=[
+            SimpleNamespace(winner=SimpleNamespace(source="sys", content=f"event {idx}"))
+            for idx in range(55)
+        ]
+    )
+    orchestrator = SimpleNamespace(
+        _last_user_interaction_time=0.0,
+        dream_cycle=SimpleNamespace(process_dreams=lambda: None),
+        status=SimpleNamespace(brain_connected=False),
+    )
+    services = {
+        "executive_closure": object(),
+        "causal_world_model": SimpleNamespace(get_prompt_context=lambda: "causal context"),
+        "cognitive_engine": Brain(),
+        "skill_router": object(),
+        "cognitive_integration_layer": recovery,
+        "mycelium": bus,
+        "orchestrator": orchestrator,
+        "liquid_state": liquid,
+        "global_workspace": workspace,
+        "belief_graph": graph,
+        "capability_engine": CapabilityEngine(),
+        "drive_engine": SimpleNamespace(satisfy=lambda *_args, **_kwargs: None),
+        "state_repository": SimpleNamespace(_current=SimpleNamespace(marker="state")),
+        "tricorder": SimpleNamespace(healthy=True, scan=lambda _state: {"tricorder": True}),
+        "interaction_signals": SignalEngine(),
+        "voice_engine": SimpleNamespace(microphone_enabled=True),
+    }
+    registered = []
+    factories = []
+
+    install_service_resolver(lambda name, default=None: services.get(name, default))
+    install_service_registration_sink(
+        lambda name, instance, required, metadata: registered.append(
+            (name, instance, required, metadata)
+        )
+    )
+    install_service_factory_registration_sink(
+        lambda name, factory, lifetime, required, metadata: factories.append(
+            (name, factory, lifetime, required, metadata)
+        )
+    )
+    install_container_health_report_resolver(lambda: {"container": "ok"})
+    try:
+        assert get_runtime_container_health_report() == {"container": "ok"}
+
+        assert executive_closure.ExecutiveClosurePhase()._get_engine() is services["executive_closure"]
+
+        manager = cognitive_manager.CognitiveManager()
+        asyncio.run(manager.on_start_async())
+        assert manager.get_status()["initialized"] is True
+
+        lazarus = lazarus_brainstem.LazarusBrainstem(orchestrator=orchestrator)
+        assert asyncio.run(lazarus.attempt_recovery()) is True
+        assert recovery.initialized is True
+        assert bus.events[-1][0] == "aura.system.recovery"
+
+        sensory = sensory_instincts.SensoryInstincts(orchestrator=orchestrator)
+        assert sensory.trigger_spike("audio", 0.4, emotion="curiosity") is True
+        assert liquid.updates[-1]["delta_curiosity"] == 0.4
+
+        summarizer = attention.AttentionSummarizer(SimpleNamespace(cognitive_engine=Brain()))
+        assert asyncio.run(summarizer._generate_seed_thought(workspace.history[:2])) == "seed thought"
+
+        augmentor = web_augmentor.SovereignWebAugmentor()
+        asyncio.run(augmentor.refresh_world_state(force=True))
+        assert "world signal" in augmentor.world_context
+
+        assert system_health._current_state_for_scan().marker == "state"
+        assert interaction_signals._get_engine() is services["interaction_signals"]
+        assert interaction_signals._microphone_signal_allowed() is True
+
+        feed = object()
+        services["neural_feed"] = feed
+        assert neural_feed.get_feed() is feed
+
+        system_monitor.register_system_monitor()
+        assert any(item[0] == "system_monitor" for item in factories)
+
+        interface_helpers._notify_user_spoke("hello")
+        assert orchestrator._last_user_interaction_time >= 0.0
+    finally:
+        install_service_resolver(None)
+        install_service_registration_sink(None)
+        install_service_factory_registration_sink(None)
+        install_container_health_report_resolver(None)
+
+    for module in (
+        cognitive_manager,
+        lazarus_brainstem,
+        web_augmentor,
+        dream_coordinator,
+        system_health,
+        self_knowing,
+        master_moral_integration,
+        attention,
+        neural_feed,
+        core_baseline,
+        consciousness_phase,
+        executive_closure,
+        presence_integration,
+        response_policy,
+        sensory_instincts,
+        system_monitor,
+        interface_helpers,
+        interaction_signals,
+    ):
+        source = inspect.getsource(module)
+        assert "core.container" not in source
+        assert "ServiceContainer" not in source
+        assert "core.runtime.service_registry" in source

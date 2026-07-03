@@ -1,10 +1,8 @@
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 import logging
-import time
 import asyncio
-from typing import Optional
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.Senses.Instincts")
 
@@ -50,7 +48,7 @@ class SensoryInstincts:
         """Directly influence the LiquidState based on sensory input."""
         applied_intensity = max(0.0, float(intensity))
         try:
-            authority = ServiceContainer.get("substrate_authority", default=None)
+            authority = get_runtime_service("substrate_authority", default=None)
             if authority is not None:
                 from core.consciousness.substrate_authority import (
                     ActionCategory,
@@ -73,7 +71,7 @@ class SensoryInstincts:
             record_degradation('sensory_instincts', exc)
             logger.debug("SensoryInstincts authority gate unavailable: %s", exc)
 
-        ls = ServiceContainer.get("liquid_state", default=None)
+        ls = get_runtime_service("liquid_state", default=None)
         if not ls:
             return False
             
@@ -83,6 +81,6 @@ class SensoryInstincts:
             ls.update(delta_frustration=applied_intensity)
         
         from core.thought_stream import get_emitter
-        get_emitter().emit(f"Gut Reaction ⚡", f"Detected {modality} stimulus (intensity: {applied_intensity:.2f})", level="warning")
+        get_emitter().emit("Gut Reaction ⚡", f"Detected {modality} stimulus (intensity: {applied_intensity:.2f})", level="warning")
         logger.info("⚡ Gut Reaction: %s spike via %s (%.2f)", emotion, modality, applied_intensity)
         return True

@@ -1,9 +1,9 @@
 import asyncio
 import logging
 import time
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Callable, Coroutine
 from core.runtime.errors import record_degradation
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.DreamCoordinator")
 
@@ -41,7 +41,7 @@ class DreamCoordinator:
         async def _run():
             # The actual resilience cycle is handled by the orchestrator's instance
             # which usually loops, but if we coordinate it here, we should just call its _process_dreams
-            orch = ServiceContainer.get("orchestrator", default=None)
+            orch = get_runtime_service("orchestrator", default=None)
             if orch and hasattr(orch, "dream_cycle") and orch.dream_cycle:
                 # DreamCycle in resilience is a thread/task. If we just call process_dreams:
                 if hasattr(orch.dream_cycle, "process_dreams"):
@@ -58,7 +58,7 @@ class DreamCoordinator:
     async def run_dreamer_v2(self) -> None:
         """Priority 3: Full biological sleep cycle."""
         async def _run():
-            dreamer = ServiceContainer.get("dreamer_v2", default=None) or ServiceContainer.get("dreaming_process", default=None)
+            dreamer = get_runtime_service("dreamer_v2", default=None) or get_runtime_service("dreaming_process", default=None)
             if dreamer:
                 # Assume dreamer has a dream() method or similar
                 if hasattr(dreamer, "dream"):
@@ -76,5 +76,5 @@ def get_dream_coordinator() -> DreamCoordinator:
     global _instance
     if _instance is None:
         _instance = DreamCoordinator()
-        ServiceContainer.register_instance("dream_coordinator", _instance)
+        register_runtime_service("dream_coordinator", _instance)
     return _instance

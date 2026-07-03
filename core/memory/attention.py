@@ -6,10 +6,8 @@ from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
-import time
-import json
-from typing import List, Dict, Any, Optional
-from core.container import ServiceContainer
+from typing import List, Any, Optional
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.Memory.Attention")
 
@@ -39,7 +37,7 @@ class AttentionSummarizer:
         while self.running:
             try:
                 await asyncio.sleep(self.compression_interval)
-                workspace = ServiceContainer.get("global_workspace", default=None)
+                workspace = get_runtime_service("global_workspace", default=None)
                 if not workspace or len(workspace.history) < self.history_trigger:
                     continue
 
@@ -51,7 +49,7 @@ class AttentionSummarizer:
                 
                 if seed_thought:
                     # 3. Store in BeliefGraph as a "Latent Seed"
-                    graph = ServiceContainer.get("belief_graph", default=None)
+                    graph = get_runtime_service("belief_graph", default=None)
                     if graph:
                         graph.update_belief(
                             source="Aura_Core",
