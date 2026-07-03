@@ -6,6 +6,7 @@ grounding metadata, providing inline citations and reducing hallucinations.
 """
 
 from core.runtime.errors import record_degradation
+from core.brain.llm.cloud_errors import cloud_call_error_types
 import logging
 import os
 from typing import Any, Dict
@@ -84,7 +85,22 @@ class GroundedSearchSkill(BaseSkill):
             
         except ImportError:
             return {"ok": False, "error": "google-genai package not installed (pip install google-genai)"}
-        except (ImportError, AttributeError, RuntimeError) as e:
-            record_degradation('grounded_search', e)
-            logger.error("Grounded Search failed: %s", e)
-            return {"ok": False, "error": str(e)}
+        except (AttributeError, RuntimeError, *cloud_call_error_types()) as e:
+            # A quota-exhausted (429 RESOURCE_EXHAUSTED), unauthorized, or
+            # unreachable cloud provider must degrade to local search, never
+            # crash the turn as an unhandled request exception (observed live).
+            record_degradation(
+                'grounded_search',
+                e,
+                action="fell back from Google grounding; caller uses local web search",
+            )
+            logger.warning(
+                "Grounded search unavailable (%s: %s); falling back to local web_search.",
+                type(e).__name__,
+                str(e)[:200],
+            )
+            return {
+                "ok": False,
+                "error": str(e)[:240],
+                "note": "Fallback to standard web_search if needed.",
+            }

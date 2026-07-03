@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
 from core.runtime.errors import record_degradation
 from core.runtime.governance_policy import allow_simple_query_bypass
@@ -398,11 +399,11 @@ class ActionExecutor:
                     source="web_grounded"
                 )
                 
-            except (ImportError, AttributeError, RuntimeError) as e:
+            except (ImportError, AttributeError, RuntimeError, *cloud_call_error_types()) as e:
+                # 429/quota/unreachable cloud → fall through to the local
+                # Sovereign/DDG pipeline below, never crash the ReAct turn.
                 _record_react_degradation(e, action="fell back to sovereign browser web search after gemini search failed")
-                import traceback
-                logger.warning("Grounded Search failed (%s), falling back to Sovereign/DDG", e)
-                traceback.print_exc()
+                logger.warning("Grounded search unavailable (%s: %s), falling back to Sovereign/DDG", type(e).__name__, str(e)[:200])
         else:
              logger.debug("GEMINI_API_KEY not set. Using DuckDuckGo fallback for web search.")
 
