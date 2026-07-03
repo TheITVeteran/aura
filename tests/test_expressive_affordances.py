@@ -174,7 +174,7 @@ def test_menu_enabled_by_default_and_realize_wired():
     from interface.routes import chat as chat_routes
 
     src = inspect.getsource(chat_routes)
-    assert '"AURA_EXPRESSIVE_AFFORDANCES", "1"' in src  # on by default
+    assert '"AURA_EXPRESSIVE_AFFORDANCES", "0"' in src  # off by default (0 zero-shot emission; needs training first)
     assert "_pending_affordance_intents" in src          # stashed before gate
     assert "_affordance_registry.realize(" in src        # realized after assembly
     assert 'setdefault("data", {})["affordances"]' in src  # surfaced on the wire

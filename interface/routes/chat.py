@@ -12974,7 +12974,7 @@ async def api_chat(
                 # menu there enlarged the prompt enough to time out the heavy
                 # 32B turn (observed live). Inject only on conversational turns,
                 # where the expressive CHOICE is what matters.
-                _affordances_on = str(_os.environ.get("AURA_EXPRESSIVE_AFFORDANCES", "1")).strip().lower() in {"1", "true", "yes", "on"}
+                _affordances_on = str(_os.environ.get("AURA_EXPRESSIVE_AFFORDANCES", "0")).strip().lower() in {"1", "true", "yes", "on"}
                 if (
                     _affordances_on
                     and not is_benchmark
