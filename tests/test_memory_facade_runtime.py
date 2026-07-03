@@ -1,4 +1,5 @@
 import json
+import asyncio
 import time
 from types import SimpleNamespace
 
@@ -153,7 +154,7 @@ async def test_memory_facade_search_reads_strict_gateway_records(monkeypatch, tm
     _index.search("warmup", limit=1)
     _deadline = time.monotonic() + 5.0
     while not _index._built and time.monotonic() < _deadline:
-        time.sleep(0.01)
+        await asyncio.sleep(0.01)
     assert _index._built, "gateway record index failed to warm"
 
     results = await MemoryFacade().search("blue lantern phrase", limit=5)
@@ -197,7 +198,7 @@ async def test_memory_facade_compat_search_accepts_top_k_and_sync(monkeypatch, t
     _index.search("warmup", limit=1)
     _deadline = time.monotonic() + 5.0
     while not _index._built and time.monotonic() < _deadline:
-        time.sleep(0.01)
+        await asyncio.sleep(0.01)
     assert _index._built, "gateway record index failed to warm"
 
     facade = MemoryFacade()

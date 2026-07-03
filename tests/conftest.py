@@ -300,6 +300,29 @@ def _reset_runtime_degradation_state_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _service_registry_state_guard():
+    """Order-independence for the low-level runtime service registry.
+
+    Registry resolvers/sinks are process-global. Two contamination
+    directions were observed in-chunk (defect register, July 3):
+    tests that install a fake resolver and leak it forward, and tests
+    that "clean up" by installing None — ERASING the container-backed
+    resolver later tests depend on. Snapshot-and-restore fixes both
+    without touching individual call sites.
+    """
+    import core.runtime.service_registry as _registry
+
+    guarded = [
+        name for name in dir(_registry)
+        if name.startswith("_") and name.endswith(("_resolver", "_sink"))
+    ]
+    snapshot = {name: getattr(_registry, name) for name in guarded}
+    yield
+    for name, value in snapshot.items():
+        setattr(_registry, name, value)
+
+
+@pytest.fixture(autouse=True)
 def _contain_governance_strictness_between_tests():
     """Order-independence for governance enforcement.
 
