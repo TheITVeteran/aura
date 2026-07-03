@@ -583,3 +583,26 @@ def test_being_runtime_publish_uses_runtime_registry():
     source = inspect.getsource(being_runtime.BeingRuntime._publish)
     assert "from core.container import ServiceContainer" not in source
     assert "core.runtime.service_registry" in source
+
+
+def test_cognitive_engine_service_lookup_uses_runtime_registry_adapter():
+    import inspect
+    import core.brain.cognitive_engine as cognitive_engine
+    from core.runtime.service_registry import install_service_resolver
+
+    class Router:
+        last_tier = "primary"
+
+    router = Router()
+    install_service_resolver(lambda name, default=None: router if name == "llm_router" else default)
+    try:
+        engine = cognitive_engine.CognitiveEngine()
+        assert engine._current_tier == "primary"
+        assert cognitive_engine.get_container().get("llm_router") is router
+    finally:
+        install_service_resolver(None)
+
+    source = inspect.getsource(cognitive_engine)
+    assert "core.container" not in source
+    assert "ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source

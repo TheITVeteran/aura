@@ -5102,3 +5102,57 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
 - Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
   desktop findings, and longer soak/runtime evidence.
+
+## Checkpoint 2026-07-03-21: Cognitive Engine Registry Boundary
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Removed `core.brain.cognitive_engine`'s direct import of the global runtime
+  container.
+- Added a small runtime-registry-backed adapter for legacy cognitive phases
+  that still expect a `.get(...)` service view.
+- Moved CognitiveEngine's consciousness, router, spine, drift-monitor,
+  orchestrator, state-repository, and vision-buffer reads through the runtime
+  service registry boundary without changing the public cognitive API.
+- Added regression coverage that prevents `core.container` and
+  `ServiceContainer` imports from returning to the cognitive engine.
+- Kept the reliability standard general-purpose: the implementation is a
+  reusable service-boundary hardening step for any runtime quality bar, not an
+  aerospace-domain branch.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_cognitive_engine_generate_routing.py tests/test_cognitive_engine_background_hardening.py`
+  -> `46 passed`.
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `118 passed`.
+- `python -m ruff check --select F,E9 core/brain/cognitive_engine.py tests/test_runtime_error_architecture.py`
+  -> passed.
+- `python -m py_compile core/brain/cognitive_engine.py tests/test_runtime_error_architecture.py`
+  -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=44.8`,
+  `largest_cycle_size=615`, `cycle_count=7`, `dependency_edges=7512`,
+  `god_file_count=37`, `module_count=2245`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=0`, `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check`
+  -> passed.
+
+Boundary:
+
+- This closes the direct container back-edge from the live cognitive engine path
+  but is metric-neutral in the current architecture gate because the dominant
+  SCC is still held by other cross-module imports. Do not count this as a
+  largest-cycle reduction checkpoint.
+
+Estimate:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 39-43%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
+- Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
+  desktop findings, and longer soak/runtime evidence.

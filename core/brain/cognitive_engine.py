@@ -14,10 +14,10 @@ from core.memory.retention_policy import working_history_retention_policy
 from core.runtime import background_policy
 from core.runtime.errors import record_degradation
 from core.runtime.pipeline_blueprint import instantiate_legacy_runtime_phases
+from core.runtime.service_registry import get_runtime_service
 from core.state.aura_state import AuraState, CognitiveMode
 from core.utils.concurrency import RobustLock
 
-from ..container import get_container
 from .autopoiesis import AutopoieticGraph
 from .llm.context_assembler import ContextAssembler
 from .reasoning_strategies import ReasoningStrategies, StrategyType
@@ -63,6 +63,23 @@ _COGNITIVE_ENGINE_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
 )
+
+
+class _RuntimeServiceAdapter:
+    """Small compatibility layer for legacy phase constructors expecting container.get."""
+
+    @staticmethod
+    def get(name: str, default: Any = None) -> Any:
+        return get_runtime_service(name, default=default)
+
+
+_RUNTIME_SERVICE_ADAPTER = _RuntimeServiceAdapter()
+
+
+def get_container() -> _RuntimeServiceAdapter:
+    """Return the runtime-registry-backed service view used by cognitive phases."""
+
+    return _RUNTIME_SERVICE_ADAPTER
 
 
 def _bounded_float(value: Any, default: float = 0.0, *, lower: float = 0.0, upper: float = 1.0) -> float:
@@ -483,8 +500,6 @@ class CognitiveEngine:
     @property
     def consciousness(self) -> Any:
         """Unified access to the consciousness layer for metric aggregation."""
-        from ..container import get_container
-
         return get_container().get("consciousness_core", default=None)
 
     @property
@@ -1280,9 +1295,7 @@ class CognitiveEngine:
 
         # v40: Spiritual Spine - Prior Position Injection
         # The ordering is critical: injection -> system prompt -> user message.
-        from core.container import ServiceContainer
-
-        spine = ServiceContainer.get("spine", default=None)
+        spine = get_container().get("spine", default=None)
         if spine and origin in ("user", "voice", "admin"):
             # Extract topic: look for nouns or use the first sentence.
             # v40: Improved topic extraction
@@ -1314,8 +1327,8 @@ class CognitiveEngine:
 
         # v40: Identity Drift - Context Refresh check
         # If history is too long and burying identity, we "refresh" by reminding Aura who she is.
-        drift = ServiceContainer.get("drift_monitor", default=None)
-        orchestrator = ServiceContainer.get("orchestrator", default=None)
+        drift = get_container().get("drift_monitor", default=None)
+        orchestrator = get_container().get("orchestrator", default=None)
 
         if drift:
             # Check for a specific pending correction from the last turn
@@ -1390,7 +1403,7 @@ class CognitiveEngine:
         )
 
         # v40: Clear drift correction after use
-        orchestrator = ServiceContainer.get("orchestrator", default=None)
+        orchestrator = get_container().get("orchestrator", default=None)
         if orchestrator and hasattr(orchestrator, "_pending_correction"):
             orchestrator._pending_correction = ""
 
@@ -2922,9 +2935,7 @@ class CognitiveEngine:
 
         [ZENITH] Functionalized: Linking Sensory Buffer to Cognitive reasoning.
         """
-        from core.container import ServiceContainer
-
-        buffer = ServiceContainer.get("vision_buffer", default=None)
+        buffer = get_container().get("vision_buffer", default=None)
         if not buffer:
             logger.warning("👁️ [VISION] see() called but vision_buffer not found in container.")
             return "👁️ visual_analysis: Sensory buffer unavailable."

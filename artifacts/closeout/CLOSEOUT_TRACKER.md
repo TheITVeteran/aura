@@ -2450,3 +2450,48 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-21: Cognitive Engine Registry Boundary
+
+Status: ready to commit.
+
+What changed:
+
+- Removed the cognitive engine's direct dependency on the global container.
+- Added a runtime-registry-backed service adapter so legacy cognitive phases can
+  keep using a `.get(...)` service view without reintroducing the container
+  import.
+- Moved the cognitive engine's service reads for consciousness, router, spine,
+  drift monitor, orchestrator, state repository, and vision buffer through the
+  registry-backed boundary.
+- Added regression coverage that blocks `core.container` and `ServiceContainer`
+  imports from returning to `core.brain.cognitive_engine`.
+- Kept the quality target general: this is reusable runtime ownership and
+  reliability hardening, not aerospace-domain behavior.
+
+Evidence:
+
+- Cognitive-engine/runtime focused tests -> `46 passed`.
+- Runtime/architecture/audit/reliability focused tests -> `118 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=44.8`,
+  `largest_cycle_size=615`, `cycle_count=7`, `dependency_edges=7512`,
+  `module_count=2245`.
+- Remaining-checkpoint contract -> `gaps=0`,
+  `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check` -> passed.
+
+Boundary:
+
+- Metric-neutral: this removes a direct user-facing cognitive-engine container
+  back-edge, but it does not reduce the largest import SCC on its own.
+
+Tracker:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 39-43%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
+- Remaining total checkpoint groups: 3.
