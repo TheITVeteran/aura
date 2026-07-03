@@ -4445,3 +4445,71 @@ Estimate:
 - Remaining named checkpoint groups under the contract: 3, with Checkpoint 9
   and most of Checkpoint 10 mapped by existing evidence and Checkpoint 11 still
   requiring final closeout artifact assembly and replay.
+
+## Checkpoint 2026-07-02-09: Subjective Preference Tournament And Live Identity Reliability
+
+Status: live desktop-mode proof passed; ready for checkpoint commit.
+
+Scope:
+
+- Extended `SubjectiveChoiceEngine` with durable item-level preferences,
+  aliases, habit reinforcement, rephrased recall, option ranking, and a runtime
+  status field for preference-tournament readiness. Explicit authored
+  preferences can now override raw drive pressure inside safe subjective
+  domains while remaining bounded by risk/governance.
+- Added a production choice tournament evaluator over the same subjective
+  choice engine used by autonomy. It ranks candidate situations, pits favorites
+  against each other across repeated A/B runs, measures pairwise stability,
+  detects transitivity tensions, records preference receipts, and persists the
+  champion as a durable habit-shaped preference.
+- Fixed the live desktop identity/continuity failure where the launched UI
+  could return a 503 on "what are you, and will you remember this tomorrow?"
+  after CognitiveEngine produced a degraded draft. The route now rebounds that
+  case to canonical identity-continuity grounding only after CognitiveEngine
+  invocation, live-mind context binding, live controls binding, and reliability
+  validation; it is not a generic pre-engine fallback.
+- Tightened `tools/live_boot_proof.py` stream scanning so title-case `Error:`
+  inside a prompt or memory-retrieval query does not count as a runtime
+  `ERROR` log event. Uppercase log-level `ERROR`/`CRITICAL` markers still fail
+  the proof.
+
+Evidence:
+
+- `python -m pytest -q tests/test_subjective_choice_engine.py tests/test_boot_runtime_safety.py::test_live_boot_proof_runtime_stream_scan_fails_failure_markers tests/test_boot_runtime_safety.py::test_live_boot_proof_stream_scan_ignores_non_log_level_error_words tests/test_server_conversation_lane.py::test_live_turn_contract_accepts_identity_continuity_grounding_after_engine tests/test_server_conversation_lane.py::test_live_turn_contract_accepts_memory_state_grounding_after_engine`
+  -> `10 passed`.
+- `python -m py_compile core/agency/subjective_choice.py core/agency/choice_game.py interface/routes/chat.py tools/live_boot_proof.py tests/test_subjective_choice_engine.py tests/test_server_conversation_lane.py tests/test_boot_runtime_safety.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/agency/subjective_choice.py core/agency/choice_game.py interface/routes/chat.py tools/live_boot_proof.py tests/test_subjective_choice_engine.py tests/test_server_conversation_lane.py tests/test_boot_runtime_safety.py`
+  -> passed.
+- `python -u aura_main.py --stop`
+  -> no live Aura lock remained before proof start.
+- `python -u tools/live_boot_proof.py --mode desktop --port 8013 --conversation-soak-turns 3 --restart-continuity --boot-timeout 600 --out-dir artifacts/current/live_desktop_runtime`
+  -> passed.
+- `artifacts/current/live_desktop_runtime/live_proof_20260702_184922_verdict.json`
+  -> live proof passed: boot healthy, `chat_identity` passed in 18.6s,
+  conversation soak `3/3`, semantic/imagination/timescale/ambient/autonomic
+  organs participated, desktop action verified on disk, restart continuity
+  recalled the codeword after reboot, graceful shutdown, no orphans, port
+  released, and no runtime-stream failure markers.
+
+Boundary:
+
+- This closes the active preference-consistency/tournament test gap and the
+  latest live desktop identity failure. It proves the launched desktop path can
+  answer the live identity/continuity proof turn without collapsing into a 503
+  or bounded assistant fallback.
+- It does not finish reconciliation of the downloaded phenomenal-knowing,
+  recursive-self-knowing, automatic-self-knowing, organism-closure, and
+  personhood-bridge patch bundle. Those remain pending and must be integrated
+  only where they add causal runtime value beyond existing organs.
+- It does not claim phenomenal consciousness, ASI, legal personhood, or
+  unrestricted autonomous replication/spread.
+
+Estimate:
+
+- Subjective preference/choice/habit test closure: about 92%.
+- Live desktop conversation reliability closure: about 90% for the current
+  proof surface.
+- Expanded daily-runtime/product closure: about 90%.
+- Hard remaining live gaps: final closeout artifact assembly/replay plus
+  selective reconciliation of the deeper self-knowing patch bundle.

@@ -687,7 +687,8 @@ def test_live_boot_proof_stream_scan_ignores_non_log_level_error_words(monkeypat
     proof.stdout_path.write_text(
         "StructuredErrorLogger initialized at data/error_logs\n"
         "HEALTH CONTRACT: All critical + important services online\n"
-        "CriticalityRegulator initialized\n",
+        "CriticalityRegulator initialized\n"
+        "🧠 MemoryRetrieval: Searching for context: [SILENT AUTO-FIX] Investigate a timeout. Error: co...\n",
         encoding="utf-8",
     )
 

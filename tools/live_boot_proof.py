@@ -58,7 +58,7 @@ LIVE_FALLBACK_RE = re.compile(
     r"hit a bump|one moment|having trouble formulating|could you try rephrasing)",
     re.IGNORECASE,
 )
-LIVE_LOG_LEVEL_RE = re.compile(r"(?:^|[\s\[])(?:ERROR|CRITICAL)(?:\]|:)", re.IGNORECASE)
+LIVE_LOG_LEVEL_RE = re.compile(r"(?:^|[\s\[])(?:ERROR|CRITICAL)(?:\]|:)")
 
 LIVE_STREAM_FAILURE_MARKERS = (
     "ERROR",

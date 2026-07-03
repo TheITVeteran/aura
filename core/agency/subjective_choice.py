@@ -80,6 +80,12 @@ def _norm_features(features: dict[str, Any] | None) -> dict[str, float]:
     return normalized
 
 
+def _slug(value: str) -> str:
+    cleaned = "".join(ch.lower() if ch.isalnum() else "_" for ch in str(value or ""))
+    cleaned = "_".join(part for part in cleaned.split("_") if part)
+    return cleaned[:96] or "unknown"
+
+
 def infer_preference_features(text: str, metadata: dict[str, Any] | None = None) -> dict[str, float]:
     """Infer coarse preference features from a goal/option description.
 
@@ -125,6 +131,45 @@ class ChoiceOption:
 
 
 @dataclass
+class ItemPreference:
+    domain: str
+    item_id: str
+    label: str
+    strength: float
+    reason: str = ""
+    aliases: tuple[str, ...] = ()
+    times_chosen: int = 0
+    created_at: float = field(default_factory=time.time)
+    last_chosen_at: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = asdict(self)
+        payload["aliases"] = list(self.aliases)
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ItemPreference":
+        aliases = data.get("aliases", ())
+        if isinstance(aliases, list):
+            aliases = tuple(str(item) for item in aliases)
+        elif isinstance(aliases, tuple):
+            aliases = tuple(str(item) for item in aliases)
+        else:
+            aliases = ()
+        return cls(
+            domain=_slug(str(data.get("domain", ""))),
+            item_id=_slug(str(data.get("item_id", ""))),
+            label=str(data.get("label", ""))[:160],
+            strength=_clamp(float(data.get("strength", 0.0)), W_MIN, W_MAX),
+            reason=str(data.get("reason", ""))[:500],
+            aliases=aliases,
+            times_chosen=max(0, int(data.get("times_chosen", 0) or 0)),
+            created_at=float(data.get("created_at", time.time()) or time.time()),
+            last_chosen_at=float(data.get("last_chosen_at", time.time()) or time.time()),
+        )
+
+
+@dataclass
 class SubjectiveChoiceReceipt:
     choice_id: str
     context: str
@@ -166,6 +211,7 @@ class SubjectiveChoiceEngine:
         self.preference_latitude = _clamp(preference_latitude, 0.05, 0.75)
         self._mirror_identity = bool(mirror_identity)
         self._history: list[SubjectiveChoiceReceipt] = []
+        self._item_preferences: dict[str, dict[str, ItemPreference]] = {}
         if state_path is None:
             try:
                 from core.config import config
@@ -184,6 +230,65 @@ class SubjectiveChoiceEngine:
     def preferences(self) -> dict[str, float]:
         with self._lock:
             return dict(self._preferences)
+
+    def item_preferences(self, domain: str | None = None) -> dict[str, Any]:
+        with self._lock:
+            if domain:
+                return {
+                    item_id: pref.to_dict()
+                    for item_id, pref in self._item_preferences.get(_slug(domain), {}).items()
+                }
+            return {
+                domain_id: {item_id: pref.to_dict() for item_id, pref in prefs.items()}
+                for domain_id, prefs in self._item_preferences.items()
+            }
+
+    def set_item_preference(
+        self,
+        *,
+        domain: str,
+        item_id: str,
+        label: str,
+        strength: float = 0.82,
+        reason: str = "",
+        aliases: Iterable[str] = (),
+    ) -> ItemPreference:
+        """Store an authored durable favorite/preference inside a subjective domain."""
+        domain_id = _slug(domain)
+        item_key = _slug(item_id or label)
+        pref = ItemPreference(
+            domain=domain_id,
+            item_id=item_key,
+            label=str(label or item_id)[:160],
+            strength=_clamp(float(strength), W_MIN, W_MAX),
+            reason=str(reason or "")[:500],
+            aliases=tuple(sorted({_slug(alias) for alias in aliases if str(alias).strip()})),
+        )
+        with self._lock:
+            self._item_preferences.setdefault(domain_id, {})[item_key] = pref
+            self._save()
+        return pref
+
+    def recall_item_preference(
+        self,
+        *,
+        domain: str,
+        item_id: str | None = None,
+        label: str | None = None,
+    ) -> ItemPreference | None:
+        domain_id = _slug(domain)
+        candidates = {_slug(item_id or ""), _slug(label or "")}
+        with self._lock:
+            prefs = self._item_preferences.get(domain_id, {})
+            for candidate in candidates:
+                if candidate and candidate in prefs:
+                    return prefs[candidate]
+            label_slug = _slug(label or "")
+            if label_slug:
+                for pref in prefs.values():
+                    if label_slug in {_slug(pref.label), *pref.aliases}:
+                        return pref
+            return None
 
     def score_features(self, features: dict[str, float]) -> float:
         features = _norm_features(features)
@@ -222,10 +327,12 @@ class SubjectiveChoiceEngine:
             option_features[option.id] = features
             risk_penalty = 0.35 * _clamp(option.risk)
             drive = _clamp(option.drive_score)
-            pref = self.score_features(features)
+            item_bonus = self._item_preference_bonus(option, context=context)
+            pref = _clamp(self.score_features(features) + item_bonus)
             final = (
                 ((1.0 - self.preference_latitude) * drive)
                 + (self.preference_latitude * pref)
+                + (0.30 * item_bonus)
                 - risk_penalty
             )
             drive_scores[option.id] = drive
@@ -273,8 +380,37 @@ class SubjectiveChoiceEngine:
             option_features=option_features,
         )
         if record:
+            self._learn_item_preference_from_choice(chosen, context=context, receipt=receipt)
             self._record(receipt)
         return receipt
+
+    def rank_options(self, options: Iterable[ChoiceOption], *, context: str) -> list[dict[str, Any]]:
+        """Return the same deterministic scores ``choose`` would use, without recording."""
+        option_list = list(options)
+        ranked: list[dict[str, Any]] = []
+        for option in option_list:
+            features = _norm_features(option.features or infer_preference_features(
+                f"{option.label} {option.description}", option.metadata
+            ))
+            drive = _clamp(option.drive_score)
+            item_bonus = self._item_preference_bonus(option, context=context)
+            pref = _clamp(self.score_features(features) + item_bonus)
+            final = _clamp(
+                ((1.0 - self.preference_latitude) * drive)
+                + (self.preference_latitude * pref)
+                + (0.30 * item_bonus)
+                - (0.35 * _clamp(option.risk))
+            )
+            ranked.append({
+                "id": option.id,
+                "label": option.label,
+                "drive_score": drive,
+                "preference_score": pref,
+                "final_score": final,
+                "features": features,
+            })
+        ranked.sort(key=lambda item: item["final_score"], reverse=True)
+        return ranked
 
     def choose_from_scored_initiatives(self, scored: list[Any], *, context: str) -> tuple[Any | None, SubjectiveChoiceReceipt | None]:
         if not scored:
@@ -362,9 +498,12 @@ class SubjectiveChoiceEngine:
                 "registered": True,
                 "running": self.is_alive(),
                 "choice_game_ready": True,
+                "preference_tournament_ready": True,
                 "choice_count": len(self._history),
+                "item_preference_count": sum(len(prefs) for prefs in self._item_preferences.values()),
                 "preference_latitude": self.preference_latitude,
                 "preferences": dict(self._preferences),
+                "item_preferences": self.item_preferences(),
                 "last_choice": last,
                 "state_path": str(self._state_path),
             }
@@ -402,9 +541,100 @@ class SubjectiveChoiceEngine:
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
             record_degradation("subjective_choice_identity_ledger", exc, severity="debug")
 
+    def _option_domain(self, option: ChoiceOption, *, context: str) -> str:
+        metadata = dict(option.metadata or {})
+        explicit = metadata.get("preference_domain") or metadata.get("domain")
+        if explicit:
+            return _slug(str(explicit))
+        prefix = str(context or "").split(":")
+        if len(prefix) >= 2 and prefix[0] in {"choice_game", "preference_tournament", "subjective_preference"}:
+            return _slug(prefix[1])
+        return ""
+
+    def _item_preference_bonus(self, option: ChoiceOption, *, context: str) -> float:
+        domain = self._option_domain(option, context=context)
+        if not domain:
+            return 0.0
+        pref = self._match_item_preference(domain, option)
+        if pref is None:
+            return 0.0
+        habit_bonus = min(0.12, 0.035 * math.log1p(max(0, pref.times_chosen)))
+        return min(0.75, (0.62 * _clamp(pref.strength, W_MIN, W_MAX)) + habit_bonus)
+
+    def _match_item_preference(self, domain: str, option: ChoiceOption) -> ItemPreference | None:
+        option_ids = {
+            _slug(option.id),
+            _slug(option.label),
+            _slug(str(option.metadata.get("item_id", ""))),
+        }
+        option_ids.update(_slug(str(alias)) for alias in option.metadata.get("aliases", ()) or ())
+        with self._lock:
+            prefs = self._item_preferences.get(domain, {})
+            for candidate in option_ids:
+                if candidate and candidate in prefs:
+                    return prefs[candidate]
+            label_slug = _slug(option.label)
+            for pref in prefs.values():
+                pref_aliases = {_slug(pref.label), pref.item_id, *pref.aliases}
+                if label_slug in pref_aliases or any(alias and alias in label_slug for alias in pref_aliases):
+                    return pref
+        return None
+
+    def _learn_item_preference_from_choice(
+        self,
+        option: ChoiceOption,
+        *,
+        context: str,
+        receipt: SubjectiveChoiceReceipt,
+    ) -> None:
+        metadata = dict(option.metadata or {})
+        learn_flag = metadata.get("learn_preference")
+        if learn_flag is False:
+            return
+        domain = self._option_domain(option, context=context)
+        if not domain:
+            return
+        if learn_flag is None and not str(context or "").startswith(
+            ("choice_game:", "preference_tournament:", "subjective_preference:")
+        ):
+            return
+
+        item_id = _slug(str(metadata.get("item_id") or option.id or option.label))
+        aliases = tuple(sorted({
+            _slug(str(alias))
+            for alias in metadata.get("aliases", ()) or ()
+            if str(alias).strip()
+        }))
+        with self._lock:
+            prefs = self._item_preferences.setdefault(domain, {})
+            pref = prefs.get(item_id)
+            if pref is None:
+                pref = ItemPreference(
+                    domain=domain,
+                    item_id=item_id,
+                    label=option.label[:160],
+                    strength=_clamp(max(receipt.preference_scores.get(option.id, 0.5), 0.55), W_MIN, W_MAX),
+                    reason=f"Chosen in {context}",
+                    aliases=aliases,
+                    times_chosen=1,
+                    last_chosen_at=time.time(),
+                )
+                prefs[item_id] = pref
+            else:
+                pref.times_chosen += 1
+                pref.last_chosen_at = time.time()
+                pref.strength = _clamp(
+                    max(pref.strength, receipt.preference_scores.get(option.id, pref.strength)) + 0.015,
+                    W_MIN,
+                    W_MAX,
+                )
+                if aliases:
+                    pref.aliases = tuple(sorted({*pref.aliases, *aliases}))
+
     def _save(self) -> None:
         payload = {
             "preferences": self._preferences,
+            "item_preferences": self.item_preferences(),
             "preference_latitude": self.preference_latitude,
             "history": [item.to_dict() for item in self._history[-MAX_HISTORY:]],
             "saved_at": time.time(),
@@ -428,6 +658,21 @@ class SubjectiveChoiceEngine:
                 for key in PREFERENCE_KEYS:
                     if key in stored:
                         self._preferences[key] = _clamp(float(stored[key]), W_MIN, W_MAX)
+            item_preferences = data.get("item_preferences", {})
+            if isinstance(item_preferences, dict):
+                loaded: dict[str, dict[str, ItemPreference]] = {}
+                for domain, prefs in item_preferences.items():
+                    if not isinstance(prefs, dict):
+                        continue
+                    domain_id = _slug(str(domain))
+                    loaded[domain_id] = {}
+                    for item_id, payload in prefs.items():
+                        if isinstance(payload, dict):
+                            pref = ItemPreference.from_dict({**payload, "domain": domain_id, "item_id": item_id})
+                            loaded[domain_id][pref.item_id] = pref
+                    if not loaded[domain_id]:
+                        loaded.pop(domain_id, None)
+                self._item_preferences = loaded
             self.preference_latitude = _clamp(
                 float(data.get("preference_latitude", self.preference_latitude)),
                 0.05,

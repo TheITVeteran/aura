@@ -1845,6 +1845,47 @@ def test_live_turn_contract_accepts_memory_state_grounding_after_engine(monkeypa
     assert payload["full_mind_path"] is True
 
 
+def test_live_turn_contract_accepts_identity_continuity_grounding_after_engine(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine_identity_continuity_grounding",
+        reply_source="cognitive_engine_identity_continuity_grounding",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "cognitive_engine_reply_failed": False,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            **_bound_live_mind_controls_trace(),
+            "response_path": "cognitive_engine_identity_continuity_grounding",
+        },
+    )
+
+    assert payload["response_path"] == "cognitive_engine_identity_continuity_grounding"
+    assert payload["cognitive_engine_reply_accepted"] is True
+    assert payload["bounded_contract_used"] is False
+    assert payload["legacy_fallback_used"] is False
+    assert payload["required_subsystems_ok"] is True
+    assert payload["architecture_context_bound"] is True
+    assert payload["full_mind_path"] is True
+
+
 def test_live_turn_contract_refuses_engine_text_without_mind_snapshot(monkeypatch):
     from interface.routes import chat as chat_routes
 

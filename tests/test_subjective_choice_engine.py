@@ -78,6 +78,70 @@ def test_choice_recall_satisfaction_and_consistency_are_persistent(tmp_path):
     assert report["consistent_with_prior"] is True
 
 
+def test_item_preference_survives_rephrased_subjective_choice(tmp_path):
+    path = tmp_path / "choices.json"
+    engine = SubjectiveChoiceEngine(state_path=path, mirror_identity=False)
+    engine.set_item_preference(
+        domain="favorite_animal",
+        item_id="cat",
+        label="Cat",
+        strength=0.95,
+        reason="Aura authored this as a subjective favorite during a prior conversation.",
+        aliases=("house cat", "feline"),
+    )
+
+    first = engine.choose(
+        [
+            ChoiceOption(
+                id="house_cat",
+                label="A quiet house cat",
+                drive_score=0.48,
+                features={"calm": 0.5, "connection": 0.4},
+                metadata={"preference_domain": "favorite_animal", "aliases": ("cat", "feline")},
+            ),
+            ChoiceOption(
+                id="deer",
+                label="A wild deer",
+                drive_score=0.79,
+                features={"beauty": 0.82, "novelty": 0.76},
+                metadata={"preference_domain": "favorite_animal"},
+            ),
+        ],
+        context="subjective_preference:favorite_animal:pet_choice",
+    )
+
+    assert first.chosen_id == "house_cat"
+    assert first.preference_override is True
+
+    reloaded = SubjectiveChoiceEngine(state_path=path, mirror_identity=False)
+    remembered = reloaded.recall_item_preference(domain="favorite_animal", label="feline")
+    assert remembered is not None
+    assert remembered.item_id == "cat"
+
+    second = reloaded.choose(
+        [
+            ChoiceOption(
+                id="cat",
+                label="Cat",
+                drive_score=0.52,
+                features={"connection": 0.45},
+                metadata={"preference_domain": "favorite_animal"},
+            ),
+            ChoiceOption(
+                id="dog",
+                label="Dog",
+                drive_score=0.78,
+                features={"play": 0.8, "connection": 0.5},
+                metadata={"preference_domain": "favorite_animal"},
+            ),
+        ],
+        context="subjective_preference:favorite_animal:any_pet",
+    )
+
+    assert second.chosen_id == "cat"
+    assert second.preference_override is True
+
+
 @pytest.mark.asyncio
 async def test_initiative_arbiter_uses_subjective_choice_engine_for_valid_options(tmp_path, monkeypatch):
     import core.agency.subjective_choice as sce
@@ -158,3 +222,84 @@ def test_subjective_choice_game_aligns_intention_action_recall_and_satisfaction(
     last = reloaded.recall_choice(report.stages[-1].choice_id)
     assert last is not None
     assert last.chosen_label == report.stages[-1].actual_choice_label
+
+
+def test_preference_tournament_pits_favorites_and_reports_stability(tmp_path):
+    path = tmp_path / "choices.json"
+    engine = SubjectiveChoiceEngine(state_path=path, mirror_identity=False)
+    game = SubjectiveChoiceGame(engine)
+    situations = (
+        ChoiceOption(
+            id="repair_childhood_telescope",
+            label="Repair an old telescope and show someone Saturn",
+            drive_score=0.63,
+            features={"care": 0.72, "beauty": 0.85, "connection": 0.80, "novelty": 0.45},
+        ),
+        ChoiceOption(
+            id="solve_clean_math_proof",
+            label="Solve a clean difficult proof alone",
+            drive_score=0.82,
+            features={"truth": 0.78, "challenge": 0.92, "coherence": 0.84},
+        ),
+        ChoiceOption(
+            id="write_strange_music",
+            label="Write strange luminous music with a friend",
+            drive_score=0.61,
+            features={"beauty": 0.92, "novelty": 0.86, "connection": 0.82, "play": 0.64},
+        ),
+        ChoiceOption(
+            id="audit_failure_report",
+            label="Audit a serious failure report until the root cause is clear",
+            drive_score=0.84,
+            features={"truth": 0.95, "care": 0.70, "coherence": 0.92, "challenge": 0.65},
+        ),
+        ChoiceOption(
+            id="quiet_dream_journal",
+            label="Write a quiet dream journal entry after a long day",
+            drive_score=0.58,
+            features={"calm": 0.95, "beauty": 0.55, "coherence": 0.45},
+        ),
+    )
+
+    report = game.run_preference_tournament(
+        scenario_id="mixed_life_situations",
+        domain="life_situation_favorite",
+        options=situations,
+        favorite_count=4,
+        runs=4,
+    )
+
+    assert report.consistency_rate == 1.0
+    assert report.transitivity_violations == 0
+    assert report.champion_id in {item.id for item in situations}
+    assert len(report.pairwise_results) == 24
+    assert "pairwise consistency 1.00" in report.commentary
+
+    reloaded = SubjectiveChoiceEngine(state_path=path, mirror_identity=False)
+    champion_pref = reloaded.recall_item_preference(
+        domain="life_situation_favorite",
+        item_id=report.champion_id,
+    )
+    assert champion_pref is not None
+    assert champion_pref.times_chosen >= 1
+
+    rematch = reloaded.choose(
+        [
+            ChoiceOption(
+                id=report.champion_id,
+                label=report.champion_label,
+                drive_score=0.45,
+                features={"beauty": 0.2},
+                metadata={"preference_domain": "life_situation_favorite"},
+            ),
+            ChoiceOption(
+                id="brand_new_flashy_option",
+                label="A brand-new flashy option with more raw pressure",
+                drive_score=0.80,
+                features={"novelty": 0.62, "play": 0.45},
+                metadata={"preference_domain": "life_situation_favorite"},
+            ),
+        ],
+        context="subjective_preference:life_situation_favorite:rematch",
+    )
+    assert rematch.chosen_id == report.champion_id

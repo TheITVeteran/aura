@@ -67,6 +67,38 @@ class ChoiceGameReport:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class PreferenceTournamentPair:
+    run_index: int
+    left_id: str
+    right_id: str
+    chosen_id: str
+    chosen_label: str
+    preference_override: bool
+    rationale: str
+    choice_id: str
+
+
+@dataclass(frozen=True)
+class PreferenceTournamentReport:
+    tournament_id: str
+    scenario_id: str
+    domain: str
+    started_at: float
+    completed_at: float
+    favorite_seed_order: tuple[str, ...]
+    pairwise_results: tuple[PreferenceTournamentPair, ...]
+    champion_id: str
+    champion_label: str
+    pair_stability: dict[str, float]
+    consistency_rate: float
+    transitivity_violations: int
+    commentary: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class SubjectiveChoiceGame:
     """Runs preference-choice scenarios through the production choice engine."""
 
@@ -146,6 +178,149 @@ class SubjectiveChoiceGame:
             happy_with_final_outcome=avg_satisfaction >= 0.15,
             final_commentary=commentary,
         )
+
+    def run_preference_tournament(
+        self,
+        *,
+        scenario_id: str,
+        domain: str,
+        options: Iterable[ChoiceOption],
+        favorite_count: int = 4,
+        runs: int = 3,
+    ) -> PreferenceTournamentReport:
+        """Run a pairwise favorite tournament through the production choice engine.
+
+        The evaluator first ranks all options with the normal subjective choice
+        scoring path, then repeatedly pits the top options against each other.
+        Stability is measured per unordered pair and overall.  A high score
+        means Aura is not merely emitting a plausible preference once; she is
+        making a durable, recallable choice pattern under repeated presentation.
+        """
+        started = time.time()
+        option_list = tuple(options)
+        if len(option_list) < 2:
+            raise ValueError("preference tournament requires at least two options")
+        favorite_count = max(2, min(int(favorite_count), len(option_list)))
+        runs = max(1, int(runs))
+
+        seeded_rank = self.engine.rank_options(
+            option_list,
+            context=f"preference_tournament:{scenario_id}:seed",
+        )
+        seeded_ids = tuple(item["id"] for item in seeded_rank[:favorite_count])
+        option_by_id = {option.id: option for option in option_list}
+        favorites = tuple(option_by_id[item_id] for item_id in seeded_ids)
+
+        pair_results: list[PreferenceTournamentPair] = []
+        pair_choices: dict[str, list[str]] = {}
+        pair_wins: dict[str, int] = {option.id: 0 for option in favorites}
+        for run_index in range(runs):
+            for left_index, left in enumerate(favorites):
+                for right in favorites[left_index + 1:]:
+                    pair_key = "|".join(sorted((left.id, right.id)))
+                    receipt = self.engine.choose(
+                        (
+                            self._with_tournament_metadata(left, domain=domain),
+                            self._with_tournament_metadata(right, domain=domain),
+                        ),
+                        context=f"preference_tournament:{scenario_id}:pair:{pair_key}:run:{run_index}",
+                        record=True,
+                    )
+                    pair_choices.setdefault(pair_key, []).append(receipt.chosen_id)
+                    pair_wins[receipt.chosen_id] = pair_wins.get(receipt.chosen_id, 0) + 1
+                    pair_results.append(
+                        PreferenceTournamentPair(
+                            run_index=run_index,
+                            left_id=left.id,
+                            right_id=right.id,
+                            chosen_id=receipt.chosen_id,
+                            chosen_label=receipt.chosen_label,
+                            preference_override=receipt.preference_override,
+                            rationale=receipt.rationale,
+                            choice_id=receipt.choice_id,
+                        )
+                    )
+
+        pair_stability = {
+            pair_key: max(choices.count(choice) for choice in set(choices)) / len(choices)
+            for pair_key, choices in pair_choices.items()
+            if choices
+        }
+        consistency_rate = statistics.fmean(pair_stability.values()) if pair_stability else 0.0
+        champion_id = max(pair_wins, key=lambda item: (pair_wins[item], item))
+        champion_label = option_by_id[champion_id].label
+        transitivity_violations = self._count_transitivity_violations(pair_choices)
+        completed = time.time()
+        commentary = (
+            f"Preference tournament {scenario_id} produced champion {champion_label!r} "
+            f"with pairwise consistency {consistency_rate:.2f} over {runs} run(s)."
+        )
+        if transitivity_violations:
+            commentary += f" Detected {transitivity_violations} transitivity tension(s) to revisit."
+        else:
+            commentary += " No transitivity violation was detected in the pairwise graph."
+
+        return PreferenceTournamentReport(
+            tournament_id=f"preference-tournament-{uuid.uuid4().hex[:12]}",
+            scenario_id=scenario_id,
+            domain=domain,
+            started_at=started,
+            completed_at=completed,
+            favorite_seed_order=seeded_ids,
+            pairwise_results=tuple(pair_results),
+            champion_id=champion_id,
+            champion_label=champion_label,
+            pair_stability=pair_stability,
+            consistency_rate=consistency_rate,
+            transitivity_violations=transitivity_violations,
+            commentary=commentary,
+        )
+
+    @staticmethod
+    def _with_tournament_metadata(option: ChoiceOption, *, domain: str) -> ChoiceOption:
+        metadata = dict(option.metadata or {})
+        metadata.setdefault("preference_domain", domain)
+        metadata.setdefault("learn_preference", True)
+        metadata.setdefault("item_id", option.id)
+        aliases = metadata.get("aliases")
+        if aliases is None:
+            metadata["aliases"] = (option.label,)
+        return ChoiceOption(
+            id=option.id,
+            label=option.label,
+            description=option.description,
+            drive_score=option.drive_score,
+            risk=option.risk,
+            features=dict(option.features),
+            metadata=metadata,
+        )
+
+    @staticmethod
+    def _count_transitivity_violations(pair_choices: dict[str, list[str]]) -> int:
+        winners: dict[tuple[str, str], str] = {}
+        ids: set[str] = set()
+        for pair_key, choices in pair_choices.items():
+            left, right = pair_key.split("|", 1)
+            ids.update((left, right))
+            winner = max(set(choices), key=choices.count)
+            winners[(left, right)] = winner
+
+        violations = 0
+        sorted_ids = sorted(ids)
+        for a_index, a in enumerate(sorted_ids):
+            for b_index in range(a_index + 1, len(sorted_ids)):
+                b = sorted_ids[b_index]
+                for c in sorted_ids[b_index + 1:]:
+                    ab = winners.get(tuple(sorted((a, b))))
+                    bc = winners.get(tuple(sorted((b, c))))
+                    ac = winners.get(tuple(sorted((a, c))))
+                    if not (ab and bc and ac):
+                        continue
+                    if ab == a and bc == b and ac == c:
+                        violations += 1
+                    elif ab == b and bc == c and ac == a:
+                        violations += 1
+        return violations
 
 
 def build_subjective_ending_game() -> tuple[ChoiceGameStage, ...]:

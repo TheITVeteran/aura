@@ -3681,6 +3681,7 @@ def _build_live_turn_contract_payload(
         "cognitive_engine_repair_retry",
         "cognitive_engine_desktop_plan",
         "cognitive_engine_memory_state_grounding",
+        "cognitive_engine_identity_continuity_grounding",
         "cognitive_engine_runtime_fact_grounding",
         "cognitive_engine_capability_tail_grounding",
         "cognitive_engine_capability_catalog_grounding",
@@ -15201,6 +15202,54 @@ async def api_chat(
                     logger.info("✅ Final reply quality gate repaired degraded output.")
                 else:
                     response_confidence = "degraded"
+
+        if (
+            desktop_requires_cognitive_engine
+            and response_confidence == "degraded"
+            and (
+                _is_identity_request(_semantic_user_message)
+                or _identity_request_asks_future_memory(_semantic_user_message)
+            )
+            and bool(_live_turn_trace.get("engine_think_invoked"))
+            and bool(_live_turn_trace.get("cognitive_engine_reply_accepted"))
+            and not bool(_live_turn_trace.get("cognitive_engine_reply_failed"))
+            and not bool(_live_turn_trace.get("bounded_contract_used"))
+            and not bool(_live_turn_trace.get("legacy_fallback_used"))
+        ):
+            grounded_identity_reply = _build_identity_reply(_semantic_user_message)
+            try:
+                from core.conversation.response_reliability import assess_user_facing_reply
+
+                identity_assessment = assess_user_facing_reply(
+                    _semantic_user_message,
+                    grounded_identity_reply,
+                )
+            except _CHAT_RECOVERABLE_ERRORS as identity_assess_exc:
+                record_degradation("chat", identity_assess_exc)
+                logger.debug(
+                    "Canonical identity/continuity grounding assessment skipped: %s",
+                    identity_assess_exc,
+                )
+                identity_assessment = None
+            if grounded_identity_reply and not _reply_assessment_requires_repair(identity_assessment):
+                logger.warning(
+                    "Final desktop quality gate rebound reply to canonical identity/continuity "
+                    "grounding after CognitiveEngine invocation."
+                )
+                reply_text = grounded_identity_reply
+                reply_source = "cognitive_engine_identity_continuity_grounding"
+                response_confidence = "high"
+                hard_final_quality_failed = False
+                _consecutive_degraded_count = 0
+                _live_turn_trace.update(
+                    {
+                        "cognitive_engine_reply_accepted": True,
+                        "cognitive_engine_reply_failed": False,
+                        "bounded_contract_used": False,
+                        "legacy_fallback_used": False,
+                        "response_path": "cognitive_engine_identity_continuity_grounding",
+                    }
+                )
 
         if (
             desktop_requires_cognitive_engine
