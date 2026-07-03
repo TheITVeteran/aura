@@ -134,6 +134,12 @@ def main(argv: list[str] | None = None) -> int:
         help="comma-separated 1-based chunk indexes to run (e.g. 5,6) — "
         "resume a partial run without repeating chunks that already passed",
     )
+    parser.add_argument(
+        "--defect-register",
+        default="",
+        help="write a machine-readable JSON defect register (order-dependence + "
+        "real failures) to this path for the self-repair backlog ingestor",
+    )
     parser.add_argument("extra", nargs="*", help="extra pytest args")
     args = parser.parse_args(argv)
 
@@ -207,6 +213,23 @@ def main(argv: list[str] | None = None) -> int:
                 order_dependent.append(fid)
             else:
                 real_failures.append(fid)
+
+    if args.defect_register:
+        try:
+            import json as _json
+
+            register = {
+                "schema": "aura.test_defect_register.v1",
+                "generated_at_unix": time.time(),
+                "order_dependent": order_dependent,
+                "real_failures": real_failures,
+            }
+            reg_path = Path(args.defect_register)
+            reg_path.parent.mkdir(parents=True, exist_ok=True)
+            reg_path.write_text(_json.dumps(register, indent=2) + "\n", encoding="utf-8")
+            print(f"🗂  defect register → {reg_path}", flush=True)
+        except OSError as _reg_exc:
+            print(f"⚠️  defect register write failed: {_reg_exc}", file=sys.stderr, flush=True)
 
     print("\n━━ chunk summary ━━")
     chunk_failures = 0
