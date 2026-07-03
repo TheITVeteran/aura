@@ -33,6 +33,17 @@ from typing import Any, Callable
 logger = logging.getLogger("Infra.Canary")
 
 
+# Guarded-callable failure envelope: user-supplied callables (checks, guards,
+# actions, hooks, channels) may raise anything. House discipline forbids broad
+# `except Exception`; this tuple names the realistic failure universe
+# explicitly. Exotic escapes — custom Exception subtypes outside these bases,
+# SystemExit, KeyboardInterrupt — propagate loudly by design.
+_GUARDED_CALLABLE_ERRORS = (
+    RuntimeError, AttributeError, TypeError, ValueError,
+    LookupError, ArithmeticError, OSError, ImportError,
+)
+
+
 class CanaryPhase(StrEnum):
     PREFLIGHT = "preflight"
     CANARY_1PCT = "canary_1pct"
@@ -132,7 +143,7 @@ class CanaryController:
             if smoke_test:
                 try:
                     passed = smoke_test()
-                except Exception as exc:
+                except _GUARDED_CALLABLE_ERRORS as exc:
                     return self._fail(f"Smoke test failed: {exc}", t0)
                 if not passed:
                     return self._fail("Smoke test returned False", t0)
@@ -143,7 +154,7 @@ class CanaryController:
             # Deploy canary
             try:
                 canary_fn()
-            except Exception as exc:
+            except _GUARDED_CALLABLE_ERRORS as exc:
                 return self._fail(f"Canary deployment failed: {exc}", t0)
 
             # Progressive phases

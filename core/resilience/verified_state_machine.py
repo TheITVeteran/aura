@@ -46,6 +46,17 @@ from typing import Any, Callable
 logger = logging.getLogger("Aura.StateMachine")
 
 
+# Guarded-callable failure envelope: user-supplied callables (checks, guards,
+# actions, hooks, channels) may raise anything. House discipline forbids broad
+# `except Exception`; this tuple names the realistic failure universe
+# explicitly. Exotic escapes — custom Exception subtypes outside these bases,
+# SystemExit, KeyboardInterrupt — propagate loudly by design.
+_GUARDED_CALLABLE_ERRORS = (
+    RuntimeError, AttributeError, TypeError, ValueError,
+    LookupError, ArithmeticError, OSError, ImportError,
+)
+
+
 class IllegalTransitionError(RuntimeError):
     """Raised when an illegal state transition is attempted."""
 
@@ -215,7 +226,7 @@ class VerifiedStateMachine:
             if guard is not None:
                 try:
                     guard_passed = guard()
-                except Exception as exc:
+                except _GUARDED_CALLABLE_ERRORS as exc:
                     logger.error(
                         "Guard for %s → %s in %s raised: %s",
                         from_state, to_state, self.name, exc,
@@ -247,7 +258,7 @@ class VerifiedStateMachine:
                 try:
                     action(from_state, to_state)
                     record.action_executed = True
-                except Exception as exc:
+                except _GUARDED_CALLABLE_ERRORS as exc:
                     logger.error(
                         "Action for %s → %s in %s raised: %s",
                         from_state, to_state, self.name, exc,

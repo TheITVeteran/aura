@@ -29,6 +29,7 @@ import json
 import logging
 import os
 import random
+import sys
 import threading
 import time
 import uuid
@@ -211,16 +212,23 @@ class Tracer:
         with self._lock:
             self._active_spans[span.span_id] = span
 
+        # A span opened inside an except block sees that outer exception in
+        # sys.exc_info(); remember it so only exceptions raised BY the span
+        # body mark the span as ERROR.
+        pre_existing_exc = sys.exc_info()[1]
         try:
             yield span
-        except Exception as exc:
-            span.set_status("ERROR", str(exc))
-            span.add_event("exception", {
-                "exception.type": type(exc).__name__,
-                "exception.message": str(exc)[:200],
-            })
-            raise
         finally:
+            # sys.exc_info() sees any in-flight exception here — including
+            # BaseException subclasses like CancelledError — so error spans
+            # are recorded without a broad except/re-raise handler.
+            in_flight = sys.exc_info()[1]
+            if in_flight is not None and in_flight is not pre_existing_exc:
+                span.set_status("ERROR", str(in_flight))
+                span.add_event("exception", {
+                    "exception.type": type(in_flight).__name__,
+                    "exception.message": str(in_flight)[:200],
+                })
             span.end()
             if span.status == SpanStatus.UNSET:
                 span.set_status("OK")
@@ -278,16 +286,16 @@ class _NoopSpan(Span):
         super().__init__(trace_id="0", span_id="0", name="noop")
 
     def set_attribute(self, key: str, value: Any) -> None:
-        pass
+        return None  # dropped span: attributes are discarded
 
     def set_status(self, status: str, description: str = "") -> None:
-        pass
+        return None  # dropped span: status is discarded
 
     def add_event(self, name: str, attributes: dict[str, Any] | None = None) -> None:
-        pass
+        return None  # dropped span: events are discarded
 
     def end(self) -> None:
-        pass
+        return None  # dropped span: nothing to finalize
 
 _NOOP_SPAN = _NoopSpan()
 

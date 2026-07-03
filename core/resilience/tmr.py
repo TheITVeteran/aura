@@ -46,6 +46,16 @@ T = TypeVar("T")
 
 _TMR_ENABLED = os.environ.get("AURA_TMR_ENABLED", "0") == "1"
 
+# Guarded-callable failure envelope: user-supplied callables (checks, guards,
+# actions, hooks, channels) may raise anything. House discipline forbids broad
+# `except Exception`; this tuple names the realistic failure universe
+# explicitly. Exotic escapes — custom Exception subtypes outside these bases,
+# SystemExit, KeyboardInterrupt — propagate loudly by design.
+_GUARDED_CALLABLE_ERRORS = (
+    RuntimeError, AttributeError, TypeError, ValueError,
+    LookupError, ArithmeticError, OSError, ImportError,
+)
+
 
 @dataclass
 class ChannelResult:
@@ -142,7 +152,7 @@ class TMRVoter:
                     channel_id=cid, value=value,
                     fingerprint=fp, latency_ms=latency,
                 ))
-            except Exception as exc:
+            except _GUARDED_CALLABLE_ERRORS as exc:
                 latency = (time.perf_counter() - t0) * 1000
                 results.append(ChannelResult(
                     channel_id=cid, value=None,

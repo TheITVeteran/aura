@@ -32,6 +32,17 @@ from typing import Any, Callable
 logger = logging.getLogger("Infra.Rollback")
 
 
+# Guarded-callable failure envelope: user-supplied callables (checks, guards,
+# actions, hooks, channels) may raise anything. House discipline forbids broad
+# `except Exception`; this tuple names the realistic failure universe
+# explicitly. Exotic escapes — custom Exception subtypes outside these bases,
+# SystemExit, KeyboardInterrupt — propagate loudly by design.
+_GUARDED_CALLABLE_ERRORS = (
+    RuntimeError, AttributeError, TypeError, ValueError,
+    LookupError, ArithmeticError, OSError, ImportError,
+)
+
+
 @dataclass
 class Checkpoint:
     """A state checkpoint for rollback."""
@@ -107,7 +118,7 @@ class RollbackController:
                 state_path.write_text(json.dumps(state, default=str, indent=2))
                 cp.state_path = str(state_path)
                 cp.verified = True
-            except Exception as exc:
+            except _GUARDED_CALLABLE_ERRORS as exc:
                 logger.error("Failed to collect state for checkpoint '%s': %s", name, exc)
 
         with self._lock:
@@ -175,7 +186,7 @@ class RollbackController:
                 return False
             try:
                 applied = bool(applier(state))
-            except Exception as exc:
+            except _GUARDED_CALLABLE_ERRORS as exc:
                 logger.error("ROLLBACK FAILED: state applier raised: %s", exc)
                 return False
             if not applied:
@@ -201,7 +212,7 @@ class RollbackController:
                 if not hook():
                     logger.error("VERIFY: Hook %s failed", hook.__name__)
                     all_passed = False
-            except Exception as exc:
+            except _GUARDED_CALLABLE_ERRORS as exc:
                 logger.error("VERIFY: Hook %s raised: %s", hook.__name__, exc)
                 all_passed = False
 
@@ -235,5 +246,5 @@ class RollbackController:
         if cp.state_path:
             try:
                 Path(cp.state_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug("Checkpoint cleanup skipped for %s: %s", cp.state_path, exc)

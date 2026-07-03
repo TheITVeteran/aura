@@ -47,7 +47,7 @@ def collect_reliability_diagnostics() -> dict[str, Any]:
             "status": registry.status(),
             "rpn_report": registry.rpn_report()[:10],  # Top 10 by risk
         }
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
         diagnostics["subsystems"]["fault_taxonomy"] = {"error": str(exc)}
 
     # 2. FMEA Registry
@@ -59,7 +59,7 @@ def collect_reliability_diagnostics() -> dict[str, Any]:
             "unmitigated": fmea.unmitigated_faults(),
             "high_risk": fmea.faults_above_rpn(30),
         }
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
         diagnostics["subsystems"]["fmea"] = {"error": str(exc)}
 
     # 3. SLO Monitor
@@ -67,7 +67,7 @@ def collect_reliability_diagnostics() -> dict[str, Any]:
         from slo.slo_monitor import get_slo_monitor
         monitor = get_slo_monitor()
         diagnostics["subsystems"]["slo_monitor"] = monitor.status()
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
         diagnostics["subsystems"]["slo_monitor"] = {"error": str(exc)}
 
     # 4. Contract Tracker
@@ -75,7 +75,7 @@ def collect_reliability_diagnostics() -> dict[str, Any]:
         from core.resilience.contracts import get_contract_tracker
         tracker = get_contract_tracker()
         diagnostics["subsystems"]["contracts"] = tracker.status()
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
         diagnostics["subsystems"]["contracts"] = {"error": str(exc)}
 
     # 5. Tracing
@@ -83,7 +83,7 @@ def collect_reliability_diagnostics() -> dict[str, Any]:
         from core.observability.tracing import get_tracer
         tracer = get_tracer()
         diagnostics["subsystems"]["tracing"] = tracer.status()
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
         diagnostics["subsystems"]["tracing"] = {"error": str(exc)}
 
     # 6. Degradation Tracker (existing)
@@ -91,7 +91,7 @@ def collect_reliability_diagnostics() -> dict[str, Any]:
         from core.runtime.errors import get_degradation_tracker
         tracker = get_degradation_tracker()
         diagnostics["subsystems"]["degradation"] = tracker.status()
-    except Exception as exc:
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
         diagnostics["subsystems"]["degradation"] = {"error": str(exc)}
 
     # Summary
@@ -137,7 +137,7 @@ def create_diagnostics_router() -> Any:
             from core.resilience.fault_taxonomy import get_fault_registry
             payload = await asyncio.to_thread(get_fault_registry().status)
             return JSONResponse(content=payload)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
     @router.get("/reliability/slos")
@@ -147,7 +147,7 @@ def create_diagnostics_router() -> Any:
             from slo.slo_monitor import get_slo_monitor
             payload = await asyncio.to_thread(get_slo_monitor().status)
             return JSONResponse(content=payload)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
     @router.get("/reliability/fmea")
@@ -165,7 +165,7 @@ def create_diagnostics_router() -> Any:
 
             payload = await asyncio.to_thread(_collect)
             return JSONResponse(content=payload)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
     @router.get("/reliability/contracts")
@@ -175,7 +175,7 @@ def create_diagnostics_router() -> Any:
             from core.resilience.contracts import get_contract_tracker
             payload = await asyncio.to_thread(get_contract_tracker().status)
             return JSONResponse(content=payload)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
     @router.get("/reliability/traces")
@@ -194,7 +194,7 @@ def create_diagnostics_router() -> Any:
 
             payload = await asyncio.to_thread(_collect)
             return JSONResponse(content=payload)
-        except Exception as exc:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
     return router

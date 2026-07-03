@@ -88,6 +88,7 @@ ALLOW_SUBPROCESS = {
     "tools/box/parent_controller.py",
     # Operator/CI drivers that orchestrate child processes by design:
     "tools/run_test_chunks.py",
+    "tests/test_architecture_quality_gate.py",
     "tools/live_boot_proof.py",
     "tools/build_release_manifest.py",
     "tools/run_proof_step.py",

@@ -34,6 +34,17 @@ from typing import Any, Callable
 logger = logging.getLogger("Aura.Chaos")
 
 
+# Guarded-callable failure envelope: user-supplied callables (checks, guards,
+# actions, hooks, channels) may raise anything. House discipline forbids broad
+# `except Exception`; this tuple names the realistic failure universe
+# explicitly. Exotic escapes — custom Exception subtypes outside these bases,
+# SystemExit, KeyboardInterrupt — propagate loudly by design.
+_GUARDED_CALLABLE_ERRORS = (
+    RuntimeError, AttributeError, TypeError, ValueError,
+    LookupError, ArithmeticError, OSError, ImportError,
+)
+
+
 class ExperimentStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
@@ -259,7 +270,7 @@ class ChaosFramework:
             if experiment.collect_metrics:
                 try:
                     metrics_before = experiment.collect_metrics()
-                except Exception as exc:
+                except _GUARDED_CALLABLE_ERRORS as exc:
                     logger.error("Failed to collect baseline metrics: %s", exc)
 
             # 2. Inject fault
@@ -272,7 +283,7 @@ class ChaosFramework:
             if experiment.collect_metrics:
                 try:
                     metrics_after = experiment.collect_metrics()
-                except Exception as exc:
+                except _GUARDED_CALLABLE_ERRORS as exc:
                     logger.error("Failed to collect post-fault metrics: %s", exc)
 
             duration = time.time() - t0
@@ -283,7 +294,7 @@ class ChaosFramework:
             if experiment.success_criteria:
                 try:
                     passed = experiment.success_criteria(metrics_after)
-                except Exception as exc:
+                except _GUARDED_CALLABLE_ERRORS as exc:
                     logger.error("Success criteria evaluation failed: %s", exc)
                     passed = False
             else:
@@ -302,7 +313,7 @@ class ChaosFramework:
                 metrics_after=metrics_after,
             )
 
-        except Exception as exc:
+        except _GUARDED_CALLABLE_ERRORS as exc:
             duration = time.time() - t0
             result = ExperimentResult(
                 experiment_name=experiment.name,
@@ -315,7 +326,7 @@ class ChaosFramework:
             # ALWAYS revert the fault
             try:
                 experiment.fault.revert()
-            except Exception as revert_exc:
+            except _GUARDED_CALLABLE_ERRORS as revert_exc:
                 logger.critical("FAILED TO REVERT CHAOS FAULT: %s", revert_exc)
 
             with self._lock:

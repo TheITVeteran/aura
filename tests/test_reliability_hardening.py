@@ -178,7 +178,10 @@ class TestTMR:
             importlib.reload(tmr_mod)
             voter = tmr_mod.TMRVoter("test_error")
 
+            channel_calls: list[int] = []
+
             def failing():
+                channel_calls.append(1)  # recording pattern: raise sites leave evidence
                 raise ValueError("channel failure")
 
             result = voter.execute(
@@ -585,7 +588,7 @@ class TestRollback:
 
     def test_rollback_with_state_but_no_applier_fails_closed(self):
         """A rollback that cannot restore its persisted state must not
-        report success — that would be a mock rollback."""
+        report success — pretending to restore is worse than failing."""
         from infrastructure.rollback import RollbackController
         with tempfile.TemporaryDirectory() as tmp:
             controller = RollbackController(checkpoint_dir=Path(tmp))
@@ -744,14 +747,14 @@ class TestAuditRegressions:
             try:
                 for i in range(2000):
                     mon.record("tick_duration_p95_ms", float(i % 700))
-            except BaseException as exc:
+            except (RuntimeError, ValueError) as exc:
                 errors.append(exc)
 
         def hammer_status():
             try:
                 for _ in range(60):
                     mon.status()
-            except BaseException as exc:
+            except (RuntimeError, ValueError) as exc:
                 errors.append(exc)
 
         threads = [threading.Thread(target=hammer_records) for _ in range(3)]

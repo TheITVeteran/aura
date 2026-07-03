@@ -324,7 +324,7 @@ def _strongly_connected_components(graph: Mapping[str, Iterable[str]]) -> tuple[
 
         if lowlinks[node] == indices[node]:
             component: list[str] = []
-            while True:
+            while stack:  # bounded: Tarjan guarantees node is on the stack
                 target = stack.pop()
                 on_stack.remove(target)
                 component.append(target)

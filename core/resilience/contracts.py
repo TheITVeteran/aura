@@ -44,6 +44,16 @@ T = TypeVar("T")
 
 _ENFORCE = os.environ.get("AURA_CONTRACTS_ENFORCE", "0") == "1"
 
+# Guarded-callable failure envelope: user-supplied callables (checks, guards,
+# actions, hooks, channels) may raise anything. House discipline forbids broad
+# `except Exception`; this tuple names the realistic failure universe
+# explicitly. Exotic escapes — custom Exception subtypes outside these bases,
+# SystemExit, KeyboardInterrupt — propagate loudly by design.
+_GUARDED_CALLABLE_ERRORS = (
+    RuntimeError, AttributeError, TypeError, ValueError,
+    LookupError, ArithmeticError, OSError, ImportError,
+)
+
 
 class ContractViolation(RuntimeError):
     """Raised when a contract is violated and enforcement is enabled."""
@@ -155,7 +165,7 @@ def precondition(
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 try:
                     ok = check(*args, **kwargs) if args else check(**kwargs)
-                except Exception:
+                except _GUARDED_CALLABLE_ERRORS:
                     ok = False
                 if not ok:
                     _handle_violation("precondition", message, func_name)
@@ -166,7 +176,7 @@ def precondition(
             def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
                 try:
                     ok = check(*args, **kwargs) if args else check(**kwargs)
-                except Exception:
+                except _GUARDED_CALLABLE_ERRORS:
                     ok = False
                 if not ok:
                     _handle_violation("precondition", message, func_name)
@@ -192,7 +202,7 @@ def postcondition(
                 result = await func(*args, **kwargs)
                 try:
                     ok = check(result)
-                except Exception:
+                except _GUARDED_CALLABLE_ERRORS:
                     ok = False
                 if not ok:
                     _handle_violation("postcondition", message, func_name)
@@ -204,7 +214,7 @@ def postcondition(
                 result = func(*args, **kwargs)
                 try:
                     ok = check(result)
-                except Exception:
+                except _GUARDED_CALLABLE_ERRORS:
                     ok = False
                 if not ok:
                     _handle_violation("postcondition", message, func_name)
@@ -247,14 +257,14 @@ def invariant(
                                        **kwargs: Any) -> Any:
                     try:
                         ok = check(self)
-                    except Exception:
+                    except _GUARDED_CALLABLE_ERRORS:
                         ok = False
                     if not ok:
                         _handle_violation("invariant", f"pre-{message}", _fn)
                     result = await _orig(self, *args, **kwargs)
                     try:
                         ok = check(self)
-                    except Exception:
+                    except _GUARDED_CALLABLE_ERRORS:
                         ok = False
                     if not ok:
                         _handle_violation("invariant", f"post-{message}", _fn)
@@ -268,14 +278,14 @@ def invariant(
                                 **kwargs: Any) -> Any:
                     try:
                         ok = check(self)
-                    except Exception:
+                    except _GUARDED_CALLABLE_ERRORS:
                         ok = False
                     if not ok:
                         _handle_violation("invariant", f"pre-{message}", _fn)
                     result = _orig(self, *args, **kwargs)
                     try:
                         ok = check(self)
-                    except Exception:
+                    except _GUARDED_CALLABLE_ERRORS:
                         ok = False
                     if not ok:
                         _handle_violation("invariant", f"post-{message}", _fn)
