@@ -104,6 +104,13 @@ class AffordanceRegistry:
             aff = self._affordances[name]
             tag = f"⟦affordance:{name}{(' ' + aff.args_hint) if aff.args_hint else ''}⟧"
             lines.append(f"  • {tag} — {aff.when}")
+        lines.append(
+            "  Example — user: 'I can't name this piece of furniture, it's low "
+            "with little drawers'  →  you: 'Sounds like a chest of drawers or a "
+            "credenza. \u27e6affordance:show_sketch prompt=\"a low wooden credenza "
+            "with small drawers\"\u27e7 Does that match?'  (emit the tag exactly, "
+            "inline, and keep speaking naturally around it.)"
+        )
         return "\n".join(lines) + "\n"
 
     def parse_intents(self, text: str) -> list[AffordanceIntent]:

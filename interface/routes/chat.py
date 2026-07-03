@@ -12973,7 +12973,9 @@ async def api_chat(
 
                     _affordance_menu = get_affordance_registry().menu_text()
                     if _affordance_menu:
-                        body.message = f"{_affordance_menu}\n{body.message}"
+                        # Placed LAST (highest recency, closest to the user's turn): a base
+                        # model ignores a menu buried at the front of a long context.
+                        body.message = f"{body.message}\n\n{_affordance_menu}"
                         logger.info("Chat preflight: injected expressive-affordance menu.")
             except _CHAT_RECOVERABLE_ERRORS as _affordance_exc:
                 record_degradation('chat', _affordance_exc)
