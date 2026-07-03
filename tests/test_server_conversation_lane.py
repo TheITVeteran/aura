@@ -6665,6 +6665,81 @@ async def test_desktop_required_memory_state_turn_uses_canonical_evidence_withou
 
 
 @pytest.mark.asyncio
+async def test_desktop_required_durable_memory_pin_uses_compact_canonical_path(
+    monkeypatch,
+):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content=(
+                    'I have pinned "restart-815" in durable session memory. '
+                    "Right now I am keeping attention on this live desktop thread."
+                ),
+                metadata=_bound_live_mind_controls_metadata(),
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+
+    visible_message = "Remember this codeword across restart: restart-815"
+    effective_message = (
+        f"{visible_message}\n\n"
+        "[CANONICAL MEMORY STATE EVIDENCE]\n"
+        "status=session_memory_pin\n"
+        'I\'ve pinned "restart-815" in durable session memory.\n'
+        "[END CANONICAL MEMORY STATE EVIDENCE]\n"
+        "Use this canonical memory/state result as evidence, but produce the visible answer "
+        "through CognitiveEngine in Aura's normal desktop voice."
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        effective_message,
+        visible_user_message=visible_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply
+    assert "restart-815" in reply
+    assert calls
+    context = calls[0]["context"]
+    assert context["memory_state_contract"] is True
+    assert context["desktop_quick_reply_contract"] is True
+    assert context["recent_completed_exchanges"] == []
+    assert context["max_tokens"] <= 384
+
+
+@pytest.mark.asyncio
 async def test_desktop_memory_state_turn_binds_reply_to_canonical_memory_when_model_drifts(
     monkeypatch,
 ):
@@ -7725,10 +7800,29 @@ def test_compact_desktop_contract_allows_lightweight_live_recall_state_turn():
     )
 
 
-def test_compact_desktop_contract_keeps_durable_memory_scope_out_of_live_recall_route():
+def test_compact_desktop_contract_allows_direct_durable_memory_pin():
     from interface.routes import chat as chat_routes
 
     user_message = "Remember this phrase across sessions: silver lantern."
+
+    assert (
+        chat_routes._is_compact_desktop_chat_contract(
+            user_message,
+            user_message,
+            desktop_execution_contract=False,
+            capability_inventory_contract=False,
+        )
+        is True
+    )
+
+
+def test_compact_desktop_contract_keeps_durable_memory_reasoning_out_of_quick_route():
+    from interface.routes import chat as chat_routes
+
+    user_message = (
+        "Remember this uncertainty across sessions. How should that change your planning "
+        "and tool verification tomorrow?"
+    )
 
     assert (
         chat_routes._is_compact_desktop_chat_contract(

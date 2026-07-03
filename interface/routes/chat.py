@@ -3120,7 +3120,14 @@ def _is_lightweight_live_desktop_state_or_recall_turn(
         return False
     if _is_identity_request(user_message) or _is_identity_challenge_request(user_message):
         return False
-    if _DURABLE_MEMORY_SCOPE_RE.search(text):
+    direct_memory_state_turn = bool(
+        _extract_session_memory_pin_request(user_message)
+        or (
+            _is_session_memory_recall_request(user_message)
+            and _is_cross_session_memory_recall_request(user_message)
+        )
+    )
+    if _DURABLE_MEMORY_SCOPE_RE.search(text) and not direct_memory_state_turn:
         return False
 
     shape = analyze_prompt_shape(user_message)
@@ -3265,7 +3272,14 @@ def _is_compact_desktop_chat_contract(
         effective_text = str(user_message or "")
     if len(effective_text) > 1600 or len(text) > 900:
         return False
-    if _DURABLE_MEMORY_SCOPE_RE.search(text):
+    direct_memory_state_turn = bool(
+        _extract_session_memory_pin_request(user_message)
+        or (
+            _is_session_memory_recall_request(user_message)
+            and _is_cross_session_memory_recall_request(user_message)
+        )
+    )
+    if _DURABLE_MEMORY_SCOPE_RE.search(text) and not direct_memory_state_turn:
         return False
     if bool(getattr(shape, "prefers_extended_answer", False)) and not lightweight_live_state_or_recall:
         return False
@@ -6209,10 +6223,8 @@ def _complete_repairable_truncated_reply(user_message: Any, reply_text: Any) -> 
 # ── Response Quality Metrics (extracted to chat_quality.py) ──
 from interface.routes.chat_quality import (  # noqa: E402
     _check_response_consistency,
-    _commitment_terms,
     _extract_and_register_commitments,
     _log_response_quality_metrics,
-    _negated_clause_contradicts_commitment,
     _reply_assessment_requires_repair,
 )
 
