@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 from core.runtime.errors import record_degradation
 from core.runtime.service_access import (
     resolve_attention_schema,
@@ -68,7 +68,7 @@ class ConsciousnessSystem:
             or LiquidSubstrate()
         )
         self.qualia = (
-            ServiceContainer.get("qualia_synthesizer", default=None) or QualiaSynthesizer()
+            get_runtime_service("qualia_synthesizer", default=None) or QualiaSynthesizer()
         )
 
         # Initialize attributes to avoid NoneType/AttributeError in IDE
@@ -83,7 +83,7 @@ class ConsciousnessSystem:
 
         # Accelerate Authority Registration (Phase Unification)
         self.substrate_authority = SubstrateAuthority()
-        ServiceContainer.register_instance("substrate_authority", self.substrate_authority)
+        register_runtime_service("substrate_authority", self.substrate_authority)
 
         self.bridge = None  # ConsciousnessBridge (Phase Bridge)
 
@@ -104,15 +104,15 @@ class ConsciousnessSystem:
             logger.warning("Could not initialize DreamingProcess: %s", e)
             self.dreaming = None
 
-        # Register subsystem instances into ServiceContainer for cross-module access
-        ServiceContainer.register_instance("attention_schema", self.attention_schema)
-        ServiceContainer.register_instance("global_workspace", self.global_workspace)
-        ServiceContainer.register_instance("temporal_binding", self.temporal_binding)
-        ServiceContainer.register_instance("homeostatic_coupling", self.homeostatic_coupling)
-        ServiceContainer.register_instance("self_prediction", self.self_prediction)
-        ServiceContainer.register_instance("conscious_substrate", self.liquid_substrate)
-        ServiceContainer.register_instance("liquid_state", self.liquid_substrate)
-        ServiceContainer.register_instance("qualia_synthesizer", self.qualia)
+        # Publish subsystem instances for cross-module access.
+        register_runtime_service("attention_schema", self.attention_schema)
+        register_runtime_service("global_workspace", self.global_workspace)
+        register_runtime_service("temporal_binding", self.temporal_binding)
+        register_runtime_service("homeostatic_coupling", self.homeostatic_coupling)
+        register_runtime_service("self_prediction", self.self_prediction)
+        register_runtime_service("conscious_substrate", self.liquid_substrate)
+        register_runtime_service("liquid_state", self.liquid_substrate)
+        register_runtime_service("qualia_synthesizer", self.qualia)
 
         self.heartbeat = CognitiveHeartbeat(
             orchestrator=orchestrator,
@@ -180,7 +180,7 @@ class ConsciousnessSystem:
 
             self.being_runtime = get_being_runtime()
             self.being_runtime.start()
-            ServiceContainer.register_instance("being_runtime", self.being_runtime, required=False)
+            register_runtime_service("being_runtime", self.being_runtime, required=False)
             self._mark_layer_online("being_runtime")
             logger.info("🧠 LAMP/AuraNow BeingRuntime ONLINE")
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
@@ -220,7 +220,7 @@ class ConsciousnessSystem:
             # Substrate sync via shared memory or direct reference
             # The engine will start syncing when attach() is called with the model.
             # We register it so other layers can find it.
-            ServiceContainer.register_instance("affective_steering", steering_engine)
+            register_runtime_service("affective_steering", steering_engine)
             self._mark_layer_online("affective_steering")
             logger.info("🧠 Layer 2: AffectiveSteering registered (awaiting model attach)")
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -257,7 +257,7 @@ class ConsciousnessSystem:
             from .phi_core import PhiCore
 
             self.phi_core = PhiCore()
-            ServiceContainer.register_instance("phi_core", self.phi_core)
+            register_runtime_service("phi_core", self.phi_core)
             self._mark_layer_online("phi_core")
             logger.info("🧠 Layer 5: PhiCore ONLINE (recording via ClosedCausalLoop)")
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -274,7 +274,7 @@ class ConsciousnessSystem:
             from .hierarchical_phi import get_hierarchical_phi
 
             self.hierarchical_phi = get_hierarchical_phi()
-            ServiceContainer.register_instance("hierarchical_phi", self.hierarchical_phi)
+            register_runtime_service("hierarchical_phi", self.hierarchical_phi)
             self._mark_layer_online("hierarchical_phi")
             logger.info(
                 "🧠 Layer 5b: HierarchicalPhi ONLINE (32-node primary + %d×16-node subsystems)",
@@ -293,7 +293,7 @@ class ConsciousnessSystem:
             from .hemispheric_split import get_hemispheric_split
 
             self.hemispheric_split = get_hemispheric_split()
-            ServiceContainer.register_instance("hemispheric_split", self.hemispheric_split)
+            register_runtime_service("hemispheric_split", self.hemispheric_split)
             self._mark_layer_online("hemispheric_split")
             logger.info("🧠 Layer 5c: HemisphericSplit ONLINE (corpus callosum intact)")
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -309,7 +309,7 @@ class ConsciousnessSystem:
             from .minimal_selfhood import get_minimal_selfhood
 
             self.minimal_selfhood = get_minimal_selfhood()
-            ServiceContainer.register_instance("minimal_selfhood", self.minimal_selfhood)
+            register_runtime_service("minimal_selfhood", self.minimal_selfhood)
             self._mark_layer_online("minimal_selfhood")
             logger.info("🧠 Layer 5d: MinimalSelfhood ONLINE (trichoplax→dugesia)")
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -325,7 +325,7 @@ class ConsciousnessSystem:
             from .recursive_tom import get_recursive_tom
 
             self.recursive_tom = get_recursive_tom()
-            ServiceContainer.register_instance("recursive_tom", self.recursive_tom)
+            register_runtime_service("recursive_tom", self.recursive_tom)
             self._mark_layer_online("recursive_tom")
             logger.info("🧠 Layer 5e: RecursiveToM ONLINE (max_depth=3, observer-aware)")
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -341,7 +341,7 @@ class ConsciousnessSystem:
             from .octopus_arms import get_octopus_federation
 
             self.octopus_federation = get_octopus_federation()
-            ServiceContainer.register_instance("octopus_federation", self.octopus_federation)
+            register_runtime_service("octopus_federation", self.octopus_federation)
             self._mark_layer_online("octopus_federation")
             logger.info("🧠 Layer 5f: OctopusFederation ONLINE (8 arms, link=intact)")
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -357,10 +357,10 @@ class ConsciousnessSystem:
             from .cellular_turnover import get_cellular_turnover
 
             self.cellular_turnover = get_cellular_turnover()
-            mesh = ServiceContainer.get("neural_mesh", default=None)
+            mesh = get_runtime_service("neural_mesh", default=None)
             if mesh is not None:
                 self.cellular_turnover.attach(mesh)
-            ServiceContainer.register_instance("cellular_turnover", self.cellular_turnover)
+            register_runtime_service("cellular_turnover", self.cellular_turnover)
             self._mark_layer_online("cellular_turnover")
             logger.info("🧠 Layer 5g: CellularTurnover ONLINE (attached=%s)", mesh is not None)
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -376,7 +376,7 @@ class ConsciousnessSystem:
             from .absorbed_voices import get_absorbed_voices
 
             self.absorbed_voices = get_absorbed_voices()
-            ServiceContainer.register_instance("absorbed_voices", self.absorbed_voices)
+            register_runtime_service("absorbed_voices", self.absorbed_voices)
             self._mark_layer_online("absorbed_voices")
             logger.info(
                 "🧠 Layer 5h: AbsorbedVoices ONLINE (%d voices loaded)",
@@ -395,7 +395,7 @@ class ConsciousnessSystem:
             from .existential_stakes import get_existential_stakes
 
             self.existential_stakes = get_existential_stakes()
-            ServiceContainer.register_instance("existential_stakes", self.existential_stakes)
+            register_runtime_service("existential_stakes", self.existential_stakes)
             self._mark_layer_online("existential_stakes")
             logger.info("🧠 Layer 5i: ExistentialStakes ONLINE (memory limit monitoring active)")
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -411,7 +411,7 @@ class ConsciousnessSystem:
             from .synaptic_plasticity import get_synaptic_plasticity
 
             self.synaptic_plasticity = get_synaptic_plasticity()
-            ServiceContainer.register_instance("synaptic_plasticity", self.synaptic_plasticity)
+            register_runtime_service("synaptic_plasticity", self.synaptic_plasticity)
             self._mark_layer_online("synaptic_plasticity")
             logger.info("🧠 Layer 5j: SynapticPlasticity ONLINE (bounded projection learning)")
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
@@ -427,7 +427,7 @@ class ConsciousnessSystem:
             from .temporal_continuity import get_temporal_continuity
 
             self.temporal_continuity = get_temporal_continuity()
-            ServiceContainer.register_instance("temporal_continuity", self.temporal_continuity)
+            register_runtime_service("temporal_continuity", self.temporal_continuity)
             self._mark_layer_online("temporal_continuity")
             logger.info("🧠 Layer 5k: TemporalContinuity ONLINE (silence residue active)")
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
@@ -443,7 +443,7 @@ class ConsciousnessSystem:
             from .attention_gate import get_attention_gate
 
             self.attention_gate = get_attention_gate()
-            ServiceContainer.register_instance("attention_gate", self.attention_gate)
+            register_runtime_service("attention_gate", self.attention_gate)
             self._mark_layer_online("attention_gate")
             logger.info("🧠 Layer 5l: AttentionGate ONLINE (causal context pruning active)")
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
@@ -459,7 +459,7 @@ class ConsciousnessSystem:
             from .somatic_qualia import get_somatic_qualia
 
             self.somatic_qualia = get_somatic_qualia()
-            ServiceContainer.register_instance("somatic_qualia", self.somatic_qualia)
+            register_runtime_service("somatic_qualia", self.somatic_qualia)
             self._mark_layer_online("somatic_qualia")
             logger.info("🧠 Layer 5m: SomaticQualia ONLINE (raw felt perturbation active)")
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
@@ -478,7 +478,7 @@ class ConsciousnessSystem:
 
             self.bridge = ConsciousnessBridge(self)
             await self.bridge.start()
-            ServiceContainer.register_instance("consciousness_bridge", self.bridge)
+            register_runtime_service("consciousness_bridge", self.bridge)
             self._mark_layer_online("consciousness_bridge")
             logger.info(
                 "🧠 Layer 6: ConsciousnessBridge ONLINE (%d/7 layers)",

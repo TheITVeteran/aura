@@ -220,8 +220,9 @@ class IntentionLoop:
     def _get_ledger(self):
         if self._ledger is None:
             try:
-                from core.container import ServiceContainer
-                self._ledger = ServiceContainer.get("cognitive_ledger", default=None)
+                from core.runtime.service_registry import get_runtime_service
+
+                self._ledger = get_runtime_service("cognitive_ledger", default=None)
             except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('intention_loop', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
@@ -230,8 +231,9 @@ class IntentionLoop:
     def _get_belief_engine(self):
         if self._belief_engine is None:
             try:
-                from core.container import ServiceContainer
-                self._belief_engine = ServiceContainer.get("belief_revision_engine", default=None)
+                from core.runtime.service_registry import get_runtime_service
+
+                self._belief_engine = get_runtime_service("belief_revision_engine", default=None)
             except (ImportError, AttributeError, RuntimeError) as _exc:
                 record_degradation('intention_loop', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
@@ -625,8 +627,9 @@ class IntentionLoop:
 
         # Try embedding-based comparison first
         try:
-            from core.container import ServiceContainer
-            embedder = ServiceContainer.get("embedding_engine", default=None)
+            from core.runtime.service_registry import get_runtime_service
+
+            embedder = get_runtime_service("embedding_engine", default=None)
             if embedder and hasattr(embedder, "similarity"):
                 sim = embedder.similarity(expected, actual)
                 return round(max(0.0, min(1.0, 1.0 - sim)), 3)
@@ -852,11 +855,12 @@ def get_intention_loop() -> IntentionLoop:
     global _instance
     if _instance is None:
         _instance = IntentionLoop()
-        # Register with ServiceContainer
+        # Publish through the low-level runtime registry when available.
         try:
-            from core.container import ServiceContainer
-            ServiceContainer.register_instance("intention_loop", _instance)
+            from core.runtime.service_registry import register_runtime_service
+
+            register_runtime_service("intention_loop", _instance)
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('intention_loop', e)
-            logger.debug("IntentionLoop: ServiceContainer registration deferred: %s", e)
+            logger.debug("IntentionLoop: runtime service registration deferred: %s", e)
     return _instance

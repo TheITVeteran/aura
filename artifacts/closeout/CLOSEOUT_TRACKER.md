@@ -2411,3 +2411,42 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 68-73% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-20: Consciousness And Intention Publication Decoupling
+
+Status: ready to commit.
+
+What changed:
+
+- Moved IntentionLoop lazy service lookups and singleton publication through the
+  runtime registry bridge.
+- Moved ConsciousnessSystem subsystem publication and lookup calls through the
+  runtime registry bridge.
+- Moved BeingRuntime AuraNow publication through the runtime registry bridge.
+- Added regression coverage for IntentionLoop, ConsciousnessSystem, and
+  BeingRuntime so these ownership back-edges stay closed.
+- Refreshed the architecture-quality baseline after the largest import SCC
+  dropped from `616` modules to `615` modules.
+- Kept the reliability standard general-purpose: reusable service ownership and
+  publication hardening, not aerospace-domain behavior.
+
+Evidence:
+
+- Runtime/architecture/audit/reliability focused tests -> `117 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=44.8`,
+  `largest_cycle_size=615`, `cycle_count=7`, `dependency_edges=7512`,
+  `module_count=2245`.
+- Remaining-checkpoint contract -> `gaps=0`,
+  `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check` -> passed.
+
+Tracker:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 38-42%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
+- Remaining total checkpoint groups: 3.

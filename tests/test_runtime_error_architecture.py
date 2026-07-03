@@ -488,3 +488,98 @@ def test_scientific_engine_belief_publish_uses_runtime_registry():
     source = inspect.getsource(scientific_engine.ScientificEngine._publish_belief)
     assert "from core.container import ServiceContainer" not in source
     assert "core.runtime.service_registry" in source
+
+
+def test_intention_loop_uses_runtime_registry(tmp_path, monkeypatch):
+    import inspect
+    import core.agency.intention_loop as intention_loop
+    from core.runtime.service_registry import (
+        install_service_registration_sink,
+        install_service_resolver,
+    )
+
+    class Embedder:
+        def similarity(self, _expected, _actual):
+            return 0.75
+
+    services = {
+        "cognitive_ledger": object(),
+        "belief_revision_engine": object(),
+        "embedding_engine": Embedder(),
+    }
+    original_class = intention_loop.IntentionLoop
+    install_service_resolver(lambda name, default=None: services.get(name, default))
+    try:
+        loop = intention_loop.IntentionLoop(db_path=str(tmp_path / "intentions.db"))
+        assert loop._get_ledger() is services["cognitive_ledger"]
+        assert loop._get_belief_engine() is services["belief_revision_engine"]
+        assert loop._calculate_surprise("expected outcome", "actual outcome") == 0.25
+    finally:
+        install_service_resolver(None)
+        loop.close()
+
+    registered: list[tuple[str, object, bool, dict[str, str | None]]] = []
+    instance = object()
+    monkeypatch.setattr(intention_loop, "_instance", None)
+    monkeypatch.setattr(intention_loop, "IntentionLoop", lambda: instance)
+    install_service_registration_sink(
+        lambda name, value, required, metadata: registered.append(
+            (name, value, required, metadata)
+        )
+    )
+    try:
+        assert intention_loop.get_intention_loop() is instance
+    finally:
+        install_service_registration_sink(None)
+        monkeypatch.setattr(intention_loop, "_instance", None)
+
+    assert registered
+    assert registered[0][0] == "intention_loop"
+    assert registered[0][1] is instance
+
+    source = inspect.getsource(original_class._get_ledger)
+    source += inspect.getsource(original_class._get_belief_engine)
+    source += inspect.getsource(original_class._calculate_surprise)
+    source += inspect.getsource(intention_loop.get_intention_loop)
+    assert "from core.container import ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source
+
+
+def test_consciousness_system_publication_uses_runtime_registry():
+    import inspect
+    import core.consciousness.system as consciousness_system
+
+    source = inspect.getsource(consciousness_system)
+    assert "core.container" not in source
+    assert "ServiceContainer" not in source
+    assert "register_runtime_service" in source
+    assert "get_runtime_service" in source
+
+
+def test_being_runtime_publish_uses_runtime_registry():
+    import inspect
+    import core.being.runtime as being_runtime
+    from core.runtime.service_registry import install_service_registration_sink
+
+    registered: list[tuple[str, object, bool, dict[str, str | None]]] = []
+    runtime = being_runtime.BeingRuntime.__new__(being_runtime.BeingRuntime)
+    now = object()
+    install_service_registration_sink(
+        lambda name, instance, required, metadata: registered.append(
+            (name, instance, required, metadata)
+        )
+    )
+    try:
+        runtime._publish(now)
+    finally:
+        install_service_registration_sink(None)
+
+    assert [item[0] for item in registered] == ["aura_now", "being_runtime"]
+    assert registered[0][1] is now
+    assert registered[1][1] is runtime
+    assert registered[0][2] is False
+    assert registered[1][2] is False
+
+    source = inspect.getsource(being_runtime.BeingRuntime._publish)
+    assert "from core.container import ServiceContainer" not in source
+    assert "core.runtime.service_registry" in source

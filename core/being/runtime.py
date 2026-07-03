@@ -671,10 +671,10 @@ class BeingRuntime:
 
     def _publish(self, now: AuraNow) -> None:
         try:
-            from core.container import ServiceContainer
+            from core.runtime.service_registry import register_runtime_service
 
-            ServiceContainer.register_instance("aura_now", now, required=False)
-            ServiceContainer.register_instance("being_runtime", self, required=False)
+            register_runtime_service("aura_now", now, required=False)
+            register_runtime_service("being_runtime", self, required=False)
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("being_runtime", exc)
             logger.debug("AuraNow publish skipped: %s", exc)

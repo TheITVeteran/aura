@@ -5047,3 +5047,58 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 68-73% locally.
 - Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
   desktop findings, and longer soak/runtime evidence.
+
+## Checkpoint 2026-07-03-20: Consciousness And Intention Publication Decoupling
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Moved `IntentionLoop` lazy service lookups and singleton publication onto the
+  low-level runtime registry.
+- Moved `ConsciousnessSystem` subsystem publication and existing qualia/neural
+  mesh lookups onto the runtime registry while preserving the same service names
+  and required/optional semantics.
+- Moved `BeingRuntime` AuraNow/being-runtime publication onto the registry.
+- Added regression tests for IntentionLoop lookups/publication,
+  ConsciousnessSystem publication, and BeingRuntime publication.
+- Refreshed the architecture baseline after reducing the largest import SCC
+  from `616` modules to `615` modules. `IntentionLoop` is no longer part of the
+  dominant SCC.
+- Kept the implementation general-purpose: this is not an aerospace-specific
+  module. It is a reusable service-publication and runtime-ownership pattern for
+  any subsystem.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `117 passed`.
+- `python -m ruff check --select F,E9 ...`
+  over touched intention/consciousness/being/test files -> passed.
+- `python -m py_compile ...`
+  over touched intention/consciousness/being/test files -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=44.8`,
+  `largest_cycle_size=615`, `cycle_count=7`, `dependency_edges=7512`,
+  `god_file_count=37`, `module_count=2245`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=0`, `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check`
+  -> passed.
+
+Boundary:
+
+- This removes more concrete container ownership from mind/being/intention
+  paths, but the dominant SCC still exists. The remaining large anchors include
+  direct `core.brain.cognitive_engine` and `core.governance.will` container
+  dependencies, which need a more careful pass because they are semantically
+  central and heavily tested.
+
+Estimate:
+
+- Architecture-regression-control closure: about 95%.
+- Existing architecture-debt reduction closure: about 38-42%.
+- Local reliability-control closure: about 93%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 69-74% locally.
+- Remaining total checkpoint groups: 3, focused on larger SCC cuts, live
+  desktop findings, and longer soak/runtime evidence.

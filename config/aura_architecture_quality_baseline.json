@@ -43,7 +43,6 @@
       "core.agency.hierarchical_agency",
       "core.agency.identity_guard",
       "core.agency.initiative_arbiter",
-      "core.agency.intention_loop",
       "core.agency.latent_distiller",
       "core.agency.neural_intent_router",
       "core.agency.parallel_executor",
@@ -654,7 +653,7 @@
   "findings": [
     {
       "code": "import_cycle",
-      "message": "Import cycle across 616 modules",
+      "message": "Import cycle across 615 modules",
       "modules": [
         "core.actuators.actuator_registry",
         "core.actuators.code_execution_actuator",
@@ -698,7 +697,6 @@
         "core.agency.hierarchical_agency",
         "core.agency.identity_guard",
         "core.agency.initiative_arbiter",
-        "core.agency.intention_loop",
         "core.agency.latent_distiller",
         "core.agency.neural_intent_router",
         "core.agency.parallel_executor",
@@ -1275,7 +1273,7 @@
       ],
       "path": null,
       "severity": "high",
-      "value": 616
+      "value": 615
     },
     {
       "code": "import_cycle",
@@ -1722,7 +1720,7 @@
     "core/agency/identity_guard.py": 259,
     "core/agency/initiative_arbiter.py": 571,
     "core/agency/initiative_selector.py": 21,
-    "core/agency/intention_loop.py": 862,
+    "core/agency/intention_loop.py": 866,
     "core/agency/latent_distiller.py": 77,
     "core/agency/mission_manager.py": 81,
     "core/agency/neural_intent_router.py": 458,
@@ -3872,7 +3870,7 @@
     "dependency_concentration_pct": 30.0186,
     "dependency_edges": 7512,
     "god_file_count": 37,
-    "largest_cycle_size": 616,
+    "largest_cycle_size": 615,
     "max_file_lines": 15933,
     "max_in_degree": 1011,
     "max_out_degree": 94,
@@ -6126,5 +6124,5 @@
     "tools.wedge_recovery_supervisor": "tools/wedge_recovery_supervisor.py"
   },
   "root": "/Users/bryan/.aura/live-source",
-  "score": 44.79
+  "score": 44.8
 }
