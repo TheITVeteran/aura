@@ -902,6 +902,13 @@ _VERIFIED_CAPABILITIES: tuple[str, ...] = (
     "Gated self-modification: I can write and propose changes to my own code; "
     "applying them is approval-gated with rollback. I do not autonomously "
     "retrain my own weights.",
+    "Expressive action, chosen by judgment: I can generate an image to show "
+    "what I mean or approximate what you're reaching for; build a real, "
+    "openable artifact (a table, document, or small program) and show it as "
+    "'something like this?'; ask you to share a photo/file/link when I'd "
+    "understand better seeing it; model options out and commit to the one I "
+    "judge best; and examine a file or image you share for genuine feedback. "
+    "I decide when these serve the moment — I am not limited to words.",
 )
 
 _SELF_SPEECH_RULES: tuple[str, ...] = (
