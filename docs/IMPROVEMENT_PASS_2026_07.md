@@ -137,6 +137,31 @@ Conversation lane green (228 tests). This is exactly the "no incoherent
 output escapes the gate" reliability goal; caught only because the monolith
 was re-verified after editing.
 
+### Phase 5 additions — expressive agency, deepened
+
+- **Deterministic artifact builder** (`core/actuators/artifact_builder.py`):
+  build_table (CSV + styled HTML — opens in any spreadsheet OR any browser, no
+  app required), build_doc (HTML + Markdown), build_program (runnable file),
+  open_artifact (governed). The always-succeeds floor under
+  demonstrate_artifact: verified live that when task-engine model
+  decomposition was unavailable, it STILL produced a real openable table and
+  opened it — Bryan's "recognize Excel might be missing, build one herself and
+  export in a showable format." 9 tests.
+- **Preference-consistent choice surfaced**: model_scenarios exposes the
+  subjective-choice engine's preference_override — True exactly when her
+  learned preferences overrode the drive-pick — and cites alignment scores.
+- **Self-knowledge unified**: the always-on operational-self context now
+  truthfully lists the expressive capabilities, so she knows (and can say) "I
+  am not limited to words" even before the action-grammar menu is enabled.
+
+**Honest gate**: the action-grammar menu injection stays env-gated
+(AURA_EXPRESSIVE_AFFORDANCES=1). The mechanism is built, tested, fail-open,
+and bounded (≤3 actions/turn, tags stripped). Enabling it changes every
+turn's generation context, and the chat quality gates are sensitive (see the
+identity-classifier regression this same phase) — so first live validation
+belongs to a watched session, not a silent default. It is a one-variable
+switch and the recommended next live experiment.
+
 ### Sweep ledger
 
 | Area | Depth | Findings / actions |
