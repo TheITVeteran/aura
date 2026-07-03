@@ -22,7 +22,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # Phase 1: Fault Taxonomy & FMEA
 # ═══════════════════════════════════════════════════════════════════════
@@ -48,8 +47,12 @@ class TestFaultTaxonomy:
 
     def test_rpn_calculation(self):
         from core.resilience.fault_taxonomy import (
-            FaultDefinition, FaultDomain, FaultSeverity,
-            FaultProbability, DetectionDifficulty, RecoveryStrategy,
+            DetectionDifficulty,
+            FaultDefinition,
+            FaultDomain,
+            FaultProbability,
+            FaultSeverity,
+            RecoveryStrategy,
         )
         defn = FaultDefinition(
             fault_id="TEST-001", name="Test",
@@ -139,6 +142,7 @@ class TestTMR:
         try:
             # Need to reimport to pick up env var
             import importlib
+
             import core.resilience.tmr as tmr_mod
             importlib.reload(tmr_mod)
             voter = tmr_mod.TMRVoter("test_unanimous")
@@ -156,6 +160,7 @@ class TestTMR:
         os.environ["AURA_TMR_ENABLED"] = "1"
         try:
             import importlib
+
             import core.resilience.tmr as tmr_mod
             importlib.reload(tmr_mod)
             voter = tmr_mod.TMRVoter("test_diverge")
@@ -174,6 +179,7 @@ class TestTMR:
         os.environ["AURA_TMR_ENABLED"] = "1"
         try:
             import importlib
+
             import core.resilience.tmr as tmr_mod
             importlib.reload(tmr_mod)
             voter = tmr_mod.TMRVoter("test_error")
@@ -217,7 +223,7 @@ class TestContracts:
         assert double(5) == 10
 
     def test_precondition_violation_logged(self):
-        from core.resilience.contracts import precondition, get_contract_tracker
+        from core.resilience.contracts import get_contract_tracker, precondition
 
         tracker = get_contract_tracker()
         before = tracker.count("precondition")
@@ -240,7 +246,7 @@ class TestContracts:
         assert abs_val(-5) == 5
 
     def test_postcondition_violation_logged(self):
-        from core.resilience.contracts import postcondition, get_contract_tracker
+        from core.resilience.contracts import get_contract_tracker, postcondition
 
         tracker = get_contract_tracker()
         before = tracker.count("postcondition")
@@ -337,7 +343,8 @@ class TestVerifiedStateMachine:
 
     def test_illegal_transition_raises(self):
         from core.resilience.verified_state_machine import (
-            create_component_health_machine, IllegalTransitionError,
+            IllegalTransitionError,
+            create_component_health_machine,
         )
         sm = create_component_health_machine()
         with pytest.raises(IllegalTransitionError):
@@ -345,7 +352,8 @@ class TestVerifiedStateMachine:
 
     def test_deadlock_detection(self):
         from core.resilience.verified_state_machine import (
-            VerifiedStateMachine, DeadlockDetectedError,
+            DeadlockDetectedError,
+            VerifiedStateMachine,
         )
         with pytest.raises(DeadlockDetectedError):
             sm = VerifiedStateMachine(
@@ -359,7 +367,8 @@ class TestVerifiedStateMachine:
 
     def test_unreachable_state_detection(self):
         from core.resilience.verified_state_machine import (
-            VerifiedStateMachine, UnreachableStateError,
+            UnreachableStateError,
+            VerifiedStateMachine,
         )
         with pytest.raises(UnreachableStateError):
             sm = VerifiedStateMachine(
@@ -442,7 +451,9 @@ class TestChaosFramework:
 
     def test_experiment_passes(self):
         from tools.chaos.chaos_framework import (
-            ChaosFramework, ChaosExperiment, LatencyFault,
+            ChaosExperiment,
+            ChaosFramework,
+            LatencyFault,
         )
         framework = ChaosFramework()
         experiment = ChaosExperiment(
@@ -530,7 +541,7 @@ class TestTracing:
 
 class TestCanary:
     def test_canary_passes(self):
-        from infrastructure.canary import CanaryController, CanaryConfig, CanaryMetrics
+        from infrastructure.canary import CanaryConfig, CanaryController, CanaryMetrics
         config = CanaryConfig(phase_duration_s=0.01)  # Fast test
         controller = CanaryController(config=config)
         result = controller.run_canary(
@@ -542,7 +553,7 @@ class TestCanary:
         assert result.passed
 
     def test_canary_rollback_on_error_rate(self):
-        from infrastructure.canary import CanaryController, CanaryConfig, CanaryMetrics
+        from infrastructure.canary import CanaryConfig, CanaryController, CanaryMetrics
         config = CanaryConfig(phase_duration_s=0.01, max_error_rate=0.05)
         controller = CanaryController(config=config)
 
@@ -562,7 +573,7 @@ class TestCanary:
         assert "Error rate" in result.rollback_reason
 
     def test_smoke_test_failure(self):
-        from infrastructure.canary import CanaryController, CanaryConfig, CanaryMetrics
+        from infrastructure.canary import CanaryConfig, CanaryController, CanaryMetrics
         config = CanaryConfig(phase_duration_s=0.01)
         controller = CanaryController(config=config)
         result = controller.run_canary(
@@ -850,7 +861,8 @@ class TestAuditRegressions:
         """Refusals are governance working as designed — they must not
         pollute fault health as unrecovered MARGINAL faults."""
         from core.resilience.fault_taxonomy import (
-            FaultRegistry, FaultSeverity,
+            FaultRegistry,
+            FaultSeverity,
         )
 
         reg = FaultRegistry()
@@ -886,3 +898,127 @@ class TestTraceability:
                 if mit["impl"] and not (repo / mit["impl"]).exists():
                     missing.append((mit["action_id"], mit["impl"]))
         assert not missing, f"FMEA mitigation paths missing on disk: {missing}"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Empirical fault evidence: the FMEA that learns from live occurrence data.
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestFaultEvidence:
+    def _defn(self, fault_id="F-TEST", probability=None):
+        from core.resilience.fault_taxonomy import (
+            DetectionDifficulty,
+            FaultDefinition,
+            FaultDomain,
+            FaultProbability,
+            FaultSeverity,
+            RecoveryStrategy,
+        )
+        return FaultDefinition(
+            fault_id=fault_id, name="Test fault", description="d",
+            domain=FaultDomain.INFERENCE, severity=FaultSeverity.CRITICAL,
+            probability=probability or FaultProbability.IMPROBABLE,
+            detection=DetectionDifficulty.CERTAIN,
+            recovery=RecoveryStrategy.IGNORE, mttr_seconds=0,
+            blast_radius="none",
+        )
+
+    def test_rate_band_mapping(self):
+        from core.resilience.fault_evidence import rate_to_band
+        assert rate_to_band(1.0) == "FREQUENT"                 # constant firing
+        assert rate_to_band(2.0 / 86_400.0) == "FREQUENT"      # 2/day
+        assert rate_to_band(2.0 / 604_800.0) == "PROBABLE"     # 2/week
+        assert rate_to_band(2.0 / 2_592_000.0) == "OCCASIONAL" # 2/month
+        assert rate_to_band(2.0 / 31_536_000.0) == "REMOTE"    # 2/year
+        assert rate_to_band(0.0) == "IMPROBABLE"
+
+    def test_recording_is_memory_only_and_persists_on_flush(self, tmp_path):
+        from core.resilience.fault_evidence import FaultEvidenceStore
+        path = tmp_path / "evidence.json"
+        store = FaultEvidenceStore(path)
+        for _ in range(5):
+            store.record("F07")
+        assert not path.exists(), "record() must never touch disk"
+        assert store.flush(force=True) is True
+        assert path.exists()
+        envelope = json.loads(path.read_text())
+        assert envelope["schema_name"] == "aura.fault_evidence"
+        assert envelope["payload"]["evidence"]["F07"]["count"] == 5
+
+    def test_evidence_accumulates_across_reboots(self, tmp_path):
+        """Two store lifetimes over the same path: counts and observed
+        runtime must accumulate, not reset — that is the learning substrate."""
+        from core.resilience.fault_evidence import FaultEvidenceStore
+        path = tmp_path / "evidence.json"
+
+        first_boot = FaultEvidenceStore(path)
+        for _ in range(3):
+            first_boot.record("F02")
+        first_boot.flush(force=True)
+        prior_runtime = json.loads(path.read_text())["payload"]["observed_runtime_s"]
+
+        second_boot = FaultEvidenceStore(path)
+        second_boot.record("F02")
+        second_boot.flush(force=True)
+        payload = json.loads(path.read_text())["payload"]
+        assert payload["evidence"]["F02"]["count"] == 4
+        assert payload["observed_runtime_s"] >= prior_runtime
+
+    def test_insufficient_evidence_never_asserts_a_band(self, tmp_path):
+        from core.resilience.fault_evidence import FaultEvidenceStore
+        store = FaultEvidenceStore(tmp_path / "evidence.json")
+        store.record("F01")  # one occurrence, seconds of runtime
+        band, basis = store.implied_probability("F01")
+        assert basis == "insufficient_evidence"
+        assert store.drift_report([self._defn("F01")]) == []
+
+    def test_drift_report_flags_understated_probability(self, tmp_path):
+        """A fault cataloged IMPROBABLE but firing repeatedly must surface
+        with a recalibrated (higher) RPN."""
+        from core.resilience.fault_evidence import FaultEvidenceStore
+        store = FaultEvidenceStore(tmp_path / "evidence.json")
+        # Simulate accumulated history: fake prior runtime via the loaded
+        # payload path (2 hours), with enough occurrences to gate through.
+        store._prior_runtime_s = 7200.0
+        for _ in range(10):
+            store.record("F-TEST")  # ~5/hour → FREQUENT territory
+
+        findings = store.drift_report([self._defn()])
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.static_band == "IMPROBABLE"
+        assert f.implied_band == "FREQUENT"
+        assert f.level_delta == 4
+        assert f.recalibrated_rpn > f.static_rpn
+
+    def test_matching_band_produces_no_drift(self, tmp_path):
+        from core.resilience.fault_evidence import FaultEvidenceStore
+        from core.resilience.fault_taxonomy import FaultProbability
+        store = FaultEvidenceStore(tmp_path / "evidence.json")
+        store._prior_runtime_s = 7200.0
+        for _ in range(10):
+            store.record("F-TEST")
+        defn = self._defn(probability=FaultProbability.FREQUENT)
+        assert store.drift_report([defn]) == []
+
+    def test_corrupt_evidence_file_starts_fresh(self, tmp_path):
+        from core.resilience.fault_evidence import FaultEvidenceStore
+        path = tmp_path / "evidence.json"
+        path.write_text("{not json")
+        store = FaultEvidenceStore(path)  # must not raise
+        assert store.occurrence_count("F01") == 0
+
+    def test_flush_rate_limit(self, tmp_path):
+        from core.resilience.fault_evidence import FaultEvidenceStore
+        store = FaultEvidenceStore(tmp_path / "evidence.json")
+        store.record("F01")
+        assert store.flush(force=True) is True
+        store.record("F01")
+        assert store.flush() is False, "unforced flush inside the interval must skip"
+
+    def test_registry_evidence_is_opt_in(self):
+        """Bare registries (tests) must not touch the evidence store."""
+        from core.resilience.fault_taxonomy import FaultRegistry
+        reg = FaultRegistry()
+        assert reg._persistent_evidence is False
+        reg.record_fault("F01", "test")  # must not import/bind the store

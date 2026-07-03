@@ -94,6 +94,22 @@ def collect_reliability_diagnostics() -> dict[str, Any]:
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
         diagnostics["subsystems"]["degradation"] = {"error": str(exc)}
 
+    # 7. Empirical fault evidence + probability drift (FMEA that learns)
+    try:
+        from core.resilience.fault_evidence import get_fault_evidence_store
+        from core.resilience.fault_taxonomy import get_fault_registry
+        store = get_fault_evidence_store()
+        drift = store.drift_report(get_fault_registry().all_definitions())
+        diagnostics["subsystems"]["fault_evidence"] = {
+            "status": store.status(),
+            "probability_drift": [f.to_dict() for f in drift[:10]],
+            "drift_count": len(drift),
+        }
+        # Diagnostics access is the designated off-hot-path flush window.
+        store.flush()
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
+        diagnostics["subsystems"]["fault_evidence"] = {"error": str(exc)}
+
     # Summary
     subsystems = diagnostics["subsystems"]
     errors = sum(1 for v in subsystems.values() if isinstance(v, dict) and "error" in v)
@@ -174,6 +190,27 @@ def create_diagnostics_router() -> Any:
         try:
             from core.resilience.contracts import get_contract_tracker
             payload = await asyncio.to_thread(get_contract_tracker().status)
+            return JSONResponse(content=payload)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
+            return JSONResponse(content={"error": str(exc)}, status_code=500)
+
+    @router.get("/reliability/drift")
+    async def drift_report() -> JSONResponse:
+        """Empirical probability drift: static FMEA bands vs observed rates."""
+        try:
+            from core.resilience.fault_evidence import get_fault_evidence_store
+            from core.resilience.fault_taxonomy import get_fault_registry
+
+            def _collect() -> dict[str, Any]:
+                store = get_fault_evidence_store()
+                drift = store.drift_report(get_fault_registry().all_definitions())
+                store.flush()
+                return {
+                    "evidence": store.status(),
+                    "probability_drift": [f.to_dict() for f in drift],
+                }
+
+            payload = await asyncio.to_thread(_collect)
             return JSONResponse(content=payload)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)

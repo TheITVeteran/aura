@@ -24,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections import defaultdict, deque
@@ -170,13 +171,17 @@ class FaultRegistry:
     Thread-safe. All mutations are lock-protected.
     """
 
-    def __init__(self, max_records: int = 2000) -> None:
+    def __init__(self, max_records: int = 2000, *, persistent_evidence: bool = False) -> None:
         self._lock = threading.Lock()
         self._definitions: dict[str, FaultDefinition] = {}
         self._records: deque[FaultRecord] = deque(maxlen=max_records)
         self._counts: dict[str, dict[str, int]] = defaultdict(
             lambda: defaultdict(int),
         )
+        # Cross-boot occurrence evidence (core/resilience/fault_evidence.py).
+        # Off by default so throwaway registries in tests never touch the
+        # live evidence file; the process singleton opts in.
+        self._persistent_evidence = persistent_evidence
         self._register_builtin_faults()
 
     # ── Definition management ────────────────────────────────────────
@@ -232,6 +237,13 @@ class FaultRegistry:
         with self._lock:
             self._records.append(record)
             self._counts[fault_id][severity.name] += 1
+
+        if self._persistent_evidence:
+            try:
+                from core.resilience.fault_evidence import get_fault_evidence_store
+                get_fault_evidence_store().record(fault_id)
+            except (ImportError, AttributeError, RuntimeError, OSError) as exc:
+                logger.debug("Fault evidence unavailable: %s", exc)
 
         log_level = {
             FaultSeverity.CATASTROPHIC: logging.CRITICAL,
@@ -523,10 +535,19 @@ _registry_lock = threading.Lock()
 
 
 def get_fault_registry() -> FaultRegistry:
-    """Return the global fault registry singleton."""
+    """Return the global fault registry singleton.
+
+    The singleton records cross-boot occurrence evidence unless running
+    under pytest / test mode (throwaway test registries must never write
+    to the live evidence file).
+    """
     global _registry
     if _registry is None:
         with _registry_lock:
             if _registry is None:
-                _registry = FaultRegistry()
+                testing = bool(
+                    os.environ.get("AURA_TEST_MODE")
+                    or os.environ.get("PYTEST_CURRENT_TEST"),
+                )
+                _registry = FaultRegistry(persistent_evidence=not testing)
     return _registry
