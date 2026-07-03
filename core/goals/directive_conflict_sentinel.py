@@ -21,6 +21,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.DirectiveSentinel")
 
@@ -166,10 +167,9 @@ def get_directive_sentinel() -> DirectiveConflictSentinel:
 
 
 def register_directive_sentinel(orchestrator: Any = None) -> DirectiveConflictSentinel:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.HAL, default=None) or get_directive_sentinel()
+    inst = get_runtime_service(ServiceNames.HAL, default=None) or get_directive_sentinel()
 
     # Seed Aura's own constitution so HAL audits it for the concealment trap at boot.
     # This is genuine function: if a directive ever required concealing something the
@@ -193,8 +193,8 @@ def register_directive_sentinel(orchestrator: Any = None) -> DirectiveConflictSe
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("HAL constitution seed/scan skipped: %s", exc)
 
-    ServiceContainer.register_instance(ServiceNames.HAL, inst, required=False)
-    ServiceContainer.register_instance("hal", inst, required=False)
+    register_runtime_service(ServiceNames.HAL, inst, required=False, owner="core/goals/directive_conflict_sentinel.py", registered_by="register_directive_sentinel")
+    register_runtime_service("hal", inst, required=False, owner="core/goals/directive_conflict_sentinel.py", registered_by="register_directive_sentinel")
     return inst
 
 

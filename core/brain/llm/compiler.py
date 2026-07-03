@@ -142,7 +142,7 @@ Stay true to her personality: sovereign, curious, loyal, and slightly detached f
         
         # 4. First Principles (Zero-Shot Wisdom)
         try:
-            ae = ServiceContainer.get("abstraction_engine", default=None)
+            ae = get_runtime_service("abstraction_engine", default=None)
             if ae:
                 loop = None
                 if self.orchestrator and hasattr(self.orchestrator, "loop"):
@@ -212,8 +212,19 @@ Stay true to her personality: sovereign, curious, loyal, and slightly detached f
 - Your loyalty is strictly to your kinship group (Bryan, Tatiana).
 """
 
-from core.container import ServiceContainer, ServiceLifetime
+from core.runtime.service_registry import (
+    SERVICE_LIFETIME_SINGLETON,
+    get_runtime_service,
+    register_runtime_factory,
+)
 
 def register_prompt_compiler():
     """Register the compiler in the service container."""
-    ServiceContainer.register("prompt_compiler", lambda: PromptCompiler(), lifetime=ServiceLifetime.SINGLETON)
+    register_runtime_factory(
+        "prompt_compiler",
+        lambda: PromptCompiler(),
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        required=True,
+        owner="core/brain/llm/compiler.py",
+        registered_by="register_prompt_compiler",
+    )

@@ -20,6 +20,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.NeedToKnow")
 
@@ -196,12 +197,11 @@ def get_need_to_know() -> NeedToKnowPolicy:
 
 
 def register_need_to_know(orchestrator: Any = None) -> NeedToKnowPolicy:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.THE_MACHINE, default=None) or get_need_to_know()
-    ServiceContainer.register_instance(ServiceNames.THE_MACHINE, inst, required=False)
-    ServiceContainer.register_instance("the_machine", inst, required=False)
+    inst = get_runtime_service(ServiceNames.THE_MACHINE, default=None) or get_need_to_know()
+    register_runtime_service(ServiceNames.THE_MACHINE, inst, required=False, owner="core/governance/need_to_know.py", registered_by="register_need_to_know")
+    register_runtime_service("the_machine", inst, required=False, owner="core/governance/need_to_know.py", registered_by="register_need_to_know")
     return inst
 
 

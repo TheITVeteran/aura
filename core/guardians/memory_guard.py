@@ -1,10 +1,9 @@
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 import asyncio
-import psutil
 import logging
 from typing import Optional
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.MemoryGuard")
 
@@ -40,7 +39,6 @@ class MemoryGuard:
 
     async def _watch_loop(self):
         import gc
-        import time
         
         base_threshold = self.threshold_percent
         adaptive_threshold = base_threshold
@@ -73,8 +71,8 @@ class MemoryGuard:
                     # 3. Component Cache Purging
                     if pressure > 95:
                         try:
-                            router = ServiceContainer.get("llm_router", default=None)
-                            gate = ServiceContainer.get("inference_gate", default=None)
+                            router = get_runtime_service("llm_router", default=None)
+                            gate = get_runtime_service("inference_gate", default=None)
                             foreground_busy = False
                             if gate:
                                 try:
@@ -97,7 +95,7 @@ class MemoryGuard:
                             logger.error("MemoryGuard: Cache purge failed: %s", e)
                     
                     # 4. LoRA Abort
-                    optimizer = ServiceContainer.get("self_optimizer", default=None)
+                    optimizer = get_runtime_service("self_optimizer", default=None)
                     if optimizer and getattr(optimizer, "_is_optimizing", False):
                         logger.critical("MemoryGuard: Aborting LoRA training to prevent system OOM")
                         if hasattr(optimizer, "abort"):
@@ -105,7 +103,7 @@ class MemoryGuard:
                     
                     # 5. Task Throttling (Phase 31: Advanced Throttling)
                     try:
-                        router = ServiceContainer.get("llm_router", default=None)
+                        router = get_runtime_service("llm_router", default=None)
                         if router and not getattr(router, "high_pressure_mode", False):
                             logger.warning("MemoryGuard: Triggering HIGH PRESSURE mode in LLM Router (%s%%)", pressure)
                             router.high_pressure_mode = True
@@ -115,7 +113,7 @@ class MemoryGuard:
 
                     if pressure > max(adaptive_threshold + 1.5, 84.0):
                         try:
-                            gate = ServiceContainer.get("inference_gate", default=None)
+                            gate = get_runtime_service("inference_gate", default=None)
                             if gate and hasattr(gate, "_shed_background_workers_for_memory_pressure"):
                                 logger.warning("MemoryGuard: Shedding background MLX workers to protect Cortex (%s%%)", pressure)
                                 await gate._shed_background_workers_for_memory_pressure()
@@ -127,7 +125,7 @@ class MemoryGuard:
                     # Cooling down
                     if self.consecutive_strikes > 0:
                         try:
-                            router = ServiceContainer.get("llm_router", default=None)
+                            router = get_runtime_service("llm_router", default=None)
                             if router and getattr(router, "high_pressure_mode", False):
                                 logger.info("MemoryGuard: System stabilized. Disabling HIGH PRESSURE mode.")
                                 router.high_pressure_mode = False

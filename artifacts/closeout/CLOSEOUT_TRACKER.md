@@ -2819,3 +2819,46 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 73-79% locally.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-30: Large SCC Runtime Registry Batch
+
+Status: ready to commit.
+
+What changed:
+
+- Converted a larger SCC slice in one checkpoint: reliability engine, prompt
+  compiler, state authority, memory guard, motivation/initiative/inference/
+  bonding phases, strategic synthesis, deliberation, voice presence/session,
+  document ingest, outcome simulator, knowledge bottling, inference feedback,
+  embodied simulator, scenario forge, values engine, goal planner, threat
+  watch, predictive engine, Aegis, directive sentinel, need-to-know policy,
+  memory manager, sovereign pruner, scheduler, and self-play.
+- Kept explicit injected-container compatibility where phases are tested with
+  local containers, while making the runtime registry the default resolver.
+- Added a broad batch-six regression test covering representative service
+  resolution, lazy factory publication, service registration, foreground
+  inference, bonding, memory, voice, scheduler, and fiction-derived organs.
+- Cleaned fatal static issues in touched files and refreshed the architecture
+  baseline after the largest import SCC dropped from `564` modules to `548`
+  modules.
+
+Evidence:
+
+- Batch-six focused runtime registry test -> `1 passed`.
+- Runtime/architecture/audit/reliability focused tests -> `129 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched modules and architecture tests -> passed.
+- Architecture baseline compare -> `passed=true`, `score=45.46`,
+  `largest_cycle_size=548`, `cycle_count=7`, `dependency_edges=7508`,
+  `god_file_count=37`, `module_count=2245`.
+- Remaining-checkpoint contract -> refreshed
+  `artifacts/closeout/remaining_checkpoint_contract_latest.json`.
+
+Tracker:
+
+- Architecture-regression-control closure: about 97-98%.
+- Existing architecture-debt reduction closure: about 60-66%.
+- Local reliability-control closure: about 94%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 74-80% locally.
+- Remaining total checkpoint groups: 3.

@@ -1,14 +1,19 @@
 """core/state_authority.py — The Single Source of Truth Arbiter.
 
 Queries prime directives, explicit knowledge, current runtime context, and
-vector memory in precedence order. Register through ServiceContainer so every
-caller resolves the same authority instance.
+vector memory in precedence order. Publishes through the runtime registry so
+every caller resolves the same authority instance.
 """
 import logging
 from enum import Enum
 from typing import Any
 
-from core.container import ServiceContainer, ServiceLifetime
+from core.runtime.service_registry import (
+    SERVICE_LIFETIME_SINGLETON,
+    get_runtime_service,
+    has_runtime_service,
+    register_runtime_factory,
+)
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Core.StateAuthority")
@@ -142,7 +147,7 @@ class StateAuthority:
     def _check_knowledge_base(self, topic: str) -> Any | None:
         """Query the knowledge graph / memory nexus via DI container."""
         try:
-            memory = ServiceContainer.get("memory", default=None)
+            memory = get_runtime_service("memory", default=None)
             if memory is None:
                 return None
 
@@ -180,7 +185,7 @@ class StateAuthority:
     def _check_vector_memory(self, topic: str) -> str | None:
         """Query the vector memory store via DI container."""
         try:
-            vector_mem = ServiceContainer.get("vector_memory", default=None)
+            vector_mem = get_runtime_service("vector_memory", default=None)
             if vector_mem is None:
                 return None
 
@@ -209,22 +214,25 @@ class StateAuthority:
 # Service Registration
 def register_state_authority():
     """Register the state authority in the global container."""
-    if ServiceContainer.has("state_authority"):
+    if has_runtime_service("state_authority"):
         return
-    ServiceContainer.register(
+    register_runtime_factory(
         "state_authority",
-        factory=lambda: StateAuthority(),
-        lifetime=ServiceLifetime.SINGLETON,
+        lambda: StateAuthority(),
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        required=True,
+        owner="core/state_authority.py",
+        registered_by="register_state_authority",
     )
 
 
 def get_state_authority():
     """Resolve or create state authority lazily."""
     try:
-        if not ServiceContainer.has("state_authority"):
+        if not has_runtime_service("state_authority"):
             register_state_authority()
-        return ServiceContainer.get("state_authority", default=None) or StateAuthority()
+        return get_runtime_service("state_authority", default=None) or StateAuthority()
     except _STATE_AUTHORITY_RECOVERABLE_ERRORS as e:
         record_degradation('state_authority', e)
-        logger.debug("ServiceContainer unavailable or failed: %s. Creating standalone StateAuthority.", e)
+        logger.debug("Runtime service registry unavailable or failed: %s. Creating standalone StateAuthority.", e)
         return StateAuthority()

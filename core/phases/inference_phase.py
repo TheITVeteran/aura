@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Any
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 from core.kernel.bridge import Phase
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.service_names import ServiceNames
@@ -25,6 +25,15 @@ _INFERENCE_ERRORS = (
 )
 _USER_ORIGINS = {"user", "voice", "admin"}
 _VALID_MOMENTUM = {"stalled", "flowing", "intense"}
+
+
+def _service_get(container: Any, name: str, *, default: Any = None) -> Any:
+    if container is not None and hasattr(container, "get"):
+        try:
+            return container.get(name, default=default)
+        except TypeError:
+            return container.get(name) or default
+    return get_runtime_service(name, default=default)
 
 
 def _record_inference_degradation(
@@ -102,7 +111,7 @@ class InferencePhase(Phase):
 
     def __init__(self, container: Any = None):
         super().__init__(kernel=container)
-        self.container = container or ServiceContainer
+        self.container = container
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
         priority = bool(kwargs.get("priority", False))
@@ -113,7 +122,7 @@ class InferencePhase(Phase):
         state.cognition.modifiers = modifiers
 
         try:
-            router = self.container.get(ServiceNames.LLM_ROUTER, default=None)
+            router = _service_get(self.container, ServiceNames.LLM_ROUTER, default=None)
             if router is None:
                 modifiers["deep_inference_status"] = {
                     "status": "unavailable",

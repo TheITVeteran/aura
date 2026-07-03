@@ -6,9 +6,8 @@ Produces a unified ExecutionPlan from multi-agent consensus.
 from core.runtime.errors import record_degradation
 import asyncio
 import logging
-import time
-from typing import Dict, List, Any, Optional
-from core.container import ServiceContainer
+from typing import Optional
+from core.runtime.service_registry import get_runtime_service
 from core.planner import ExecutionPlan, ToolCall, PlanSchema
 from core.collective.delegator import AgentDelegator
 
@@ -24,8 +23,8 @@ class StrategicSynthesizer:
         if self.delegator:
             return True
         
-        # Try ServiceContainer first
-        self.delegator = ServiceContainer.get("agent_delegator", default=None)
+        # Try runtime registry first
+        self.delegator = get_runtime_service("agent_delegator", default=None)
         if not self.delegator and self.orchestrator:
             # Try orchestrator attribute
             self.delegator = getattr(self.orchestrator, "agent_delegator", None)
@@ -48,7 +47,6 @@ class StrategicSynthesizer:
         
         # 2. Trigger the multi-agent debate
         # We use AgentDelegator's debate capability, but we want the raw outputs for specialized synthesis
-        agent_results = []
         tasks = []
         
         for role in roles:
@@ -91,7 +89,7 @@ class StrategicSynthesizer:
             
         # 5. Final Synthesis into an ExecutionPlan
         # We use 'think' with PlanSchema to ensure we get a valid plan out of the synthesis
-        brain = ServiceContainer.get("cognitive_engine", default=None)
+        brain = get_runtime_service("cognitive_engine", default=None)
         if not brain:
             logger.error("StrategicSynthesizer: Cognitive engine not available.")
             return None

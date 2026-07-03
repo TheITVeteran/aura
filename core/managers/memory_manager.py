@@ -10,7 +10,11 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import (
+    get_runtime_service,
+    has_runtime_service,
+    is_runtime_registration_locked,
+)
 from core.health.degraded_events import record_degraded_event
 from core.utils.exceptions import capture_and_log
 
@@ -40,7 +44,7 @@ class MemoryManager:
     def _get_mycelium(self):
         if self._mycelium is None:
             try:
-                self._mycelium = ServiceContainer.get("mycelial_network", default=None)
+                self._mycelium = get_runtime_service("mycelial_network", default=None)
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('memory_manager', e)
                 capture_and_log(e, {'module': __name__})
@@ -59,10 +63,10 @@ class MemoryManager:
 
     async def _approve_memory_write(self, content: str, importance: float, tags: Optional[List[str]] = None) -> bool:
         constitutional_runtime_live = (
-            ServiceContainer.has("executive_core")
-            or ServiceContainer.has("aura_kernel")
-            or ServiceContainer.has("kernel_interface")
-            or bool(getattr(ServiceContainer, "_registration_locked", False))
+            has_runtime_service("executive_core")
+            or has_runtime_service("aura_kernel")
+            or has_runtime_service("kernel_interface")
+            or is_runtime_registration_locked()
         )
         try:
             from core.constitution import get_constitutional_core
@@ -103,7 +107,7 @@ class MemoryManager:
     async def store(self, content: Any, importance: float = 0.5, tags: List[str] = None):
         """Stores content across appropriate memory layers."""
         # Heartbeat pulse — proves the memory subsystem is alive even if storage fails
-        audit = ServiceContainer.get("subsystem_audit", default=None)
+        audit = get_runtime_service("subsystem_audit", default=None)
         if audit:
             audit.heartbeat("memory")
         try:
@@ -113,12 +117,12 @@ class MemoryManager:
                 return
             
             # 1. Episodic (Short-term context)
-            episodic = ServiceContainer.get("episodic_memory", default=None)
+            episodic = get_runtime_service("episodic_memory", default=None)
             if episodic:
                 await episodic.add(content, importance=importance)
             
             # 2. Vector (Long-term semantic)
-            vector = ServiceContainer.get("vector_memory", default=None)
+            vector = get_runtime_service("vector_memory", default=None)
             if vector and importance > 0.7:  # Only index high-importance items immediately
                 await vector.index(content, metadata={"tags": tags or []})
             
@@ -135,7 +139,7 @@ class MemoryManager:
         """Retrieves and filters memories based on confidence/relevance."""
         results = []
         try:
-            vector = ServiceContainer.get("vector_memory", default=None)
+            vector = get_runtime_service("vector_memory", default=None)
             if vector:
                 # v48: VectorMemory.search is sync, wrap in to_thread
                 raw_results = await asyncio.to_thread(vector.search, query, limit=limit)
@@ -151,7 +155,7 @@ class MemoryManager:
     def search_similar(self, query: str, limit: int = 5, **kwargs) -> List[Dict]:
         """Sync delegation for legacy components (Theory of Mind, Context Manager)."""
         try:
-            vector = ServiceContainer.get("vector_memory", default=None)
+            vector = get_runtime_service("vector_memory", default=None)
             if vector and hasattr(vector, 'search_similar'):
                 return vector.search_similar(query, limit=limit, **kwargs)
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -171,12 +175,12 @@ class MemoryManager:
         """Moves episodic memories into long-term storage and prunes low-importance data."""
         try:
             # Integration with ContextPruner if available
-            pruner = ServiceContainer.get("context_pruner", default=None)
+            pruner = get_runtime_service("context_pruner", default=None)
             if pruner:
                 await pruner.prune_stale_context()
             
             # Summarize episodic bursts
-            episodic = ServiceContainer.get("episodic_memory", default=None)
+            episodic = get_runtime_service("episodic_memory", default=None)
             if episodic:
                 await episodic.consolidate()
         except (ImportError, AttributeError, RuntimeError) as e:

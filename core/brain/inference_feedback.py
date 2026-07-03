@@ -15,6 +15,7 @@ import numpy as np
 
 from core.brain.homeostatic_modulator import InferenceModulation
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.Brain.InferenceFeedback")
 
@@ -73,8 +74,6 @@ class InferenceFeedbackLoop:
         Returns:
             Dictionary of calculated metrics: surprise, coherence, etc.
         """
-        from core.container import ServiceContainer
-
         # 1. Compute Surprise (Perplexity Proxy)
         # If logprobs are available, surprise = -mean(log_probs).
         # Fallback if no logprobs: base surprise on length and punctuation volatility (standard heuristic).
@@ -92,7 +91,7 @@ class InferenceFeedbackLoop:
 
         # 2. Compute Coherence with Substrate State
         # VAD/emotional state from Substrate:
-        substrate = ServiceContainer.get("liquid_substrate", default=None)
+        substrate = get_runtime_service("liquid_substrate", default=None)
         valence = 0.0
         arousal = 0.5
         substrate_state = np.zeros(self.substrate_dim, dtype=np.float32)
@@ -128,7 +127,7 @@ class InferenceFeedbackLoop:
         coherence = float(np.clip(coherence, -1.0, 1.0))
 
         # 3. Feed Surprise back into the Free Energy Engine
-        free_energy_engine = ServiceContainer.get("free_energy_engine", default=None)
+        free_energy_engine = get_runtime_service("free_energy_engine", default=None)
         if free_energy_engine:
             try:
                 # Surprise signal scaled to 0-1 range for FreeEnergy
@@ -154,7 +153,7 @@ class InferenceFeedbackLoop:
                 logger.error("Failed to inject feedback into LiquidSubstrate: %s", exc)
 
         # 4b. Feed Surprise and Coherence back into PrecisionEngine (FHN oscillator)
-        precision_engine = ServiceContainer.get("precision_engine", default=None)
+        precision_engine = get_runtime_service("precision_engine", default=None)
         if precision_engine:
             try:
                 precision_engine.accept_inference_feedback(surprise=surprise, coherence=coherence)

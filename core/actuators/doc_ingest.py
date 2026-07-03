@@ -9,7 +9,7 @@ import re
 import logging
 from typing import Any, List
 from core.actuators.actuator_registry import BaseActuator, ActuatorResult
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.DocumentIngest")
 
@@ -68,7 +68,7 @@ class DocumentIngestActuator(BaseActuator):
         # Chunk the content
         chunks = self._chunk_text(extracted_text)
         
-        memory_facade = ServiceContainer.get("memory_facade", default=None)
+        memory_facade = get_runtime_service("memory_facade", default=None)
         if not memory_facade:
             return ActuatorResult(False, "MemoryFacade unavailable. Cannot index content.", {})
 

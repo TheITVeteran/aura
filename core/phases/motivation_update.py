@@ -2,12 +2,11 @@ from __future__ import annotations
 import logging
 import time
 import random
-import psutil
 from typing import Optional, TYPE_CHECKING
 from core.kernel.bridge import Phase
 from core.state.aura_state import AuraState
 from core.consciousness.executive_authority import get_executive_authority as get_executive_authority
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service, has_runtime_service
 from core.runtime.background_policy import background_activity_allowed
 from core.runtime.proposal_governance import propose_governed_initiative_to_state
 
@@ -18,7 +17,7 @@ logger = logging.getLogger("Aura.MotivationPhase")
 
 
 def _background_curiosity_allowed() -> bool:
-    orch = ServiceContainer.get("orchestrator", default=None)
+    orch = get_runtime_service("orchestrator", default=None)
     return background_activity_allowed(
         orch,
         min_idle_seconds=900.0,
@@ -52,7 +51,7 @@ class MotivationUpdatePhase(Phase):
         # Conversation energy slows social drive decay — active engagement satisfies social need
         conv_energy = getattr(state.cognition, "conversation_energy", 0.0)
         social_decay_multiplier = max(0.1, 1.0 - conv_energy) if conv_energy > 0.5 else 1.0
-        legacy_metabolism_active = ServiceContainer.has("will_engine")
+        legacy_metabolism_active = has_runtime_service("will_engine")
 
         for name, budget in mot.budgets.items():
             if legacy_metabolism_active and name in {"energy", "curiosity"}:

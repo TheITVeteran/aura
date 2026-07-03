@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.utils.engine_support import coerce_text, record_engine_degradation, resolve_brain
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.ScenarioForge")
 
@@ -176,12 +177,11 @@ def get_scenario_forge(orchestrator: Any = None) -> ScenarioForge:
 
 
 def register_scenario_forge(orchestrator: Any = None) -> ScenarioForge:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.CAINE, default=None) or get_scenario_forge(orchestrator)
-    ServiceContainer.register_instance(ServiceNames.CAINE, inst, required=False)
-    ServiceContainer.register_instance("caine", inst, required=False)
+    inst = get_runtime_service(ServiceNames.CAINE, default=None) or get_scenario_forge(orchestrator)
+    register_runtime_service(ServiceNames.CAINE, inst, required=False, owner="core/sim/scenario_forge.py", registered_by="register_scenario_forge")
+    register_runtime_service("caine", inst, required=False, owner="core/sim/scenario_forge.py", registered_by="register_scenario_forge")
     return inst
 
 

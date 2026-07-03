@@ -21,7 +21,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 from core.utils.engine_support import coerce_text, data_root, record_engine_degradation, resolve_brain
 
 logger = logging.getLogger("Aura.KnowledgeBottling")
@@ -162,12 +163,11 @@ def get_knowledge_bottling(orchestrator: Any = None) -> KnowledgeBottlingEngine:
 
 
 def register_knowledge_bottling(orchestrator: Any = None) -> KnowledgeBottlingEngine:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.BRAINIAC, default=None) or get_knowledge_bottling(orchestrator)
-    ServiceContainer.register_instance(ServiceNames.BRAINIAC, inst, required=False)
-    ServiceContainer.register_instance("brainiac", inst, required=False)
+    inst = get_runtime_service(ServiceNames.BRAINIAC, default=None) or get_knowledge_bottling(orchestrator)
+    register_runtime_service(ServiceNames.BRAINIAC, inst, required=False, owner="core/knowledge/bottling.py", registered_by="register_knowledge_bottling")
+    register_runtime_service("brainiac", inst, required=False, owner="core/knowledge/bottling.py", registered_by="register_knowledge_bottling")
     return inst
 
 

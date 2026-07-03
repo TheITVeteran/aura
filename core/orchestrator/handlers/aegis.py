@@ -8,6 +8,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 if TYPE_CHECKING:
     from core.orchestrator.main import RobustOrchestrator
@@ -97,14 +98,13 @@ async def _aegis_pulse(
     vault_sync_interval_s: float = _DEFAULT_VAULT_SYNC_INTERVAL_S,
 ) -> dict[str, Any]:
     """Run one integrity pulse and return an operational status record."""
-    from core.container import ServiceContainer
     from core.mycelium import MycelialNetwork
 
-    mycelium = ServiceContainer.get("mycelial_network", default=None)
+    mycelium = get_runtime_service("mycelial_network", default=None)
     if mycelium is None:
         restored = MycelialNetwork()
         try:
-            ServiceContainer.register_instance("mycelial_network", restored)
+            register_runtime_service("mycelial_network", restored, required=False, owner="core/orchestrator/handlers/aegis.py", registered_by="_run_aegis_integrity_pulse")
         except _AEGIS_ERRORS as exc:
             orch._aegis_integrity_failed = True
             _record_aegis_degradation(

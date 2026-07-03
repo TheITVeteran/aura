@@ -20,6 +20,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.ThreatWatch")
 
@@ -181,12 +182,11 @@ def get_threat_watch() -> ThreatWatch:
 
 
 def register_threat_watch(orchestrator: Any = None) -> ThreatWatch:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.SAFE_SURF, default=None) or get_threat_watch()
-    ServiceContainer.register_instance(ServiceNames.SAFE_SURF, inst, required=False)
-    ServiceContainer.register_instance("safe_surf", inst, required=False)
+    inst = get_runtime_service(ServiceNames.SAFE_SURF, default=None) or get_threat_watch()
+    register_runtime_service(ServiceNames.SAFE_SURF, inst, required=False, owner="core/guardians/threat_watch.py", registered_by="register_threat_watch")
+    register_runtime_service("safe_surf", inst, required=False, owner="core/guardians/threat_watch.py", registered_by="register_threat_watch")
     return inst
 
 

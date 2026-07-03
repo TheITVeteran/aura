@@ -6,12 +6,11 @@ problems and solve them, pushing failures to the DistillationPipe for nightly le
 """
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
-import asyncio
 import logging
 import random
 import re
 import time
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 from core.brain.cognitive_engine import ThinkingMode
 from core.runtime.background_policy import (
     RESEARCH_BACKGROUND_POLICY,
@@ -59,7 +58,7 @@ class ContinuousSelfPlay:
 
     async def _generate_adversarial_problem(self) -> str:
         """The Adversary Shard creates a novel, highly complex scenario."""
-        engine = ServiceContainer.get("cognitive_engine", default=None)
+        engine = get_runtime_service("cognitive_engine", default=None)
         if not engine:
             return ""
 
@@ -78,7 +77,7 @@ Do not provide the solution. Output ONLY the problem statement.
 
     async def _attempt_solution(self, problem: str) -> str:
         """The Solver Shard attempts to resolve the Adversary's problem."""
-        engine = ServiceContainer.get("cognitive_engine", default=None)
+        engine = get_runtime_service("cognitive_engine", default=None)
         if not engine:
             return ""
 
@@ -145,7 +144,7 @@ Detail your logical chain of thought before providing the final answer.
         if time_since_interaction < self.idle_threshold:
             return
 
-        orchestrator = ServiceContainer.get("orchestrator", default=None)
+        orchestrator = get_runtime_service("orchestrator", default=None)
         defer_reason = background_activity_reason(
             orchestrator,
             profile=RESEARCH_BACKGROUND_POLICY,
@@ -182,7 +181,7 @@ Detail your logical chain of thought before providing the final answer.
                     confidence,
                 )
                 
-                distillation = ServiceContainer.get("distillation_pipe", default=None)
+                distillation = get_runtime_service("distillation_pipe", default=None)
                 if distillation and hasattr(distillation, 'flag_for_distillation'):
                     # This uses existing pipeline to ask Gemini for the ideal answer
                     # and saves it to lora_dataset.jsonl
@@ -195,7 +194,7 @@ Detail your logical chain of thought before providing the final answer.
                 logger.info("✅ Self-Play Solver succeeded (confidence=%.2f).", confidence)
                 
                 # Optional: Send highly successful complex logic to the Abstraction Engine
-                abstraction = ServiceContainer.get("abstraction_engine", default=None)
+                abstraction = get_runtime_service("abstraction_engine", default=None)
                 if abstraction:
                     # Note: abstract_from_success is async
                     task = get_task_tracker().create_task(

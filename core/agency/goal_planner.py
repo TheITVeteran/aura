@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.skills.fluid_executor import Step
 
 logger = logging.getLogger("Aura.GoalPlanner")
@@ -129,9 +130,7 @@ class GoalPlanner:
 
     async def _default_generate(self, prompt: str, temperature: float) -> str:
         try:
-            from core.container import ServiceContainer
-
-            gate = ServiceContainer.get("inference_gate", default=None)
+            gate = get_runtime_service("inference_gate", default=None)
             if gate is None or not hasattr(gate, "generate_response"):
                 return ""
             # Background proactive thinking runs on the cheap background lane, NOT the

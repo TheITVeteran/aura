@@ -10,6 +10,7 @@ ZENITH Protocol compliance:
 """
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 import base64
 import binascii
 import hashlib
@@ -97,8 +98,7 @@ class BlackHole:
 
     def on_start(self):
         """Initializes the provider with the Horcrux key."""
-        from core.container import ServiceContainer
-        horcrux = ServiceContainer.get("horcrux", default=None)
+        horcrux = get_runtime_service("horcrux", default=None)
         if not horcrux or not horcrux.derived_key:
             logger.error("BlackHole: Horcrux keys UNAVAILABLE. Encryption disabled.")
             return

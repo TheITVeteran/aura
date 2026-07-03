@@ -5,9 +5,9 @@ import time
 import logging
 import traceback
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Optional, Any, List
+from typing import Callable, Dict, Optional, Any
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker, mark_task_protected
 
@@ -58,11 +58,11 @@ class Scheduler:
         self._main_loop_task: Optional[asyncio.Task] = None
         self._initialized = True
         try:
-            if ServiceContainer.get("scheduler", default=None) is None:
-                ServiceContainer.register_instance("scheduler", self, required=False)
+            if get_runtime_service("scheduler", default=None) is None:
+                register_runtime_service("scheduler", self, required=False, owner="core/scheduler.py", registered_by="Scheduler.__init__")
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation("scheduler", exc)
-            logger.debug("Scheduler container registration unavailable during import: %s", exc)
+            logger.debug("Scheduler registry publication unavailable during import: %s", exc)
         logger.info("Scheduler substrate initialized.")
 
     def _ensure_async_primitives(self) -> tuple[asyncio.Lock, asyncio.Event]:

@@ -5,6 +5,7 @@ from typing import Any, Optional
 from . import BasePhase
 from ..state.aura_state import AuraState
 from core.runtime.background_policy import background_activity_allowed
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.proposal_governance import propose_governed_initiative_to_state
 
 logger = logging.getLogger(__name__)
@@ -23,13 +24,11 @@ class InitiativeGenerationPhase(BasePhase):
     @staticmethod
     def _autonomy_pause_reason() -> str:
         try:
-            from core.container import ServiceContainer
-
-            router = ServiceContainer.get("llm_router", default=None)
+            router = get_runtime_service("llm_router", default=None)
             if router and getattr(router, "high_pressure_mode", False):
                 return "memory_pressure"
 
-            gate = ServiceContainer.get("inference_gate", default=None)
+            gate = get_runtime_service("inference_gate", default=None)
             if gate and hasattr(gate, "_background_local_deferral_reason"):
                 reason = str(gate._background_local_deferral_reason(origin="initiative_generation") or "").strip()
                 if reason:
@@ -56,8 +55,7 @@ class InitiativeGenerationPhase(BasePhase):
             return state
 
         try:
-            from core.container import ServiceContainer
-            orch = ServiceContainer.get("orchestrator", default=None)
+            orch = get_runtime_service("orchestrator", default=None)
         except (ImportError, AttributeError, RuntimeError):
             orch = None
         if not background_activity_allowed(

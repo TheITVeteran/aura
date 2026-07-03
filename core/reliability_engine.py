@@ -10,10 +10,13 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Dict, Optional, Callable, Any
-from pathlib import Path
+from typing import Dict, Callable
 
-from core.container import ServiceContainer, ServiceLifetime
+from core.runtime.service_registry import (
+    SERVICE_LIFETIME_SINGLETON,
+    get_runtime_service,
+    register_runtime_factory,
+)
 
 logger = logging.getLogger("Aura.Reliability")
 
@@ -139,11 +142,14 @@ class ReliabilityEngine:
 
 # Singleton registration
 def get_reliability_engine() -> ReliabilityEngine:
-    return ServiceContainer.get("reliability_engine", default=None) or ReliabilityEngine()
+    return get_runtime_service("reliability_engine", default=None) or ReliabilityEngine()
 
 # Auto-register on import
-ServiceContainer.register(
+register_runtime_factory(
     "reliability_engine",
-    factory=get_reliability_engine,
-    lifetime=ServiceLifetime.SINGLETON
+    get_reliability_engine,
+    lifetime=SERVICE_LIFETIME_SINGLETON,
+    required=True,
+    owner="core/reliability_engine.py",
+    registered_by="reliability_engine_import",
 )

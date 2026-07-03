@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from core.memory.retention_policy import sovereign_pruner_target_retention
 from core.runtime.errors import record_degradation
 from core.runtime.runtime_settings import get_runtime_setting
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.SovereignPruner")
 
@@ -48,9 +49,7 @@ class SovereignPruner:
 
     def _background_should_defer(self) -> bool:
         try:
-            from core.container import ServiceContainer
-
-            gate = ServiceContainer.get("inference_gate", default=None)
+            gate = get_runtime_service("inference_gate", default=None)
             if gate and hasattr(gate, "_background_local_deferral_reason"):
                 return bool(gate._background_local_deferral_reason(origin="sovereign_pruner"))
         except (ImportError, AttributeError, RuntimeError) as exc:
@@ -200,8 +199,7 @@ class SovereignPruner:
         if self.orchestrator:
             return getattr(self.orchestrator, "cognitive_engine", None)
         try:
-            from core.container import ServiceContainer
-            return ServiceContainer.get("cognitive_engine", default=None)
+            return get_runtime_service("cognitive_engine", default=None)
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("sovereign_pruner", exc)
             logger.debug("Cognitive engine lookup failed: %s", exc)

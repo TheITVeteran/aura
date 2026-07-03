@@ -1784,3 +1784,236 @@ def test_runtime_registry_batch_five_safety_memory_morality_seams():
         assert "get_container" not in source
         if module is not repair_phase:
             assert "core.runtime.service_registry" in source
+
+
+def test_runtime_registry_batch_six_large_scc_service_seams(monkeypatch):
+    import asyncio
+    import inspect
+    from types import SimpleNamespace
+
+    import core.actuators.doc_ingest as doc_ingest
+    import core.agency.goal_planner as goal_planner
+    import core.agency.self_play as self_play
+    import core.brain.deliberation as deliberation
+    import core.brain.inference_feedback as inference_feedback
+    import core.brain.llm.compiler as compiler
+    import core.collective.strategic_synthesis as strategic_synthesis
+    import core.consciousness.predictive_engine as predictive_engine
+    import core.embodiment.voice_presence as voice_presence
+    import core.environment.embodied_simulator as embodied_simulator
+    import core.goals.directive_conflict_sentinel as directive_conflict_sentinel
+    import core.governance.need_to_know as need_to_know
+    import core.guardians.memory_guard as memory_guard
+    import core.guardians.threat_watch as threat_watch
+    import core.knowledge.bottling as bottling
+    import core.managers.memory_manager as memory_manager
+    import core.memory.black_hole as black_hole
+    import core.memory.sovereign_pruner as sovereign_pruner
+    import core.orchestrator.handlers.aegis as aegis
+    import core.phases.bonding_phase as bonding_phase
+    import core.phases.inference_phase as inference_phase
+    import core.phases.initiative_generation as initiative_generation
+    import core.phases.motivation_update as motivation_update
+    import core.reliability_engine as reliability_engine
+    import core.scheduler as scheduler
+    import core.sim.outcome_simulator as outcome_simulator
+    import core.sim.scenario_forge as scenario_forge
+    import core.state_authority as state_authority
+    import core.values_engine as values_engine
+    import core.voice.voice_session as voice_session
+    from core.runtime.service_registry import (
+        install_registration_locked_resolver,
+        install_service_factory_registration_sink,
+        install_service_presence_resolver,
+        install_service_registration_sink,
+        install_service_resolver,
+    )
+    from core.state.aura_state import AuraState
+
+    class Memory:
+        def query_knowledge(self, topic):
+            return "remembered truth" if topic == "topic" else None
+
+        def recall(self, _topic):
+            return None
+
+    class VectorMemory:
+        def retrieve_context(self, _topic, top_k=1):
+            return [{"content": "vector truth"}]
+
+        def search(self, _query, limit=5):
+            return [{"score": 0.9, "content": "match"}]
+
+        def search_similar(self, _query, limit=5, **_kwargs):
+            return [{"score": 0.9}]
+
+    class Router:
+        high_pressure_mode = True
+
+        async def think(self, *_args, **_kwargs):
+            return (
+                '{"implicit_intent":"answer directly","user_subtext":"needs clarity",'
+                '"momentum":"flowing","conversation_hooks":["clarity"]}'
+            )
+
+    class Gate:
+        async def generate_response(self, prompt, **_kwargs):
+            return f"generated:{prompt[:8]}"
+
+        def _background_local_deferral_reason(self, *, origin):
+            return f"{origin}:deferred"
+
+    class Tom:
+        known_selves = {"bryan": SimpleNamespace(rapport=0.8)}
+
+    class Mycelium:
+        def __init__(self):
+            self.pulsed = []
+
+        def get_hypha(self, source, target):
+            return SimpleNamespace(pulse=lambda success=True: self.pulsed.append((source, target, success)))
+
+    class TTS:
+        def __init__(self):
+            self.messages = []
+
+        async def speak(self, message):
+            self.messages.append(message)
+
+    reliability = object()
+    mycelium = Mycelium()
+    tts = TTS()
+    services = {
+        "reliability_engine": reliability,
+        "memory": Memory(),
+        "vector_memory": VectorMemory(),
+        "llm_router": Router(),
+        "inference_gate": Gate(),
+        "theory_of_mind": Tom(),
+        "mycelial_network": mycelium,
+        "tts_engine": tts,
+        "free_energy_engine": SimpleNamespace(accept_surprise_signal=lambda *_args, **_kwargs: None),
+    }
+    registered: list[tuple[str, object, bool, dict[str, str | None]]] = []
+    factories: list[tuple[str, object, object, bool, dict[str, str | None]]] = []
+
+    monkeypatch.setattr(scheduler.Scheduler, "_instance", None)
+    install_service_resolver(lambda name, default=None: services.get(name, default))
+    install_service_presence_resolver(lambda name: name in services)
+    install_registration_locked_resolver(lambda: False)
+    install_service_registration_sink(
+        lambda name, instance, required, metadata: registered.append(
+            (name, instance, required, metadata)
+        )
+    )
+    install_service_factory_registration_sink(
+        lambda name, factory, lifetime, required, metadata: factories.append(
+            (name, factory, lifetime, required, metadata)
+        )
+    )
+    try:
+        assert reliability_engine.get_reliability_engine() is reliability
+
+        compiler.register_prompt_compiler()
+        state_authority.register_state_authority()
+        assert any(item[0] == "prompt_compiler" for item in factories)
+        assert any(item[0] == "state_authority" for item in factories)
+
+        authority = state_authority.StateAuthority()
+        assert authority._check_knowledge_base("topic") == "remembered truth"
+        assert authority._check_vector_memory("missing") == "vector truth"
+
+        state = AuraState.default()
+        state.cognition.current_origin = "user"
+        inferred = asyncio.run(inference_phase.InferencePhase().execute(state, objective="help me"))
+        assert inferred.cognition.modifiers["inferred_intent"] == "answer directly"
+
+        bonded = AuraState.default()
+        bonded.cognition.current_origin = "user"
+        bonded = asyncio.run(bonding_phase.BondingPhase().execute(bonded, objective="A personal note " * 20))
+        assert bonded.identity.bonding_level > 0
+
+        assert initiative_generation.InitiativeGenerationPhase._autonomy_pause_reason() == "memory_pressure"
+        assert motivation_update._background_curiosity_allowed() in {True, False}
+
+        manager = memory_manager.MemoryManager()
+        assert manager._get_mycelium() is mycelium
+        assert manager.search_similar("query") == [{"score": 0.9}]
+
+        session = voice_session.VoiceSessionManager()
+        asyncio.run(session.start())
+        session.begin_session("hello")
+        asyncio.run(session.narrate("checking voice"))
+        assert any(item[0] == "voice_session" for item in registered)
+        assert tts.messages == ["checking voice"]
+
+        scheduler.Scheduler()
+        assert any(item[0] == "scheduler" for item in registered)
+
+        black = black_hole.BlackHole()
+        black.on_start()
+        assert black._aesgcm is None
+
+        assert goal_planner.GoalPlanner().classify("explain this") == "reasoning"
+        assert asyncio.run(goal_planner.GoalPlanner()._default_generate("question", 0.2)).startswith("generated:")
+
+        assert outcome_simulator.register_outcome_simulator().get_status()["healthy"] is True
+        assert bottling.register_knowledge_bottling().get_status()["healthy"] is True
+        assert scenario_forge.register_scenario_forge().get_status()["healthy"] is True
+        assert threat_watch.register_threat_watch().get_status()["healthy"] is True
+        assert directive_conflict_sentinel.register_directive_sentinel().get_status()["healthy"] is True
+        assert need_to_know.register_need_to_know().get_status()["healthy"] is True
+
+        registered_names = [item[0] for item in registered]
+        assert "culture_mind" in registered_names
+        assert "brainiac" in registered_names
+        assert "caine" in registered_names
+        assert "safe_surf" in registered_names
+        assert "hal" in registered_names
+        assert "the_machine" in registered_names
+    finally:
+        install_service_resolver(None)
+        install_service_presence_resolver(None)
+        install_registration_locked_resolver(None)
+        install_service_registration_sink(None)
+        install_service_factory_registration_sink(None)
+
+    for module in (
+        doc_ingest,
+        goal_planner,
+        self_play,
+        deliberation,
+        inference_feedback,
+        compiler,
+        strategic_synthesis,
+        predictive_engine,
+        voice_presence,
+        embodied_simulator,
+        directive_conflict_sentinel,
+        need_to_know,
+        memory_guard,
+        threat_watch,
+        bottling,
+        memory_manager,
+        black_hole,
+        sovereign_pruner,
+        aegis,
+        bonding_phase,
+        inference_phase,
+        initiative_generation,
+        motivation_update,
+        reliability_engine,
+        scheduler,
+        outcome_simulator,
+        scenario_forge,
+        state_authority,
+        values_engine,
+        voice_session,
+    ):
+        source = inspect.getsource(module)
+        assert "core.container" not in source
+        assert "from container import" not in source
+        assert "ServiceContainer" not in source
+        assert "ServiceLifetime" not in source
+        assert "get_container" not in source
+        assert "core.runtime.service_registry" in source

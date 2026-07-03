@@ -5611,3 +5611,64 @@ Estimate:
 - Remaining total checkpoint groups: 3, focused on remaining SCC cuts,
   provider/factory ownership splits, live desktop findings, and longer
   soak/runtime evidence.
+
+## Checkpoint 2026-07-03-30: Large SCC Runtime Registry Batch
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Converted a larger SCC slice in one checkpoint instead of continuing
+  one-file cuts: reliability engine, prompt compiler, state authority,
+  memory guard, motivation/initiative/inference/bonding phases, strategic
+  synthesis, deliberation, voice presence/session, document ingest, outcome
+  simulator, knowledge bottling, inference feedback, embodied simulator,
+  scenario forge, values engine, goal planner, threat watch, predictive
+  engine, Aegis, directive sentinel, need-to-know policy, memory manager,
+  sovereign pruner, scheduler, and self-play.
+- Preserved explicit injected-container compatibility for foreground
+  inference and bonding phases while making the runtime registry the default
+  resolver.
+- Added broad regression coverage proving representative resolver/factory/
+  registration behavior across the batch and strict source ownership so the
+  old `core.container` dependency does not return.
+- Cleaned fatal static issues in touched files so the enlarged SCC batch also
+  leaves import hygiene stricter.
+- Refreshed the architecture-quality baseline after reducing the largest
+  import SCC from `564` modules to `548` modules.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_error_architecture.py::test_runtime_registry_batch_six_large_scc_service_seams`
+  -> `1 passed`.
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `129 passed`.
+- `python -m ruff check --select F,E9 ...`
+  over touched batch modules and architecture tests -> passed.
+- `python -m py_compile ...`
+  over touched batch modules and architecture tests -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=45.46`,
+  `largest_cycle_size=548`, `cycle_count=7`, `dependency_edges=7508`,
+  `god_file_count=37`, `module_count=2245`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> completed and refreshed
+  `artifacts/closeout/remaining_checkpoint_contract_latest.json`.
+
+Boundary:
+
+- This checkpoint removes another 16 modules from the largest SCC through
+  batchable registry seams. Remaining SCC work should continue in larger
+  families: provider/factory ownership splits, manager/orchestrator seams,
+  and live desktop/runtime proof artifacts. It does not claim live desktop
+  soak completion.
+
+Estimate:
+
+- Architecture-regression-control closure: about 97-98%.
+- Existing architecture-debt reduction closure: about 60-66%.
+- Local reliability-control closure: about 94%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 74-80% locally.
+- Remaining total checkpoint groups: 3, focused on remaining SCC cuts,
+  provider/factory ownership splits, live desktop findings, and longer
+  soak/runtime evidence.

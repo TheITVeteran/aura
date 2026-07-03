@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 from core.kernel.bridge import Phase
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.state.aura_state import AuraState
@@ -83,6 +83,15 @@ def _bounded_float(
     return max(lower, min(upper, number))
 
 
+def _service_get(container: Any, name: str, *, default: Any = None) -> Any:
+    if container is not None and hasattr(container, "get"):
+        try:
+            return container.get(name, default=default)
+        except TypeError:
+            return container.get(name) or default
+    return get_runtime_service(name, default=default)
+
+
 class BondingPhase(Phase):
     """
     Phase to handle long-term personality evolution and user bonding.
@@ -91,7 +100,7 @@ class BondingPhase(Phase):
 
     def __init__(self, container: Any = None):
         super().__init__(kernel=container)
-        self.container = container or ServiceContainer
+        self.container = container
 
     async def execute(
         self,
@@ -130,7 +139,7 @@ class BondingPhase(Phase):
 
             rapport = 0.5
             try:
-                tom = ServiceContainer.get("theory_of_mind", default=None)
+                tom = _service_get(self.container, "theory_of_mind", default=None)
                 if tom and tom.known_selves:
                     user_model = next(iter(tom.known_selves.values()))
                     rapport = _bounded_float(getattr(user_model, "rapport", 0.5), 0.5)

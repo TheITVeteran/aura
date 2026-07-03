@@ -19,6 +19,7 @@ import numpy as np
 from core.brain.causal_world_model import CausalWorldModel
 from core.perception.affordance_schema import AffordanceKnowledgeBase
 from core.runtime.task_ownership import create_tracked_task, fire_and_forget
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.EmbodiedSimulator")
 
@@ -115,8 +116,7 @@ class ContinuousSimulatorLoop:
     def _feed_sensorimotor_grounding(self):
         """Translates raw physics (scene graph) into neural substrate injections."""
         try:
-            from core.container import ServiceContainer
-            substrate = ServiceContainer.get("conscious_substrate", default=None)
+            substrate = get_runtime_service("conscious_substrate", default=None)
             if substrate:
                 # E.g. Arousal spikes if objects are moving fast near the agent
                 nearby = self.scene.get_nearby_entities(radius=5.0)

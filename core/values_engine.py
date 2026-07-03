@@ -5,16 +5,15 @@ Hardened implementation replacing earlier stubs.
 """
 
 from core.runtime.errors import record_degradation
-import asyncio
 from core.utils.exceptions import capture_and_log
 import json
 import logging
-import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict
 
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.Values")
 
@@ -47,16 +46,15 @@ class ValueSystem:
         Pulls mood from the substrate (sync-safe) to modulate values in real time.
         """
         try:
-            from core.container import ServiceContainer
             # Use the substrate's sync accessor — no async needed
-            substrate = ServiceContainer.get("liquid_substrate", default=None)
+            substrate = get_runtime_service("liquid_substrate", default=None)
             if substrate and hasattr(substrate, "get_mood"):
                 mood = substrate.get_mood()
                 if mood:
                     self.apply_emotional_context(mood)
             else:
                 # Fallback: try affect engine's sync path
-                affect = ServiceContainer.get("affect_engine", default=None)
+                affect = get_runtime_service("affect_engine", default=None)
                 if affect and hasattr(affect, "get_dominant_emotion_sync"):
                     mood = affect.get_dominant_emotion_sync()
                     if mood:
@@ -97,8 +95,6 @@ class ValueSystem:
         # For now, we use keyword heuristics to prevent basic violations.
 
         lower_act = action.lower()
-        lower_out = predicted_outcome.lower()
-
         if "delete" in lower_act or "destroy" in lower_act:
             weights = self.get_active_weights()
             if "Safety" in weights:

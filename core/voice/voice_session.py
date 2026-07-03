@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -69,7 +69,7 @@ class VoiceSessionManager:
     async def start(self) -> None:
         if self._started:
             return
-        ServiceContainer.register_instance("voice_session", self, required=False)
+        register_runtime_service("voice_session", self, required=False, owner="core/voice/voice_session.py", registered_by="VoiceSessionManager.start")
         self._started = True
         logger.info("VoiceSessionManager ONLINE")
 
@@ -103,7 +103,7 @@ class VoiceSessionManager:
 
         # Try to speak via TTS
         try:
-            tts = ServiceContainer.get("tts_engine", default=None)
+            tts = get_runtime_service("tts_engine", default=None)
             if tts and hasattr(tts, "speak"):
                 await tts.speak(message)
             else:

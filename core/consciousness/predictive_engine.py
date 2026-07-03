@@ -13,7 +13,7 @@ from typing import Any
 
 import numpy as np
 
-from core.container import ServiceContainer
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Consciousness.Predictive")
@@ -183,7 +183,7 @@ class PredictiveEngine:
         surprise = self.compute_surprise(actual_outcome, actual_substrate)
 
         try:
-            fe = ServiceContainer.get("free_energy_engine", default=None)
+            fe = get_runtime_service("free_energy_engine", default=None)
             if fe and hasattr(fe, "accept_surprise_signal"):
                 fe.accept_surprise_signal(surprise)
         except (ImportError, AttributeError, RuntimeError) as e:

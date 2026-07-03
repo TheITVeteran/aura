@@ -2,12 +2,12 @@
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 import re
-import asyncio
 import json
 
 from core.brain.llm_interface import LLMInterface
 from core.brain.trace_logger import TraceLogger
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 
 @dataclass
 class Decision:
@@ -115,10 +115,9 @@ Keep answers concise.
         if len(actions) < 2:
             return None
         try:
-            from core.container import ServiceContainer
             from core.reasoning.native_system2 import SearchAlgorithm, System2SearchConfig
 
-            system2 = ServiceContainer.get("native_system2", default=None)
+            system2 = get_runtime_service("native_system2", default=None)
             if system2 is None:
                 return None
 

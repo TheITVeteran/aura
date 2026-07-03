@@ -23,6 +23,7 @@ from typing import Any
 
 from core.morality.action_markers import BROAD_SCOPE_MARKERS, IRREVERSIBLE_MARKERS, scan_markers
 from core.utils.engine_support import coerce_text, record_engine_degradation, resolve_brain
+from core.runtime.service_registry import get_runtime_service, register_runtime_service
 
 logger = logging.getLogger("Aura.OutcomeSimulator")
 
@@ -153,12 +154,11 @@ def get_outcome_simulator(orchestrator: Any = None) -> OutcomeSimulationEngine:
 
 
 def register_outcome_simulator(orchestrator: Any = None) -> OutcomeSimulationEngine:
-    from core.container import ServiceContainer
     from core.service_names import ServiceNames
 
-    inst = ServiceContainer.get(ServiceNames.CULTURE_MIND, default=None) or get_outcome_simulator(orchestrator)
-    ServiceContainer.register_instance(ServiceNames.CULTURE_MIND, inst, required=False)
-    ServiceContainer.register_instance("culture_mind", inst, required=False)
+    inst = get_runtime_service(ServiceNames.CULTURE_MIND, default=None) or get_outcome_simulator(orchestrator)
+    register_runtime_service(ServiceNames.CULTURE_MIND, inst, required=False, owner="core/sim/outcome_simulator.py", registered_by="register_outcome_simulator")
+    register_runtime_service("culture_mind", inst, required=False, owner="core/sim/outcome_simulator.py", registered_by="register_outcome_simulator")
     return inst
 
 

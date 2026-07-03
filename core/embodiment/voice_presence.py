@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.VoicePresence")
@@ -161,8 +162,7 @@ class VoicePresence:
 
 async def maybe_speak_response(response: str, state: Any) -> None:
     try:
-        from core.container import ServiceContainer
-        voice = ServiceContainer.get("voice_presence", default=None)
+        voice = get_runtime_service("voice_presence", default=None)
         if voice:
             await voice.speak_response(response, phi=getattr(state, "phi", 0.0))
     except (ImportError, AttributeError, RuntimeError) as e:
