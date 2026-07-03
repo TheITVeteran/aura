@@ -1,4 +1,5 @@
 {
+  "passed": true,
   "standards": [
     {
       "acceptance": "Launched desktop path boots, chats, perceives, acts, retries, and shuts down without fallback loops, duplicate kernels, RAM runaway, or false health.",

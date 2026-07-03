@@ -283,12 +283,14 @@ def evaluate(*, require_live: bool = False) -> list[StandardStatus]:
 def report(*, require_live: bool = False) -> dict[str, Any]:
     statuses = evaluate(require_live=require_live)
     complete = sum(1 for item in statuses if item.status != "gap")
+    gaps = len(statuses) - complete
     return {
+        "passed": gaps == 0,
         "standards": [asdict(item) for item in statuses],
         "summary": {
             "total": len(statuses),
             "mapped": complete,
-            "gaps": len(statuses) - complete,
+            "gaps": gaps,
             "require_live": require_live,
         },
     }

@@ -4683,3 +4683,48 @@ Estimate:
 - Closeout evidence-consistency closure: about 97%.
 - Expanded daily-runtime/product closure: about 92%.
 - Remaining total checkpoint groups: 2-3.
+
+## Checkpoint 2026-07-02-13: Frontier Pass Contract For Final Assembly
+
+Status: prerequisite contract fix validated; commit pending.
+
+Scope:
+
+- Added a top-level `passed` field to
+  `tools/closeout/frontier_standards_matrix.py` output. `passed` is true only
+  when the frontier matrix has zero gaps.
+- Regenerated `artifacts/closeout/frontier_standards_latest.json` with
+  `passed=true`, `summary.gaps=0`, `summary.mapped=9`, and
+  `summary.require_live=true`.
+- Reran the live desktop proof from a clean committed tree. The canonical
+  ignored live artifact now reports `passed=true`, `git_dirty=false`, commit
+  `e36f024a`, and peak RSS about `20.6GB`.
+- Reran artifact consistency and final claim validation against the fresh live
+  proof; both passed.
+
+Evidence:
+
+- `python -m pytest -q tests/test_frontier_standards_matrix.py tests/test_final_closeout_assembler.py`
+  -> `10 passed`.
+- `python -m py_compile tools/closeout/frontier_standards_matrix.py tests/test_frontier_standards_matrix.py`
+  -> passed.
+- `python -m ruff check --select F,E9 tools/closeout/frontier_standards_matrix.py tests/test_frontier_standards_matrix.py`
+  -> passed.
+- `python -u tools/live_boot_proof.py --mode desktop --port 8015 --conversation-soak-turns 3 --restart-continuity --boot-timeout 600 --out-dir artifacts/current/live_desktop_runtime`
+  -> live proof passed.
+- `python tools/artifact_consistency_validator.py --artifacts artifacts/current`
+  -> `passed=true`.
+- `python tools/final_claim_validator.py --claims CLAIMS_MATRIX.md --artifacts artifacts/current`
+  -> `passed=true`.
+
+Boundary:
+
+- This is a final-assembly evidence-contract fix. It does not change Aura's
+  runtime behavior beyond making the frontier proof artifact consumable by the
+  final closeout assembler.
+
+Estimate:
+
+- Final closeout evidence assembly closure: about 98%.
+- Expanded daily-runtime/product closure: about 92-93%.
+- Remaining total checkpoint groups: 2-3.

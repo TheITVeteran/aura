@@ -2152,3 +2152,35 @@ Tracker:
 - Closeout evidence-consistency closure: about 97%.
 - Expanded daily-runtime/product closure: about 92%.
 - Remaining total checkpoint groups: 2-3.
+
+## Checkpoint 2026-07-02-13: Frontier Pass Contract For Final Assembly
+
+Status: ready to commit.
+
+What changed:
+
+- `frontier_standards_matrix.py` now emits top-level `passed=true` when the
+  matrix has zero gaps.
+- `artifacts/closeout/frontier_standards_latest.json` was regenerated with
+  `passed=true`.
+- Canonical live desktop proof was rerun from clean commit `e36f024a` and
+  passed with `git_dirty=false`.
+- Artifact consistency and final claim validation passed against the refreshed
+  evidence set.
+
+Evidence:
+
+- `python -m pytest -q tests/test_frontier_standards_matrix.py tests/test_final_closeout_assembler.py`
+  -> `10 passed`.
+- `python -u tools/live_boot_proof.py --mode desktop --port 8015 --conversation-soak-turns 3 --restart-continuity --boot-timeout 600 --out-dir artifacts/current/live_desktop_runtime`
+  -> passed.
+- `python tools/artifact_consistency_validator.py --artifacts artifacts/current`
+  -> `passed=true`.
+- `python tools/final_claim_validator.py --claims CLAIMS_MATRIX.md --artifacts artifacts/current`
+  -> `passed=true`.
+
+Tracker:
+
+- Final closeout evidence assembly closure: about 98%.
+- Expanded daily-runtime/product closure: about 92-93%.
+- Remaining total checkpoint groups: 2-3.

@@ -21,6 +21,7 @@ def test_frontier_standards_cover_requested_closeout_targets():
 
 def test_frontier_standards_have_no_source_or_validator_gaps():
     payload = report()
+    assert payload["passed"] is True
     assert payload["summary"]["gaps"] == 0
     assert payload["summary"]["mapped"] == payload["summary"]["total"]
 
