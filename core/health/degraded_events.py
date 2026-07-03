@@ -55,7 +55,7 @@ def _schedule_awaitable(awaitable: Any, *, label: str) -> None:
             awaitable.close()
         return
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         def _runner() -> None:
             try:
@@ -349,9 +349,9 @@ def _forward_to_error_intelligence(
     _LAST_FORWARDED[key] = time.time()
 
     try:
-        from core.container import ServiceContainer
+        from core.runtime.service_registry import get_runtime_service
 
-        orch = ServiceContainer.get("orchestrator", default=None)
+        orch = get_runtime_service("orchestrator", default=None)
         self_modifier = getattr(orch, "self_modifier", None) if orch else None
         if not self_modifier or not hasattr(self_modifier, "on_error"):
             return

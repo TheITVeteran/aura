@@ -103,9 +103,10 @@ class RobustLock:
         if self.adaptive:
             # We check the metrics collector for GPU load if possible
             try:
-                from core.observability.metrics import get_metrics
+                from core.runtime.service_registry import get_runtime_service
 
-                m = get_metrics()._custom_gauges.get("gpu_utilization", 0)
+                metrics = get_runtime_service("metrics", default=None)
+                m = getattr(metrics, "_custom_gauges", {}).get("gpu_utilization", 0)
                 if m > 0.8:
                     wait_time = max(wait_time, 180.0)
                     logger.debug(
@@ -439,9 +440,9 @@ class EventLoopMonitor:
             logger.debug("Suppressed %s in core.utils.concurrency: %s", type(_exc).__name__, _exc)
 
         try:
-            from core.container import ServiceContainer
+            from core.runtime.service_registry import get_runtime_service
 
-            gate = ServiceContainer.get("inference_gate", default=None)
+            gate = get_runtime_service("inference_gate", default=None)
             status_getter = getattr(gate, "get_conversation_status", None)
             if callable(status_getter):
                 status = status_getter()

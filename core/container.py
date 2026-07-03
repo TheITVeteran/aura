@@ -927,6 +927,8 @@ def _install_runtime_service_registry_bridge() -> None:
     try:
         from core.runtime.service_registry import (
             install_failure_policy_resolver,
+            install_registration_locked_resolver,
+            install_service_presence_resolver,
             install_service_resolver,
         )
 
@@ -941,8 +943,16 @@ def _install_runtime_service_registry_bridge() -> None:
         def _service_for(service_name: str, default: object | None = None) -> object | None:
             return ServiceContainer.get(service_name, default=default)
 
+        def _has_service(service_name: str) -> bool:
+            return ServiceContainer.has(service_name)
+
+        def _registration_locked() -> bool:
+            return bool(getattr(ServiceContainer, "_registration_locked", False))
+
         install_failure_policy_resolver(_failure_policy_for)
         install_service_resolver(_service_for)
+        install_service_presence_resolver(_has_service)
+        install_registration_locked_resolver(_registration_locked)
     except (ImportError, RuntimeError, AttributeError) as exc:
         logger.debug("Runtime service registry bridge unavailable: %s", exc)
 

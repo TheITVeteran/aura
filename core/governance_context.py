@@ -124,22 +124,24 @@ def governance_runtime_active() -> bool:
     }:
         return True
     try:
-        from core.container import ServiceContainer
+        from core.runtime.service_registry import (
+            has_runtime_service,
+            is_runtime_registration_locked,
+        )
 
         runtime_services_present = (
-            ServiceContainer.has("executive_core")
-            or ServiceContainer.has("aura_kernel")
-            or ServiceContainer.has("kernel_interface")
+            has_runtime_service("executive_core")
+            or has_runtime_service("aura_kernel")
+            or has_runtime_service("kernel_interface")
         )
-        if not getattr(ServiceContainer, "_registration_locked", False):
+        registration_locked = is_runtime_registration_locked()
+        if not registration_locked:
             # Early boot can use degraded governance only before canonical
             # runtime services exist. Once kernel/executive/interface is
             # registered, consequential sinks must fail closed even if the
             # container has not finished locking registration.
             return runtime_services_present
-        return runtime_services_present or bool(
-            getattr(ServiceContainer, "_registration_locked", False)
-        )
+        return runtime_services_present or registration_locked
     except (ImportError, AttributeError, RuntimeError) as exc:
         record_degradation("governance_context", exc)
         logger.debug("Strict governance mode lookup failed: %s", exc)
@@ -410,7 +412,6 @@ def governed(fn: Callable) -> Callable:
 
 
 def _is_coroutine_function(fn):
-    import asyncio
     return inspect.iscoroutinefunction(fn)
 
 

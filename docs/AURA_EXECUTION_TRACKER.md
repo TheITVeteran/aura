@@ -4932,3 +4932,61 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 65-70% locally.
 - Remaining total checkpoint groups: 3, focused on additional SCC cuts,
   live desktop findings, and long-run soak evidence.
+
+## Checkpoint 2026-07-03-18: Runtime Registry Predicate Decoupling
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Extended `core.runtime.service_registry` with narrow runtime predicates for
+  service presence and registration-lock status. This preserves the general
+  service-locator bridge while keeping low-level modules out of
+  `core.container`.
+- Removed direct container imports from `core.governance_context`,
+  `core.utils.concurrency`, `core.health.degraded_events`, and
+  `core.terminal_monitor`.
+- Kept runtime behavior intact by resolving the active foreground inference
+  gate, reliability engine, orchestrator, and world-state publisher through the
+  low-level registry rather than concrete container/world-state imports.
+- Added regression tests that block reintroducing container imports or direct
+  world-state imports in the low-level runtime/error-monitoring paths.
+- Refreshed the architecture baseline after reducing the largest import SCC
+  from `756` modules to `621` modules.
+- Confirmed the reliability-quality standard remains general-purpose: the
+  check is not aerospace-domain behavior. It is a reusable quality bar for any
+  Aura subsystem that needs bounded failure behavior, clean ownership, and
+  measurable architecture improvement.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_error_architecture.py tests/test_architecture_quality_gate.py tests/test_audit_chain.py tests/test_reliability_hardening.py`
+  -> `108 passed`.
+- `python -m ruff check --select F,E9 ...`
+  over touched runtime/architecture/test files -> passed.
+- `python -m py_compile ...`
+  over touched runtime/architecture/test files -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=44.74`,
+  `largest_cycle_size=621`, `cycle_count=7`, `dependency_edges=7512`,
+  `god_file_count=37`, `module_count=2245`.
+- `python tools/closeout/remaining_checkpoint_contract.py --json --require-live`
+  -> `gaps=0`, `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check`
+  -> passed.
+
+Boundary:
+
+- This checkpoint reduces a major runtime/container SCC and prevents several
+  back-edges from returning. It does not claim architecture consolidation is
+  finished: the largest SCC remains `621` modules, so additional ownership
+  cuts are still tracked.
+
+Estimate:
+
+- Architecture-regression-control closure: about 94%.
+- Existing architecture-debt reduction closure: about 30-35%.
+- Local reliability-control closure: about 92%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 67-72% locally.
+- Remaining total checkpoint groups: 3, focused on continued SCC reduction,
+  live desktop findings, and longer soak/runtime evidence.

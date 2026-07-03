@@ -267,8 +267,11 @@ class TerminalMonitor:
         # to user-relevant errors (the sci-fi scenario: Aura sees errors
         # and proactively helps)
         try:
-            from core.world_state import get_world_state
-            ws = get_world_state()
+            from core.runtime.service_registry import get_runtime_service
+
+            ws = get_runtime_service("world_state", default=None)
+            if ws is None:
+                return
             # Only feed actionable errors, not internal noise
             for pattern in self._actionable_patterns:
                 if re.search(pattern, entry.message, re.IGNORECASE):
@@ -324,8 +327,9 @@ class TerminalMonitor:
         now = time.time()
         reliability = None
         try:
-            from core.container import ServiceContainer
-            reliability = ServiceContainer.get("reliability_engine", default=None)
+            from core.runtime.service_registry import get_runtime_service
+
+            reliability = get_runtime_service("reliability_engine", default=None)
         except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('terminal_monitor', _e)
             logger.debug('Ignored Exception in terminal_monitor.py: %s', _e)

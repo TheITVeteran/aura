@@ -2328,3 +2328,44 @@ Tracker:
 - Expanded daily-runtime/product closure: about 95%.
 - Chrome/Kubernetes-style operational maturity closure: about 65-70% locally.
 - Remaining total checkpoint groups: 1-2.
+
+## Checkpoint 2026-07-03-18: Runtime Registry Predicate Decoupling
+
+Status: ready to commit.
+
+What changed:
+
+- Extended the runtime service registry with narrow service-presence and
+  registration-lock predicates so low-level runtime code no longer needs to
+  import the global container for these checks.
+- Removed direct container imports from governance-context, concurrency,
+  degraded-event forwarding, and terminal-monitor runtime paths.
+- Kept terminal-monitor world-state reporting live by publishing through the
+  runtime registry instead of importing `core.world_state` directly.
+- Added regression coverage that blocks the removed container/world-state
+  back-edges from returning.
+- Refreshed the architecture-quality baseline after the largest import SCC
+  dropped from `756` modules to `621` modules.
+- Kept the quality bar general: this is reusable production reliability and
+  ownership hardening, not aerospace-domain behavior.
+
+Evidence:
+
+- Runtime/architecture/audit/reliability focused tests -> `108 passed`.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Focused `py_compile` over touched runtime and test modules -> passed.
+- Architecture baseline compare -> `passed=true`, `score=44.74`,
+  `largest_cycle_size=621`, `cycle_count=7`, `dependency_edges=7512`,
+  `module_count=2245`.
+- Remaining-checkpoint contract -> `gaps=0`,
+  `remaining_checkpoints=3`, `requirements=7`.
+- `git diff --check` -> passed.
+
+Tracker:
+
+- Architecture-regression-control closure: about 94%.
+- Existing architecture-debt reduction closure: about 30-35%.
+- Local reliability-control closure: about 92%.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 67-72% locally.
+- Remaining total checkpoint groups: 3.
