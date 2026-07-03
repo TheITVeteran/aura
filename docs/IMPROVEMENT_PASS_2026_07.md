@@ -162,6 +162,32 @@ identity-classifier regression this same phase) — so first live validation
 belongs to a watched session, not a silent default. It is a one-variable
 switch and the recommended next live experiment.
 
+### GPU window (July 3) — live 32B validation, honest findings
+
+Ran the pending 32B jobs with the instance up:
+- **Speculative decoding, live on the fused 32B: 14.91 → 20.68 tok/s = 1.39x**
+  (predicted; the large target/draft ratio pays). artifact: specdec_32b.json.
+- **Affordance judgment probed live (2 runs): emission = 0.** The 32B does NOT
+  adopt the ⟦affordance:⟧ grammar zero-shot even at max recency + a worked
+  example. Honest conclusion: the mechanism is safe/wired but DORMANT; reliable
+  use needs training (the flywheel), not prompting. **Reverted the menu to OFF
+  by default** — enabling it was pure cost (prompt bloat, latency) for no
+  benefit. Mechanism + desktop-objective gate stay.
+- **Real daily-use bug found & fixed** (surfaced by the probe, independent of
+  affordances): brief social turns ('thanks') drew a servile reply whose tail
+  the quality gate correctly rejected → retries exhausted → ZERO tokens →
+  parent inline-retry storm → sustained lag → a clean self-preservation
+  shutdown (no crash, snapshot frozen, exit 0 — the safety system working).
+  Fix: repair_generic_assistant_language salvages a brief clean reply for
+  brief turns; the worker salvages on exhaustion instead of yielding empty.
+  Live-verified: 'thanks' → "I'm glad it was helpful!" (clean, no storm).
+- **Flywheel delta: not run** — 0 verified-preference rows accumulated yet
+  (the reasoning amplifier needs live runs first); the gate correctly fails
+  closed. Honest: ready, waiting on data.
+
+Crash-watch discipline throughout (Bryan's ask): monitored neural stream +
+loop-wedge/stall dumps live; 0 wedges, the one shutdown was graceful.
+
 ### Sweep ledger
 
 | Area | Depth | Findings / actions |
