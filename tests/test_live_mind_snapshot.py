@@ -145,7 +145,9 @@ class RuntimeServices:
 def test_live_mind_snapshot_collects_deep_runtime_state(monkeypatch):
     from core.runtime import live_mind_snapshot
 
-    monkeypatch.setattr(live_mind_snapshot, "ServiceContainer", RuntimeServices)
+    monkeypatch.setattr(
+        live_mind_snapshot, "get_runtime_service", RuntimeServices.get
+    )
     monkeypatch.setattr(live_mind_snapshot, "_frontmost_app_fast", lambda: "Notes")
 
     snapshot = live_mind_snapshot.collect_live_mind_snapshot(
@@ -174,7 +176,9 @@ def test_live_desktop_context_payload_carries_mind_snapshot(monkeypatch):
     from core.runtime import live_mind_snapshot
     from interface.routes import chat as chat_routes
 
-    monkeypatch.setattr(live_mind_snapshot, "ServiceContainer", RuntimeServices)
+    monkeypatch.setattr(
+        live_mind_snapshot, "get_runtime_service", RuntimeServices.get
+    )
     monkeypatch.setattr(chat_routes, "ServiceContainer", RuntimeServices)
     monkeypatch.setattr(
         chat_routes,
@@ -229,7 +233,9 @@ def test_live_desktop_context_payload_carries_recent_voice_perception(monkeypatc
 
     RuntimeServices.services["world_state"] = VoiceWorldState()
     try:
-        monkeypatch.setattr(live_mind_snapshot, "ServiceContainer", RuntimeServices)
+        monkeypatch.setattr(
+        live_mind_snapshot, "get_runtime_service", RuntimeServices.get
+    )
         monkeypatch.setattr(chat_routes, "ServiceContainer", RuntimeServices)
         monkeypatch.setattr(chat_routes.time, "time", lambda: 1030.0)
         monkeypatch.setattr(chat_routes, "_resolve_live_voice_state", lambda *args, **kwargs: {})

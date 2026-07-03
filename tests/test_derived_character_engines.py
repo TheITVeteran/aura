@@ -472,7 +472,7 @@ def test_derived_runtime_context_collects_live_signals(monkeypatch):
         "hal": Hal(),
     }
     monkeypatch.setattr(
-        "core.runtime.derived_runtime_context.ServiceContainer.get",
+        "core.runtime.derived_runtime_context.get_runtime_service",
         lambda name, default=None: services.get(name, default),
     )
 
@@ -491,7 +491,7 @@ def test_derived_runtime_output_guard_blocks_secret_egress(monkeypatch):
             return {"recommended_action": "block", "level": "high"}
 
     monkeypatch.setattr(
-        "core.runtime.derived_runtime_context.ServiceContainer.get",
+        "core.runtime.derived_runtime_context.get_runtime_service",
         lambda name, default=None: Ice() if name == "ice" else default,
     )
     out = guard_user_facing_output(

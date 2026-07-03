@@ -53,7 +53,9 @@ BOOT_SERVICE_REQUIREMENTS: tuple[BootServiceRequirement, ...] = (
         owner_file="core/being/runtime.py",
         required_for="Cortex-facing live state packet",
         failure_policy="degrade_with_receipt",
-        evidence_tokens=('ServiceContainer.register_instance("aura_now"', "def prompt_block"),
+        # Registration goes through the registry seam (decoupled from the
+        # concrete container) since the registry-seam refactor.
+        evidence_tokens=('register_runtime_service("aura_now"', "def prompt_block"),
     ),
     BootServiceRequirement(
         name="memory_write_gateway",

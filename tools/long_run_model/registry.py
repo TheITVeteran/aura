@@ -286,7 +286,11 @@ def build_registry() -> RuntimeRegistry:
     will_engine_still_mutates_curiosity = "motivation.budgets.setdefault(\"curiosity\"" in will_engine_source
     backup_wired = (
         "BackupManager" in core_baseline_source
-        and 'register_instance("backup_manager"' in core_baseline_source
+        # Registration may go through the container or the registry seam.
+        and (
+            'register_instance("backup_manager"' in core_baseline_source
+            or 'register_runtime_service("backup_manager"' in core_baseline_source
+        )
         and "await orchestrator.backup_manager.on_start_async()" in core_baseline_source
     )
     database_coordinator_wired = 'register_instance("database_coordinator"' in boot_source

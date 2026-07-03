@@ -89,17 +89,15 @@ def test_get_world_state_registers_canonical_singleton(monkeypatch):
 
     monkeypatch.setattr(world_state_module, "_ws_instance", None)
     monkeypatch.setattr(
-        world_state_module.ServiceContainer,
-        "has",
-        classmethod(lambda cls, name: bool(registrations)),
+        world_state_module,
+        "has_runtime_service",
+        lambda name: bool(registrations),
     )
     monkeypatch.setattr(
-        world_state_module.ServiceContainer,
-        "register_instance",
-        classmethod(
-            lambda cls, name, instance, **metadata: registrations.append(
-                (name, instance, metadata)
-            )
+        world_state_module,
+        "register_runtime_service",
+        lambda name, instance, **metadata: registrations.append(
+            (name, instance, metadata)
         ),
     )
 

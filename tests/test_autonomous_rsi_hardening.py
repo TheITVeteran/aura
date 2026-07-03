@@ -35,6 +35,12 @@ def test_generate_solver_source_uses_verified_deterministic_path_without_router(
     from core.container import ServiceContainer
 
     monkeypatch.setattr(ServiceContainer, "get", staticmethod(lambda *_args, **_kwargs: None))
+    # No generation backend at all: on machines with local code weights,
+    # get_local_code_model() would otherwise take the LLM path and generate
+    # real code — this test pins the deterministic fallback contract.
+    monkeypatch.setattr(
+        "core.brain.llm.local_code_model.get_local_code_model", lambda: None
+    )
 
     source, metadata = generate_solver_source({"gcd"}, generation_id="Aura-G1")
     task = Task("gcd", "", 6, {"a": 54, "b": 24})

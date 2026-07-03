@@ -38,9 +38,9 @@ async def test_memory_ui_reports_degraded_when_horcrux_probe_fails(monkeypatch):
     facade = SimpleNamespace(vector=vault, episodic=_EmptyEpisodic(), setup=lambda: None)
 
     monkeypatch.setattr(
-        memory_ui.ServiceContainer,
-        "get",
-        classmethod(lambda _cls, _name, default=None: facade),
+        memory_ui,
+        "get_runtime_service",
+        lambda _name, default=None: facade,
     )
 
     result = await memory_ui.get_vault_stats()
@@ -58,9 +58,9 @@ async def test_memory_ui_reports_degraded_when_memory_read_fails(monkeypatch):
     facade = SimpleNamespace(vector=vault, episodic=_EmptyEpisodic(), setup=lambda: None)
 
     monkeypatch.setattr(
-        memory_ui.ServiceContainer,
-        "get",
-        classmethod(lambda _cls, _name, default=None: facade),
+        memory_ui,
+        "get_runtime_service",
+        lambda _name, default=None: facade,
     )
 
     result = await memory_ui.get_vault_stats()

@@ -179,7 +179,7 @@ async def test_browser_only_camera_privacy_keeps_vision_signals_available(monkey
             return vision_buffer
         return default
 
-    monkeypatch.setattr(privacy_routes.ServiceContainer, "get", fake_get)
+    monkeypatch.setattr(privacy_routes, "get_runtime_service", fake_get)
 
     import core.runtime.boot_safety as boot_safety
 

@@ -54,7 +54,7 @@ def test_bonding_phase_uses_neutral_rapport_when_service_fails(monkeypatch):
 
     async def scenario():
         get_degradation_tracker().reset()
-        monkeypatch.setattr(bonding_module.ServiceContainer, "get", unavailable)
+        monkeypatch.setattr(bonding_module, "get_runtime_service", unavailable)
         state = AuraState()
         state.cognition.current_origin = "admin"
         before = state.identity.bonding_level

@@ -1,4 +1,5 @@
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -142,6 +143,19 @@ async def test_memory_facade_search_reads_strict_gateway_records(monkeypatch, tm
         lambda: SimpleNamespace(root=tmp_path),
     )
 
+    # The gateway record index serves cold searches empty by design (freshness
+    # never costs event-loop time). Bind the process-wide index to this root
+    # and warm it before searching, mirroring live behavior after boot.
+    import core.memory.gateway_record_index as _gri
+
+    monkeypatch.setattr(_gri, "_INDEX", None)
+    _index = _gri.get_gateway_record_index(tmp_path)
+    _index.search("warmup", limit=1)
+    _deadline = time.monotonic() + 5.0
+    while not _index._built and time.monotonic() < _deadline:
+        time.sleep(0.01)
+    assert _index._built, "gateway record index failed to warm"
+
     results = await MemoryFacade().search("blue lantern phrase", limit=5)
 
     assert any("blue lantern phrase" in item["content"] for item in results)
@@ -172,6 +186,19 @@ async def test_memory_facade_compat_search_accepts_top_k_and_sync(monkeypatch, t
         "core.memory.memory_write_gateway.get_memory_write_gateway",
         lambda: SimpleNamespace(root=tmp_path),
     )
+
+    # The gateway record index serves cold searches empty by design (freshness
+    # never costs event-loop time). Bind the process-wide index to this root
+    # and warm it before searching, mirroring live behavior after boot.
+    import core.memory.gateway_record_index as _gri
+
+    monkeypatch.setattr(_gri, "_INDEX", None)
+    _index = _gri.get_gateway_record_index(tmp_path)
+    _index.search("warmup", limit=1)
+    _deadline = time.monotonic() + 5.0
+    while not _index._built and time.monotonic() < _deadline:
+        time.sleep(0.01)
+    assert _index._built, "gateway record index failed to warm"
 
     facade = MemoryFacade()
 

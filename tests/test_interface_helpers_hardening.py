@@ -41,9 +41,9 @@ def test_notify_user_spoke_continues_after_optional_hook_failure(monkeypatch):
     )
 
     monkeypatch.setattr(
-        helpers.ServiceContainer,
-        "get",
-        classmethod(lambda _cls, _name, default=None: orchestrator),
+        helpers,
+        "get_runtime_service",
+        lambda _name, default=None: orchestrator,
     )
 
     helpers._notify_user_spoke("hello")

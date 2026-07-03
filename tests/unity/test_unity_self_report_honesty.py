@@ -26,8 +26,8 @@ def test_fragmented_unity_reports_measurable_cause(monkeypatch):
     fe = SimpleNamespace(current=_FreeEnergyState(free_energy=0.1), get_trend=lambda: "stable")
 
     monkeypatch.setattr(
-        self_report_module.ServiceContainer,
-        "get",
+        self_report_module,
+        "get_runtime_service",
         lambda name, default=None: mapping.get(name, default),
     )
     monkeypatch.setattr(self_report_module, "get_free_energy_engine", lambda: fe)
@@ -41,8 +41,8 @@ def test_nominal_state_does_not_force_fragmentation_language(monkeypatch):
     fe = SimpleNamespace(current=_FreeEnergyState(free_energy=0.35), get_trend=lambda: "stable")
 
     monkeypatch.setattr(
-        self_report_module.ServiceContainer,
-        "get",
+        self_report_module,
+        "get_runtime_service",
         lambda name, default=None: mapping.get(name, default),
     )
     monkeypatch.setattr(self_report_module, "get_free_energy_engine", lambda: fe)

@@ -3185,7 +3185,7 @@ async def test_motivation_update_recovers_social_drive_during_high_energy_conver
         propose_initiative_to_state=_AsyncCallRecorder(return_value=(state, {"reason": "noop"}))
     )
     monkeypatch.setattr(
-        "core.phases.motivation_update.ServiceContainer.has", lambda *_args, **_kwargs: False
+        "core.phases.motivation_update.has_runtime_service", lambda *_args, **_kwargs: False
     )
     monkeypatch.setattr(
         "core.phases.motivation_update.get_executive_authority", lambda *_args, **_kwargs: authority
