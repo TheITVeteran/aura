@@ -2151,12 +2151,31 @@ _CONVERSATION_RECALL_TOPIC_MARKERS = (
 )
 
 
+# Content recall: "earlier I gave/told you X — what was it?" The deliverable
+# is a SPECIFIC fact from this session's transcript. Observed live (July 2026):
+# these turns reached the model with zero session context and durable-memory
+# noise as evidence, and it confabulated values ("4523" for a code that was
+# 7213, two turns after acknowledging it).
+_CONVERSATION_RECALL_CONTENT_RE = re.compile(
+    r"\bearlier\b.{0,120}\bi\s+(?:gave|told|mentioned|said|asked)\b"
+    r"|\bi\s+(?:gave|told|mentioned)\s+you\b.{0,120}\b(?:earlier|before|a\s+while\s+(?:ago|back))\b"
+    r"|\bwhat\s+(?:was|is|were)\s+(?:the|my|that|it)\b.{0,120}"
+    r"\b(?:i\s+(?:gave|told|mentioned|said)|asked\s+you\s+to\s+(?:keep|remember))\b"
+    r"|\b(?:what|which)\s+\w[\w\s'-]{0,50}\bdid\s+i\s+"
+    r"(?:say|give|tell|mention|pick|choose)\b"
+    r"|\basked\s+you\s+to\s+keep\s+in\s+mind\b.{0,80}\bwhat\s+was\b",
+    re.IGNORECASE,
+)
+
+
 def _classify_conversation_recall_request(user_message: str) -> str:
     text = normalize_memory_intent_text(_normalize_user_message(user_message)).rstrip(" ?!.")
     if not text:
         return ""
     if any(marker in text for marker in _CONVERSATION_RECALL_LAST_AURA_MARKERS):
         return "last_aura"
+    if _CONVERSATION_RECALL_CONTENT_RE.search(text):
+        return "content"
     if any(marker in text for marker in _CONVERSATION_RECALL_RECENT_PAIR_MARKERS):
         return "recent_pair"
     if re.search(
@@ -2523,6 +2542,50 @@ async def _recall_durable_conversation_snippets(user_message: str, *, limit: int
         return []
 
 
+_CONTENT_RECALL_STOPWORDS = frozenset(
+    "a an and are as at be before but by chat choose chose did do does earlier "
+    "for from gave give had has have i in is it its just keep kind me mention "
+    "mentioned mind my name note number of on or pick picked quick remember "
+    "reminder said say small so tell that the thing this those to told was "
+    "were what which while with you your".split()
+)
+
+
+def _content_recall_keywords(user_message: str) -> list[str]:
+    tokens = re.findall(r"[a-z][a-z'-]{2,}", str(user_message or "").lower())
+    return [tok for tok in tokens if tok not in _CONTENT_RECALL_STOPWORDS]
+
+
+async def _find_session_content_exchanges(
+    user_message: str,
+    *,
+    session_id: str = "",
+    limit: int = 40,
+) -> list[dict[str, str]]:
+    """Latest-first session exchanges whose USER turn matches the question's
+    content words. Grounded content recall: the answer to "earlier I gave you
+    X" is a quote from the transcript, never a durable-memory guess."""
+    keywords = _content_recall_keywords(user_message)
+    if not keywords:
+        return []
+    exchanges = await _recent_completed_conversation_exchanges(
+        current_user_message=user_message,
+        session_id=session_id,
+        limit=limit,
+    )
+    scored: list[tuple[int, int, dict[str, str]]] = []
+    for idx, entry in enumerate(exchanges):
+        user_text = str(entry.get("user") or "").lower()
+        if not user_text:
+            continue
+        hits = sum(1 for keyword in keywords if keyword in user_text)
+        if hits >= min(2, len(keywords)):
+            scored.append((hits, idx, entry))
+    # Best keyword coverage first; among ties prefer the most recent turn.
+    scored.sort(key=lambda item: (-item[0], -item[1]))
+    return [entry for _, _, entry in scored]
+
+
 async def _build_conversation_recall_reply(
     user_message: str,
     *,
@@ -2553,6 +2616,26 @@ async def _build_conversation_recall_reply(
     recall_kind = _classify_conversation_recall_request(user_message)
     if not recall_kind:
         return None
+
+    if recall_kind == "content":
+        # The asked-for fact lives in THIS session's transcript or nowhere.
+        # Quote the matching turn verbatim (anti-confabulation: always true),
+        # or say honestly that it isn't there. Durable memory is the wrong
+        # lane for "earlier in this conversation" and must not be asserted.
+        matches = await _find_session_content_exchanges(
+            user_message, session_id=session_id
+        )
+        if matches:
+            quoted = _clip_conversation_text(matches[0].get("user"), limit=420)
+            reply = f'Earlier in this conversation you told me: "{quoted}"'
+            ack = _clip_conversation_text(matches[0].get("aura"), limit=200)
+            if ack:
+                reply += f' — and I acknowledged it: "{ack}"'
+            return reply
+        return (
+            "I don't find that in this conversation's completed turns, so I "
+            "won't guess. If you tell me again I'll hold onto it."
+        )
 
     exchanges = await _recent_completed_conversation_exchanges(
         current_user_message=user_message,
@@ -4618,11 +4701,14 @@ async def _run_cognitive_engine_chat_turn(
     # live-mind speech contract; execution, identity/self-process, long, and
     # multi-part turns are still excluded above and flow through deeper planning.
     recent_context_needed = _desktop_turn_needs_recent_context(visible)
-    if memory_state_contract:
+    if memory_state_contract and not recent_context_needed:
         # Canonical memory/state turns already carry the authoritative state
         # evidence for the current question. Replaying older chat here makes the
         # live model prone to answering stale topics instead of the requested
-        # pin/recall/state fact.
+        # pin/recall/state fact. But when the turn asks about THIS conversation
+        # (recall/follow-up), the transcript IS the authoritative evidence —
+        # dropping it forced the model to confabulate from durable-memory noise
+        # (observed live: "4523" for a code planted as 7213 two turns prior).
         recent_context_limit = 0
     elif capability_inventory_contract and compact_desktop_chat_contract and not recent_context_needed:
         # Compact live desktop turns must remain genuinely compact. Pulling four
