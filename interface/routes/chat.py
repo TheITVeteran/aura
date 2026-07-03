@@ -8031,9 +8031,25 @@ def _build_simple_affect_check_reply(user_message: str) -> str:
     return _shape_with_live_substrate(reply, user_message)
 
 
+# "what are you <gerund>" (talking about / doing / saying / referring to ...)
+# is a topical question, NOT an identity request. Without this guard the
+# identity classifier false-positives on contextual-relevance challenges like
+# "what are you talking about?" and lets the identity-grounding rebind paper
+# over an off-topic/hallucinatory reply that must fail closed.
+_IDENTITY_REQUEST_RE = re.compile(
+    r"\b(?:what|who)\s+are\s+you\b"
+    r"(?!\s+(?:talking|doing|saying|referring|going|trying|thinking|planning|"
+    r"working|looking|waiting|asking|getting|making|reading|writing|hiding|"
+    r"implying|suggesting|on\s+about))"
+)
+
+
 def _is_identity_request(user_message: str) -> bool:
     text = _normalize_user_message(user_message)
     if not text:
+        return False
+    # A challenge to relevance is definitionally not an identity request.
+    if _is_contextual_relevance_challenge(user_message):
         return False
     if text in {
         "who are you",
@@ -8045,7 +8061,7 @@ def _is_identity_request(user_message: str) -> bool:
     }:
         return True
     return bool(
-        re.search(r"\b(?:what|who)\s+are\s+you\b", text)
+        _IDENTITY_REQUEST_RE.search(text)
         or re.search(r"\btell\s+me\s+(?:who|what)\s+you\s+are\b", text)
         or re.search(r"\bintroduce\s+yourself\b", text)
     )
