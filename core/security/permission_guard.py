@@ -137,7 +137,9 @@ class PermissionGuard(AuraBaseModule):
             direct["direct_probe"] = True
             return direct
 
-        native_result = await self._native_bridge_permission_result(ptype)
+        native_result = await self._native_bridge_permission_result(
+            ptype, force_one_shot=False
+        )
         if native_result is not None:
             result = native_result
         elif local_result is not None:
@@ -174,7 +176,7 @@ class PermissionGuard(AuraBaseModule):
         return direct
 
     async def _native_bridge_permission_result(
-        self, ptype: PermissionType
+        self, ptype: PermissionType, *, force_one_shot: bool = True
     ) -> dict[str, Any] | None:
         """Return effective Aura.app permission when the native bridge is trusted.
 
@@ -195,16 +197,15 @@ class PermissionGuard(AuraBaseModule):
         try:
             from core.security.native_desktop_bridge import probe_native_desktop_bridge
 
-            # Cached probe: the underlying one-shot bridge call takes up to
-            # 5s, while health surfaces budget ~0.6s per probe. force=True
-            # here meant EVERY UI poll bypassed the cache, spawned the
-            # native helper, and timed out — the permanent "PROBE FAIL"
-            # Bryan saw. Cache hits answer instantly; the cache refreshes
-            # itself on TTL expiry.
+            # Two truth modes: the cached EFFECTIVE path (rare, 30s+ cache)
+            # forces one-shot native truth — the pinned contract. Health
+            # polls (every minute, ~0.6s budget) pass force_one_shot=False:
+            # the underlying one-shot call takes up to 5s, and forcing it
+            # per poll was the permanent "PROBE FAIL" Bryan saw.
             native_probe = await asyncio.to_thread(
                 probe_native_desktop_bridge,
-                force=False,
-                prefer_one_shot=False,
+                force=force_one_shot,
+                prefer_one_shot=force_one_shot,
             )
         except _PERMISSION_RECOVERABLE_ERRORS as exc:
             self.logger.debug("Native Aura.app permission probe unavailable: %s", exc)
@@ -562,13 +563,15 @@ class PermissionGuard(AuraBaseModule):
         )
 
     async def _check_accessibility_permission(self) -> dict[str, Any]:
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, self._accessibility_preflight_probe)
-        if result is not None and result.get("granted"):
-            return result
-        native_result = await self._native_bridge_permission_result(PermissionType.ACCESSIBILITY)
+        # Effective (cached, rare) path: one-shot native truth wins — the
+        # app bridge's grant is what determines whether Aura can act.
+        native_result = await self._native_bridge_permission_result(
+            PermissionType.ACCESSIBILITY, force_one_shot=True
+        )
         if native_result is not None:
             return native_result
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, self._accessibility_preflight_probe)
         if result is not None:
             return result
         return {
