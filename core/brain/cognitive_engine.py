@@ -2342,6 +2342,26 @@ class CognitiveEngine:
                 "Use this to keep consciousness, sentience, self-awareness, and personhood claims "
                 "functional, bounded, and evidence-based."
             )
+        try:
+            from core.introspection.self_forensics import (
+                build_self_forensics_context,
+                is_self_forensics_question,
+            )
+
+            if is_self_forensics_question(user_prompt):
+                # Asked about her own shutdown/crash history, she gets her
+                # actual black boxes (grace flag, sentinel log, incident
+                # records, faults) — observed live: without this she
+                # confabulated electromagnetic interference for a
+                # generation-gate wedge, three rejected drafts in a row.
+                _forensics = build_self_forensics_context()
+                if _forensics:
+                    grounding_blocks.append(
+                        "[SELF-FORENSICS EVIDENCE]\n" + _forensics
+                    )
+        except (ImportError, AttributeError, RuntimeError, OSError) as _sf_exc:
+            logger.debug("Self-forensics grounding unavailable: %s", _sf_exc)
+
         if grounding_blocks:
             user_prompt = (
                 "[CURRENT USER MESSAGE]\n"
