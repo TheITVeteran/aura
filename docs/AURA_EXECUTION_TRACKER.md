@@ -6261,3 +6261,33 @@ Tracker:
 - Expanded daily-runtime/product closure remains about 97%.
 - Chrome/Kubernetes/aerospace operational maturity closure remains about
   86-90% locally, with proof honesty improved and RSI evidence still open.
+
+## Checkpoint 2026-07-04-41: Enterprise Gate Static Hygiene Repair
+
+Status: implementation validated; checkpoint commit pending.
+
+Scope:
+
+- Fixed a new enterprise-gate regression in
+  `tests/test_runtime_stability_edges.py`: a guard helper for the lightweight
+  dialectical crucible test was a raise-only fake function.
+- Replaced it with a stateful guard that records whether the unexpected LLM
+  call happened, then asserts the lightweight path did not use it.
+
+Evidence:
+
+- `python -m pytest -q tests/test_runtime_stability_edges.py::TestLiveRuntimeContentionGuards::test_dialectical_crucible_lightweight_default_does_not_spawn_llm_roles`
+  -> `1 passed`.
+- `python tools/aura_enterprise_gate.py --root . --baseline config/aura_enterprise_gate_baseline.json --fail-on-regression --out artifacts/current/enterprise_gate.json`
+  -> passed; `high_or_critical_count=0`.
+
+Boundary:
+
+- This is a gate hygiene checkpoint, not a new live desktop proof. The live
+  desktop evidence remains Checkpoint 39.
+
+Tracker:
+
+- Expanded daily-runtime/product closure remains about 97%.
+- Chrome/Kubernetes/aerospace operational maturity closure remains about
+  86-90% locally, with the enterprise static ratchet back to clean.

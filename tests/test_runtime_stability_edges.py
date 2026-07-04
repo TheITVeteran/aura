@@ -1988,7 +1988,11 @@ class TestLiveRuntimeContentionGuards(unittest.IsolatedAsyncioTestCase):
         from core.container import ServiceContainer
 
         class Engine:
+            def __init__(self):
+                self.called = False
+
             async def think(self, *_args, **_kwargs):
+                self.called = True
                 raise AssertionError("background crucible should not call LLM by default")
 
         class Beliefs:
@@ -1999,12 +2003,13 @@ class TestLiveRuntimeContentionGuards(unittest.IsolatedAsyncioTestCase):
                 self.claims.append(kwargs)
                 return True
 
+        engine = Engine()
         beliefs = Beliefs()
         old_get = ServiceContainer.get
 
         def fake_get(name, default=None):
             if name == "cognitive_engine":
-                return Engine()
+                return engine
             if name == "belief_revision_engine":
                 return beliefs
             return default
@@ -2018,6 +2023,7 @@ class TestLiveRuntimeContentionGuards(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["reason"], "lightweight_crucible")
+        self.assertFalse(engine.called)
         self.assertEqual(len(beliefs.claims), 1)
 
     async def test_optional_threaded_status_times_out_as_stale_not_api_blocker(self):
