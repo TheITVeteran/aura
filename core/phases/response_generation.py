@@ -1445,6 +1445,13 @@ class ResponseGenerationPhase(BasePhase):
         """Strip tags and assistant-isms without leaking internal thought into chat."""
         import re
 
+        # A background generation that deferred/failed can hand us None, and every
+        # re.* below then raises "expected string or bytes-like object, got
+        # 'NoneType'" — which tripped the mind_tick circuit and held the runtime
+        # DEGRADED (observed live 2026-07-04). A cleaner must never crash on None.
+        if not isinstance(text, str):
+            text = "" if text is None else str(text)
+
         mumbling = ""
         # Internal Monologue Spillage ("Mumbling")
         exp_state = "neutral"
