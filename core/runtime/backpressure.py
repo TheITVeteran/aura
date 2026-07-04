@@ -82,19 +82,31 @@ def record_expected_backpressure(
         _counters[subsystem] = _counters.get(subsystem, 0) + 1
         streak = _counters[subsystem]
 
+    # CRITICAL: a background timeout must NEVER fail-close its subsystem. Many
+    # of these (sovereign_pruner, dialectical_crucible) are on the fail-closed
+    # list, and record_degradation escalates ANY warning+ on a fail-closed
+    # service to a CRITICAL SERVICE FAILURE that RAISES and drives the runtime
+    # into failure-lockdown 1.00 — which is exactly what pinned the live kernel
+    # unhealthy and left the desktop stuck on "Connecting to runtime" (2026-07-04).
+    # Record on a dedicated ``.backpressure`` channel (not a registered
+    # fail-closed service) with the policy disabled, so the event stays visible
+    # without ever locking the mind down over a slow housekeeping pass.
+    backpressure_channel = f"{subsystem}.backpressure"
+
     if not foreground_inference_active():
         record_degradation(
-            subsystem,
+            backpressure_channel,
             error,
             severity="warning",
             action=f"{action} (foreground idle — timeout is unexplained, not backpressure)",
             extra=extra,
+            enforce_failure_policy=False,
         )
         return "escalated"
 
     if streak >= max(1, int(escalate_after)):
         record_degradation(
-            subsystem,
+            backpressure_channel,
             error,
             severity="warning",
             action=(
@@ -102,6 +114,7 @@ def record_expected_backpressure(
                 "backpressure is no longer transient)"
             ),
             extra=extra,
+            enforce_failure_policy=False,
         )
         with _lock:
             _counters[subsystem] = 0

@@ -285,10 +285,36 @@ def gui_actor_entry(port: int, token: str = None):
                         suppress_degradation=True,
                     )
                     status_code = int(resp.get("status_code", 0) or 0)
-                    if 0 < status_code < 500:
+                    # A chat-capable runtime must not stay hidden behind the
+                    # splash. Root returns 503 while the runtime is merely
+                    # DEGRADED (e.g. a background subsystem in failure-lockdown),
+                    # even though conversation works — that pinned the desktop on
+                    # "Connecting to runtime" indefinitely (2026-07-04). If the
+                    # conversation lane is ready, load the real UI regardless.
+                    conversation_ready = False
+                    if not (0 < status_code < 500):
+                        try:
+                            boot = get_network_gateway().request(
+                                "GET",
+                                f"http://127.0.0.1:{port}/api/health/boot",
+                                timeout=5,
+                                source="gui_actor.boot_wait_conversation",
+                                read_only=True,
+                                suppress_degradation=True,
+                            )
+                            raw = boot.get("content") or b""
+                            if isinstance(raw, (bytes, bytearray)):
+                                raw = raw.decode("utf-8", "replace")
+                            payload = json.loads(raw) if raw else {}
+                            conversation_ready = bool(
+                                payload.get("conversation_ready") is True
+                            )
+                        except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
+                            conversation_ready = False
+                    if (0 < status_code < 500) or conversation_ready:
                         logger.info(
-                            "🔄 API ready (attempt %d, %.1fs). Loading GUI: %s",
-                            attempt, elapsed, app_url,
+                            "🔄 API ready (attempt %d, %.1fs, status=%s, conversation_ready=%s). Loading GUI: %s",
+                            attempt, elapsed, status_code, conversation_ready, app_url,
                         )
                         try:
                             window.load_url(app_url)
