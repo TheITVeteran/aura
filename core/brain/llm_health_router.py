@@ -247,33 +247,50 @@ def _release_generation_gate_after_call(lease_id: int) -> None:
         pass
 
 
-def force_release_generation_gate(reason: str = "hard_generation_deadline") -> bool:
-    """Emergency-release a stale router gate lease from a watchdog thread."""
+def force_release_generation_gate(
+    reason: str = "hard_generation_deadline", *, release_all: bool = False
+) -> bool:
+    """Emergency-release stale router gate lease(s) from a watchdog thread.
+
+    release_all reclaims EVERY active lease: after force_abort kills the
+    workers, every holder is dead by construction — the overnight July 4
+    incident held the second permit of the two-slot gate with a dead
+    lease, so the 2s re-acquire failed, every later attempt got the
+    saturation result without reaching a client, the conversation lane
+    stayed cold, and the launcher executed a recovering runtime.
+    """
 
     reason = str(reason or "hard_generation_deadline")
+    released_any = False
     with _GENERATION_GATE_STATE_LOCK:
-        if not _GENERATION_GATE_ACTIVE_LEASES:
-            return False
-        lease_id, (acquired_at, owner) = min(
-            _GENERATION_GATE_ACTIVE_LEASES.items(),
-            key=lambda item: item[1][0],
-        )
-        _GENERATION_GATE_ACTIVE_LEASES.pop(lease_id, None)
-        _GENERATION_GATE_FORCED_LEASES.add(lease_id)
-        age_s = max(0.0, time.time() - acquired_at)
-    try:
-        _GENERATION_GATE.release()
-    except ValueError:
+        max_reclaims = len(_GENERATION_GATE_ACTIVE_LEASES)
+    for _ in range(max_reclaims):
         with _GENERATION_GATE_STATE_LOCK:
-            _GENERATION_GATE_FORCED_LEASES.discard(lease_id)
-        return False
-    record_degradation(
-        "llm_health_router",
-        TimeoutError(f"generation gate forcibly released after {age_s:.1f}s"),
-        severity="degraded",
-        action=f"released stale generation gate lease for {owner}: {reason}",
-    )
-    return True
+            if not _GENERATION_GATE_ACTIVE_LEASES:
+                break
+            lease_id, (acquired_at, owner) = min(
+                _GENERATION_GATE_ACTIVE_LEASES.items(),
+                key=lambda item: item[1][0],
+            )
+            _GENERATION_GATE_ACTIVE_LEASES.pop(lease_id, None)
+            _GENERATION_GATE_FORCED_LEASES.add(lease_id)
+            age_s = max(0.0, time.time() - acquired_at)
+        try:
+            _GENERATION_GATE.release()
+        except ValueError:
+            with _GENERATION_GATE_STATE_LOCK:
+                _GENERATION_GATE_FORCED_LEASES.discard(lease_id)
+            break
+        released_any = True
+        record_degradation(
+            "llm_health_router",
+            TimeoutError(f"generation gate forcibly released after {age_s:.1f}s"),
+            severity="degraded",
+            action=f"released stale generation gate lease for {owner}: {reason}",
+        )
+        if not release_all:
+            break
+    return released_any
 
 
 def _record_router_degradation(
@@ -879,7 +896,10 @@ class HealthAwareLLMRouter:
     def force_abort_active_generation(self, reason: str = "hard_generation_deadline") -> int:
         """Abort stale router/model generation state from watchdog or saturation paths."""
 
-        aborted = 1 if force_release_generation_gate(reason=reason) else 0
+        # All gate holders are dead once the workers are killed below —
+        # reclaim every lease so the lane can heal (next attempt respawns
+        # the worker) instead of wedging on a dead permit.
+        aborted = 1 if force_release_generation_gate(reason=reason, release_all=True) else 0
         seen: set[int] = set()
 
         def _abort_client(client: Any) -> None:

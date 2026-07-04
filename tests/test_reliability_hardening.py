@@ -1156,3 +1156,38 @@ class TestHelloTurnCascade:
             "a user-facing reply under lockdown must degrade (constrained "
             "speech), never be rejected into silence"
         )
+
+
+class TestGenerationGateRecovery:
+    """Overnight July 4: two lanes stacked behind the cold 32B load; the
+    force-abort killed both workers but freed only the OLDEST lease — a
+    dead holder kept the second permit, every later attempt saturated
+    without reaching a client, the lane stayed cold, and the launcher
+    executed a recovering runtime after six minutes."""
+
+    def test_release_all_reclaims_every_dead_lease(self):
+        from core.brain import llm_health_router as router
+
+        # Occupy both permits like the stacked overnight lanes.
+        leases = []
+        acquired = 0
+        while router._GENERATION_GATE.acquire(blocking=False):
+            acquired += 1
+            leases.append(
+                router._mark_generation_gate_acquired(f"test:lane{acquired}")
+            )
+        assert acquired >= 1, "gate must be acquirable in tests"
+        try:
+            # Single release (old behavior) leaves n-1 dead permits held.
+            assert router.force_release_generation_gate(
+                "test_stale", release_all=True
+            ) is True
+            # Every permit must be reacquirable — the lane can heal.
+            for _ in range(acquired):
+                assert router._GENERATION_GATE.acquire(blocking=False) is True
+        finally:
+            for _ in range(acquired):
+                try:
+                    router._GENERATION_GATE.release()
+                except ValueError:
+                    break
