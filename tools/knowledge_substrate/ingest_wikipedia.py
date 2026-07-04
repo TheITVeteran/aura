@@ -193,6 +193,15 @@ def main() -> int:
     parser.add_argument("--max-pages", type=int, default=0)
     parser.add_argument("--deadline-minutes", type=float, default=0.0)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--rebuild", action="store_true",
+        help=(
+            "Refresh mode for a NEW dump: ingest into <db>.rebuild.tmp and "
+            "atomically swap over the live corpus only on full completion — "
+            "readers keep the old corpus until the instant of the swap, and "
+            "a failed rebuild leaves the live corpus untouched."
+        ),
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -201,9 +210,34 @@ def main() -> int:
     if not args.dump.exists():
         logger.error("dump not found: %s", args.dump)
         return 2
+    target_db = args.db or default_corpus_db_path()
+    if args.rebuild:
+        rebuild_db = Path(str(target_db) + ".rebuild.tmp")
+        if rebuild_db.exists() and not args.resume:
+            rebuild_db.unlink()
+        summary = ingest(
+            args.dump,
+            db_path=rebuild_db,
+            max_pages=args.max_pages,
+            deadline_minutes=args.deadline_minutes,
+            resume=args.resume,
+        )
+        if summary["stop_reason"] != "dump_exhausted":
+            logger.warning(
+                "rebuild stopped early (%s) — live corpus untouched; rerun "
+                "with --rebuild --resume to continue", summary["stop_reason"],
+            )
+            logger.info("ingest summary: %s", summary)
+            return 3
+        import os as _os
+
+        _os.replace(rebuild_db, target_db)
+        logger.info("rebuild swapped into place: %s", target_db)
+        logger.info("ingest summary: %s", summary)
+        return 0
     summary = ingest(
         args.dump,
-        db_path=args.db,
+        db_path=target_db,
         max_pages=args.max_pages,
         deadline_minutes=args.deadline_minutes,
         resume=args.resume,

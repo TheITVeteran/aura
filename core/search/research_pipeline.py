@@ -1,6 +1,4 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import hashlib
@@ -11,15 +9,16 @@ import os
 import re
 import sys
 import time
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any
 from urllib.parse import urlparse
 
+from core.runtime.errors import record_degradation
 from core.runtime.network_gateway import get_network_gateway
 from core.thought_stream import get_emitter
 from core.utils.task_tracker import get_task_tracker
-
 
 logger = logging.getLogger("Aura.SearchPipeline")
 
@@ -136,7 +135,7 @@ _NOISY_RESULT_HOST_TERMS = (
 )
 
 _SEARCH_HIT_CACHE_TTL_SECONDS = 10 * 60
-_SEARCH_HIT_CACHE: dict[str, tuple[float, list["SearchHit"]]] = {}
+_SEARCH_HIT_CACHE: dict[str, tuple[float, list[SearchHit]]] = {}
 
 
 def _ddgs_enabled() -> bool:
@@ -324,7 +323,7 @@ class SearchArtifact:
 class SearchArtifactStore:
     """Small local persistence layer for retained web learnings."""
 
-    def __init__(self, path: Optional[Path] = None):
+    def __init__(self, path: Path | None = None):
         self.path = path or self._default_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -384,10 +383,10 @@ class SearchArtifactStore:
         self,
         query: str,
         *,
-        freshness_seconds: Optional[int] = None,
+        freshness_seconds: int | None = None,
         allow_stale: bool = False,
         force_refresh: bool = False,
-    ) -> Optional[SearchArtifact]:
+    ) -> SearchArtifact | None:
         if force_refresh:
             return None
         normalized_query = _normalize_query(query)
@@ -399,7 +398,7 @@ class SearchArtifactStore:
 
         freshest = freshness_seconds if freshness_seconds is not None else _freshness_window(query)
         now = _now()
-        best: Optional[SearchArtifact] = None
+        best: SearchArtifact | None = None
         best_score = 0.0
 
         for artifact in reversed(self._read_all()):
@@ -429,7 +428,7 @@ class SearchArtifactStore:
 class ResearchSearchPipeline:
     """Hybrid web retrieval with chunking, synthesis, and retention."""
 
-    def __init__(self, artifact_store: Optional[SearchArtifactStore] = None):
+    def __init__(self, artifact_store: SearchArtifactStore | None = None):
         self.artifact_store = artifact_store or SearchArtifactStore()
 
     async def search(
@@ -438,8 +437,8 @@ class ResearchSearchPipeline:
         *,
         num_results: int = 5,
         deep: bool = False,
-        retain: Optional[bool] = None,
-        context: Optional[dict[str, Any]] = None,
+        retain: bool | None = None,
+        context: dict[str, Any] | None = None,
         force_refresh: bool = False,
     ) -> dict[str, Any]:
         emitter = get_emitter()
@@ -663,6 +662,7 @@ class ResearchSearchPipeline:
 
     def _legacy_html_search(self, query: str, num_results: int) -> list[SearchHit]:
         import urllib.parse
+
         from bs4 import BeautifulSoup
 
         encoded = urllib.parse.quote_plus(query)
@@ -915,7 +915,7 @@ class ResearchSearchPipeline:
 
         return pages
 
-    async def _fetch_page(self, client: Any, hit: SearchHit, *, timeout_val: float = 8.0) -> Optional[SearchPage]:
+    async def _fetch_page(self, client: Any, hit: SearchHit, *, timeout_val: float = 8.0) -> SearchPage | None:
         try:
             response = await asyncio.to_thread(
                 get_network_gateway().request,
@@ -959,7 +959,7 @@ class ResearchSearchPipeline:
             position=hit.position,
         )
 
-    async def _fetch_page_with_browser(self, hit: SearchHit) -> Optional[SearchPage]:
+    async def _fetch_page_with_browser(self, hit: SearchHit) -> SearchPage | None:
         try:
             from core.phantom_browser import PhantomBrowser
 
@@ -1243,7 +1243,7 @@ class ResearchSearchPipeline:
             "evidence": top_chunks,
         }
 
-    def _parse_synthesis_json(self, raw: str) -> Optional[dict[str, Any]]:
+    def _parse_synthesis_json(self, raw: str) -> dict[str, Any] | None:
         try:
             start = raw.find("{")
             end = raw.rfind("}") + 1
@@ -1399,6 +1399,29 @@ class ResearchSearchPipeline:
         except (ImportError, AttributeError, RuntimeError, TypeError) as exc:
             record_degradation('research_pipeline', exc)
             logger.debug("Vector memory retention failed: %s", exc)
+
+        # 3b. Local knowledge corpus: verified retained knowledge becomes a
+        # permanently searchable reference document (source=web_retained) —
+        # the corpus accretes from lived research, not only dump snapshots.
+        try:
+            import asyncio as _asyncio
+
+            from core.knowledge.local_corpus import get_local_corpus_store
+
+            _corpus = get_local_corpus_store()
+            if _corpus.document_count() > 0:
+                # Off-loop: sqlite writes must never buy loop time.
+                await _asyncio.to_thread(
+                    _corpus.add_retained_document,
+                    artifact.query[:300],
+                    memory_text,
+                    artifact_id=artifact.artifact_id,
+                )
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            record_degradation(
+                "research_pipeline", exc, severity="debug",
+                action="corpus writeback skipped",
+            )
 
         # 3. Tertiary: update belief system with facts
         try:
@@ -1560,7 +1583,7 @@ class ResearchSearchPipeline:
         query: str,
         *,
         deep: bool,
-        retain: Optional[bool],
+        retain: bool | None,
         context: dict[str, Any],
         result: dict[str, Any],
     ) -> bool:
@@ -1618,9 +1641,9 @@ class ResearchSearchPipeline:
                 try:
                     result = await asyncio.wait_for(router.think(prompt), timeout=timeout_seconds)
                     return _normalize_text(str(result or ""), limit=4000)
-                except (asyncio.TimeoutError, RuntimeError, AttributeError, TypeError):
+                except (TimeoutError, RuntimeError, AttributeError, TypeError):
                     pass  # no-op: intentional
-            except (asyncio.TimeoutError, RuntimeError, AttributeError, TypeError):
+            except (TimeoutError, RuntimeError, AttributeError, TypeError):
                 pass  # no-op: intentional
 
         brain = context.get("brain")
@@ -1634,7 +1657,7 @@ class ResearchSearchPipeline:
                 if isinstance(result, dict):
                     return _normalize_text(str(result.get("content") or result.get("text") or ""), limit=4000)
                 return _normalize_text(str(result or ""), limit=4000)
-            except (asyncio.TimeoutError, RuntimeError, AttributeError, TypeError):
+            except (TimeoutError, RuntimeError, AttributeError, TypeError):
                 return ""
         return ""
 

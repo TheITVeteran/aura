@@ -206,3 +206,61 @@ class TestReferenceRetrievalLane:
         retriever = IntentionalRetriever()
         wired = retriever.wire_default_stores()
         assert MemoryStoreType.REFERENCE.value not in wired
+
+
+class TestContinuousGrowth:
+    def test_retained_document_insert_is_deduped_by_artifact(self, tmp_path):
+        """The corpus accretes from verified lived research — once per
+        artifact, provenance-tagged, searchable immediately."""
+        store = _seeded_store(tmp_path)
+        first = store.add_retained_document(
+            "quantum error correction thresholds",
+            "Verified research note: surface codes tolerate ~1% physical "
+            "error rates; below threshold, logical error falls exponentially "
+            "with code distance.",
+            artifact_id="artifact-123",
+        )
+        again = store.add_retained_document(
+            "quantum error correction thresholds",
+            "duplicate content",
+            artifact_id="artifact-123",
+        )
+        assert first is True
+        assert again is False, "same artifact must not be re-inserted"
+        hits = store.search("surface codes physical error threshold", limit=2)
+        assert hits and hits[0].source == "web_retained"
+
+    def test_rebuild_swap_replaces_corpus_atomically(self, tmp_path):
+        """Refresh mode: a new dump ingests beside the live corpus and
+        swaps in atomically only on completion."""
+        import bz2
+        import os
+
+        live = tmp_path / "corpus.db"
+        LocalCorpusStore(live).add_documents(
+            [("Old article", "stale content from the previous snapshot " * 10,
+              "wikipedia")]
+        )
+
+        body = "Fresh snapshot content about lunar geology and basalt plains. " * 8
+        xml = (
+            '<mediawiki xmlns="http://www.mediawiki.org/xml/export-0.11/">'
+            "<page><title>Lunar geology</title><ns>0</ns><id>1</id>"
+            f"<revision><id>1</id><text>{body}</text></revision></page>"
+            "</mediawiki>"
+        )
+        dump = tmp_path / "new.xml.bz2"
+        dump.write_bytes(bz2.compress(xml.encode("utf-8")))
+
+        from tools.knowledge_substrate.ingest_wikipedia import ingest
+
+        rebuild = tmp_path / "corpus.db.rebuild.tmp"
+        summary = ingest(dump, db_path=rebuild)
+        assert summary["stop_reason"] == "dump_exhausted"
+        os.replace(rebuild, live)
+
+        refreshed = LocalCorpusStore(live)
+        assert refreshed.document_count() == 1
+        hits = refreshed.search("lunar geology basalt", limit=1)
+        assert hits and hits[0].title == "Lunar geology"
+        assert refreshed.search("stale content previous", limit=1)[0:0] == []

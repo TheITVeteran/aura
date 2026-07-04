@@ -163,6 +163,24 @@ class LocalCorpusStore:
             finally:
                 conn.close()
 
+    def add_retained_document(
+        self, title: str, body: str, *, artifact_id: str,
+        source: str = "web_retained",
+    ) -> bool:
+        """Insert one verified retained-knowledge document, deduped by
+        artifact ID — the corpus grows continuously from what Aura actually
+        researches and verifies, not only from dump snapshots.
+
+        Returns True if a new document was written.
+        """
+        artifact_key = f"retained:{artifact_id}"
+        if self.get_meta(artifact_key):
+            return False
+        written = self.add_documents([(title, body, source)])
+        if written:
+            self.set_meta(artifact_key, "1")
+        return bool(written)
+
     def set_meta(self, key: str, value: str) -> None:
         with self._write_lock:
             conn = self._connect_rw()
