@@ -10,7 +10,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **about 97%** based on current live
+- Expanded daily-runtime/product closure: **100% for the current configured
+  local checkpoint program** based on current live
   evidence, not documentation. This number is deliberately governed by the live
   desktop path, not by historical proof-profile success. Checkpoint 5 addresses
   two live defects, and the follow-up desktop-mode live proof verified bounded
@@ -34,7 +35,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   the signed `com.aura.desktop` bridge, no stream failure markers, clean
   shutdown, no orphan processes, and port release after stop. Checkpoint 37
   closes a real enterprise-gate regression introduced by the Program DNA proof
-  surface instead of relaxing the baseline.
+  surface instead of relaxing the baseline. Checkpoint 38 replayed the live
+  desktop path from a clean commit with bounded RSS, CognitiveEngine replies,
+  live mind-organ participation, governed desktop action, restart continuity,
+  clean shutdown, and no runtime failure markers.
 - Estimated checkpoints in this expanded program: **12 total**. Checkpoint 1 is
   committed and pushed; Checkpoint 2 is source-committed but live TCC remains
   open; Checkpoint 3 is committed and pushed; Checkpoint 4 is committed and
@@ -57,9 +61,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   launched identity. Checkpoint 10C is source-validated for research-cycle
   fail-open-with-repair semantics; Checkpoint 10D live-validates background
   autonomy and desktop-access truth under a launched desktop-mode proof.
-  Checkpoint 37 is the enterprise-ratchet repair checkpoint. The remaining
-  evidence gap is now the final live desktop replay and evidence packaging
-  checkpoint, including the final clean worktree/commit/push proof.
+  Checkpoint 37 is the enterprise-ratchet repair checkpoint. Checkpoint 38 is
+  the final clean-commit live desktop replay and evidence packaging checkpoint.
+  No configured local checkpoint group remains open after the final tracker
+  commit/push proof. Independent third-party evaluation and longer 24-72h
+  soaks remain outside this configured local checkpoint program.
 
 ### Scope Clarification For The Current Pass
 
@@ -6064,3 +6070,70 @@ Tracker:
 - Chrome/Kubernetes-style operational maturity closure: about 82-87% locally.
 - Remaining checkpoint groups: 1, focused on final live desktop replay,
   evidence packaging, and final assessment.
+
+## Checkpoint 2026-07-03-38: Final Clean-Commit Live Desktop Replay
+
+Status: final configured local checkpoint validated; tracker commit pending.
+
+Scope:
+
+- Replayed the real desktop-mode Aura runtime from clean commit
+  `79fd297cf6534bdc836e24ec21913dcb8a5901f6` after the enterprise-ratchet
+  repair checkpoint was committed and pushed.
+- Used the same desktop-mode local MLX lane that the launcher uses, with a
+  32GB external RSS abort guard and normal full-runtime background organs.
+- Verified boot health, runtime vitals, CognitiveEngine chat, identity reply,
+  conversation memory continuity, multi-turn conversation soak, live mind-organ
+  participation, governed desktop action, restart continuity, clean shutdown,
+  port release, no orphan Aura processes, and runtime-stream failure-marker
+  absence.
+
+Evidence:
+
+- Command:
+  `AURA_LIVE_PROOF_RSS_ABORT_MB=32000 AURA_PROCESS_RSS_LIMIT_GB=32 AURA_FINAL_PROOF_LIVE_SOAK_TURNS=4 python tools/live_boot_proof.py --mode desktop --port 8023 --conversation-soak-turns 4 --restart-continuity --boot-timeout 420 --out-dir artifacts/current/live_desktop_runtime_final_checkpoint`
+  -> `LIVE PROOF PASSED`.
+- Verdict:
+  `artifacts/current/live_desktop_runtime_final_checkpoint/live_proof_20260703_175133_verdict.json`.
+- Verdict summary:
+  `passed=true`, `mode=desktop`, `git_dirty=false`, commit
+  `79fd297cf6534bdc836e24ec21913dcb8a5901f6`, peak RSS `20542.6MB`,
+  20/20 steps passed, 0 failures.
+- Conversation evidence:
+  capability inventory returned
+  `status=cognitive_engine_capability_inventory`; identity and soak turns
+  returned `status=cognitive_engine`; 4/4 soak turns passed.
+- Mind-path evidence:
+  semantic, imagination, timescale, ambient, and autonomic organs processed
+  live turns.
+- Desktop-action evidence:
+  governed desktop action verified a 400-character file on disk.
+- Restart evidence:
+  codeword continuity survived real process shutdown and reboot.
+- Cleanup evidence:
+  both shutdown steps returned `--stop rc=0`, `graceful=True`,
+  `orphans=none`, and `port_free=True`; post-proof process table showed no
+  `Aura.app`, `aura-launcher`, `aura_main.py`, `gui_actor.py`, or
+  `mlx_worker` processes.
+- Runtime-stream evidence:
+  `runtime_stream_scan` found no failure markers in runtime stdout.
+
+Boundary:
+
+- This closes the configured local daily-runtime checkpoint list for this
+  pass. It does not prove private qualia, legal/moral personhood, solved AGI,
+  ASI, arbitrary closed-source program reconstruction, or indefinite
+  multiday reliability on every machine.
+- Longer 24-72h soaks, independent external audits, and real visible
+  voice/browser/app demos remain useful follow-up evidence, not blockers for
+  the configured local checkpoint program completed here.
+
+Tracker:
+
+- Configured local proof profile: 100% historically passed.
+- Expanded daily-runtime/product checkpoint program: 100% complete for the
+  current configured local checklist.
+- Chrome/Kubernetes-style operational maturity closure: about 84-89% locally;
+  remaining evidence is scale/soak/distribution maturity rather than a known
+  failed local gate.
+- Remaining configured local checkpoint groups: 0.
