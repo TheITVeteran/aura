@@ -6137,3 +6137,86 @@ Tracker:
   remaining evidence is scale/soak/distribution maturity rather than a known
   failed local gate.
 - Remaining configured local checkpoint groups: 0.
+
+## Checkpoint 2026-07-04-39: Live Desktop Route Regression Hardening
+
+Status: implementation and launched-runtime replay validated; checkpoint commit
+pending.
+
+Scope:
+
+- Treated Bryan's post-closeout reports as a real product regression: launched
+  Aura still had ways to stall, restart, overheat, surface backend failure
+  phrasing, or route self-process questions into canned/degraded replies.
+- Kept the full-mind desktop contract strict: the desktop-required `/api/chat`
+  path must invoke the CognitiveEngine/live-mind path and may only bind a
+  canonical self-process or identity grounding after that path was actually
+  attempted.
+- Replaced visible failure floors for self-process/identity no-reply cases with
+  evidence-bound live grounding that preserves `full_mind_path=true`,
+  `bounded_contract_used=false`, high confidence, and output receipts.
+- Removed normal-user speech leaks such as "failed closed", "reply-quality
+  gate", "legacy fallback", "live conversation contract", "mood-card", and
+  internal model/status phrasing from the repaired self-process route.
+- Reduced foreground contention and heat sources by making background affect
+  appraisal, memory consolidation, and dialectical debate deterministic/
+  heuristic by default, with LLM use behind explicit opt-in flags.
+- Added bounded cached status paths for memory-pressure and CRSM/LoRA status so
+  health and subsystem endpoints do not repeatedly perform expensive process
+  scans or block live readiness.
+- Preserved false-health protection while allowing the launcher/chat surface to
+  open when conversation is operational but non-critical checks are degraded:
+  `conversation_operational` now still requires the orchestrator health probe to
+  pass.
+- Included the pending launcher/UI changes that reduce duplicate Aura windows,
+  avoid killing observable runtimes on normal app termination, and clear stale
+  "conversation initializing" placeholders once the lane is ready.
+- Put managed background project commands under the local governed scope so
+  autonomous project/refactor actions do not emit ungoverned-action warnings.
+
+Evidence:
+
+- `python -m pytest -q tests/test_server_conversation_lane.py::test_api_chat_desktop_self_process_no_reply_uses_grounded_repair tests/test_server_conversation_lane.py::test_api_chat_desktop_identity_no_reply_uses_evidence_bound_repair tests/test_server_conversation_lane.py::test_api_chat_desktop_required_recovers_only_through_full_mind_path tests/test_server_conversation_lane.py::test_required_capability_inventory_binds_catalog_after_weak_engine_reply tests/test_server_conversation_lane.py::test_desktop_required_capability_repair_uses_grounded_inventory_without_third_pass tests/test_server_conversation_lane.py::test_api_chat_desktop_discards_bounded_repair_when_full_mind_path_not_proven tests/test_runtime_stability_edges.py::TestLiveRuntimeContentionGuards tests/test_runtime_stability_edges.py::TestAffectBroadcastBackpressure tests/test_memory_pressure_policy.py tests/test_background_backpressure.py tests/test_background_consolidation_tiering.py tests/test_autonomy_visibility.py::test_proactive_presence_rejects_backend_failure_text_from_visible_chat tests/test_tasks_managed_command.py::test_managed_project_command_launch_is_locally_governed`
+  -> `44 passed`.
+- `python -m pytest -q tests/test_boot_health.py tests/test_launcher_polish_contract.py tests/test_ui_bootstrap_contract.py tests/test_server_conversation_lane.py::test_api_chat_desktop_self_process_no_reply_uses_grounded_repair tests/test_server_conversation_lane.py::test_api_chat_desktop_identity_no_reply_uses_evidence_bound_repair tests/test_runtime_stability_edges.py::TestLiveRuntimeContentionGuards tests/test_runtime_stability_edges.py::TestAffectBroadcastBackpressure tests/test_memory_pressure_policy.py tests/test_background_backpressure.py tests/test_background_consolidation_tiering.py tests/test_autonomy_visibility.py::test_proactive_presence_rejects_backend_failure_text_from_visible_chat tests/test_tasks_managed_command.py::test_managed_project_command_launch_is_locally_governed`
+  -> `93 passed`.
+- Real `/Applications/Aura.app` launched from `/Users/bryan/.aura/live-source`
+  reached `/api/health`: `status=ok`, `conversation_ready=true`,
+  lane `state=ready`, `blockers=[]`.
+- Real desktop-required `/api/chat` replay with
+  `X-Aura-Surface: desktop-ui` and
+  `X-Aura-Require-CognitiveEngine: true`:
+  - Turn 1: `status=cognitive_engine`, `confidence=high`,
+    `full_mind_path=true`, natural one-sentence reply.
+  - Turn 2 self-process: `status=cognitive_engine`, `confidence=high`,
+    `full_mind_path=true`; canonical self-process grounding answered in normal
+    speech without backend-gate/fallback phrasing.
+- Recent launched-runtime log scan after replay found no `DEGRADATION`,
+  `NEW INCIDENT`, `FAULT RUNTIME-CHAT`, `failed closed`, `route blocked`,
+  `unhealthy`, `conversation cold`, timeout, traceback, or event-loop-lag
+  markers. The only matched line was the expected INFO-level canonical
+  self-process grounding note.
+- Aura process tree was stopped after replay to avoid leaving the 32B worker
+  consuming RAM/thermal headroom.
+
+Boundary:
+
+- This checkpoint fixes the specific live-route failure class observed today:
+  self-process/capability/identity turns no longer collapse into visible
+  backend failure floors, unbounded fallback, or generic assistant substitution
+  when the required desktop path has enough canonical state to ground a reply.
+- This does not replace a longer visible UI conversation soak, TCC/macOS
+  permission reconciliation, or a 24-72h unattended reliability run. Those are
+  still the right remaining evidence for Chrome/Kubernetes/aerospace-level
+  daily-product claims.
+
+Tracker:
+
+- Expanded daily-runtime/product closure after this regression checkpoint:
+  about 97%.
+- Chrome/Kubernetes/aerospace operational maturity closure: about 86-90%
+  locally; remaining proof is longer soak, visible UI interaction breadth,
+  packaging/permission distribution, and independent external replay.
+- Remaining checkpoint groups: 1 consolidated reliability/proof group, likely
+  2-3 smaller sub-checkpoints: visible UI dialogue soak, macOS TCC/desktop
+  control reconciliation, and longer unattended/thermal soak.

@@ -2,6 +2,7 @@ from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from core.autonomic.iot_bridge import PhysicalActuator
@@ -357,6 +358,10 @@ class AffectEngineV2:
         self._llm_failure_count = 0
         self._llm_backoff_until = 0.0
         self._last_llm_failure_reason = ""
+        self._llm_appraisal_enabled = os.getenv(
+            "AURA_AFFECT_LLM_APPRAISAL",
+            "",
+        ).strip().lower() in {"1", "true", "yes", "on"}
 
         # Issue 109: Task tracking to prevent leaks
         self._background_tasks = set()
@@ -446,7 +451,12 @@ class AffectEngineV2:
         except (ImportError, AttributeError, RuntimeError):
             foreground_active = False
 
-        if self._llm_available and len(trigger) > 10:
+        if (not self._llm_appraisal_enabled) and len(trigger) > 10:
+            appraisal = self._heuristic_appraisal(trigger, context)
+            intensity = (
+                abs(appraisal.get("v", 0.0)) + abs(appraisal.get("a", 0.0))
+            ) / 2.0 or intensity
+        elif self._llm_available and len(trigger) > 10:
             if foreground_active:
                 logger.debug(
                     "Affect appraisal skipped: foreground chat is in flight — "
@@ -474,7 +484,7 @@ class AffectEngineV2:
                     intensity = (
                         abs(appraisal.get("v", 0.0)) + abs(appraisal.get("a", 0.0))
                     ) / 2.0 or intensity
-                except (OSError, ConnectionError, TimeoutError) as e:
+                except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as e:
                     failure_reason = self._classify_appraisal_failure(e)
                     quiet_background_failure = failure_reason in {
                         "lane_unavailable",
@@ -691,7 +701,19 @@ class AffectEngineV2:
         """
         # Normalize intensity: callers pass 5.0–15.0 scale, react() expects 0.0–1.0
         normalized = min(1.0, intensity / 15.0)
-        await self.react(stimulus_type, {"intensity": normalized})
+        try:
+            return await self.react(stimulus_type, {"intensity": normalized})
+        except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError) as exc:
+            logger.debug(
+                "Affect stimulus %s fell back to heuristic after %s.",
+                stimulus_type,
+                type(exc).__name__,
+            )
+            try:
+                appraisal = self._heuristic_appraisal(stimulus_type, {"intensity": normalized})
+                return {"status": "heuristic_fallback", "appraisal": appraisal}
+            except (RuntimeError, ValueError, TypeError, AttributeError):
+                return {"status": "suppressed", "reason": type(exc).__name__}
 
     async def decay_tick(self):
         """Alias for pulse() to support legacy Orchestrator heartbeats.
@@ -1326,7 +1348,8 @@ class AffectEngineV2:
             if match:
                 results[key.lower()] = float(match.group(1))
         if results == {'v': 0.0, 'a': 0.0, 'e': 0.0}:
-            raise ValueError("parse_failure")
+            logger.debug("Affect appraisal returned unparsable text; using heuristic appraisal.")
+            return self._heuristic_appraisal(trigger, context)
         return results
 
     # ------------------------------------------------------------------

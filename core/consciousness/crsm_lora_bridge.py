@@ -27,6 +27,7 @@ The quality score passed to FinetunePipe:
            - 0.2 * (1 - confidence)        (uncertain responses = weaker signal)
 """
 from __future__ import annotations
+import os
 from core.runtime.errors import record_degradation
 
 from core.utils.task_tracker import get_task_tracker
@@ -75,6 +76,7 @@ class CRSMLoraBridge:
         self._capture_count: int = 0
         self._flush_count: int = 0
         self._total_flushed: int = 0
+        self._status_cache: tuple[float, Dict] | None = None
         PERSIST_PATH.parent.mkdir(parents=True, exist_ok=True)
         logger.info("CRSMLoraBridge online — experience → substrate loop active.")
 
@@ -192,7 +194,24 @@ class CRSMLoraBridge:
         """Force flush all unflushed moments — call at shutdown."""
         self._flush_to_finetune_pipe(force=True)
 
-    def get_status(self) -> Dict:
+    def _status_cache_ttl_s(self) -> float:
+        default = 0.0 if os.environ.get("PYTEST_CURRENT_TEST") else 5.0
+        try:
+            return max(0.0, float(os.getenv("AURA_CRSM_STATUS_CACHE_TTL_S", str(default))))
+        except (TypeError, ValueError):
+            return default
+
+    def get_status(self, *, force_refresh: bool = False) -> Dict:
+        ttl = self._status_cache_ttl_s()
+        now = time.monotonic()
+        if not force_refresh and ttl > 0.0 and self._status_cache is not None:
+            cached_at, cached = self._status_cache
+            if now - cached_at <= ttl:
+                status = dict(cached)
+                status["_cached"] = True
+                status["_cache_age_s"] = round(now - cached_at, 3)
+                return status
+
         status = {
             "buffer_size": len(self._buffer),
             "capture_count": self._capture_count,
@@ -211,6 +230,8 @@ class CRSMLoraBridge:
             status["loop"] = get_crsm_loop_monitor().loop_state()
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             status["loop"] = None
+        if ttl > 0.0:
+            self._status_cache = (now, dict(status))
         return status
 
     def get_context_block(self) -> str:

@@ -842,6 +842,12 @@ class ProactivePresence:
         r'|^Execute Goal:'
         r'|Sometimes quiet means'
         r'|Would you like to dive'
+        r'|I could not produce a reliable answer'
+        r'|reasoning backend failed'
+        r'|backend failed before returning usable text'
+        r'|failed before returning usable text'
+        r'|Cortex route blocked'
+        r'|Cortex unavailable'
         r')',
         re.IGNORECASE | re.DOTALL
     )

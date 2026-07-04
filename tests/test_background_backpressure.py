@@ -145,5 +145,5 @@ class TestPrunerYields:
         )
         mem = SimpleNamespace(id="abcdef1234", content="c", source="s")
         result = await pruner._consolidate(mem)
-        assert result is None
+        assert result == "c"
         assert recorded == []

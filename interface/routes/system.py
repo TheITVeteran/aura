@@ -81,6 +81,35 @@ def _env_positive_float(name: str, default: float) -> float:
     return value if value > 0.0 else default
 
 
+async def _optional_threaded_status(
+    label: str,
+    fn: Any,
+    *,
+    timeout_s: float = 0.18,
+    fallback: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Read optional health-panel data without blocking the API loop."""
+
+    fallback_payload = {"_stale": True, "reason": "status_unavailable"}
+    if fallback:
+        fallback_payload.update(fallback)
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(fn),
+            timeout=max(0.05, float(timeout_s)),
+        )
+        return dict(result or {}) if isinstance(result, dict) else {"value": result, "_stale": False}
+    except TimeoutError:
+        logger.debug("Optional health status %s timed out after %.2fs", label, timeout_s)
+        fallback_payload["reason"] = "status_timeout"
+        return fallback_payload
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation("system.optional_status", exc)
+        logger.debug("Optional health status %s failed: %s", label, exc)
+        fallback_payload["reason"] = f"{type(exc).__name__}: {exc}"
+        return fallback_payload
+
+
 def _runtime_component_status(
     service_name: str,
     *status_methods: str,
@@ -2296,7 +2325,13 @@ async def api_health(request: Request):
         is_gui_proxy=os.environ.get("AURA_GUI_PROXY") == "1",
         conversation_lane=conversation_lane,
     )
-    connected = bool(boot_snapshot.get("system_ready", False))
+    connected = bool(
+        boot_snapshot.get("system_ready", False)
+        or (
+            boot_snapshot.get("ready", False)
+            and boot_snapshot.get("conversation_ready", False)
+        )
+    )
 
     ls_data = {}
     try:
@@ -2708,13 +2743,22 @@ async def api_health(request: Request):
     substrate_data: dict[str, Any] = {}
     try:
         from core.consciousness.crsm_lora_bridge import get_crsm_lora_bridge
-        substrate_data["lora_bridge"] = get_crsm_lora_bridge().get_status()
+        substrate_data["lora_bridge"] = await _optional_threaded_status(
+            "crsm_lora_bridge",
+            lambda: get_crsm_lora_bridge().get_status(),
+            timeout_s=0.18,
+            fallback={"loop": None},
+        )
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
         logger.debug("LoRA bridge status failed: %s", e)
     try:
         from core.consciousness.experience_consolidator import get_experience_consolidator
-        substrate_data["consolidator"] = get_experience_consolidator().get_status()
+        substrate_data["consolidator"] = await _optional_threaded_status(
+            "experience_consolidator",
+            lambda: get_experience_consolidator().get_status(),
+            timeout_s=0.18,
+        )
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
         logger.debug("Consolidator status failed: %s", e)
@@ -3034,7 +3078,13 @@ async def api_ui_bootstrap(request: Request = None):
             "build": VERSION,
         },
         "session": {
-            "connected": bool(boot_snapshot.get("system_ready", False)),
+            "connected": bool(
+                boot_snapshot.get("system_ready", False)
+                or (
+                    boot_snapshot.get("ready", False)
+                    and boot_snapshot.get("conversation_ready", False)
+                )
+            ),
             "initialized": bool(getattr(status_obj, "initialized", False)),
             "websocket_clients": ws_manager.count(),
             "is_gui_proxy": os.environ.get("AURA_GUI_PROXY") == "1",

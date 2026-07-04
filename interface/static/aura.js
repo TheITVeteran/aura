@@ -3710,18 +3710,34 @@ function applyConversationLane(lane, healthStatus = '') {
 
     const laneText = conversationLaneStatusText(effectiveLane);
     const laneStandby = laneIsStandby(effectiveLane);
+    const activeGeneration = laneHasActiveGeneration(effectiveLane);
     if (state.connected) {
         const healthy = laneHealthIsOperational(effectiveLane, healthStatus);
-        const laneOperational = (state.conversationReady || laneHasActiveGeneration(effectiveLane)) && healthy;
+        const laneOperational = (state.conversationReady || activeGeneration) && healthy;
         const connectionMode = laneOperational ? 'online' : 'degraded';
         setConnectionVisual(connectionMode, !laneOperational ? laneText : '');
     }
 
-    updateTypingLabel(
-        state.conversationReady || laneHasActiveGeneration(effectiveLane)
-            ? 'Aura is thinking…'
-            : `Aura is ${laneText}...`
-    );
+    if (state.conversationReady && !activeGeneration && !state.isSubmitting) {
+        updateTypingLabel('Aura is ready.');
+        const typingInd = $('typing-ind');
+        if (typingInd) typingInd.classList.remove('show');
+        setChatPanelState('idle');
+
+        const messages = DOM.messages || $('messages');
+        const hasOnlyInitializingPlaceholder = messages
+            && messages.children.length === 1
+            && messages.textContent.includes('Conversation lane initializing');
+        if (hasOnlyInitializingPlaceholder) {
+            messages.innerHTML = '';
+        }
+    } else {
+        updateTypingLabel(
+            state.conversationReady || activeGeneration
+                ? 'Aura is thinking…'
+                : `Aura is ${laneText}...`
+        );
+    }
 
     const tierEl = $('r-llm-tier');
     if (tierEl) {
@@ -3744,7 +3760,7 @@ function applyConversationLane(lane, healthStatus = '') {
             tierEl.title = laneStandby
                 ? 'Local Cortex is not conversation-ready yet.'
                 : effectiveLane.last_failure_reason || (effectiveLane.desired_model || 'Cortex (32B)');
-            tierEl.style.color = laneHasActiveGeneration(effectiveLane)
+            tierEl.style.color = activeGeneration
                 ? 'var(--success)'
                 : effectiveLane.state === 'failed' ? 'var(--error)' : 'var(--warn)';
         }

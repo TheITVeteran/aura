@@ -927,6 +927,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private var forcedRelaunchAttempted = false
     private var autoDesktopOpenTriggered = false
     private var spawnedFreshRuntime = false
+    private var explicitStopInProgress = false
     private let launchedAt = Date()
     private let staleMarkerWithoutRuntimeWindow: TimeInterval = 8.0
     private let terminalHandoffWindow: TimeInterval = 75.0
@@ -988,7 +989,9 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        terminateSpawnedProcesses()
+        if explicitStopInProgress {
+            terminateSpawnedProcesses()
+        }
         releaseAppInstanceLock()
     }
 
@@ -1779,6 +1782,11 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        if existingRuntimeIsObservable() {
+            renderPendingLaunch(waitingOnExisting: true)
+            return
+        }
+
         if !launchInFlight {
             launchInFlight = true
             renderPendingLaunch(waitingOnExisting: false)
@@ -2199,6 +2207,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
 
 
     @objc private func forceStopAura() {
+        explicitStopInProgress = true
         renderTitle("Stopping Aura")
         renderStatus(
             detail: "Forcing Aura to stop and clearing launcher locks…",
@@ -2233,6 +2242,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func forceStopAuraProcess() -> String {
+        explicitStopInProgress = true
         let cleanupScript = auraRoot.appendingPathComponent("aura_cleanup.py")
         let logHandle: FileHandle?
         do {
@@ -2292,15 +2302,20 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             footerLabel.stringValue = "Aura is already handling the desktop-window request. Give it a moment before trying again."
             return
         }
-        do {
-            try spawnAuxiliaryAura(arguments: ["--open-gui-window"])
-            autoDesktopOpenTriggered = true
-            NSApp.activate(ignoringOtherApps: true)
-            NSRunningApplication.current.activate(options: [])
-            NSApp.requestUserAttention(.informationalRequest)
-        } catch {
-            footerLabel.stringValue = "Aura’s desktop window could not be opened. Check the launcher logs."
+        if existingRuntimeIsObservable() {
+            do {
+                try spawnAuxiliaryAura(arguments: ["--open-gui-window"])
+                autoDesktopOpenTriggered = true
+                NSApp.activate(ignoringOtherApps: true)
+                NSRunningApplication.current.activate(options: [])
+                NSApp.requestUserAttention(.informationalRequest)
+            } catch {
+                footerLabel.stringValue = "Aura’s desktop window could not be opened. Check the launcher logs."
+            }
+            return
         }
+
+        footerLabel.stringValue = "Aura is still booting. The desktop window will open when the live runtime is observable."
     }
 
     @objc private func openBrowser() {

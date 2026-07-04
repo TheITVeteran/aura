@@ -92,6 +92,7 @@ def _boot_progress_for_phase(boot_phase: str) -> int:
         "kernel_bootstrap": 14,
         "kernel_warming": 48,
         "conversation_warming": 78,
+        "conversation_operational": 100,
         "conversation_working": 100,
         "conversation_recovering": 86,
         "conversation_failed": 92,
@@ -119,6 +120,8 @@ def _boot_status_message(
         return "Aura proxy is alive; canonical runtime is not ready."
     if normalized == "kernel_ready":
         return "Aura is awake."
+    if normalized == "conversation_operational":
+        return "Aura's conversation lane is ready; non-critical runtime checks remain degraded."
     if normalized == "conversation_working":
         return "Aura is answering through the live conversation lane."
     if normalized == "conversation_recovering":
@@ -303,10 +306,31 @@ def build_boot_health_snapshot(
         launcher_ready = launcher_openable
         status_text = "ready" if system_ready else "booting"
         http_status = 200 if system_ready else 503
+        conversation_operational = bool(
+            orchestrator is not None
+            and initialized
+            and healthy
+            and not last_error
+            and runtime_integrity_ok
+            and runtime_contract_operational
+            and runtime_required_probes_ok
+            and conversation_ready
+            and (running or runtime_fresh or cycle_count > 0)
+        )
 
         if system_ready and conversation_ready:
             boot_phase = "kernel_ready"
             status_text = "ready"
+            user_ready = True
+            launcher_ready = True
+            http_status = 200
+        elif conversation_operational:
+            # Do not claim full health while important services are degraded.
+            # But if all critical probes pass and the live conversation lane is
+            # ready, the desktop chat surface must connect instead of trapping
+            # the user behind the launcher/loading shell.
+            boot_phase = "conversation_operational"
+            status_text = "degraded"
             user_ready = True
             launcher_ready = True
             http_status = 200

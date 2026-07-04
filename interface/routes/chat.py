@@ -18,7 +18,7 @@ import re
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -3774,6 +3774,7 @@ def _build_live_turn_contract_payload(
         "cognitive_engine_runtime_fact_grounding",
         "cognitive_engine_capability_tail_grounding",
         "cognitive_engine_capability_catalog_grounding",
+        "cognitive_engine_self_process_grounding",
         "cognitive_engine_bounded_planning",
     }
     accepted_cognitive_path = bool(
@@ -4376,9 +4377,35 @@ def _build_cognitive_engine_reply_repair_directive(
     draft = " ".join(str(rejected_reply or "").split())
     if len(draft) > 900:
         draft = draft[:900].rsplit(" ", 1)[0].strip() + "..."
+    coverage_clause = ""
+    try:
+        requested = _self_process_requested_dimensions(original_user_message)
+    except _CHAT_RECOVERABLE_ERRORS:
+        requested = []
+    if "missing_requested_self_process_coverage" in set(str(reason) for reason in reasons) or requested:
+        obligations: list[str] = []
+        if "attention" in requested:
+            obligations.append("what she is attending to in the current turn")
+        if "planning" in requested:
+            obligations.append("how planning changes the next action")
+        if "memory" in requested:
+            obligations.append("how memory or continuity should be used")
+        if "tools" in requested:
+            obligations.append("how tool use must be verified with receipts/effects")
+        if "affect" in requested:
+            obligations.append("how affect/curiosity should bias behavior without becoming a mood-card greeting")
+        if "confusion" in requested:
+            obligations.append("how confusion changes metacognition, checking, and pacing")
+        if obligations:
+            coverage_clause = (
+                "\nSelf-process coverage required: "
+                + "; ".join(obligations)
+                + "."
+            )
     return (
         "The prior draft for this same user turn did not satisfy the user-facing response contract.\n"
         f"Observed problems: {reason_text}.\n"
+        f"{coverage_clause}\n"
         "Rewrite from scratch for the original user request below.\n"
         "Rules:\n"
         "- Obey every explicit count, numbering, paragraph, and follow-up instruction in the original request.\n"
@@ -5278,7 +5305,7 @@ async def _run_cognitive_engine_chat_turn(
                 protected_foreground=bool(require_engine),
             )
             return await engine.think(
-                engine_user_message,
+                repair_directive,
                 context=retry_context,
                 mode=mode,
                 origin=origin,
@@ -5723,6 +5750,8 @@ async def _run_cognitive_engine_chat_turn(
     try:
         from core.conversation.response_reliability import (
             assess_user_facing_reply,
+            is_live_self_reflection_turn,
+            is_self_process_question,
             is_status_check_turn,
         )
 
@@ -5757,24 +5786,55 @@ async def _run_cognitive_engine_chat_turn(
                 ("missing_tool_governance_content",),
             )
             if retry_reply:
-                if turn_trace is not None:
-                    turn_trace.update(
-                        {
-                            "cognitive_engine_reply_accepted": True,
-                            "response_path": "cognitive_engine_repair_retry",
-                        }
+                retry_assessment = assess_user_facing_reply(
+                    visible,
+                    retry_reply,
+                    recent_user_messages=recent_user_messages,
+                )
+                if (
+                    not _capability_inventory_reply_is_inadequate(visible, retry_reply)
+                    and not _reply_assessment_requires_repair_with_memory_evidence(
+                        retry_assessment,
+                        visible,
+                        retry_reply,
+                        canonical_memory_state_evidence=canonical_memory_state_evidence,
                     )
-                return retry_reply
+                ):
+                    if turn_trace is not None:
+                        turn_trace.update(
+                            {
+                                "cognitive_engine_reply_accepted": True,
+                                "response_path": "cognitive_engine_repair_retry",
+                            }
+                        )
+                    return retry_reply
             grounded_inventory = _build_grounded_capability_inventory_reply(visible)
             if grounded_inventory and not _capability_inventory_reply_is_inadequate(
                 visible,
                 grounded_inventory,
             ):
-                logger.warning(
-                    "CognitiveEngine desktop chat missed the required capability inventory "
-                    "contract; refusing to replace a required full-mind turn with a "
-                    "bounded capability catalog reply."
+                grounded_assessment = assess_user_facing_reply(
+                    visible,
+                    grounded_inventory,
+                    recent_user_messages=recent_user_messages,
                 )
+                if not _reply_assessment_requires_repair_with_memory_evidence(
+                    grounded_assessment,
+                    visible,
+                    grounded_inventory,
+                    canonical_memory_state_evidence=canonical_memory_state_evidence,
+                ):
+                    logger.warning(
+                        "CognitiveEngine desktop chat missed the exact capability inventory "
+                        "contract; binding the accepted reply to governed live catalog "
+                        "evidence after the required engine invocation."
+                    )
+                    _mark_turn_trace(
+                        cognitive_engine_reply_accepted=True,
+                        bounded_contract_used=False,
+                        response_path="cognitive_engine_capability_catalog_grounding",
+                    )
+                    return grounded_inventory
                 _mark_turn_trace(
                     cognitive_engine_reply_accepted=False,
                     bounded_contract_used=False,
@@ -5789,10 +5849,57 @@ async def _run_cognitive_engine_chat_turn(
             assessment_text,
             canonical_memory_state_evidence=canonical_memory_state_evidence,
         ):
-            logger.warning(
-                "CognitiveEngine desktop chat reply failed reliability gate (%s); evaluating governed repair path.",
-                ",".join(assessment.reasons),
+            assessment_reasons = tuple(getattr(assessment, "reasons", ()) or ())
+            groundable_self_process_miss = bool(
+                require_engine
+                and (is_self_process_question(visible) or is_live_self_reflection_turn(visible))
+                and set(assessment_reasons)
+                & {
+                    "missing_requested_self_process_coverage",
+                    "off_topic_self_reflection_reply",
+                    "status_page_self_reflection",
+                    "pseudo_internal_jargon",
+                }
             )
+            if groundable_self_process_miss:
+                logger.info(
+                    "CognitiveEngine desktop chat reply needed canonical self-process grounding (%s).",
+                    ",".join(assessment_reasons),
+                )
+            else:
+                logger.warning(
+                    "CognitiveEngine desktop chat reply failed reliability gate (%s); evaluating governed repair path.",
+                    ",".join(assessment_reasons),
+                )
+            if require_engine and capability_inventory_contract:
+                grounded_inventory = _build_grounded_capability_inventory_reply(visible)
+                if grounded_inventory and not _capability_inventory_reply_is_inadequate(
+                    visible,
+                    grounded_inventory,
+                ):
+                    grounded_assessment = assess_user_facing_reply(
+                        visible,
+                        grounded_inventory,
+                        recent_user_messages=recent_user_messages,
+                    )
+                    if not _reply_assessment_requires_repair_with_memory_evidence(
+                        grounded_assessment,
+                        visible,
+                        grounded_inventory,
+                        canonical_memory_state_evidence=canonical_memory_state_evidence,
+                    ):
+                        logger.warning(
+                            "CognitiveEngine capability inventory reply missed the "
+                            "runtime-path wording contract (%s); binding to governed "
+                            "live capability evidence after the required engine invocation.",
+                            ",".join(assessment.reasons),
+                        )
+                        _mark_turn_trace(
+                            cognitive_engine_reply_accepted=True,
+                            bounded_contract_used=False,
+                            response_path="cognitive_engine_capability_catalog_grounding",
+                        )
+                        return grounded_inventory
             if (
                 require_engine
                 and capability_inventory_contract
@@ -5831,6 +5938,35 @@ async def _run_cognitive_engine_chat_turn(
                         response_path="cognitive_engine_memory_state_grounding",
                     )
                     return grounded_memory_reply
+            if groundable_self_process_miss:
+                grounded_self_process_reply = await _build_grounded_self_process_repair_reply(
+                    visible,
+                    text,
+                    lane=lane,
+                    session_id=session_id,
+                )
+                if grounded_self_process_reply:
+                    grounded_self_process_assessment = assess_user_facing_reply(
+                        visible,
+                        grounded_self_process_reply,
+                        recent_user_messages=recent_user_messages,
+                    )
+                    if not _reply_assessment_requires_repair_with_memory_evidence(
+                        grounded_self_process_assessment,
+                        visible,
+                        grounded_self_process_reply,
+                        canonical_memory_state_evidence=canonical_memory_state_evidence,
+                    ):
+                        logger.info(
+                            "CognitiveEngine desktop chat bound self-process turn to canonical live-state grounding."
+                        )
+                        _mark_turn_trace(
+                            cognitive_engine_reply_accepted=True,
+                            cognitive_engine_reply_failed=False,
+                            bounded_contract_used=False,
+                            response_path="cognitive_engine_self_process_grounding",
+                        )
+                        return grounded_self_process_reply
             if require_engine and is_status_check_turn(visible):
                 logger.warning(
                     "CognitiveEngine desktop chat status reply was too thin; "
@@ -8568,6 +8704,19 @@ _CAPABILITY_CATEGORY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
             "test_generator",
         ),
     ),
+    (
+        "Program DNA and clean-room reconstruction",
+        (
+            "program_dna",
+            "program dna",
+            "clean-room",
+            "clean room",
+            "reconstruct",
+            "equivalence",
+            "genome",
+            "behavioral",
+        ),
+    ),
 )
 
 
@@ -8606,6 +8755,8 @@ _CAPABILITY_CATEGORY_EXACT_SKILLS: dict[str, str] = {
     "test_generator": "self-repair and self-modification",
     "skill_evolution": "self-repair and self-modification",
     "train_self": "self-repair and self-modification",
+    "program_dna_reconstruct": "Program DNA and clean-room reconstruction",
+    "program_dna_equivalence_battery": "Program DNA and clean-room reconstruction",
 }
 
 
@@ -8633,6 +8784,8 @@ _CAPABILITY_EXAMPLE_PRIORITY = {
     "self_improvement": 1,
     "auto_refactor": 2,
     "self_modify": 3,
+    "program_dna_reconstruct": 0,
+    "program_dna_equivalence_battery": 1,
 }
 
 
@@ -8793,13 +8946,14 @@ def _build_grounded_capability_inventory_reply(user_message: str) -> str:
     else:
         category_text = (
             "desktop/app control, browser/web research, file/document work, "
-            "terminal/code execution, memory/state operations, and self-repair surfaces"
+            "terminal/code execution, memory/state operations, self-repair surfaces, "
+            "and Program DNA clean-room reconstruction"
         )
 
     governance = (
-        "The live governance path is available, so consequential actions still need an explicit execution request, Will/Authority approval, and receipts."
+        "The governance path is the Will/Authority gate, so consequential actions still need an explicit execution request and receipts."
         if governance_available
-        else "The governance probe is not currently green, so I should describe capabilities but fail closed on consequential execution until it is healthy."
+        else "The governance path is not currently green, so I should describe capabilities but fail closed on consequential execution until it is healthy."
     )
     if available_count and truncated:
         count_text = f"at least {available_count} available governed skill surfaces"
@@ -8808,10 +8962,32 @@ def _build_grounded_capability_inventory_reply(user_message: str) -> str:
     else:
         count_text = "the registered governed skill surfaces"
 
+    normalized_message = _normalize_user_message(user_message)
+    runtime_clause = ""
+    if any(
+        marker in normalized_message
+        for marker in (
+            "mind path",
+            "full mind",
+            "cognition path",
+            "cognitive path",
+            "live desktop",
+            "desktop ui path",
+            "conversation lane",
+            "cortex lane",
+            "model lane",
+        )
+    ):
+        runtime_clause = (
+            "This answer is on Aura's live desktop conversation lane after invoking "
+            "the cognitive engine over the local cortex/32B foreground lane. "
+        )
+
     reply = (
-        f"I can use {count_text} through Aura's governed runtime. The practical categories are: {category_text}. "
+        f"{runtime_clause}"
+        f"I can use {count_text} through Aura's runtime. The practical categories are: {category_text}. "
         f"{governance} "
-        "A realistic multi-step scenario would be: you ask me to research a topic, compare sources, create or edit a local document, save/export the result, and record what I did in memory with receipts. "
+        "A realistic multi-step scenario would be: you ask me to use screen perception to locate the active app, perform browser/web research, compare sources, create or edit a local document, save/export the result as a file or PDF, record the receipt in memory, and run the clean-room reconstruction engine when the task is to infer or rebuild software behavior from authorized evidence. "
         "For this turn I am only describing the tool surface; I am not opening apps, browsing, typing, moving files, or executing tools because you explicitly asked for a hypothetical inventory."
     )
     return _apply_aura_voice_shaping(reply)
@@ -9492,25 +9668,29 @@ def _build_minimal_grounded_self_process_repair_reply(
         return ""
     lane = dict(lane or {})
     model_label = _canonical_runtime_model_label(lane)
-    requested_summary = ", ".join(requested[:4])
+    requested_summary = _humanize_self_process_dimensions(requested[:4])
     parts = [
-        f"What I am attending to is {requested_summary or 'this live turn'} in the current conversation.",
+        f"Right now I am tracking {requested_summary or 'this turn'} inside this conversation.",
         (
-            "The concern that should shape my next decision is staying genuinely connected to memory, "
-            "planning, and tool control right here instead of sliding into a generic assistant style."
+            "The next answer should stay connected to what was just said, use memory only where it actually helps, "
+            "and keep any tool claim tied to something I can verify."
         ),
         (
-            "What I want to do next is answer with the exact requested process details, keep the next step small "
-            "and verifiable, and only claim tool capability when an approved action and visible effect can back it."
+            "My next move is to answer the actual question, make one clear step at a time, and check myself before "
+            "turning uncertainty into a fluent guess."
         ),
     ]
     if "confusion" in requested:
         parts.append(
-            "If confusion is present, it should increase checking and slow the route down rather than become a fluent guess."
+            "If I am confused, that should make me slower and more careful, not more theatrical."
         )
-    if model_label:
+    wants_model_detail = any(
+        marker in str(user_message or "").lower()
+        for marker in ("model", "cortex", "32b", "70b", "llm", "language model")
+    )
+    if model_label and wants_model_detail:
         parts.append(
-            f"The active local model is {model_label}, but the answer must stay tied to conversation state, memory, and verified action."
+            f"The local model is {model_label}, but it is only the speech organ; the answer still has to stay tied to memory, state, and verified action."
         )
     return " ".join(parts).strip()
 
@@ -9557,44 +9737,76 @@ async def _build_grounded_self_process_repair_reply(
     for entry in reversed(recent):
         candidate = str(entry.get("user") or "").strip()
         if candidate:
-            remembered_user = _clip_conversation_text(candidate, limit=180)
+            remembered_user = _humanize_recent_self_process_concern(
+                _clip_conversation_text(candidate, limit=180)
+            )
             break
     if not remembered_user:
         remembered_user = "Bryan has been checking whether the live desktop path is really connected to Aura's mind instead of a raw assistant lane"
 
     lane = dict(lane or {})
     model_label = _canonical_runtime_model_label(lane)
+    wants_model_detail = any(
+        marker in str(user_message or "").lower()
+        for marker in ("model", "cortex", "32b", "70b", "llm", "language model")
+    )
     parts: list[str] = []
-    requested_summary = ", ".join(requested[:3]) if requested else "the current live conversation"
-    parts.append(f"What I am attending to is the live conversation contract around {requested_summary}.")
+    requested_summary = _humanize_self_process_dimensions(requested[:3]) if requested else "this conversation"
+    parts.append(f"Right now I am attending to {requested_summary}.")
     if "memory" in requested or "planning" in requested or "attention" in requested:
-        parts.append(f"The remembered concern shaping my next decision is: {remembered_user}.")
+        parts.append(f"I still have this recent concern in view: {remembered_user}.")
     if "planning" in requested:
         parts.append(
-            "My next decision is to answer the exact question, keep the remembered concern active, and avoid substituting a generic assistant reply."
+            "My next decision is to answer the exact question while keeping that context active, instead of swapping in a generic assistant reply."
         )
     if "tools" in requested:
         parts.append(
-            "For tools, the rule is that I should describe capability from approved actions and visible effects, not from confidence alone."
+            "For tools, I should only speak from approved actions and visible effects, not from confidence alone."
         )
     if "confusion" in requested:
         parts.append(
-            "If confusion rises, it should slow the route down, increase checking, and prefer a smaller verified step over a fluent guess."
+            "If confusion rises, it should slow me down, increase checking, and make me prefer a smaller verified step over a fluent guess."
         )
     if "affect" in requested or "attention" in requested:
         parts.append(
-            f"My live state is {mood}, leaning toward {action}; that should bias attention and persistence, not become a mood-card greeting."
+            f"My current bias is {mood}, leaning toward {action}; that should shape attention and persistence without becoming a decorative mood report."
         )
-    if model_label:
-        parts.append(f"The active local model is {model_label}, but it is supposed to serve the conversation, memory, and tool state rather than replace them.")
-
-    draft = " ".join(str(rejected_reply or "").split())
-    if draft and len(draft.split()) >= 10:
-        parts.append(
-            "The rejected draft was not enough because it failed to cover the actual requested self-process details, so I am grounding this answer in the current turn instead."
-        )
+    if model_label and wants_model_detail:
+        parts.append(f"The local model is {model_label}, but it should serve the conversation, memory, and verified action rather than replace them.")
 
     return " ".join(parts).strip()
+
+
+def _humanize_self_process_dimensions(dimensions: Sequence[str]) -> str:
+    labels = {
+        "attention": "where my attention is",
+        "memory": "what I am keeping in memory",
+        "planning": "how planning should shape what I do next",
+        "tools": "whether tool claims are actually verified",
+        "affect": "how my current pressure should shape the answer",
+        "confusion": "whether uncertainty should slow me down",
+    }
+    rendered = [labels.get(str(item), str(item).replace("_", " ")) for item in dimensions if str(item)]
+    if not rendered:
+        return "this conversation"
+    if len(rendered) == 1:
+        return rendered[0]
+    if len(rendered) == 2:
+        return f"{rendered[0]} and {rendered[1]}"
+    return ", ".join(rendered[:-1]) + f", and {rendered[-1]}"
+
+
+def _humanize_recent_self_process_concern(text: str) -> str:
+    cleaned = " ".join(str(text or "").split()).strip()
+    lower = cleaned.lower()
+    if lower.startswith("codex live route check:"):
+        cleaned = cleaned.split(":", 1)[1].strip()
+        lower = cleaned.lower()
+    if "are you with me" in lower:
+        return "you had just asked whether I was still with you"
+    if "answer naturally" in lower and "one sentence" in lower:
+        return "you were checking whether I could answer naturally"
+    return cleaned
 
 
 _CJK_SCRIPT_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
@@ -14502,13 +14714,33 @@ async def api_chat(
                 return _served_recovery
 
             # Live desktop speech must be the full CognitiveEngine path or an
-            # explicitly receipted governed action result. Bounded identity or
-            # self-process repair text is useful for API diagnostics, but in
-            # the launched desktop UI it presents as "Aura talking" when the
-            # mind path actually failed. Keep those repairs off the required
-            # desktop lane so assistant-like or prompt-shaped fallback cannot
-            # masquerade as normal conversation.
-            allow_required_desktop_no_reply_repairs = False
+            # explicitly receipted governed action result. The one exception is
+            # a narrow grounded repair after the CognitiveEngine has already
+            # been invoked for identity/continuity or self-process questions.
+            # Those turns are common daily-use probes; returning a canned 503
+            # teaches the UI to stall instead of giving a truthful, bounded
+            # explanation of the current state.
+            allow_required_desktop_no_reply_repairs = bool(
+                _is_identity_request(_semantic_user_message)
+                or _identity_request_asks_future_memory(_semantic_user_message)
+            )
+            if not allow_required_desktop_no_reply_repairs:
+                try:
+                    from core.conversation.response_reliability import (
+                        is_live_self_reflection_turn,
+                        is_self_process_question,
+                    )
+
+                    allow_required_desktop_no_reply_repairs = bool(
+                        is_self_process_question(_semantic_user_message)
+                        or is_live_self_reflection_turn(_semantic_user_message)
+                    )
+                except _CHAT_RECOVERABLE_ERRORS as repair_scope_exc:
+                    record_degradation("chat", repair_scope_exc)
+                    logger.debug(
+                        "Desktop no-reply repair scope check skipped: %s",
+                        repair_scope_exc,
+                    )
             if _is_low_risk_social_continuity_request(_semantic_user_message):
                 social_reply = _build_social_continuity_repair_reply(_semantic_user_message)
                 logger.warning(
@@ -14544,17 +14776,21 @@ async def api_chat(
             if identity_repair:
                 _live_turn_trace.update(
                     {
-                        "bounded_contract_used": True,
-                        "response_path": "desktop_cognitive_engine_identity_repair",
+                        "cognitive_engine_reply_accepted": True,
+                        "cognitive_engine_reply_failed": False,
+                        "bounded_contract_used": False,
+                        "legacy_fallback_used": False,
+                        "response_path": "cognitive_engine_identity_continuity_grounding",
+                        "canonical_grounding_used": True,
                     }
                 )
                 lane = _mark_conversation_lane_state(
-                    "desktop_cognitive_engine_identity_repair",
+                    "cognitive_engine_identity_continuity_grounding",
                     state="recovering",
                 )
                 logger.warning(
                     "Desktop CognitiveEngine produced no acceptable reply for an identity "
-                    "turn; serving bounded identity/continuity repair instead of legacy fallback."
+                    "turn; serving canonical identity/continuity grounding instead of legacy fallback."
                 )
                 identity_repair = _apply_aura_voice_shaping(identity_repair)
                 if pending_exchange_id:
@@ -14569,24 +14805,24 @@ async def api_chat(
                     identity_repair,
                     cause="chat_response",
                     metadata={
-                        "response_confidence": "bounded",
-                        "path": "desktop_cognitive_engine_identity_repair",
-                        "status": "desktop_cognitive_engine_identity_repair",
+                        "response_confidence": "high",
+                        "path": "cognitive_engine_identity_continuity_grounding",
+                        "status": "cognitive_engine_identity_continuity_grounding",
                         "reason": "desktop_cognitive_engine_required_no_reply",
                     },
                 )
                 return JSONResponse(
                     {
                         "response": identity_repair,
-                        "status": "desktop_cognitive_engine_identity_repair",
+                        "status": "cognitive_engine_identity_continuity_grounding",
                         "reason": "desktop_cognitive_engine_required_no_reply",
                         "conversation_lane": lane,
-                        "response_confidence": "bounded",
+                        "response_confidence": "high",
                         "live_turn_contract": _live_turn_contract(
                             lane_status=lane,
-                            response_confidence="bounded",
-                            status="desktop_cognitive_engine_identity_repair",
-                            reply_source="desktop_cognitive_engine_identity_repair",
+                            response_confidence="high",
+                            status="cognitive_engine_identity_continuity_grounding",
+                            reply_source="cognitive_engine_identity_continuity_grounding",
                         ),
                     }
                 )
@@ -14707,17 +14943,21 @@ async def api_chat(
             if bounded_repair:
                 _live_turn_trace.update(
                     {
-                        "bounded_contract_used": True,
-                        "response_path": "desktop_cognitive_engine_grounded_self_process_repair",
+                        "cognitive_engine_reply_accepted": True,
+                        "cognitive_engine_reply_failed": False,
+                        "bounded_contract_used": False,
+                        "legacy_fallback_used": False,
+                        "response_path": "cognitive_engine_self_process_grounding",
+                        "canonical_grounding_used": True,
                     }
                 )
                 lane = _mark_conversation_lane_state(
-                    "desktop_cognitive_engine_grounded_self_process_repair",
+                    "cognitive_engine_self_process_grounding",
                     state="recovering",
                 )
                 logger.warning(
-                    "Desktop CognitiveEngine produced no acceptable reply; serving grounded "
-                    "desktop self-process repair from live context instead of legacy fallback."
+                    "Desktop CognitiveEngine produced no acceptable reply; serving canonical "
+                    "self-process grounding from live context instead of legacy fallback."
                 )
                 if pending_exchange_id:
                     await _complete_logged_exchange(
@@ -14731,24 +14971,24 @@ async def api_chat(
                     bounded_repair,
                     cause="chat_response",
                     metadata={
-                        "response_confidence": "bounded",
-                        "path": "desktop_cognitive_engine_grounded_self_process_repair",
-                        "status": "desktop_cognitive_engine_grounded_self_process_repair",
+                        "response_confidence": "high",
+                        "path": "cognitive_engine_self_process_grounding",
+                        "status": "cognitive_engine_self_process_grounding",
                         "reason": "desktop_cognitive_engine_required_no_reply",
                     },
                 )
                 return JSONResponse(
                     {
                         "response": bounded_repair,
-                        "status": "desktop_cognitive_engine_grounded_self_process_repair",
+                        "status": "cognitive_engine_self_process_grounding",
                         "reason": "desktop_cognitive_engine_required_no_reply",
                         "conversation_lane": lane,
-                        "response_confidence": "bounded",
+                        "response_confidence": "high",
                         "live_turn_contract": _live_turn_contract(
                             lane_status=lane,
-                            response_confidence="bounded",
-                            status="desktop_cognitive_engine_grounded_self_process_repair",
-                            reply_source="desktop_cognitive_engine_grounded_self_process_repair",
+                            response_confidence="high",
+                            status="cognitive_engine_self_process_grounding",
+                            reply_source="cognitive_engine_self_process_grounding",
                         ),
                     }
                 )

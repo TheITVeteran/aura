@@ -214,6 +214,34 @@ def test_constitutive_compute_budget_throttles_on_process_tree_rss_pressure(monk
     assert budget.reason.startswith("process_tree_rss:20.0GB/18.0GB")
 
 
+def test_memory_pressure_snapshot_cache_prevents_repeated_process_tree_scans(monkeypatch):
+    import core.utils.memory_monitor as memory_monitor
+
+    monkeypatch.setenv("AURA_MEMORY_SNAPSHOT_CACHE_TTL_S", "30")
+    monkeypatch.setenv("AURA_PROCESS_RSS_LIMIT_GB", "18")
+    monkeypatch.setattr(
+        memory_monitor.psutil,
+        "virtual_memory",
+        lambda: _vm(total_gb=64.0, available_gb=40.0, percent=30.0),
+    )
+    memory_monitor.clear_memory_pressure_snapshot_cache()
+    calls = 0
+
+    def _scan():
+        nonlocal calls
+        calls += 1
+        return 2.0
+
+    monkeypatch.setattr(memory_monitor, "_process_tree_rss_gb", _scan)
+
+    first = memory_monitor.get_memory_pressure_snapshot()
+    second = memory_monitor.get_memory_pressure_snapshot()
+
+    assert first is second
+    assert calls == 1
+    memory_monitor.clear_memory_pressure_snapshot_cache()
+
+
 def test_background_policy_defers_optional_work_under_cpu_pressure(monkeypatch):
     import core.runtime.background_policy as background_policy
 

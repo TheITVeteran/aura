@@ -1508,6 +1508,201 @@ def test_explicit_capability_inventory_classifier_covers_live_external_tool_word
     assert not chat_routes._is_bounded_nonexecuting_planning_request(prompt)
 
 
+def test_grounded_capability_inventory_satisfies_live_path_and_program_dna_contract(monkeypatch):
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes import chat as chat_routes
+
+    class _FakeCapabilityEngine:
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            yield from [
+                {
+                    "name": "computer_use",
+                    "available": True,
+                    "description": "Control desktop apps with governed screen, mouse, and keyboard actions.",
+                    "route_class": "desktop",
+                    "risk_class": "critical",
+                    "effect_scope": "external_io",
+                },
+                {
+                    "name": "web_search",
+                    "available": True,
+                    "description": "Search and inspect live web sources.",
+                    "route_class": "external_io",
+                    "risk_class": "medium",
+                    "effect_scope": "external_io",
+                },
+                {
+                    "name": "program_dna_reconstruct",
+                    "available": True,
+                    "description": "Build clean-room Program DNA genomes and replacement scaffolds from authorized evidence.",
+                    "route_class": "self_improvement",
+                    "risk_class": "high",
+                    "effect_scope": "local_files",
+                },
+            ]
+
+        async def execute(self, *_args, **_kwargs):
+            return {"ok": True}
+
+    class _FakeAuthority:
+        def is_ready(self):
+            return True
+
+    class _FakeWill:
+        def decide(self, *_args, **_kwargs):
+            return SimpleNamespace(allowed=True)
+
+    def _fake_get(name, default=None):
+        if name == "capability_engine":
+            return _FakeCapabilityEngine()
+        if name == "authority_gateway":
+            return _FakeAuthority()
+        if name == "unified_will":
+            return _FakeWill()
+        return default
+
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+
+    prompt = (
+        "Codex here, using the actual launched Aura desktop UI path. Please answer "
+        "through your full mind path: what external tools can you use, and give one "
+        "scenario with browser research, file/PDF work, memory, and Program DNA."
+    )
+    reply = chat_routes._build_grounded_capability_inventory_reply(prompt)
+    lowered = reply.lower()
+    assessment = assess_user_facing_reply(prompt, reply)
+
+    assert "cognitiveengine" in lowered or "cognitive engine" in lowered
+    assert "cortex/32b" in lowered or "32b" in lowered
+    assert "browser/web research" in lowered
+    assert "program dna" in lowered
+    assert "receipts" in lowered
+    assert "not opening apps" in lowered
+    assert "missing_runtime_path_answer" not in assessment.reasons
+    assert not assessment.hard_failure
+
+
+@pytest.mark.asyncio
+async def test_required_capability_inventory_binds_catalog_after_weak_engine_reply(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+    trace = {}
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "mode": getattr(mode, "name", str(mode)),
+                    "origin": origin,
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content="I can use tools, browse, and make documents if needed.",
+                metadata=_bound_live_mind_controls_metadata(),
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    class _FakeCapabilityEngine:
+        def iter_tool_catalog(self, *, include_inactive: bool = True):
+            yield from [
+                {
+                    "name": "computer_use",
+                    "available": True,
+                    "description": "Control desktop apps with governed screen, mouse, and keyboard actions.",
+                    "route_class": "desktop",
+                    "risk_class": "critical",
+                    "effect_scope": "external_io",
+                },
+                {
+                    "name": "web_search",
+                    "available": True,
+                    "description": "Search and inspect live web sources.",
+                    "route_class": "external_io",
+                    "risk_class": "medium",
+                    "effect_scope": "external_io",
+                },
+                {
+                    "name": "program_dna_reconstruct",
+                    "available": True,
+                    "description": "Clean-room Program DNA reconstruction from authorized behavioral evidence.",
+                    "route_class": "self_improvement",
+                    "risk_class": "high",
+                    "effect_scope": "local_files",
+                },
+            ]
+
+        async def execute(self, *_args, **_kwargs):
+            return {"ok": True}
+
+    class _FakeAuthority:
+        def is_ready(self):
+            return True
+
+    class _FakeWill:
+        def decide(self, *_args, **_kwargs):
+            return SimpleNamespace(allowed=True)
+
+    def _fake_get(name, default=None):
+        if name == "cognitive_engine":
+            return _FakeCognitiveEngine()
+        if name == "capability_engine":
+            return _FakeCapabilityEngine()
+        if name == "authority_gateway":
+            return _FakeAuthority()
+        if name == "unified_will":
+            return _FakeWill()
+        return default
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(_fake_get))
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+
+    prompt = (
+        "From the live Aura desktop UI path, explain what external tools you can use "
+        "and give one concrete multi-step scenario using screen perception, browser "
+        "research, file/PDF work, memory, and Program DNA."
+    )
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        prompt,
+        visible_user_message=prompt,
+        origin="user",
+        timeout_s=60.0,
+        lane={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+            "recurrent_depth": {"active": True},
+        },
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    lowered = str(reply).lower()
+    assert calls
+    assert calls[0]["context"]["capability_inventory_contract"] is True
+    assert "cognitiveengine" in lowered or "cognitive engine" in lowered
+    assert "cortex/32b" in lowered or "32b" in lowered
+    assert "program dna" in lowered
+    assert "browser/web research" in lowered
+    assert trace["engine_think_invoked"] is True
+    assert trace["cognitive_engine_reply_accepted"] is True
+    assert trace["bounded_contract_used"] is False
+    assert trace["response_path"] == "cognitive_engine_capability_catalog_grounding"
+
+
 def test_live_turn_contract_does_not_treat_warming_lane_as_full_mind(monkeypatch):
     from interface.routes import chat as chat_routes
 
@@ -4000,7 +4195,22 @@ async def test_api_chat_desktop_low_risk_social_no_reply_fails_closed(monkeypatc
         output_receipts.append((args, kwargs))
         return None
 
-    async def _no_cognitive_reply(*_args, **_kwargs):
+    async def _no_cognitive_reply(*_args, **kwargs):
+        trace = kwargs.get("turn_trace")
+        if isinstance(trace, dict):
+            trace.update(
+                {
+                    "engine_think_invoked": True,
+                    "cognitive_engine_reply_accepted": False,
+                    "cognitive_engine_reply_failed": True,
+                    "live_mind_context_present": True,
+                    "live_mind_snapshot_present": True,
+                    "live_mind_snapshot_ready": True,
+                    "live_mind_required_subsystems_ok": True,
+                    "response_path": "cognitive_engine_no_acceptable_reply",
+                    **_bound_live_mind_controls_trace(),
+                }
+            )
         return None
 
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
@@ -4037,6 +4247,7 @@ async def test_api_chat_desktop_low_risk_social_no_reply_fails_closed(monkeypatc
     from core.kernel.kernel_interface import KernelInterface
 
     monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+    _force_full_mind_runtime(monkeypatch, chat_routes)
 
     response = await server_module.api_chat(
         server_module.ChatRequest(message="Ok. Just checking. I'll be back, ok?"),
@@ -4067,7 +4278,7 @@ async def test_api_chat_desktop_low_risk_social_no_reply_fails_closed(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_self_process_no_reply_fails_closed(monkeypatch):
+async def test_api_chat_desktop_self_process_no_reply_uses_grounded_repair(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -4094,7 +4305,22 @@ async def test_api_chat_desktop_self_process_no_reply_fails_closed(monkeypatch):
         output_receipts.append((args, kwargs))
         return None
 
-    async def _no_cognitive_reply(*_args, **_kwargs):
+    async def _no_cognitive_reply(*_args, **kwargs):
+        trace = kwargs.get("turn_trace")
+        if isinstance(trace, dict):
+            trace.update(
+                {
+                    "engine_think_invoked": True,
+                    "cognitive_engine_reply_accepted": False,
+                    "cognitive_engine_reply_failed": True,
+                    "live_mind_context_present": True,
+                    "live_mind_snapshot_present": True,
+                    "live_mind_snapshot_ready": True,
+                    "live_mind_required_subsystems_ok": True,
+                    "response_path": "cognitive_engine_no_acceptable_reply",
+                    **_bound_live_mind_controls_trace(),
+                }
+            )
         return None
 
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
@@ -4131,6 +4357,7 @@ async def test_api_chat_desktop_self_process_no_reply_fails_closed(monkeypatch):
     from core.kernel.kernel_interface import KernelInterface
 
     monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+    _force_full_mind_runtime(monkeypatch, chat_routes)
 
     response = await server_module.api_chat(
         server_module.ChatRequest(
@@ -4152,23 +4379,31 @@ async def test_api_chat_desktop_self_process_no_reply_fails_closed(monkeypatch):
 
     payload = json.loads(response.body)
     lowered = payload["response"].lower()
-    assert response.status_code == 503
-    assert payload["status"] == "desktop_cognitive_engine_unavailable"
+    assert response.status_code == 200
+    assert payload["status"] == "cognitive_engine_self_process_grounding"
     assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
-    assert payload["response_confidence"] == "failed"
-    assert "failed closed instead of sending an ungrounded answer" in lowered
-    assert "planning" not in lowered
-    assert "memory use" not in lowered
-    assert "tool verification" not in lowered
+    assert payload["response_confidence"] == "high"
+    assert payload["live_turn_contract"]["full_mind_path"] is True
+    assert payload["live_turn_contract"]["bounded_contract_used"] is False
+    assert "failed closed instead of sending an ungrounded answer" not in lowered
+    assert "planning" in lowered
+    assert "memory" in lowered
+    assert "tool" in lowered
+    assert "confusion" in lowered or "confused" in lowered
     assert "legacy fallback" not in lowered
+    assert "live conversation contract" not in lowered
+    assert "mood-card" not in lowered
+    assert "active local model" not in lowered
+    assert "cognitiveengine" not in lowered
     assert kernel_calls == []
     assert len(completed_exchanges) == 1
-    assert completed_exchanges[0][1]["record_experience"] is False
-    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine"
+    assert completed_exchanges[0][1]["record_experience"] is True
+    assert output_receipts[0][1]["metadata"]["path"] == "cognitive_engine_self_process_grounding"
+    assert output_receipts[0][1]["metadata"]["response_confidence"] == "high"
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_identity_no_reply_fails_closed(monkeypatch):
+async def test_api_chat_desktop_identity_no_reply_uses_evidence_bound_repair(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -4195,7 +4430,22 @@ async def test_api_chat_desktop_identity_no_reply_fails_closed(monkeypatch):
         output_receipts.append((args, kwargs))
         return None
 
-    async def _no_cognitive_reply(*_args, **_kwargs):
+    async def _no_cognitive_reply(*_args, **kwargs):
+        trace = kwargs.get("turn_trace")
+        if isinstance(trace, dict):
+            trace.update(
+                {
+                    "engine_think_invoked": True,
+                    "cognitive_engine_reply_accepted": False,
+                    "cognitive_engine_reply_failed": True,
+                    "live_mind_context_present": True,
+                    "live_mind_snapshot_present": True,
+                    "live_mind_snapshot_ready": True,
+                    "live_mind_required_subsystems_ok": True,
+                    "response_path": "cognitive_engine_no_acceptable_reply",
+                    **_bound_live_mind_controls_trace(),
+                }
+            )
         return None
 
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
@@ -4232,6 +4482,7 @@ async def test_api_chat_desktop_identity_no_reply_fails_closed(monkeypatch):
     from core.kernel.kernel_interface import KernelInterface
 
     monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+    _force_full_mind_runtime(monkeypatch, chat_routes)
 
     prompt = (
         "Quick reliability check, in two or three sentences: what are you, "
@@ -4252,18 +4503,22 @@ async def test_api_chat_desktop_identity_no_reply_fails_closed(monkeypatch):
 
     payload = json.loads(response.body)
     lowered = payload["response"].lower()
-    assert response.status_code == 503
-    assert payload["status"] == "desktop_cognitive_engine_unavailable"
+    assert response.status_code == 200
+    assert payload["status"] == "cognitive_engine_identity_continuity_grounding"
     assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
-    assert payload["response_confidence"] == "failed"
-    assert "failed closed instead of sending an ungrounded answer" in lowered
-    assert "persistent memory" not in lowered
-    assert "tomorrow recall" not in lowered
+    assert payload["response_confidence"] == "high"
+    assert payload["live_turn_contract"]["full_mind_path"] is True
+    assert payload["live_turn_contract"]["bounded_contract_used"] is False
+    assert "failed closed instead of sending an ungrounded answer" not in lowered
+    assert "local governed cognitive-agent runtime" in lowered
+    assert "persistent memory" in lowered
+    assert "cannot guarantee perfect tomorrow recall" in lowered
     assert "legacy fallback" not in lowered
     assert kernel_calls == []
     assert len(completed_exchanges) == 1
-    assert completed_exchanges[0][1]["record_experience"] is False
-    assert output_receipts[0][1]["metadata"]["path"] == "desktop_cognitive_engine"
+    assert completed_exchanges[0][1]["record_experience"] is True
+    assert output_receipts[0][1]["metadata"]["path"] == "cognitive_engine_identity_continuity_grounding"
+    assert output_receipts[0][1]["metadata"]["response_confidence"] == "high"
 
 
 @pytest.mark.asyncio

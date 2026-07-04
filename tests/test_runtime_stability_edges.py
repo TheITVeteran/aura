@@ -880,6 +880,64 @@ class TestAffectBroadcastBackpressure(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(result)
         self.assertEqual(engine._llm_failure_count, 0)
 
+    async def test_affect_appraisal_defaults_to_heuristic_for_live_background(self):
+        with swap("core.affect.damasio_v2.PhysicalActuator", return_value=_CallRecorder()):
+            from core.affect.damasio_v2 import AffectEngineV2
+
+            engine = AffectEngineV2()
+
+        guarded_gate = _CallRecorder()
+        guarded_gate.get_conversation_status.return_value = {
+            "conversation_ready": True,
+            "state": "ready",
+            "warmup_in_flight": False,
+            "foreground_owned": False,
+            "active_generations": 0,
+            "request_age_s": 0.0,
+        }
+        guarded_gate.generate = _AsyncCallRecorder(side_effect=AssertionError("background affect appraisal must not call the LLM by default"))
+        engine._background_llm_should_defer = _CallRecorder(return_value=False)
+
+        with swap("core.container.ServiceContainer.get", return_value=guarded_gate), \
+             swap("core.brain.llm.mlx_client._foreground_owner_active", return_value=False):
+            result = await engine.react("I feel frustrated and need to reflect on recent interactions.")
+
+        self.assertIsNotNone(result)
+        guarded_gate.generate.assert_not_awaited()
+        self.assertEqual(engine._llm_failure_count, 0)
+
+    async def test_affect_opt_in_parse_failure_uses_heuristic_appraisal(self):
+        with swap("core.affect.damasio_v2.PhysicalActuator", return_value=_CallRecorder()):
+            from core.affect.damasio_v2 import AffectEngineV2
+
+            engine = AffectEngineV2()
+
+        gate = _CallRecorder()
+        gate.generate = _AsyncCallRecorder(return_value="I feel present.")
+        gate.get_conversation_status.return_value = {
+            "conversation_ready": True,
+            "state": "ready",
+        }
+
+        with swap("core.container.ServiceContainer.get", return_value=gate):
+            appraisal = await engine._appraise_with_llm("error and frustration", {"intensity": 0.6})
+
+        self.assertLess(appraisal["v"], 0.0)
+        self.assertGreater(appraisal["a"], 0.0)
+
+    async def test_apply_stimulus_suppresses_empty_response_failures(self):
+        with swap("core.affect.damasio_v2.PhysicalActuator", return_value=_CallRecorder()):
+            from core.affect.damasio_v2 import AffectEngineV2
+
+            engine = AffectEngineV2()
+
+        engine.react = _AsyncCallRecorder(side_effect=ValueError("empty_response"))
+
+        result = await engine.apply_stimulus("resource_strain", 9.0)
+
+        self.assertEqual(result["status"], "heuristic_fallback")
+        self.assertIn("appraisal", result)
+
     async def test_affect_background_timeout_falls_back_without_runtime_degradation(self):
         with swap("core.affect.damasio_v2.PhysicalActuator", return_value=_CallRecorder()):
             from core.affect.damasio_v2 import AffectEngineV2
@@ -1896,6 +1954,83 @@ class TestStateManagerSnapshotRecovery(unittest.TestCase):
             self.assertFalse(corrupt_newest.exists())
             self.assertEqual(latest.read_bytes(), valid_older.read_bytes())
             self.assertTrue(list((snapshot_dir / "autopsy").glob("corrupted_state_*_snapshot_300_shutdown.json")))
+
+
+class TestLiveRuntimeContentionGuards(unittest.IsolatedAsyncioTestCase):
+    async def test_sovereign_pruner_uses_heuristic_consolidation_without_llm_by_default(self):
+        from core.memory.sovereign_pruner import MemoryRecord, SovereignPruner
+
+        class Brain:
+            called = False
+
+            async def think(self, *_args, **_kwargs):
+                self.called = True
+                raise AssertionError("background pruner should not call LLM by default")
+
+        pruner = SovereignPruner()
+        pruner._brain = Brain()
+        mem = MemoryRecord(
+            id="m1",
+            content="Bryan and Aura fixed a live desktop crash. Aura learned to reserve foreground cognition.",
+            timestamp=time.time(),
+            source="chat",
+            emotional_weight=0.7,
+            identity_relevance=0.9,
+        )
+
+        result = await pruner._consolidate(mem)
+
+        self.assertIn("foreground cognition", result)
+        self.assertFalse(pruner._brain.called)
+
+    async def test_dialectical_crucible_lightweight_default_does_not_spawn_llm_roles(self):
+        from core.adaptation.dialectics import DialecticalCrucible
+        from core.container import ServiceContainer
+
+        class Engine:
+            async def think(self, *_args, **_kwargs):
+                raise AssertionError("background crucible should not call LLM by default")
+
+        class Beliefs:
+            def __init__(self):
+                self.claims = []
+
+            async def process_new_claim(self, **kwargs):
+                self.claims.append(kwargs)
+                return True
+
+        beliefs = Beliefs()
+        old_get = ServiceContainer.get
+
+        def fake_get(name, default=None):
+            if name == "cognitive_engine":
+                return Engine()
+            if name == "belief_revision_engine":
+                return beliefs
+            return default
+
+        ServiceContainer.get = staticmethod(fake_get)
+        try:
+            crucible = DialecticalCrucible()
+            result = await crucible.run_crucible("Aura should keep foreground chat responsive.", context="test")
+        finally:
+            ServiceContainer.get = old_get
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["reason"], "lightweight_crucible")
+        self.assertEqual(len(beliefs.claims), 1)
+
+    async def test_optional_threaded_status_times_out_as_stale_not_api_blocker(self):
+        from interface.routes.system import _optional_threaded_status
+
+        def slow_status():
+            time.sleep(0.25)
+            return {"ok": True}
+
+        result = await _optional_threaded_status("slow", slow_status, timeout_s=0.01)
+
+        self.assertTrue(result["_stale"])
+        self.assertEqual(result["reason"], "status_timeout")
 
 
 class TestHealingSwarmForegroundPolicy(unittest.IsolatedAsyncioTestCase):

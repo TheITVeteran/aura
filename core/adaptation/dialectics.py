@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 from typing import Any
 
 from core.container import ServiceContainer
@@ -69,6 +70,10 @@ class DialecticalCrucible:
         self.max_concurrent_debates = max(1, int(max_concurrent_debates))
         self.stage_timeout_s = max(1.0, float(stage_timeout_s))
         self._capacity_lock = asyncio.Lock()
+        self._llm_background_debate_enabled = os.getenv(
+            "AURA_CRUCIBLE_BACKGROUND_LLM",
+            "",
+        ).strip().lower() in {"1", "true", "yes", "on"}
 
     async def _try_enter_capacity(self) -> bool:
         async with self._capacity_lock:
@@ -132,7 +137,17 @@ class DialecticalCrucible:
             return None
 
         async def _invoke() -> Any:
-            return await _maybe_await(think(objective=prompt, mode=mode, priority=priority))
+            return await _maybe_await(
+                think(
+                    objective=prompt,
+                    mode=mode,
+                    priority=priority,
+                    origin="dialectical_crucible",
+                    is_background=True,
+                    max_tokens=220,
+                    temperature=0.35,
+                )
+            )
 
         try:
             response = await asyncio.wait_for(_invoke(), timeout=self.stage_timeout_s)
@@ -272,6 +287,9 @@ Return ONLY the final synthesized belief.
             logger.info("⏸️ Crucible deferred for '%s' (%s).", concept[:50], reason)
             return {"ok": False, "reason": reason}
 
+        if not self._llm_background_debate_enabled:
+            return await self._run_lightweight_crucible(concept, context)
+
         if not await self._try_enter_capacity():
             logger.warning("Crucible at capacity. Skipping dialectic for: %s", concept[:30])
             return {"ok": False, "reason": "capacity"}
@@ -328,6 +346,69 @@ Return ONLY the final synthesized belief.
             capture_and_log(exc, {"module": "DialecticalCrucible", "concept": concept})
             return {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
 
+        finally:
+            await self._leave_capacity()
+
+    async def _run_lightweight_crucible(self, concept: str, context: str = "") -> dict[str, Any]:
+        """Run deterministic adversarial review when model budget is reserved.
+
+        Background dialectics should stay alive, but live desktop conversation
+        must never compete with hidden debate prompts. This path preserves the
+        causal safety pressure without spawning LLM roles.
+        """
+
+        if not await self._try_enter_capacity():
+            return {"ok": False, "reason": "capacity"}
+        try:
+            lowered = concept.lower()
+            unstable_shape = any(
+                marker in lowered
+                for marker in ("```", "traceback", "reflex_path_active", "exception occurred")
+            )
+            antithesis = (
+                "The idea may be stale, underspecified, or produced by a transient runtime artifact; "
+                "it should not become identity-bearing belief without grounding."
+            )
+            defense = (
+                "It can still be useful as a provisional observation if it came from a real outcome "
+                "and stays explicitly revisable."
+            )
+            synthesis = (
+                f"Provisional belief: {concept[:220].strip()} "
+                "This remains revisable until future evidence confirms it."
+            )
+            if unstable_shape:
+                return {
+                    "ok": False,
+                    "reason": "lightweight_crucible_quarantined_unstable_concept",
+                    "original": concept,
+                    "antithesis": antithesis,
+                    "defense": defense,
+                    "synthesis": synthesis,
+                    "belief_committed": False,
+                }
+
+            belief_committed = await self._commit_synthesis(synthesis)
+            pulse_sent = self._pulse_success() if belief_committed else False
+            return {
+                "ok": bool(belief_committed),
+                "reason": "lightweight_crucible",
+                "original": concept,
+                "antithesis": antithesis,
+                "defense": defense,
+                "synthesis": synthesis,
+                "belief_committed": belief_committed,
+                "pulse_sent": pulse_sent,
+            }
+        except _CRUCIBLE_RECOVERABLE_ERRORS as exc:
+            _record_crucible_degradation(
+                "dialectical_crucible",
+                exc,
+                action="lightweight crucible preserved pre-existing belief state after runtime failure",
+                severity="warning",
+                extra={"concept_preview": concept[:120]},
+            )
+            return {"ok": False, "error": str(exc), "error_type": type(exc).__name__}
         finally:
             await self._leave_capacity()
 

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import re
 import time
 from dataclasses import dataclass
 
@@ -46,6 +48,10 @@ class SovereignPruner:
         self._last_prune_at = 0.0
         self._min_prune_interval_s = 20.0
         self._max_consolidations_per_pass = 4
+        self._llm_consolidation_enabled = os.getenv(
+            "AURA_PRUNER_LLM_CONSOLIDATION",
+            "",
+        ).strip().lower() in {"1", "true", "yes", "on"}
 
     def _background_should_defer(self) -> bool:
         try:
@@ -150,10 +156,12 @@ class SovereignPruner:
     async def _consolidate(self, mem: MemoryRecord) -> str | None:
         from core.runtime.backpressure import foreground_inference_active
 
+        if not bool(getattr(self, "_llm_consolidation_enabled", False)):
+            return self._heuristic_insight(mem)
         if foreground_inference_active():
             # Yield instead of competing with the user's turn and timing out.
             logger.debug("[PRUNER] Yielded consolidation of %s to foreground inference.", mem.id[:8])
-            return None
+            return self._heuristic_insight(mem)
         brain = self._get_brain()
         if not brain:
             return None
@@ -210,7 +218,58 @@ class SovereignPruner:
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation("sovereign_pruner", e)
             logger.debug("Consolidation for %s failed: %s", mem.id[:8], e)
+            return self._heuristic_insight(mem)
+
+    def _heuristic_insight(self, mem: MemoryRecord) -> str | None:
+        """Cheap consolidation used by live runtime when model budget is reserved.
+
+        This keeps memory metabolism active without letting housekeeping consume
+        the foreground Cortex or wedge the event loop. It intentionally extracts
+        the most identity/affect-relevant sentence instead of inventing a new
+        interpretation.
+        """
+
+        text = re.sub(r"\s+", " ", str(mem.content or "")).strip()
+        if not text:
             return None
+        sentences = [
+            part.strip(" -\t\r\n")
+            for part in re.split(r"(?<=[.!?])\s+", text)
+            if part.strip(" -\t\r\n")
+        ]
+        if not sentences:
+            sentences = [text]
+        markers = {
+            "learned": 2.0,
+            "realized": 2.0,
+            "remember": 1.7,
+            "prefer": 1.7,
+            "choice": 1.7,
+            "value": 1.6,
+            "trust": 1.5,
+            "goal": 1.4,
+            "felt": 1.2,
+            "failed": 1.0,
+            "fixed": 1.0,
+            "bryan": 0.7,
+            "aura": 0.5,
+        }
+
+        def _score(sentence: str) -> tuple[float, int]:
+            lower = sentence.lower()
+            marker_score = sum(weight for marker, weight in markers.items() if marker in lower)
+            length_bonus = min(len(sentence), 220) / 220.0
+            source = str(getattr(mem, "source", "") or "")
+            source_bonus = 0.25 if source and source.lower() in lower else 0.0
+            affect_bonus = 0.35 * float(getattr(mem, "emotional_weight", 0.0) or 0.0)
+            identity_bonus = 0.45 * float(getattr(mem, "identity_relevance", 0.0) or 0.0)
+            return (marker_score + length_bonus + source_bonus + affect_bonus + identity_bonus, -len(sentence))
+
+        selected = max(sentences[:8], key=_score)
+        selected = selected[:240].rstrip()
+        if not selected or selected.lower() in {"null", "none"}:
+            return None
+        return selected
 
     def _get_brain(self):
         if self.orchestrator:

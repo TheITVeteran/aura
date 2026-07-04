@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -147,13 +148,18 @@ def _run_async_blocking(coro_factory):
 
 async def _run_project_command_async(command: tuple[str, ...], *, timeout_s: float) -> ManagedCommandResult:
     started = time.perf_counter()
-    process = await get_subprocess_gateway().spawn_async(
-        command,
-        cwd=PROJECT_ROOT,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        source="self_modification:managed_project_command",
-    )
+    with local_internal_governed_scope(
+        "tasks.managed_project_command",
+        domain="self_modification",
+        constraints={"command": list(command), "timeout_s": timeout_s},
+    ):
+        process = await get_subprocess_gateway().spawn_async(
+            command,
+            cwd=PROJECT_ROOT,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            source="self_modification:managed_project_command",
+        )
 
     timed_out = False
     try:

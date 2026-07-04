@@ -4,6 +4,8 @@ import ctypes
 import logging
 import os
 import sys
+import threading
+import time
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -77,6 +79,8 @@ class _DarwinRUsageInfoV4(ctypes.Structure):
 _DARWIN_RUSAGE_INFO_V4 = 4
 _DARWIN_LIBPROC: Any | None = None
 _DARWIN_LIBPROC_UNAVAILABLE = False
+_SNAPSHOT_CACHE_LOCK = threading.Lock()
+_SNAPSHOT_CACHE: tuple[float, "MemoryPressureSnapshot"] | None = None
 
 
 def _clamp_pressure(value: float) -> int:
@@ -88,6 +92,27 @@ def _env_float(name: str, default: float) -> float:
         return float(os.environ.get(name, str(default)))
     except (TypeError, ValueError, OverflowError):
         return float(default)
+
+
+def _memory_snapshot_cache_ttl_s() -> float:
+    """Return the live memory snapshot cache TTL.
+
+    Darwin phys_footprint scans are accurate but expensive when called by many
+    1Hz/10Hz background loops. In live runtime we cache for a short window so
+    health/background policy probes do not stall the API event loop. Unit tests
+    default to uncached unless they explicitly set the TTL.
+    """
+
+    default = 0.0 if os.environ.get("PYTEST_CURRENT_TEST") else 0.75
+    return max(0.0, _env_float("AURA_MEMORY_SNAPSHOT_CACHE_TTL_S", default))
+
+
+def clear_memory_pressure_snapshot_cache() -> None:
+    """Testing hook and recovery hook for callers that need a fresh next sample."""
+
+    global _SNAPSHOT_CACHE
+    with _SNAPSHOT_CACHE_LOCK:
+        _SNAPSHOT_CACHE = None
 
 
 def _current_darwin_footprint_bytes(info: _DarwinRUsageInfoV4) -> int:
@@ -248,8 +273,21 @@ class MemoryPressureSnapshot:
         return payload
 
 
-def get_memory_pressure_snapshot() -> MemoryPressureSnapshot:
+def get_memory_pressure_snapshot(
+    *,
+    force_refresh: bool = False,
+    max_age_s: float | None = None,
+) -> MemoryPressureSnapshot:
     """Return one canonical unified-memory pressure decision for runtime gates."""
+
+    global _SNAPSHOT_CACHE
+    ttl = _memory_snapshot_cache_ttl_s() if max_age_s is None else max(0.0, float(max_age_s))
+    now = time.monotonic()
+    if not force_refresh and ttl > 0.0:
+        with _SNAPSHOT_CACHE_LOCK:
+            cached = _SNAPSHOT_CACHE
+        if cached is not None and (now - cached[0]) <= ttl:
+            return cached[1]
 
     vm = psutil.virtual_memory()
     total_gb = float(getattr(vm, "total", 0) or 0) / float(1024**3)
@@ -328,7 +366,7 @@ def get_memory_pressure_snapshot() -> MemoryPressureSnapshot:
         )
     reason = "; ".join(reason_parts)
 
-    return MemoryPressureSnapshot(
+    snapshot = MemoryPressureSnapshot(
         pressure_pct=pressure_pct,
         available_gb=available_gb,
         total_gb=total_gb,
@@ -342,6 +380,10 @@ def get_memory_pressure_snapshot() -> MemoryPressureSnapshot:
         level=level,
         reason=reason,
     )
+    if ttl > 0.0:
+        with _SNAPSHOT_CACHE_LOCK:
+            _SNAPSHOT_CACHE = (now, snapshot)
+    return snapshot
 
 
 class AppleSiliconMemoryMonitor:

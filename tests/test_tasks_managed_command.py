@@ -1,6 +1,14 @@
 from core.tasks import managed_command, run_mutation_tests, run_rl_training
 
 
+def test_managed_project_command_launch_is_locally_governed():
+    source = (managed_command.PROJECT_ROOT / "core/tasks/managed_command.py").read_text(encoding="utf-8")
+
+    assert "local_internal_governed_scope(" in source
+    assert 'domain="self_modification"' in source
+    assert 'source="self_modification:managed_project_command"' in source
+
+
 def test_pytest_target_normalizes_to_workspace_relative_command(monkeypatch):
     captured = {}
 

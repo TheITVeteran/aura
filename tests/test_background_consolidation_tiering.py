@@ -19,7 +19,8 @@ class AsyncCallRecorder:
 
 
 @pytest.mark.asyncio
-async def test_sovereign_pruner_uses_background_think_lane():
+async def test_sovereign_pruner_uses_background_think_lane(monkeypatch):
+    monkeypatch.setenv("AURA_PRUNER_LLM_CONSOLIDATION", "1")
     think = AsyncCallRecorder(SimpleNamespace(content="The exchange revealed a stable preference."))
     brain = SimpleNamespace(
         think=think,

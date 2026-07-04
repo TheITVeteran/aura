@@ -449,6 +449,35 @@ async def test_proactive_presence_prefers_visible_primary(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_proactive_presence_rejects_backend_failure_text_from_visible_chat(monkeypatch):
+    _simulate_idle_background_runtime(monkeypatch)
+    orchestrator = SimpleNamespace(
+        emit_spontaneous_message=AsyncCallRecorder(
+            {
+                "ok": True,
+                "action": "released",
+                "target": "primary",
+            }
+        ),
+        _last_thought_time=0.0,
+    )
+    emitter = SimpleNamespace(emit=CallRecorder())
+    terminal = SimpleNamespace(queue_autonomous_message=CallRecorder())
+    monkeypatch.setattr("core.thought_stream.get_emitter", lambda: emitter)
+    monkeypatch.setattr("core.terminal_chat.get_terminal_fallback", lambda: terminal)
+
+    presence = ProactivePresence(orchestrator=orchestrator)
+    await presence._emit(
+        "I could not produce a reliable answer because the reasoning backend failed before returning usable text.",
+    )
+
+    assert orchestrator.emit_spontaneous_message.await_count == 0
+    assert emitter.emit.calls == []
+    assert terminal.queue_autonomous_message.calls == []
+    assert presence._outputs_this_hour == 0
+
+
+@pytest.mark.asyncio
 async def test_proactive_presence_requeues_visible_update_when_primary_is_temporarily_held(monkeypatch):
     _simulate_idle_background_runtime(monkeypatch)
     orchestrator = SimpleNamespace(
