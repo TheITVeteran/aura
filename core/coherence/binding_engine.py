@@ -284,10 +284,20 @@ class BindingEngine:
                     max(report.tension_pressure, float(getattr(unity_state, "fragmentation_score", 0.0) or 0.0)),
                     3,
                 )
-                report.overall_coherence = round(
-                    max(0.0, min(1.0, (report.overall_coherence * 0.45) + (float(unity_state.unity_score or 0.0) * 0.55))),
-                    3,
-                )
+                _unity_score = float(unity_state.unity_score or 0.0)
+                if _unity_score > 0.0:
+                    report.overall_coherence = round(
+                        max(0.0, min(1.0, (report.overall_coherence * 0.45) + (_unity_score * 0.55))),
+                        3,
+                    )
+                else:
+                    # Zero-evidence unity (cold start) is UNKNOWN, not
+                    # incoherence — blending 0.0 here drove overall
+                    # coherence to 0.00 right after boot, tripping the
+                    # executive's lockdown and silencing user replies
+                    # (EMIT_MESSAGE is lockdown-blocked). Same honesty rule
+                    # as phi: unmeasurable never reads as zero.
+                    report.threats.append("unity:no_evidence_yet")
                 if getattr(unity_state, "repair_needed", False):
                     for reason in list(getattr(unity_state, "repair_reasons", []) or [])[:3]:
                         report.threats.append(f"unity:{reason}")

@@ -1571,7 +1571,9 @@ class IncomingLogicMixin:
                         action="returned cognitive-failure message after thinking watchdog task failed",
                         severity="error",
                     )
-                    logger.error("❌ [WATCHDOG] Thinking task failed: %s", e)
+                    logger.error(
+                        "❌ [WATCHDOG] Thinking task failed: %r", e, exc_info=True,
+                    )
                     # GROK ZENITH HARDENING: Ensure the user is notified if cognition fails entirely.
                     if origin in ("user", "voice", "admin"):
                         error_msg = f"My cognitive process encountered a fatal interruption: {str(e)[:100]}. I am recovering my state."

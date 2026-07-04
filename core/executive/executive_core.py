@@ -596,6 +596,17 @@ class ExecutiveCore:
         # Lockdown mode: only essential operations
         if coherence < COHERENCE_LOCKDOWN_THRESHOLD:
             if intent.action_type in LOCKDOWN_BLOCKED:
+                if (
+                    intent.action_type == ActionType.EMIT_MESSAGE
+                    and intent.source == IntentSource.USER
+                ):
+                    # Silence toward the user is worse than constrained
+                    # speech: a user-facing reply under lockdown degrades
+                    # (short, slow, cautious) but is never muted outright.
+                    return self._degrade(intent,
+                        f"coherence_lockdown_user_speech_{coherence:.2f}",
+                        coherence,
+                        constraints={"max_tokens": 192, "timeout_s": 30})
                 return self._reject(intent,
                     f"coherence_lockdown_{coherence:.2f}",
                     coherence)

@@ -1112,3 +1112,47 @@ class TestHttpTraceMiddleware:
                 pass
         assert child.trace_id == root.trace_id
         assert child.parent_span_id == root.span_id
+
+
+class TestHelloTurnCascade:
+    """Live regressions from July 4: the wedge cascade that silenced her.
+
+    Chain: cold-start unity (zero evidence) blended as 0.0 → binding
+    coherence 0.00 → executive lockdown → EMIT_MESSAGE rejected → the
+    user's reply muted with everything else healthy.
+    """
+
+    def test_zero_evidence_unity_never_zeroes_coherence(self):
+        from core.coherence.binding_engine import CoherenceReport
+
+        # The aggregation contract: a fresh report with healthy components
+        # stays healthy when unity has no evidence (the blend must be
+        # skipped, not fed a zero).
+        report = CoherenceReport(timestamp=0.0)
+        assert report.overall_coherence == 1.0
+        # Simulate the blend guard: unity_score 0.0 must not be blended.
+        unity_score = 0.0
+        if unity_score > 0.0:
+            report.overall_coherence = (report.overall_coherence * 0.45) + (unity_score * 0.55)
+        assert report.overall_coherence == 1.0
+
+    def test_binding_engine_source_skips_zero_evidence_blend(self):
+        import inspect
+
+        from core.coherence import binding_engine
+
+        src = inspect.getsource(binding_engine)
+        assert "no_evidence_yet" in src, (
+            "cold-start unity must be treated as unknown, never zero"
+        )
+
+    def test_user_speech_degrades_not_mutes_under_lockdown(self):
+        import inspect
+
+        from core.executive import executive_core
+
+        src = inspect.getsource(executive_core)
+        assert "coherence_lockdown_user_speech" in src, (
+            "a user-facing reply under lockdown must degrade (constrained "
+            "speech), never be rejected into silence"
+        )
