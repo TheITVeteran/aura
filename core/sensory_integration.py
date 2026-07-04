@@ -295,7 +295,16 @@ class HearingSystem:
 
     @property
     def microphone_available(self) -> bool:
-        """Public access to microphone availability."""
+        """Public access to microphone availability.
+
+        Probes lazily the first time it is read. Without this, the boot-time
+        summary logged "Microphone: unavailable" simply because it read the
+        uninitialized default before any async probe ran — a false alarm that
+        made a working mic look broken during voice triage.
+        """
+        if not self._microphone_checked:
+            self._microphone_available = self._check_microphone()
+            self._microphone_checked = True
         return self._microphone_available
 
     async def _get_microphone_available(self) -> bool:

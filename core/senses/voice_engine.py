@@ -907,6 +907,18 @@ class SovereignVoiceEngine:
                 stt_gates = self._get_sensory_thresholds()
                 current_silence_threshold = stt_gates["rms"]
 
+                # Rate-limited liveness heartbeat: makes "Aura doesn't respond to
+                # voice" diagnosable. It proves mic frames are actually arriving
+                # and shows whether ambient/speech RMS crosses the VAD gate — the
+                # first fork in triaging a silent voice path.
+                _hb_now = time.time()
+                if _hb_now - getattr(self, "_vad_heartbeat_at", 0.0) > 15.0:
+                    logger.info(
+                        "🎙️ Voice listening: RMS=%.4f gate=%.4f speaking=%s buffered=%dB",
+                        rms, current_silence_threshold, is_speaking, len(accumulated),
+                    )
+                    self._vad_heartbeat_at = _hb_now
+
                 if rms > current_silence_threshold:
                     last_voice_time = time.time()
                     if not is_speaking:
