@@ -1,0 +1,55 @@
+{
+  "schema": "aura.ablation_scorecard.v1",
+  "generated_at_unix": 1783190910.8870049,
+  "honesty": "every value measured from the real organ; no clamps or hardcoded statistics; a no-delta result is reported as not-load-bearing, never hidden",
+  "all_conditions_load_bearing": true,
+  "conditions": [
+    {
+      "condition": "without_substrate",
+      "subsystem": "core.being.policy_coupler",
+      "metric": "policy_divergence_across_states (mean pairwise normalized L1)",
+      "baseline": 0.085,
+      "ablated": 0.0,
+      "delta": 0.085,
+      "load_bearing": true,
+      "method": "7 causal self-states through the real coupler vs the same organ blinded to a neutral state",
+      "detail": {
+        "distinct_intact_policies": 7,
+        "distinct_blinded_policies": 1
+      }
+    },
+    {
+      "condition": "without_system2",
+      "subsystem": "core.reasoning.proof_answer_solver",
+      "metric": "strict_proof_exact_answer_rate",
+      "baseline": 1.0,
+      "ablated": 0.0,
+      "delta": 1.0,
+      "load_bearing": true,
+      "method": "real symbolic solver on a strict-proof battery vs no solver (no deterministic derivation path)",
+      "detail": {
+        "battery_size": 6
+      }
+    },
+    {
+      "condition": "without_verifier",
+      "subsystem": "core.reasoning.proof_answer_solver.validate_strict_proof_answer",
+      "metric": "balanced_accuracy (accept correct + reject wrong)",
+      "baseline": 1.0,
+      "ablated": 0.5,
+      "delta": 0.5,
+      "load_bearing": true,
+      "method": "real validator on (correct, wrong) answer pairs vs a null verifier that accepts everything",
+      "detail": {
+        "battery_size": 6,
+        "wrong_rejected_by_real": 6,
+        "wrong_rejected_by_null": 0
+      }
+    }
+  ],
+  "context_conditions_dedicated_runner": {
+    "will": "governance discrimination needs runtime stakes + permission context; run tools/agi/run_will_governance_ablation.py (real UnifiedWill vs neutral packet).",
+    "memory": "recall-grounding delta vs no-memory needs the running kernel; run a retention battery against /api/chat on :8000.",
+    "reasoning_amplifier": "verifier-filtered self-consistency vs single-sample needs the live model via ReasoningAmplifierV2(generate=...)."
+  }
+}
