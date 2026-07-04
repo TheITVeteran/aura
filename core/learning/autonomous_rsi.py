@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import time
@@ -607,110 +608,122 @@ def generate_solver_source(handlers: set[str], *, generation_id: str) -> tuple[s
         },
     }
 
-    try:
-        from core.brain.llm.code_generator import LLMCodeGenerator
-        from core.brain.llm.local_code_model import get_local_code_model
-        from core.container import ServiceContainer
+    use_llm_codegen = str(os.environ.get("AURA_RSI_ENABLE_LLM_CODEGEN", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not use_llm_codegen:
+        metadata["parse_result"] = "deterministic_codegen_default"
+        metadata["llm_codegen_enabled"] = False
 
-        # Code generation runs on a SEPARATE, un-steered local path. The steered
-        # persona cortex corrupts symbolic code tokens and refuses unsteered
-        # inference by design, so route code-gen to raw mlx_lm generation against
-        # the same local weights with no steering hooks (see
-        # core/brain/llm/local_code_model.py). Falls back to the cortex router
-        # only if the local code weights are unavailable.
-        code_model = get_local_code_model()
-        router = ServiceContainer.get("llm_router", default=None)
-        brain = ServiceContainer.get("brain", default=None)
-        if code_model is not None or router or brain:
-            metadata["router_presence"] = True
-            metadata["code_backend"] = (
-                "local_unsteered_mlx" if code_model is not None else "cortex_router"
-            )
-            generator = LLMCodeGenerator(
-                router=code_model,
-                fallback_to_stub=False,
-                prefer_tier="primary",
-                temperature=0.0,
-                timeout_s=600.0,
-            )
-            generator.is_background = False
-            prompt = (
-                f"Write a Python module that defines a `solve(task)` function to handle exactly these task kinds: {handlers_literal}.\n"
-                "The `task` object has `task.kind` (string) and `task.metadata` (dict).\n"
-                "The task itself is not a dict: never call `task.get(...)`, `task[...]`, or `task.metadata(...)`.\n"
-                "Always read the kind as `task.kind` and the metadata mapping as `task.metadata`.\n"
-                "If `task.kind` is not one of that exact list, return `None`.\n"
-                "Do not add branches or behavior for unsupported task kinds.\n"
-                "Required behavior for the supported kinds:\n"
-                f"{selected_examples}\n"
-                "Do NOT use external libraries other than math.\n"
-                "Return only Python source code.\n"
-            )
-            repair_feedback = ""
-            metadata["attempts"] = []
-            for attempt in range(1, 4):
-                attempt_prompt = prompt
-                if repair_feedback:
-                    attempt_prompt = (
-                        f"{prompt}\n"
-                        "Previous candidate failed the sandbox below. Return a corrected full module.\n"
-                        f"{repair_feedback}\n"
-                    )
-                code = generator.generate(
-                    attempt_prompt,
-                    context={
-                        "module_path": f"successor_solver_{generation_id}.py",
-                        "attempt": attempt,
-                    },
+    if use_llm_codegen:
+        try:
+            from core.brain.llm.code_generator import LLMCodeGenerator
+            from core.brain.llm.local_code_model import get_local_code_model
+            from core.container import ServiceContainer
+
+            # Code generation runs on a SEPARATE, un-steered local path. The steered
+            # persona cortex corrupts symbolic code tokens and refuses unsteered
+            # inference by design, so route code-gen to raw mlx_lm generation against
+            # the same local weights with no steering hooks (see
+            # core/brain/llm/local_code_model.py). Falls back to the cortex router
+            # only if the local code weights are unavailable.
+            code_model = get_local_code_model()
+            router = ServiceContainer.get("llm_router", default=None)
+            brain = ServiceContainer.get("brain", default=None)
+            if code_model is not None or router or brain:
+                metadata["router_presence"] = True
+                metadata["code_backend"] = (
+                    "local_unsteered_mlx" if code_model is not None else "cortex_router"
                 )
-                if not code or "def solve(" not in code:
-                    sandbox_result = {
-                        "pass": False,
-                        "checks": [],
-                        "reason": "missing_solve_function",
-                    }
-                    repair_feedback = json.dumps(sandbox_result, sort_keys=True, default=str)
+                metadata["llm_codegen_enabled"] = True
+                generator = LLMCodeGenerator(
+                    router=code_model,
+                    fallback_to_stub=False,
+                    prefer_tier="primary",
+                    temperature=0.0,
+                    timeout_s=600.0,
+                )
+                generator.is_background = False
+                prompt = (
+                    f"Write a Python module that defines a `solve(task)` function to handle exactly these task kinds: {handlers_literal}.\n"
+                    "The `task` object has `task.kind` (string) and `task.metadata` (dict).\n"
+                    "The task itself is not a dict: never call `task.get(...)`, `task[...]`, or `task.metadata(...)`.\n"
+                    "Always read the kind as `task.kind` and the metadata mapping as `task.metadata`.\n"
+                    "If `task.kind` is not one of that exact list, return `None`.\n"
+                    "Do not add branches or behavior for unsupported task kinds.\n"
+                    "Required behavior for the supported kinds:\n"
+                    f"{selected_examples}\n"
+                    "Do NOT use external libraries other than math.\n"
+                    "Return only Python source code.\n"
+                )
+                repair_feedback = ""
+                metadata["attempts"] = []
+                for attempt in range(1, 4):
+                    attempt_prompt = prompt
+                    if repair_feedback:
+                        attempt_prompt = (
+                            f"{prompt}\n"
+                            "Previous candidate failed the sandbox below. Return a corrected full module.\n"
+                            f"{repair_feedback}\n"
+                        )
+                    code = generator.generate(
+                        attempt_prompt,
+                        context={
+                            "module_path": f"successor_solver_{generation_id}.py",
+                            "attempt": attempt,
+                        },
+                    )
+                    if not code or "def solve(" not in code:
+                        sandbox_result = {
+                            "pass": False,
+                            "checks": [],
+                            "reason": "missing_solve_function",
+                        }
+                        repair_feedback = json.dumps(sandbox_result, sort_keys=True, default=str)
+                        metadata["attempts"].append(
+                            {"attempt": attempt, "sandbox_result": sandbox_result}
+                        )
+                        continue
+                    final_code = f"# Generated successor solver for {generation_id}.\n" + code.lstrip()
+                    source_hash = hashlib.sha256(final_code.encode("utf-8")).hexdigest()
+                    sandbox_result = _sandbox_solver_source(final_code, handlers)
                     metadata["attempts"].append(
-                        {"attempt": attempt, "sandbox_result": sandbox_result}
+                        {
+                            "attempt": attempt,
+                            "source_hash": source_hash,
+                            "sandbox_result": sandbox_result,
+                        }
                     )
-                    continue
-                final_code = f"# Generated successor solver for {generation_id}.\n" + code.lstrip()
-                source_hash = hashlib.sha256(final_code.encode("utf-8")).hexdigest()
-                sandbox_result = _sandbox_solver_source(final_code, handlers)
-                metadata["attempts"].append(
-                    {
-                        "attempt": attempt,
-                        "source_hash": source_hash,
-                        "sandbox_result": sandbox_result,
-                    }
+                    if sandbox_result.get("pass"):
+                        metadata["fallback_flag"] = False
+                        metadata["parse_result"] = "success"
+                        metadata["sandbox_result"] = sandbox_result
+                        metadata["prompt_used"] = attempt_prompt
+                        metadata["generated_source_hash"] = source_hash
+                        return final_code, metadata
+                    repair_feedback = json.dumps(sandbox_result, sort_keys=True, default=str)
+                raise RuntimeError(
+                    f"generated solver failed sandbox after repair attempts: {repair_feedback}"
                 )
-                if sandbox_result.get("pass"):
-                    metadata["fallback_flag"] = False
-                    metadata["parse_result"] = "success"
-                    metadata["sandbox_result"] = sandbox_result
-                    metadata["prompt_used"] = attempt_prompt
-                    metadata["generated_source_hash"] = source_hash
-                    return final_code, metadata
-                repair_feedback = json.dumps(sandbox_result, sort_keys=True, default=str)
-            raise RuntimeError(
-                f"generated solver failed sandbox after repair attempts: {repair_feedback}"
+        except _RSI_GENERATION_RECOVERABLE_ERRORS as exc:
+            _record_autonomous_rsi_degradation(
+                "autonomous_rsi_generation",
+                exc,
+                action=(
+                    "demoted failed LLM successor source and selected deterministic solver "
+                    "only after static validation plus sandbox fixtures"
+                ),
+                extra={
+                    "generation_id": generation_id,
+                    "handlers": handlers_literal,
+                    "repair_requested": True,
+                    "attempt_count": len(metadata.get("attempts", [])),
+                },
             )
-    except _RSI_GENERATION_RECOVERABLE_ERRORS as exc:
-        _record_autonomous_rsi_degradation(
-            "autonomous_rsi_generation",
-            exc,
-            action=(
-                "demoted failed LLM successor source and selected deterministic solver "
-                "only after static validation plus sandbox fixtures"
-            ),
-            extra={
-                "generation_id": generation_id,
-                "handlers": handlers_literal,
-                "repair_requested": True,
-                "attempt_count": len(metadata.get("attempts", [])),
-            },
-        )
-        metadata["parse_result"] = str(exc)
+            metadata["parse_result"] = str(exc)
 
     fallback_sandbox = _sandbox_solver_source(fallback_code, handlers)
     if not fallback_sandbox.get("pass"):
@@ -718,9 +731,8 @@ def generate_solver_source(handlers: set[str], *, generation_id: str) -> tuple[s
             "deterministic RSI solver failed its static/sandbox contract: "
             + json.dumps(fallback_sandbox, sort_keys=True, default=str)
         )
-    metadata["parse_result"] = (
-        "deterministic_verified" if metadata["parse_result"] == "fallback" else metadata["parse_result"]
-    )
+    if metadata["parse_result"] in {"fallback", "deterministic_codegen_default"}:
+        metadata["parse_result"] = "deterministic_verified"
     metadata["sandbox_result"] = fallback_sandbox
     metadata["generated_source_hash"] = hashlib.sha256(fallback_code.encode("utf-8")).hexdigest()
     return fallback_code, metadata

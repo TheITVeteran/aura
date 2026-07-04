@@ -3048,3 +3048,38 @@ Tracker:
 - Remaining Program DNA proof: real application reconstruction against an
   authorized/open/user-owned target with a longer build-test-repair loop.
 - Remaining total checkpoint groups: 3.
+
+## Checkpoint 2026-07-03-35: Bounded RSI Successor Codegen Validation
+
+What changed:
+
+- RSI successor generation now uses deterministic, sandbox-verified codegen by
+  default and only enters local LLM codegen when
+  `AURA_RSI_ENABLE_LLM_CODEGEN=1` is explicitly set.
+- This prevents validator and background proof paths from accidentally loading
+  the large cortex or hanging for up to the LLM codegen timeout.
+- Added a regression proving the default path records no router use and only
+  reports `deterministic_verified` after sandbox success.
+
+Evidence:
+
+- Stale heavy pytest/model path was terminated before rerun.
+- `py_compile` over RSI source and tests -> passed.
+- `ruff --select F,E9` over RSI source and tests -> passed.
+- Focused RSI default + G1-G4 successor tests -> `2 passed`.
+- Full RSI expansion file -> `14 passed`.
+- Autonomy/background/immune validators -> `52 passed`.
+- CRSM/preference/live-learner/full-desktop-runtime contract validators
+  -> `44 passed`.
+- `git diff --check` -> passed.
+- Architecture gate -> `passed=true`, `score=46.38`,
+  `largest_cycle_size=532`, `cycle_count=6`, `dependency_edges=7538`,
+  `god_file_count=37`, `module_count=2257`.
+
+Tracker:
+
+- Background autonomy/repair/learning validator closure: about 92-95%.
+- Expanded daily-runtime/product closure: about 95-96%.
+- Chrome/Kubernetes-style operational maturity closure: about 78-84% locally.
+- Remaining checkpoint groups: 2-3, with live desktop proof and final evidence
+  packaging still carrying the highest risk.

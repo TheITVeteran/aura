@@ -5900,3 +5900,56 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 77-83% locally.
 - Remaining total checkpoint groups: 3, focused on live desktop proof,
   background autonomy/repair/learning closure, and final evidence packaging.
+
+## Checkpoint 2026-07-03-35: Bounded RSI Successor Codegen Validation
+
+Status: implementation validated for checkpoint commit.
+
+Scope:
+
+- Made autonomous RSI successor source generation deterministic by default so
+  validation and background self-improvement tests do not silently spawn the
+  large local cortex or hang behind model startup.
+- Preserved the LLM-generated successor path behind the explicit
+  `AURA_RSI_ENABLE_LLM_CODEGEN=1` switch for deliberate experimental runs.
+- Kept the deterministic successor path substantive: generated solvers still
+  pass static validation, sandbox fixtures, and unsupported-kind checks before
+  promotion.
+- Added regression coverage proving the default path does not touch the router
+  and records `deterministic_verified` only after sandbox success.
+
+Evidence:
+
+- Killed a stale pytest process that had entered the heavy model codegen path.
+- `python -m py_compile core/learning/autonomous_rsi.py tests/test_rsi_expansion_components.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/learning/autonomous_rsi.py tests/test_rsi_expansion_components.py`
+  -> passed.
+- `python -m pytest -q tests/test_rsi_expansion_components.py::test_autonomous_successor_codegen_defaults_to_deterministic_sandbox tests/test_rsi_expansion_components.py::test_autonomous_successor_engine_generates_reproducible_g1_to_g4`
+  -> `2 passed`.
+- `python -m pytest -q tests/test_rsi_expansion_components.py`
+  -> `14 passed`.
+- `python -m pytest -q tests/test_autonomy_visibility.py tests/test_autonomous_task_engine_runtime.py tests/test_adaptive_immune_system.py`
+  -> `52 passed`.
+- `python -m pytest -q tests/test_crsm_loop_monitor.py tests/test_preference_trainer.py tests/test_live_learner_continual_training.py tests/test_full_desktop_runtime_contract.py`
+  -> `44 passed`.
+- `git diff --check` -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=46.38`,
+  `largest_cycle_size=532`, `cycle_count=6`, `dependency_edges=7538`,
+  `god_file_count=37`, `module_count=2257`.
+
+Boundary:
+
+- This does not remove experimental LLM successor generation; it makes that
+  expensive path opt-in so source validators, background autonomy, and RSI proof
+  runs remain bounded and repeatable.
+- This checkpoint closes the validator hang/memory-spike failure mode, not the
+  broader live desktop proof requirement.
+
+Estimate:
+
+- Background autonomy/repair/learning validator closure: about 92-95%.
+- Expanded daily-runtime/product closure: about 95-96%.
+- Chrome/Kubernetes-style operational maturity closure: about 78-84% locally.
+- Remaining total checkpoint groups: 2-3, focused on live desktop proof,
+  final closeout/evidence packaging, and any failures found in the live lane.

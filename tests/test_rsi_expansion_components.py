@@ -7,6 +7,7 @@ from core.learning.architecture_search import ArchitectureSearchLab
 from core.learning.autonomous_rsi import (
     AutonomousSuccessorEngine,
     ExternalHiddenEvalCustodian,
+    generate_solver_source,
     solve_with_generated_code,
     solve_with_handlers,
 )
@@ -227,6 +228,18 @@ def solve(task):
     )
 
     assert solve_with_generated_code(task, source) == task.answer
+
+
+def test_autonomous_successor_codegen_defaults_to_deterministic_sandbox(monkeypatch):
+    monkeypatch.delenv("AURA_RSI_ENABLE_LLM_CODEGEN", raising=False)
+
+    source, metadata = generate_solver_source({"gcd", "mod"}, generation_id="Aura-G-fast")
+
+    assert "def solve" in source
+    assert metadata["llm_codegen_enabled"] is False
+    assert metadata["router_presence"] is False
+    assert metadata["parse_result"] == "deterministic_verified"
+    assert metadata["sandbox_result"]["pass"] is True
 
 
 def test_autonomous_successor_engine_generates_reproducible_g1_to_g4(tmp_path: Path):
