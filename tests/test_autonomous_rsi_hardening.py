@@ -70,6 +70,9 @@ def test_generate_solver_source_demotes_unsafe_llm_candidate(monkeypatch):
     monkeypatch.setattr(
         "core.brain.llm.local_code_model.get_local_code_model", lambda: None
     )
+    # LLM code-gen is env-gated now; this test exists to prove the unsafe
+    # candidate is demoted WHEN generation runs, so enable the gate.
+    monkeypatch.setenv("AURA_RSI_ENABLE_LLM_CODEGEN", "1")
 
     source, metadata = generate_solver_source({"gcd"}, generation_id="Aura-G2")
 
