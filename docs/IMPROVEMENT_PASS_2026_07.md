@@ -323,3 +323,33 @@ Remaining in this arc: recovery executor (faults actuate their
 RecoveryStrategy) — deliberately deferred to integrate with the immune
 system rather than duplicate it, blocked on the parallel agent's
 in-flight immune_system.py edits.
+
+## Knowledge substrate populated + search resilience (July 3, evening)
+
+- **Local corpus LIVE**: full English Wikipedia ingested — 7,189,653
+  pages processed, 6,588,092 articles indexed, 35.6GB FTS5 corpus, 96
+  minutes, one command, resumable (survived multiple session restarts
+  via the detached download supervisor). Warm queries ~90ms with real
+  relevance (relativity → Hafele–Keating; Kalman → Schmidt–Kalman/EKF).
+- **A live autonomy failure Bryan observed** (web_search FAILED during
+  the 'Maintain and repair Aura' default goal) root-caused to the
+  planner hardcoding web_search into every tool menu whether or not the
+  skill existed. Three-layer fix (417ece86): local_reference_search
+  first-class skill (offline, provenance-tagged, honest misses), planner
+  tool-menu honesty + shortcut fallback, and runtime web→corpus
+  degradation with offline_fallback provenance. Search intent can no
+  longer dead-end in this system.
+- **Order-dependence class extinct**: suite-wide verdict went from 22
+  order-dependent failures to ZERO via one conftest guard
+  (snapshot/restore of registry resolvers — tests were erasing the
+  container-backed resolver during 'cleanup'). Real failures 22 → 4 → 0:
+  the last four closed with real fixes, not markers (db2371bd) — a
+  welfare-coverage contract that had been satisfied by a DEAD
+  ActionExecutor import now wraps live search in an actual
+  WelfareTransaction; a new skill's sync write inside async execute()
+  moved to the async atomic lane; catalog ratchet updated 67→70 for
+  three legitimate new skills; one more environment-dependent RSI test
+  pinned.
+- Remaining for the substrate arc: rebuild-and-swap refresh mode for new
+  dumps, and retained-web-knowledge writeback (the continuous-growth
+  path), then the flywheel distillation bridge.
