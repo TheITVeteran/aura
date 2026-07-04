@@ -58,3 +58,24 @@ def test_worker_salvages_instead_of_empty_on_exhaustion():
     idx_salvage = src.find("Salvaged a clean brief reply")
     idx_empty = src.find('response_text = ""\n                                            break')
     assert idx_salvage != -1
+
+
+def test_presence_check_acknowledgment_is_not_a_placeholder():
+    """Live regression (July 4): Bryan asked 'can you hear me?' and the
+    perfect answer — 'I hear you. What's on your mind?' — was rejected by
+    the low-signal acknowledgement rule, so he got silence. For a
+    presence check, the acknowledgment IS the substantive answer."""
+    from core.conversation.response_reliability import (
+        _has_low_signal_acknowledgement_placeholder,
+    )
+
+    assert _has_low_signal_acknowledgement_placeholder(
+        "can you hear me?", "I hear you. What's on your mind?"
+    ) is False
+    assert _has_low_signal_acknowledgement_placeholder(
+        "are you there", "I'm here."
+    ) is False
+    # Real questions keep the guard: filler replies still fail it.
+    assert _has_low_signal_acknowledgement_placeholder(
+        "explain the fault taxonomy design", "I hear you. What's on your mind?"
+    ) is True

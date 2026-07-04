@@ -2291,7 +2291,32 @@ def _substantive_prompt_terms(user_message: Any) -> set[str]:
     return terms
 
 
+_PRESENCE_CHECK_RE = re.compile(
+    r"(?:\b(?:can|do|did)\s+you\s+hear\b"
+    r"|\b(?:are|r)\s+(?:you|u)\s+(?:there|here|alive|awake|listening|online|working|with\s+me)\b"
+    r"|\byou\s+(?:there|here|alive|awake|listening|online)\b"
+    r"|\bshow\s+(?:me\s+)?(?:that\s+)?(?:you(?:'re|\s+are)?\s+)?(?:there|here|alive|listening|responsive)\b"
+    r"|^\s*(?:hello|hi|hey|yo|testing|test|ping|aura)\s*[.!?]*\s*$)",
+    re.IGNORECASE,
+)
+
+
+def _is_presence_check(user_message: Any) -> bool:
+    """True for brief 'are you there?'-class turns.
+
+    For a presence check, an acknowledgment IS the substantive answer —
+    observed live: 'can you hear me?' → 'I hear you. What's on your mind?'
+    was rejected as filler and Bryan got silence.
+    """
+    text = str(user_message or "").strip()
+    if not text or len(text.split()) > 8:
+        return False
+    return bool(_PRESENCE_CHECK_RE.search(text))
+
+
 def _has_low_signal_acknowledgement_placeholder(user_message: Any, reply_text: Any) -> bool:
+    if _is_presence_check(user_message):
+        return False
     if not _requires_substantive_reply(user_message):
         return False
     reply = str(reply_text or "").strip()
