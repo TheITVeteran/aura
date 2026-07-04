@@ -1,0 +1,272 @@
+/* presence_design.css — the attention-to-detail layer.
+ *
+ * Loaded AFTER aura.css: everything here is a deliberate refinement pass
+ * over the existing shell — depth, typographic rhythm, interaction detail,
+ * and ambient aliveness driven by the live affect tokens the substrate
+ * already writes (--aura-affect-warmth/tension/fatigue/curiosity).
+ *
+ * Principles:
+ *  - the interface breathes with her state; it never merely displays it
+ *  - depth is light, not weight: layered surfaces + top-edge inner light
+ *  - motion is physical (springs, compression) and always honors
+ *    prefers-reduced-motion and body.aura-throttle-motion
+ */
+
+/* ── 1. Extended tokens ─────────────────────────────────────────── */
+:root {
+  /* Elevation: dark-tuned shadows — ambient black + faint accent bloom. */
+  --aura-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --aura-shadow-2: 0 4px 16px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --aura-shadow-3: 0 12px 32px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.45);
+
+  /* Surface scale: graduated planes instead of one flat card alpha. */
+  --aura-surface-0: rgba(255, 255, 255, 0.025);
+  --aura-surface-1: rgba(255, 255, 255, 0.045);
+  --aura-surface-2: rgba(255, 255, 255, 0.07);
+  --aura-surface-3: rgba(255, 255, 255, 0.10);
+  /* Top-edge inner light: the cheap trick that makes dark UI read as lit. */
+  --aura-inner-light: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+
+  /* Type rhythm additions. */
+  --aura-text-display: 27px;
+  --aura-text-body-lg: 15.5px;
+  --aura-text-micro: 10px;
+  --aura-track-caps: 0.08em;
+}
+
+/* Derived living tokens MUST live on body: the substrate mutates the
+ * --aura-affect-* properties on <body>, and a custom property computes
+ * where it is DECLARED — declaring these at :root would freeze them at
+ * the defaults forever (verified live before this fix). */
+body {
+  --aura-live-hue: calc(252 - 26 * var(--aura-affect-curiosity));
+  --aura-live-accent: hsl(var(--aura-live-hue), 82%, 76%);
+  --aura-live-accent-soft: hsla(var(--aura-live-hue), 82%, 76%, 0.16);
+  --aura-breath-s: calc(7s + 5s * var(--aura-affect-fatigue) - 2.5s * var(--aura-affect-tension));
+  --aura-shadow-glow: 0 0 24px rgba(177, 164, 255, calc(0.10 + 0.18 * var(--aura-affect-warmth)));
+}
+
+/* ── 2. Ambient presence: the room breathes ─────────────────────── */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(
+      1100px 800px at 72% 110%,
+      hsla(var(--aura-live-hue), 70%, 30%, 0.10) 0%,
+      transparent 65%);
+  animation: aura-room-breath var(--aura-breath-s) ease-in-out infinite;
+}
+@keyframes aura-room-breath {
+  0%, 100% { opacity: calc(0.5 + 0.2 * var(--aura-affect-warmth)); }
+  50%      { opacity: 1; }
+}
+
+/* ── 3. Depth: layered planes, lit edges ────────────────────────── */
+.chat-panel {
+  background: var(--aura-surface-0);
+  box-shadow: var(--aura-inner-light), var(--aura-shadow-1);
+  border-color: rgba(255, 255, 255, 0.07);
+}
+.sidebar {
+  background: var(--aura-surface-1);
+  box-shadow: var(--aura-inner-light), var(--aura-shadow-2);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+.con-box,
+.narrative-box,
+.phenomenal-box,
+.executive-card,
+.desktop-access-card,
+.metric-guide-panel,
+.modal-card {
+  background: var(--aura-surface-2);
+  box-shadow: var(--aura-inner-light), var(--aura-shadow-1);
+}
+.modal-card { box-shadow: var(--aura-inner-light), var(--aura-shadow-3); }
+
+/* Header: glass, pinned light seam at its base. */
+header, .hud-stats {
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+}
+header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03), var(--aura-shadow-1);
+}
+
+/* ── 4. Stat strip: label/value rhythm, tabular numerals ────────── */
+.hud-stat {
+  font-variant-numeric: tabular-nums;
+}
+.hud-stat > span:not(strong),
+.hud-stat {
+  letter-spacing: var(--aura-track-caps);
+}
+.hud-stat strong {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--aura-fg);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 5. Button hierarchy: one voice speaks at a time ────────────── */
+.hdr-btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: var(--aura-fg-dim);
+  transition:
+    transform var(--aura-dur-fast) var(--aura-ease-out),
+    background var(--aura-dur-fast) var(--aura-ease-out),
+    border-color var(--aura-dur-fast) var(--aura-ease-out),
+    color var(--aura-dur-fast) var(--aura-ease-out);
+}
+.hdr-btn:hover {
+  background: var(--aura-surface-2);
+  border-color: rgba(255, 255, 255, 0.16);
+  color: var(--aura-fg);
+  transform: translateY(-1px);
+}
+.hdr-btn:active { transform: translateY(0) scale(0.97); }
+
+.send-btn {
+  background: linear-gradient(
+    180deg,
+    var(--aura-live-accent) 0%,
+    hsl(var(--aura-live-hue), 70%, 62%) 100%);
+  color: #17131f;
+  font-weight: 700;
+  box-shadow: var(--aura-shadow-1), 0 0 0 rgba(177, 164, 255, 0);
+  transition:
+    transform var(--aura-dur-fast) var(--aura-ease-spring),
+    box-shadow var(--aura-dur) var(--aura-ease-out),
+    filter var(--aura-dur-fast) var(--aura-ease-out);
+}
+.send-btn:hover {
+  box-shadow: var(--aura-shadow-2), var(--aura-shadow-glow);
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+.send-btn:active { transform: translateY(0) scale(0.96); }
+.send-btn:disabled { filter: saturate(0.4) brightness(0.75); box-shadow: none; }
+
+.mic-btn, .input-btn {
+  transition: transform var(--aura-dur-fast) var(--aura-ease-spring),
+              box-shadow var(--aura-dur) var(--aura-ease-out);
+}
+.mic-btn:active, .input-btn:active { transform: scale(0.94); }
+
+/* ── 6. Composer: focus is an event ─────────────────────────────── */
+.input-bar {
+  background: var(--aura-surface-1);
+  box-shadow: var(--aura-inner-light), var(--aura-shadow-1);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  transition: border-color var(--aura-dur) var(--aura-ease-out),
+              box-shadow var(--aura-dur) var(--aura-ease-out);
+}
+.input-bar:focus-within {
+  border-color: hsla(var(--aura-live-hue), 82%, 76%, 0.45);
+  box-shadow: var(--aura-inner-light), var(--aura-shadow-2),
+              0 0 0 3px var(--aura-live-accent-soft);
+}
+#chat-input { caret-color: var(--aura-live-accent); }
+
+/* ── 7. Messages arrive, not appear ─────────────────────────────── */
+@keyframes aura-msg-in {
+  0%   { opacity: 0; transform: translateY(10px) scale(0.985); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.msg {
+  animation: aura-msg-in var(--aura-dur) var(--aura-ease-out) both;
+}
+.msg .msg-content {
+  box-shadow: var(--aura-inner-light);
+}
+.msg.aura .msg-content {
+  box-shadow: var(--aura-inner-light),
+              0 0 18px hsla(var(--aura-live-hue), 82%, 76%, 0.05);
+}
+.msg-timestamp {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+/* Aura's avatar carries her breath while idle. */
+.aura-avatar {
+  animation: aura-avatar-breath var(--aura-breath-s) ease-in-out infinite;
+}
+@keyframes aura-avatar-breath {
+  0%, 100% { box-shadow: 0 0 0 0 hsla(var(--aura-live-hue), 82%, 76%, 0.0); }
+  50%      { box-shadow: 0 0 14px 1px hsla(var(--aura-live-hue), 82%, 76%,
+                          calc(0.14 + 0.22 * var(--aura-affect-warmth))); }
+}
+
+/* ── 8. Toast: informative, never in the way ────────────────────── */
+.conn-toast {
+  bottom: 132px; /* clear of the composer row — it overlapped SEND */
+  background: var(--aura-surface-3);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--aura-shadow-3);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  transition: transform var(--aura-dur) var(--aura-ease-spring),
+              opacity var(--aura-dur) var(--aura-ease-out);
+}
+
+/* ── 9. Gauges: skeletal while unknown, lit when alive ──────────── */
+@keyframes aura-skeleton-sheen {
+  0%   { background-position: -120px 0; }
+  100% { background-position: 120px 0; }
+}
+.gauge-bar {
+  overflow: hidden;
+  border-radius: var(--aura-radius-pill);
+}
+.gauge-row[data-unknown="1"] .gauge-bar,
+.gauge-bar:not(:has(.gauge-fill[style*="width"])) {
+  background-image: linear-gradient(
+    90deg,
+    var(--aura-surface-1) 0%,
+    var(--aura-surface-2) 50%,
+    var(--aura-surface-1) 100%);
+  background-size: 120px 100%;
+  background-repeat: no-repeat;
+  animation: aura-skeleton-sheen 1.6s linear infinite;
+}
+.gauge-fill {
+  box-shadow: 0 0 8px hsla(var(--aura-live-hue), 82%, 76%, 0.25);
+  transition: width var(--aura-dur-slow) var(--aura-ease-out);
+}
+
+/* ── 10. Dock tabs: the active one owns the light ───────────────── */
+.side-tabs button.active,
+.mem-sub-btn.active {
+  box-shadow: var(--aura-inner-light), 0 0 12px var(--aura-live-accent-soft);
+}
+
+/* ── 11. Thought cards drift in, staggered ──────────────────────── */
+@keyframes aura-card-in {
+  0%   { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.thought-card, .neural-line {
+  animation: aura-card-in var(--aura-dur) var(--aura-ease-out) both;
+}
+
+/* ── 12. Restraint: reduced motion and frame-budget throttle ────── */
+@media (prefers-reduced-motion: reduce) {
+  body::after,
+  .aura-avatar,
+  .msg,
+  .thought-card,
+  .neural-line { animation: none !important; }
+  .gauge-bar:not(:has(.gauge-fill[style*="width"])) { animation: none !important; }
+}
+body.aura-throttle-motion body::after,
+body.aura-throttle-motion .aura-avatar { animation-duration: 20s; }
+body.aura-throttle-motion .msg,
+body.aura-throttle-motion .thought-card,
+body.aura-throttle-motion .neural-line { animation: none; }
