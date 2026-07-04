@@ -332,6 +332,9 @@ _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S = _env_positive_float(
     "AURA_DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S",
     6.0,
 )
+# Consecutive direct-probe timeout streaks per permission type (backpressure doctrine).
+_DIRECT_PROBE_TIMEOUT_STREAKS: dict[str, int] = {}
+
 _DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S = _env_positive_float(
     "AURA_DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S",
     0.6,
@@ -1313,11 +1316,17 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                 direct_probe = getattr(guard, "check_permission_direct", None)
                 if callable(direct_probe):
                     async def _bounded_direct_probe(ptype: Any) -> dict[str, Any]:
+                        streak_key = ptype.name.lower()
                         try:
                             result = await asyncio.wait_for(
                                 direct_probe(ptype),
                                 timeout=max(0.2, _DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S),
                             )
+                            if _DIRECT_PROBE_TIMEOUT_STREAKS.pop(streak_key, 0):
+                                logger.info(
+                                    "Desktop %s direct probe recovered after timeouts",
+                                    streak_key,
+                                )
                             return result if isinstance(result, dict) else {
                                 "granted": False,
                                 "status": "invalid_probe_result",
@@ -1326,12 +1335,28 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                                 "direct_probe": True,
                             }
                         except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
-                            record_degradation(
-                                "system.desktop_access.direct_probe",
-                                exc,
-                                action=f"marked {ptype.name.lower()} direct permission unavailable without discarding other probes",
-                                severity="warning",
-                            )
+                            # The UI polls this endpoint every minute; a probe
+                            # that times out persistently is expected
+                            # backpressure, not a fresh incident per poll.
+                            # Record on the FIRST failure and every 15th;
+                            # in between, log quietly (streak doctrine).
+                            streak = _DIRECT_PROBE_TIMEOUT_STREAKS.get(streak_key, 0) + 1
+                            _DIRECT_PROBE_TIMEOUT_STREAKS[streak_key] = streak
+                            if streak == 1 or streak % 15 == 0:
+                                record_degradation(
+                                    "system.desktop_access.direct_probe",
+                                    exc,
+                                    action=(
+                                        f"marked {streak_key} direct permission unavailable "
+                                        f"without discarding other probes (streak={streak})"
+                                    ),
+                                    severity="warning",
+                                )
+                            else:
+                                logger.debug(
+                                    "Desktop %s direct probe timeout (streak %d, suppressed)",
+                                    streak_key, streak,
+                                )
                             return {
                                 "granted": False,
                                 "status": "probe_failed",

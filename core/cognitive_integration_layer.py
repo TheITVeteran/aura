@@ -777,7 +777,12 @@ class CognitiveIntegrationLayer:
                     action="conversation_turn",
                     outcome=f"Aura: {response[:500]}",
                     success=True,
-                    metadata={"domain": domain}
+                    # A conversation turn IS user-facing by construction; the
+                    # origin marker keeps the constitutional gate from
+                    # classifying it as an autonomous write (observed live:
+                    # Bryan's hello deferred under epistemic_reconciliation
+                    # because the source resolved to 'memory_facade').
+                    metadata={"domain": domain, "origin": "user", "intent_source": "user"}
                 )
         except _CIL_RECOVERABLE_ERRORS as e:
             _record_cil_degradation(

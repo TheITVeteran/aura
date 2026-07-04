@@ -219,7 +219,22 @@ class EnhancedWebSearchSkill(BaseSkill):
                 context=context or {},
                 force_refresh=force_refresh,
             )
-        except (RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
+        except (RuntimeError, OSError, ValueError, TypeError, AttributeError, ImportError) as exc:
+            # A RAISING pipeline (missing backend, hard network failure) must
+            # reach the local-corpus fallback exactly like a returned
+            # failure — observed live: the exception path bypassed the
+            # fallback and the curiosity loop logged web_search FAILED with
+            # 6.5M offline documents sitting available.
+            record_degradation(
+                "web_search", exc, severity="warning",
+                action="pipeline raised; degrading to local corpus",
+            )
+            offline = self._local_corpus_fallback(query, num_results)
+            if offline is not None:
+                offline["web_error"] = str(exc)[:200]
+                _tx.complete(outcome="partial", error=str(exc)[:200])
+                offline.setdefault("summary", offline.get("message") or "")
+                return offline
             _tx.complete(outcome="failure", error=str(exc)[:200])
             raise
         _tx.complete(

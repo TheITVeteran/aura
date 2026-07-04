@@ -931,6 +931,19 @@ class SovereignVoiceEngine:
                         if self.state == VoiceState.SPEAKING and not self.interrupt_flag.is_set():
                             logger.warning("🎙️ Barge-in detected in VAD! Interrupting Aura...")
                             self.interrupt_flag.set()
+                elif is_speaking and (time.time() - last_voice_time) > SILENCE_TIMEOUT:
+                    # UN-LATCH: without this, the first gate crossing pinned
+                    # is_speaking=True forever, end-of-utterance could never
+                    # fire (it requires `not is_speaking`), and user speech
+                    # accumulated until the 5MB safety wipe DISCARDED it —
+                    # the live "Aura doesn't answer when I talk" silence.
+                    is_speaking = False
+                    if self._on_vad_change:
+                        self._on_vad_change(False)
+                    logger.debug(
+                        "🎙️ Voice activity ended (RMS=%.4f, Gate=%.4f) — utterance closing",
+                        rms, current_silence_threshold,
+                    )
                 
                 # Detect end of speech (user was speaking, now silent for > threshold)
                 silence_detected = (

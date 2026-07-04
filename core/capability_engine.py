@@ -859,6 +859,8 @@ class CapabilityEngine(AuraBaseModule):
         self.skills: dict[str, SkillMetadata] = {}
         self.instances: dict[str, Any] = {}
         self._explicitly_deactivated_skills: set[str] = set()
+        # skill → monotonic deadline while a user-advocate block holds.
+        self._advocate_block_cooldowns: dict[str, float] = {}
         self.active_skills: set = {
             # Core routing
             "ManageAbilities",
@@ -3442,6 +3444,27 @@ class CapabilityEngine(AuraBaseModule):
                         }
                 _tron = ServiceContainer.get("tron", default=None)
                 if _tron is not None:
+                    # Advocate-block memory: a skill the user-advocate blocked
+                    # stays blocked for its cooldown instead of being re-fired
+                    # by every autonomy cycle (observed live: auto_refactor
+                    # re-attempted each cycle, surprise=1.0 every time, the
+                    # loop never learning the advocate said "confirm first").
+                    _block_until = self._advocate_block_cooldowns.get(skill_name, 0.0)
+                    _params_confirmed = bool(
+                        params.get("confirmed") or params.get("user_confirmed")
+                        or ctx.get("confirmed") or ctx.get("user_confirmed")
+                    )
+                    if _block_until > time.monotonic() and not _params_confirmed:
+                        return {
+                            "ok": False,
+                            "error": (
+                                "User advocate previously blocked this skill; "
+                                "awaiting user confirmation (cooldown active)"
+                            ),
+                            "status": "blocked_by_user_advocate",
+                            "awaiting_confirmation": True,
+                            "cooldown": True,
+                        }
                     confirmed = bool(
                         params.get("confirmed")
                         or params.get("user_confirmed")
@@ -3480,10 +3503,26 @@ class CapabilityEngine(AuraBaseModule):
                             "🟦 User-advocate BLOCKED skill '%s': %s",
                             skill_name, reason,
                         )
+                        # Remember the block: autonomous retries within the
+                        # cooldown short-circuit instead of re-litigating.
+                        self._advocate_block_cooldowns[skill_name] = (
+                            time.monotonic() + 1800.0
+                        )
+                        try:
+                            from core.thought_stream import get_emitter
+                            get_emitter().emit(
+                                "Awaiting confirmation",
+                                f"'{skill_name}' paused by my user-advocate: {reason} "
+                                "— say the word and I'll proceed.",
+                                level="info", category="Agency",
+                            )
+                        except (ImportError, AttributeError, RuntimeError):
+                            self.logger.debug("Thought stream unavailable for advocate notice.")
                         return {
                             "ok": False,
                             "error": f"User advocate blocked: {reason}",
                             "status": "blocked_by_user_advocate",
+                            "awaiting_confirmation": True,
                         }
                 _machine = ServiceContainer.get("the_machine", default=None)
                 _scope = str(effect_scope or "").lower()
