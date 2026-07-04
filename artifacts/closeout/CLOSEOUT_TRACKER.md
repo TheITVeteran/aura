@@ -3083,3 +3083,37 @@ Tracker:
 - Chrome/Kubernetes-style operational maturity closure: about 78-84% locally.
 - Remaining checkpoint groups: 2-3, with live desktop proof and final evidence
   packaging still carrying the highest risk.
+
+## Checkpoint 2026-07-03-36: Native Launcher Duplicate-Session Cleanup
+
+What changed:
+
+- Pre-launch cleanup now removes stale native `aura-launcher` processes as
+  well as Python/GUI/MLX workers.
+- The cleanup path skips the current cleanup process and its parent process, so
+  Force Stop can clear stale duplicate launcher windows without killing the
+  visible launcher that is reporting the result.
+- Existing verified-live-runtime protection remains intact unless
+  `AURA_CLEANUP_FORCE=1` is explicitly set.
+
+Evidence:
+
+- `py_compile` over cleanup and launcher contract tests -> passed.
+- `ruff --select F,E9` over cleanup and launcher contract tests -> passed.
+- Launcher/full-desktop runtime contract tests -> `45 passed`.
+- `python aura_cleanup.py` -> completed successfully.
+- Post-cleanup process table showed no Aura native launcher, runtime, GUI actor,
+  or MLX worker processes.
+- `git diff --check` -> passed.
+- Architecture gate -> `passed=true`, `score=46.38`,
+  `largest_cycle_size=532`, `cycle_count=6`, `dependency_edges=7538`,
+  `god_file_count=37`, `module_count=2257`.
+
+Tracker:
+
+- Live desktop launch/session cleanup closure: about 90-94%.
+- Background runtime visibility/required-organ closure: about 92-95%.
+- Expanded daily-runtime/product closure: about 96%.
+- Chrome/Kubernetes-style operational maturity closure: about 79-85% locally.
+- Remaining checkpoint groups: 2, focused on live desktop proof and final
+  evidence packaging/assessment.

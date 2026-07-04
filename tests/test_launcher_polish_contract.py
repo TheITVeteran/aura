@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -177,6 +178,31 @@ def test_cleanup_preserves_verified_live_runtime_unless_forced():
     assert 'AURA_CLEANUP_FORCE' in cleanup
     assert "skipping aggressive pre-launch process cleanup" in cleanup
     assert "preserving lock directory" in cleanup
+    assert "def _kill_stale_native_launchers()" in cleanup
+    assert "Aura.app/Contents/MacOS/aura-launcher" in cleanup
+    assert "pid in {current_pid, parent_pid}" in cleanup
+
+
+def test_cleanup_recognizes_native_launcher_process():
+    from scripts.one_off import aura_cleanup
+
+    launcher = SimpleNamespace(
+        info={
+            "exe": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
+            "cmdline": ["/Applications/Aura.app/Contents/MacOS/aura-launcher"],
+            "name": "aura-launcher",
+        },
+    )
+    unrelated = SimpleNamespace(
+        info={
+            "exe": "/Applications/Notes.app/Contents/MacOS/Notes",
+            "cmdline": ["/Applications/Notes.app/Contents/MacOS/Notes"],
+            "name": "Notes",
+        },
+    )
+
+    assert aura_cleanup._is_native_launcher_process(launcher) is True
+    assert aura_cleanup._is_native_launcher_process(unrelated) is False
 
 
 def test_cleanup_treats_missing_lock_pid_as_stale(monkeypatch):

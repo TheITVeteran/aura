@@ -5953,3 +5953,56 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 78-84% locally.
 - Remaining total checkpoint groups: 2-3, focused on live desktop proof,
   final closeout/evidence packaging, and any failures found in the live lane.
+
+## Checkpoint 2026-07-03-36: Native Launcher Duplicate-Session Cleanup
+
+Status: implementation validated for checkpoint commit.
+
+Scope:
+
+- Hardened pre-launch cleanup so it reaps stale native
+  `/Applications/Aura.app/Contents/MacOS/aura-launcher` processes in addition
+  to Python runtime, GUI actor, and MLX worker processes.
+- Preserved the active caller: the cleanup path skips the current Python
+  process and its parent so Force Stop can clear stale duplicate launchers
+  without killing the visible launcher UI that is reporting the result.
+- Kept the existing verified-runtime protection: if a trustworthy live Aura
+  runtime owns the orchestrator lock, cleanup still avoids aggressive process
+  killing unless `AURA_CLEANUP_FORCE=1` is set.
+- Added direct coverage for native launcher process recognition and retained
+  full desktop background-runtime readiness checks.
+
+Evidence:
+
+- `python -m py_compile scripts/one_off/aura_cleanup.py tests/test_launcher_polish_contract.py`
+  -> passed.
+- `python -m ruff check --select F,E9 scripts/one_off/aura_cleanup.py tests/test_launcher_polish_contract.py`
+  -> passed.
+- `python -m pytest -q tests/test_launcher_polish_contract.py tests/test_full_desktop_runtime_contract.py`
+  -> `45 passed`.
+- `python aura_cleanup.py` -> completed successfully, reset stale lock
+  directory, and did not find an active Aura stack to terminate.
+- Process table after cleanup showed no `Aura.app`, `aura-launcher`,
+  `aura_main.py`, `gui_actor.py`, `mlx_worker`, or `MLXWorker` processes.
+- `git diff --check` -> passed.
+- Architecture gate baseline compare -> `passed=true`, `score=46.38`,
+  `largest_cycle_size=532`, `cycle_count=6`, `dependency_edges=7538`,
+  `god_file_count=37`, `module_count=2257`.
+
+Boundary:
+
+- This prevents stale native launcher windows from surviving cleanup paths; it
+  does not claim a full visible desktop demo run because no live Aura session
+  was active during this checkpoint.
+- Background cognition is covered by the full-runtime status contract tests:
+  normal/protected desktop launch expects all canonical background organs and
+  marks readiness false if they are missing.
+
+Estimate:
+
+- Live desktop launch/session cleanup closure: about 90-94%.
+- Background runtime visibility/required-organ closure: about 92-95%.
+- Expanded daily-runtime/product closure: about 96%.
+- Chrome/Kubernetes-style operational maturity closure: about 79-85% locally.
+- Remaining checkpoint groups: 2, focused on live desktop proof and final
+  evidence packaging/assessment.

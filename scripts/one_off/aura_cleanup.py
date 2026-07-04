@@ -25,6 +25,7 @@ _AURA_PROCESS_PATTERNS = (
     "gui_actor.py",
     "simulate_200.py",
 )
+_NATIVE_LAUNCHER_SUFFIX = "Aura.app/Contents/MacOS/aura-launcher"
 
 
 def _truthy_env(name: str) -> bool:
@@ -89,6 +90,61 @@ def _kill_stale_processes() -> None:
             logger.warning("Failed to kill %s: %s: %s", pattern, type(exc).__name__, exc)
 
 
+def _is_native_launcher_process(proc) -> bool:
+    try:
+        info = getattr(proc, "info", {}) or {}
+        exe = str(info.get("exe") or "")
+        cmdline = [str(item) for item in (info.get("cmdline") or [])]
+        name = str(info.get("name") or "")
+    except (AttributeError, TypeError, ValueError):
+        return False
+    first_arg = cmdline[0] if cmdline else ""
+    return (
+        exe.endswith(_NATIVE_LAUNCHER_SUFFIX)
+        or first_arg.endswith(_NATIVE_LAUNCHER_SUFFIX)
+        or (name == "aura-launcher" and _NATIVE_LAUNCHER_SUFFIX in " ".join([exe, *cmdline]))
+    )
+
+
+def _kill_stale_native_launchers() -> None:
+    """Terminate stale native launchers without killing the caller's launcher UI."""
+
+    try:
+        import psutil
+    except ImportError:
+        return
+
+    current_pid = os.getpid()
+    parent_pid = os.getppid()
+    candidates = []
+    for proc in psutil.process_iter(["pid", "exe", "cmdline", "name"]):
+        try:
+            pid = int(proc.info.get("pid") or proc.pid)
+            if pid in {current_pid, parent_pid}:
+                continue
+            if _is_native_launcher_process(proc):
+                candidates.append(proc)
+        except (psutil.Error, OSError, TypeError, ValueError):
+            continue
+
+    for proc in candidates:
+        try:
+            logger.info("Terminating stale Aura native launcher PID: %s", proc.pid)
+            proc.terminate()
+        except psutil.Error as exc:
+            logger.debug("Native launcher PID %s already exited: %s", getattr(proc, "pid", "?"), exc)
+    for proc in candidates:
+        try:
+            proc.wait(timeout=3.0)
+        except psutil.TimeoutExpired:
+            try:
+                proc.kill()
+            except psutil.Error as exc:
+                logger.debug("Native launcher PID %s unavailable for kill: %s", proc.pid, exc)
+        except psutil.Error:
+            continue
+
+
 def _reset_stale_locks() -> None:
     live_pid = None if _truthy_env("AURA_CLEANUP_FORCE") else _verified_live_runtime_pid()
     if live_pid is not None:
@@ -112,6 +168,7 @@ def _reset_stale_locks() -> None:
 def main() -> None:
     logger.info("Starting Aura pre-launch cleanup.")
     _kill_stale_processes()
+    _kill_stale_native_launchers()
     _reset_stale_locks()
     time.sleep(2)
     logger.info("Aura pre-launch cleanup complete.")
