@@ -119,21 +119,38 @@ class PermissionGuard(AuraBaseModule):
         itself can prove the grant for the current process identity. This method
         provides that stricter evidence without mutating the normal cache.
         """
+        # Fast local probes first (ctypes/CG calls, microseconds): if THIS
+        # process holds the grant, that is the truth and we are done. The
+        # native app bridge is the fallback for "python denied but Aura.app
+        # can act" — never the first hop inside a sub-second probe budget.
+        local_result: dict[str, Any] | None = None
+        if ptype == PermissionType.SCREEN:
+            loop = asyncio.get_running_loop()
+            local_result = await loop.run_in_executor(None, self._screen_preflight_probe)
+        elif ptype == PermissionType.ACCESSIBILITY:
+            loop = asyncio.get_running_loop()
+            local_result = await loop.run_in_executor(
+                None, self._accessibility_preflight_probe
+            )
+        if local_result is not None and local_result.get("granted"):
+            direct = dict(local_result)
+            direct["direct_probe"] = True
+            return direct
+
         native_result = await self._native_bridge_permission_result(ptype)
         if native_result is not None:
             result = native_result
+        elif local_result is not None:
+            result = local_result
         elif ptype == PermissionType.SCREEN:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, self._screen_preflight_probe)
-            if result is None:
-                result = {
-                    "granted": False,
-                    "status": "deferred",
-                    "guidance": (
-                        "Direct Screen Recording preflight is unavailable. "
-                        + self.get_guidance(PermissionType.SCREEN)
-                    ),
-                }
+            result = {
+                "granted": False,
+                "status": "deferred",
+                "guidance": (
+                    "Direct Screen Recording preflight is unavailable. "
+                    + self.get_guidance(PermissionType.SCREEN)
+                ),
+            }
         elif ptype == PermissionType.MIC:
             result = await self._check_mic_permission()
         elif ptype == PermissionType.CAMERA:
@@ -178,10 +195,16 @@ class PermissionGuard(AuraBaseModule):
         try:
             from core.security.native_desktop_bridge import probe_native_desktop_bridge
 
+            # Cached probe: the underlying one-shot bridge call takes up to
+            # 5s, while health surfaces budget ~0.6s per probe. force=True
+            # here meant EVERY UI poll bypassed the cache, spawned the
+            # native helper, and timed out — the permanent "PROBE FAIL"
+            # Bryan saw. Cache hits answer instantly; the cache refreshes
+            # itself on TTL expiry.
             native_probe = await asyncio.to_thread(
                 probe_native_desktop_bridge,
-                force=True,
-                prefer_one_shot=True,
+                force=False,
+                prefer_one_shot=False,
             )
         except _PERMISSION_RECOVERABLE_ERRORS as exc:
             self.logger.debug("Native Aura.app permission probe unavailable: %s", exc)
@@ -539,11 +562,13 @@ class PermissionGuard(AuraBaseModule):
         )
 
     async def _check_accessibility_permission(self) -> dict[str, Any]:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, self._accessibility_preflight_probe)
+        if result is not None and result.get("granted"):
+            return result
         native_result = await self._native_bridge_permission_result(PermissionType.ACCESSIBILITY)
         if native_result is not None:
             return native_result
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, self._accessibility_preflight_probe)
         if result is not None:
             return result
         return {
