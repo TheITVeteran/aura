@@ -199,14 +199,32 @@ class EnhancedWebSearchSkill(BaseSkill):
                 )
                 logger.error("Deep Research failed, falling back to legacy: %s", e)
 
-        # Legacy direct search
-        result = await self.pipeline.search(
-            query,
-            num_results=num_results,
-            deep=effective_deep,
-            retain=retain,
-            context=context or {},
-            force_refresh=force_refresh,
+        # Legacy direct search — a consequential network action, wrapped in
+        # a welfare transaction (begin → execute → complete with outcome) so
+        # the consequence bus sees real egress effects, not a decorative
+        # import (the previous unused ActionExecutor import was exactly that
+        # and rightly died to lint).
+        from core.being.welfare_transaction import WelfareTransaction
+
+        _tx = WelfareTransaction.begin(
+            domain="network_research",
+            action=f"web_search:{query[:80]}",
+        )
+        try:
+            result = await self.pipeline.search(
+                query,
+                num_results=num_results,
+                deep=effective_deep,
+                retain=retain,
+                context=context or {},
+                force_refresh=force_refresh,
+            )
+        except (RuntimeError, OSError, ValueError, TypeError, AttributeError) as exc:
+            _tx.complete(outcome="failure", error=str(exc)[:200])
+            raise
+        _tx.complete(
+            outcome="success" if result.get("ok") else "failure",
+            error="" if result.get("ok") else str(result.get("error") or "")[:200],
         )
         if not result.get("ok") and force_refresh:
             logger.info(

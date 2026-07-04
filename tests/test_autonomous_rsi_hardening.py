@@ -64,6 +64,12 @@ def test_generate_solver_source_demotes_unsafe_llm_candidate(monkeypatch):
 
     monkeypatch.setattr(ServiceContainer, "get", staticmethod(lambda *_args, **_kwargs: object()))
     monkeypatch.setattr(code_generator, "LLMCodeGenerator", UnsafeGenerator)
+    # Environment independence: with real local code weights present,
+    # get_local_code_model() would otherwise be consulted (and may raise) —
+    # this test pins the router-driven unsafe-candidate demotion contract.
+    monkeypatch.setattr(
+        "core.brain.llm.local_code_model.get_local_code_model", lambda: None
+    )
 
     source, metadata = generate_solver_source({"gcd"}, generation_id="Aura-G2")
 

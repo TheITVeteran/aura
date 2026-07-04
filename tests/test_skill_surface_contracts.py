@@ -87,6 +87,9 @@ EXPECTED_REGISTERED_SKILLS = {
     "voice_output",
     "web_interlocutor",
     "web_search",
+        "local_reference_search",
+        "program_dna_reconstruct",
+        "program_dna_equivalence_battery",
     "x_tools",
 }
 
@@ -220,8 +223,8 @@ def _neutralize_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
     import core.skills.reddit_adapter as reddit_adapter
     import core.skills.social_lurker as social_lurker
     import core.skills.sovereign_browser as sovereign_browser
-    import core.skills.web_interlocutor as web_interlocutor
     import core.skills.vision_actor as vision_actor
+    import core.skills.web_interlocutor as web_interlocutor
     from core.skills.auto_refactor import AutoRefactorSkill
     from core.skills.speak import SpeakSkill
 
@@ -300,7 +303,7 @@ def _redirect_runtime_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 def test_registered_skill_surface_matches_expected_catalog(skill_registry):
     assert set(skill_registry) == EXPECTED_REGISTERED_SKILLS
-    assert len(skill_registry) == 67
+    assert len(skill_registry) == 70
 
 
 @pytest.mark.asyncio

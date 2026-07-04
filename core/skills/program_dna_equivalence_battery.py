@@ -44,7 +44,13 @@ class ProgramDNAEquivalenceBatterySkill(BaseSkill):
         report = await battery.run_battery(project_root=Path.cwd())
         out_path = Path(params.out_path).expanduser()
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        # Async lane: a sync write here blocks the live event loop (the
+        # ratchet exists because one such fsync froze it for 20 minutes).
+        from core.runtime.atomic_writer import async_atomic_write_text
+
+        await async_atomic_write_text(
+            out_path, json.dumps(report, indent=2, sort_keys=True) + "\n"
+        )
 
         slim_report = dict(report)
         if not params.include_results:
