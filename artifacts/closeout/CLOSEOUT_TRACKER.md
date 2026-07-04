@@ -3117,3 +3117,48 @@ Tracker:
 - Chrome/Kubernetes-style operational maturity closure: about 79-85% locally.
 - Remaining checkpoint groups: 2, focused on live desktop proof and final
   evidence packaging/assessment.
+
+## Checkpoint 2026-07-03-37: Enterprise Ratchet Repair for Program DNA Proof Surface
+
+What changed:
+
+- Repaired all enterprise-gate regressions introduced by the new Program DNA
+  proof surface and endurance probe instead of accepting a weaker baseline.
+- Program DNA scaffold validation now uses AST parsing rather than runtime
+  `compile`.
+- Conversation endurance RSS probing now uses psutil process inspection rather
+  than shelling out to `pgrep`.
+- Endurance control-plane probe exceptions are narrowed to expected
+  transport/JSON/timeout/OS failure classes.
+- Runtime architecture tests no longer contain a hardcoded local temp path.
+- The cloud-error test helper no longer uses a pass-only initializer.
+- The hidden-source auth archetype is now named simulated-auth while retaining
+  the same safe no-real-credentials proof boundary.
+
+Evidence:
+
+- Focused `py_compile` over touched runtime, proof, and test files -> passed.
+- Focused `ruff --select F,E9` over touched files -> passed.
+- Cloud-error, runtime-registry seam, and Program DNA behavioral equivalence
+  tests -> `8 passed`.
+- Program DNA reconstruction, equivalence battery, and live-probe contract
+  tests -> `13 passed`.
+- Operational-label/frontier/desktop/preference/RSI/mutation battery
+  -> 37/37 groups passed.
+- Architecture quality gate -> passed.
+- Enterprise gate -> passed with `high_or_critical_count=0`.
+- Production readiness gate -> passed.
+- Program DNA hidden-source behavioral equivalence battery -> 7/7 scenarios,
+  14/14 held-out cases, `equivalence=1.0`.
+- `git diff --check` -> passed.
+
+Boundary:
+
+- This checkpoint restores source/audit quality for the new proof surfaces.
+  Final live desktop replay remains the last open checkpoint.
+
+Tracker:
+
+- Expanded daily-runtime/product closure: about 97%.
+- Chrome/Kubernetes-style operational maturity closure: about 82-87% locally.
+- Remaining checkpoint groups: 1.

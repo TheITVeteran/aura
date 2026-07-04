@@ -40,15 +40,13 @@ def test_genai_error_hierarchy_included_when_sdk_present():
         # classified as a cloud error via the base type.
         class _FakeQuota(api_error):  # type: ignore[misc, valid-type]
             def __init__(self):  # noqa: D401 - bypass SDK's response_json arg
-                pass
+                Exception.__init__(self, "429 RESOURCE_EXHAUSTED: quota exceeded")
 
         assert is_cloud_call_error(_FakeQuota())
 
 
 def test_grounded_search_degrades_on_cloud_error(monkeypatch):
     """The except tuple must catch a provider error and return ok=False."""
-    import core.skills.grounded_search as gs
-
     degrade_tuple = (AttributeError, RuntimeError, *cloud_call_error_types())
     # Simulate the live failure shape: a 429-style error is raised by the SDK.
     raised = ConnectionError("429 RESOURCE_EXHAUSTED: quota exceeded")

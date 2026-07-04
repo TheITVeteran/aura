@@ -2019,7 +2019,7 @@ def test_runtime_registry_batch_six_large_scc_service_seams(monkeypatch):
         assert "core.runtime.service_registry" in source
 
 
-def test_runtime_registry_batch_seven_consciousness_adaptation_seams(monkeypatch):
+def test_runtime_registry_batch_seven_consciousness_adaptation_seams(monkeypatch, tmp_path):
     import asyncio
     import inspect
     from types import SimpleNamespace
@@ -2261,7 +2261,7 @@ def test_runtime_registry_batch_seven_consciousness_adaptation_seams(monkeypatch
         assert fake_experiencer.refs["substrate"] == "substrate"
         assert len(global_workspace.subscribers) == 1
 
-        graph = acg.ActionConsequenceGraph(persist_path="/tmp/aura-test-acg.json")
+        graph = acg.ActionConsequenceGraph(persist_path=tmp_path / "aura-test-acg.json")
         graph._save = lambda *args, **kwargs: None
         graph.record_outcome({"tool": "inspect", "params": {"path": "x"}}, "ctx", "ok", True)
         assert graph.query_consequences("inspect", {"path": "x"})

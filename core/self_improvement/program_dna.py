@@ -1191,12 +1191,10 @@ class ProgramDNAReconstructionEngine:
         ]
         plan.scaffold_files = [str(path) for path in files if path.exists()]
         try:
-            compile((root / "src" / "program.py").read_text(encoding="utf-8"), str(root / "src" / "program.py"), "exec")
-            compile(
-                (root / "tests" / "test_program_contract.py").read_text(encoding="utf-8"),
-                str(root / "tests" / "test_program_contract.py"),
-                "exec",
-            )
+            program_path = root / "src" / "program.py"
+            test_path = root / "tests" / "test_program_contract.py"
+            ast.parse(program_path.read_text(encoding="utf-8"), filename=str(program_path))
+            ast.parse(test_path.read_text(encoding="utf-8"), filename=str(test_path))
             plan.scaffold_syntax_ok = True
         except (OSError, SyntaxError, UnicodeDecodeError) as exc:
             plan.scaffold_syntax_ok = False

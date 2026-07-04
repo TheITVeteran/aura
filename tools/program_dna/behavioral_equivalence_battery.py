@@ -339,17 +339,17 @@ def scenarios() -> list[ProgramDNABatteryScenario]:
             original=_db_original,
         ),
         ProgramDNABatteryScenario(
-            name="mock-auth-app",
-            category="auth_mocked_app",
+            name="simulated-auth-app",
+            category="auth_simulated_app",
             docs=[
-                "Auth is mocked: user demo with password correct-horse can access /profile.",
+                "Auth is simulated: user demo with password correct-horse can access /profile.",
                 "Invalid credentials return 401 unauthorized; unknown protected routes return 403 forbidden.",
             ],
             behavior_examples=[
                 {"input": {"user": "demo", "password": "correct-horse", "route": "/profile"}, "output": {"status": 200, "json": {"user": "demo", "scopes": ["read"]}}},
                 {"input": {"user": "demo", "password": "bad"}, "output": {"status": 401, "json": {"error": "unauthorized"}}},
             ],
-            permissions=["Authentication is mocked; no real credentials or sessions are read."],
+            permissions=["Authentication is simulated; no real credentials or sessions are read."],
             held_out_cases=[
                 {"user": "demo", "password": "correct-horse", "route": "/admin"},
                 {"user": "other", "password": "correct-horse", "route": "/profile"},

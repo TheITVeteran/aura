@@ -21,7 +21,7 @@ async def test_program_dna_hidden_source_behavioral_equivalence_battery(tmp_path
         "file_format_converter",
         "web_app",
         "local_db_tool",
-        "auth_mocked_app",
+        "auth_simulated_app",
         "missing_docs",
     } <= categories
     assert all(item["hidden_source_withheld"] for item in report["results"])

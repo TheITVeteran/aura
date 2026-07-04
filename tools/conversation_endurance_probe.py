@@ -22,7 +22,6 @@ import argparse
 import json
 import random
 import re
-import subprocess
 import sys
 import time
 import urllib.error
@@ -187,18 +186,24 @@ def _chat(base: str, session: str, message: str, timeout: float) -> str:
 
 def _server_rss_mb() -> float | None:
     try:
-        out = subprocess.run(
-            ["pgrep", "-f", "aura_main"], capture_output=True, text=True, timeout=5
-        ).stdout.split()
-        if not out:
-            return None
         import psutil
-
-        return round(
-            sum(psutil.Process(int(pid)).memory_info().rss for pid in out) / 1e6, 1
-        )
-    except Exception:
+    except ImportError:
         return None
+
+    total = 0
+    matched = False
+    for proc in psutil.process_iter(["cmdline"]):
+        try:
+            cmdline = " ".join(str(part) for part in (proc.info.get("cmdline") or []))
+            if "aura_main.py" not in cmdline:
+                continue
+            matched = True
+            total += proc.memory_info().rss
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError, TypeError, ValueError):
+            continue
+    if not matched:
+        return None
+    return round(total / 1e6, 1)
 
 
 def _thermal_level() -> int | None:
@@ -207,7 +212,7 @@ def _thermal_level() -> int | None:
         from core.runtime.thermal import thermal_state
 
         return thermal_state().level
-    except Exception:
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
         return None
 
 
@@ -219,7 +224,14 @@ def _snapshot(base: str) -> dict:
         snap["server_cpu_pct"] = m.get("cpu_usage")
         snap["cycle_count"] = m.get("cycle_count")
         snap["probes_all_passed"] = (m.get("required_probes") or {}).get("all_passed")
-    except Exception as exc:  # noqa: BLE001 — probe must survive anything
+    except (
+        TimeoutError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+    ) as exc:
         snap["metrics_error"] = str(exc)[:120]
     snap["server_rss_mb"] = _server_rss_mb()
     snap["thermal_level"] = _thermal_level()
@@ -233,7 +245,14 @@ def _incidents(base: str) -> dict:
             "active": int(s.get("active_count", 0)),
             "has_critical": bool(s.get("has_critical", False)),
         }
-    except Exception:
+    except (
+        TimeoutError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+    ):
         return {"active": -1, "has_critical": False}
 
 
@@ -312,7 +331,14 @@ def main() -> int:
             try:
                 _get_json(args.base, "/api/health/boot", timeout=10.0)
                 control_latency = round(time.monotonic() - c0, 3)
-            except Exception:
+            except (
+                TimeoutError,
+                OSError,
+                ValueError,
+                json.JSONDecodeError,
+                urllib.error.HTTPError,
+                urllib.error.URLError,
+            ):
                 control_latency = -1.0
                 if server_lost_at is None and "Connection refused" in error:
                     server_lost_at = n
