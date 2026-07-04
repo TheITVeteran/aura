@@ -50,6 +50,7 @@ DEFAULT_PROBES: tuple[str, ...] = (
     "chat_creative_self_reflection",
     "skill_button_file_write",
     "program_dna_reconstruct",
+    "program_dna_equivalence_battery",
     "chat_coding_snake",
     "novel_topic_continuity",
     "computer_use_local_app",
@@ -123,6 +124,7 @@ class LiveRuntimeProbe:
             "chat_creative_self_reflection": self._chat_creative_self_reflection,
             "skill_button_file_write": self._skill_button_file_write,
             "program_dna_reconstruct": self._program_dna_reconstruct,
+            "program_dna_equivalence_battery": self._program_dna_equivalence_battery,
             "chat_coding_snake": self._chat_coding_snake,
             "novel_topic_continuity": self._novel_topic_continuity,
             "computer_use_local_app": self._computer_use_local_app,
@@ -562,6 +564,37 @@ class LiveRuntimeProbe:
                 "ui_tests": len(plan.get("ui_tests") or []),
                 "interaction_tests": len(plan.get("interaction_tests") or []),
                 "edge_case_tests": len(plan.get("edge_case_tests") or []),
+            },
+        )
+
+    async def _program_dna_equivalence_battery(self) -> tuple[str, dict[str, Any]]:
+        stamp = int(time.time())
+        out_path = f"artifacts/current/live_program_dna_equivalence/{stamp}/battery.json"
+        result = await self._skill(
+            "program_dna_equivalence_battery",
+            {"out_path": out_path, "include_results": False},
+        )
+        if not result.get("ok"):
+            raise AssertionError(f"program_dna_equivalence_battery failed: {result}")
+        body = result.get("result") if isinstance(result.get("result"), dict) else result
+        if not isinstance(body, dict) or not body.get("ok"):
+            raise AssertionError(f"program_dna_equivalence_battery returned malformed body: {result}")
+        if body.get("scenario_count") != 7 or body.get("passed_scenarios") != 7:
+            raise AssertionError(f"program_dna_equivalence_battery did not pass all scenarios: {result}")
+        if body.get("passed_cases") != body.get("held_out_cases") or body.get("equivalence") != 1.0:
+            raise AssertionError(f"program_dna_equivalence_battery failed held-out equivalence: {result}")
+        artifact = Path(str(result.get("artifact") or out_path))
+        if not artifact.exists():
+            raise AssertionError(f"program_dna_equivalence_battery did not write artifact: {artifact}")
+        return (
+            "program DNA hidden-source behavioral equivalence battery passed through live skill lane",
+            {
+                "artifact": str(artifact),
+                "scenario_count": body.get("scenario_count"),
+                "passed_scenarios": body.get("passed_scenarios"),
+                "passed_cases": body.get("passed_cases"),
+                "held_out_cases": body.get("held_out_cases"),
+                "equivalence": body.get("equivalence"),
             },
         )
 

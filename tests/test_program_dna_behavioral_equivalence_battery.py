@@ -1,5 +1,6 @@
 import pytest
 
+from core.skills.program_dna_equivalence_battery import ProgramDNAEquivalenceBatterySkill
 from tools.program_dna.behavioral_equivalence_battery import run_battery, scenarios
 
 
@@ -32,3 +33,23 @@ def test_program_dna_battery_scenarios_do_not_expose_source_paths():
         assert scenario.held_out_cases
         assert scenario.docs or scenario.behavior_examples
         assert not hasattr(scenario, "source_paths")
+
+
+@pytest.mark.asyncio
+async def test_program_dna_equivalence_battery_skill_runs_and_writes_artifact(tmp_path):
+    out_path = tmp_path / "program_dna_equivalence.json"
+
+    result = await ProgramDNAEquivalenceBatterySkill().execute(
+        {"out_path": str(out_path), "include_results": False},
+        context={"surface": "test"},
+    )
+
+    assert result["ok"] is True
+    assert result["skill"] == "program_dna_equivalence_battery"
+    assert result["artifact"] == str(out_path)
+    assert out_path.exists()
+    payload = result["result"]
+    assert payload["ok"] is True
+    assert payload["scenario_count"] == 7
+    assert payload["passed_cases"] == payload["held_out_cases"]
+    assert "results" not in payload

@@ -1090,6 +1090,40 @@ async def test_live_runtime_probe_checks_program_dna_skill_contract(tmp_path):
     assert "document_creation" in data["features"]
 
 
+@pytest.mark.asyncio
+async def test_live_runtime_probe_checks_program_dna_equivalence_battery_contract(tmp_path):
+    from tools.live_runtime_probe import LiveRuntimeProbe
+
+    class Probe(LiveRuntimeProbe):
+        async def _skill(self, skill_name, params):
+            assert skill_name == "program_dna_equivalence_battery"
+            assert params["include_results"] is False
+            artifact = tmp_path / "battery.json"
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            artifact.write_text("{}", encoding="utf-8")
+            return {
+                "ok": True,
+                "artifact": str(artifact),
+                "result": {
+                    "ok": True,
+                    "scenario_count": 7,
+                    "passed_scenarios": 7,
+                    "held_out_cases": 14,
+                    "passed_cases": 14,
+                    "equivalence": 1.0,
+                },
+            }
+
+    probe = Probe("http://127.0.0.1:8000")
+
+    detail, data = await probe._program_dna_equivalence_battery()
+
+    assert "equivalence battery" in detail
+    assert data["scenario_count"] == 7
+    assert data["passed_cases"] == 14
+    assert data["equivalence"] == 1.0
+
+
 def test_input_bus_normalizes_external_priority_values():
     bus = InputBus(maxsize=4)
     try:

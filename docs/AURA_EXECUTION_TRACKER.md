@@ -5849,3 +5849,54 @@ Estimate:
 - Chrome/Kubernetes-style operational maturity closure: about 77-83% locally.
 - Remaining total checkpoint groups: 3, focused on live desktop proof,
   background autonomy/repair/learning closure, and final evidence packaging.
+
+## Checkpoint 2026-07-03-34: Program DNA Equivalence Battery Live Skill
+
+Status: implementation validated; commit pending.
+
+Scope:
+
+- Promoted the hidden-source behavioral equivalence battery from developer-only
+  proof tooling into a governed Aura skill:
+  `program_dna_equivalence_battery`.
+- The skill writes a JSON artifact, returns a bounded summary, and keeps
+  per-scenario details optional so the live path can run the battery without
+  bloating chat responses.
+- Added capability-engine active-skill and intent-routing coverage so Aura can
+  choose the battery when asked for hidden-source Program DNA proof, held-out
+  behavioral tests, or reconstruction equivalence.
+- Added the battery to `tools/live_runtime_probe.py` as a focused live probe
+  through `/api/skill/execute`, with checks for artifact creation, 7/7
+  scenario pass, 14/14 held-out case pass, and `equivalence=1.0`.
+
+Evidence:
+
+- `python -m py_compile core/capability_engine.py core/skills/program_dna_equivalence_battery.py tools/live_runtime_probe.py tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_runtime_polish.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/capability_engine.py core/skills/program_dna_equivalence_battery.py tools/live_runtime_probe.py tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_runtime_polish.py`
+  -> passed.
+- `python -m pytest -q tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_skill_contract tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_equivalence_battery_contract tests/test_runtime_polish.py::test_live_runtime_probe_can_run_focused_probe_sets`
+  -> `13 passed`.
+- Direct skill invocation wrote
+  `artifacts/current/program_dna_equivalence_skill_latest.json` and returned
+  `ok=true`, `scenario_count=7`, `passed_scenarios=7`,
+  `passed_cases=14`, `held_out_cases=14`, `equivalence=1.0`.
+- Architecture gate baseline compare -> `passed=true`, `score=46.38`,
+  `largest_cycle_size=532`, `cycle_count=6`, `dependency_edges=7538`,
+  `god_file_count=37`, `module_count=2257`.
+
+Boundary:
+
+- This closes the live skill-callability gap for the representative Program
+  DNA equivalence battery. It is still a representative archetype battery, not
+  proof of arbitrary closed-source reconstruction or exact proprietary
+  algorithm recovery.
+
+Estimate:
+
+- Program DNA reconstruction closure: about 90-93% for authorized/public
+  clean-room study and representative replacement generation.
+- Expanded daily-runtime/product closure: about 95%.
+- Chrome/Kubernetes-style operational maturity closure: about 77-83% locally.
+- Remaining total checkpoint groups: 3, focused on live desktop proof,
+  background autonomy/repair/learning closure, and final evidence packaging.

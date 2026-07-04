@@ -266,9 +266,13 @@ def test_program_dna_skill_is_live_capability_engine_surface():
     engine = CapabilityEngine(orchestrator=None)
 
     assert "program_dna_reconstruct" in engine.get_available_skills()
+    assert "program_dna_equivalence_battery" in engine.get_available_skills()
     assert "program_dna_reconstruct" in engine.active_skills
+    assert "program_dna_equivalence_battery" in engine.active_skills
     selected = engine.detect_intent("Can you capture the program DNA and rebuild this app clean-room?")
     assert "program_dna_reconstruct" in selected
+    selected_battery = engine.detect_intent("Run the Program DNA hidden-source behavioral equivalence battery.")
+    assert "program_dna_equivalence_battery" in selected_battery
 
 
 @pytest.mark.asyncio

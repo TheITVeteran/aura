@@ -897,6 +897,7 @@ class CapabilityEngine(AuraBaseModule):
             "cognitive_trainer",
             "evolution_status",
             "program_dna_reconstruct",
+            "program_dna_equivalence_battery",
             # OS & computer control
             "computer_use",
             "desktop_task",
@@ -1150,6 +1151,13 @@ class CapabilityEngine(AuraBaseModule):
                 r"rebuild (?:this |that |the )?(?:program|app|application|software|tool)",
                 r"copy (?:the )?(?:behavior|features|ui|ux) of (?:this |that |the )?(?:program|app|application|software|tool)",
                 r"extract (?:the )?(?:behavior|affordances|features|dna) (?:from|of)",
+            ],
+            "program_dna_equivalence_battery": [
+                r"program dna (?:equivalence|battery|behavioral proof|hidden.?source)",
+                r"hidden.?source (?:program|software|behavioral) (?:test|battery|proof|equivalence)",
+                r"behavioral equivalence (?:battery|test|proof)",
+                r"test (?:program|software|app) reconstruction (?:equivalence|behavior)",
+                r"held.?out (?:tests?|cases?) (?:against|for) (?:the )?(?:original|replacement)",
             ],
             # ── Screen / Vision ───────────────────────────────────────
             "query_visual_context": [

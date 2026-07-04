@@ -76,6 +76,49 @@ Claim boundary:
   recovery, exact hidden algorithm equivalence, credential extraction,
   DRM/license bypass, or offensive malware/payload generation.
 
+## Checkpoint 2026-07-03-34: Program DNA Equivalence Skill Surface
+
+Status: verified locally, ready for commit.
+
+Why:
+
+- The hidden-source equivalence proof needed to be available through Aura's
+  governed capability surface, not only as a developer command.
+- The live runtime probe needed a focused check that the battery can be invoked
+  through `/api/skill/execute` and produces a durable artifact.
+
+What changed:
+
+- Added `core/skills/program_dna_equivalence_battery.py`.
+- Added capability-engine active-skill and intent patterns for hidden-source
+  Program DNA equivalence/battery requests.
+- Added live runtime probe coverage for
+  `program_dna_equivalence_battery`.
+- Added tests for skill execution, routing, live-probe contract, and artifact
+  writing.
+
+Evidence:
+
+- `python -m py_compile core/capability_engine.py core/skills/program_dna_equivalence_battery.py tools/live_runtime_probe.py tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_runtime_polish.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/capability_engine.py core/skills/program_dna_equivalence_battery.py tools/live_runtime_probe.py tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_runtime_polish.py`
+  -> passed.
+- `python -m pytest -q tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_skill_contract tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_equivalence_battery_contract tests/test_runtime_polish.py::test_live_runtime_probe_can_run_focused_probe_sets`
+  -> `13 passed`.
+- Direct skill invocation wrote
+  `artifacts/current/program_dna_equivalence_skill_latest.json` and returned
+  `ok=true`, `scenario_count=7`, `passed_scenarios=7`,
+  `passed_cases=14`, `held_out_cases=14`, `equivalence=1.0`.
+- Architecture gate baseline compare -> `passed=true`, `score=46.38`,
+  `largest_cycle_size=532`, `cycle_count=6`, `dependency_edges=7538`,
+  `god_file_count=37`, `module_count=2257`.
+
+Claim boundary:
+
+- This proves governed callability and artifact production for the
+  representative hidden-source Program DNA battery. It does not prove arbitrary
+  software cloning, exact hidden algorithm recovery, or permission/DRM bypass.
+
 ## Checkpoint 2026-06-30-02: Final Local Proof Closure
 
 Status: verified locally, ready for commit.
