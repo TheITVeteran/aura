@@ -640,43 +640,43 @@ class SandboxTester:
                 return results
             logger.warning("Pyright guard bypassed due to error: %s", e)
 
-        # Test 5: Run Unit Tests (pytest) if available
-        # Check for test files associated with the target
-        # e.g., core/memory.py -> tests/core/test_memory.py or same dir test_memory.py
+        # Test 5: Behavioral gate — the patch must prove behavior against
+        # the repo's real impacted tests in a copy-on-write clone. The old
+        # heuristic searched INSIDE the sandbox (which never contains the
+        # tests/ tree) and passed by default on finding nothing — a
+        # compiles-clean logic bug sailed through with zero behavioral
+        # evidence (external review finding, July 3).
         try:
-            # Simple heuristic for test discovery
-            test_files = await asyncio.to_thread(
-                lambda: list(sandbox_path.rglob(f"test_{sandbox_file.name}"))
+            from core.self_modification.behavioral_gate import run_behavioral_gate
+
+            verdict = await run_behavioral_gate(
+                fix.target_file,
+                code,
+                repo_root=self.code_base,
             )
-            
-            if test_files:
-                logger.info("Running tests: %s", test_files)
-                try:
-                    results["tests_run"] = [
-                        path.relative_to(sandbox_path).as_posix() for path in test_files
-                    ]
-                except ValueError:
-                    results["tests_run"] = [str(path) for path in test_files]
+            results["behavioral_gate"] = verdict.to_dict()
+            results["tests_run"] = verdict.tests
+            if verdict.tests:
                 results["commands"].append(
-                    "python -m pytest " + " ".join(results["tests_run"])
+                    "python -m pytest " + " ".join(verdict.tests)
                 )
-                result = await get_subprocess_gateway().run_async(
-                    ["python", "-m", "pytest", str(test_files[0])],
-                    capture_output=True,
-                    timeout=30,
-                    cwd=sandbox_path,
-                    source="core.self_modification.code_repair.validate_unit_tests",
+            if verdict.passed:
+                results["unit_tests"] = True
+            elif not verdict.covered and "core/" not in fix.target_file:
+                # Non-core files without coverage keep the lenient path,
+                # loudly: the gap is visible in the result payload.
+                results["unit_tests"] = True
+                results["errors"].append(
+                    "behavioral coverage missing (non-core file; allowed)"
                 )
-                
-                if result.returncode == 0:
-                    results["unit_tests"] = True
-                else:
-                    results["errors"].append(f"Unit tests failed: {result.stdout}")
-                    return results
             else:
-                # No tests found - pass by default but log
-                results["unit_tests"] = True # "N/A"
-                
+                # Core patches without green impacted tests are NOT
+                # auto-promotable — uncovered or failing both fail closed.
+                results["errors"].append(
+                    f"Behavioral gate: {verdict.detail[:300]}"
+                )
+                return results
+
         except (subprocess.SubprocessError, OSError) as e:
             _record_code_repair_degradation(
                 e,

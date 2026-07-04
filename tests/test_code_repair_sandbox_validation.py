@@ -65,7 +65,16 @@ async def test_sandbox_validation_fails_closed_when_unit_test_runner_fails(monke
         raise subprocess.SubprocessError("pytest transport failed")
 
     monkeypatch.setattr("core.resilience.diagnostic_hub.get_diagnostic_hub", lambda: _Hub())
-    monkeypatch.setattr("core.self_modification.code_repair.subprocess.run", _run_raises)
+
+    async def _gate_raises(*_args, **_kwargs):
+        run_calls.append((_args, _kwargs))
+        raise subprocess.SubprocessError("pytest transport failed")
+
+    # The unit-test runner is now the behavioral gate (cloned-repo pytest);
+    # its transport failure must still fail the validation closed.
+    monkeypatch.setattr(
+        "core.self_modification.behavioral_gate.run_behavioral_gate", _gate_raises
+    )
 
     result = await SandboxTester()._run_tests_in_sandbox(tmp_path, _fix("pkg/module.py"))
 
