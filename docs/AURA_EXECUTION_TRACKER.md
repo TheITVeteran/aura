@@ -6220,3 +6220,44 @@ Tracker:
 - Remaining checkpoint groups: 1 consolidated reliability/proof group, likely
   2-3 smaller sub-checkpoints: visible UI dialogue soak, macOS TCC/desktop
   control reconciliation, and longer unattended/thermal soak.
+
+## Checkpoint 2026-07-04-40: Bounded Proof-Bundle Refresh
+
+Status: implementation validated; checkpoint commit pending.
+
+Scope:
+
+- Fixed `tools/proof_bundle.py` so default proof-bundle regeneration no longer
+  invokes the live activation auditor. The default path now produces a bounded
+  offline/static activation snapshot and reserves live activation reconciliation
+  for explicit `AURA_PROOF_BUNDLE_LIVE_ACTIVATION_AUDIT=1` runs.
+- Updated the static scheduler wiring token to match the current orchestrator
+  source (`scheduler.start()`), so the activation wiring proof does not fail on
+  stale source text.
+- Regenerated `artifacts/proof_bundle/latest` after the bounded change. The
+  generator completed quickly and truthfully reported the remaining
+  `undeniable_rsi` gap as `not_l3_evidence` rather than hanging or forcing a
+  green proof.
+
+Evidence:
+
+- `python -m py_compile tools/proof_bundle.py tests/test_proof_bundle_hardening.py`
+  -> passed.
+- `python -m pytest -q tests/test_proof_bundle_hardening.py tests/test_long_horizon_kickoff.py::TestLongHorizonInfrastructure::test_proof_bundle_importable`
+  -> `2 passed`.
+- `python tools/proof_bundle.py --output-dir artifacts/proof_bundle/latest`
+  -> completed without hanging; manifest `passed=false` because canonical proof
+  bundle still records `undeniable_rsi` as `not_l3_evidence`.
+- `git diff --check` -> passed.
+
+Boundary:
+
+- This closes the generator hang/dirty-artifact issue. It does not close the
+  remaining RSI/L3 evidence gap; that stays visible in the refreshed canonical
+  proof bundle.
+
+Tracker:
+
+- Expanded daily-runtime/product closure remains about 97%.
+- Chrome/Kubernetes/aerospace operational maturity closure remains about
+  86-90% locally, with proof honesty improved and RSI evidence still open.

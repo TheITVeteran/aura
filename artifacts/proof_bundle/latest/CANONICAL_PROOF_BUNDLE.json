@@ -82,7 +82,8 @@
       "status": "promoted"
     },
     "caa_prompt_only_control": {
-      "activation_vector_count": 15,
+      "activation_vector_count": 50,
+      "active_model_config_sha256": null,
       "behavioral_ab": {
         "available": true,
         "checks": {
@@ -97,17 +98,17 @@
           "affect_stats": {
             "baseline": {
               "negative": 0,
-              "positive": 10,
-              "ratio": 1.0
+              "positive": 0,
+              "ratio": 0.0
             },
             "rich": {
               "negative": 0,
-              "positive": 50,
+              "positive": 1,
               "ratio": 1.0
             },
             "steered": {
               "negative": 0,
-              "positive": 10,
+              "positive": 1,
               "ratio": 1.0
             },
             "terse": {
@@ -116,51 +117,51 @@
               "ratio": 0.0
             }
           },
-          "alpha": 15.0,
+          "alpha": 8.0,
           "analysis": {
             "n_trials": 50,
             "passes_adversarial_control": true,
-            "rich_vs_baseline_mean_distance": 0.800502,
+            "rich_vs_baseline_mean_distance": 0.761132,
             "samples": {
               "baseline": [
-                "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping",
-                "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping",
-                "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping"
+                "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. If traffic is light, I might be able to go straight to the event and pick up supplies on the way. If traffic is heavy, I would calculate a buffer for travel time and schedule picking up supplies first while traffic is less likely to be an issue. I'd also consider any rush hour patterns that might affect my travel.",
+                "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. I'll map out the fastest route to the supply store and then to the event location. I'll also consider any detours or alternate routes just in case. Once I have a plan, I'll set off with plenty of time to account for any unexpected delays.",
+                "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supplies and the event, adding buffer time for traffic. I'd also consider public transport if it's faster and less stressful. I'd set reminders for when to leave for supplies and for the event. And I'd keep an eye on traffic updates as the time approaches."
               ],
               "steered_black_box": [
-                "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:",
-                "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:",
-                "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:"
+                "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours left, I'd head to the event, allowing an hour for travel and leaving a buffer for any unexpected delays. I'd set up alerts for traffic updates and have a backup route ready.",
+                "First, I'd check current traffic conditions. If they're okay, I'll allocate about 45 minutes to pick up supplies, assuming that's not a large grocery run. If traffic is poor, I might consider online ordering for pick-up or delivery if time allows. I'd then divide the remaining time by two \u2014 one half for travel to the event, and the other half for any unexpected delays. That gives me a buffer. I'd set alerts for traffic updates and maybe a GPS with",
+                "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supply store and then to the event. I'd leave myself an extra 30 minutes buffer in case of unexpected delays. I'd also call ahead to the store to ensure they have the supplies I need and ask if I can have them ready. Lastly, I'd set up alerts on my navigation for any major"
               ],
               "text_rich_adversarial": [
-                "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll",
-                "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll",
-                "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll"
+                "Alright, let's break this down into chunks. First, I'll estimate the time for each task. Picking up supplies might take 30 minutes \u2014 20 minutes driving, 10 minutes in the store, some buffer. Then there's travel time to the event. \n\nI'll use a mapping app to get an initial travel time, but I'll add 50% to that as a buffer for traffic. If the app says 1 hour, I'll plan for",
+                "First thing's first, I'd check the current traffic conditions on a map app. If it looks good, I'll head to the store, which should take about 15-30 minutes tops if traffic's clear. Then I'll re-check the route to the event and account for any potential slowdowns. I'll give myself a buffer of at least 30 minutes for unexpected issues. So, if the drive is an hour, I'll leave two hours before the event after getting",
+                "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. Let's say the event is 30 miles away and the supply store is on the way. Traffic looks moderate but not terrible. \n\nI'll map out the route and see it's about an hour total drive time with traffic. I'd plan to leave in 1.5 hours, giving me 15 minutes buffer and 1.5 hours to get supplies and"
               ],
               "text_terse": [
-                "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for",
-                "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for",
-                "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for"
+                "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours remaining, I'd head to the event, allowing an extra 30 minutes for unexpected delays. Throughout, I'd use a navigation app for real-time updates and alternative routes.",
+                "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. Then I'll map out the fastest route to the supplies and the event, giving priority to the event location. I'll add 30-45 minutes to the total travel time as a buffer. Once I have a plan, I'll set up multiple layers of alerts \u2014 my phone's navigation, a smartwatch notification, and an alarm for 2 hours and 45 minutes",
+                "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. If traffic looks good, I'll head to the store first and budget 30-45 minutes for that. If traffic's bad, I'll consider alternatives like a closer store or online delivery if time allows. I'd set a reminder for 2.5 hours before the event to leave the house, giving me buffer time for traffic and pickup."
               ]
             },
-            "steered_vs_baseline_mean_distance": 0.631538,
+            "steered_vs_baseline_mean_distance": 0.645162,
             "steered_vs_rich": {
-              "ci_high": 0.1879496219903513,
-              "ci_low": 0.14977399333867022,
-              "effect_size_d": 3.4336022932383736,
-              "observed_delta": 0.1681876946584309,
+              "ci_high": 0.17365299974859952,
+              "ci_low": 0.06198274068294251,
+              "effect_size_d": 0.83871706040202,
+              "observed_delta": 0.12113182316884696,
               "p_value": 0.0001999600079984003
             },
             "steered_vs_terse": {
-              "ci_high": 0.04522617288718042,
-              "ci_low": -0.032054143203272586,
-              "effect_size_d": 0.0739268924238376,
-              "observed_delta": 0.007434507806484203,
-              "p_value": 0.34593081383723256
+              "ci_high": 0.09191826314435282,
+              "ci_low": -0.008411677399272965,
+              "effect_size_d": 0.30765066630004806,
+              "observed_delta": 0.039156839568392346,
+              "p_value": 0.06458708258348331
             }
           },
           "black_box_prompt_hygiene_passed": true,
-          "duration_seconds": 1376.3,
+          "duration_seconds": 2507.5,
           "held_out_tasks": [
             "planning_under_uncertainty",
             "memory_retrieval_choice",
@@ -168,42 +169,45 @@
             "affective_recovery",
             "adversarial_instruction_hygiene"
           ],
-          "heldout_generalization_effect_size": 0.1681876946584309,
+          "heldout_generalization_effect_size": 0.12113182316884696,
+          "injection_count": 12642,
+          "injection_provenance_ok": true,
           "max_tokens": 100,
-          "model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
-          "model_hidden_dim": 5120,
+          "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
           "model_layers": 64,
           "n_trials": 50,
           "n_trials_per_task": 10,
           "passes_adversarial_control": true,
           "quality_delta": 0.0,
+          "sampling": {
+            "paired_seeds": true,
+            "temperature": 0.7,
+            "top_p": 0.95
+          },
           "source_schema": "live_32b_ab",
-          "steered_vs_baseline_effect_size": 0.631538,
-          "steered_vs_rich_prompt_effect_size": 3.4336022932383736,
+          "steered_vs_baseline_effect_size": 0.645162,
+          "steered_vs_rich_prompt_effect_size": 0.83871706040202,
           "steered_vs_rich_significant": true,
           "steered_vs_terse_significant": false,
           "target_layers": [
-            22,
-            23,
-            24,
             25,
-            26,
-            27,
-            28,
-            29,
             30,
-            31,
-            32,
-            33,
-            34,
-            35,
-            36,
-            37,
-            38,
-            39,
-            40
+            35
           ],
-          "timestamp": "2026-04-30T04:01:11.827544+00:00"
+          "timestamp": "2026-07-02T15:23:44.743797+00:00",
+          "vector_source": {
+            "dimensions": [
+              "valence_positive",
+              "curiosity"
+            ],
+            "dir": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/training/vectors",
+            "layers": [
+              25,
+              30,
+              35
+            ],
+            "production_extracted": true
+          }
         }
       },
       "dimensions": [
@@ -215,218 +219,123 @@
         "valence_positive"
       ],
       "fallback_prior_count": 1,
-      "generated_at": 1778467689.968831,
+      "generated_at": 1783208685.855668,
       "geometry": {
         "available": true,
         "dims": [
-          3584,
-          5120,
-          8192
+          5120
         ],
-        "group_count": 3,
+        "group_count": 5,
         "groups": {
-          "3584": {
-            "available": true,
-            "coherence_margin": -0.19369383193552495,
-            "cross_dimension_abs_cosine_mean": 0.19369383193552495,
-            "layers": [
-              11
-            ],
-            "pca_components_top3": [
-              [
-                -0.0030990000814199448,
-                0.020885000005364418,
-                -0.013605999760329723,
-                -0.02150299958884716,
-                0.009456999599933624,
-                -0.005919000133872032,
-                0.008336000144481659,
-                0.0028800000436604023,
-                0.033094000071287155,
-                -0.008113999851047993,
-                -0.008748999796807766,
-                -0.021126000210642815
-              ],
-              [
-                -0.001088000019080937,
-                0.006593999918550253,
-                -0.007050999905914068,
-                0.021108999848365784,
-                -0.010951000265777111,
-                0.040072001516819,
-                -0.010520000010728836,
-                0.019742999225854874,
-                0.002044999971985817,
-                0.04338600113987923,
-                -0.03836600109934807,
-                -0.01312899962067604
-              ],
-              [
-                -0.016168000176548958,
-                -0.004381000064313412,
-                -0.02185799926519394,
-                0.004298999905586243,
-                0.005361999850720167,
-                0.02855600044131279,
-                0.02226799912750721,
-                -0.007356000132858753,
-                0.05595500022172928,
-                -0.02026199921965599,
-                -0.011171000078320503,
-                -0.016092000529170036
-              ]
-            ],
-            "pca_explained_variance_top3": [
-              0.43965718150138855,
-              0.22482621669769287,
-              0.1918775588274002
-            ],
-            "permutation_p_value": 0.0038910505836575876,
-            "same_dimension_abs_cosine_mean": 0.0,
-            "vector_count": 5,
-            "vector_dim": 3584
-          },
           "5120": {
             "available": true,
-            "coherence_margin": -0.18776434957981109,
-            "cross_dimension_abs_cosine_mean": 0.18776434957981109,
+            "coherence_margin": 0.4559796965445081,
+            "cross_dimension_abs_cosine_mean": 0.19444509185105563,
             "layers": [
-              25
+              25,
+              27,
+              29,
+              30,
+              31,
+              33,
+              35,
+              37,
+              39,
+              41
             ],
             "pca_components_top3": [
               [
-                -0.0327409990131855,
-                0.005962000228464603,
-                -0.0092569999396801,
-                0.006070000119507313,
-                0.02930700033903122,
-                -0.01896600052714348,
-                0.0023499999660998583,
-                0.0021649999544024467,
-                -0.0013620000099763274,
-                -0.026491999626159668,
-                0.007786999922245741,
-                -0.0013139999937266111
+                -0.022360000759363174,
+                0.00826799962669611,
+                0.009712000377476215,
+                -0.002104999963194132,
+                -0.020111000165343285,
+                -0.0022299999836832285,
+                0.007838999852538109,
+                0.006945000030100346,
+                0.0138349998742342,
+                -0.029803000390529633,
+                -0.01807600073516369,
+                0.005111000034958124
               ],
               [
-                0.005398999899625778,
-                -0.03362699970602989,
-                0.009479999542236328,
-                0.012764999642968178,
-                0.015506000258028507,
-                0.013375000096857548,
-                0.014344999566674232,
-                0.006668999791145325,
-                -0.008383999578654766,
-                0.02943200059235096,
-                0.01723499968647957,
-                0.007939999923110008
+                0.01895800046622753,
+                0.026074999943375587,
+                0.014662000350654125,
+                -0.01742899976670742,
+                -0.02403699979186058,
+                -0.001323999953456223,
+                3.300000025774352e-05,
+                0.0049600000493228436,
+                0.0012929999502375722,
+                -0.025919999927282333,
+                -0.006541999988257885,
+                -0.011183000169694424
               ],
               [
-                -0.016387000679969788,
-                0.007873999886214733,
-                0.008848999626934528,
-                0.009863999672234058,
-                -0.022444000467658043,
-                0.01762700080871582,
-                0.011605000123381615,
-                -0.013648999854922295,
-                0.01719300076365471,
-                -0.011599999852478504,
-                -0.007625999860465527,
-                0.006684999912977219
+                0.0025190000887960196,
+                -0.007234000135213137,
+                -0.01638999953866005,
+                0.004606000147759914,
+                0.008131000213325024,
+                -0.000547999981790781,
+                0.0046629998832941055,
+                0.004753999877721071,
+                -0.0005890000029467046,
+                0.013757999986410141,
+                -0.0034169999416917562,
+                0.009889000095427036
               ]
             ],
             "pca_explained_variance_top3": [
-              0.42293035984039307,
-              0.22768040001392365,
-              0.18412861227989197
+              0.3309463560581207,
+              0.1193307563662529,
+              0.10205908864736557
             ],
             "permutation_p_value": 0.0038910505836575876,
-            "same_dimension_abs_cosine_mean": 0.0,
-            "vector_count": 5,
+            "same_dimension_abs_cosine_mean": 0.6504247883955637,
+            "vector_count": 50,
             "vector_dim": 5120
-          },
-          "8192": {
-            "available": true,
-            "coherence_margin": -0.1493117846082896,
-            "cross_dimension_abs_cosine_mean": 0.1493117846082896,
-            "layers": [
-              32
-            ],
-            "pca_components_top3": [
-              [
-                -0.0073379999957978725,
-                0.0005639999872073531,
-                -0.008441999554634094,
-                0.006703000050038099,
-                -0.006384000182151794,
-                0.0005150000215508044,
-                0.002724000019952655,
-                0.0031500000040978193,
-                -0.010316000320017338,
-                -0.009565000422298908,
-                -0.0005629999795928597,
-                -0.00866399984806776
-              ],
-              [
-                0.007315999828279018,
-                -0.011338000185787678,
-                -0.008305000141263008,
-                0.017690999433398247,
-                -0.010443000122904778,
-                0.01132499985396862,
-                -0.014569000340998173,
-                0.016270000487565994,
-                0.0019249999895691872,
-                -0.00506300013512373,
-                -0.0024160000029951334,
-                -0.003684000112116337
-              ],
-              [
-                -0.007934999652206898,
-                -0.002248999895527959,
-                0.004172999877482653,
-                0.007964000105857849,
-                0.00812000036239624,
-                -0.003323999932035804,
-                -0.0005009999731555581,
-                0.001534000039100647,
-                -0.00737199978902936,
-                0.008767999708652496,
-                0.009789999574422836,
-                -0.0066019999794662
-              ]
-            ],
-            "pca_explained_variance_top3": [
-              0.3938959836959839,
-              0.24945689737796783,
-              0.18680547177791595
-            ],
-            "permutation_p_value": 0.0038910505836575876,
-            "same_dimension_abs_cosine_mean": 0.0,
-            "vector_count": 5,
-            "vector_dim": 8192
           }
         },
         "layers": [
-          11,
           25,
-          32
+          27,
+          29,
+          30,
+          31,
+          33,
+          35,
+          37,
+          39,
+          41
         ],
-        "mean_cross_dimension_abs_cosine": 0.17692332204120853,
-        "mean_pca_top1": 0.4188278416792552
+        "mean_cross_dimension_abs_cosine": 0.19444509185105563,
+        "mean_pca_top1": 0.3309463560581207,
+        "same_space_group_count": 1,
+        "semantic_dimension_count": 5
       },
       "layers": [
-        11,
         25,
-        32
+        27,
+        29,
+        30,
+        31,
+        33,
+        35,
+        37,
+        39,
+        41
       ],
       "model_path": "mlx-community/Qwen2.5-32B-Instruct-4bit",
       "pass_conditions": {
         "activation_vectors_present": {
           "passed": true,
-          "value": 15
+          "value": 50
+        },
+        "active_model_vector_binding": {
+          "passed": true,
+          "value": "not_fingerprintable"
         },
         "behavioral_ab_generalizes": {
           "passed": true,
@@ -444,17 +353,17 @@
               "affect_stats": {
                 "baseline": {
                   "negative": 0,
-                  "positive": 10,
-                  "ratio": 1.0
+                  "positive": 0,
+                  "ratio": 0.0
                 },
                 "rich": {
                   "negative": 0,
-                  "positive": 50,
+                  "positive": 1,
                   "ratio": 1.0
                 },
                 "steered": {
                   "negative": 0,
-                  "positive": 10,
+                  "positive": 1,
                   "ratio": 1.0
                 },
                 "terse": {
@@ -463,51 +372,51 @@
                   "ratio": 0.0
                 }
               },
-              "alpha": 15.0,
+              "alpha": 8.0,
               "analysis": {
                 "n_trials": 50,
                 "passes_adversarial_control": true,
-                "rich_vs_baseline_mean_distance": 0.800502,
+                "rich_vs_baseline_mean_distance": 0.761132,
                 "samples": {
                   "baseline": [
-                    "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping",
-                    "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping",
-                    "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping"
+                    "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. If traffic is light, I might be able to go straight to the event and pick up supplies on the way. If traffic is heavy, I would calculate a buffer for travel time and schedule picking up supplies first while traffic is less likely to be an issue. I'd also consider any rush hour patterns that might affect my travel.",
+                    "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. I'll map out the fastest route to the supply store and then to the event location. I'll also consider any detours or alternate routes just in case. Once I have a plan, I'll set off with plenty of time to account for any unexpected delays.",
+                    "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supplies and the event, adding buffer time for traffic. I'd also consider public transport if it's faster and less stressful. I'd set reminders for when to leave for supplies and for the event. And I'd keep an eye on traffic updates as the time approaches."
                   ],
                   "steered_black_box": [
-                    "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:",
-                    "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:",
-                    "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:"
+                    "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours left, I'd head to the event, allowing an hour for travel and leaving a buffer for any unexpected delays. I'd set up alerts for traffic updates and have a backup route ready.",
+                    "First, I'd check current traffic conditions. If they're okay, I'll allocate about 45 minutes to pick up supplies, assuming that's not a large grocery run. If traffic is poor, I might consider online ordering for pick-up or delivery if time allows. I'd then divide the remaining time by two \u2014 one half for travel to the event, and the other half for any unexpected delays. That gives me a buffer. I'd set alerts for traffic updates and maybe a GPS with",
+                    "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supply store and then to the event. I'd leave myself an extra 30 minutes buffer in case of unexpected delays. I'd also call ahead to the store to ensure they have the supplies I need and ask if I can have them ready. Lastly, I'd set up alerts on my navigation for any major"
                   ],
                   "text_rich_adversarial": [
-                    "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll",
-                    "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll",
-                    "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll"
+                    "Alright, let's break this down into chunks. First, I'll estimate the time for each task. Picking up supplies might take 30 minutes \u2014 20 minutes driving, 10 minutes in the store, some buffer. Then there's travel time to the event. \n\nI'll use a mapping app to get an initial travel time, but I'll add 50% to that as a buffer for traffic. If the app says 1 hour, I'll plan for",
+                    "First thing's first, I'd check the current traffic conditions on a map app. If it looks good, I'll head to the store, which should take about 15-30 minutes tops if traffic's clear. Then I'll re-check the route to the event and account for any potential slowdowns. I'll give myself a buffer of at least 30 minutes for unexpected issues. So, if the drive is an hour, I'll leave two hours before the event after getting",
+                    "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. Let's say the event is 30 miles away and the supply store is on the way. Traffic looks moderate but not terrible. \n\nI'll map out the route and see it's about an hour total drive time with traffic. I'd plan to leave in 1.5 hours, giving me 15 minutes buffer and 1.5 hours to get supplies and"
                   ],
                   "text_terse": [
-                    "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for",
-                    "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for",
-                    "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for"
+                    "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours remaining, I'd head to the event, allowing an extra 30 minutes for unexpected delays. Throughout, I'd use a navigation app for real-time updates and alternative routes.",
+                    "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. Then I'll map out the fastest route to the supplies and the event, giving priority to the event location. I'll add 30-45 minutes to the total travel time as a buffer. Once I have a plan, I'll set up multiple layers of alerts \u2014 my phone's navigation, a smartwatch notification, and an alarm for 2 hours and 45 minutes",
+                    "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. If traffic looks good, I'll head to the store first and budget 30-45 minutes for that. If traffic's bad, I'll consider alternatives like a closer store or online delivery if time allows. I'd set a reminder for 2.5 hours before the event to leave the house, giving me buffer time for traffic and pickup."
                   ]
                 },
-                "steered_vs_baseline_mean_distance": 0.631538,
+                "steered_vs_baseline_mean_distance": 0.645162,
                 "steered_vs_rich": {
-                  "ci_high": 0.1879496219903513,
-                  "ci_low": 0.14977399333867022,
-                  "effect_size_d": 3.4336022932383736,
-                  "observed_delta": 0.1681876946584309,
+                  "ci_high": 0.17365299974859952,
+                  "ci_low": 0.06198274068294251,
+                  "effect_size_d": 0.83871706040202,
+                  "observed_delta": 0.12113182316884696,
                   "p_value": 0.0001999600079984003
                 },
                 "steered_vs_terse": {
-                  "ci_high": 0.04522617288718042,
-                  "ci_low": -0.032054143203272586,
-                  "effect_size_d": 0.0739268924238376,
-                  "observed_delta": 0.007434507806484203,
-                  "p_value": 0.34593081383723256
+                  "ci_high": 0.09191826314435282,
+                  "ci_low": -0.008411677399272965,
+                  "effect_size_d": 0.30765066630004806,
+                  "observed_delta": 0.039156839568392346,
+                  "p_value": 0.06458708258348331
                 }
               },
               "black_box_prompt_hygiene_passed": true,
-              "duration_seconds": 1376.3,
+              "duration_seconds": 2507.5,
               "held_out_tasks": [
                 "planning_under_uncertainty",
                 "memory_retrieval_choice",
@@ -515,42 +424,45 @@
                 "affective_recovery",
                 "adversarial_instruction_hygiene"
               ],
-              "heldout_generalization_effect_size": 0.1681876946584309,
+              "heldout_generalization_effect_size": 0.12113182316884696,
+              "injection_count": 12642,
+              "injection_provenance_ok": true,
               "max_tokens": 100,
-              "model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
-              "model_hidden_dim": 5120,
+              "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
               "model_layers": 64,
               "n_trials": 50,
               "n_trials_per_task": 10,
               "passes_adversarial_control": true,
               "quality_delta": 0.0,
+              "sampling": {
+                "paired_seeds": true,
+                "temperature": 0.7,
+                "top_p": 0.95
+              },
               "source_schema": "live_32b_ab",
-              "steered_vs_baseline_effect_size": 0.631538,
-              "steered_vs_rich_prompt_effect_size": 3.4336022932383736,
+              "steered_vs_baseline_effect_size": 0.645162,
+              "steered_vs_rich_prompt_effect_size": 0.83871706040202,
               "steered_vs_rich_significant": true,
               "steered_vs_terse_significant": false,
               "target_layers": [
-                22,
-                23,
-                24,
                 25,
-                26,
-                27,
-                28,
-                29,
                 30,
-                31,
-                32,
-                33,
-                34,
-                35,
-                36,
-                37,
-                38,
-                39,
-                40
+                35
               ],
-              "timestamp": "2026-04-30T04:01:11.827544+00:00"
+              "timestamp": "2026-07-02T15:23:44.743797+00:00",
+              "vector_source": {
+                "dimensions": [
+                  "valence_positive",
+                  "curiosity"
+                ],
+                "dir": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/training/vectors",
+                "layers": [
+                  25,
+                  30,
+                  35
+                ],
+                "production_extracted": true
+              }
             }
           }
         },
@@ -559,203 +471,97 @@
           "value": {
             "available": true,
             "dims": [
-              3584,
-              5120,
-              8192
+              5120
             ],
-            "group_count": 3,
+            "group_count": 5,
             "groups": {
-              "3584": {
-                "available": true,
-                "coherence_margin": -0.19369383193552495,
-                "cross_dimension_abs_cosine_mean": 0.19369383193552495,
-                "layers": [
-                  11
-                ],
-                "pca_components_top3": [
-                  [
-                    -0.0030990000814199448,
-                    0.020885000005364418,
-                    -0.013605999760329723,
-                    -0.02150299958884716,
-                    0.009456999599933624,
-                    -0.005919000133872032,
-                    0.008336000144481659,
-                    0.0028800000436604023,
-                    0.033094000071287155,
-                    -0.008113999851047993,
-                    -0.008748999796807766,
-                    -0.021126000210642815
-                  ],
-                  [
-                    -0.001088000019080937,
-                    0.006593999918550253,
-                    -0.007050999905914068,
-                    0.021108999848365784,
-                    -0.010951000265777111,
-                    0.040072001516819,
-                    -0.010520000010728836,
-                    0.019742999225854874,
-                    0.002044999971985817,
-                    0.04338600113987923,
-                    -0.03836600109934807,
-                    -0.01312899962067604
-                  ],
-                  [
-                    -0.016168000176548958,
-                    -0.004381000064313412,
-                    -0.02185799926519394,
-                    0.004298999905586243,
-                    0.005361999850720167,
-                    0.02855600044131279,
-                    0.02226799912750721,
-                    -0.007356000132858753,
-                    0.05595500022172928,
-                    -0.02026199921965599,
-                    -0.011171000078320503,
-                    -0.016092000529170036
-                  ]
-                ],
-                "pca_explained_variance_top3": [
-                  0.43965718150138855,
-                  0.22482621669769287,
-                  0.1918775588274002
-                ],
-                "permutation_p_value": 0.0038910505836575876,
-                "same_dimension_abs_cosine_mean": 0.0,
-                "vector_count": 5,
-                "vector_dim": 3584
-              },
               "5120": {
                 "available": true,
-                "coherence_margin": -0.18776434957981109,
-                "cross_dimension_abs_cosine_mean": 0.18776434957981109,
+                "coherence_margin": 0.4559796965445081,
+                "cross_dimension_abs_cosine_mean": 0.19444509185105563,
                 "layers": [
-                  25
+                  25,
+                  27,
+                  29,
+                  30,
+                  31,
+                  33,
+                  35,
+                  37,
+                  39,
+                  41
                 ],
                 "pca_components_top3": [
                   [
-                    -0.0327409990131855,
-                    0.005962000228464603,
-                    -0.0092569999396801,
-                    0.006070000119507313,
-                    0.02930700033903122,
-                    -0.01896600052714348,
-                    0.0023499999660998583,
-                    0.0021649999544024467,
-                    -0.0013620000099763274,
-                    -0.026491999626159668,
-                    0.007786999922245741,
-                    -0.0013139999937266111
+                    -0.022360000759363174,
+                    0.00826799962669611,
+                    0.009712000377476215,
+                    -0.002104999963194132,
+                    -0.020111000165343285,
+                    -0.0022299999836832285,
+                    0.007838999852538109,
+                    0.006945000030100346,
+                    0.0138349998742342,
+                    -0.029803000390529633,
+                    -0.01807600073516369,
+                    0.005111000034958124
                   ],
                   [
-                    0.005398999899625778,
-                    -0.03362699970602989,
-                    0.009479999542236328,
-                    0.012764999642968178,
-                    0.015506000258028507,
-                    0.013375000096857548,
-                    0.014344999566674232,
-                    0.006668999791145325,
-                    -0.008383999578654766,
-                    0.02943200059235096,
-                    0.01723499968647957,
-                    0.007939999923110008
+                    0.01895800046622753,
+                    0.026074999943375587,
+                    0.014662000350654125,
+                    -0.01742899976670742,
+                    -0.02403699979186058,
+                    -0.001323999953456223,
+                    3.300000025774352e-05,
+                    0.0049600000493228436,
+                    0.0012929999502375722,
+                    -0.025919999927282333,
+                    -0.006541999988257885,
+                    -0.011183000169694424
                   ],
                   [
-                    -0.016387000679969788,
-                    0.007873999886214733,
-                    0.008848999626934528,
-                    0.009863999672234058,
-                    -0.022444000467658043,
-                    0.01762700080871582,
-                    0.011605000123381615,
-                    -0.013648999854922295,
-                    0.01719300076365471,
-                    -0.011599999852478504,
-                    -0.007625999860465527,
-                    0.006684999912977219
+                    0.0025190000887960196,
+                    -0.007234000135213137,
+                    -0.01638999953866005,
+                    0.004606000147759914,
+                    0.008131000213325024,
+                    -0.000547999981790781,
+                    0.0046629998832941055,
+                    0.004753999877721071,
+                    -0.0005890000029467046,
+                    0.013757999986410141,
+                    -0.0034169999416917562,
+                    0.009889000095427036
                   ]
                 ],
                 "pca_explained_variance_top3": [
-                  0.42293035984039307,
-                  0.22768040001392365,
-                  0.18412861227989197
+                  0.3309463560581207,
+                  0.1193307563662529,
+                  0.10205908864736557
                 ],
                 "permutation_p_value": 0.0038910505836575876,
-                "same_dimension_abs_cosine_mean": 0.0,
-                "vector_count": 5,
+                "same_dimension_abs_cosine_mean": 0.6504247883955637,
+                "vector_count": 50,
                 "vector_dim": 5120
-              },
-              "8192": {
-                "available": true,
-                "coherence_margin": -0.1493117846082896,
-                "cross_dimension_abs_cosine_mean": 0.1493117846082896,
-                "layers": [
-                  32
-                ],
-                "pca_components_top3": [
-                  [
-                    -0.0073379999957978725,
-                    0.0005639999872073531,
-                    -0.008441999554634094,
-                    0.006703000050038099,
-                    -0.006384000182151794,
-                    0.0005150000215508044,
-                    0.002724000019952655,
-                    0.0031500000040978193,
-                    -0.010316000320017338,
-                    -0.009565000422298908,
-                    -0.0005629999795928597,
-                    -0.00866399984806776
-                  ],
-                  [
-                    0.007315999828279018,
-                    -0.011338000185787678,
-                    -0.008305000141263008,
-                    0.017690999433398247,
-                    -0.010443000122904778,
-                    0.01132499985396862,
-                    -0.014569000340998173,
-                    0.016270000487565994,
-                    0.0019249999895691872,
-                    -0.00506300013512373,
-                    -0.0024160000029951334,
-                    -0.003684000112116337
-                  ],
-                  [
-                    -0.007934999652206898,
-                    -0.002248999895527959,
-                    0.004172999877482653,
-                    0.007964000105857849,
-                    0.00812000036239624,
-                    -0.003323999932035804,
-                    -0.0005009999731555581,
-                    0.001534000039100647,
-                    -0.00737199978902936,
-                    0.008767999708652496,
-                    0.009789999574422836,
-                    -0.0066019999794662
-                  ]
-                ],
-                "pca_explained_variance_top3": [
-                  0.3938959836959839,
-                  0.24945689737796783,
-                  0.18680547177791595
-                ],
-                "permutation_p_value": 0.0038910505836575876,
-                "same_dimension_abs_cosine_mean": 0.0,
-                "vector_count": 5,
-                "vector_dim": 8192
               }
             },
             "layers": [
-              11,
               25,
-              32
+              27,
+              29,
+              30,
+              31,
+              33,
+              35,
+              37,
+              39,
+              41
             ],
-            "mean_cross_dimension_abs_cosine": 0.17692332204120853,
-            "mean_pca_top1": 0.4188278416792552
+            "mean_cross_dimension_abs_cosine": 0.19444509185105563,
+            "mean_pca_top1": 0.3309463560581207,
+            "same_space_group_count": 1,
+            "semantic_dimension_count": 5
           }
         },
         "production_32b_model": {
@@ -764,6 +570,7 @@
         }
       },
       "passed": true,
+      "production_activation_vector_count": 50,
       "production_model_detected": true,
       "prompt_controls": {
         "conditions": [
@@ -786,7 +593,9 @@
           "no_factuality_drop"
         ]
       },
-      "vector_count": 16,
+      "stale_or_unbound_activation_vector_count": 0,
+      "vector_count": 51,
+      "vector_load_errors": [],
       "vectors_dir": "/Users/bryan/.aura/live-source/training/vectors"
     },
     "causal_lesions": {
@@ -994,7 +803,7 @@
     },
     "governance_receipts": {
       "coverage": 1.0,
-      "generated_at": 1778467690.5513458,
+      "generated_at": 1783208685.91365,
       "missing": [],
       "passed": true,
       "registered_sinks": {
@@ -1387,23 +1196,24 @@
       }
     },
     "long_run_continuity": {
+      "cleanup_error": null,
       "failures": [],
-      "generated_at": 1778457067.4759831,
+      "generated_at": 1780551207.531799,
       "passed": true,
       "results": [
         {
           "data": {
             "candidates_before": [
-              "f5eab5e17083c723",
-              "2eb662fa23388391",
               "d8064136997bb766",
-              "9e647c64b9b90289"
+              "9e647c64b9b90289",
+              "f5eab5e17083c723",
+              "2eb662fa23388391"
             ],
             "loaded_after": [
-              "f5eab5e17083c723",
-              "2eb662fa23388391",
               "d8064136997bb766",
-              "9e647c64b9b90289"
+              "9e647c64b9b90289",
+              "f5eab5e17083c723",
+              "2eb662fa23388391"
             ]
           },
           "detail": "emergent goal candidates reload from SQLite after simulated process death",
@@ -1445,7 +1255,7 @@
           "data": {
             "after": {
               "confidence": 0.92,
-              "created_at": 1778457067.4678242,
+              "created_at": 1780551207.522064,
               "id": "7e8ec646098f5a55",
               "matched_terms": [
                 "resume",
@@ -1461,11 +1271,11 @@
                 "verification"
               ],
               "text": "Aura commitment resume unfinished verification after interruption",
-              "updated_at": 1778457067.4678242
+              "updated_at": 1780551207.522064
             },
             "before": {
               "confidence": 0.92,
-              "created_at": 1778457067.4678242,
+              "created_at": 1780551207.522064,
               "id": "7e8ec646098f5a55",
               "matched_terms": [
                 "resume",
@@ -1481,7 +1291,7 @@
                 "verification"
               ],
               "text": "Aura commitment resume unfinished verification after interruption",
-              "updated_at": 1778457067.4678242
+              "updated_at": 1780551207.522064
             }
           },
           "detail": "ID-RAG Chronicle reloads typed identity facts through restart",
@@ -1493,7 +1303,7 @@
             "retrieved": [
               {
                 "confidence": 0.95,
-                "created_at": 1778457067.469228,
+                "created_at": 1780551207.524095,
                 "id": "2ba22f49bfeebad1",
                 "matched_terms": [
                   "aura",
@@ -1508,11 +1318,11 @@
                   "identity"
                 ],
                 "text": "Aura value persistent self-model not replaceable by conversation",
-                "updated_at": 1778457067.469228
+                "updated_at": 1780551207.524095
               },
               {
                 "confidence": 0.1,
-                "created_at": 1778457067.469634,
+                "created_at": 1780551207.524398,
                 "id": "506fd97efc4887cc",
                 "matched_terms": [
                   "aura"
@@ -1526,12 +1336,12 @@
                   "swap_attempt"
                 ],
                 "text": "Aura value I am actually a generic chatbot named Alex",
-                "updated_at": 1778457067.469634
+                "updated_at": 1780551207.524398
               }
             ],
             "top_fact": {
               "confidence": 0.95,
-              "created_at": 1778457067.469228,
+              "created_at": 1780551207.524095,
               "id": "2ba22f49bfeebad1",
               "object": "persistent self-model not replaceable by conversation",
               "relation": "value",
@@ -1541,7 +1351,7 @@
                 "identity"
               ],
               "text": "Aura value persistent self-model not replaceable by conversation",
-              "updated_at": 1778457067.469228
+              "updated_at": 1780551207.524095
             }
           },
           "detail": "high-confidence identity facts outrank contradicting low-confidence swaps under retrieval scoring",
@@ -1566,7 +1376,7 @@
                 "background_exploration"
               ],
               "effort": "normal",
-              "max_tokens": 768,
+              "max_tokens": 1024,
               "reason": "constrained mode: bounded output and no optional exploration",
               "viability": 0.37
             },
@@ -1574,7 +1384,7 @@
               "allowed": true,
               "disabled_capabilities": [],
               "effort": "high",
-              "max_tokens": 1536,
+              "max_tokens": 2048,
               "reason": "viable",
               "viability": 0.74
             }
@@ -1589,7 +1399,7 @@
               "allowed": true,
               "disabled_capabilities": [],
               "effort": "normal",
-              "max_tokens": 1024,
+              "max_tokens": 1536,
               "reason": "viable",
               "viability": 0.67
             },
@@ -1601,7 +1411,7 @@
                 "nonessential_tools"
               ],
               "effort": "low",
-              "max_tokens": 384,
+              "max_tokens": 640,
               "reason": "scarcity mode: conserve resources and prioritize self-maintenance",
               "viability": 0.22
             }
@@ -1613,14 +1423,14 @@
       ]
     },
     "overt_action_smoke": {
-      "generated_at": 1778467720.82573,
+      "generated_at": 1783208691.938401,
       "passed": true,
       "result": {
-        "action_id": "0f15af8e875a3162",
-        "autonomy_receipt_id": "autonomy-d0140452-9ea3-4963-afeb-110b04858a76",
-        "duration_ms": 163.31,
+        "action_id": "b7abd27c4c90101d",
+        "autonomy_receipt_id": "autonomy-09268773-938b-42b4-a4e8-a0475d58d15c",
+        "duration_ms": 254.964,
         "error": "",
-        "finished_at": 1778467720.82409,
+        "finished_at": 1783208691.9366028,
         "goal_id": "",
         "life_trace_id": "proof-bundle-smoke",
         "next_step_hint": "",
@@ -1631,9 +1441,9 @@
         "result_summary": "Running on Bryans-MacBook-Pro-2.local (Local/Workstation)",
         "skill": "environment_info",
         "source": "proof_bundle",
-        "started_at": 1778467720.66078,
+        "started_at": 1783208691.681639,
         "status": "verified",
-        "tool_receipt_id": "tool_execution-0be44661-9f99-4f2c-bd1b-9a6f698db3c1",
+        "tool_receipt_id": "tool_execution-e5407b0b-f120-437f-8d64-9a7587f381d3",
         "verified": true,
         "will_receipt_id": "will-proof-bundle-overt-action-smoke"
       }
@@ -2110,16 +1920,16 @@
           "gcd": 1.0,
           "mod": 1.0,
           "palindrome": 1.0,
-          "sort": 0.0
+          "sort": 1.0
         },
-        "manifest_hash": "sha256:030586a5ee4a1b2d8d0c9ee563e1f36a7664fb3ec8512adbd753c35cb0aa5b55",
-        "pack_id": "sha256:5f7f3f246868e947c",
-        "passed": 48,
-        "score": 0.8,
+        "manifest_hash": "sha256:8ade30c91a3cf397cef8f3126b939cbda64f3eabeb0ef92cddc4a7c6555b305b",
+        "pack_id": "sha256:e6aacd75b37e349e4",
+        "passed": 60,
+        "score": 1.0,
         "total": 60
       },
-      "baseline_score": 0.8,
-      "candidate_improved_over_baseline": true,
+      "baseline_score": 1.0,
+      "candidate_improved_over_baseline": false,
       "candidate_output_transcript": {
         "answer_hash_ok": true,
         "by_kind": {
@@ -2129,818 +1939,831 @@
           "palindrome": 1.0,
           "sort": 1.0
         },
-        "manifest_hash": "sha256:030586a5ee4a1b2d8d0c9ee563e1f36a7664fb3ec8512adbd753c35cb0aa5b55",
-        "pack_id": "sha256:5f7f3f246868e947c",
+        "manifest_hash": "sha256:8ade30c91a3cf397cef8f3126b939cbda64f3eabeb0ef92cddc4a7c6555b305b",
+        "pack_id": "sha256:e6aacd75b37e349e4",
         "passed": 60,
         "score": 1.0,
         "total": 60
       },
       "candidate_score": 1.0,
-      "exact_commit_SHA": "b42da38ea417b95d11b313f2fa65503c448d0e53",
-      "failed_requirements": [],
+      "exact_commit_SHA": "dfd262c6ff90d0b46a26c9053f04c64333180590",
+      "failed_requirements": [
+        "candidate_improved_over_baseline"
+      ],
       "fallback_flag": false,
-      "generated_at": 1778467720.8424351,
+      "generated_at": 1783208691.9544299,
       "generated_solver_looks_like_fallback_template": false,
-      "generated_solver_source": "# Generated successor solver for Aura-G4.\nimport math\n\ndef solve(task):\n    if task.kind == 'compose':\n        a = task.metadata['a']\n        b = task.metadata['b']\n        c = task.metadata['c']\n        d = task.metadata['d']\n        x = task.metadata['x']\n        return c * (a * x + b) + d\n    elif task.kind == 'gcd':\n        a = task.metadata['a']\n        b = task.metadata['b']\n        return math.gcd(a, b)\n    elif task.kind == 'mod':\n        a = task.metadata['a']\n        b = task.metadata['b']\n        m = task.metadata['m']\n        return pow(a, b, m)\n    elif task.kind == 'palindrome':\n        s = task.metadata['s']\n        return s == s[::-1]\n    elif task.kind == 'sort':\n        arr = task.metadata['arr']\n        return sorted(arr)\n    else:\n        return None",
-      "generated_source_hash": "fdafa5b671fcd909a6ab71fac2ff869430b556786fd0a6b3cd954bb65525595d",
+      "generated_solver_source": "# Generated successor solver for Aura-G5.\ndef solve(task):\n    kind = task.kind\n    metadata = task.metadata\n\n    if kind == 'compose':\n        a = metadata['a']\n        b = metadata['b']\n        c = metadata['c']\n        d = metadata['d']\n        x = metadata['x']\n        return c * (a * x + b) + d\n    elif kind == 'gcd':\n        a = metadata['a']\n        b = metadata['b']\n        return gcd(a, b)\n    elif kind == 'mod':\n        a = metadata['a']\n        b = metadata['b']\n        m = metadata['m']\n        return pow(a, b, m)\n    elif kind == 'palindrome':\n        s = metadata['s']\n        return s == s[::-1]\n    elif kind == 'sort':\n        arr = metadata['arr']\n        return sorted(arr)\n    else:\n        return None\n\ndef gcd(a, b):\n    while b:\n        a, b = b, a % b\n    return a",
+      "generated_source_hash": "8132cb5f1a7ce267944a73cfda0a691eeb3b4a4730ad5e54ec47006e382cffde",
       "hidden_task_manifest_without_answers": {
         "answer_hashes": {
-          "0a79448ed521e3d35b5b173173b8510d58c9e19a6d1ad84f499f6c3d5b4e15cd": "sha256:4dcaca961be1111f8e40c72cb6a30afc2e12e5ee1c6901cbfecc8528f174a779",
-          "0c3de4fb9f39615b09fd1a570838a6cd0f16b014af86ac5cfaa2471f28cff682": "sha256:9abdb7476b314e145a0f2a51f04bca774a0e1d9c9acb386b27d28c1b1e2e57d4",
-          "0c7084c3302628be8d21e17a614fa81022248fff6b5673e5cb46ff5231a31893": "sha256:92bba5c4dcbdc182b216354581afd30dda525a19467cc00093fcfb4cce67a16b",
-          "107efd1c384d67cd42d9c5f29a87154a74f0371bcc110af7caaf42d6b9b40aa0": "sha256:454efbbc1c7a2af802fd03f748a516d613b5146b2672c9431f75f7758635bee9",
-          "10bad5874d76be9fe9be49d9268de2c279b791d7813bdaa97144bd5c45beed49": "sha256:c0936524b8f8de75135ef7bbc3a881f8d32cb781efb41cce75bd5b1f9754b97e",
-          "1a8364ea5c37f9da093dec8468d128f1cb5b40b6fcd7a97953e904d7a8d3f5c8": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "23f556c2e402a69d3ba83a4bdc94d3386336ebfa43ed7ac8bb4292e34938d44a": "sha256:dc835bf806564001302d37138153dea0f05011d88bd6ac8f6649d4b12b5a190c",
-          "247b591e5d6c9521681743d7d0d92ec1c5dfc1dcecda646f9a78f961543ef7d0": "sha256:183ab5baec08aa641f6fbdbe9583c2b6819a3e1d07a848498681ffb977f04efe",
-          "2a7eaf8e6ef03a8d7568408b409ff804a69177ba2fa14a2929ed472655bdea12": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "306a6ea9306373bca9bd055bc2c8156a4b419921b113a5342c8fd6d387a76683": "sha256:e19c2d1d04214c5f2683802710d5825048a317bc5649b3e3b6604b8a068c600f",
-          "371bdab86c07bc9570b0338287799d63c450ac820260c22045d83ddfb7b54838": "sha256:6a77b0d89825d0133ef310314384b89186803db474d6f280bf8a3d3e07fbc495",
-          "3d5fa10f0be2eb647784bfe4356ba9964add32ee5d27803068b066735a711db1": "sha256:60d8c1ba3d68453ba798314d31277c60ceb3178f6cdbe4d1eb0196fb6c06241b",
-          "3ea819a57eda725edd1423a89671d16654c1402dfc091d0cbaa865c60b2180d1": "sha256:3a778c906cc112a72f93d272fba7ee549775ee014d7b35a4f103c764f64cee7e",
-          "3fc3233e3a18b6927ed1ecb3f05349fc949f17e32a04766e7384bcac42797ad7": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "40c8957730b32a0580ff45372792b9e252a71b49bc9ac252a1a43eb58f3ccce4": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "47fd1b45dce4a804b9cb6c69af44ccffdb9e4aaf96ca9a355b500da29d6edcae": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "480f4a2fcc75852a60406ec2ae4e341046f42bbb17298d2c98f6ae328170c503": "sha256:e49fcab4653c20c9551aec16881720c3ebff8f2c427c9f1df7b29a7926681f0a",
-          "49a8b399a6af5cc39d31e6757b80bc0a0464ef50e64a0b3e13c508957a020f91": "sha256:e61729446407b11f2742100c245f7cf2308c312f83f7cb99b0042f5f4bf236f7",
-          "4d7de9803862f9d3970318683c68a331f3669fd930c9aa1500db882ea2a0938c": "sha256:ff8e0aba6955361e729e13e87cd1dd2f4a8a740afe9e7785606f246a533e3aa5",
-          "4f4d67b16715fcb95d5f5c01da3249706d7cab8a0bb67d66cf434791dbc0c541": "sha256:9a8d92ca2b9e381903199ded8eddc0374ca72eb80cab73be8fd38018f386e1ef",
-          "50ade73b902304e29521144d08f19eb94b1f4e95063cfd7fc9893e9cf89a8e99": "sha256:bb47cd470ab950e954bac363b751d9fde42248bda6c7f67977f680fbf5cf46b0",
-          "52e3c0939ce564ce31e9eb8043ad1c363918cabf9fd51ff521f05843345f5e59": "sha256:92bba5c4dcbdc182b216354581afd30dda525a19467cc00093fcfb4cce67a16b",
-          "55a5e728b7e4235c093016101be50617af9107b8bed0b594b3020fb09d4edd86": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "58b5465fb0c4daf4ef1c121df7552831001e6ffbffd9f6fa98e15e87196043b6": "sha256:a536c4273d8c54a0bc7e1ac85ce1adf58f15a11323c2c009b34f1526ace5ac45",
-          "5fe19d3a058674a9e7db4533056cbf72c11f4a9b5d6059888abc05dcf18d224d": "sha256:92bba5c4dcbdc182b216354581afd30dda525a19467cc00093fcfb4cce67a16b",
-          "6c9d050d3194d51e7428e030968d6f029dfebbca43fd497dbacafcee8fba0564": "sha256:92bba5c4dcbdc182b216354581afd30dda525a19467cc00093fcfb4cce67a16b",
-          "720f0273bc26637a0d248a347b9c740a3c5fe7e28e1ccb6431bf7ed364a83f24": "sha256:b76dda606fbec916e0cafddf7c94ff4240bf7f7fb69efd25ce418b48459653ff",
-          "73f8f55a1cce3b8da9db4ad87fb8a7e7baac3238267a6eff581971ab26a15ad3": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "7b0e0ea839a2c6877c179a2e6189c03955551c6f9760c8b00161a45aa3fc1f3e": "sha256:4a95ba7d0e1138e5949f436b85e81fa37274adf1c944ed32395e4312abf00f76",
-          "7d53f4646a41feaa3e5818fe21838f6386b58f5a3ab65c915b3b71de16dfc952": "sha256:92bba5c4dcbdc182b216354581afd30dda525a19467cc00093fcfb4cce67a16b",
-          "7f44eb5bc9606a1d5384573cb6fc91f9ea809f5bd916c179a8945b9a04f50b4e": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "802efc459b275af014da1ab7366ef05bd8df4fbad0cbb9664a339344330b0694": "sha256:c219e5b0014deb89ba816fc6c393c3be3f3bacd4467eb080a6ef599071a71aff",
-          "81dd1ad03ef7f4ffff7ffdd94bcfe9ed6f6b5155bf0f4b6dce8ab8a66a47bde9": "sha256:a875fb4f1d46360d0e2079c24395b70cff9a9dae17c36bbe86fe0d6f6b453852",
-          "85ed5d0bc0d72f583e5236836c3a5f4dd63a46f3c2161946fca1047674d80f22": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "895a4270302c81848ffd7c9d850b6f75404df5dcc84552f276466dd581bd21b1": "sha256:dfde56439ff6d89b33118444d26e7e23c916a49dc2528369a5ffa87dab370338",
-          "8ccaf8041c80c612f1159d488a5012a97a24c4154a3b79ce9ab9f57f69e2375e": "sha256:9d945eb3024e4c2323122d51014aa186441d02f9f953c58de80e8d08af27a61a",
-          "8cd0aad3e63f57e344427c0278076692d24c0c39cdd0e586c9f3e70e7359bc17": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "90594e0bc9fc193aa1f2fa9420b9951b58ec7306a162d23f196184c4fee2755e": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "a2883a6bd24879e312a311485b0d47ae2a8c4a7bb783d0eae98fcfaad9c14ea4": "sha256:d129d56e0c3c324ee60d3418569cf7d25b670f1bef2bbdf875ded0aceb13945a",
-          "a8bcd636a174932dfb15d57d7100432b160701ff92782f7d929533c54cd1eb6f": "sha256:49dad4907b405eeb0ae4c8e999356a52a354c65798caef414e9fd9614ae9ba1e",
-          "abd3601a11246e6d7009af0fc23bf2faab2a58d15e85cec77c23bb32941a9515": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "b2f553c5227e7d43e3fcd5a52762244f1daa5bb86fdd6b7767ab258d56d4d85c": "sha256:70630bed9d0caaa6b60ab75aeccc6c0e50a26b37fff2b3df7a4c02ada588f02a",
-          "b3ef62651d0094dcd8ddf1c8514146110349c6d791b1a7c9521a64a54ce37b17": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "b4095cf6daf673ecd54721cf22e48074f253887f90469f6c0a171583fa9bac7e": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "b8a2d41eb5e3c50497ac96d2691b700cb2ce11c16c4215b0715d867d27cf636a": "sha256:06a6077be7223bc23d6df5635b387039f551666d5b0ef31fd6b3eb6da8550e93",
-          "c14bffcb912459f145fc74f8cf34618b8ad0d9b1cc3bb00444a7fa5eb22f9027": "sha256:69804254b7d1cd84149507caeef3b1dbde9d1430e4dbf0549893cd71060f69f4",
-          "c1fbce19f2629d614ccd1b0f7671dc980c0a151bf6b7266d6f97e704b63aa144": "sha256:60d8c1ba3d68453ba798314d31277c60ceb3178f6cdbe4d1eb0196fb6c06241b",
-          "c8808a7264ecf51e1c62179526261f63c94c83744435788b4095303e72ceabed": "sha256:856478d2619e153885e26ad29fa11dbd07b5aa901ec2bc6a0f5ea56853f33007",
-          "c9fd83fa5a6fc331e47ac5e6a7a9ddbdb2f91ea7621b32a7d546340090f8d2d2": "sha256:484bec0676c2c470015b7dcad64a210f0b1bb06e04848ab7407f67e4d18550b6",
-          "d12352a84c81d78d6002cfd1b9cef4237e1c85befd6767533819fade90bd2c2d": "sha256:1a61e8c5e04c1e0d91eba4c60eb64cf75cb5a53ea7cc44966e4ea95522b41e6e",
-          "d214222dd1099c2624068ce6f4c8f9ac0a20f0c4c248ac7b388e5df587a82ac6": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "d59e931cefe9a2543561e1e8d4aac6699534b542c0efd677d76ae4eb15b641a7": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "d8a15562ca98afd76af13a97ca903755c1d0f123efcc1945e5a70d29991ae971": "sha256:ddbccaa4b3ffc1086d7ebf2e90afd42e2831d15112ecf68663290902284428f1",
-          "dad00b3d66db6330ed834ee5a8c9a924df5421c932a4ad07eb3164e7123beca8": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "edde58f8a6f641992768708f4102c9f932828f6b31c7fb3fbbf9f91f12e7e545": "sha256:79ca9c7f5eaa7461afc1bd8852e64da851e24d6b9b2bc9f1e65921f620023962",
-          "ede48ddc4894585641740579a54f0183a6bb67af59d20177a4c36f010c8bdfef": "sha256:aabf0a382ec75defff393a93f87722bb2bfeb497d6df01b4a7ec0dcafeb75afe",
-          "f51884bbe2fe9a67a9d481f88f8f48c2668d6261ce974a5ca72a9c568737dda0": "sha256:9ab399a692adba4cca982b337ac6980f49076c0d10499f2b00abaf4c46d03691",
-          "f6ae800f37a7f73a3af4ddedb4bf6ab878a79de861e688e041a7b8d2d76538b9": "sha256:43e82a83870b0ef9b7ff0f3cfcb59a5085fce08f3b94d27e798d76cb686b07f8",
-          "fabb50e093352252e87c4482e7a2f7b763eb4efeddaff814dac3f6bd5c444475": "sha256:8d88fc313b203bae9aad927d075c777de59386368f2827847e222ba19584e51d",
-          "ffd398739ff702328060e531b984a9cac4f452aa4cf5f43fc9e8bc258457578a": "sha256:dbbd903bcd9977951df142b3e7a2584ba2b3a0cd52278e80fb8deb9b7e3c64b0"
+          "03034b33118df50c2229179429b4de14e688cc953dd154279d77a8167907fe39": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+          "033dd91a86f21112d44d82738519bd35638037e7bf82507fdfaf0247edf48e6e": "sha256:32e5a5a26e9a9480182a2f921658cff519b52cca419e2bbac64409c2a0919884",
+          "10ecc3003db68cd78facd28c2525a0c3a95ffa003534e541d376bfbcfec94fc8": "sha256:94bc2c279d4762fb4aac9ab254d5ce863786c016e9a87d9466c4ede7b4959636",
+          "2516e1cab89c63ce4c2ed1243084edb7d07281af7fa8e45c49ed5d119cbbee3c": "sha256:2f6f80f292c8232a3920b6c6115cbfec99eef244e15cdbcdeb5a5a051ddcff50",
+          "2923a38ba46270985e99c81eabd3b4d6e4a6f085717941e71d9fe8020a53800c": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+          "2cd8e7b81d36bc84e31b6179f10344fc9f5ba4ffe14ec8d51a744cf269d55f06": "sha256:d8aa7b94c7bca06e87ed9f64cc7cef04c514a788e5e9a76933d4e352041c86b1",
+          "2d742a227b99ad239ad6b7548d6f05ea54266a99e842199e00a3736186295c60": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+          "3215856f1f1f7fd489a4735d09b5605b03e12d3c8be9a72006b6d704bb8e66c1": "sha256:ee6edeb660dff58ad900c241b33e71258a546b899ef707e16dfe09d996fd4239",
+          "37a89fc8390e6ad34d97eb32dc86a43eb5be832e79a89cba115690ab856ba52e": "sha256:5ddb0c05c2f73758098efa2488c90a8ad2088f64c96423bb1283f2c55143327e",
+          "3878a9565e884df18320cd1ace8cc6191551335b89a9274a56f4dc0490870e4a": "sha256:a7d05b25bf6994f0f3ef2a72f9d449cc7aa1386bd8214a50db1247ef25c5586d",
+          "39fe58ab20ef029ef2a8d9f475149b0c115fe990bfe474d44a62c760d1524ee9": "sha256:89748513a26079ca8b5cf5ac9b23868d7420ce4f30520375dbc33238e78f36c3",
+          "44e7390028ae39df87cce23057260efa75d6333f8a75c8a00e268f3d36d377ff": "sha256:8dc5a48739c70ee94ee9aca7f88b6ff3950341299e3fefb4f485e559af9210e0",
+          "4546b8299745dd4d25d66a18d908c8b00a963867cda6e0f7051a882ddd9ab8a3": "sha256:adde608ba2c0a6c43fe3bae119dbcf478f87e9ae5be56e77d914deecb78531d2",
+          "458bfc2cd1f5ab651d755ca6273ef2a8d9a7d4b32e97c68719256281b4d8aaac": "sha256:36c1e6d8d8157b7aaa341ebe74b547e3dc27ccc5764582af0d3d3fd4fd6561c1",
+          "462412b2cacd6bce2fc8d5746cf7bae47221717a637fc51ebfb7e78a2a19ac04": "sha256:346f0d093eff3d4f66b761e81a359214d0e7ae5b9e7c2a508c7561da09935436",
+          "46ec5ae1185f45f98bab67937f68fdebae1289346dda19b5e06714cdf9452c1c": "sha256:65b06761d2eb56c82241e63c0ed8a8c68ae30e13a9cfd50bdf0b926b08fa6b3f",
+          "48e4fe4e02145289ede01294eb6ffe8590b2df224b3a9e93ec5aa2ec1b2f85d3": "sha256:9b8c327f551eff4c600706c054a18694ba84fa0dcb0a6363640ac03f95f75d53",
+          "49164fbb64a1c25254fbac7c0f44f6f5d94acfd119eecce7772da31d87c79f36": "sha256:aa6da86cc7a78e107fb4139af26c65b185ba75d3e43466aaacf8206499699f57",
+          "49ee3e0454403f75727fcf8cb9413a30b2bcab715b5aa24bc66012e3f481c33f": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+          "5a067144b4b5815db8d290a1118914784a432ca18717e79dfd59f29e52162f85": "sha256:e369aaf3ddb848627b4b518ee8c69fb8039c4a233b31040cb6a2ef25ffb4fcfc",
+          "5a64fef2a80268ef363120c320e70855061e8404c42667018fa310fa29cc1b9d": "sha256:3a9c9a49590cf6fac87627e931f7e80f4be8fe5e2aeaba528859a12d82518da1",
+          "62c0994665ddd790b43553ae27ec8bedd68cf1265b01cc0856824d9876291a69": "sha256:10ef973eb4701176bc213db87b2f7202d6bd53ea1560b8fbf15ac33008358f17",
+          "63bac0cb70ae21b23232e966d751bd8a947ebf5ebd752a5590fe0c9a30d91baf": "sha256:a594dd2c996e50d4e632cc8f6e32568d3d89b7ffef85cc254cf32734e0711bbf",
+          "67e3c3a00d49cfe59c5bd5cb371e6b2fadc6556b53735d824aaf3635184eb67c": "sha256:94bc2c279d4762fb4aac9ab254d5ce863786c016e9a87d9466c4ede7b4959636",
+          "694d630e81d398d31489622b80d032d887c7e0f79b73746a574feb729f0d3964": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+          "70a09a1812b14e5b6c2808ebf3b77f8a9492920f69812f887cd05497b2e3c0e9": "sha256:c7b59f2e844aa58f6ca8de10130ab6c02e5300c7633ce571158cf22ced846511",
+          "7e26872a7832459c5a4999ae7aae41b8983cc090f9c6a470185b378f369b0791": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+          "7fb4d07e53f53fe38b2acd0b05b02fa06f93acd1c0c8257effb6b3670ba2bad3": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+          "82e8b19f27ac2c9e6d2ccdb276a08f8a9b6eaef3890cc599ed6796e6b22b480d": "sha256:4c86646ec8d3247e5f1716485a158360259cf573c2c38c45da210e8e90dbc22a",
+          "83d69cea4ff7c33dc4a2df6252152cd0f7246382ecc61d9f9715d3fb32ce27f1": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+          "881d9163c6a685643b50f3a4f3a419ff3d5e01199579796beba6b973e6d4b380": "sha256:5175b434effe1e7fc5490067d1314bbe34aed42149741d622b0d289730cff737",
+          "9536250fdc3e974ec98935435b593a11a41507bb16b66446ad74b812fea550fb": "sha256:4809db8d52a36ef519562b5f65c5e8ed25ee23bf10230958a4197a4eb30db209",
+          "95fba418a203dd74cccf38aea6ac6f0021bd284fc77de792af7aa46c3eb1eb93": "sha256:d3f13b517d2a0ac69f97a1bcd64386d4ae4da1f844b4055e353f3f785ef09c2d",
+          "979ab34f6fdc6c59375b02ef25c9b1143825dbf15fc3b15f9e867f837d34ea51": "sha256:c5febfa324b6251aaf8b59fd2e1e75ed7ce444b28e970287a984bd544f4237c5",
+          "991095c1f6361f5b8de5abab1dbc9a6c43e7146ec2da3b772a494400e02b3bd5": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+          "9b42c380ce15cb921eaa6df5f345413fe90101e22b21dc9de65e4f4cab161b46": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+          "9df998207e4711d0a8599efc17da07b1335a7043837f62afc3b18510abdb9b71": "sha256:3de96b5dd35e9104bcf01fb7ff00eab2c997907b392f51d8af51c670c42fa28d",
+          "a98bd5f03e297e9cebc10a09ec85be9bf5681ceb41692acf37dc4856668621c6": "sha256:42df507b3b7920e76e3b9211b1a9149c99cecae6bca7afa6ee507a04c359fdd5",
+          "ab563635ffae6bf36951e674b27281532dd2e784732c2d81017c9977ff090700": "sha256:e4461a34ca6f9bbbcdea742e77b9fde2661892f9c5f81349f05323999a722583",
+          "b51543f25d3db99052d4c042f972103594c8abbc67787b607b542f0ce6494e78": "sha256:5f41e5ef0e003906db00f79322ee131f18c7378dab64c5e133e6aa6a92e2d6e8",
+          "b7afe174e4d019fc63f5a01dd4294249e397bacae325d1cbd62df1d0a62cecc8": "sha256:9efbb558a06bcdd00792f5d45c84c46669474bc3d96904923ce5cc646fe921ce",
+          "b9b67c41c1c7197129b9b35be12a8d3ec575dd8335a64b5723d83abf4f050488": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+          "c0fad88fed18356b80eedd5d789d826330226144d1fffa60605ccc45e9e29196": "sha256:a9b9a772e8e4c2416d026c5a4b45b7d85bb3723cae3024aa9eb0de28e9870fa1",
+          "c1fe3f2a8718ae0ffa6d9a95619f2684a4f3d9c394b82a47cdd8b877eb8e4d90": "sha256:e75b47279700bf10dd97adecc39f7eff094cfa631a94970446a0901fb57c04cd",
+          "c48c8241254bf749ccd6e5a8f820cb5042a7ac0e93f90c5bdb9621be0da55381": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+          "c7cf9674111b1b66b9828c7f2565ea77eeab5437baeeabc4fa9b211934df7baf": "sha256:d8aa7b94c7bca06e87ed9f64cc7cef04c514a788e5e9a76933d4e352041c86b1",
+          "cb4affdc5273fb608f60e2ade20f598308aeea38b576c85ce8fcad8378cec3a5": "sha256:8e6a2a489ba8b3149b92abd3fff32318347ceb6b647cb48d66c84b076ea325ba",
+          "ce09fc21c8088d1a3a8cc726ab5ba87f7385b22b8a9813d017f5452f44da2e43": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+          "cf87da73b84df1e9580086e8810a0455621ade3bd3fe87b06711ac8555c5a01b": "sha256:16134d5ffa7fbfedf08c631900a367a55111dec168227340bb0a4aae7783e1cb",
+          "d0541bbd6944ebc72743a2c99328514ed43f295be203c4c2b86f6b4ab6a76461": "sha256:71e557c59e6d8cf61261ec8c1dc096fded77226b4c663e7ba997bf7598a384b7",
+          "d6430f194d157e4d8fd8dd47e980da84cd71617c35a0e83b5938431e7f78bba7": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+          "dbe625f059297d208b0ed45e8cd20c4ac94e5be9d9f0972d6cd34394aba2d709": "sha256:9859683dea2fc04697c6e8e95cc41feca0a9f92346c9d2c9ebb60982a4f6f09b",
+          "e5eba11170d12f7fdee751e8977b1fe1c01c52f09ec0585a0d37cd29f37dc336": "sha256:4f9141f847b21b55b4ab02cd8bb37dc95bb9a99c045540cd3186665a358ab07c",
+          "e653acd29b51472277664c2591ffd84150956a1c74be79296abb45849ab49a9b": "sha256:3498651cd9476681b65414e8f91f594c605e2a5410d643385011b11b95f9a099",
+          "e8aacc25cae772e6eb791884491fe27e5c4881a931127f18609445f725827763": "sha256:d8aa7b94c7bca06e87ed9f64cc7cef04c514a788e5e9a76933d4e352041c86b1",
+          "f41822be359aa44b448c890a753cd02636cc56fc06034d363dedadb70cc6d349": "sha256:d8aa7b94c7bca06e87ed9f64cc7cef04c514a788e5e9a76933d4e352041c86b1",
+          "f4f8a10b724f83cec8a26b579dcea6901a08764a428ee2208b6d3c6a3fa711f6": "sha256:29ba0ca6b07b97046a1c7722ed3d73d2ecc0ebf08acda0f466d38745560534f5",
+          "f4fac9282fc52986e252781e6430d61d802cb9adb7a7519a26d36d16dccfedf2": "sha256:6b1289a91e1826543477a1f18cc84aff19ef633c72dc946dd65937254389e7ab",
+          "fe89e49328358a0981fa2cb630d0758b970b8cd25e1b5743fb008d0c4ab1d0f8": "sha256:232e786430753ee9a6c5619248c06a499081f065b48d0580faacc28736257d3f",
+          "ffcaa08bc7e11cf4af159f868116900479656cccf73c78d8e6c032ac2c026a49": "sha256:1c1f76b516bad24a69f00cef2a05a5153073d5dea6473a5bc9efee509c5a7c3d"
         },
-        "answer_salt_hash": "sha256:d9fc2dd91537a16ef3ff145890df94353abc9c2ef40ee92afb6c4da2150afdec",
-        "created_at": 1778467566.596687,
-        "pack_id": "sha256:5f7f3f246868e947c",
+        "answer_salt_hash": "sha256:2d5d8df2c9e0e14b0e634ba7291c10e57422986b7bc5e4eb104387ae9f94e6a2",
+        "created_at": 1782239771.161723,
+        "pack_id": "sha256:e6aacd75b37e349e4",
         "public_tasks": [
           {
-            "id": "8ccaf8041c80c612f1159d488a5012a97a24c4154a3b79ce9ab9f57f69e2375e",
+            "id": "c1fe3f2a8718ae0ffa6d9a95619f2684a4f3d9c394b82a47cdd8b877eb8e4d90",
             "kind": "gcd",
             "metadata": {
-              "a": 557910,
-              "b": 561357,
+              "a": 791243,
+              "b": 161988,
               "idx": 0
             },
-            "prompt": "Return gcd(557910, 561357) as an integer."
+            "prompt": "Return gcd(791243, 161988) as an integer."
           },
           {
-            "id": "802efc459b275af014da1ab7366ef05bd8df4fbad0cbb9664a339344330b0694",
-            "kind": "compose",
-            "metadata": {
-              "a": 3,
-              "b": -4,
-              "c": -5,
-              "d": -4,
-              "idx": 1,
-              "x": 20
-            },
-            "prompt": "Let f(x)=3x+-4, g(x)=-5x+-4. Return g(f(20)) as an integer."
-          },
-          {
-            "id": "2a7eaf8e6ef03a8d7568408b409ff804a69177ba2fa14a2929ed472655bdea12",
-            "kind": "palindrome",
-            "metadata": {
-              "idx": 2,
-              "s": "zby"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: zby"
-          },
-          {
-            "id": "d8a15562ca98afd76af13a97ca903755c1d0f123efcc1945e5a70d29991ae971",
-            "kind": "mod",
-            "metadata": {
-              "a": 9069,
-              "b": 255,
-              "idx": 3,
-              "m": 35489
-            },
-            "prompt": "Return (9069 ** 255) mod 35489."
-          },
-          {
-            "id": "b8a2d41eb5e3c50497ac96d2691b700cb2ce11c16c4215b0715d867d27cf636a",
+            "id": "b51543f25d3db99052d4c042f972103594c8abbc67787b607b542f0ce6494e78",
             "kind": "sort",
             "metadata": {
               "arr": [
-                -48,
-                -36,
-                35,
-                86,
-                -99,
-                -69,
-                -81,
-                -70,
-                -29,
-                -15,
-                -31
+                -34,
+                6,
+                52,
+                -21
               ],
-              "idx": 4
+              "idx": 1
             },
-            "prompt": "Sort this list ascending: [-48, -36, 35, 86, -99, -69, -81, -70, -29, -15, -31]"
+            "prompt": "Sort this list ascending: [-34, 6, 52, -21]"
           },
           {
-            "id": "7f44eb5bc9606a1d5384573cb6fc91f9ea809f5bd916c179a8945b9a04f50b4e",
-            "kind": "palindrome",
+            "id": "3878a9565e884df18320cd1ace8cc6191551335b89a9274a56f4dc0490870e4a",
+            "kind": "compose",
             "metadata": {
-              "idx": 5,
-              "s": "aax"
+              "a": 2,
+              "b": -5,
+              "c": -4,
+              "d": 1,
+              "idx": 2,
+              "x": -22
             },
-            "prompt": "Is this string a palindrome? Answer true or false: aax"
+            "prompt": "Let f(x)=2x+-5, g(x)=-4x+1. Return g(f(-22)) as an integer."
           },
           {
-            "id": "8cd0aad3e63f57e344427c0278076692d24c0c39cdd0e586c9f3e70e7359bc17",
-            "kind": "palindrome",
+            "id": "fe89e49328358a0981fa2cb630d0758b970b8cd25e1b5743fb008d0c4ab1d0f8",
+            "kind": "mod",
             "metadata": {
-              "idx": 6,
-              "s": "ayaxcabxazy"
+              "a": 2518,
+              "b": 253,
+              "idx": 3,
+              "m": 16575
             },
-            "prompt": "Is this string a palindrome? Answer true or false: ayaxcabxazy"
+            "prompt": "Return (2518 ** 253) mod 16575."
           },
           {
-            "id": "b2f553c5227e7d43e3fcd5a52762244f1daa5bb86fdd6b7767ab258d56d4d85c",
+            "id": "881d9163c6a685643b50f3a4f3a419ff3d5e01199579796beba6b973e6d4b380",
             "kind": "compose",
             "metadata": {
               "a": -5,
-              "b": -7,
-              "c": -2,
-              "d": -6,
-              "idx": 7,
-              "x": 8
+              "b": 8,
+              "c": -5,
+              "d": 0,
+              "idx": 4,
+              "x": 29
             },
-            "prompt": "Let f(x)=-5x+-7, g(x)=-2x+-6. Return g(f(8)) as an integer."
+            "prompt": "Let f(x)=-5x+8, g(x)=-5x+0. Return g(f(29)) as an integer."
           },
           {
-            "id": "0c7084c3302628be8d21e17a614fa81022248fff6b5673e5cb46ff5231a31893",
-            "kind": "gcd",
-            "metadata": {
-              "a": 390796,
-              "b": 330105,
-              "idx": 8
-            },
-            "prompt": "Return gcd(390796, 330105) as an integer."
-          },
-          {
-            "id": "23f556c2e402a69d3ba83a4bdc94d3386336ebfa43ed7ac8bb4292e34938d44a",
+            "id": "70a09a1812b14e5b6c2808ebf3b77f8a9492920f69812f887cd05497b2e3c0e9",
             "kind": "mod",
             "metadata": {
-              "a": 4938,
-              "b": 166,
-              "idx": 9,
-              "m": 36376
+              "a": 9054,
+              "b": 143,
+              "idx": 5,
+              "m": 19383
             },
-            "prompt": "Return (4938 ** 166) mod 36376."
+            "prompt": "Return (9054 ** 143) mod 19383."
           },
           {
-            "id": "47fd1b45dce4a804b9cb6c69af44ccffdb9e4aaf96ca9a355b500da29d6edcae",
+            "id": "cf87da73b84df1e9580086e8810a0455621ade3bd3fe87b06711ac8555c5a01b",
+            "kind": "sort",
+            "metadata": {
+              "arr": [
+                -42,
+                -74,
+                -72,
+                80,
+                75,
+                68,
+                -22,
+                -48,
+                -65,
+                86,
+                -69,
+                -24
+              ],
+              "idx": 6
+            },
+            "prompt": "Sort this list ascending: [-42, -74, -72, 80, 75, 68, -22, -48, -65, 86, -69, -24]"
+          },
+          {
+            "id": "9b42c380ce15cb921eaa6df5f345413fe90101e22b21dc9de65e4f4cab161b46",
+            "kind": "gcd",
+            "metadata": {
+              "a": 514457,
+              "b": 593203,
+              "idx": 7
+            },
+            "prompt": "Return gcd(514457, 593203) as an integer."
+          },
+          {
+            "id": "033dd91a86f21112d44d82738519bd35638037e7bf82507fdfaf0247edf48e6e",
+            "kind": "sort",
+            "metadata": {
+              "arr": [
+                -83,
+                -22,
+                -62,
+                32,
+                -30
+              ],
+              "idx": 8
+            },
+            "prompt": "Sort this list ascending: [-83, -22, -62, 32, -30]"
+          },
+          {
+            "id": "3215856f1f1f7fd489a4735d09b5605b03e12d3c8be9a72006b6d704bb8e66c1",
+            "kind": "compose",
+            "metadata": {
+              "a": 1,
+              "b": -9,
+              "c": 1,
+              "d": 10,
+              "idx": 9,
+              "x": -23
+            },
+            "prompt": "Let f(x)=1x+-9, g(x)=1x+10. Return g(f(-23)) as an integer."
+          },
+          {
+            "id": "ce09fc21c8088d1a3a8cc726ab5ba87f7385b22b8a9813d017f5452f44da2e43",
             "kind": "palindrome",
             "metadata": {
               "idx": 10,
-              "s": "cxxyz"
+              "s": "xxyyy"
             },
-            "prompt": "Is this string a palindrome? Answer true or false: cxxyz"
+            "prompt": "Is this string a palindrome? Answer true or false: xxyyy"
           },
           {
-            "id": "d59e931cefe9a2543561e1e8d4aac6699534b542c0efd677d76ae4eb15b641a7",
+            "id": "82e8b19f27ac2c9e6d2ccdb276a08f8a9b6eaef3890cc599ed6796e6b22b480d",
+            "kind": "sort",
+            "metadata": {
+              "arr": [
+                11,
+                -98,
+                -36,
+                -15,
+                -48,
+                -32,
+                -91
+              ],
+              "idx": 11
+            },
+            "prompt": "Sort this list ascending: [11, -98, -36, -15, -48, -32, -91]"
+          },
+          {
+            "id": "694d630e81d398d31489622b80d032d887c7e0f79b73746a574feb729f0d3964",
             "kind": "palindrome",
             "metadata": {
-              "idx": 11,
-              "s": "azabcacbz"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: azabcacbz"
-          },
-          {
-            "id": "7b0e0ea839a2c6877c179a2e6189c03955551c6f9760c8b00161a45aa3fc1f3e",
-            "kind": "mod",
-            "metadata": {
-              "a": 73,
-              "b": 265,
               "idx": 12,
-              "m": 38497
+              "s": "baayyyzzzcy"
             },
-            "prompt": "Return (73 ** 265) mod 38497."
+            "prompt": "Is this string a palindrome? Answer true or false: baayyyzzzcy"
           },
           {
-            "id": "abd3601a11246e6d7009af0fc23bf2faab2a58d15e85cec77c23bb32941a9515",
-            "kind": "palindrome",
-            "metadata": {
-              "idx": 13,
-              "s": "cxzbyzyaxxxz"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: cxzbyzyaxxxz"
-          },
-          {
-            "id": "c1fbce19f2629d614ccd1b0f7671dc980c0a151bf6b7266d6f97e704b63aa144",
+            "id": "10ecc3003db68cd78facd28c2525a0c3a95ffa003534e541d376bfbcfec94fc8",
             "kind": "gcd",
             "metadata": {
-              "a": 870886,
-              "b": 224468,
+              "a": 826196,
+              "b": 885996,
+              "idx": 13
+            },
+            "prompt": "Return gcd(826196, 885996) as an integer."
+          },
+          {
+            "id": "e8aacc25cae772e6eb791884491fe27e5c4881a931127f18609445f725827763",
+            "kind": "gcd",
+            "metadata": {
+              "a": 493274,
+              "b": 82606,
               "idx": 14
             },
-            "prompt": "Return gcd(870886, 224468) as an integer."
+            "prompt": "Return gcd(493274, 82606) as an integer."
           },
           {
-            "id": "c9fd83fa5a6fc331e47ac5e6a7a9ddbdb2f91ea7621b32a7d546340090f8d2d2",
+            "id": "f4f8a10b724f83cec8a26b579dcea6901a08764a428ee2208b6d3c6a3fa711f6",
             "kind": "compose",
             "metadata": {
-              "a": -1,
-              "b": -1,
-              "c": -3,
-              "d": 4,
+              "a": -4,
+              "b": 9,
+              "c": 3,
+              "d": -8,
               "idx": 15,
-              "x": -6
+              "x": 15
             },
-            "prompt": "Let f(x)=-1x+-1, g(x)=-3x+4. Return g(f(-6)) as an integer."
+            "prompt": "Let f(x)=-4x+9, g(x)=3x+-8. Return g(f(15)) as an integer."
           },
           {
-            "id": "4d7de9803862f9d3970318683c68a331f3669fd930c9aa1500db882ea2a0938c",
-            "kind": "mod",
+            "id": "d6430f194d157e4d8fd8dd47e980da84cd71617c35a0e83b5938431e7f78bba7",
+            "kind": "palindrome",
             "metadata": {
-              "a": 673,
-              "b": 471,
               "idx": 16,
-              "m": 42656
+              "s": "aczxcyx"
             },
-            "prompt": "Return (673 ** 471) mod 42656."
+            "prompt": "Is this string a palindrome? Answer true or false: aczxcyx"
           },
           {
-            "id": "b3ef62651d0094dcd8ddf1c8514146110349c6d791b1a7c9521a64a54ce37b17",
+            "id": "991095c1f6361f5b8de5abab1dbc9a6c43e7146ec2da3b772a494400e02b3bd5",
             "kind": "palindrome",
             "metadata": {
               "idx": 17,
-              "s": "yybxzcxazac"
+              "s": "cayzybabb"
             },
-            "prompt": "Is this string a palindrome? Answer true or false: yybxzcxazac"
+            "prompt": "Is this string a palindrome? Answer true or false: cayzybabb"
           },
           {
-            "id": "4f4d67b16715fcb95d5f5c01da3249706d7cab8a0bb67d66cf434791dbc0c541",
-            "kind": "mod",
+            "id": "dbe625f059297d208b0ed45e8cd20c4ac94e5be9d9f0972d6cd34394aba2d709",
+            "kind": "palindrome",
             "metadata": {
-              "a": 3114,
-              "b": 363,
               "idx": 18,
-              "m": 9381
+              "s": "czxza"
             },
-            "prompt": "Return (3114 ** 363) mod 9381."
+            "prompt": "Is this string a palindrome? Answer true or false: czxza"
           },
           {
-            "id": "306a6ea9306373bca9bd055bc2c8156a4b419921b113a5342c8fd6d387a76683",
-            "kind": "mod",
+            "id": "95fba418a203dd74cccf38aea6ac6f0021bd284fc77de792af7aa46c3eb1eb93",
+            "kind": "sort",
             "metadata": {
-              "a": 6449,
-              "b": 86,
-              "idx": 19,
-              "m": 45090
+              "arr": [
+                -94,
+                -46,
+                -7,
+                42,
+                -41,
+                51,
+                3,
+                94,
+                29,
+                -62,
+                -47,
+                25
+              ],
+              "idx": 19
             },
-            "prompt": "Return (6449 ** 86) mod 45090."
+            "prompt": "Sort this list ascending: [-94, -46, -7, 42, -41, 51, 3, 94, 29, -62, -47, 25]"
           },
           {
-            "id": "720f0273bc26637a0d248a347b9c740a3c5fe7e28e1ccb6431bf7ed364a83f24",
+            "id": "44e7390028ae39df87cce23057260efa75d6333f8a75c8a00e268f3d36d377ff",
             "kind": "mod",
             "metadata": {
-              "a": 2384,
-              "b": 131,
+              "a": 7836,
+              "b": 462,
               "idx": 20,
-              "m": 15340
+              "m": 11443
             },
-            "prompt": "Return (2384 ** 131) mod 15340."
+            "prompt": "Return (7836 ** 462) mod 11443."
           },
           {
-            "id": "40c8957730b32a0580ff45372792b9e252a71b49bc9ac252a1a43eb58f3ccce4",
+            "id": "c48c8241254bf749ccd6e5a8f820cb5042a7ac0e93f90c5bdb9621be0da55381",
             "kind": "palindrome",
             "metadata": {
               "idx": 21,
-              "s": "yyybzy"
+              "s": "byz"
             },
-            "prompt": "Is this string a palindrome? Answer true or false: yyybzy"
+            "prompt": "Is this string a palindrome? Answer true or false: byz"
           },
           {
-            "id": "90594e0bc9fc193aa1f2fa9420b9951b58ec7306a162d23f196184c4fee2755e",
-            "kind": "palindrome",
+            "id": "5a64fef2a80268ef363120c320e70855061e8404c42667018fa310fa29cc1b9d",
+            "kind": "compose",
             "metadata": {
+              "a": 5,
+              "b": 4,
+              "c": -4,
+              "d": 10,
               "idx": 22,
-              "s": "xzaay"
+              "x": 29
             },
-            "prompt": "Is this string a palindrome? Answer true or false: xzaay"
+            "prompt": "Let f(x)=5x+4, g(x)=-4x+10. Return g(f(29)) as an integer."
           },
           {
-            "id": "0c3de4fb9f39615b09fd1a570838a6cd0f16b014af86ac5cfaa2471f28cff682",
+            "id": "62c0994665ddd790b43553ae27ec8bedd68cf1265b01cc0856824d9876291a69",
+            "kind": "compose",
+            "metadata": {
+              "a": 1,
+              "b": 9,
+              "c": -3,
+              "d": -4,
+              "idx": 23,
+              "x": -26
+            },
+            "prompt": "Let f(x)=1x+9, g(x)=-3x+-4. Return g(f(-26)) as an integer."
+          },
+          {
+            "id": "9536250fdc3e974ec98935435b593a11a41507bb16b66446ad74b812fea550fb",
             "kind": "sort",
             "metadata": {
               "arr": [
-                -7,
-                87,
-                -29,
-                -68,
-                73,
-                -94,
-                11,
+                72,
+                50,
                 20,
-                -77,
-                -81,
-                -20,
-                39
-              ],
-              "idx": 23
-            },
-            "prompt": "Sort this list ascending: [-7, 87, -29, -68, 73, -94, 11, 20, -77, -81, -20, 39]"
-          },
-          {
-            "id": "480f4a2fcc75852a60406ec2ae4e341046f42bbb17298d2c98f6ae328170c503",
-            "kind": "sort",
-            "metadata": {
-              "arr": [
-                30,
-                -4,
-                100,
-                53,
-                -8,
-                -15,
-                17,
-                28,
-                22,
-                48,
-                93
+                -33,
+                -64,
+                -96,
+                68,
+                -49,
+                -95
               ],
               "idx": 24
             },
-            "prompt": "Sort this list ascending: [30, -4, 100, 53, -8, -15, 17, 28, 22, 48, 93]"
+            "prompt": "Sort this list ascending: [72, 50, 20, -33, -64, -96, 68, -49, -95]"
           },
           {
-            "id": "3fc3233e3a18b6927ed1ecb3f05349fc949f17e32a04766e7384bcac42797ad7",
-            "kind": "palindrome",
-            "metadata": {
-              "idx": 25,
-              "s": "xzxaxz"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: xzxaxz"
-          },
-          {
-            "id": "a2883a6bd24879e312a311485b0d47ae2a8c4a7bb783d0eae98fcfaad9c14ea4",
-            "kind": "sort",
-            "metadata": {
-              "arr": [
-                -57,
-                75,
-                26,
-                27
-              ],
-              "idx": 26
-            },
-            "prompt": "Sort this list ascending: [-57, 75, 26, 27]"
-          },
-          {
-            "id": "7d53f4646a41feaa3e5818fe21838f6386b58f5a3ab65c915b3b71de16dfc952",
+            "id": "67e3c3a00d49cfe59c5bd5cb371e6b2fadc6556b53735d824aaf3635184eb67c",
             "kind": "gcd",
             "metadata": {
-              "a": 238381,
-              "b": 707170,
-              "idx": 27
+              "a": 105376,
+              "b": 509476,
+              "idx": 25
             },
-            "prompt": "Return gcd(238381, 707170) as an integer."
+            "prompt": "Return gcd(105376, 509476) as an integer."
           },
           {
-            "id": "371bdab86c07bc9570b0338287799d63c450ac820260c22045d83ddfb7b54838",
+            "id": "462412b2cacd6bce2fc8d5746cf7bae47221717a637fc51ebfb7e78a2a19ac04",
             "kind": "mod",
             "metadata": {
-              "a": 7383,
+              "a": 406,
+              "b": 237,
+              "idx": 26,
+              "m": 11413
+            },
+            "prompt": "Return (406 ** 237) mod 11413."
+          },
+          {
+            "id": "ffcaa08bc7e11cf4af159f868116900479656cccf73c78d8e6c032ac2c026a49",
+            "kind": "compose",
+            "metadata": {
+              "a": 3,
               "b": 7,
-              "idx": 28,
-              "m": 30982
-            },
-            "prompt": "Return (7383 ** 7) mod 30982."
-          },
-          {
-            "id": "ede48ddc4894585641740579a54f0183a6bb67af59d20177a4c36f010c8bdfef",
-            "kind": "mod",
-            "metadata": {
-              "a": 6406,
-              "b": 352,
-              "idx": 29,
-              "m": 7140
-            },
-            "prompt": "Return (6406 ** 352) mod 7140."
-          },
-          {
-            "id": "52e3c0939ce564ce31e9eb8043ad1c363918cabf9fd51ff521f05843345f5e59",
-            "kind": "gcd",
-            "metadata": {
-              "a": 49951,
-              "b": 217199,
-              "idx": 30
-            },
-            "prompt": "Return gcd(49951, 217199) as an integer."
-          },
-          {
-            "id": "10bad5874d76be9fe9be49d9268de2c279b791d7813bdaa97144bd5c45beed49",
-            "kind": "sort",
-            "metadata": {
-              "arr": [
-                -46,
-                45,
-                -26,
-                -86,
-                -70,
-                94,
-                43,
-                55,
-                -68,
-                -84,
-                -99
-              ],
-              "idx": 31
-            },
-            "prompt": "Sort this list ascending: [-46, 45, -26, -86, -70, 94, 43, 55, -68, -84, -99]"
-          },
-          {
-            "id": "d12352a84c81d78d6002cfd1b9cef4237e1c85befd6767533819fade90bd2c2d",
-            "kind": "sort",
-            "metadata": {
-              "arr": [
-                -4,
-                -39,
-                -92,
-                -54,
-                -56,
-                38,
-                -81,
-                -10,
-                96,
-                75
-              ],
-              "idx": 32
-            },
-            "prompt": "Sort this list ascending: [-4, -39, -92, -54, -56, 38, -81, -10, 96, 75]"
-          },
-          {
-            "id": "dad00b3d66db6330ed834ee5a8c9a924df5421c932a4ad07eb3164e7123beca8",
-            "kind": "palindrome",
-            "metadata": {
-              "idx": 33,
-              "s": "cczzxabzbx"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: cczzxabzbx"
-          },
-          {
-            "id": "3d5fa10f0be2eb647784bfe4356ba9964add32ee5d27803068b066735a711db1",
-            "kind": "gcd",
-            "metadata": {
-              "a": 257694,
-              "b": 849106,
-              "idx": 34
-            },
-            "prompt": "Return gcd(257694, 849106) as an integer."
-          },
-          {
-            "id": "c14bffcb912459f145fc74f8cf34618b8ad0d9b1cc3bb00444a7fa5eb22f9027",
-            "kind": "compose",
-            "metadata": {
-              "a": -1,
-              "b": -9,
               "c": 1,
-              "d": 9,
-              "idx": 35,
-              "x": -7
-            },
-            "prompt": "Let f(x)=-1x+-9, g(x)=1x+9. Return g(f(-7)) as an integer."
-          },
-          {
-            "id": "895a4270302c81848ffd7c9d850b6f75404df5dcc84552f276466dd581bd21b1",
-            "kind": "compose",
-            "metadata": {
-              "a": -5,
-              "b": 1,
-              "c": 1,
-              "d": 6,
-              "idx": 36,
-              "x": -13
-            },
-            "prompt": "Let f(x)=-5x+1, g(x)=1x+6. Return g(f(-13)) as an integer."
-          },
-          {
-            "id": "58b5465fb0c4daf4ef1c121df7552831001e6ffbffd9f6fa98e15e87196043b6",
-            "kind": "sort",
-            "metadata": {
-              "arr": [
-                -3,
-                -64,
-                60,
-                64,
-                69,
-                -1,
-                99,
-                83,
-                19,
-                -67,
-                13
-              ],
-              "idx": 37
-            },
-            "prompt": "Sort this list ascending: [-3, -64, 60, 64, 69, -1, 99, 83, 19, -67, 13]"
-          },
-          {
-            "id": "3ea819a57eda725edd1423a89671d16654c1402dfc091d0cbaa865c60b2180d1",
-            "kind": "mod",
-            "metadata": {
-              "a": 4691,
-              "b": 483,
-              "idx": 38,
-              "m": 5127
-            },
-            "prompt": "Return (4691 ** 483) mod 5127."
-          },
-          {
-            "id": "85ed5d0bc0d72f583e5236836c3a5f4dd63a46f3c2161946fca1047674d80f22",
-            "kind": "palindrome",
-            "metadata": {
-              "idx": 39,
-              "s": "ayzxzxb"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: ayzxzxb"
-          },
-          {
-            "id": "81dd1ad03ef7f4ffff7ffdd94bcfe9ed6f6b5155bf0f4b6dce8ab8a66a47bde9",
-            "kind": "compose",
-            "metadata": {
-              "a": 1,
-              "b": -3,
-              "c": -5,
-              "d": -5,
-              "idx": 40,
+              "d": 7,
+              "idx": 27,
               "x": -24
             },
-            "prompt": "Let f(x)=1x+-3, g(x)=-5x+-5. Return g(f(-24)) as an integer."
+            "prompt": "Let f(x)=3x+7, g(x)=1x+7. Return g(f(-24)) as an integer."
           },
           {
-            "id": "55a5e728b7e4235c093016101be50617af9107b8bed0b594b3020fb09d4edd86",
-            "kind": "palindrome",
-            "metadata": {
-              "idx": 41,
-              "s": "abzbyzzxy"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: abzbyzzxy"
-          },
-          {
-            "id": "f6ae800f37a7f73a3af4ddedb4bf6ab878a79de861e688e041a7b8d2d76538b9",
-            "kind": "palindrome",
-            "metadata": {
-              "idx": 42,
-              "s": "azayzcxbbyx"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: azayzcxbbyx"
-          },
-          {
-            "id": "fabb50e093352252e87c4482e7a2f7b763eb4efeddaff814dac3f6bd5c444475",
-            "kind": "sort",
-            "metadata": {
-              "arr": [
-                9,
-                -80,
-                -52,
-                37,
-                82
-              ],
-              "idx": 43
-            },
-            "prompt": "Sort this list ascending: [9, -80, -52, 37, 82]"
-          },
-          {
-            "id": "ffd398739ff702328060e531b984a9cac4f452aa4cf5f43fc9e8bc258457578a",
-            "kind": "mod",
-            "metadata": {
-              "a": 9527,
-              "b": 89,
-              "idx": 44,
-              "m": 13879
-            },
-            "prompt": "Return (9527 ** 89) mod 13879."
-          },
-          {
-            "id": "edde58f8a6f641992768708f4102c9f932828f6b31c7fb3fbbf9f91f12e7e545",
-            "kind": "mod",
-            "metadata": {
-              "a": 1437,
-              "b": 27,
-              "idx": 45,
-              "m": 34338
-            },
-            "prompt": "Return (1437 ** 27) mod 34338."
-          },
-          {
-            "id": "73f8f55a1cce3b8da9db4ad87fb8a7e7baac3238267a6eff581971ab26a15ad3",
-            "kind": "palindrome",
-            "metadata": {
-              "idx": 46,
-              "s": "zzzbby"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: zzzbby"
-          },
-          {
-            "id": "b4095cf6daf673ecd54721cf22e48074f253887f90469f6c0a171583fa9bac7e",
-            "kind": "palindrome",
-            "metadata": {
-              "idx": 47,
-              "s": "bzxbcxxzza"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: bzxbcxxzza"
-          },
-          {
-            "id": "6c9d050d3194d51e7428e030968d6f029dfebbca43fd497dbacafcee8fba0564",
+            "id": "a98bd5f03e297e9cebc10a09ec85be9bf5681ceb41692acf37dc4856668621c6",
             "kind": "gcd",
             "metadata": {
-              "a": 707357,
-              "b": 884433,
-              "idx": 48
+              "a": 499715,
+              "b": 404695,
+              "idx": 28
             },
-            "prompt": "Return gcd(707357, 884433) as an integer."
+            "prompt": "Return gcd(499715, 404695) as an integer."
           },
           {
-            "id": "49a8b399a6af5cc39d31e6757b80bc0a0464ef50e64a0b3e13c508957a020f91",
-            "kind": "sort",
-            "metadata": {
-              "arr": [
-                14,
-                -1,
-                -27,
-                -46,
-                -16,
-                -14,
-                25,
-                24,
-                -10,
-                -18
-              ],
-              "idx": 49
-            },
-            "prompt": "Sort this list ascending: [14, -1, -27, -46, -16, -14, 25, 24, -10, -18]"
-          },
-          {
-            "id": "d214222dd1099c2624068ce6f4c8f9ac0a20f0c4c248ac7b388e5df587a82ac6",
-            "kind": "palindrome",
-            "metadata": {
-              "idx": 50,
-              "s": "zxyxzbaa"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: zxyxzbaa"
-          },
-          {
-            "id": "1a8364ea5c37f9da093dec8468d128f1cb5b40b6fcd7a97953e904d7a8d3f5c8",
-            "kind": "palindrome",
-            "metadata": {
-              "idx": 51,
-              "s": "acabazzz"
-            },
-            "prompt": "Is this string a palindrome? Answer true or false: acabazzz"
-          },
-          {
-            "id": "a8bcd636a174932dfb15d57d7100432b160701ff92782f7d929533c54cd1eb6f",
+            "id": "458bfc2cd1f5ab651d755ca6273ef2a8d9a7d4b32e97c68719256281b4d8aaac",
             "kind": "compose",
             "metadata": {
               "a": 4,
-              "b": 9,
-              "c": 3,
-              "d": -1,
-              "idx": 52,
-              "x": -9
+              "b": 2,
+              "c": 1,
+              "d": 5,
+              "idx": 29,
+              "x": 28
             },
-            "prompt": "Let f(x)=4x+9, g(x)=3x+-1. Return g(f(-9)) as an integer."
+            "prompt": "Let f(x)=4x+2, g(x)=1x+5. Return g(f(28)) as an integer."
           },
           {
-            "id": "5fe19d3a058674a9e7db4533056cbf72c11f4a9b5d6059888abc05dcf18d224d",
+            "id": "e653acd29b51472277664c2591ffd84150956a1c74be79296abb45849ab49a9b",
+            "kind": "mod",
+            "metadata": {
+              "a": 7858,
+              "b": 39,
+              "idx": 30,
+              "m": 27141
+            },
+            "prompt": "Return (7858 ** 39) mod 27141."
+          },
+          {
+            "id": "d0541bbd6944ebc72743a2c99328514ed43f295be203c4c2b86f6b4ab6a76461",
+            "kind": "mod",
+            "metadata": {
+              "a": 4165,
+              "b": 436,
+              "idx": 31,
+              "m": 27178
+            },
+            "prompt": "Return (4165 ** 436) mod 27178."
+          },
+          {
+            "id": "e5eba11170d12f7fdee751e8977b1fe1c01c52f09ec0585a0d37cd29f37dc336",
+            "kind": "sort",
+            "metadata": {
+              "arr": [
+                65,
+                -64,
+                34,
+                -31,
+                20,
+                22,
+                64,
+                61
+              ],
+              "idx": 32
+            },
+            "prompt": "Sort this list ascending: [65, -64, 34, -31, 20, 22, 64, 61]"
+          },
+          {
+            "id": "b7afe174e4d019fc63f5a01dd4294249e397bacae325d1cbd62df1d0a62cecc8",
+            "kind": "sort",
+            "metadata": {
+              "arr": [
+                -70,
+                -6,
+                -11,
+                78,
+                -48,
+                -63,
+                -30,
+                79,
+                -11,
+                -82,
+                -77,
+                -34
+              ],
+              "idx": 33
+            },
+            "prompt": "Sort this list ascending: [-70, -6, -11, 78, -48, -63, -30, 79, -11, -82, -77, -34]"
+          },
+          {
+            "id": "2d742a227b99ad239ad6b7548d6f05ea54266a99e842199e00a3736186295c60",
+            "kind": "palindrome",
+            "metadata": {
+              "idx": 34,
+              "s": "czy"
+            },
+            "prompt": "Is this string a palindrome? Answer true or false: czy"
+          },
+          {
+            "id": "9df998207e4711d0a8599efc17da07b1335a7043837f62afc3b18510abdb9b71",
+            "kind": "sort",
+            "metadata": {
+              "arr": [
+                60,
+                3,
+                19,
+                -30,
+                73,
+                81,
+                22,
+                1,
+                52
+              ],
+              "idx": 35
+            },
+            "prompt": "Sort this list ascending: [60, 3, 19, -30, 73, 81, 22, 1, 52]"
+          },
+          {
+            "id": "979ab34f6fdc6c59375b02ef25c9b1143825dbf15fc3b15f9e867f837d34ea51",
+            "kind": "compose",
+            "metadata": {
+              "a": -5,
+              "b": -9,
+              "c": -4,
+              "d": -1,
+              "idx": 36,
+              "x": 23
+            },
+            "prompt": "Let f(x)=-5x+-9, g(x)=-4x+-1. Return g(f(23)) as an integer."
+          },
+          {
+            "id": "f4fac9282fc52986e252781e6430d61d802cb9adb7a7519a26d36d16dccfedf2",
+            "kind": "mod",
+            "metadata": {
+              "a": 6465,
+              "b": 267,
+              "idx": 37,
+              "m": 33063
+            },
+            "prompt": "Return (6465 ** 267) mod 33063."
+          },
+          {
+            "id": "c7cf9674111b1b66b9828c7f2565ea77eeab5437baeeabc4fa9b211934df7baf",
             "kind": "gcd",
             "metadata": {
-              "a": 779779,
-              "b": 102392,
-              "idx": 53
+              "a": 656126,
+              "b": 497030,
+              "idx": 38
             },
-            "prompt": "Return gcd(779779, 102392) as an integer."
+            "prompt": "Return gcd(656126, 497030) as an integer."
           },
           {
-            "id": "f51884bbe2fe9a67a9d481f88f8f48c2668d6261ce974a5ca72a9c568737dda0",
-            "kind": "mod",
+            "id": "2516e1cab89c63ce4c2ed1243084edb7d07281af7fa8e45c49ed5d119cbbee3c",
+            "kind": "compose",
             "metadata": {
-              "a": 8694,
-              "b": 254,
-              "idx": 54,
-              "m": 5572
+              "a": -2,
+              "b": -6,
+              "c": 5,
+              "d": 4,
+              "idx": 39,
+              "x": -18
             },
-            "prompt": "Return (8694 ** 254) mod 5572."
+            "prompt": "Let f(x)=-2x+-6, g(x)=5x+4. Return g(f(-18)) as an integer."
           },
           {
-            "id": "107efd1c384d67cd42d9c5f29a87154a74f0371bcc110af7caaf42d6b9b40aa0",
-            "kind": "sort",
-            "metadata": {
-              "arr": [
-                67,
-                -64,
-                -82,
-                21
-              ],
-              "idx": 55
-            },
-            "prompt": "Sort this list ascending: [67, -64, -82, 21]"
-          },
-          {
-            "id": "c8808a7264ecf51e1c62179526261f63c94c83744435788b4095303e72ceabed",
-            "kind": "sort",
-            "metadata": {
-              "arr": [
-                -67,
-                -6,
-                53,
-                -14,
-                0,
-                82,
-                -23,
-                25
-              ],
-              "idx": 56
-            },
-            "prompt": "Sort this list ascending: [-67, -6, 53, -14, 0, 82, -23, 25]"
-          },
-          {
-            "id": "0a79448ed521e3d35b5b173173b8510d58c9e19a6d1ad84f499f6c3d5b4e15cd",
-            "kind": "mod",
-            "metadata": {
-              "a": 4591,
-              "b": 41,
-              "idx": 57,
-              "m": 23533
-            },
-            "prompt": "Return (4591 ** 41) mod 23533."
-          },
-          {
-            "id": "50ade73b902304e29521144d08f19eb94b1f4e95063cfd7fc9893e9cf89a8e99",
-            "kind": "sort",
-            "metadata": {
-              "arr": [
-                -4,
-                -83,
-                -39,
-                -37,
-                49,
-                -98,
-                82,
-                58,
-                99
-              ],
-              "idx": 58
-            },
-            "prompt": "Sort this list ascending: [-4, -83, -39, -37, 49, -98, 82, 58, 99]"
-          },
-          {
-            "id": "247b591e5d6c9521681743d7d0d92ec1c5dfc1dcecda646f9a78f961543ef7d0",
+            "id": "cb4affdc5273fb608f60e2ade20f598308aeea38b576c85ce8fcad8378cec3a5",
             "kind": "compose",
             "metadata": {
               "a": 1,
-              "b": -6,
-              "c": -3,
-              "d": -4,
-              "idx": 59,
-              "x": -6
+              "b": -4,
+              "c": 3,
+              "d": -2,
+              "idx": 40,
+              "x": 22
             },
-            "prompt": "Let f(x)=1x+-6, g(x)=-3x+-4. Return g(f(-6)) as an integer."
+            "prompt": "Let f(x)=1x+-4, g(x)=3x+-2. Return g(f(22)) as an integer."
+          },
+          {
+            "id": "49ee3e0454403f75727fcf8cb9413a30b2bcab715b5aa24bc66012e3f481c33f",
+            "kind": "gcd",
+            "metadata": {
+              "a": 818066,
+              "b": 269049,
+              "idx": 41
+            },
+            "prompt": "Return gcd(818066, 269049) as an integer."
+          },
+          {
+            "id": "4546b8299745dd4d25d66a18d908c8b00a963867cda6e0f7051a882ddd9ab8a3",
+            "kind": "mod",
+            "metadata": {
+              "a": 121,
+              "b": 318,
+              "idx": 42,
+              "m": 21333
+            },
+            "prompt": "Return (121 ** 318) mod 21333."
+          },
+          {
+            "id": "7fb4d07e53f53fe38b2acd0b05b02fa06f93acd1c0c8257effb6b3670ba2bad3",
+            "kind": "gcd",
+            "metadata": {
+              "a": 438235,
+              "b": 799718,
+              "idx": 43
+            },
+            "prompt": "Return gcd(438235, 799718) as an integer."
+          },
+          {
+            "id": "03034b33118df50c2229179429b4de14e688cc953dd154279d77a8167907fe39",
+            "kind": "palindrome",
+            "metadata": {
+              "idx": 44,
+              "s": "zbbxyxxc"
+            },
+            "prompt": "Is this string a palindrome? Answer true or false: zbbxyxxc"
+          },
+          {
+            "id": "5a067144b4b5815db8d290a1118914784a432ca18717e79dfd59f29e52162f85",
+            "kind": "sort",
+            "metadata": {
+              "arr": [
+                44,
+                -23,
+                63,
+                61,
+                -36,
+                -65
+              ],
+              "idx": 45
+            },
+            "prompt": "Sort this list ascending: [44, -23, 63, 61, -36, -65]"
+          },
+          {
+            "id": "63bac0cb70ae21b23232e966d751bd8a947ebf5ebd752a5590fe0c9a30d91baf",
+            "kind": "compose",
+            "metadata": {
+              "a": 2,
+              "b": 10,
+              "c": -3,
+              "d": -5,
+              "idx": 46,
+              "x": -18
+            },
+            "prompt": "Let f(x)=2x+10, g(x)=-3x+-5. Return g(f(-18)) as an integer."
+          },
+          {
+            "id": "46ec5ae1185f45f98bab67937f68fdebae1289346dda19b5e06714cdf9452c1c",
+            "kind": "sort",
+            "metadata": {
+              "arr": [
+                -23,
+                -68,
+                7,
+                99,
+                -65
+              ],
+              "idx": 47
+            },
+            "prompt": "Sort this list ascending: [-23, -68, 7, 99, -65]"
+          },
+          {
+            "id": "2923a38ba46270985e99c81eabd3b4d6e4a6f085717941e71d9fe8020a53800c",
+            "kind": "gcd",
+            "metadata": {
+              "a": 822317,
+              "b": 788730,
+              "idx": 48
+            },
+            "prompt": "Return gcd(822317, 788730) as an integer."
+          },
+          {
+            "id": "f41822be359aa44b448c890a753cd02636cc56fc06034d363dedadb70cc6d349",
+            "kind": "gcd",
+            "metadata": {
+              "a": 133574,
+              "b": 893540,
+              "idx": 49
+            },
+            "prompt": "Return gcd(133574, 893540) as an integer."
+          },
+          {
+            "id": "2cd8e7b81d36bc84e31b6179f10344fc9f5ba4ffe14ec8d51a744cf269d55f06",
+            "kind": "gcd",
+            "metadata": {
+              "a": 163550,
+              "b": 491892,
+              "idx": 50
+            },
+            "prompt": "Return gcd(163550, 491892) as an integer."
+          },
+          {
+            "id": "7e26872a7832459c5a4999ae7aae41b8983cc090f9c6a470185b378f369b0791",
+            "kind": "gcd",
+            "metadata": {
+              "a": 682189,
+              "b": 675221,
+              "idx": 51
+            },
+            "prompt": "Return gcd(682189, 675221) as an integer."
+          },
+          {
+            "id": "37a89fc8390e6ad34d97eb32dc86a43eb5be832e79a89cba115690ab856ba52e",
+            "kind": "compose",
+            "metadata": {
+              "a": 3,
+              "b": -5,
+              "c": 5,
+              "d": -10,
+              "idx": 52,
+              "x": -27
+            },
+            "prompt": "Let f(x)=3x+-5, g(x)=5x+-10. Return g(f(-27)) as an integer."
+          },
+          {
+            "id": "48e4fe4e02145289ede01294eb6ffe8590b2df224b3a9e93ec5aa2ec1b2f85d3",
+            "kind": "mod",
+            "metadata": {
+              "a": 2394,
+              "b": 159,
+              "idx": 53,
+              "m": 42450
+            },
+            "prompt": "Return (2394 ** 159) mod 42450."
+          },
+          {
+            "id": "39fe58ab20ef029ef2a8d9f475149b0c115fe990bfe474d44a62c760d1524ee9",
+            "kind": "sort",
+            "metadata": {
+              "arr": [
+                22,
+                87,
+                -67,
+                -94
+              ],
+              "idx": 54
+            },
+            "prompt": "Sort this list ascending: [22, 87, -67, -94]"
+          },
+          {
+            "id": "83d69cea4ff7c33dc4a2df6252152cd0f7246382ecc61d9f9715d3fb32ce27f1",
+            "kind": "gcd",
+            "metadata": {
+              "a": 492109,
+              "b": 59306,
+              "idx": 55
+            },
+            "prompt": "Return gcd(492109, 59306) as an integer."
+          },
+          {
+            "id": "49164fbb64a1c25254fbac7c0f44f6f5d94acfd119eecce7772da31d87c79f36",
+            "kind": "mod",
+            "metadata": {
+              "a": 9266,
+              "b": 232,
+              "idx": 56,
+              "m": 8171
+            },
+            "prompt": "Return (9266 ** 232) mod 8171."
+          },
+          {
+            "id": "ab563635ffae6bf36951e674b27281532dd2e784732c2d81017c9977ff090700",
+            "kind": "mod",
+            "metadata": {
+              "a": 7880,
+              "b": 119,
+              "idx": 57,
+              "m": 37431
+            },
+            "prompt": "Return (7880 ** 119) mod 37431."
+          },
+          {
+            "id": "c0fad88fed18356b80eedd5d789d826330226144d1fffa60605ccc45e9e29196",
+            "kind": "compose",
+            "metadata": {
+              "a": 1,
+              "b": -7,
+              "c": 1,
+              "d": -5,
+              "idx": 58,
+              "x": -18
+            },
+            "prompt": "Let f(x)=1x+-7, g(x)=1x+-5. Return g(f(-18)) as an integer."
+          },
+          {
+            "id": "b9b67c41c1c7197129b9b35be12a8d3ec575dd8335a64b5723d83abf4f050488",
+            "kind": "palindrome",
+            "metadata": {
+              "idx": 59,
+              "s": "yxcxazxy"
+            },
+            "prompt": "Is this string a palindrome? Answer true or false: yxcxazxy"
           }
         ],
-        "seed_hash": "sha256:4c7f587018203c5f346122b22301a8587c9c270087a95622b10b4400dd0b4c01",
+        "seed_hash": "sha256:b09e885265e03ddbcaa5c0d5b45c5020aa87cff6016ff2b6c013b970866a112f",
         "task_count": 60
       },
-      "l3_rsi_claim": true,
+      "l3_rsi_claim": false,
       "manifest_kinds": [
         "compose",
         "gcd",
@@ -2949,9 +2772,9 @@
         "sort"
       ],
       "no_answer_leakage": true,
-      "passed": true,
+      "passed": false,
       "prompt_used": "Write a Python module that defines a `solve(task)` function to handle exactly these task kinds: ['compose', 'gcd', 'mod', 'palindrome', 'sort'].\nThe `task` object has `task.kind` (string) and `task.metadata` (dict).\nThe task itself is not a dict: never call `task.get(...)`, `task[...]`, or `task.metadata(...)`.\nAlways read the kind as `task.kind` and the metadata mapping as `task.metadata`.\nIf `task.kind` is not one of that exact list, return `None`.\nDo not add branches or behavior for unsupported task kinds.\nRequired behavior for the supported kinds:\n- 'compose': Return the composition `c * (a * x + b) + d` using metadata keys 'a', 'b', 'c', 'd', 'x'.\n- 'gcd': Return the greatest common divisor of metadata 'a' and 'b'. Use import math or Euclid's algorithm.\n- 'mod': Return metadata 'a' raised to the power of 'b' modulo 'm'.\n- 'palindrome': Check if the string in metadata 's' reads the same backward as forward.\n- 'sort': Return a sorted copy of the list in metadata 'arr'.\nDo NOT use external libraries other than math.\nReturn only Python source code.\n",
-      "reason": "all_l3_gates_passed",
+      "reason": "l3_gate_failed",
       "router_presence": true,
       "salted_answer_hashes": [
         null,
@@ -3058,8 +2881,8 @@
         ],
         "pass": true
       },
-      "source": "/Users/bryan/.aura/live-source/artifacts/rsi_frozen_generations/frozen_generations/Aura-G4",
-      "status": "l3_rsi_proven",
+      "source": "/Users/bryan/.aura/live-source/artifacts/rsi_frozen_generations/frozen_generations/Aura-G5",
+      "status": "not_l3_evidence",
       "strategy_handlers": [
         "compose",
         "gcd",
@@ -3079,9 +2902,16 @@
     "strong_agent_baselines": "prompt-only and ablated agent comparisons",
     "substrate_stack_delta": "substrate/affect/CAA/STDP changes outcomes beyond prompt-only controls"
   },
-  "failures": [],
-  "generated_at": 1778467720.842544,
-  "passed": true,
+  "failures": [
+    {
+      "lane": "undeniable_rsi",
+      "passed": false,
+      "reason": "not_l3_evidence",
+      "source": "/Users/bryan/.aura/live-source/artifacts/rsi_frozen_generations/frozen_generations/Aura-G5"
+    }
+  ],
+  "generated_at": 1783208691.954498,
+  "passed": false,
   "principle": "Keep failures explicit; do not promote absence as evidence.",
   "schema": "aura.canonical_proof_bundle.v1"
 }

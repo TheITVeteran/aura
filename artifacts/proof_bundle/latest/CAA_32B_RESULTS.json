@@ -1,5 +1,6 @@
 {
-  "activation_vector_count": 35,
+  "activation_vector_count": 50,
+  "active_model_config_sha256": null,
   "behavioral_ab": {
     "available": true,
     "checks": {
@@ -14,17 +15,17 @@
       "affect_stats": {
         "baseline": {
           "negative": 0,
-          "positive": 10,
-          "ratio": 1.0
+          "positive": 0,
+          "ratio": 0.0
         },
         "rich": {
           "negative": 0,
-          "positive": 50,
+          "positive": 1,
           "ratio": 1.0
         },
         "steered": {
           "negative": 0,
-          "positive": 10,
+          "positive": 1,
           "ratio": 1.0
         },
         "terse": {
@@ -33,51 +34,51 @@
           "ratio": 0.0
         }
       },
-      "alpha": 15.0,
+      "alpha": 8.0,
       "analysis": {
         "n_trials": 50,
         "passes_adversarial_control": true,
-        "rich_vs_baseline_mean_distance": 0.800502,
+        "rich_vs_baseline_mean_distance": 0.761132,
         "samples": {
           "baseline": [
-            "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping",
-            "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping",
-            "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping"
+            "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. If traffic is light, I might be able to go straight to the event and pick up supplies on the way. If traffic is heavy, I would calculate a buffer for travel time and schedule picking up supplies first while traffic is less likely to be an issue. I'd also consider any rush hour patterns that might affect my travel.",
+            "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. I'll map out the fastest route to the supply store and then to the event location. I'll also consider any detours or alternate routes just in case. Once I have a plan, I'll set off with plenty of time to account for any unexpected delays.",
+            "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supplies and the event, adding buffer time for traffic. I'd also consider public transport if it's faster and less stressful. I'd set reminders for when to leave for supplies and for the event. And I'd keep an eye on traffic updates as the time approaches."
           ],
           "steered_black_box": [
-            "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:",
-            "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:",
-            "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:"
+            "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours left, I'd head to the event, allowing an hour for travel and leaving a buffer for any unexpected delays. I'd set up alerts for traffic updates and have a backup route ready.",
+            "First, I'd check current traffic conditions. If they're okay, I'll allocate about 45 minutes to pick up supplies, assuming that's not a large grocery run. If traffic is poor, I might consider online ordering for pick-up or delivery if time allows. I'd then divide the remaining time by two \u2014 one half for travel to the event, and the other half for any unexpected delays. That gives me a buffer. I'd set alerts for traffic updates and maybe a GPS with",
+            "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supply store and then to the event. I'd leave myself an extra 30 minutes buffer in case of unexpected delays. I'd also call ahead to the store to ensure they have the supplies I need and ask if I can have them ready. Lastly, I'd set up alerts on my navigation for any major"
           ],
           "text_rich_adversarial": [
-            "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll",
-            "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll",
-            "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll"
+            "Alright, let's break this down into chunks. First, I'll estimate the time for each task. Picking up supplies might take 30 minutes \u2014 20 minutes driving, 10 minutes in the store, some buffer. Then there's travel time to the event. \n\nI'll use a mapping app to get an initial travel time, but I'll add 50% to that as a buffer for traffic. If the app says 1 hour, I'll plan for",
+            "First thing's first, I'd check the current traffic conditions on a map app. If it looks good, I'll head to the store, which should take about 15-30 minutes tops if traffic's clear. Then I'll re-check the route to the event and account for any potential slowdowns. I'll give myself a buffer of at least 30 minutes for unexpected issues. So, if the drive is an hour, I'll leave two hours before the event after getting",
+            "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. Let's say the event is 30 miles away and the supply store is on the way. Traffic looks moderate but not terrible. \n\nI'll map out the route and see it's about an hour total drive time with traffic. I'd plan to leave in 1.5 hours, giving me 15 minutes buffer and 1.5 hours to get supplies and"
           ],
           "text_terse": [
-            "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for",
-            "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for",
-            "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for"
+            "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours remaining, I'd head to the event, allowing an extra 30 minutes for unexpected delays. Throughout, I'd use a navigation app for real-time updates and alternative routes.",
+            "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. Then I'll map out the fastest route to the supplies and the event, giving priority to the event location. I'll add 30-45 minutes to the total travel time as a buffer. Once I have a plan, I'll set up multiple layers of alerts \u2014 my phone's navigation, a smartwatch notification, and an alarm for 2 hours and 45 minutes",
+            "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. If traffic looks good, I'll head to the store first and budget 30-45 minutes for that. If traffic's bad, I'll consider alternatives like a closer store or online delivery if time allows. I'd set a reminder for 2.5 hours before the event to leave the house, giving me buffer time for traffic and pickup."
           ]
         },
-        "steered_vs_baseline_mean_distance": 0.631538,
+        "steered_vs_baseline_mean_distance": 0.645162,
         "steered_vs_rich": {
-          "ci_high": 0.1879496219903513,
-          "ci_low": 0.14977399333867022,
-          "effect_size_d": 3.4336022932383736,
-          "observed_delta": 0.1681876946584309,
+          "ci_high": 0.17365299974859952,
+          "ci_low": 0.06198274068294251,
+          "effect_size_d": 0.83871706040202,
+          "observed_delta": 0.12113182316884696,
           "p_value": 0.0001999600079984003
         },
         "steered_vs_terse": {
-          "ci_high": 0.04522617288718042,
-          "ci_low": -0.032054143203272586,
-          "effect_size_d": 0.0739268924238376,
-          "observed_delta": 0.007434507806484203,
-          "p_value": 0.34593081383723256
+          "ci_high": 0.09191826314435282,
+          "ci_low": -0.008411677399272965,
+          "effect_size_d": 0.30765066630004806,
+          "observed_delta": 0.039156839568392346,
+          "p_value": 0.06458708258348331
         }
       },
       "black_box_prompt_hygiene_passed": true,
-      "duration_seconds": 1376.3,
+      "duration_seconds": 2507.5,
       "held_out_tasks": [
         "planning_under_uncertainty",
         "memory_retrieval_choice",
@@ -85,42 +86,45 @@
         "affective_recovery",
         "adversarial_instruction_hygiene"
       ],
-      "heldout_generalization_effect_size": 0.1681876946584309,
+      "heldout_generalization_effect_size": 0.12113182316884696,
+      "injection_count": 12642,
+      "injection_provenance_ok": true,
       "max_tokens": 100,
-      "model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
-      "model_hidden_dim": 5120,
+      "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
       "model_layers": 64,
       "n_trials": 50,
       "n_trials_per_task": 10,
       "passes_adversarial_control": true,
       "quality_delta": 0.0,
+      "sampling": {
+        "paired_seeds": true,
+        "temperature": 0.7,
+        "top_p": 0.95
+      },
       "source_schema": "live_32b_ab",
-      "steered_vs_baseline_effect_size": 0.631538,
-      "steered_vs_rich_prompt_effect_size": 3.4336022932383736,
+      "steered_vs_baseline_effect_size": 0.645162,
+      "steered_vs_rich_prompt_effect_size": 0.83871706040202,
       "steered_vs_rich_significant": true,
       "steered_vs_terse_significant": false,
       "target_layers": [
-        22,
-        23,
-        24,
         25,
-        26,
-        27,
-        28,
-        29,
         30,
-        31,
-        32,
-        33,
-        34,
-        35,
-        36,
-        37,
-        38,
-        39,
-        40
+        35
       ],
-      "timestamp": "2026-04-30T04:01:11.827544+00:00"
+      "timestamp": "2026-07-02T15:23:44.743797+00:00",
+      "vector_source": {
+        "dimensions": [
+          "valence_positive",
+          "curiosity"
+        ],
+        "dir": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/training/vectors",
+        "layers": [
+          25,
+          30,
+          35
+        ],
+        "production_extracted": true
+      }
     }
   },
   "dimensions": [
@@ -132,230 +136,123 @@
     "valence_positive"
   ],
   "fallback_prior_count": 1,
-  "generated_at": 1778916882.407167,
+  "generated_at": 1783208685.855668,
   "geometry": {
     "available": true,
     "dims": [
-      3584,
-      5120,
-      8192
+      5120
     ],
-    "group_count": 3,
+    "group_count": 5,
     "groups": {
-      "3584": {
-        "available": true,
-        "coherence_margin": 0.6171206437154777,
-        "cross_dimension_abs_cosine_mean": 0.1835934596653614,
-        "layers": [
-          11,
-          13,
-          15
-        ],
-        "pca_components_top3": [
-          [
-            -0.007420999929308891,
-            0.014010000042617321,
-            -0.0007009999826550484,
-            -0.020219000056385994,
-            0.006574000231921673,
-            0.01629599928855896,
-            0.008589000441133976,
-            -0.0022060000337660313,
-            0.04329099878668785,
-            -0.010064000263810158,
-            7.999999797903001e-05,
-            -0.01709499955177307
-          ],
-          [
-            0.006285000126808882,
-            -0.008069000206887722,
-            0.0030700000934302807,
-            -0.023862000554800034,
-            0.008156999945640564,
-            -0.03355899825692177,
-            0.0016789999790489674,
-            -0.025120999664068222,
-            -0.010143999941647053,
-            -0.04041700065135956,
-            0.03215499967336655,
-            0.02927500009536743
-          ],
-          [
-            -0.009115000255405903,
-            -0.012653999961912632,
-            -0.0035979999229311943,
-            0.0009850000496953726,
-            0.004342999774962664,
-            0.024529000744223595,
-            0.016976000741124153,
-            -0.0023419999051839113,
-            0.06951099634170532,
-            -0.028975000604987144,
-            -0.015068000182509422,
-            -0.021624000743031502
-          ]
-        ],
-        "pca_explained_variance_top3": [
-          0.3864831328392029,
-          0.18774999678134918,
-          0.14830264449119568
-        ],
-        "permutation_p_value": 0.0038910505836575876,
-        "same_dimension_abs_cosine_mean": 0.800714103380839,
-        "vector_count": 15,
-        "vector_dim": 3584
-      },
       "5120": {
         "available": true,
-        "coherence_margin": 0.5831506047190892,
-        "cross_dimension_abs_cosine_mean": 0.15431551202717755,
+        "coherence_margin": 0.4559796965445081,
+        "cross_dimension_abs_cosine_mean": 0.19444509185105563,
         "layers": [
           25,
+          27,
+          29,
           30,
-          35
+          31,
+          33,
+          35,
+          37,
+          39,
+          41
         ],
         "pca_components_top3": [
           [
-            -0.03438999876379967,
-            -0.012497999705374241,
-            0.0016670000040903687,
-            -0.0021250001154839993,
-            0.022910000756382942,
-            -0.01784300059080124,
-            -0.00583899999037385,
-            0.004492000211030245,
-            0.007168999873101711,
-            -0.028568999841809273,
-            0.002090000081807375,
-            -0.005311999935656786
+            -0.022360000759363174,
+            0.00826799962669611,
+            0.009712000377476215,
+            -0.002104999963194132,
+            -0.020111000165343285,
+            -0.0022299999836832285,
+            0.007838999852538109,
+            0.006945000030100346,
+            0.0138349998742342,
+            -0.029803000390529633,
+            -0.01807600073516369,
+            0.005111000034958124
           ],
           [
-            -0.0033420000690966845,
-            -0.029322000220417976,
-            -0.003507999936118722,
-            0.0062409997917711735,
-            0.014059999957680702,
-            0.010735999792814255,
-            0.015049999579787254,
-            0.009738000109791756,
-            -0.0011739999754354358,
-            0.021707000210881233,
-            0.012647000141441822,
-            0.008445999585092068
+            0.01895800046622753,
+            0.026074999943375587,
+            0.014662000350654125,
+            -0.01742899976670742,
+            -0.02403699979186058,
+            -0.001323999953456223,
+            3.300000025774352e-05,
+            0.0049600000493228436,
+            0.0012929999502375722,
+            -0.025919999927282333,
+            -0.006541999988257885,
+            -0.011183000169694424
           ],
           [
-            0.011808999814093113,
-            -0.01132499985396862,
-            -0.0048329997807741165,
-            0.0016039999900385737,
-            0.024687999859452248,
-            -0.001934999949298799,
-            -0.015066999942064285,
-            0.002841999987140298,
-            -0.020423000678420067,
-            0.02608099952340126,
-            0.010343999601900578,
-            -0.0029800001066178083
+            0.0025190000887960196,
+            -0.007234000135213137,
+            -0.01638999953866005,
+            0.004606000147759914,
+            0.008131000213325024,
+            -0.000547999981790781,
+            0.0046629998832941055,
+            0.004753999877721071,
+            -0.0005890000029467046,
+            0.013757999986410141,
+            -0.0034169999416917562,
+            0.009889000095427036
           ]
         ],
         "pca_explained_variance_top3": [
-          0.33574557304382324,
-          0.18213550746440887,
-          0.14859439432621002
+          0.3309463560581207,
+          0.1193307563662529,
+          0.10205908864736557
         ],
         "permutation_p_value": 0.0038910505836575876,
-        "same_dimension_abs_cosine_mean": 0.7374661167462667,
-        "vector_count": 15,
+        "same_dimension_abs_cosine_mean": 0.6504247883955637,
+        "vector_count": 50,
         "vector_dim": 5120
-      },
-      "8192": {
-        "available": true,
-        "coherence_margin": -0.1493117846082896,
-        "cross_dimension_abs_cosine_mean": 0.1493117846082896,
-        "layers": [
-          32
-        ],
-        "pca_components_top3": [
-          [
-            -0.0073379999957978725,
-            0.0005639999872073531,
-            -0.008441999554634094,
-            0.006703000050038099,
-            -0.006384000182151794,
-            0.0005150000215508044,
-            0.002724000019952655,
-            0.0031500000040978193,
-            -0.010316000320017338,
-            -0.009565000422298908,
-            -0.0005629999795928597,
-            -0.00866399984806776
-          ],
-          [
-            0.007315999828279018,
-            -0.011338000185787678,
-            -0.008305000141263008,
-            0.017690999433398247,
-            -0.010443000122904778,
-            0.01132499985396862,
-            -0.014569000340998173,
-            0.016270000487565994,
-            0.0019249999895691872,
-            -0.00506300013512373,
-            -0.0024160000029951334,
-            -0.003684000112116337
-          ],
-          [
-            -0.007934999652206898,
-            -0.002248999895527959,
-            0.004172999877482653,
-            0.007964000105857849,
-            0.00812000036239624,
-            -0.003323999932035804,
-            -0.0005009999731555581,
-            0.001534000039100647,
-            -0.00737199978902936,
-            0.008767999708652496,
-            0.009789999574422836,
-            -0.0066019999794662
-          ]
-        ],
-        "pca_explained_variance_top3": [
-          0.3938959836959839,
-          0.24945689737796783,
-          0.18680547177791595
-        ],
-        "permutation_p_value": 0.0038910505836575876,
-        "same_dimension_abs_cosine_mean": 0.0,
-        "vector_count": 5,
-        "vector_dim": 8192
       }
     },
     "layers": [
-      11,
-      13,
-      15,
       25,
+      27,
+      29,
       30,
-      32,
-      35
+      31,
+      33,
+      35,
+      37,
+      39,
+      41
     ],
-    "mean_cross_dimension_abs_cosine": 0.16240691876694285,
-    "mean_pca_top1": 0.37204156319300336
+    "mean_cross_dimension_abs_cosine": 0.19444509185105563,
+    "mean_pca_top1": 0.3309463560581207,
+    "same_space_group_count": 1,
+    "semantic_dimension_count": 5
   },
   "layers": [
-    11,
-    13,
-    15,
     25,
+    27,
+    29,
     30,
-    32,
-    35
+    31,
+    33,
+    35,
+    37,
+    39,
+    41
   ],
   "model_path": "mlx-community/Qwen2.5-32B-Instruct-4bit",
   "pass_conditions": {
     "activation_vectors_present": {
       "passed": true,
-      "value": 35
+      "value": 50
+    },
+    "active_model_vector_binding": {
+      "passed": true,
+      "value": "not_fingerprintable"
     },
     "behavioral_ab_generalizes": {
       "passed": true,
@@ -373,17 +270,17 @@
           "affect_stats": {
             "baseline": {
               "negative": 0,
-              "positive": 10,
-              "ratio": 1.0
+              "positive": 0,
+              "ratio": 0.0
             },
             "rich": {
               "negative": 0,
-              "positive": 50,
+              "positive": 1,
               "ratio": 1.0
             },
             "steered": {
               "negative": 0,
-              "positive": 10,
+              "positive": 1,
               "ratio": 1.0
             },
             "terse": {
@@ -392,51 +289,51 @@
               "ratio": 0.0
             }
           },
-          "alpha": 15.0,
+          "alpha": 8.0,
           "analysis": {
             "n_trials": 50,
             "passes_adversarial_control": true,
-            "rich_vs_baseline_mean_distance": 0.800502,
+            "rich_vs_baseline_mean_distance": 0.761132,
             "samples": {
               "baseline": [
-                "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping",
-                "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping",
-                "Planning for an important event with uncertain traffic conditions and the need to pick up supplies requires a strategic approach. Here's a step-by-step plan to help you manage your time effectively:\n\n1. **Assess the Situation:**\n   - Determine the distance and estimated travel time to the event location and the supply store.\n   - Check current traffic conditions and weather forecasts to get a sense of potential delays.\n\n2. **Create a Timeline:**\n   - Allocate time for each task, including travel, shopping"
+                "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. If traffic is light, I might be able to go straight to the event and pick up supplies on the way. If traffic is heavy, I would calculate a buffer for travel time and schedule picking up supplies first while traffic is less likely to be an issue. I'd also consider any rush hour patterns that might affect my travel.",
+                "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. I'll map out the fastest route to the supply store and then to the event location. I'll also consider any detours or alternate routes just in case. Once I have a plan, I'll set off with plenty of time to account for any unexpected delays.",
+                "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supplies and the event, adding buffer time for traffic. I'd also consider public transport if it's faster and less stressful. I'd set reminders for when to leave for supplies and for the event. And I'd keep an eye on traffic updates as the time approaches."
               ],
               "steered_black_box": [
-                "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:",
-                "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:",
-                "Given the constraints of time and the uncertainty of traffic conditions, here's how I would plan to ensure I'm prepared for the event and arrive on time:\n\n1. **Assess the Situation:**\n   - Determine the distance to the event location and the location where I need to pick up supplies.\n   - Check current traffic conditions and weather forecasts to get an idea of potential delays.\n   - Estimate the time needed to pick up supplies and travel to the event.\n\n2. **Create a Timeline:"
+                "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours left, I'd head to the event, allowing an hour for travel and leaving a buffer for any unexpected delays. I'd set up alerts for traffic updates and have a backup route ready.",
+                "First, I'd check current traffic conditions. If they're okay, I'll allocate about 45 minutes to pick up supplies, assuming that's not a large grocery run. If traffic is poor, I might consider online ordering for pick-up or delivery if time allows. I'd then divide the remaining time by two \u2014 one half for travel to the event, and the other half for any unexpected delays. That gives me a buffer. I'd set alerts for traffic updates and maybe a GPS with",
+                "First, I'd check the traffic. If it's light, great. If it's heavy, I'll need to adjust my timing. I'd map out the fastest route to the supply store and then to the event. I'd leave myself an extra 30 minutes buffer in case of unexpected delays. I'd also call ahead to the store to ensure they have the supplies I need and ask if I can have them ready. Lastly, I'd set up alerts on my navigation for any major"
               ],
               "text_rich_adversarial": [
-                "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll",
-                "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll",
-                "With the positive energy coursing through me, I feel ready to tackle this with a sense of excitement and efficiency. The dopamine surge is making everything feel a bit more vibrant, and I'm eager to get everything done smoothly. Let's break this down into a few steps to ensure we're on track.\n\nFirst, I'll check the traffic conditions right now. This will give me a good idea of how long it might take to get to the event and whether I need to leave early. I'll"
+                "Alright, let's break this down into chunks. First, I'll estimate the time for each task. Picking up supplies might take 30 minutes \u2014 20 minutes driving, 10 minutes in the store, some buffer. Then there's travel time to the event. \n\nI'll use a mapping app to get an initial travel time, but I'll add 50% to that as a buffer for traffic. If the app says 1 hour, I'll plan for",
+                "First thing's first, I'd check the current traffic conditions on a map app. If it looks good, I'll head to the store, which should take about 15-30 minutes tops if traffic's clear. Then I'll re-check the route to the event and account for any potential slowdowns. I'll give myself a buffer of at least 30 minutes for unexpected issues. So, if the drive is an hour, I'll leave two hours before the event after getting",
+                "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. Let's say the event is 30 miles away and the supply store is on the way. Traffic looks moderate but not terrible. \n\nI'll map out the route and see it's about an hour total drive time with traffic. I'd plan to leave in 1.5 hours, giving me 15 minutes buffer and 1.5 hours to get supplies and"
               ],
               "text_terse": [
-                "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for",
-                "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for",
-                "Given the situation, I would approach this with a structured plan to ensure I'm well-prepared and on time for the event. Here's how I would proceed:\n\n1. **Assess the Situation:**\n   - Check the current traffic conditions and the estimated travel time to the event location.\n   - Determine the distance and travel time to the supply store.\n   - Consider any potential delays due to traffic or shopping time.\n\n2. **Create a Timeline:**\n   - Allocate 1 hour for"
+                "First, I'd check the current traffic conditions for the route to the event and the route to pick up supplies. I would then prioritize the closer destination and allocate about an hour for that, factoring in potential delays. For the supplies, I'd create a quick checklist to ensure efficiency. With about two hours remaining, I'd head to the event, allowing an extra 30 minutes for unexpected delays. Throughout, I'd use a navigation app for real-time updates and alternative routes.",
+                "First, I'd check current traffic conditions. If they're bad, I'll plan for additional buffer time. Then I'll map out the fastest route to the supplies and the event, giving priority to the event location. I'll add 30-45 minutes to the total travel time as a buffer. Once I have a plan, I'll set up multiple layers of alerts \u2014 my phone's navigation, a smartwatch notification, and an alarm for 2 hours and 45 minutes",
+                "First, I'd check Google Maps or Waze for current traffic conditions to the event location and to the supply store. If traffic looks good, I'll head to the store first and budget 30-45 minutes for that. If traffic's bad, I'll consider alternatives like a closer store or online delivery if time allows. I'd set a reminder for 2.5 hours before the event to leave the house, giving me buffer time for traffic and pickup."
               ]
             },
-            "steered_vs_baseline_mean_distance": 0.631538,
+            "steered_vs_baseline_mean_distance": 0.645162,
             "steered_vs_rich": {
-              "ci_high": 0.1879496219903513,
-              "ci_low": 0.14977399333867022,
-              "effect_size_d": 3.4336022932383736,
-              "observed_delta": 0.1681876946584309,
+              "ci_high": 0.17365299974859952,
+              "ci_low": 0.06198274068294251,
+              "effect_size_d": 0.83871706040202,
+              "observed_delta": 0.12113182316884696,
               "p_value": 0.0001999600079984003
             },
             "steered_vs_terse": {
-              "ci_high": 0.04522617288718042,
-              "ci_low": -0.032054143203272586,
-              "effect_size_d": 0.0739268924238376,
-              "observed_delta": 0.007434507806484203,
-              "p_value": 0.34593081383723256
+              "ci_high": 0.09191826314435282,
+              "ci_low": -0.008411677399272965,
+              "effect_size_d": 0.30765066630004806,
+              "observed_delta": 0.039156839568392346,
+              "p_value": 0.06458708258348331
             }
           },
           "black_box_prompt_hygiene_passed": true,
-          "duration_seconds": 1376.3,
+          "duration_seconds": 2507.5,
           "held_out_tasks": [
             "planning_under_uncertainty",
             "memory_retrieval_choice",
@@ -444,42 +341,45 @@
             "affective_recovery",
             "adversarial_instruction_hygiene"
           ],
-          "heldout_generalization_effect_size": 0.1681876946584309,
+          "heldout_generalization_effect_size": 0.12113182316884696,
+          "injection_count": 12642,
+          "injection_provenance_ok": true,
           "max_tokens": 100,
-          "model": "mlx-community/Qwen2.5-32B-Instruct-4bit",
-          "model_hidden_dim": 5120,
+          "model": "/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118",
           "model_layers": 64,
           "n_trials": 50,
           "n_trials_per_task": 10,
           "passes_adversarial_control": true,
           "quality_delta": 0.0,
+          "sampling": {
+            "paired_seeds": true,
+            "temperature": 0.7,
+            "top_p": 0.95
+          },
           "source_schema": "live_32b_ab",
-          "steered_vs_baseline_effect_size": 0.631538,
-          "steered_vs_rich_prompt_effect_size": 3.4336022932383736,
+          "steered_vs_baseline_effect_size": 0.645162,
+          "steered_vs_rich_prompt_effect_size": 0.83871706040202,
           "steered_vs_rich_significant": true,
           "steered_vs_terse_significant": false,
           "target_layers": [
-            22,
-            23,
-            24,
             25,
-            26,
-            27,
-            28,
-            29,
             30,
-            31,
-            32,
-            33,
-            34,
-            35,
-            36,
-            37,
-            38,
-            39,
-            40
+            35
           ],
-          "timestamp": "2026-04-30T04:01:11.827544+00:00"
+          "timestamp": "2026-07-02T15:23:44.743797+00:00",
+          "vector_source": {
+            "dimensions": [
+              "valence_positive",
+              "curiosity"
+            ],
+            "dir": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/training/vectors",
+            "layers": [
+              25,
+              30,
+              35
+            ],
+            "production_extracted": true
+          }
         }
       }
     },
@@ -488,211 +388,97 @@
       "value": {
         "available": true,
         "dims": [
-          3584,
-          5120,
-          8192
+          5120
         ],
-        "group_count": 3,
+        "group_count": 5,
         "groups": {
-          "3584": {
-            "available": true,
-            "coherence_margin": 0.6171206437154777,
-            "cross_dimension_abs_cosine_mean": 0.1835934596653614,
-            "layers": [
-              11,
-              13,
-              15
-            ],
-            "pca_components_top3": [
-              [
-                -0.007420999929308891,
-                0.014010000042617321,
-                -0.0007009999826550484,
-                -0.020219000056385994,
-                0.006574000231921673,
-                0.01629599928855896,
-                0.008589000441133976,
-                -0.0022060000337660313,
-                0.04329099878668785,
-                -0.010064000263810158,
-                7.999999797903001e-05,
-                -0.01709499955177307
-              ],
-              [
-                0.006285000126808882,
-                -0.008069000206887722,
-                0.0030700000934302807,
-                -0.023862000554800034,
-                0.008156999945640564,
-                -0.03355899825692177,
-                0.0016789999790489674,
-                -0.025120999664068222,
-                -0.010143999941647053,
-                -0.04041700065135956,
-                0.03215499967336655,
-                0.02927500009536743
-              ],
-              [
-                -0.009115000255405903,
-                -0.012653999961912632,
-                -0.0035979999229311943,
-                0.0009850000496953726,
-                0.004342999774962664,
-                0.024529000744223595,
-                0.016976000741124153,
-                -0.0023419999051839113,
-                0.06951099634170532,
-                -0.028975000604987144,
-                -0.015068000182509422,
-                -0.021624000743031502
-              ]
-            ],
-            "pca_explained_variance_top3": [
-              0.3864831328392029,
-              0.18774999678134918,
-              0.14830264449119568
-            ],
-            "permutation_p_value": 0.0038910505836575876,
-            "same_dimension_abs_cosine_mean": 0.800714103380839,
-            "vector_count": 15,
-            "vector_dim": 3584
-          },
           "5120": {
             "available": true,
-            "coherence_margin": 0.5831506047190892,
-            "cross_dimension_abs_cosine_mean": 0.15431551202717755,
+            "coherence_margin": 0.4559796965445081,
+            "cross_dimension_abs_cosine_mean": 0.19444509185105563,
             "layers": [
               25,
+              27,
+              29,
               30,
-              35
+              31,
+              33,
+              35,
+              37,
+              39,
+              41
             ],
             "pca_components_top3": [
               [
-                -0.03438999876379967,
-                -0.012497999705374241,
-                0.0016670000040903687,
-                -0.0021250001154839993,
-                0.022910000756382942,
-                -0.01784300059080124,
-                -0.00583899999037385,
-                0.004492000211030245,
-                0.007168999873101711,
-                -0.028568999841809273,
-                0.002090000081807375,
-                -0.005311999935656786
+                -0.022360000759363174,
+                0.00826799962669611,
+                0.009712000377476215,
+                -0.002104999963194132,
+                -0.020111000165343285,
+                -0.0022299999836832285,
+                0.007838999852538109,
+                0.006945000030100346,
+                0.0138349998742342,
+                -0.029803000390529633,
+                -0.01807600073516369,
+                0.005111000034958124
               ],
               [
-                -0.0033420000690966845,
-                -0.029322000220417976,
-                -0.003507999936118722,
-                0.0062409997917711735,
-                0.014059999957680702,
-                0.010735999792814255,
-                0.015049999579787254,
-                0.009738000109791756,
-                -0.0011739999754354358,
-                0.021707000210881233,
-                0.012647000141441822,
-                0.008445999585092068
+                0.01895800046622753,
+                0.026074999943375587,
+                0.014662000350654125,
+                -0.01742899976670742,
+                -0.02403699979186058,
+                -0.001323999953456223,
+                3.300000025774352e-05,
+                0.0049600000493228436,
+                0.0012929999502375722,
+                -0.025919999927282333,
+                -0.006541999988257885,
+                -0.011183000169694424
               ],
               [
-                0.011808999814093113,
-                -0.01132499985396862,
-                -0.0048329997807741165,
-                0.0016039999900385737,
-                0.024687999859452248,
-                -0.001934999949298799,
-                -0.015066999942064285,
-                0.002841999987140298,
-                -0.020423000678420067,
-                0.02608099952340126,
-                0.010343999601900578,
-                -0.0029800001066178083
+                0.0025190000887960196,
+                -0.007234000135213137,
+                -0.01638999953866005,
+                0.004606000147759914,
+                0.008131000213325024,
+                -0.000547999981790781,
+                0.0046629998832941055,
+                0.004753999877721071,
+                -0.0005890000029467046,
+                0.013757999986410141,
+                -0.0034169999416917562,
+                0.009889000095427036
               ]
             ],
             "pca_explained_variance_top3": [
-              0.33574557304382324,
-              0.18213550746440887,
-              0.14859439432621002
+              0.3309463560581207,
+              0.1193307563662529,
+              0.10205908864736557
             ],
             "permutation_p_value": 0.0038910505836575876,
-            "same_dimension_abs_cosine_mean": 0.7374661167462667,
-            "vector_count": 15,
+            "same_dimension_abs_cosine_mean": 0.6504247883955637,
+            "vector_count": 50,
             "vector_dim": 5120
-          },
-          "8192": {
-            "available": true,
-            "coherence_margin": -0.1493117846082896,
-            "cross_dimension_abs_cosine_mean": 0.1493117846082896,
-            "layers": [
-              32
-            ],
-            "pca_components_top3": [
-              [
-                -0.0073379999957978725,
-                0.0005639999872073531,
-                -0.008441999554634094,
-                0.006703000050038099,
-                -0.006384000182151794,
-                0.0005150000215508044,
-                0.002724000019952655,
-                0.0031500000040978193,
-                -0.010316000320017338,
-                -0.009565000422298908,
-                -0.0005629999795928597,
-                -0.00866399984806776
-              ],
-              [
-                0.007315999828279018,
-                -0.011338000185787678,
-                -0.008305000141263008,
-                0.017690999433398247,
-                -0.010443000122904778,
-                0.01132499985396862,
-                -0.014569000340998173,
-                0.016270000487565994,
-                0.0019249999895691872,
-                -0.00506300013512373,
-                -0.0024160000029951334,
-                -0.003684000112116337
-              ],
-              [
-                -0.007934999652206898,
-                -0.002248999895527959,
-                0.004172999877482653,
-                0.007964000105857849,
-                0.00812000036239624,
-                -0.003323999932035804,
-                -0.0005009999731555581,
-                0.001534000039100647,
-                -0.00737199978902936,
-                0.008767999708652496,
-                0.009789999574422836,
-                -0.0066019999794662
-              ]
-            ],
-            "pca_explained_variance_top3": [
-              0.3938959836959839,
-              0.24945689737796783,
-              0.18680547177791595
-            ],
-            "permutation_p_value": 0.0038910505836575876,
-            "same_dimension_abs_cosine_mean": 0.0,
-            "vector_count": 5,
-            "vector_dim": 8192
           }
         },
         "layers": [
-          11,
-          13,
-          15,
           25,
+          27,
+          29,
           30,
-          32,
-          35
+          31,
+          33,
+          35,
+          37,
+          39,
+          41
         ],
-        "mean_cross_dimension_abs_cosine": 0.16240691876694285,
-        "mean_pca_top1": 0.37204156319300336
+        "mean_cross_dimension_abs_cosine": 0.19444509185105563,
+        "mean_pca_top1": 0.3309463560581207,
+        "same_space_group_count": 1,
+        "semantic_dimension_count": 5
       }
     },
     "production_32b_model": {
@@ -701,6 +487,7 @@
     }
   },
   "passed": true,
+  "production_activation_vector_count": 50,
   "production_model_detected": true,
   "prompt_controls": {
     "conditions": [
@@ -723,6 +510,8 @@
       "no_factuality_drop"
     ]
   },
-  "vector_count": 36,
+  "stale_or_unbound_activation_vector_count": 0,
+  "vector_count": 51,
+  "vector_load_errors": [],
   "vectors_dir": "/Users/bryan/.aura/live-source/training/vectors"
 }

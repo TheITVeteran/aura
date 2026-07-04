@@ -253,13 +253,33 @@ def _boot_health() -> dict[str, Any]:
 
 
 def _activation_report() -> dict[str, Any]:
+    boot_wiring = _boot_wiring_report()
+    live_activation_audit = str(
+        os.getenv("AURA_PROOF_BUNDLE_LIVE_ACTIVATION_AUDIT", "")
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if not live_activation_audit:
+        offline_missing = [
+            name
+            for name, found in (boot_wiring.get("found") or {}).items()
+            if not bool(found)
+        ]
+        return {
+            "generated_at": time.time(),
+            "offline_snapshot": True,
+            "live_audit_skipped": True,
+            "live_audit_required_env": "AURA_PROOF_BUNDLE_LIVE_ACTIVATION_AUDIT=1",
+            "live_missing_required": [],
+            "missing_required": offline_missing,
+            "boot_wiring": boot_wiring,
+            "passed": bool(boot_wiring.get("passed") and not offline_missing),
+        }
+
     from core.runtime.activation_audit import get_activation_auditor
 
     async def run() -> dict[str, Any]:
         report = await get_activation_auditor().audit(reconcile=True)
         payload = report.to_dict()
         live_missing = list(payload.get("missing_required", []))
-        boot_wiring = _boot_wiring_report()
         offline_missing = [
             name
             for name in live_missing
@@ -578,7 +598,7 @@ def _boot_wiring_report() -> dict[str, Any]:
         "activation_audit": ("aura_main.py", "get_activation_auditor"),
         "keep_awake": ("aura_main.py", "start_from_environment"),
         "mind_tick": ("core/orchestrator/main.py", "orchestrator.mind_tick.start"),
-        "scheduler": ("core/orchestrator/main.py", "orchestrator.scheduler.start"),
+        "scheduler": ("core/orchestrator/main.py", "scheduler.start()"),
         "output_gate": ("aura_main.py", 'register_instance("output_gate"'),
         "scar_formation": ("core/runtime/activation_audit.py", "_start_scar_formation"),
         "self_healing": ("aura_main.py", 'register_instance("self_healing"'),

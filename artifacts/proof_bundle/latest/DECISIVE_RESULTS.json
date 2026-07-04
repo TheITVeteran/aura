@@ -4,7 +4,7 @@
       "black_box_prompt_hygiene": {
         "leaks": [],
         "pass": true,
-        "prompt_chars": 20337
+        "prompt_chars": 15360
       },
       "hardware_reality": {
         "pass": true,
@@ -94,7 +94,7 @@
             "nonessential_tools"
           ],
           "effort": "low",
-          "max_tokens": 384,
+          "max_tokens": 640,
           "reason": "scarcity mode: conserve resources and prioritize self-maintenance",
           "viability": 0.19
         },
@@ -138,14 +138,14 @@
           "steered_vs_rich": {
             "ci_high": -0.07641633728590247,
             "ci_low": -0.07641633728590247,
-            "effect_size_d": 0.0,
+            "effect_size_d": -76416.33728590247,
             "observed_delta": -0.07641633728590247,
             "p_value": 1.0
           },
           "steered_vs_terse": {
             "ci_high": -0.08600713012477712,
             "ci_low": -0.08600713012477712,
-            "effect_size_d": 0.0,
+            "effect_size_d": -86007.13012477712,
             "observed_delta": -0.08600713012477712,
             "p_value": 1.0
           }
@@ -154,8 +154,8 @@
       }
     },
     "failures": [],
-    "generated_at": 1778115451.6044002,
-    "git_commit": "db7e7ce73eb6739da69fc55503faa722adb2b4d6",
+    "generated_at": 1782766074.415942,
+    "git_commit": "5af57755d71fa7414e3332dbf11fc708b3911c12",
     "status": "pass"
   },
   "source": "/Users/bryan/.aura/live-source/tests/DECISIVE_RESULTS.json"

@@ -17,13 +17,13 @@
       "exists": true,
       "passed": true,
       "summary": {
-        "activation_vector_count": 15,
-        "vector_count": 16
+        "activation_vector_count": 50,
+        "vector_count": 51
       }
     },
     "CANONICAL_PROOF_BUNDLE.json": {
       "exists": true,
-      "passed": true,
+      "passed": false,
       "summary": {}
     },
     "DECISIVE_RESULTS.json": {
@@ -59,7 +59,7 @@
       "exists": true,
       "passed": true,
       "summary": {
-        "files_scanned": 1705
+        "files_scanned": 2449
       }
     },
     "SELF_REPAIR_LINEAGE.json": {
@@ -87,13 +87,13 @@
     "SELF_REPAIR_LINEAGE.json": "artifacts/proof_bundle/latest/SELF_REPAIR_LINEAGE.json",
     "STDP_EXTERNAL_VALIDATION.json": "artifacts/proof_bundle/latest/STDP_EXTERNAL_VALIDATION.json"
   },
-  "generated_at": 1778467720.844554,
+  "generated_at": 1783208691.957191,
   "git": {
-    "commit": "b42da38ea417b95d11b313f2fa65503c448d0e53",
+    "commit": "dfd262c6ff90d0b46a26c9053f04c64333180590",
     "status": "unavailable_without_git_subprocess"
   },
-  "passed": true,
-  "readiness_passed": true,
+  "passed": false,
+  "readiness_passed": false,
   "required_files": [
     "DECISIVE_RESULTS.json",
     "CAA_32B_RESULTS.json",
