@@ -375,6 +375,153 @@ class ProgramDNAReconstructionEngine:
             warnings=warnings,
         )
 
+    def _build_reconstruction_prompt(
+        self,
+        target: str,
+        spec_docs: list[str],
+        train_examples: list[dict[str, Any]],
+        fn_name: str,
+    ) -> str:
+        lines = [
+            f"# Clean-room reconstruction target: {target}",
+            "",
+            "## Specification — observed behavior only (no source is available to you)",
+        ]
+        lines.extend(f"- {doc}" for doc in spec_docs if str(doc).strip())
+        lines.append("")
+        lines.append("## Observed input/output examples")
+        for example in train_examples:
+            lines.append(
+                f"- input={json.dumps(example.get('input'), sort_keys=True)}"
+                f" -> output={json.dumps(example.get('output'), sort_keys=True)}"
+            )
+        lines.append("")
+        lines.append(
+            f"Implement `def {fn_name}(case):` — it takes one dict argument and returns the "
+            "output. Reproduce the behavior for UNSEEN inputs of the same shape, not just the "
+            "examples. Python standard library only; no I/O, no network. Return one fenced "
+            "python code block and nothing else."
+        )
+        return "\n".join(lines)
+
+    async def reconstruct_executable_via_cognition(
+        self,
+        *,
+        target: str,
+        spec_docs: list[str],
+        train_examples: list[dict[str, Any]],
+        held_out: list[dict[str, Any]] | None = None,
+        fn_name: str = "reconstructed",
+        authorization: str = "educational",
+        objective: str = "",
+        temperature: float = 0.1,
+        max_tokens: int = 900,
+    ) -> dict[str, Any]:
+        """Reconstruct RUNNABLE behavior from spec only, then verify it honestly.
+
+        This is the real capability behind Program DNA. No source is read: the
+        model writes an implementation from the observable behavior (docs +
+        input/output examples), and a sandbox that genuinely fails wrong code
+        differentially checks it against HELD-OUT observations the synthesizer
+        never saw. The result carries an epistemic label, never an overclaim:
+
+        * ``supported``  — every held-out observation reproduced (survived trials; NOT a proof)
+        * ``refuted``    — at least one held-out observation diverged
+        * ``conjecture`` — no held-out oracle, no model, or no sandbox available
+
+        ``held_out`` items are ``{"input": <case dict>, "expected": <output>}``,
+        where the expected outputs come from OBSERVING the real program, not its
+        source.
+        """
+        blocked = self._policy_blocks(
+            str(authorization or "").strip().lower(), str(objective or target).lower()
+        )
+        if blocked:
+            return {"ok": False, "target": target, "status": "blocked", "blocked_reasons": blocked}
+        if not fn_name.isidentifier():
+            fn_name = "reconstructed"
+        held_out = list(held_out or [])
+
+        prompt = self._build_reconstruction_prompt(target, spec_docs, train_examples, fn_name)
+        code = ""
+        generation_error = ""
+        try:
+            from core.brain.llm.code_generator import LLMCodeGenerator, extract_python_code
+
+            generator = LLMCodeGenerator()
+            raw = await generator.generate_async(
+                prompt,
+                context={
+                    "prefer_tier": "primary",
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "origin": "program_dna_reconstruction",
+                    "system_prompt": (
+                        "You are a clean-room reimplementation engine. Implement the observed "
+                        "behavior from the specification and examples ONLY. You are NOT given, "
+                        "and must NOT assume, the original source. Standard library only."
+                    ),
+                },
+            )
+            code = extract_python_code(raw) or str(raw or "")
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            generation_error = f"{type(exc).__name__}: {exc}"
+            self._record_degradation("program_dna_reconstruction.cognition", exc, severity="warning")
+
+        if not code.strip():
+            return {
+                "ok": False,
+                "target": target,
+                "status": "conjecture",
+                "epistemic_status": "conjecture",
+                "reason": generation_error or "no_code_generated",
+                "held_out_total": len(held_out),
+            }
+
+        evaluator = None
+        try:
+            from core.discovery.code_eval import SafeCodeEvaluator
+
+            evaluator = SafeCodeEvaluator(timeout_seconds=5.0)
+        except (ImportError, RuntimeError) as exc:
+            self._record_degradation("program_dna_reconstruction.sandbox", exc, severity="warning")
+
+        passed = 0
+        failures: list[dict[str, Any]] = []
+        if evaluator is not None:
+            for case in held_out:
+                expected = case.get("expected")
+                inp = case.get("input", case)
+                evaluation = evaluator.evaluate(code, fn_name, [((inp,), expected)])
+                if evaluation.outcome == "passed" and evaluation.passed == 1:
+                    passed += 1
+                else:
+                    failures.append(
+                        {"input": inp, "expected": expected, "outcome": evaluation.outcome}
+                    )
+
+        total = len(held_out)
+        if evaluator is None or total == 0:
+            status = "conjecture"
+        elif passed == total:
+            status = "supported"
+        else:
+            status = "refuted"
+
+        return {
+            "ok": status == "supported",
+            "target": target,
+            "status": status,
+            "epistemic_status": status,
+            "fn_name": fn_name,
+            "held_out_passed": passed,
+            "held_out_total": total,
+            "equivalence": (passed / total) if total else 0.0,
+            "failures": failures[:10],
+            "code": code,
+            "source_policy": "spec-only (docs + examples); no original source, no decompilation",
+        }
+
     def _policy_blocks(self, authorization: str, objective: str) -> list[str]:
         blocks: list[str] = []
         if authorization not in AUTHORIZED_SCOPES:

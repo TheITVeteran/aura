@@ -59,6 +59,7 @@ class ScenarioResult:
     cases_total: int
     features: list[str]
     hidden_source_withheld: bool
+    falsification_rejected: bool = False
     failures: list[dict[str, Any]] = field(default_factory=list)
     genome_summary: dict[str, Any] = field(default_factory=dict)
 
@@ -403,8 +404,18 @@ def _build_payload(scenario: ProgramDNABatteryScenario) -> dict[str, Any]:
     }
 
 
-def _synthesize_replacement(scenario: ProgramDNABatteryScenario, genome: dict[str, Any]) -> BehaviorFn:
-    """Produce a clean-room behavior from docs/examples/genome, never source."""
+def _reference_implementation(scenario: ProgramDNABatteryScenario, genome: dict[str, Any]) -> BehaviorFn:
+    """Return the clean-room REFERENCE implementation for this scenario.
+
+    HONESTY NOTE: offline, this is a human-authored reference implementation,
+    not model-synthesized output. Its job is to exercise the differential
+    verification harness — proving the harness genuinely runs held-out cases
+    and (via the falsification self-test below) FAILS wrong implementations.
+    The real, model-synthesized reconstruction is scored live by
+    ``ProgramDNAReconstructionEngine.reconstruct_executable_via_cognition``
+    (see tools/program_dna_live_reconstruction_probe.py). We route by genome
+    signature so the harness stays representation-driven, never by source.
+    """
 
     text = json.dumps({"docs": scenario.docs, "examples": scenario.behavior_examples, "genome": genome}, sort_keys=True).lower()
     if "slug" in text and "stats" in text:
@@ -421,7 +432,28 @@ def _synthesize_replacement(scenario: ProgramDNABatteryScenario, genome: dict[st
         return _auth_replacement
     if "cleans user-entered labels" in text or "hello world" in text:
         return _missing_docs_replacement
-    raise ValueError(f"could not synthesize replacement for {scenario.name}")
+    raise ValueError(f"no reference implementation for {scenario.name}")
+
+
+def _mutated_implementation(reference: BehaviorFn) -> BehaviorFn:
+    """A deliberately-wrong implementation used to prove the harness can FAIL.
+
+    A verification harness that only ever confirms matching code proves nothing.
+    This corrupts every output so the differential check MUST reject it; if it
+    doesn't, the harness is rigged and the battery fails.
+    """
+
+    def mutated(case: Case) -> Any:
+        out = reference(case)
+        if isinstance(out, str):
+            return out + "__WRONG__"
+        if isinstance(out, dict):
+            return {**out, "__mutated__": True}
+        if isinstance(out, (list, tuple)):
+            return list(out) + ["__WRONG__"]
+        return ("__WRONG__", out)
+
+    return mutated
 
 
 async def run_battery(*, project_root: Path | None = None) -> dict[str, Any]:
@@ -446,17 +478,25 @@ async def run_battery(*, project_root: Path | None = None) -> dict[str, Any]:
             )
             continue
 
-        replacement = _synthesize_replacement(scenario, result.genome.to_dict() if hasattr(result.genome, "to_dict") else asdict(result.genome))
+        genome_dict = result.genome.to_dict() if hasattr(result.genome, "to_dict") else asdict(result.genome)
+        reference = _reference_implementation(scenario, genome_dict)
         failures: list[dict[str, Any]] = []
         passed = 0
         for case in scenario.held_out_cases:
             expected = scenario.original(case)
-            actual = replacement(case)
+            actual = reference(case)
             if actual == expected:
                 passed += 1
             else:
                 failures.append({"case": case, "expected": expected, "actual": actual})
         total = len(scenario.held_out_cases)
+
+        # Falsification self-test: a wrong implementation MUST be rejected on
+        # every held-out case. If the harness can't fail, its passes are worthless.
+        mutated = _mutated_implementation(reference)
+        mutant_rejected = all(
+            mutated(case) != scenario.original(case) for case in scenario.held_out_cases
+        )
         feature_names = [feature.name for feature in result.features]
         genome = asdict(result.genome)
         results.append(
@@ -469,6 +509,7 @@ async def run_battery(*, project_root: Path | None = None) -> dict[str, Any]:
                 cases_total=total,
                 features=feature_names,
                 hidden_source_withheld=True,
+                falsification_rejected=mutant_rejected,
                 failures=failures,
                 genome_summary={
                     "analysis_mode": genome.get("analysis_mode"),
@@ -483,15 +524,33 @@ async def run_battery(*, project_root: Path | None = None) -> dict[str, Any]:
     total_cases = sum(item.cases_total for item in results)
     passed_cases = sum(item.cases_passed for item in results)
     passed_scenarios = sum(1 for item in results if item.ok)
+    falsification_ok = all(item.falsification_rejected for item in results) and bool(results)
     return {
-        "ok": passed_scenarios == len(results) and passed_cases == total_cases,
+        # The battery only passes if the harness both confirms matching code AND
+        # rejects wrong code. A harness that can't fail proves nothing.
+        "ok": passed_scenarios == len(results) and passed_cases == total_cases and falsification_ok,
         "battery": "program_dna_hidden_source_behavioral_equivalence",
         "scenario_count": len(results),
         "passed_scenarios": passed_scenarios,
         "held_out_cases": total_cases,
         "passed_cases": passed_cases,
         "equivalence": passed_cases / total_cases if total_cases else 0.0,
-        "source_policy": "engine received docs, examples, and observations only; original callables are private harness oracles",
+        "falsification_ok": falsification_ok,
+        "proves": [
+            "The differential verification harness runs held-out cases and REJECTS wrong "
+            "implementations (falsification self-test passes on every scenario).",
+            "The genome pipeline causally derives features/workflows/unknowns from spec "
+            "evidence (docs, examples, observations) only — no source is read.",
+        ],
+        "does_not_prove": [
+            "Deterministic offline reconstruction of arbitrary behavior. The offline candidate "
+            "is a human-authored clean-room REFERENCE implementation used to exercise the "
+            "harness; it is not model output.",
+            "Real model-synthesized reconstruction is scored live, spec-only, against held-out "
+            "observations by tools/program_dna_live_reconstruction_probe.py.",
+        ],
+        "candidate_policy": "offline candidate = clean-room reference implementation (harness oracle); "
+        "engine receives docs/examples/observations only; original callables are private oracles",
         "limits": [
             "Representative archetype proof, not arbitrary closed-source equivalence.",
             "No proprietary source recovery, DRM bypass, credential extraction, or binary decompilation occurs.",

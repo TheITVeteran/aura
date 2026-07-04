@@ -27,6 +27,32 @@ async def test_program_dna_hidden_source_behavioral_equivalence_battery(tmp_path
     assert all(item["hidden_source_withheld"] for item in report["results"])
     assert all(item["genome_summary"]["feature_count"] >= 1 for item in report["results"])
 
+    # Honesty contract: the harness must prove it can FAIL, and it must not
+    # dress a reference oracle up as model output.
+    assert report["falsification_ok"] is True
+    assert all(item["falsification_rejected"] for item in report["results"])
+    assert "does_not_prove" in report
+    assert any("reference implementation" in claim.lower() for claim in report["does_not_prove"])
+    assert "reference implementation" in report["candidate_policy"].lower()
+
+
+@pytest.mark.asyncio
+async def test_battery_fails_when_the_harness_cannot_reject_wrong_code(monkeypatch):
+    """If the falsification self-test is defeated, the whole battery must fail.
+
+    This guards the guard: it proves ``ok`` is genuinely gated on the harness
+    being able to fail, not just on matching implementations passing.
+    """
+    import tools.program_dna.behavioral_equivalence_battery as battery
+
+    # Neuter the mutation so the "wrong" implementation is actually correct.
+    monkeypatch.setattr(battery, "_mutated_implementation", lambda reference: reference)
+
+    report = await battery.run_battery()
+
+    assert report["falsification_ok"] is False
+    assert report["ok"] is False
+
 
 def test_program_dna_battery_scenarios_do_not_expose_source_paths():
     for scenario in scenarios():
