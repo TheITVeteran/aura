@@ -506,6 +506,19 @@ class FaultRegistry:
                 blast_radius="Divergent channel quarantined; majority result used",
             ),
             FaultDefinition(
+                fault_id="AFFECT-TRAP", name="Affective sampling trap",
+                description="Sampling temperature pinned at the deterministic "
+                            "floor while distress telemetry failed to improve — "
+                            "the safety clamp starving self-repair variance "
+                            "(digital-depression loop); a bounded exploration "
+                            "escape was opened",
+                domain=FaultDomain.CONSCIOUSNESS, severity=FaultSeverity.MARGINAL,
+                probability=FaultProbability.REMOTE,
+                detection=DetectionDifficulty.HIGH,
+                recovery=RecoveryStrategy.AUTOMATIC_FALLBACK, mttr_seconds=60,
+                blast_radius="Degraded creative/self-repair capability until escape",
+            ),
+            FaultDefinition(
                 fault_id="WILL-REFUSE", name="Will refusal issued",
                 description="The Will refused an action — governance functioning "
                             "as designed; recorded for forensic traceability only",

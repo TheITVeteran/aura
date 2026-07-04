@@ -197,6 +197,7 @@ def compute_inference_params(
     base_max_tokens: int = 1536,
     base_temperature: float = 0.7,
     foreground: bool = True,
+    lane: str = "speech",
 ) -> InferenceParams:
     """Compute the live inference params from substrate state."""
 
@@ -222,6 +223,21 @@ def compute_inference_params(
     temp += 0.04 * s["active_seek_information"]
     temp_ceiling = 0.85 if foreground else 0.90
     temp = max(0.15, min(temp_ceiling, temp))
+
+    # Anti-trap governor: sustained floor-pinned temperature with
+    # non-improving distress is a closed feedback loop (safety clamp
+    # starving the very variance needed to self-heal). The guard observes
+    # every computation, opens a bounded exploration escape when trapped,
+    # and gives repair/ideation lanes an unconditional exploration floor.
+    try:
+        from core.brain.affective_antitrap import get_affective_trap_guard
+        temp, _antitrap_note = get_affective_trap_guard().observe_and_adjust(
+            temp, s, lane=lane,
+        )
+        if _antitrap_note:
+            rationale.append(_antitrap_note)
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        logger.debug("Anti-trap guard unavailable: %s", exc)
     rationale.append(
         f"temp={temp:.2f} (ach={s['acetylcholine']:.2f}, corts={s['cortisol']:.2f}, "
         f"curio={s['curiosity']:.2f}, active_uncert={s['active_uncertainty']:.2f}, "

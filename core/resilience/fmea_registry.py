@@ -278,6 +278,24 @@ class FMEARegistry:
                                  automated=True, implementation_path="core/resilience/tmr.py",
                                  verified=False),
             ], notes="Mitigation added during reliability hardening"),
+            "AFFECT-TRAP": FMEAEntry(fault_id="AFFECT-TRAP", mitigations=[
+                MitigationAction("MIT-AT-1",
+                                 "Anti-trap guard: bounded exploration escape when "
+                                 "temperature pins at floor with non-improving distress; "
+                                 "repair/ideation lanes get unconditional exploration floors",
+                                 automated=True,
+                                 implementation_path="core/brain/affective_antitrap.py",
+                                 verified=True),
+            ], notes="Digital-depression loop identified by external review July 3"),
+            "WILL-REFUSE": FMEAEntry(fault_id="WILL-REFUSE", mitigations=[
+                MitigationAction("MIT-WR-1",
+                                 "No mitigation required: refusal IS governance working "
+                                 "as designed; occurrences recorded (recovered=True) for "
+                                 "forensic traceability only",
+                                 automated=True,
+                                 implementation_path="core/governance/will.py",
+                                 verified=True),
+            ], notes="Not a defect class — traceability entry"),
             "F20": FMEAEntry(fault_id="F20", mitigations=[
                 MitigationAction("MIT-F20-1", "Design-by-contract log+continue enforcement",
                                  automated=True, implementation_path="core/resilience/contracts.py",
