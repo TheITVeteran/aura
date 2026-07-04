@@ -164,6 +164,7 @@ _READ_ONLY_EFFECT_SKILLS = frozenset(
     {
         "clock",
         "environment_info",
+        "local_reference_search",
         "query_beliefs",
         "system_proprioception",
         "evolution_status",
@@ -867,7 +868,8 @@ class CapabilityEngine(AuraBaseModule):
             "system_proprioception",
             "environment_info",
             "clock",
-            # Web & network
+            # Web & network (+ the offline lane that backstops it)
+            "local_reference_search",
             "web_search",
             "sovereign_browser",
             "sovereign_terminal",

@@ -13,9 +13,6 @@ from core.search.research_pipeline import freshness_window_for_query, query_requ
 from core.skills.base_skill import BaseSkill
 from core.skills.deep_research import run_deep_research
 
-from core.runtime.action_executor import ActionExecutor
-from core.governance.will import ActionDomain
-
 logger = logging.getLogger("Skills.WebSearch")
 
 
@@ -224,6 +221,17 @@ class EnhancedWebSearchSkill(BaseSkill):
                 context=context or {},
                 force_refresh=False,
             )
+        if not result.get("ok"):
+            # Web unreachable/failed: answer from the local knowledge corpus
+            # (6.5M offline reference docs) instead of returning empty-handed.
+            # Provenance is explicit — a dated snapshot, never passed off as
+            # live web results.
+            offline = self._local_corpus_fallback(query, num_results)
+            if offline is not None:
+                offline["web_error"] = str(
+                    result.get("error") or result.get("message") or "web search failed"
+                )
+                result = offline
         result.setdefault("summary", result.get("answer") or result.get("message") or "")
         try:
             from core.advanced_cognition import ExternalEvidenceDeliberator
@@ -250,6 +258,54 @@ class EnhancedWebSearchSkill(BaseSkill):
         except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("web_search", exc, severity="warning", action="continued without evidence deliberation receipts")
         return result
+
+    @staticmethod
+    def _local_corpus_fallback(query: str, num_results: int) -> dict[str, Any] | None:
+        """Degrade to the local knowledge corpus when the web is unreachable.
+
+        Returns None when the corpus is absent/empty or has no match, so the
+        caller keeps the original web failure result.
+        """
+        try:
+            from core.knowledge.local_corpus import get_local_corpus_store
+
+            store = get_local_corpus_store()
+            if store.document_count() <= 0:
+                return None
+            hits = store.search(query, limit=max(1, min(int(num_results), 10)))
+            if not hits:
+                return None
+            logger.info(
+                "WebSearch degraded to local corpus for '%s' (%d offline hits)",
+                query[:80],
+                len(hits),
+            )
+            return {
+                "ok": True,
+                "provenance": "local_corpus",
+                "offline_fallback": True,
+                "results": [
+                    {
+                        "title": hit.title,
+                        "snippet": hit.snippet,
+                        "source": hit.source,
+                        "provenance": "local_corpus",
+                    }
+                    for hit in hits
+                ],
+                "summary": (
+                    "Web search was unavailable; answered from the local "
+                    f"offline reference corpus ({len(hits)} matches, dated snapshot)."
+                ),
+            }
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            record_degradation(
+                "web_search",
+                exc,
+                severity="debug",
+                action="local corpus fallback unavailable",
+            )
+            return None
 
     async def on_stop_async(self):
         """Lifecycle hook retained for skill manager shutdown symmetry."""

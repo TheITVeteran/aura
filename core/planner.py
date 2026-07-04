@@ -8,8 +8,6 @@ Features:
 5. Structured logging and metrics
 """
 
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import hashlib
 import json
@@ -19,9 +17,13 @@ import time
 from collections import OrderedDict, defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
+
 from pydantic import BaseModel, Field
+
 from core.config import config
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Kernel.Planner")
 
@@ -44,22 +46,22 @@ class ToolSchema:
 
     name: str
     description: str
-    required_params: List[str]
-    optional_params: List[str] = field(default_factory=list)
-    param_schemas: Dict[str, Any] = field(default_factory=dict)
+    required_params: list[str]
+    optional_params: list[str] = field(default_factory=list)
+    param_schemas: dict[str, Any] = field(default_factory=dict)
 
 # ─── 1. CONSTRAINED DECODING SCHEMAS ─────────────────────────────────────────
 
 class ToolCallSchema(BaseModel):
     """Pydantic model for LLM-generated tool calls."""
     tool: str = Field(..., description="The exact name of the tool from available schema.")
-    params: Dict[str, Any] = Field(default_factory=dict, description="Arguments required by tool.")
-    output_var: Optional[str] = Field(None, description="Variable name to store result.")
+    params: dict[str, Any] = Field(default_factory=dict, description="Arguments required by tool.")
+    output_var: str | None = Field(None, description="Variable name to store result.")
 
 class PlanSchema(BaseModel):
     """Pydantic model for LLM-generated execution plans."""
-    plan_steps: List[str] = Field(..., description="High-level reasoning steps.")
-    tool_calls: List[ToolCallSchema] = Field(..., description="Sequential tool executions.")
+    plan_steps: list[str] = Field(..., description="High-level reasoning steps.")
+    tool_calls: list[ToolCallSchema] = Field(..., description="Sequential tool executions.")
 
 
 @dataclass
@@ -67,9 +69,9 @@ class ToolCall:
     """Structured tool call with validation."""
 
     tool: str
-    params: Dict[str, Any]
-    output_var: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any]
+    output_var: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     
     def __post_init__(self):
         """Validate tool call structure."""
@@ -86,7 +88,7 @@ class ToolCall:
         """Safely get parameter value."""
         return self.params.get(key, default)
     
-    def validate(self, available_tools: Dict[str, ToolSchema]) -> List[str]:
+    def validate(self, available_tools: dict[str, ToolSchema]) -> list[str]:
         """Validate tool call against schema."""
         errors = []
         
@@ -116,10 +118,10 @@ class ExecutionPlan:
     """Complete execution plan with metadata."""
 
     goal: str
-    plan_steps: List[str]
-    tool_calls: List[ToolCall]
+    plan_steps: list[str]
+    tool_calls: list[ToolCall]
     replan_budget: int = 3
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     plan_hash: str = None
     
@@ -141,7 +143,7 @@ class ExecutionPlan:
         plan_str = json.dumps(plan_data, sort_keys=True)
         return hashlib.sha256(plan_str.encode()).hexdigest()
     
-    def is_valid(self) -> Tuple[bool, List[str]]:
+    def is_valid(self) -> tuple[bool, list[str]]:
         """Validate plan structure."""
         errors = []
         
@@ -160,7 +162,7 @@ class ExecutionPlan:
         
         return len(errors) == 0, errors
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "goal": self.goal,
@@ -187,7 +189,7 @@ class PlanCache:
         self.max_size = max_size
         self.cache: OrderedDict[str, ExecutionPlan] = OrderedDict()
     
-    def get(self, goal_hash: str) -> Optional[ExecutionPlan]:
+    def get(self, goal_hash: str) -> ExecutionPlan | None:
         """Get plan from cache, moving it to most-recent position."""
         if goal_hash in self.cache:
             self.cache.move_to_end(goal_hash)
@@ -262,18 +264,24 @@ class Planner:
         """Rebuild tool schemas from the registry."""
         self.tool_schemas = self._load_tool_schemas()
 
-    def _load_tool_schemas(self) -> Dict[str, ToolSchema]:
+    def _load_tool_schemas(self) -> dict[str, ToolSchema]:
         """Load tool schemas from registry or defaults."""
         schemas = {}
         
-        # Default core tool schemas
+        # Default core tool schemas. Only tools that ALWAYS exist belong
+        # here — advertising web_search unconditionally handed every plan a
+        # tool that fails whenever the skill is absent or the network is
+        # down (observed live: autonomous repair goal → web_search FAILED).
         core_schemas = {
-            "web_search": ToolSchema(
-                name="web_search",
-                description="Search the web for information",
+            "local_reference_search": ToolSchema(
+                name="local_reference_search",
+                description=(
+                    "Search the LOCAL offline knowledge corpus (Wikipedia "
+                    "snapshot) — instant, private, works without network"
+                ),
                 required_params=["query"],
-                optional_params=["deep"],
-                param_schemas={"query": str, "deep": bool}
+                optional_params=["limit"],
+                param_schemas={"query": str, "limit": int}
             ),
             "native_chat": ToolSchema(
                 name="native_chat",
@@ -283,6 +291,14 @@ class Planner:
                 param_schemas={"message": str}
             )
         }
+        if self.registry and "web_search" in getattr(self.registry, "skills", {}):
+            core_schemas["web_search"] = ToolSchema(
+                name="web_search",
+                description="Search the web for information",
+                required_params=["query"],
+                optional_params=["deep"],
+                param_schemas={"query": str, "deep": bool}
+            )
         
         # Merge with registry if available
         if self.registry:
@@ -308,7 +324,7 @@ class Planner:
         schemas.update(core_schemas)
         return schemas
     
-    def _detect_intent(self, goal_text: str) -> Optional[Dict[str, Any]]:
+    def _detect_intent(self, goal_text: str) -> dict[str, Any] | None:
         """Detect intent patterns for shortcut planning.
         
         Args:
@@ -366,8 +382,12 @@ class Planner:
         search_match = re.match(self.INTENT_PATTERNS["search_query"], goal_text_lower)
         if search_match:
             query = search_match.group(2)
-            logger.info("Shortcut: Search intent for '%s'", query)
-            
+            web_available = bool(
+                self.registry and "web_search" in getattr(self.registry, "skills", {})
+            )
+            search_tool = "web_search" if web_available else "local_reference_search"
+            logger.info("Shortcut: Search intent for '%s' via %s", query, search_tool)
+
             return {
                 "plan": [
                     f"Search for information about '{query}'",
@@ -375,8 +395,10 @@ class Planner:
                 ],
                 "tool_calls": [
                     ToolCall(
-                        tool="web_search",
-                        params={"query": query, "num_results": 5},
+                        tool=search_tool,
+                        params={"query": query, "num_results": 5}
+                        if search_tool == "web_search"
+                        else {"query": query, "limit": 5},
                         output_var="search_results"
                     )
                 ]
@@ -716,7 +738,7 @@ INCORRECT: {{"tool": "search", "params": {{"params": {{"query": "test"}}}}}}
 
 Return ONLY the JSON object, no additional text."""
 
-    async def _parse_llm_response(self, response: str, goal_text: str) -> Dict[str, Any]:
+    async def _parse_llm_response(self, response: str, goal_text: str) -> dict[str, Any]:
         """Parse LLM response into structured plan."""
         try:
             # Try to extract JSON from response
@@ -769,7 +791,7 @@ Return ONLY the JSON object, no additional text."""
             logger.error("Failed to parse LLM response: %s", e)
             return self._extract_plan_from_text(response, goal_text)
 
-    def _extract_plan_from_text(self, text: str, goal_text: str) -> Dict[str, Any]:
+    def _extract_plan_from_text(self, text: str, goal_text: str) -> dict[str, Any]:
         """Extract plan from unstructured text as fallback."""
         # Simple heuristic extraction
         lines = [line.strip() for line in text.split('\n') if line.strip()]
@@ -827,7 +849,7 @@ Return ONLY the JSON object, no additional text."""
             metadata={"source": "fallback"}
         )
 
-    def validate_tool_call(self, tool_call: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    def validate_tool_call(self, tool_call: dict[str, Any]) -> tuple[bool, list[str]]:
         """Validate tool call structure."""
         try:
             tc = ToolCall(**tool_call)
@@ -836,7 +858,7 @@ Return ONLY the JSON object, no additional text."""
         except ValueError as e:
             return False, [str(e)]
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get planning statistics."""
         return {
             "total_plans": self.planning_stats["total_plans"],
@@ -866,8 +888,8 @@ Return ONLY the JSON object, no additional text."""
 
     def save_to_disk(self, plan: ExecutionPlan) -> None:
         """Save active plan to disk for resilience."""
-        import tempfile
         import os
+        import tempfile
         try:
             plan_path = config.paths.data_dir / "active_plan.json"
             plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -884,7 +906,7 @@ Return ONLY the JSON object, no additional text."""
             record_degradation('planner', e)
             logger.error("Failed to persist plan: %s", e)
 
-    def load_from_disk(self) -> Optional[ExecutionPlan]:
+    def load_from_disk(self) -> ExecutionPlan | None:
         """Load active plan from disk after restart."""
         try:
             from core.config import config
@@ -892,7 +914,7 @@ Return ONLY the JSON object, no additional text."""
             if not plan_path.exists():
                 return None
                 
-            with open(plan_path, "r") as f:
+            with open(plan_path) as f:
                 data = json.load(f)
                 
             # Reconstruct ExecutionPlan object
