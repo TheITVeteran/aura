@@ -859,6 +859,7 @@ def test_desktop_access_panel_uses_dedicated_probe_endpoint():
     assert "pollDesktopAccess();" in aura_js
     assert 'id="desktop-access-actions"' in aura_html
     assert "async function runDesktopAccessAction(action)" in aura_js
+    assert "headers: auraDesktopHeaders()" in aura_js
     assert "'request-screen': '/api/system/desktop-access/request-screen'" in aura_js
     assert "'request-accessibility': '/api/system/desktop-access/request-accessibility'" in aura_js
     assert "'settings-screen': '/api/system/desktop-access/open-settings/screen'" in aura_js
@@ -1771,3 +1772,15 @@ def test_heartstone_save_is_debounced(monkeypatch, tmp_path):
     values._flush_pending_save()
 
     assert writes == ["write"]
+
+
+def test_background_tool_deferrals_do_not_train_as_failures():
+    executor = (PROJECT_ROOT / "core" / "coordinators" / "tool_executor.py").read_text(encoding="utf-8")
+    orchestrator_mixin = (PROJECT_ROOT / "core" / "orchestrator" / "mixins" / "tool_execution.py").read_text(
+        encoding="utf-8"
+    )
+
+    for source in (executor, orchestrator_mixin):
+        assert 'result.get("status", "") or "").lower() == "deferred"' in source
+        assert "Tool %s execution deferred" in source
+        assert "return result\n            logger.info(\"Tool %s execution completed" in source

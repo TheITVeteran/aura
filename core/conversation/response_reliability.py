@@ -262,7 +262,9 @@ _ACKNOWLEDGEMENT_PLACEHOLDER_RE = re.compile(
     r"\b(?:i heard you|i hear you|my thinking is running deeper than my words|"
     r"thinking is running deeper than (?:my|the) words|"
     r"my words are still catching up|words are still catching up|"
-    r"i am still thinking|i'?m still thinking)\b",
+    r"i am still thinking|i'?m still thinking|"
+    r"keep me posted|keep me updated|thanks(?:,|\.)?\s+(?:keep me posted|keep me updated)|"
+    r"let me know if anything changes|(?:if|when) anything changes)\b",
     re.IGNORECASE,
 )
 _SUBSTANTIVE_OVERLAP_STOPWORDS = {
@@ -345,6 +347,11 @@ _LIVE_DESKTOP_GATE_LEAK_RE = re.compile(
     r"desktop cognitive engine required no reply|desktop_cognitive_engine_required_no_reply|"
     r"desktop_cognitive_engine_timeout|desktop_cognitive_engine_unavailable|"
     r"refused the legacy fallback|refused the direct inference fallback)\b",
+    re.IGNORECASE,
+)
+_UNSUPPORTED_EXTERNAL_PROVIDER_PATH_RE = re.compile(
+    r"\b(?:fallback|fall\s+back|route|routing|path|lane|speak(?:ing)?\s+through|using)\b"
+    r"[^.!?\n]{0,80}\b(?:claude|anthropic|chatgpt|openai|gemini|deepseek|grok|copilot)\b",
     re.IGNORECASE,
 )
 _COGNITIVE_ENGINE_FAILURE_ENVELOPE_RE = re.compile(
@@ -880,6 +887,7 @@ _RUNTIME_PATH_REQUEST_RE = re.compile(
     r"\b(?:"
     r"mind/cognition path|cognition path|cognitive path|mind path|"
     r"what path (?:are|is)|which path (?:are|is)|"
+    r"what runtime path|which runtime path|runtime path (?:are|is)|"
     r"route probe|desktop route|live desktop route|"
     r"model lane|foreground lane|conversation lane|cortex lane"
     r")\b",
@@ -1361,6 +1369,44 @@ def _requested_word_count_range(user_message: Any) -> tuple[int, int] | None:
     return None
 
 
+_QUOTED_REQUIRED_PHRASE_RE = re.compile(
+    r"\b(?:include|mention|use)\b[^\"'“”‘’]{0,80}[\"'“”‘’](?P<phrase>[^\"'“”‘’]{1,80})[\"'“”‘’]",
+    re.IGNORECASE,
+)
+_INCLUDE_REQUIRED_PHRASE_RE = re.compile(
+    r"\b(?:include|mention)\s+(?:the\s+)?(?:(?:exact\s+)?(?:phrase|word|term)\s+)?"
+    r"(?P<phrase>[A-Za-z0-9][A-Za-z0-9 _-]{1,80})(?:[.!?;,]|$)",
+    re.IGNORECASE,
+)
+_USE_REQUIRED_PHRASE_RE = re.compile(
+    r"\buse\s+(?:the\s+)?(?:exact\s+)?(?:phrase|word|term)\s+"
+    r"(?P<phrase>[A-Za-z0-9][A-Za-z0-9 _-]{1,80})(?:[.!?;,]|$)",
+    re.IGNORECASE,
+)
+
+
+def _requested_required_phrases(user_message: Any) -> tuple[str, ...]:
+    text = str(user_message or "")
+    if not text:
+        return ()
+    phrases: list[str] = []
+    for pattern in (
+        _QUOTED_REQUIRED_PHRASE_RE,
+        _INCLUDE_REQUIRED_PHRASE_RE,
+        _USE_REQUIRED_PHRASE_RE,
+    ):
+        for match in pattern.finditer(text):
+            phrase = " ".join(str(match.group("phrase") or "").strip(" .,:;!?\"'“”‘’").split())
+            if not phrase:
+                continue
+            # Avoid treating a full instruction clause as a required phrase when
+            # the user wrote something like "use your own voice and include X".
+            if len(_WORD_RE.findall(phrase)) > 8:
+                continue
+            phrases.append(phrase.lower())
+    return tuple(dict.fromkeys(phrases))
+
+
 def has_requested_word_count_contract(user_message: Any) -> bool:
     """Return True when the user gave an explicit word-count output contract."""
     return _requested_word_count_range(user_message) is not None
@@ -1451,6 +1497,11 @@ def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[st
 
     if _FOLLOWUP_QUESTION_REQUEST_RE.search(user) and "?" not in reply:
         reasons.append("missing_requested_followup_question")
+    normalized_reply = _normalize(reply)
+    for phrase in _requested_required_phrases(user):
+        if phrase and phrase not in normalized_reply:
+            reasons.append("missing_requested_phrase")
+            break
     return reasons
 
 
@@ -2878,6 +2929,16 @@ def _missing_runtime_path_answer(prompt: Any, reply_text: Any) -> bool:
     return not bool(_RUNTIME_PATH_ANSWER_RE.search(raw))
 
 
+def _has_unsupported_external_provider_path_claim(prompt: Any, reply_text: Any) -> bool:
+    prompt_norm = _normalize(prompt)
+    if not prompt_norm or not _RUNTIME_PATH_REQUEST_RE.search(prompt_norm):
+        return False
+    raw = str(reply_text or "")
+    if not raw:
+        return False
+    return bool(_UNSUPPORTED_EXTERNAL_PROVIDER_PATH_RE.search(raw))
+
+
 def _has_direct_answer_deflection(prompt: Any, reply_text: Any) -> bool:
     """Reject clarification-style deflections when the prompt asks for a direct answer."""
 
@@ -3345,6 +3406,8 @@ def _model_text_integrity_reasons(
         reasons.append("cognitive_engine_failure_envelope")
     if user_facing and _RAW_MODEL_IDENTITY_LEAK_RE.search(raw):
         reasons.append("raw_model_identity_leak")
+    if user_facing and _has_unsupported_external_provider_path_claim(prompt, raw):
+        reasons.append("unsupported_external_provider_path_claim")
     if user_facing and _requires_self_claim_evidence_boundary(prompt):
         if _REDUCTIVE_SELF_CLAIM_RE.search(raw):
             reasons.append("raw_model_identity_leak")
@@ -3439,6 +3502,7 @@ def assess_model_text_integrity(
         "internal_live_gate_leak",
         "cognitive_engine_failure_envelope",
         "raw_model_identity_leak",
+        "unsupported_external_provider_path_claim",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",
@@ -3510,6 +3574,7 @@ def assess_user_facing_reply(
             "runtime_boilerplate",
             "backend_symbolic_surface_leak",
             "raw_model_identity_leak",
+            "unsupported_external_provider_path_claim",
             "unrequested_pop_culture_intrusion",
             "unexpected_cjk_intrusion",
             "surface_nonsense_drift",
@@ -3637,6 +3702,7 @@ def assess_user_facing_reply(
         "internal_live_gate_leak",
         "cognitive_engine_failure_envelope",
         "raw_model_identity_leak",
+        "unsupported_external_provider_path_claim",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",
@@ -3698,6 +3764,7 @@ def assess_user_facing_reply(
         "missing_requested_list_count",
         "missing_requested_word_count",
         "missing_requested_followup_question",
+        "missing_requested_phrase",
         "missing_future_memory_answer",
         "missing_identity_answer",
         "missing_requested_self_process_coverage",
@@ -3761,6 +3828,11 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
             instruction_notes.append(
                 f"Use between {minimum_words} and {maximum_words} words because the user explicitly requested that length."
             )
+    required_phrases = _requested_required_phrases(user_message)
+    for phrase in required_phrases:
+        instruction_notes.append(
+            f"Include the exact requested phrase: {phrase}."
+        )
     if _FOLLOWUP_QUESTION_REQUEST_RE.search(str(user_message or "")):
         instruction_notes.append("End with a real follow-up question because the user requested one.")
     continuation_match = _NAMED_CONTINUATION_ANCHOR_RE.search(str(user_message or ""))

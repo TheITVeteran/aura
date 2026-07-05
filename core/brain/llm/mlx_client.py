@@ -35,6 +35,13 @@ from .mlx_worker import _mlx_worker_loop
 logger = logging.getLogger("LLM.MLX")
 
 
+def _model_path_is_deep_solver(model_path: str | None) -> bool:
+    """Return whether a model path names Aura's optional local deep Solver lane."""
+
+    lowered = os.path.basename(str(model_path or "")).lower()
+    return any(token in lowered for token in ("72b", "solver"))
+
+
 def _record_mlx_degradation(
     error: BaseException,
     *,
@@ -1177,6 +1184,9 @@ class MLXLocalClient:
         lowered = os.path.basename(self.model_path).lower()
         return any(token in lowered for token in ("32b", "72b", "zenith", "solver", "cortex"))
 
+    def _is_deep_solver_lane(self) -> bool:
+        return _model_path_is_deep_solver(self.model_path)
+
     def _mark_progress(self) -> None:
         self._last_progress_at = time.time()
 
@@ -1333,7 +1343,24 @@ class MLXLocalClient:
         elif state == "ready":
             self._lane_error = ""
 
-    def _classify_failure(self, *, foreground_request: bool = False) -> str:
+    def _classify_failure(
+        self,
+        *,
+        foreground_request: bool = False,
+        reason: str = "",
+        classification: str | None = None,
+    ) -> str:
+        if classification:
+            return classification
+        normalized_reason = str(reason or "").lower()
+        if (
+            self._is_deep_solver_lane()
+            and (
+                "memory_pressure_refused_worker_spawn" in normalized_reason
+                or "optional_deep_solver_memory_refusal" in normalized_reason
+            )
+        ):
+            return "non_critical_fallback"
         if foreground_request or (self._is_primary_or_deep_lane() and _foreground_owner_active()):
             return "foreground_blocking"
         return "background_degraded"
@@ -1345,6 +1372,7 @@ class MLXLocalClient:
         detail: str = "",
         severity: str = "warning",
         foreground_request: bool = False,
+        classification: str | None = None,
     ) -> None:
         try:
             from core.health.degraded_events import record_degraded_event
@@ -1354,7 +1382,11 @@ class MLXLocalClient:
                 reason,
                 detail=detail,
                 severity=severity,
-                classification=self._classify_failure(foreground_request=foreground_request),
+                classification=self._classify_failure(
+                    foreground_request=foreground_request,
+                    reason=f"{reason}:{detail}",
+                    classification=classification,
+                ),
                 context={
                     "model": os.path.basename(self.model_path),
                     "lane_state": self._lane_state,
@@ -1367,6 +1399,35 @@ class MLXLocalClient:
                 action="kept lane-local degraded state after health event emission failed",
             )
             logger.debug("Failed to record MLX degraded event: %s", exc)
+
+    def _is_optional_deep_solver_memory_refusal(self, detail: str) -> bool:
+        return self._is_deep_solver_lane() and "memory_pressure_refused_worker_spawn:" in str(detail)
+
+    def _handle_optional_deep_solver_memory_refusal(self, detail: str) -> bool:
+        """Treat a refused 72B load as an unavailable optional lane, not a live-system failure."""
+
+        if not self._is_optional_deep_solver_memory_refusal(detail):
+            return False
+        self._set_lane_state("cold")
+        self._init_future = None
+        self._consecutive_spawn_failures = 0
+        # Short backoff prevents repeated oversized 72B attempts from flooding the
+        # neural stream while keeping the optional lane available after pressure falls.
+        self._spawn_backoff_until = time.time() + 60.0
+        self._record_degraded_event(
+            "optional_deep_solver_memory_refusal",
+            detail=f"{os.path.basename(self.model_path)}:{detail}",
+            severity="warning",
+            foreground_request=False,
+            classification="non_critical_fallback",
+        )
+        logger.warning(
+            "🛡️ [MLX] Optional deep Solver worker refused by memory guard for %s: %s. "
+            "Keeping primary Cortex authoritative.",
+            os.path.basename(self.model_path),
+            detail,
+        )
+        return True
 
     def _stale_after(
         self, *, during_generation: bool = False, foreground_request: bool = False
@@ -2334,6 +2395,12 @@ class MLXLocalClient:
         memory_block = _memory_pressure_blocks_worker_spawn(self.model_path)
         if memory_block:
             error = RuntimeError(f"memory_pressure_refused_worker_spawn:{memory_block}")
+            if self._is_deep_solver_lane():
+                logger.warning(
+                    "🛡️ [MLX] Refusing optional deep Solver spawn before model load: %s",
+                    memory_block,
+                )
+                raise error
             _record_mlx_degradation(
                 error,
                 action="refused MLX worker spawn before model load due to memory pressure",
@@ -2829,6 +2896,8 @@ class MLXLocalClient:
                         self._spawn_backoff_until = 0.0
                     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                         detail = str(exc)
+                        if self._handle_optional_deep_solver_memory_refusal(detail):
+                            return False
                         _sf = getattr(self, "_consecutive_spawn_failures", 0) + 1
                         self._consecutive_spawn_failures = _sf
                         self._spawn_backoff_until = time.time() + min(
@@ -2890,6 +2959,8 @@ class MLXLocalClient:
                     self._spawn_backoff_until = 0.0
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     detail = str(exc)
+                    if self._handle_optional_deep_solver_memory_refusal(detail):
+                        return False
                     # [BUG FIX] Exponential backoff: 10s, 30s, 60s, 120s, 300s
                     self._consecutive_spawn_failures = _spawn_fails + 1
                     backoff = min(300.0, 10.0 * (2 ** min(_spawn_fails, 5)))
@@ -2949,6 +3020,16 @@ class MLXLocalClient:
                         recurrent_status = res.get("recurrent_depth")
                         if isinstance(recurrent_status, dict):
                             self._recurrent_depth_status = recurrent_status
+                        if "steering_active" in res:
+                            try:
+                                self._steering_active.value = bool(res.get("steering_active"))
+                                self._substrate_mem[-1] = 1.0 if bool(res.get("steering_active")) else 0.0
+                            except (TypeError, ValueError, IndexError, AttributeError) as steering_receipt_exc:
+                                _record_mlx_degradation(
+                                    steering_receipt_exc,
+                                    action="kept worker ready after steering liveness receipt write failed",
+                                    severity="warning",
+                                )
                         if target_path in (primary_path, deep_path):
                             _GLOBAL_LAST_HEAVY_MODEL = target_path
                             _GLOBAL_LAST_SWAP_TIME = time.time()

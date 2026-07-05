@@ -202,6 +202,7 @@ def build_safe_boot_env(
     env.setdefault("AURA_GOVERNOR_PRUNE_MB", "37888")
     env.setdefault("AURA_GOVERNOR_UNLOAD_MB", "39936")
     env.setdefault("AURA_GOVERNOR_CRITICAL_MB", "41984")
+    env.setdefault("AURA_ENABLE_LOCAL_DEEP_SOLVER", "0")
     env.setdefault("AURA_MLX_32B_PROJECTED_FOOTPRINT_GB", "auto")
     env.setdefault("AURA_MLX_32B_PROCESS_RESERVE_GB", "3")
     env.setdefault("AURA_MLX_72B_PROJECTED_FOOTPRINT_GB", "auto")

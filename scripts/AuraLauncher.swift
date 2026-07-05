@@ -2,6 +2,7 @@ import AppKit
 import CoreGraphics
 import Darwin
 import Foundation
+import WebKit
 
 private let nativeBridgeFlag = "--native-desktop-bridge"
 
@@ -898,6 +899,8 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private var openDesktopButton: NSButton!
     private var openBrowserButton: NSButton!
     private var forceStopButton: NSButton!
+    private var desktopWindow: NSWindow?
+    private var desktopWebView: WKWebView?
 
     private var auraRoot: URL!
     private var launchScript: URL!
@@ -1562,6 +1565,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         env["AURA_GOVERNOR_CRITICAL_MB"] = "41984"
         env["AURA_LOCAL_RUNTIME_SINGLETON"] = "1"
         env["AURA_LOCAL_PARALLEL_SLOTS"] = "1"
+        env["AURA_ENABLE_LOCAL_DEEP_SOLVER"] = "0"
         env["AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB"] = "24"
         env["AURA_MLX_32B_PROJECTED_FOOTPRINT_GB"] = "auto"
         env["AURA_MLX_32B_PROCESS_RESERVE_GB"] = "3"
@@ -1645,6 +1649,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         export AURA_GOVERNOR_CRITICAL_MB=41984
         export AURA_LOCAL_RUNTIME_SINGLETON=1
         export AURA_LOCAL_PARALLEL_SLOTS=1
+        export AURA_ENABLE_LOCAL_DEEP_SOLVER=0
         export AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB=24
         export AURA_MLX_32B_PROJECTED_FOOTPRINT_GB=auto
         export AURA_MLX_32B_PROCESS_RESERVE_GB=3
@@ -1961,12 +1966,58 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         guard !closeScheduled else { return }
         closeScheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + readyCloseDelay) { [weak self] in
-            self?.hideLauncherWindow()
+            if self?.desktopWindow?.isVisible == true {
+                self?.hideLauncherWindow()
+            }
         }
     }
 
     private func hideLauncherWindow() {
         window?.orderOut(nil)
+    }
+
+    private func desktopWindowIsVisible() -> Bool {
+        desktopWindow?.isVisible == true
+    }
+
+    private func desktopURL() -> URL {
+        let build = bundledSemver.isEmpty ? "live" : bundledSemver
+        let ts = Int(Date().timeIntervalSince1970)
+        return URL(string: "http://127.0.0.1:8000/?build=\(build)&ts=\(ts)&surface=native-app")!
+    }
+
+    private func openNativeDesktopWindow() {
+        if desktopWindow == nil {
+            let frame = NSRect(x: 0, y: 0, width: 1280, height: 820)
+            let config = WKWebViewConfiguration()
+            config.preferences.javaScriptCanOpenWindowsAutomatically = true
+            let webView = WKWebView(frame: frame, configuration: config)
+            webView.allowsBackForwardNavigationGestures = false
+            webView.setValue(false, forKey: "drawsBackground")
+
+            let desktop = NSWindow(
+                contentRect: frame,
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            desktop.title = "Aura Zenith"
+            desktop.minSize = NSSize(width: 900, height: 640)
+            desktop.contentView = webView
+            desktop.isReleasedWhenClosed = false
+            desktopWindow = desktop
+            desktopWebView = webView
+        }
+
+        desktopWebView?.load(URLRequest(url: desktopURL(), cachePolicy: .reloadIgnoringLocalCacheData))
+        desktopWindow?.center()
+        desktopWindow?.makeKeyAndOrderFront(nil)
+        desktopWindow?.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+        NSRunningApplication.current.activate(options: [.activateAllWindows])
+        NSApp.requestUserAttention(.informationalRequest)
+        autoDesktopOpenTriggered = true
+        clearGuiWindowLaunchMarker()
     }
 
     private func bootMarkerAge() -> TimeInterval? {
@@ -2038,7 +2089,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func desktopWindowLaunchInProgress() -> Bool {
-        guiWindowHelperIsRunning() || guiWindowLaunchIsFresh()
+        desktopWindowIsVisible() || guiWindowHelperIsRunning() || guiWindowLaunchIsFresh()
     }
 
     private func runtimeLockFileURL() -> URL {
@@ -2345,20 +2396,13 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         }
         if desktopWindowLaunchInProgress() {
             footerLabel.stringValue = "Aura’s desktop window is already open or opening. I’m keeping this launch single-flight."
+            if desktopWindowIsVisible() {
+                openNativeDesktopWindow()
+            }
             return
         }
         if existingRuntimeIsObservable() {
-            do {
-                markGuiWindowLaunch()
-                try spawnAuxiliaryAura(arguments: ["--open-gui-window"])
-                autoDesktopOpenTriggered = true
-                NSApp.activate(ignoringOtherApps: true)
-                NSRunningApplication.current.activate(options: [])
-                NSApp.requestUserAttention(.informationalRequest)
-            } catch {
-                clearGuiWindowLaunchMarker()
-                footerLabel.stringValue = "Aura’s desktop window could not be opened. Check the launcher logs."
-            }
+            openNativeDesktopWindow()
             return
         }
 
@@ -2454,21 +2498,13 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         }
         if desktopWindowLaunchInProgress() {
             autoDesktopOpenTriggered = true
+            if desktopWindowIsVisible() {
+                openNativeDesktopWindow()
+            }
             return true
         }
-        do {
-            markGuiWindowLaunch()
-            try spawnAuxiliaryAura(arguments: ["--open-gui-window"])
-            autoDesktopOpenTriggered = true
-            NSApp.activate(ignoringOtherApps: true)
-            NSRunningApplication.current.activate(options: [])
-            NSApp.requestUserAttention(.informationalRequest)
-            return true
-        } catch {
-            clearGuiWindowLaunchMarker()
-            footerLabel.stringValue = "Aura is ready, but the desktop window didn’t open automatically. Use Open Desktop Window."
-            return false
-        }
+        openNativeDesktopWindow()
+        return true
     }
 }
 

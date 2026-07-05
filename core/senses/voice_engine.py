@@ -598,12 +598,12 @@ class SovereignVoiceEngine:
                     compute_type="int8" # Improved CPU performance
                 )
             self._stt_initialized = True
-            self._pulse_hypha("voice_engine", "cognition", success=True)
+            self._pulse_hypha("voice_engine", "sensory_gate", success=True)
             logger.info("✅ Whisper STT online (model=%s, device=%s)", self.whisper_model_name, actual_device)
         except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as e:
             record_degradation('voice_engine', e)
             logger.error("Failed to init STT: %s", e)
-            self._pulse_hypha("voice_engine", "cognition", success=False)
+            self._pulse_hypha("voice_engine", "sensory_gate", success=False)
 
     def _init_tts(self):
         tts_api = _load_tts_api() if self.use_xtts else None
@@ -1236,11 +1236,15 @@ class SovereignVoiceEngine:
                 "direct EventBus dispatch disabled."
             )
 
-        # Pulse the mycelial connection
-        self._signal_mycelium("voice_engine", "cognition", {
+        # Pulse the mycelial connection.  Unauthorized STT is perception, not a
+        # foreground thought: route candidates through the sensory gate so media
+        # or nearby voices cannot contaminate the live typed chat context.
+        mycelium_target = "cognition" if direct_command_dispatch else "sensory_gate"
+        self._signal_mycelium("voice_engine", mycelium_target, {
             "event": "transcript" if direct_command_dispatch else "transcript_candidate",
             "text": text[:100],
             "authorized_command": bool(direct_command_dispatch),
+            "conversation_context_eligible": bool(direct_command_dispatch),
             "audio_source": audio_source,
         })
 

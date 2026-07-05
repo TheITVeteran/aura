@@ -59,6 +59,33 @@ async def test_ambient_transcript_candidate_cannot_enter_full_cognitive_path(tmp
     ]
 
 
+def test_unauthorized_transcript_candidate_routes_to_sensory_gate(tmp_path, monkeypatch) -> None:
+    from core.senses.voice_engine import SovereignVoiceEngine
+
+    monkeypatch.delenv("AURA_VOICE_DIRECT_EVENTBUS", raising=False)
+    monkeypatch.delenv("AURA_VOICE_ALWAYS_DIRECT_TO_CHAT", raising=False)
+
+    engine = SovereignVoiceEngine(data_dir=str(tmp_path))
+    signals: list[tuple[str, str, dict]] = []
+
+    def capture_signal(source: str, target: str, payload: dict) -> None:
+        signals.append((source, target, dict(payload)))
+
+    monkeypatch.setattr(engine, "_signal_mycelium", capture_signal)
+    monkeypatch.setattr(engine, "_pulse_hypha", lambda *_args, **_kwargs: None)
+
+    engine._dispatch_transcript(
+        "background video says something unrelated",
+        source_assessment={"source": "device_media", "response_authorized": False},
+    )
+
+    assert signals
+    assert signals[-1][0:2] == ("voice_engine", "sensory_gate")
+    assert signals[-1][2]["event"] == "transcript_candidate"
+    assert signals[-1][2]["authorized_command"] is False
+    assert signals[-1][2]["conversation_context_eligible"] is False
+
+
 def test_audio_attention_distinguishes_media_direct_address_and_nearby_speech() -> None:
     from core.senses.audio_attention import classify_audio_attention
 

@@ -1662,7 +1662,7 @@ async def request_screen_access() -> dict[str, Any]:
                 "request_screen",
                 read_only=True,
                 timeout=45.0,
-                prefer_one_shot=True,
+                prefer_one_shot=False,
             )
         except _SYSTEM_RECOVERABLE_ERRORS as exc:
             record_degradation(
@@ -1737,7 +1737,7 @@ async def request_accessibility_access() -> dict[str, Any]:
                 "request_accessibility",
                 read_only=True,
                 timeout=45.0,
-                prefer_one_shot=True,
+                prefer_one_shot=False,
             )
         except _SYSTEM_RECOVERABLE_ERRORS as exc:
             record_degradation(

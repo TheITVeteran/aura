@@ -111,6 +111,51 @@ def test_reliability_gate_rejects_timeout_ignorance_from_live_logs():
     assert "reliability_diagnostic_too_thin" in assessment.reasons
 
 
+def test_reliability_gate_rejects_progress_ack_for_substantive_question():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Actually curious. Do you know when Codex, Claude, or Gemini first started helping build you?",
+        "Thanks. Keep me posted if anything changes or there’s any updates.",
+    )
+
+    assert assessment.retryable
+    assert "low_signal_acknowledgement_placeholder" in assessment.reasons
+
+
+def test_reliability_gate_rejects_missing_requested_phrase_and_runtime_path():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "AURA_VISIBLE_PROBE_20260705_RED_CEDAR: What did I just ask, "
+            "what runtime path are you using, and what should you do if a reply "
+            "fails quality? Include red cedar."
+        ),
+        (
+            "You asked about Bryan Young, the person who built me. If a reply "
+            "fails quality checks, I should avoid sending out something unreliable."
+        ),
+    )
+
+    assert assessment.retryable
+    assert "missing_requested_phrase" in assessment.reasons
+    assert "missing_runtime_path_answer" in assessment.reasons
+
+
+def test_reliability_gate_rejects_external_provider_path_hallucination():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "What runtime path are you using right now?",
+        "My current path is Cortex with fallback to Claude if needed.",
+    )
+
+    assert assessment.retryable
+    assert assessment.hard_failure
+    assert "unsupported_external_provider_path_claim" in assessment.reasons
+
+
 def test_reliability_gate_rejects_cognitive_engine_failure_envelope():
     from core.conversation.response_reliability import assess_user_facing_reply
 

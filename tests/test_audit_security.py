@@ -127,3 +127,24 @@ def test_watchdog_stall_detection():
     watchdog.stop()
 
 # --- 5. CORS Restrictions (C-02) ---
+
+def test_localhost_api_does_not_allow_wildcard_cors():
+    server_source = (Path(__file__).parent.parent / "interface" / "server.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'allow_origins=["*"]' not in server_source
+    assert "allow_origins=allowed_local_ui_origins()" in server_source
+    assert "X-Aura-Desktop-Request" in server_source
+    assert "authenticated = not bool(expected) or is_local" not in server_source
+    assert "local_browser_origin_allowed" in server_source
+
+
+def test_desktop_ui_marks_same_origin_post_requests():
+    aura_js = (Path(__file__).parent.parent / "interface" / "static" / "aura.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert "function auraDesktopHeaders" in aura_js
+    assert "'X-Aura-Desktop-Request': 'same-origin'" in aura_js
+    assert "headers: auraDesktopHeaders({'Content-Type': 'application/json'})" in aura_js

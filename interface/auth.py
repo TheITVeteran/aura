@@ -28,6 +28,20 @@ logger = logging.getLogger("Aura.Server.Auth")
 
 TRUSTED_IPS = {"127.0.0.1", "::1"}
 HEALTH_PATHS = {"/", "/api/health", "/api/health/live", "/api/health/ready"}
+LOCAL_UI_ORIGINS = {
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+}
+PROTECTED_LOCAL_POST_PATHS = {
+    "/api/skill/execute",
+    "/api/reboot",
+    "/api/system/hot-reload",
+    "/api/terminal/send",
+}
 
 CHEAT_CODE_COOKIE_NAME = "aura_owner_session"
 CHEAT_CODE_COOKIE_TTL_SECS = 60 * 60 * 24 * 30
@@ -51,11 +65,105 @@ def _extract_request_token(request: Request) -> str | None:
     return x_api_token or None
 
 
+def allowed_local_ui_origins() -> list[str]:
+    """Origins allowed to drive Aura's local UI API from a browser.
+
+    Aura is a localhost desktop app, but browser security still matters:
+    arbitrary websites must not be able to treat the user's loopback server as
+    an authenticated capability surface.
+    """
+    return sorted(LOCAL_UI_ORIGINS)
+
+
+def _header_value(request: Request, name: str) -> str:
+    headers = getattr(request, "headers", None) or {}
+    try:
+        return str(headers.get(name) or headers.get(name.lower()) or "")
+    except (AttributeError, TypeError):
+        return ""
+
+
+def _request_method(request: Request) -> str:
+    return str(getattr(request, "method", "GET") or "GET").upper()
+
+
+def _is_allowed_local_ui_origin(value: str) -> bool:
+    value = str(value or "").strip().rstrip("/")
+    return bool(value and value in LOCAL_UI_ORIGINS)
+
+
+def _is_cross_site_browser_request(request: Request) -> bool:
+    """Return True when browser metadata says this is not Aura's own UI.
+
+    Cross-origin CSRF against localhost carries either an Origin header or
+    Fetch Metadata such as ``Sec-Fetch-Site: cross-site``.  Treat those as
+    hostile unless the request also supplies the real API token.
+    """
+    origin = _header_value(request, "Origin").strip()
+    if origin and not _is_allowed_local_ui_origin(origin):
+        return True
+    fetch_site = _header_value(request, "Sec-Fetch-Site").strip().lower()
+    if fetch_site in {"cross-site", "same-site"} and not _is_allowed_local_ui_origin(origin):
+        return True
+    return False
+
+
+def _has_same_origin_browser_context(request: Request) -> bool:
+    origin = _header_value(request, "Origin").strip()
+    if _is_allowed_local_ui_origin(origin):
+        return True
+    referer = _header_value(request, "Referer").strip()
+    return any(referer.startswith(f"{allowed}/") or referer == allowed for allowed in LOCAL_UI_ORIGINS)
+
+
+def _has_desktop_ui_marker(request: Request) -> bool:
+    surface = _header_value(request, "X-Aura-Surface").strip().lower()
+    desktop_marker = _header_value(request, "X-Aura-Desktop-Request").strip().lower()
+    return surface in {"desktop", "desktop-ui", "voice"} or desktop_marker in {"1", "true", "same-origin"}
+
+
+def _allow_local_without_token(request: Request, *, protected_route: bool) -> bool:
+    if not _is_trusted_local_host(_request_host(request)):
+        return False
+    if _is_cross_site_browser_request(request):
+        return False
+    if not protected_route:
+        return True
+    return _has_same_origin_browser_context(request) or _has_desktop_ui_marker(request)
+
+
+def request_has_allowed_local_browser_origin(request: Request) -> bool:
+    """True when a browser-originated local request came from Aura's UI."""
+    if not _is_trusted_local_host(_request_host(request)):
+        return False
+    if _is_cross_site_browser_request(request):
+        return False
+    origin = _header_value(request, "Origin").strip()
+    if origin:
+        return _is_allowed_local_ui_origin(origin)
+    return True
+
+
 def validate_runtime_security_request(request: Request) -> None:
     """Fail closed on every request if security config drifts after startup."""
     path = str(getattr(request.url, "path", "") or "")
     host = _request_host(request)
     internal_only = bool(getattr(config.security, "internal_only_mode", False))
+
+    # Browser-originated cross-site requests to localhost are CSRF attempts.
+    # A valid bearer/API token can still authorize automation clients, but
+    # loopback alone is not authentication.
+    expected_for_origin = config.api_token
+    supplied_for_origin = _extract_request_token(request)
+    if (
+        _is_cross_site_browser_request(request)
+        and not (
+            expected_for_origin
+            and supplied_for_origin
+            and hmac.compare_digest(supplied_for_origin, expected_for_origin)
+        )
+    ):
+        raise HTTPException(status_code=403, detail="Cross-origin local API request denied")
 
     if internal_only:
         if not _is_trusted_local_host(host):
@@ -72,10 +180,17 @@ def validate_runtime_security_request(request: Request) -> None:
         logger.error("AURA_API_TOKEN not set and service is not internal-only. Blocking request to %s.", path)
         raise HTTPException(status_code=503, detail="Authentication not configured")
 
-    if _is_trusted_local_host(host):
+    supplied = _extract_request_token(request)
+    if supplied and hmac.compare_digest(supplied, expected):
         return
 
-    supplied = _extract_request_token(request)
+    protected_local_post = (
+        _request_method(request) not in {"GET", "HEAD", "OPTIONS"}
+        and path in PROTECTED_LOCAL_POST_PATHS
+    )
+    if _allow_local_without_token(request, protected_route=protected_local_post):
+        return
+
     if not supplied or not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -95,16 +210,7 @@ def _verify_token(request: Request, x_api_token: str | None = Header(default=Non
     """Bearer-token check. Ensures fail-closed unless running in strict internal_only_mode."""
     expected = config.api_token
     internal_only = getattr(config.security, "internal_only_mode", False)
-    host = _request_host(request)
-
-    if _is_trusted_local_host(host) and not x_api_token:
-        # Local desktop operation is already covered by the runtime security
-        # request gate. Let same-host UI/probe calls hit governed skill routes
-        # without forcing a second hidden token path.
-        if not getattr(_verify_token, '_warned_local', False):
-            logger.warning("AURA_API_TOKEN not supplied for trusted local request.")
-            _verify_token._warned_local = True
-        return
+    supplied = _extract_request_token(request) or x_api_token
 
     if not expected:
         # Only allow missing token if we are strictly bound to localhost
@@ -117,7 +223,19 @@ def _verify_token(request: Request, x_api_token: str | None = Header(default=Non
         logger.error("AURA_API_TOKEN not set and service is not internal-only. Blocking.")
         raise HTTPException(status_code=503, detail="Authentication not configured")
 
-    if not x_api_token or not hmac.compare_digest(x_api_token, expected):
+    if supplied and hmac.compare_digest(supplied, expected):
+        return
+
+    if internal_only and _allow_local_without_token(request, protected_route=False):
+        return
+
+    if _allow_local_without_token(request, protected_route=True):
+        if not getattr(_verify_token, '_warned_local', False):
+            logger.info("Trusted same-origin Aura UI request accepted without exposing API token.")
+            _verify_token._warned_local = True
+        return
+
+    if not supplied or not hmac.compare_digest(supplied, expected):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 

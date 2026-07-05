@@ -2157,7 +2157,7 @@ def _mlx_worker_loop(
             from core.consciousness.affective_steering import get_steering_engine
             engine = get_steering_engine()
             engine.attach(model, tokenizer)
-            if substrate_mem:
+            if substrate_mem is not None:
                 engine.start_substrate_sync(shared_state=substrate_mem)
             _steering_active = engine.is_active()
 
@@ -2257,6 +2257,7 @@ def _mlx_worker_loop(
                 "status": "ok",
                 "action": "init",
                 "device": device,
+                "steering_active": bool(_steering_active),
                 "recurrent_depth": recurrent_depth_status,
             }
         )

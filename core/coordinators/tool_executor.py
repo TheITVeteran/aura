@@ -261,7 +261,15 @@ class ToolExecutor:
             if not isinstance(result, dict):
                 result = {"ok": True, "output": result}
             success = bool(result.get("ok", False))
+            deferred = str(result.get("status", "") or "").lower() == "deferred"
             elapsed_ms = (time.time() - _start) * 1000
+            if deferred:
+                logger.info(
+                    "Tool %s execution deferred: %s",
+                    tool_name,
+                    result.get("reason") or result.get("message") or "background_policy",
+                )
+                return result
             logger.info("Tool %s execution completed: %s", tool_name, success)
 
             # Tool learning

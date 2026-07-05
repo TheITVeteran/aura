@@ -11,6 +11,11 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "openDesktopWindow" in swift
     assert 'app.setActivationPolicy(.regular)' in swift
     assert "requestUserAttention" in swift
+    assert "import WebKit" in swift
+    assert "WKWebView" in swift
+    assert "openNativeDesktopWindow" in swift
+    assert "surface=native-app" in swift
+    assert "desktopWindowIsVisible" in swift
     assert "claimAppInstanceLock" in swift
     assert 'desktop-app-instance.lock' in swift
     assert "activateExistingLauncherInstance" in swift
@@ -71,6 +76,7 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "AURA_PROCESS_RSS_LIMIT_GB" in swift
     assert "AURA_LOCAL_RUNTIME_SINGLETON" in swift
     assert "AURA_LOCAL_PARALLEL_SLOTS" in swift
+    assert "AURA_ENABLE_LOCAL_DEEP_SOLVER" in swift
     assert "AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB" in swift
     assert "AURA_MLX_32B_PROCESS_RESERVE_GB" in swift
     assert "AURA_MLX_72B_LOAD_MIN_AVAILABLE_GB" in swift
@@ -92,6 +98,7 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert 'env["AURA_DEFERRED_CORTEX_PREWARM"] = "1"' in swift
     assert 'env["AURA_LOCAL_RUNTIME_SINGLETON"] = "1"' in swift
     assert 'env["AURA_LOCAL_PARALLEL_SLOTS"] = "1"' in swift
+    assert 'env["AURA_ENABLE_LOCAL_DEEP_SOLVER"] = "0"' in swift
     assert 'env["AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB"] = "24"' in swift
     assert 'env["AURA_MLX_32B_PROJECTED_FOOTPRINT_GB"] = "auto"' in swift
     assert 'env["AURA_MLX_32B_PROCESS_RESERVE_GB"] = "3"' in swift
@@ -138,6 +145,7 @@ def test_launch_script_supports_gui_window_mode():
     assert "AURA_GOVERNOR_CRITICAL_MB:=41984" in shell
     assert "AURA_LOCAL_RUNTIME_SINGLETON:=1" in shell
     assert "AURA_LOCAL_PARALLEL_SLOTS:=1" in shell
+    assert "AURA_ENABLE_LOCAL_DEEP_SOLVER:=0" in shell
     assert "AURA_MLX_32B_LOAD_MIN_AVAILABLE_GB:=24" in shell
     assert "AURA_MLX_32B_PROJECTED_FOOTPRINT_GB:=auto" in shell
     assert "AURA_MLX_32B_PROCESS_RESERVE_GB:=3" in shell
@@ -145,6 +153,7 @@ def test_launch_script_supports_gui_window_mode():
     assert "AURA_MLX_72B_PROJECTED_FOOTPRINT_GB:=auto" in shell
     assert "AURA_MLX_72B_PROCESS_RESERVE_GB:=5" in shell
     assert "AURA_FOREGROUND_CHAT_MAX_TOKENS:=2048" in shell
+    assert "export AURA_ENABLE_LOCAL_DEEP_SOLVER" in shell
     assert "unset AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR" in shell
     assert "AURA_DESKTOP_FORCE_DISABLE_SECONDARY_MODEL_REPAIR" in shell
     assert "resolve_launch_log()" in shell
@@ -340,6 +349,27 @@ def test_packaged_launcher_tracks_spawned_runtime_children_for_teardown():
     assert "trackSpawnedProcess(proc)" in swift
     assert "proc.terminationHandler" in swift
     assert "kill(proc.processIdentifier, SIGKILL)" in swift
+
+
+def test_packaged_launcher_uses_native_app_window_for_default_desktop_surface():
+    swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
+
+    open_body = swift.split("@objc private func openDesktopWindow()", 1)[1].split(
+        "@objc private func openBrowser()",
+        1,
+    )[0]
+    auto_body = swift.split("private func autoOpenDesktopWindowIfNeeded()", 1)[1].split(
+        "\n    }\n}",
+        1,
+    )[0]
+
+    assert "openNativeDesktopWindow()" in open_body
+    assert 'spawnAuxiliaryAura(arguments: ["--open-gui-window"])' not in open_body
+    assert "openNativeDesktopWindow()" in auto_body
+    assert 'spawnAuxiliaryAura(arguments: ["--open-gui-window"])' not in auto_body
+    assert "WKWebView(frame:" in swift
+    assert "desktop.contentView = webView" in swift
+    assert 'desktop.title = "Aura Zenith"' in swift
 
 
 def test_aura_main_acquires_singleton_lock_before_port_cleanup_and_reaper_boot():

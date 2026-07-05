@@ -253,7 +253,12 @@ logging.getLogger().addHandler(_qh)
 
 
 # ── Event bridge functions (extracted to interface/event_bridge.py) ──
-from interface.auth import _restore_owner_session_from_request, validate_runtime_security_request
+from interface.auth import (
+    _restore_owner_session_from_request,
+    allowed_local_ui_origins,
+    request_has_allowed_local_browser_origin,
+    validate_runtime_security_request,
+)
 from interface.event_bridge import mycelial_ui_callback, run_event_bridge
 
 # ── Shared helpers ──
@@ -511,16 +516,17 @@ async def add_cache_headers(request: Request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if not config.security.internal_only_mode else [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:8000",
-        "http://127.0.0.1:8000"
-    ],
+    allow_origins=allowed_local_ui_origins(),
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Api-Token", "X-Idempotency-Key", "Authorization"],
+    allow_headers=[
+        "Content-Type",
+        "X-Api-Token",
+        "X-Idempotency-Key",
+        "Authorization",
+        "X-Aura-Surface",
+        "X-Aura-Desktop-Request",
+        "X-Aura-Require-CognitiveEngine",
+    ],
 )
 
 STATIC_DIR = config.paths.project_root / "interface" / "static"
@@ -916,8 +922,9 @@ async def websocket_endpoint(ws: WebSocket):
     expected = os.environ.get("AURA_API_TOKEN", "")
     host = ws.client.host if ws.client else "unknown"
     is_local = host in ("127.0.0.1", "::1", "localhost")
+    local_browser_origin_allowed = request_has_allowed_local_browser_origin(ws)
 
-    authenticated = not bool(expected) or is_local
+    authenticated = not bool(expected) or (is_local and local_browser_origin_allowed)
     auth_timeout = 5.0
 
     try:
@@ -938,7 +945,7 @@ async def websocket_endpoint(ws: WebSocket):
             except json.JSONDecodeError:
                 await ws.close(code=4001, reason="Invalid Auth Payload")
                 return
-        elif is_local and expected:
+        elif is_local and expected and local_browser_origin_allowed:
             await ws.send_text(json.dumps({"type": "auth_success", "note": "local_trust"}))
 
         while not is_shutdown_requested():

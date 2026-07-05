@@ -81,11 +81,19 @@ function nowSeconds() {
     return Date.now() / 1000;
 }
 
+function auraDesktopHeaders(extra = {}) {
+    return {
+        'X-Aura-Surface': 'desktop-ui',
+        'X-Aura-Desktop-Request': 'same-origin',
+        ...extra,
+    };
+}
+
 async function postInteractionSignal(path, payload, { quiet = true, keepalive = false } = {}) {
     try {
         await fetch(path, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: auraDesktopHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify(payload),
             keepalive
         });
@@ -1397,6 +1405,7 @@ async function runDesktopAccessAction(action) {
             method: 'POST',
             cache: 'no-store',
             credentials: 'same-origin',
+            headers: auraDesktopHeaders(),
         });
         let payload = {};
         try {
@@ -2900,7 +2909,7 @@ function recordChatLatency(requestId, latencyMs, ok) {
 
     fetch('/api/performance/ack', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: auraDesktopHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ request_id: requestId, latency_ms: latencyMs }),
     }).catch(() => {});
 }
@@ -2969,9 +2978,8 @@ async function runChatRequest(msg, { messageAlreadyRendered = false } = {}) {
         const res = await fetch('/api/chat', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'X-Aura-Surface': 'desktop-ui',
-                'X-Aura-Require-CognitiveEngine': 'true'
+                ...auraDesktopHeaders({ 'Content-Type': 'application/json' }),
+                'X-Aura-Require-CognitiveEngine': 'true',
             },
             body: JSON.stringify({ message: msg }),
             signal: controller.signal,
@@ -4275,7 +4283,7 @@ async function togglePrivacy(type, currentEnabled, btn) {
         }
         const res = await fetch(`/api/privacy/${type}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: auraDesktopHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({ enabled: next })
         });
         const d = await res.json();
@@ -4689,7 +4697,10 @@ if (brainBtn) brainBtn.addEventListener('click', async (e) => {
     brainBtn.style.opacity = '0.5';
     brainBtn.textContent = '◇ ...';
     try {
-        const res = await fetch('/api/brain/retry', { method: 'POST' });
+        const res = await fetch('/api/brain/retry', {
+            method: 'POST',
+            headers: auraDesktopHeaders(),
+        });
         const d = await res.json();
         appendMsg('aura', d.status === 'retry_sent' ? '🧠 Brain retry signal sent.' : '⚠ Orchestrator unavailable.');
     } catch (e) {
@@ -4743,7 +4754,10 @@ if (updateBtn) updateBtn.addEventListener('click', async (e) => {
     updateBtn.textContent = '↻ ...';
     appendMsg('aura', '♻️ Hot-reloading Aura code from disk...');
     try {
-        const res = await fetch('/api/system/hot-reload', { method: 'POST' });
+        const res = await fetch('/api/system/hot-reload', {
+            method: 'POST',
+            headers: auraDesktopHeaders(),
+        });
         if (res.ok) {
             const data = await res.json();
             const reloaded = data.reloaded_count || 0;
@@ -4841,7 +4855,7 @@ if (termSendBtn) termSendBtn.addEventListener('click', async (e) => {
     try {
         const r = await fetch('/api/terminal/send', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: auraDesktopHeaders({'Content-Type': 'application/json'}),
             body: JSON.stringify({text: input.value.trim()})
         });
         const d = await r.json();
@@ -4862,7 +4876,10 @@ if (rebootBtn) rebootBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (confirm('Reboot Aura? This will restart the server process.')) {
         try {
-            await fetch('/api/reboot', { method: 'POST' });
+            await fetch('/api/reboot', {
+                method: 'POST',
+                headers: auraDesktopHeaders(),
+            });
         } catch (e) {
             console.warn('[System] Reboot request failed:', e);
             appendMsg('aura', '⚠ Reboot request failed before it reached the server.', false, { diagnostic: true });
@@ -5162,7 +5179,7 @@ async function activateCheatCode() {
     try {
         const resp = await fetch('/api/cheat-codes/activate', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: auraDesktopHeaders({ 'Content-Type': 'application/json' }),
             credentials: 'same-origin',
             body: JSON.stringify({ code }),
         });

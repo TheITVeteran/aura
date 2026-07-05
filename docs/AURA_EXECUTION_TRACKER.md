@@ -6531,3 +6531,76 @@ Tracker:
   if host load allows, launched Aura live skill/model replay for Program DNA and
   desktop conversation/tool behavior. Remaining soak work is the longer
   unattended/thermal runtime proof.
+
+## Checkpoint 2026-07-05-01: Localhost CSRF Hardening + Resident Desktop Bridge Truth
+
+Status: implementation validated; checkpoint commit pending.
+
+Scope:
+
+- Patched the GitHub-reported localhost trust bypass: loopback alone is no
+  longer treated as authentication for protected local POST routes.
+- Replaced wildcard browser CORS with the explicit Aura local UI origin list.
+- Added same-origin/desktop request headers to the live UI POST paths that need
+  tokenless local operation.
+- Patched WebSocket auth so a hostile browser Origin cannot receive local-trust
+  authentication on `/ws`.
+- Confirmed live exploit behavior: a cross-site POST to
+  `/api/skill/execute?skill_name=sovereign_terminal` returns HTTP 403 before
+  command execution.
+- Rebuilt and reinstalled `/Applications/Aura.app` with the trusted
+  `Aura Local Code Signing` identity and verified the resident bridge identity
+  reports `com.aura.desktop` with stable signing.
+- Changed desktop permission request actions to route through the resident
+  Aura.app bridge instead of one-shot subprocess probes, so TCC prompts attach
+  to the same identity the user launches.
+- Patched background tool deferrals so protected quiet-window deferrals are not
+  logged, learned, or written into ACG/memory as failed tool executions.
+
+Evidence:
+
+- `python -m py_compile interface/auth.py interface/server.py interface/routes/system.py core/brain/llm/mlx_client.py core/brain/llm/mlx_worker.py core/senses/voice_engine.py core/conversation/response_reliability.py tools/live_boot_proof.py`
+  -> passed.
+- `python -m pytest -q tests/test_runtime_security_config.py tests/test_audit_security.py tests/test_server_runtime_hardening.py::test_desktop_access_screen_request_uses_resident_signed_bridge tests/test_server_runtime_hardening.py::test_desktop_access_accessibility_request_uses_resident_signed_bridge tests/test_runtime_polish.py::test_desktop_access_panel_uses_dedicated_probe_endpoint`
+  -> `22 passed`.
+- `python -m pytest -q tests/test_launcher_polish_contract.py tests/test_mlx_memory_safety.py tests/test_boot_runtime_safety.py::test_live_boot_proof_inherits_safe_desktop_mlx_limits tests/test_boot_runtime_safety.py::test_live_boot_proof_desktop_mode_mirrors_packaged_launcher tests/test_live_runtime_surface_regressions.py::test_local_deep_solver_is_blocked_by_default_on_64gb_desktop`
+  -> `60 passed`.
+- `python -m pytest -q tests/test_voice_desktop_runtime_path.py tests/test_chat_reliability_proof.py::test_reliability_gate_rejects_progress_ack_for_substantive_question tests/test_chat_reliability_proof.py::test_reliability_gate_rejects_missing_requested_phrase_and_runtime_path tests/test_chat_reliability_proof.py::test_reliability_gate_rejects_external_provider_path_hallucination`
+  -> `22 passed`.
+- `python -m pytest -q tests/test_tool_executor_hardening.py tests/test_react_loop_integration.py::test_web_search_ddgs_fallback_live tests/test_local_reference_skill.py`
+  -> `12 passed`.
+- `python -m pytest -q tests/test_launcher_polish_contract.py tests/test_mlx_memory_safety.py tests/test_voice_desktop_runtime_path.py tests/test_chat_reliability_proof.py::test_reliability_gate_rejects_progress_ack_for_substantive_question tests/test_chat_reliability_proof.py::test_reliability_gate_rejects_missing_requested_phrase_and_runtime_path tests/test_chat_reliability_proof.py::test_reliability_gate_rejects_external_provider_path_hallucination`
+  -> `79 passed`.
+- `git diff --check` -> passed.
+- Live `/api/health/boot` after launched Aura.app: `ready=true`,
+  `conversation_ready=true`, required probes pass, runtime healthy.
+- Live process table after launch: one `aura-launcher` parent and one
+  `aura_main.py --desktop` runtime root; no duplicate root Aura sessions.
+- Live `/api/system/desktop-access` now reports the resident bridge transport
+  truthfully: `bridge_transport=resident_ipc`, `bundle_identifier=com.aura.desktop`,
+  `automation=true`.
+
+Boundary:
+
+- The resident Aura.app bridge is reachable and correctly signed, but macOS
+  still denies Screen Recording and Accessibility for this exact app identity.
+  The request endpoints return `approval_required`; Aura cannot honestly mark
+  desktop control ready until the OS TCC grants flip true for
+  `/Applications/Aura.app`.
+- The stale direct one-shot bridge path is no longer accepted as proof of
+  desktop readiness.
+- Background autonomy is active, but foreground-protected deferrals remain
+  intentional. They are now neutral deferrals rather than failed tool attempts.
+
+Tracker:
+
+- Localhost security closure rises to about 98-99% for this report.
+- Resident desktop bridge truth closure rises to about 90-92%; remaining work
+  is the OS TCC grant itself plus a post-grant live desktop action replay.
+- Live launch/conversation readiness closure remains about 97-98% locally for
+  boot/health/cortex readiness.
+- Expanded daily-runtime/product closure remains about 97-98% locally, with
+  desktop OS-control proof gated on the current TCC denial.
+- Remaining non-soak checkpoint work: post-TCC visible desktop action replay,
+  live Program DNA/model skill replay, final RSI live proof replay if host load
+  allows, and continued Chrome/Kubernetes/aerospace reliability tightening.

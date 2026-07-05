@@ -1277,7 +1277,7 @@ def test_desktop_access_summary_includes_permission_request_state(monkeypatch):
     assert payload["tcc_repair_plan"]["request_state"]["screen_recording"]["target"] == "Aura.app"
 
 
-def test_desktop_access_screen_request_uses_one_shot_signed_bridge(monkeypatch):
+def test_desktop_access_screen_request_uses_resident_signed_bridge(monkeypatch):
     from interface.routes import system as system_routes
 
     calls = []
@@ -1288,7 +1288,7 @@ def test_desktop_access_screen_request_uses_one_shot_signed_bridge(monkeypatch):
             "ok": True,
             "screen_recording": True,
             "bundle_identifier": "com.aura.desktop",
-            "bridge_transport": "one_shot_subprocess",
+            "bridge_transport": "resident_ipc",
         }
 
     monkeypatch.setattr("core.security.native_desktop_bridge.invoke_native_desktop_bridge", _invoke)
@@ -1300,16 +1300,16 @@ def test_desktop_access_screen_request_uses_one_shot_signed_bridge(monkeypatch):
         system_routes._desktop_access_request_state.update(original_request_state)
 
     assert result["granted"] is True
-    assert result["native_bridge"]["bridge_transport"] == "one_shot_subprocess"
+    assert result["native_bridge"]["bridge_transport"] == "resident_ipc"
     assert calls == [
         (
             "request_screen",
-            {"read_only": True, "timeout": 45.0, "prefer_one_shot": True},
+            {"read_only": True, "timeout": 45.0, "prefer_one_shot": False},
         )
     ]
 
 
-def test_desktop_access_accessibility_request_uses_one_shot_signed_bridge(monkeypatch):
+def test_desktop_access_accessibility_request_uses_resident_signed_bridge(monkeypatch):
     from interface.routes import system as system_routes
 
     calls = []
@@ -1320,7 +1320,7 @@ def test_desktop_access_accessibility_request_uses_one_shot_signed_bridge(monkey
             "ok": True,
             "accessibility": True,
             "bundle_identifier": "com.aura.desktop",
-            "bridge_transport": "one_shot_subprocess",
+            "bridge_transport": "resident_ipc",
         }
 
     monkeypatch.setattr("core.security.native_desktop_bridge.invoke_native_desktop_bridge", _invoke)
@@ -1332,11 +1332,11 @@ def test_desktop_access_accessibility_request_uses_one_shot_signed_bridge(monkey
         system_routes._desktop_access_request_state.update(original_request_state)
 
     assert result["granted"] is True
-    assert result["native_bridge"]["bridge_transport"] == "one_shot_subprocess"
+    assert result["native_bridge"]["bridge_transport"] == "resident_ipc"
     assert calls == [
         (
             "request_accessibility",
-            {"read_only": True, "timeout": 45.0, "prefer_one_shot": True},
+            {"read_only": True, "timeout": 45.0, "prefer_one_shot": False},
         )
     ]
 

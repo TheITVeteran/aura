@@ -468,3 +468,77 @@ def test_clean_user_surface_bypasses_worker_prompt_cache():
     assert _job_requires_prompt_cache_bypass({"clean_user_surface_contract": True}) is True
     assert _job_requires_prompt_cache_bypass({"proof_evaluation_contract": True}) is True
     assert _job_requires_prompt_cache_bypass({"action": "generate"}) is False
+
+
+def test_optional_deep_solver_memory_refusal_stays_noncritical(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    events = []
+    client = mlx_client.MLXLocalClient("/models/Qwen2.5-72B-Instruct-4bit")
+    monkeypatch.setattr(
+        client,
+        "_record_degraded_event",
+        lambda reason, **kwargs: events.append((reason, kwargs)),
+    )
+
+    handled = client._handle_optional_deep_solver_memory_refusal(
+        "memory_pressure_refused_worker_spawn:model_load_headroom:25.5GB < required 52.0GB"
+    )
+
+    assert handled is True
+    assert client._lane_state == "cold"
+    assert client._init_future is None
+    assert client._consecutive_spawn_failures == 0
+    assert client._spawn_backoff_until > time.time()
+    assert events == [
+        (
+            "optional_deep_solver_memory_refusal",
+            {
+                "detail": (
+                    "Qwen2.5-72B-Instruct-4bit:"
+                    "memory_pressure_refused_worker_spawn:model_load_headroom:25.5GB < required 52.0GB"
+                ),
+                "severity": "warning",
+                "foreground_request": False,
+                "classification": "non_critical_fallback",
+            },
+        )
+    ]
+    assert client._classify_failure(
+        reason="memory_pressure_refused_worker_spawn:model_load_headroom",
+    ) == "non_critical_fallback"
+
+
+def test_optional_deep_solver_handler_ignores_primary_32b_memory_refusal(monkeypatch):
+    from core.brain.llm import mlx_client
+
+    events = []
+    client = mlx_client.MLXLocalClient("/models/Qwen2.5-32B-Instruct-8bit")
+    monkeypatch.setattr(
+        client,
+        "_record_degraded_event",
+        lambda reason, **kwargs: events.append((reason, kwargs)),
+    )
+
+    handled = client._handle_optional_deep_solver_memory_refusal(
+        "memory_pressure_refused_worker_spawn:model_load_headroom:12.0GB < required 24.0GB"
+    )
+
+    assert handled is False
+    assert events == []
+
+
+def test_mlx_worker_accepts_zeroed_shared_substrate_for_affective_sync():
+    source = open("core/brain/llm/mlx_worker.py", encoding="utf-8").read()
+
+    assert "if substrate_mem is not None:" in source
+    assert "engine.start_substrate_sync(shared_state=substrate_mem)" in source
+    assert '"steering_active": bool(_steering_active)' in source
+
+
+def test_mlx_client_records_worker_steering_liveness_receipt():
+    source = open("core/brain/llm/mlx_client.py", encoding="utf-8").read()
+
+    assert 'if "steering_active" in res:' in source
+    assert "self._steering_active.value = bool(res.get(\"steering_active\"))" in source
+    assert "self._substrate_mem[-1] = 1.0 if bool(res.get(\"steering_active\")) else 0.0" in source

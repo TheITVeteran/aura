@@ -448,6 +448,7 @@ def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
     assert env["AURA_GOVERNOR_PRUNE_MB"] == "37888"
     assert env["AURA_GOVERNOR_UNLOAD_MB"] == "39936"
     assert env["AURA_GOVERNOR_CRITICAL_MB"] == "41984"
+    assert env["AURA_ENABLE_LOCAL_DEEP_SOLVER"] == "0"
     assert env["AURA_MLX_32B_PROJECTED_FOOTPRINT_GB"] == "auto"
     assert env["AURA_MLX_32B_PROCESS_RESERVE_GB"] == "3"
     assert env["AURA_MLX_72B_PROJECTED_FOOTPRINT_GB"] == "auto"
@@ -475,6 +476,7 @@ def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(monkeypatch):
     assert env["AURA_AUTO_LISTEN"] == "1"
     assert env["AURA_EAGER_CORTEX_WARMUP"] == "0"
     assert env["AURA_DEFERRED_CORTEX_PREWARM"] == "1"
+    assert env["AURA_ENABLE_LOCAL_DEEP_SOLVER"] == "0"
     assert env["AURA_AMBIENT_STREAM_INTERVAL_S"] == "5"
     assert env["AURA_AUTONOMIC_REFLECTION_INTERVAL_S"] == "30"
 
