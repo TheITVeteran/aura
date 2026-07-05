@@ -182,7 +182,19 @@ class FaultRegistry:
         # Off by default so throwaway registries in tests never touch the
         # live evidence file; the process singleton opts in.
         self._persistent_evidence = persistent_evidence
+        # Listeners fire OUTSIDE the lock, guarded, and must be O(1)
+        # (the recovery bridge only enqueues). Bounded to prevent
+        # accidental listener sprawl.
+        self._listeners: list[Any] = []
         self._register_builtin_faults()
+
+    def add_listener(self, listener: Any) -> bool:
+        """Register a fault-record listener (max 8; O(1) callbacks only)."""
+        with self._lock:
+            if len(self._listeners) >= 8 or listener in self._listeners:
+                return False
+            self._listeners.append(listener)
+            return True
 
     # ── Definition management ────────────────────────────────────────
 
@@ -244,6 +256,12 @@ class FaultRegistry:
                 get_fault_evidence_store().record(fault_id)
             except (ImportError, AttributeError, RuntimeError, OSError) as exc:
                 logger.debug("Fault evidence unavailable: %s", exc)
+
+        for listener in list(self._listeners):
+            try:
+                listener(record)
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("Fault listener failed: %s", exc)
 
         log_level = {
             FaultSeverity.CATASTROPHIC: logging.CRITICAL,
