@@ -1046,7 +1046,13 @@ class ExecutiveCore:
 
             summary = get_constitutional_core().belief_authority.summary()
             return {
-                "contested": int(summary.get("contested", 0) or 0),
+                # Fresh contests gate autonomy; aged-out contests (no
+                # re-assertion within the freshness window) stop wedging
+                # every autonomous write forever. Falls back to the raw
+                # count when the authority predates freshness tracking.
+                "contested": int(
+                    summary.get("fresh_contested", summary.get("contested", 0)) or 0
+                ),
                 "trusted": int(summary.get("trusted", 0) or 0),
                 "coherence_score": float(summary.get("coherence_score", 1.0) or 1.0),
             }

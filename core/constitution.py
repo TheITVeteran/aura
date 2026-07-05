@@ -192,6 +192,56 @@ class BeliefAuthority:
         self._history.append(record)
         return record
 
+    # A contest that nothing re-asserts must not gate autonomy forever —
+    # observed live: contested count only ever grew (1→2) and every
+    # autonomous write deferred for the whole session because no
+    # resolution API existed at all.
+    CONTEST_FRESHNESS_S = 6 * 3600.0
+
+    def reconcile(
+        self,
+        belief_id: str,
+        *,
+        resolution: str = "affirmed",
+        evidence: str = "",
+    ) -> bool:
+        """Resolve a contested belief (research completed / adjudicated).
+
+        resolution ∈ {affirmed, retired}: affirmed restores active status
+        with the new evidence attached; retired removes the claim.
+        """
+        record = self._beliefs.get(belief_id)
+        if record is None or record.status != "contested":
+            return False
+        if resolution == "retired":
+            del self._beliefs[belief_id]
+        else:
+            record.status = "active"
+            record.reason = "reconciled"
+            if evidence:
+                record.evidence = (record.evidence + [str(evidence)[:200]])[:10]
+            record.recorded_at = time.time()
+        return True
+
+    def contested_records(self, *, fresh_only: bool = False) -> list[dict[str, Any]]:
+        now = time.time()
+        out = []
+        for belief_id, record in self._beliefs.items():
+            if record.status != "contested":
+                continue
+            age = now - float(record.recorded_at or now)
+            if fresh_only and age > self.CONTEST_FRESHNESS_S:
+                continue
+            entry = record.to_dict()
+            entry["belief_id"] = belief_id
+            entry["age_s"] = round(age, 1)
+            out.append(entry)
+        return out
+
+    def fresh_contested_count(self) -> int:
+        """Contested records young enough to gate autonomy (age-out applies)."""
+        return len(self.contested_records(fresh_only=True))
+
     def recent(self, limit: int = 25) -> list[dict[str, Any]]:
         items = list(self._history)[-limit:]
         return [item.to_dict() for item in items]
@@ -199,6 +249,11 @@ class BeliefAuthority:
     def summary(self) -> dict[str, Any]:
         records = list(self._beliefs.values())
         contested = [record for record in records if record.status == "contested"]
+        now = time.time()
+        fresh_contested = [
+            record for record in contested
+            if (now - float(record.recorded_at or now)) <= self.CONTEST_FRESHNESS_S
+        ]
         trusted = [record for record in records if record.status == "trusted"]
         active = [record for record in records if record.status in {"active", "trusted"}]
         coherence = 1.0
@@ -209,6 +264,7 @@ class BeliefAuthority:
             "trusted": len(trusted),
             "active": len(active),
             "contested": len(contested),
+            "fresh_contested": len(fresh_contested),
             "coherence_score": round(coherence, 4),
         }
 

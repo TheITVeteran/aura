@@ -1191,3 +1191,45 @@ class TestGenerationGateRecovery:
                     router._GENERATION_GATE.release()
                 except ValueError:
                     break
+
+
+class TestBeliefReconciliation:
+    """Live regression: contested beliefs gated every autonomous write
+    forever — no resolution API existed and contests never aged out."""
+
+    def _authority_with_contest(self):
+        from core.constitution import BeliefAuthority
+
+        auth = BeliefAuthority()
+        auth.review_update("world", "k1", "v1")
+        auth.review_update("world", "k1", "DIFFERENT")
+        assert auth.summary()["contested"] == 1
+        return auth
+
+    def test_reconcile_clears_the_gate(self):
+        auth = self._authority_with_contest()
+        belief_id = auth.contested_records()[0]["belief_id"]
+        assert auth.reconcile(
+            belief_id, resolution="affirmed", evidence="research: supported"
+        )
+        summary = auth.summary()
+        assert summary["contested"] == 0
+        assert summary["fresh_contested"] == 0
+
+    def test_unreasserted_contests_age_out_of_the_gate(self):
+        import time as _time
+
+        auth = self._authority_with_contest()
+        for record in auth._beliefs.values():
+            if record.status == "contested":
+                record.recorded_at = _time.time() - 7 * 3600
+        summary = auth.summary()
+        assert summary["contested"] == 1          # still visible for honesty
+        assert summary["fresh_contested"] == 0    # but no longer gating
+
+    def test_executive_reads_fresh_count(self):
+        import inspect
+
+        from core.executive import executive_core
+
+        assert "fresh_contested" in inspect.getsource(executive_core)
