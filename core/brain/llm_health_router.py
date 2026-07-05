@@ -1798,7 +1798,7 @@ class HealthAwareLLMRouter:
             )
             return
         logger.info(
-            "⏸️ Router: Deferring background inference before generation gate for origin=%s reason=%s%s.",
+            "⏸️ Router: Queueing background inference until admission clears for origin=%s reason=%s%s.",
             origin,
             reason,
             suffix,

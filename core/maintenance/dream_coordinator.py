@@ -39,6 +39,7 @@ class DreamCoordinator:
         self._last_run: Dict[str, float] = {}
         self._running: Dict[str, bool] = {}
         self._run_count: Dict[str, int] = {}
+        self._pending: Dict[str, Dict[str, Any]] = {}
 
     async def run_if_due(
         self,
@@ -73,7 +74,7 @@ class DreamCoordinator:
                 allow_no_user_anchor=allow_no_user_anchor,
             )
             if reason:
-                logger.info("DreamCoordinator: '%s' deferred — %s.", name, reason)
+                self._mark_deferred(name, reason)
                 return False
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
@@ -105,6 +106,7 @@ class DreamCoordinator:
 
             self._running[name] = True
             self._run_count[name] = self._run_count.get(name, 0) + 1
+            self._pending.pop(name, None)
             logger.info(
                 "🌙 DreamCoordinator: running '%s' (run #%d, priority=%d)",
                 name, self._run_count[name], priority,
@@ -133,4 +135,33 @@ class DreamCoordinator:
             "last_run_monotonic": {k: round(v, 1) for k, v in self._last_run.items()},
             "currently_running": {k: v for k, v in self._running.items() if v},
             "run_counts": dict(self._run_count),
+            "pending": {k: dict(v) for k, v in self._pending.items()},
         }
+
+    def _mark_deferred(self, name: str, reason: str) -> None:
+        """Record deferred work without turning normal boot gating into log noise."""
+
+        now = time.monotonic()
+        previous = self._pending.get(name)
+        count = int((previous or {}).get("count", 0)) + 1
+        first_seen = float((previous or {}).get("first_seen_monotonic", now))
+        previous_reason = str((previous or {}).get("reason", "") or "")
+        self._pending[name] = {
+            "reason": reason,
+            "count": count,
+            "first_seen_monotonic": round(first_seen, 1),
+            "last_seen_monotonic": round(now, 1),
+        }
+        if previous_reason == reason:
+            logger.debug(
+                "DreamCoordinator: '%s' still queued until admission clears (%s, count=%d).",
+                name,
+                reason,
+                count,
+            )
+            return
+        logger.info(
+            "DreamCoordinator: '%s' queued until admission clears (%s).",
+            name,
+            reason,
+        )

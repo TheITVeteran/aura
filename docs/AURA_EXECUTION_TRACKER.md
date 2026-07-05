@@ -6907,3 +6907,49 @@ Live Replay:
   `Service Unavailable`, `Exception in ASGI`, `stubborn`, `SIGKILL`,
   `orphan`, `route blocked`, `conversation_ready`, `worker_not_alive`, or
   `lane_cold` lines in the checked windows.
+
+## Checkpoint 2026-07-05-06: Background Cold-Lane Deferrals Become Queued State
+
+Status: implementation, focused verification, and live replay complete.
+
+Scope:
+
+- `DreamCoordinator` now records pending background work with reason/count
+  instead of repeatedly logging expected admission deferrals as if subsystems
+  were broken.
+- Repeated deferrals for the same dream subsystem and reason are debug-only;
+  info logs now fire only when a subsystem first becomes queued or the reason
+  changes.
+- Router generation-gate messaging for background work now says background
+  inference is queued until admission clears. The internal
+  `background_deferred:*` contract remains unchanged for callers and tests.
+- Scheduler retry semantics are preserved: `DreamCoordinator` still does not
+  advance `_last_run` on queued admission, so work retries on the next scheduler
+  tick rather than being dropped.
+
+Verification:
+
+- `python -m py_compile core/brain/llm_health_router.py core/maintenance/dream_coordinator.py`
+  -> passed.
+- `python -m pytest -q tests/test_live_runtime_surface_regressions.py::test_dream_coordinator_defers_dream_work_during_proof_runs tests/test_live_runtime_surface_regressions.py::test_dream_coordinator_defers_dream_work_during_boot_grace tests/test_live_runtime_surface_regressions.py::test_dream_coordinator_tracks_pending_deferrals_without_info_flood`
+  -> `3 passed`.
+- `python -m pytest -q tests/test_llm_health_router_timeout.py::test_router_defers_background_local_runtime_during_foreground_quiet_window tests/test_llm_health_router_timeout.py::test_router_deduplicates_repeated_background_deferral_logs tests/test_live_runtime_surface_regressions.py::test_dream_coordinator_tracks_pending_deferrals_without_info_flood`
+  -> `3 passed`.
+
+Live Replay:
+
+- Restarted Aura through `/Applications/Aura.app`.
+- Process table after relaunch: exactly one resident
+  `/Applications/Aura.app/Contents/MacOS/aura-launcher` parent and one
+  `aura_main.py --desktop` Python child.
+- Four live `/api/health/boot` samples: `status=ready`,
+  `boot_phase=kernel_ready`, `conversation_ready=true`, `blockers=[]`.
+- Four live `/api/system/desktop-access` samples:
+  `overall_status=ready`, `permission_confidence=direct`,
+  `blocking_permissions=[]`, `probe_transport=resident_ipc`,
+  `probe_handled_by=resident_aura_launcher`,
+  `desktop_control_ready=true`, `screen_capture_ready=true`.
+- Recent live log tail showed queued background state:
+  `Router: Queueing background inference until admission clears...` and
+  `DreamCoordinator: 'dlq_recovery' queued until admission clears...`, with no
+  matching error/blocker/orphan/crash terms in the checked window.

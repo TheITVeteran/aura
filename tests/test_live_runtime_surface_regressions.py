@@ -1134,6 +1134,46 @@ def test_dream_coordinator_defers_dream_work_during_boot_grace(monkeypatch):
     asyncio.run(scenario())
 
 
+def test_dream_coordinator_tracks_pending_deferrals_without_info_flood(monkeypatch, caplog):
+    from core.maintenance.dream_coordinator import DreamCoordinator
+    from core.runtime import background_policy
+
+    reasons = iter(["conversation_lane_cold", "conversation_lane_cold", "memory_pressure_91.0"])
+
+    async def scenario():
+        ran = False
+
+        async def dream_job():
+            nonlocal ran
+            ran = True
+
+        monkeypatch.setattr(
+            background_policy,
+            "background_activity_reason",
+            lambda *args, **kwargs: next(reasons),
+        )
+        coordinator = DreamCoordinator()
+        with caplog.at_level(logging.INFO, logger="Aura.DreamCoordinator"):
+            assert await coordinator.run_if_due("dlq_recovery", dream_job, 0) is False
+            assert await coordinator.run_if_due("dlq_recovery", dream_job, 0) is False
+            assert await coordinator.run_if_due("dlq_recovery", dream_job, 0) is False
+
+        assert ran is False
+        status = coordinator.status()
+        pending = status["pending"]["dlq_recovery"]
+        assert pending["reason"] == "memory_pressure_91.0"
+        assert pending["count"] == 3
+
+    asyncio.run(scenario())
+
+    info_messages = [record.getMessage() for record in caplog.records if record.levelno == logging.INFO]
+    queued_messages = [message for message in info_messages if "queued until admission clears" in message]
+    assert len(queued_messages) == 2
+    assert "conversation_lane_cold" in queued_messages[0]
+    assert "memory_pressure_91.0" in queued_messages[1]
+    assert not any("deferred" in message for message in info_messages)
+
+
 def test_hypervisor_uses_active_runtime_lag_budget_during_proof(monkeypatch):
     from core.ops.hypervisor import Hypervisor
 
