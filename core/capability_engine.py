@@ -3951,6 +3951,16 @@ class CapabilityEngine(AuraBaseModule):
         last_error = "Unknown"
         attempt = 0
         output: Any = None
+        # Sensorimotor grounding: commit an expected world-state BEFORE
+        # executing; verify reality (not the tool's claim) after. A tool
+        # reporting success without the predicted effect is recorded as
+        # ACTION-CLAIM-MISMATCH (the confabulated-action class).
+        try:
+            from core.grounding.sensorimotor_loop import ground_result, open_grounding
+            _sm_predicate, _sm_receipt = open_grounding(skill_name, params)
+        except (ImportError, AttributeError, RuntimeError):
+            _sm_predicate, _sm_receipt = None, None
+            ground_result = None
         max_attempts = 1 if self._outer_retry_disabled(skill_name, params, context) else self.max_retries
         for attempt in range(max(1, max_attempts)):
             try:
@@ -3967,6 +3977,13 @@ class CapabilityEngine(AuraBaseModule):
                     output = await self._call_method(skill, inputs)
 
                 if self._check_success(output):
+                    if _sm_predicate is not None and ground_result is not None:
+                        try:
+                            ground_result(
+                                skill_name, params, output, _sm_predicate, _sm_receipt,
+                            )
+                        except (OSError, RuntimeError, TypeError, ValueError) as _sm_exc:
+                            self.logger.debug("Grounding check skipped: %s", _sm_exc)
                     if isinstance(output, dict):
                         payload = dict(output)
                         payload["ok"] = bool(

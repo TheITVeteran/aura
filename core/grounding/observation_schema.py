@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -15,12 +15,12 @@ class Observation:
     """Universal structured representation of sensory input from a virtual environment."""
     source: str = ""
     event_type: str = ""
-    data: Dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
     severity: float = 0.0  # 0.0 (safe/informational) to 1.0 (highly critical/destructive)
-    suggested_affordances: List[str] = field(default_factory=list)  # Action possibilities
+    suggested_affordances: list[str] = field(default_factory=list)  # Action possibilities
     timestamp: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serializes the observation to a dictionary."""
         return {
             "source": self.source,
@@ -37,7 +37,7 @@ class FileObservation(Observation):
     """Specialized observation for file system activity."""
     path: str = ""
     operation: str = ""  # "read", "write", "delete", "create", "chmod"
-    size_bytes: Optional[int] = None
+    size_bytes: int | None = None
     success: bool = True
 
     def __post_init__(self) -> None:
@@ -64,8 +64,8 @@ class ProcessObservation(Observation):
     exit_code: int = 0
     stdout: str = ""
     stderr: str = ""
-    cpu_percent: Optional[float] = None
-    memory_rss_bytes: Optional[int] = None
+    cpu_percent: float | None = None
+    memory_rss_bytes: int | None = None
 
     def __post_init__(self) -> None:
         self.source = "terminal"
@@ -92,7 +92,7 @@ class UnitTestObservation(Observation):
     passed_count: int = 0
     failed_count: int = 0
     duration_seconds: float = 0.0
-    failures: List[Dict[str, Any]] = field(default_factory=list)  # Elements: {"test_name": str, "message": str, "traceback": str}
+    failures: list[dict[str, Any]] = field(default_factory=list)  # Elements: {"test_name": str, "message": str, "traceback": str}
 
     def __post_init__(self) -> None:
         self.source = "pytest"

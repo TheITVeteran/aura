@@ -10,8 +10,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
-
+from typing import Any, Literal
 
 GroundingKind = Literal[
     "perceptual",
@@ -34,17 +33,17 @@ class GroundingMethod:
     kind: GroundingKind
     version: str = "1"
     confidence_floor: float = 0.55
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class PerceptualEvidence:
     evidence_id: str
     modality: str
-    features: List[float]
+    features: list[float]
     raw_ref: str = ""
     timestamp: float = field(default_factory=time.time)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -52,10 +51,10 @@ class GroundedConcept:
     concept_id: str
     label: str
     kind: GroundingKind
-    prototype: List[float]
+    prototype: list[float]
     method_id: str
     confidence: float = 0.0
-    evidence_ids: List[str] = field(default_factory=list)
+    evidence_ids: list[str] = field(default_factory=list)
     positive_count: int = 0
     negative_count: int = 0
     created_at: float = field(default_factory=time.time)
@@ -82,7 +81,7 @@ class GroundingEvent:
     concept_id: str
     evidence_id: str
     prediction: bool
-    observed: Optional[bool]
+    observed: bool | None
     reward: float = 0.0
     confidence_before: float = 0.0
     confidence_after: float = 0.0

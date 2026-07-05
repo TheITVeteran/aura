@@ -524,6 +524,19 @@ class FaultRegistry:
                 blast_radius="Divergent channel quarantined; majority result used",
             ),
             FaultDefinition(
+                fault_id="ACTION-CLAIM-MISMATCH", name="Confabulated action",
+                description="A tool reported success while the predicted "
+                            "world-state was absent — the agent believed an "
+                            "unexecuted intention (sensorimotor grounding "
+                            "caught the claim/reality divergence)",
+                domain=FaultDomain.TOOL_EXECUTION, severity=FaultSeverity.CRITICAL,
+                probability=FaultProbability.REMOTE,
+                detection=DetectionDifficulty.HIGH,
+                recovery=RecoveryStrategy.RETRY_WITH_BACKOFF, mttr_seconds=30,
+                blast_radius="False belief about completed work; downstream "
+                             "plans built on a phantom effect",
+            ),
+            FaultDefinition(
                 fault_id="AFFECT-TRAP", name="Affective sampling trap",
                 description="Sampling temperature pinned at the deterministic "
                             "floor while distress telemetry failed to improve — "

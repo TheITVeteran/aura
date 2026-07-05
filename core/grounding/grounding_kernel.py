@@ -20,7 +20,6 @@ import numpy as np
 
 from core.grounding.types import GroundingMethod, PerceptualEvidence, new_id
 
-
 # Modalities for which a real (non-provisional) encoder is wired.
 SUPPORTED_MODALITIES = frozenset({"text"})
 
