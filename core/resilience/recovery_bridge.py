@@ -132,7 +132,7 @@ class RecoveryBridge:
         return True
 
     def _drain(self) -> None:
-        while True:
+        while self._started:  # daemon lifetime; bounded by the started flag
             record = self._queue.get()
             try:
                 self._respond(record)

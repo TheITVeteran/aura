@@ -156,18 +156,7 @@ def register_all_services(is_proxy: bool = False):
         record_degradation("service_registration.defensive_runtime", exc)
 
     def _create_immune_system():
-        pass
-
-    try:
-        from core.resilience.fault_taxonomy import get_fault_registry
-        from core.resilience.recovery_bridge import get_recovery_bridge
-
-        bridge = get_recovery_bridge()
-        if bridge.start():
-            get_fault_registry().add_listener(bridge.on_fault)
-    except (ImportError, AttributeError, RuntimeError) as exc:
-        record_degradation("service_registration", exc, severity="debug",
-                           action="recovery bridge not started")
+        from core.security.immune_system import get_immune_system
 
         immune = get_immune_system()
         # Install the real enforcement backends (firewall/quarantine/process/resource/arp) so the
@@ -180,6 +169,18 @@ def register_all_services(is_proxy: bool = False):
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             pass
         return immune
+
+    try:
+        from core.resilience.fault_taxonomy import get_fault_registry
+        from core.resilience.recovery_bridge import get_recovery_bridge
+
+        bridge = get_recovery_bridge()
+        if bridge.start():
+            get_fault_registry().add_listener(bridge.on_fault)
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        record_degradation("service_registration.recovery_bridge", exc,
+                           severity="debug",
+                           action="recovery bridge not started")
 
     container.register(
         'immune_system', _create_immune_system,

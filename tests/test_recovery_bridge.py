@@ -127,9 +127,13 @@ class TestListenerSeam:
     def test_failing_listener_never_breaks_recording(self):
         registry = FaultRegistry()
 
+        boom_calls: list[int] = []
+
         def boom(record):
+            boom_calls.append(1)  # recording pattern: raise sites leave evidence
             raise RuntimeError("listener failure")
 
         registry.add_listener(boom)
         record = registry.record_fault("F01", "test")  # must not raise
         assert record.fault_id == "F01"
+        assert boom_calls == [1]
