@@ -32,6 +32,13 @@ def _truthy_env(name: str) -> bool:
     return str(os.environ.get(name, "")).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _recent_grace_seconds() -> float:
+    try:
+        return max(0.0, float(os.environ.get("AURA_CLEANUP_RECENT_GRACE_S", "45") or 45))
+    except (TypeError, ValueError):
+        return 45.0
+
+
 def _verified_live_runtime_pid() -> int | None:
     """Return the live runtime PID from the orchestrator lock, if trustworthy."""
     pid = read_instance_lock_pid("orchestrator")
@@ -113,9 +120,16 @@ def _kill_stale_native_launchers() -> None:
         import psutil
     except ImportError:
         return
+    if not _truthy_env("AURA_CLEANUP_FORCE") and _verified_live_runtime_pid() is not None:
+        logger.info(
+            "Verified live Aura runtime detected; preserving native Aura.app launcher bridge."
+        )
+        return
 
     current_pid = os.getpid()
     parent_pid = os.getppid()
+    grace_s = _recent_grace_seconds()
+    now = time.time()
     candidates = []
     for proc in psutil.process_iter(["pid", "exe", "cmdline", "name"]):
         try:
@@ -123,6 +137,18 @@ def _kill_stale_native_launchers() -> None:
             if pid in {current_pid, parent_pid}:
                 continue
             if _is_native_launcher_process(proc):
+                try:
+                    age_s = now - float(proc.create_time())
+                except (psutil.Error, OSError, TypeError, ValueError):
+                    age_s = grace_s + 1.0
+                if not _truthy_env("AURA_CLEANUP_FORCE") and age_s < grace_s:
+                    logger.info(
+                        "Preserving recent Aura native launcher PID %s (age %.1fs < %.1fs).",
+                        pid,
+                        age_s,
+                        grace_s,
+                    )
+                    continue
                 candidates.append(proc)
         except (psutil.Error, OSError, TypeError, ValueError):
             continue

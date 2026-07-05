@@ -881,7 +881,7 @@ def test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_
     assert force_values == [False]
 
 
-def test_desktop_access_summary_native_bridge_ready_skips_slow_python_tcc_probes(monkeypatch):
+def test_desktop_access_summary_one_shot_bridge_does_not_count_as_ready(monkeypatch):
     import core.security.permission_guard as permission_guard_module
     from core.skills.computer_use import ComputerUseSkill
     from interface.routes import system as system_routes
@@ -895,12 +895,15 @@ def test_desktop_access_summary_native_bridge_ready_skips_slow_python_tcc_probes
             }
 
         async def check_permission(self, ptype, force=False):
-            self.python_probe_calls = getattr(self, "python_probe_calls", 0) + 1
-            raise AssertionError("native-ready bridge should bypass Python TCC probes")
+            return {"granted": False, "status": "denied", "guidance": f"python denied {ptype.name}"}
 
         async def check_permission_direct(self, ptype):
-            self.python_probe_calls = getattr(self, "python_probe_calls", 0) + 1
-            raise AssertionError("native-ready bridge should bypass direct Python TCC probes")
+            return {
+                "granted": False,
+                "status": "denied",
+                "guidance": f"direct denied {ptype.name}",
+                "direct_probe": True,
+            }
 
     monkeypatch.setattr(system_routes.sys, "platform", "darwin")
     monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
@@ -930,11 +933,16 @@ def test_desktop_access_summary_native_bridge_ready_skips_slow_python_tcc_probes
     finally:
         system_routes._desktop_access_cache.update(original_cache)
 
-    assert payload["overall_status"] == "ready"
-    assert payload["permission_confidence"] == "direct"
-    assert payload["blocking_permissions"] == []
-    assert payload["desktop_control_ready"] is True
-    assert payload["direct_accessibility"]["status"] == "active_native_bridge"
+    assert payload["overall_status"] == "blocked"
+    assert payload["permission_confidence"] == "blocked"
+    assert payload["blocking_permissions"] == [
+        "screen_recording",
+        "accessibility",
+        "automation",
+    ]
+    assert payload["desktop_control_ready"] is False
+    assert payload["native_bridge_probe"]["bridge_transport"] == "one_shot_subprocess"
+    assert any("one-shot Aura.app bridge" in line for line in payload["desktop_access_diagnosis"])
 
 
 def test_desktop_access_summary_menu_clock_probe_is_bounded(monkeypatch):

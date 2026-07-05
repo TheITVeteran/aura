@@ -201,6 +201,9 @@ def test_cleanup_preserves_verified_live_runtime_unless_forced():
     assert "def _kill_stale_native_launchers()" in cleanup
     assert "Aura.app/Contents/MacOS/aura-launcher" in cleanup
     assert "pid in {current_pid, parent_pid}" in cleanup
+    assert "preserving native Aura.app launcher bridge" in cleanup
+    assert "AURA_CLEANUP_RECENT_GRACE_S" in cleanup
+    assert "Preserving recent Aura native launcher" in cleanup
 
 
 def test_cleanup_recognizes_native_launcher_process():
@@ -223,6 +226,82 @@ def test_cleanup_recognizes_native_launcher_process():
 
     assert aura_cleanup._is_native_launcher_process(launcher) is True
     assert aura_cleanup._is_native_launcher_process(unrelated) is False
+
+
+def test_cleanup_preserves_native_launcher_when_live_runtime_verified(monkeypatch):
+    import sys
+
+    from scripts.one_off import aura_cleanup
+
+    terminated = []
+
+    class FakeProc:
+        pid = 4321
+        info = {
+            "pid": 4321,
+            "exe": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
+            "cmdline": ["/Applications/Aura.app/Contents/MacOS/aura-launcher"],
+            "name": "aura-launcher",
+        }
+
+        def terminate(self):
+            terminated.append(self.pid)
+
+    class FakePsutil:
+        Error = Exception
+        TimeoutExpired = TimeoutError
+
+        @staticmethod
+        def process_iter(_attrs):
+            return [FakeProc()]
+
+    monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
+    monkeypatch.setattr(aura_cleanup, "_verified_live_runtime_pid", lambda: 1234)
+
+    aura_cleanup._kill_stale_native_launchers()
+
+    assert terminated == []
+
+
+def test_cleanup_preserves_recent_native_launcher_without_force(monkeypatch):
+    import sys
+    import time
+
+    from scripts.one_off import aura_cleanup
+
+    terminated = []
+
+    class FakeProc:
+        pid = 4321
+        info = {
+            "pid": 4321,
+            "exe": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
+            "cmdline": ["/Applications/Aura.app/Contents/MacOS/aura-launcher"],
+            "name": "aura-launcher",
+        }
+
+        def create_time(self):
+            return time.time() - 2.0
+
+        def terminate(self):
+            terminated.append(self.pid)
+
+    class FakePsutil:
+        Error = Exception
+        TimeoutExpired = TimeoutError
+
+        @staticmethod
+        def process_iter(_attrs):
+            return [FakeProc()]
+
+    monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
+    monkeypatch.setattr(aura_cleanup, "_verified_live_runtime_pid", lambda: None)
+    monkeypatch.setenv("AURA_CLEANUP_RECENT_GRACE_S", "45")
+    monkeypatch.delenv("AURA_CLEANUP_FORCE", raising=False)
+
+    aura_cleanup._kill_stale_native_launchers()
+
+    assert terminated == []
 
 
 def test_cleanup_treats_missing_lock_pid_as_stale(monkeypatch):

@@ -1,6 +1,7 @@
 import asyncio
 import sqlite3
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -92,6 +93,45 @@ async def test_mind_tick_liveness_probe_repairs_dead_supervised_loop():
     assert tick._task is not None
     assert not tick._task.done()
     assert tick.get_health_status()["liveness_repair_count"] == 1
+
+    release.set()
+    await tick._task
+
+
+@pytest.mark.asyncio
+async def test_mind_tick_done_callback_repairs_failed_loop_without_health_poll():
+    tick = MindTick.__new__(MindTick)
+    tick._running = True
+    tick._started_at = time.time()
+    tick._last_successful_tick_at = 0.0
+    tick._consecutive_loop_failures = 0
+    tick._last_liveness_repair_at = 0.0
+    tick._liveness_repair_count = 0
+    tick._owner_loop = asyncio.get_running_loop()
+    tick.orchestrator = SimpleNamespace()
+
+    release = asyncio.Event()
+
+    async def failed_loop():
+        await asyncio.sleep(0)
+        raise TypeError("expected string or bytes-like object, got 'NoneType'")
+
+    async def recovered_loop():
+        await release.wait()
+
+    tick._run_loop = recovered_loop
+    failed_task = asyncio.create_task(failed_loop())
+    tick._task = failed_task
+    tick._install_loop_done_callback(failed_task, name="test.failed")
+
+    deadline = time.monotonic() + 1.0
+    while tick._task is failed_task and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+
+    assert tick._task is not failed_task
+    assert tick._task is not None
+    assert not tick._task.done()
+    assert tick._liveness_repair_count == 1
 
     release.set()
     await tick._task

@@ -192,6 +192,7 @@ class MindTick:
         self._last_deferred_cortex_health_log_at = 0.0
         self._last_liveness_repair_at = 0.0
         self._liveness_repair_count = 0
+        self._owner_loop = None
         
         # Cognitive Deepening Components
         self.predictive_engine = PredictiveEngine()
@@ -243,6 +244,33 @@ class MindTick:
         from core.supervisor.registry import get_task_registry
         self.registry = get_task_registry()
         logger.info("📋 MindTick: TaskRegistry heartbeat wired.")
+
+    def _install_loop_done_callback(self, task: asyncio.Task | None, *, name: str) -> None:
+        """Attach a restart hook to the supervised MindTick loop."""
+        if task is None:
+            return
+
+        def _on_done(done_task: asyncio.Task) -> None:
+            if not self._running or is_shutdown_requested():
+                return
+            try:
+                exc = done_task.exception()
+            except asyncio.CancelledError:
+                exc = None
+            except _MIND_BOUNDARY_ERRORS as err:
+                exc = err
+            if exc is not None:
+                logger.error(
+                    "MindTick supervised loop %s exited unexpectedly: %s",
+                    name,
+                    exc,
+                    exc_info=(type(exc), exc, exc.__traceback__),
+                )
+            else:
+                logger.warning("MindTick supervised loop %s exited while runtime was still active.", name)
+            self._attempt_liveness_repair()
+
+        task.add_done_callback(_on_done)
 
     def register_phase(self, name: str, phase_fn: PhaseCallable):
         """Register a new cognitive phase to execute every tick."""
@@ -345,6 +373,7 @@ class MindTick:
             self._owner_loop = asyncio.get_running_loop()
         except RuntimeError:
             self._owner_loop = None
+        self._install_loop_done_callback(self._task, name="mind_tick.run_loop")
         logger.info("💓 MindTick: Cognitive rhythm started.")
 
     def is_alive(self) -> bool:
@@ -395,6 +424,13 @@ class MindTick:
                     self._task = _schedule_mind_task(
                         self._run_loop(), name="mind_tick.run_loop.recovered.threadsafe"
                     )
+                    self._install_loop_done_callback(
+                        self._task,
+                        name="mind_tick.run_loop.recovered.threadsafe",
+                    )
+                    self._liveness_repair_count = (
+                        int(getattr(self, "_liveness_repair_count", 0) or 0) + 1
+                    )
                     logger.warning("💓 MindTick: loop revived via owning-loop repair.")
 
                 owner_loop.call_soon_threadsafe(_threadsafe_repair)
@@ -418,6 +454,10 @@ class MindTick:
         if self._task is None:
             self._running = False
             return False
+        self._install_loop_done_callback(
+            self._task,
+            name=f"mind_tick.run_loop.recovered.{int(getattr(self, '_liveness_repair_count', 0) or 0) + 1}",
+        )
 
         self._liveness_repair_count = int(getattr(self, "_liveness_repair_count", 0) or 0) + 1
         detail = (
@@ -1221,7 +1261,11 @@ class MindTick:
             except _MIND_BOUNDARY_ERRORS as e:
                 self._consecutive_loop_failures += 1
                 _record_mind_degradation(e)
-                logger.error("⚠️ MindTick Loop Error: %s", e)
+                logger.error(
+                    "⚠️ MindTick Loop Error: %s",
+                    e,
+                    exc_info=(type(e), e, e.__traceback__),
+                )
                 try:
                     record_degraded_event(
                         "mind_tick",

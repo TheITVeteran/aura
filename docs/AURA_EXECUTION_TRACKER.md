@@ -6760,3 +6760,81 @@ Tracker:
 - Chrome/Kubernetes/aerospace operational maturity remains about **89-92%**
   locally; this checkpoint removes a repeated permissions/launcher-crash class
   and prevents a false-health path.
+
+## Checkpoint 2026-07-05-04: Resident Lifecycle + One-Shot Masking + MindTick Repair
+
+Status: implementation and live resident replay validated; checkpoint commit
+pending.
+
+Scope:
+
+- Fixed the remaining desktop-access false-health path: `/api/system/desktop-access`
+  now treats `one_shot_subprocess` as diagnostic only. Production readiness
+  requires the resident `Aura.app` bridge transport (`resident_ipc`).
+- Hardened cleanup so a verified live Aura runtime preserves the native
+  `Aura.app` launcher bridge instead of reaping it and leaving orphaned Python.
+- Added a recent-launch grace window for native launcher cleanup
+  (`AURA_CLEANUP_RECENT_GRACE_S`) so cleanup cannot race a freshly opened
+  signed app into a multi-instance/orphan state.
+- Added event-driven MindTick loop repair. If the supervised loop exits
+  unexpectedly, a done callback records the traceback and schedules a
+  replacement on the owning event loop instead of waiting for user prompting or
+  remaining permanently degraded.
+- Rebuilt and reinstalled `/Applications/Aura.app`, killed the orphaned Python
+  runtime, and relaunched through the signed app bundle.
+
+Live Evidence:
+
+- Process table immediately after relaunch: one
+  `/Applications/Aura.app/Contents/MacOS/aura-launcher` parent and one
+  `aura_main.py --desktop` Python child.
+- Live `/api/health/boot`: first `conversation_working`, then
+  `status=ready`, `boot_phase=kernel_ready`, `conversation_ready=true`,
+  `blockers=[]`.
+- Live `/api/system/desktop-access`: `overall_status=ready`,
+  `permission_confidence=direct`, `blocking_permissions=[]`,
+  `bridge_transport=resident_ipc`, `handled_by=resident_aura_launcher`,
+  `screen_capture_ready=true`, `desktop_control_ready=true`,
+  `screen_text_ready=true`, `menu_clock_ready=true`.
+- Stability check after the previous handoff/close window: resident launcher
+  still alive, Python still childed to the launcher, desktop access still
+  resident IPC, and the checked recent log window contained no matching
+  `DEGRADATION`, `MindTick Loop Error`, `contract/important`, `Traceback`,
+  `one_shot`, `unhealthy`, `ERROR`, `CRITICAL`, `HIGH EVENT LOOP LAG`,
+  `MEMWATCH`, `blocked`, or `denied` lines.
+
+Verification:
+
+- `python -m py_compile core/mind_tick.py interface/routes/system.py scripts/one_off/aura_cleanup.py core/security/native_desktop_bridge.py core/security/permission_guard.py`
+  -> passed.
+- `xcrun swiftc -typecheck -framework AppKit -framework CoreGraphics -framework Foundation -framework WebKit scripts/AuraLauncher.swift`
+  -> passed.
+- `python -m pytest -q tests/test_mind_tick_runtime_contract.py tests/test_server_runtime_hardening.py::test_desktop_access_summary_one_shot_bridge_does_not_count_as_ready`
+  -> `8 passed`.
+- `python -m pytest -q tests/test_launcher_polish_contract.py::test_cleanup_preserves_verified_live_runtime_unless_forced tests/test_launcher_polish_contract.py::test_cleanup_preserves_native_launcher_when_live_runtime_verified tests/test_launcher_polish_contract.py::test_cleanup_preserves_recent_native_launcher_without_force tests/test_launcher_polish_contract.py::test_cleanup_recognizes_native_launcher_process`
+  -> `4 passed`.
+- `python -m pytest -q tests/test_server_runtime_hardening.py::test_desktop_access_summary_one_shot_bridge_does_not_count_as_ready tests/test_server_runtime_hardening.py::test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_grants tests/test_server_runtime_hardening.py::test_desktop_access_summary_keeps_resident_probe_authoritative_by_default`
+  -> `3 passed`.
+
+Boundary:
+
+- This closes the specific resident bridge lifecycle and one-shot masking
+  failure reproduced after checkpoint 03.
+- The broader non-soak proof work remains: visible live desktop action replay,
+  long multi-turn live conversation proof, Program DNA live replay, RSI proof
+  replay, and broader Chrome/Kubernetes/aerospace reliability normalization.
+
+Tracker:
+
+- Resident desktop bridge/TCC closure remains **100% for the current installed
+  app identity**, now with the resident process verified to survive the handoff
+  window.
+- Live launch/conversation readiness rises to about **99% locally** for
+  boot/bridge readiness; the longer conversation proof is still required before
+  calling daily chat reliability complete.
+- Expanded daily-runtime/product closure is about **98-99% locally** for the
+  fixed classes, with remaining non-soak work concentrated in visible tool
+  action and extended live conversation/skill proof.
+- Chrome/Kubernetes/aerospace operational maturity rises to about **90-93%**
+  locally for launch/permission lifecycle and false-health prevention; broader
+  maturity still needs the remaining proof matrix and soak.

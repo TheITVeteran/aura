@@ -1256,6 +1256,7 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
         from core.skills._pyautogui_runtime import get_pyautogui
 
         native_ready = False
+        resident_native_ready = False
         if sys.platform == "darwin":
             try:
                 from core.security.native_desktop_bridge import probe_native_desktop_bridge
@@ -1268,19 +1269,21 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                     native_probe if isinstance(native_probe, dict)
                     else {"ok": False, "error": f"invalid:{type(native_probe).__name__}"}
                 )
-                native_ready = bool(
+                resident_native_ready = bool(
                     isinstance(native_probe, dict)
                     and native_probe.get("ok")
+                    and native_probe.get("bridge_transport") == "resident_ipc"
                     and all(
                         bool(native_probe.get(key))
                         for key in ("screen_recording", "accessibility", "automation")
                     )
                 )
+                native_ready = resident_native_ready
             except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
                 record_degradation(
                     "system.desktop_access.native_bridge_probe",
                     exc,
-                    action="continued with Python TCC probes after Aura.app bridge probe failed",
+                    action="continued with Python TCC probes after resident Aura.app bridge probe failed",
                     severity="warning",
                 )
                 payload["native_bridge_probe"] = {
@@ -1379,7 +1382,12 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                         )
 
         native_bridge = payload.get("native_bridge_probe")
-        if isinstance(native_bridge, dict) and native_bridge.get("ok"):
+        native_bridge_is_resident = (
+            isinstance(native_bridge, dict)
+            and native_bridge.get("ok")
+            and native_bridge.get("bridge_transport") == "resident_ipc"
+        )
+        if native_bridge_is_resident:
             payload["effective_app_identity"] = {
                 "bundle_identifier": str(native_bridge.get("bundle_identifier", "") or ""),
                 "bridge_executable": str(native_bridge.get("bridge_executable", "") or ""),
@@ -1570,7 +1578,7 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
             hint = str(signature.get("tcc_repair_hint") or "").strip()
             if hint:
                 diagnosis.append(hint)
-        if isinstance(native_bridge, dict) and native_bridge.get("ok") and payload["blocking_permissions"]:
+        if native_bridge_is_resident and payload["blocking_permissions"]:
             diagnosis.append(
                 "The resident Aura.app bridge is reachable, but macOS denies the requested TCC grants for this exact app identity."
             )
@@ -1595,6 +1603,10 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                 "request_state": dict(_desktop_access_request_state),
                 "verification_endpoint": "/api/system/desktop-access",
             }
+        if isinstance(native_bridge, dict) and native_bridge.get("bridge_transport") == "one_shot_subprocess":
+            diagnosis.append(
+                "A diagnostic one-shot Aura.app bridge responded, but the resident Aura.app bridge is not alive; durable desktop control is blocked until the signed app stays resident."
+            )
         if (
             payload.get("process_identity", {}).get("bundle_identifier") == "org.python.python"
             and payload.get("overall_status") != "ready"
