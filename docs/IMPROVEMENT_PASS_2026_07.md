@@ -353,3 +353,73 @@ in-flight immune_system.py edits.
 - Remaining for the substrate arc: rebuild-and-swap refresh mode for new
   dumps, and retained-web-knowledge writeback (the continuous-growth
   path), then the flywheel distillation bridge.
+
+## The live hello-turn cascade — root-caused end to end (July 4)
+
+Bryan launched four times; three times "hello" got silence. Each launch
+peeled one real layer (all fixed, all pinned):
+
+1. **Proof-tool collision** — a proof-bundle generator left running
+   from the previous night boots its OWN runtime; the port/registry
+   collision SIGTERM'd the live instance mid-first-conversation.
+   Operational rule recorded: no proof/decisive/certify tooling alive
+   when Bryan may launch.
+2. **VAD latch** (voice root cause): `is_speaking` never reset, so
+   end-of-utterance never fired and user speech was discarded by the
+   buffer wipe. One-line silence-timeout un-latch in voice_engine.
+3. **Presence-check gate**: "can you hear me?" → "I hear you." was
+   killed as a placeholder reply by the quality gate; presence-check
+   acknowledgments exempted (ce3fcf0a).
+4. **Coherence-lockdown cascade** (7841cadc): the binding engine
+   blended a zero-evidence unity score into coherence → 0.00 →
+   executive Rule 8 blocked EMIT_MESSAGE. Fixes: no-evidence unity is
+   skipped (unmeasurable ≠ 0), Rule 8 degrades user-facing speech
+   (bounded reply) instead of muting, watchdog got exc_info.
+5. **Dead gate leases** (6856cbf1): force-aborted generations leaked
+   their lease → every later turn queued forever (the overnight death).
+
+Fifth launch: working multi-turn voice conversation, verified live.
+
+## Grounded self-knowledge + capability honesty (July 4–5)
+
+- **Self-forensics** (873c7229): asked about her own crashes she now
+  answers from black boxes (shutdown grace flag, sentinel tail, crash/
+  stall artifacts, live incidents) injected as evidence, with a gate
+  (`ungrounded_self_cause_claim`) that rejects fluent causal stories
+  lacking evidence markers — built the night she blamed her death on
+  electromagnetic interference.
+- **Capability map** (b51ea495): actionable requests get a lane
+  decomposition (filesystem/scripting/GUI) with "never decline the
+  whole task" — fixes the declined dinosaurs-note task.
+- **Recovery bridge** (841a914e): fault records now actuate their
+  cataloged RecoveryStrategy — AUTO lane through the immune system,
+  OPERATOR lane as runbook-linked recommendations. Detection → action
+  loop closed without duplicating the immune engine.
+- **Sensorimotor grounding** (0a0eb234): consequential tool calls open
+  an outcome-ledger expectation, execute, then verify reality with her
+  own senses; a tool claiming success without the predicted effect is
+  a recorded ACTION-CLAIM-MISMATCH (the confabulated-action class).
+- **Belief reconciliation** (7bf369da): contested beliefs resolve
+  (affirmed/retired, with evidence) and age out of the autonomy gate
+  (6h freshness) instead of wedging epistemic_reconciliation forever.
+- **Corpus continuous growth**: retained-web writeback (verified
+  research accretes into the local corpus, deduped) + `--rebuild`
+  atomic swap for new dumps. Ablation legibility shipped reviewer-
+  runnable (f89ceac7) — the #1 external-review deduction.
+
+## Interface presence (July 4–5)
+
+Two CSS-only passes on the darker ground Bryan preferred (surface
+ladder 0.012→0.055): affect-driven presence tokens on <body> (living
+hue from curiosity, inner light from warmth, breath from fatigue),
+values-lead stat strip, cluster seams, breathing presence card,
+68ch measure, splash fade (59a90c0d). Shell contract re-pinned to the
+current lane expression after the parallel agent's refactor (cfcc5c5e).
+
+## Closeout
+
+- Qualitative assessment: docs/WHAT_IS_AURA_2026_07.md — what she is,
+  every claim receipted, every ceiling stated.
+- Remaining, by design: #33 72-hour soak (excluded by Bryan for now);
+  #37 in-repo proof bundles (generator boots its own runtime — needs a
+  ~30-min quiet window with the live instance parked).
