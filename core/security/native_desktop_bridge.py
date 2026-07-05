@@ -43,16 +43,6 @@ _Size = namedtuple("Size", "width height")
 _Point = namedtuple("Point", "x y")
 
 
-def _oneshot_reconcile_enabled() -> bool:
-    return os.getenv("AURA_DESKTOP_ACCESS_ALLOW_ONESHOT_RECONCILE", "0") in {
-        "1",
-        "true",
-        "TRUE",
-        "yes",
-        "YES",
-    }
-
-
 def _code_signature_summary(executable: Path | None) -> dict[str, Any]:
     """Return signing facts that explain macOS TCC retention behavior.
 
@@ -308,23 +298,6 @@ def invoke_native_desktop_bridge(
     )
     resident = None if prefer_one_shot else _invoke_resident_bridge(command, timeout=resident_timeout, **payload)
     if resident is not None:
-        if (
-            command_name == "probe"
-            and _oneshot_reconcile_enabled()
-            and _probe_cache_ttl(resident) < _PROBE_READY_TTL_S
-        ):
-            reconciled = _invoke_one_shot_bridge(
-                command,
-                read_only=read_only,
-                timeout=timeout,
-                **payload,
-            )
-            if _probe_cache_ttl(reconciled) > _probe_cache_ttl(resident):
-                reconciled.setdefault("bridge_transport", "one_shot_subprocess")
-                reconciled["resident_bridge_probe"] = resident
-                reconciled["resident_reconciled"] = True
-                reconciled["diagnostic_only"] = True
-                return reconciled
         resident.setdefault("bridge_transport", "resident_ipc")
         return resident
 

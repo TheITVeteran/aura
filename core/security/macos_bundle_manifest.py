@@ -34,6 +34,14 @@ TCC_USAGE_DESCRIPTIONS: dict[str, str] = {
     "NSCameraUsageDescription": (
         "Aura needs camera access for visual processing and spatial awareness."
     ),
+    "NSScreenCaptureUsageDescription": (
+        "Aura needs screen capture access to see the desktop, read visible text, "
+        "and verify computer-use actions."
+    ),
+    "NSAccessibilityUsageDescription": (
+        "Aura needs Accessibility access to move the mouse, type, inspect UI "
+        "state, and verify desktop actions you ask it to perform."
+    ),
     "NSSpeechRecognitionUsageDescription": (
         "Aura needs speech recognition to convert your spoken audio to text."
     ),

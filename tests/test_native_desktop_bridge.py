@@ -159,11 +159,10 @@ def test_native_bridge_probe_keeps_short_resident_timeout(monkeypatch):
     assert observed == [("probe", 3.0)]
 
 
-def test_native_bridge_reconciles_stale_resident_probe_with_one_shot_when_diagnostic_enabled(monkeypatch, tmp_path):
+def test_native_bridge_keeps_resident_probe_authoritative_over_one_shot(monkeypatch, tmp_path):
     from core.security import native_desktop_bridge as bridge
 
     monkeypatch.setenv("AURA_NATIVE_BRIDGE_DIR", str(tmp_path / "resident"))
-    monkeypatch.setenv("AURA_DESKTOP_ACCESS_ALLOW_ONESHOT_RECONCILE", "1")
     observed: list[tuple[str, float]] = []
     executable = tmp_path / "aura-launcher"
     executable.write_text("bridge", encoding="utf-8")
@@ -202,12 +201,73 @@ def test_native_bridge_reconciles_stale_resident_probe_with_one_shot_when_diagno
     result = bridge.invoke_native_desktop_bridge("probe", read_only=True, timeout=5.0)
 
     assert result["ok"] is True
-    assert result["accessibility"] is True
-    assert result["bridge_transport"] == "one_shot_subprocess"
-    assert result["resident_reconciled"] is True
-    assert result["diagnostic_only"] is True
-    assert result["resident_bridge_probe"]["accessibility"] is False
+    assert result["accessibility"] is False
+    assert result["bridge_transport"] == "resident_ipc"
+    assert "resident_reconciled" not in result
     assert observed == [("probe", 3.0)]
+
+
+def test_native_bridge_does_not_reconcile_one_shot_with_different_bundle(monkeypatch, tmp_path):
+    from core.security import native_desktop_bridge as bridge
+
+    monkeypatch.setenv("AURA_NATIVE_BRIDGE_DIR", str(tmp_path / "resident"))
+    executable = tmp_path / "aura-launcher"
+    executable.write_text("bridge", encoding="utf-8")
+    executable.chmod(0o755)
+
+    def _resident(command, *, timeout, **_payload):
+        return {
+            "ok": True,
+            "screen_recording": True,
+            "accessibility": False,
+            "automation": True,
+            "bundle_identifier": "com.aura.desktop",
+            "bridge_transport": "resident_ipc",
+        }
+
+    class _Gateway:
+        def run(self, _argv, **_kwargs):
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    {
+                        "ok": True,
+                        "screen_recording": True,
+                        "accessibility": True,
+                        "automation": True,
+                        "bundle_identifier": "com.other.app",
+                    }
+                ),
+                stderr="",
+                returncode=0,
+            )
+
+    monkeypatch.setattr(bridge, "bridge_executable", lambda: executable)
+    monkeypatch.setattr(bridge, "_invoke_resident_bridge", _resident)
+    monkeypatch.setattr(bridge, "get_subprocess_gateway", lambda: _Gateway())
+
+    result = bridge.invoke_native_desktop_bridge("probe", read_only=True, timeout=5.0)
+
+    assert result["bridge_transport"] == "resident_ipc"
+    assert result["accessibility"] is False
+    assert "resident_reconciled" not in result
+
+
+def test_native_pyautogui_uses_resident_transport_for_effects(monkeypatch):
+    from core.security import native_desktop_bridge as bridge
+
+    calls = []
+
+    def _invoke(command, **payload):
+        calls.append((command, payload))
+        return {"ok": True}
+
+    monkeypatch.setattr(bridge, "invoke_native_desktop_bridge", _invoke)
+    native = bridge.NativePyAutoGUI()
+    native.PAUSE = 0
+
+    native.write("visible text")
+
+    assert calls == [("write", {"text": "visible text", "interval": 0.0})]
 
 
 def test_resident_bridge_skips_stale_ipc_dirs_when_launcher_is_not_alive(monkeypatch, tmp_path):

@@ -215,6 +215,11 @@ class PermissionGuard(AuraBaseModule):
             return None
         if not native_probe.get("ok"):
             return None
+        if (
+            native_probe.get("bridge_transport") == "one_shot_subprocess"
+            and not force_one_shot
+        ):
+            return None
         if not native_probe.get(native_key):
             return None
         return {

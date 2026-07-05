@@ -1027,23 +1027,6 @@ def test_desktop_access_summary_keeps_resident_probe_authoritative_by_default(mo
 
     def _native_probe(force=False, prefer_one_shot=False):
         probe_calls.append((force, prefer_one_shot))
-        if prefer_one_shot:
-            return {
-                "ok": True,
-                "screen_recording": True,
-                "accessibility": True,
-                "automation": True,
-                "frontmost_app": "Aura",
-                "bundle_identifier": "com.aura.desktop",
-                "bridge_executable": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
-                "bridge_transport": "one_shot_subprocess",
-                "code_signature": {
-                    "identifier": "com.aura.desktop",
-                    "authorities": ["Aura Local Code Signing"],
-                    "team_identifier": "not set",
-                    "stable_tcc_identity": True,
-                },
-            }
         return {
             "ok": True,
             "screen_recording": True,
@@ -1078,7 +1061,7 @@ def test_desktop_access_summary_keeps_resident_probe_authoritative_by_default(mo
     assert payload["permission_confidence"] == "partial_direct"
     assert payload["desktop_control_ready"] is False
     assert payload["screen_text_ready"] is False
-    assert "accessibility" in payload["blocking_permissions"]
+    assert payload["blocking_permissions"] == ["accessibility"]
     assert payload["native_bridge_probe"]["bridge_transport"] == "resident_ipc"
     assert "resident_reconciled" not in payload["native_bridge_probe"]
     assert probe_calls == [(False, False)]

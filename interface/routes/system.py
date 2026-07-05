@@ -1264,42 +1264,6 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                     asyncio.to_thread(probe_native_desktop_bridge, force=False),
                     timeout=max(0.2, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S),
                 )
-                if (
-                    isinstance(native_probe, dict)
-                    and native_probe.get("ok")
-                    and not all(
-                        bool(native_probe.get(key))
-                        for key in ("screen_recording", "accessibility", "automation")
-                    )
-                    and os.getenv("AURA_DESKTOP_ACCESS_ALLOW_ONESHOT_RECONCILE", "0")
-                    in {"1", "true", "TRUE", "yes", "YES"}
-                ):
-                    one_shot_probe = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            probe_native_desktop_bridge,
-                            force=True,
-                            prefer_one_shot=True,
-                        ),
-                        timeout=max(0.2, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S),
-                    )
-                    if (
-                        isinstance(one_shot_probe, dict)
-                        and one_shot_probe.get("ok")
-                        and sum(
-                            1
-                            for key in ("screen_recording", "accessibility", "automation")
-                            if bool(one_shot_probe.get(key))
-                        )
-                        > sum(
-                            1
-                            for key in ("screen_recording", "accessibility", "automation")
-                            if bool(native_probe.get(key))
-                        )
-                    ):
-                        one_shot_probe["resident_bridge_probe"] = native_probe
-                        one_shot_probe["resident_reconciled"] = True
-                        one_shot_probe["diagnostic_only"] = True
-                        native_probe = one_shot_probe
                 payload["native_bridge_probe"] = (
                     native_probe if isinstance(native_probe, dict)
                     else {"ok": False, "error": f"invalid:{type(native_probe).__name__}"}

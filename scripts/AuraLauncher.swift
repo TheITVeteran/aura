@@ -88,6 +88,10 @@ private func bridgeAutomationProbe() -> [String: Any] {
     ]
 }
 
+private func bridgeActivateForPermissionPrompt() {
+    NSRunningApplication.current.activate(options: [.activateAllWindows])
+}
+
 private func bridgeTypeText(_ text: String, interval: TimeInterval) -> Bool {
     for scalar in text.unicodeScalars {
         var unit = UniChar(scalar.value)
@@ -133,6 +137,7 @@ private func nativeDesktopBridgeResult(payload: [String: Any]) -> ([String: Any]
         }
         return (response, 0)
     case "request_screen":
+        bridgeActivateForPermissionPrompt()
         let granted = CGRequestScreenCaptureAccess()
         return ([
             "ok": granted,
@@ -142,6 +147,7 @@ private func nativeDesktopBridgeResult(payload: [String: Any]) -> ([String: Any]
             "height": height,
         ], granted ? 0 : 2)
     case "request_accessibility":
+        bridgeActivateForPermissionPrompt()
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         let granted = AXIsProcessTrustedWithOptions(options)
         return ([
@@ -250,8 +256,24 @@ private func nativeDesktopBridgeResult(payload: [String: Any]) -> ([String: Any]
     }
 }
 
+private func nativeDesktopBridgeCommandRequiresMainThread(payload: [String: Any]) -> Bool {
+    let command = String(describing: payload["command"] ?? "probe").lowercased()
+    return command == "request_screen" || command == "request_accessibility"
+}
+
+private func evaluateNativeDesktopBridge(payload: [String: Any]) -> ([String: Any], Int32) {
+    if Thread.isMainThread || !nativeDesktopBridgeCommandRequiresMainThread(payload: payload) {
+        return nativeDesktopBridgeResult(payload: payload)
+    }
+    var bridgedResult: ([String: Any], Int32) = (["ok": false, "error": "main_thread_bridge_uninitialized"], 2)
+    DispatchQueue.main.sync {
+        bridgedResult = nativeDesktopBridgeResult(payload: payload)
+    }
+    return bridgedResult
+}
+
 private func runNativeDesktopBridge(payload: [String: Any]) -> Never {
-    let (result, status) = nativeDesktopBridgeResult(payload: payload)
+    let (result, status) = evaluateNativeDesktopBridge(payload: payload)
     bridgeJSON(result, status: status)
 }
 
@@ -358,6 +380,40 @@ private struct BootSnapshot {
         return normalized == "kernel_ready" || normalized == "proxy_ready"
     }
 
+    var conversationOperational: Bool {
+        if conversationReady {
+            return true
+        }
+        if let lane = payload["conversation_lane"] as? [String: Any] {
+            let state = String(describing: lane["state"] ?? "").lowercased()
+            if [
+                "ready",
+                "serving",
+                "working",
+                "generating",
+                "busy",
+                "foreground_generation",
+                "handshaking",
+            ].contains(state) {
+                return true
+            }
+            if (lane["warmup_in_flight"] as? Bool) == true {
+                return true
+            }
+        }
+        let normalized = bootPhase.lowercased()
+        return [
+            "conversation_operational",
+            "conversation_working",
+            "kernel_ready",
+            "proxy_ready",
+        ].contains(normalized)
+    }
+
+    var runtimeHasUserVisibleHandoff: Bool {
+        launcherReady || systemReady || conversationOperational
+    }
+
     var blockers: [String] {
         (payload["blockers"] as? [String]) ?? []
     }
@@ -366,15 +422,37 @@ private struct BootSnapshot {
         bootPhase.replacingOccurrences(of: "_", with: " ")
     }
 
+    var hasDeadMindTickBlocker: Bool {
+        blockers.contains { blocker in
+            blocker == "important:mind_tick" || blocker == "contract/important:mind_tick"
+        }
+    }
+
+    var hasEventLoopMonitorBlocker: Bool {
+        blockers.contains { blocker in
+            blocker == "important:event_loop_monitor" || blocker == "contract/important:event_loop_monitor"
+        }
+    }
+
     var staleRuntimeFailureReason: String? {
         let normalized = bootPhase.lowercased()
-        let hasDeadCoreLoopBlocker = blockers.contains { blocker in
-            blocker == "important:mind_tick" || blocker == "important:event_loop_monitor"
-        }
         if runtimeAge >= 45.0 && !runtimeLoopRunning {
             return "Existing runtime lock points at a process whose boot loop is no longer running."
         }
-        if runtimeAge >= 90.0 && hasDeadCoreLoopBlocker {
+        if runtimeAge >= 90.0 && hasDeadMindTickBlocker {
+            return "Existing runtime has a dead mind tick; replacing the stale runtime instead of preserving a zombie session."
+        }
+
+        // After Aura is openable or the conversation lane is doing real work,
+        // the launcher is an observer. Core-loop degradation must surface in
+        // health/neural telemetry, not SIGTERM the user's active session. The
+        // explicit Force Stop button remains the operator-owned escape hatch.
+        // A dead mind tick is the exception: it means the foreground can look
+        // open while the canonical cognition loop is already gone.
+        if runtimeHasUserVisibleHandoff {
+            return nil
+        }
+        if runtimeAge >= 90.0 && (hasDeadMindTickBlocker || hasEventLoopMonitorBlocker) {
             return "Existing runtime is explicitly blocked by a dead core loop."
         }
         if runtimeAge >= 90.0 && normalized == "kernel_warming" && !runtimeContractHealthy {
@@ -391,13 +469,17 @@ private struct BootSnapshot {
             return "Existing runtime is serving build \(semver), but launcher expects \(trimmedExpected)."
         }
 
+        if let staleReason = staleRuntimeFailureReason {
+            return staleReason
+        }
+
         // Once the kernel has completed handoff, the launcher is an observer.
         // A foreground conversation can transiently return 5xx while Cortex
         // resets or a quality gate retries; converting that into --reboot
         // destroys the user's session and the model's warm state. Runtime
         // recovery owns post-handoff failures. Forced replacement remains
         // available through the explicit UI action.
-        if launcherReady || systemReady {
+        if runtimeHasUserVisibleHandoff {
             return nil
         }
 
@@ -1148,7 +1230,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         var status: Int32 = 0
         if let data = try? Data(contentsOf: requestURL),
            let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            let result = nativeDesktopBridgeResult(payload: payload)
+            let result = evaluateNativeDesktopBridge(payload: payload)
             response = result.0
             status = result.1
         } else {

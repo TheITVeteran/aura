@@ -161,7 +161,7 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "active_native_bridge")
         self.assertTrue(result["native_bridge"])
 
-    async def test_effective_check_keeps_resident_native_app_permission_truth(self):
+    async def test_effective_check_ignores_one_shot_native_app_permission(self):
         guard = PermissionGuard()
         guard._accessibility_preflight_probe = lambda: {
             "granted": False,
@@ -172,24 +172,23 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
 
         def _probe(*, force=False, prefer_one_shot=False):
             calls.append((force, prefer_one_shot))
-            if prefer_one_shot:
-                return {
-                    "ok": True,
-                    "screen_recording": True,
-                    "accessibility": True,
-                    "automation": True,
-                    "bundle_identifier": "com.aura.desktop",
-                    "bridge_executable": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
-                    "bridge_transport": "one_shot_subprocess",
-                }
             return {
                 "ok": True,
                 "screen_recording": True,
-                "accessibility": False,
+                "accessibility": True,
                 "automation": True,
                 "bundle_identifier": "com.aura.desktop",
                 "bridge_executable": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
-                "bridge_transport": "resident_ipc",
+                "bridge_transport": "one_shot_subprocess",
+                "resident_reconciled": True,
+                "resident_bridge_probe": {
+                    "ok": True,
+                    "screen_recording": True,
+                    "accessibility": False,
+                    "automation": True,
+                    "bundle_identifier": "com.aura.desktop",
+                    "bridge_transport": "resident_ipc",
+                },
             }
 
         with patch(
@@ -200,7 +199,8 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result["granted"])
         self.assertEqual(result["status"], "denied")
-        self.assertNotIn((True, True), calls)
+        self.assertNotIn("native_bridge", result)
+        self.assertEqual(calls, [(False, False), (False, False)])
 
     async def test_effective_check_falls_back_to_current_process_when_native_bridge_denies(self):
         guard = PermissionGuard()

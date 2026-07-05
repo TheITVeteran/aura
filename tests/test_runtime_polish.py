@@ -1786,9 +1786,11 @@ def test_background_tool_deferrals_do_not_train_as_failures():
         assert "return result\n            logger.info(\"Tool %s execution completed" in source
 
 
-def test_desktop_access_oneshot_reconcile_is_explicit_diagnostic_only():
-    system_route = (PROJECT_ROOT / "interface" / "routes" / "system.py").read_text(encoding="utf-8")
+def test_desktop_access_does_not_promote_oneshot_probe_to_live_readiness():
+    bridge = (PROJECT_ROOT / "core" / "security" / "native_desktop_bridge.py").read_text(encoding="utf-8")
+    guard = (PROJECT_ROOT / "core" / "security" / "permission_guard.py").read_text(encoding="utf-8")
 
-    assert "AURA_DESKTOP_ACCESS_ALLOW_ONESHOT_RECONCILE" in system_route
-    assert "prefer_one_shot=True" in system_route
-    assert 'one_shot_probe["diagnostic_only"] = True' in system_route
+    assert "resident_reconciled" not in bridge
+    assert "same_signed_bridge_one_shot_has_stronger_tcc_grants" not in bridge
+    assert "bridge_transport\") == \"one_shot_subprocess\"" in guard
+    assert "and not force_one_shot" in guard

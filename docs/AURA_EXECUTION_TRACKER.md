@@ -6680,3 +6680,83 @@ Tracker:
 - Remaining non-soak checkpoint work: post-TCC visible desktop action replay,
   live Program DNA/model skill replay, final RSI live proof replay if host load
   allows, and continued reliability tightening.
+
+## Checkpoint 2026-07-05-03: Resident TCC Grant Closure + Launcher Crash Guard
+
+Status: implementation and live resident replay validated; checkpoint commit
+pending.
+
+Scope:
+
+- Fixed a real `aura-launcher` SIGTRAP crash in the one-shot native bridge path.
+  Permission request commands now use `NSRunningApplication.current.activate`
+  instead of constructing/activating `NSApp` from a CLI-style bridge process.
+- Removed automatic one-shot bridge promotion from production readiness. A
+  transient `/Applications/Aura.app/... --native-desktop-bridge` subprocess can
+  still be used explicitly when no resident bridge exists, but it cannot make
+  the live desktop path look healthy while the resident Aura.app bridge is
+  denied.
+- Tightened `PermissionGuard` so one-shot native bridge probes are
+  diagnostic-only for normal readiness. Direct live permission confidence now
+  requires resident bridge evidence.
+- Patched the packaged launcher stale-runtime policy so an old process with a
+  dead `mind_tick` cannot be preserved indefinitely just because the UI handoff
+  happened once.
+- Moved native Screen Recording / Accessibility request handling onto the main
+  thread in the resident launcher path.
+- Rebuilt and reinstalled `/Applications/Aura.app`; cleared the stale live
+  orphan runtime; relaunched from the signed app bundle.
+
+Live Evidence:
+
+- Process table after relaunch: one `/Applications/Aura.app/.../aura-launcher`
+  parent and one `aura_main.py --desktop` Python child.
+- Live `/api/health/boot`: `status=ready`, `boot_phase=kernel_ready`,
+  `conversation_ready=true`, `blockers=[]`.
+- Live `/api/system/desktop-access`: `overall_status=ready`,
+  `permission_confidence=direct`, `blocking_permissions=[]`,
+  `screen_capture_ready=true`, `desktop_control_ready=true`,
+  `screen_text_ready=true`, `menu_clock_ready=true`.
+- Native bridge proof from the live runtime wrote
+  `/tmp/aura-native-bridge-proof.png` through `resident_ipc` with
+  `handled_by=resident_aura_launcher`.
+- Resident bridge evidence: `screen_recording=true`, `accessibility=true`,
+  `automation=true`, `bundle_identifier=com.aura.desktop`,
+  `bridge_transport=resident_ipc`.
+
+Verification:
+
+- `xcrun swiftc -typecheck -framework AppKit -framework CoreGraphics -framework Foundation -framework WebKit scripts/AuraLauncher.swift`
+  -> passed.
+- `python -m py_compile core/security/native_desktop_bridge.py core/security/permission_guard.py`
+  -> passed.
+- `python -m pytest -q tests/test_native_desktop_bridge.py tests/test_permission_guard_cache.py tests/test_server_runtime_hardening.py tests/test_runtime_polish.py::test_desktop_access_does_not_promote_oneshot_probe_to_live_readiness`
+  -> `353 passed`.
+- `python -m pytest -q tests/test_llm_health_router_timeout.py::test_desktop_background_headroom_defers_brainstem_before_memory_spike tests/test_llm_health_router_timeout.py::test_desktop_background_headroom_allows_reflex_with_moderate_headroom tests/test_llm_health_router_timeout.py::test_router_defers_background_local_runtime_during_foreground_quiet_window tests/test_runtime_security_config.py::test_verify_token_rejects_bare_localhost_for_protected_skill_route tests/test_runtime_security_config.py::test_runtime_security_rejects_cross_site_localhost_csrf tests/test_audit_security.py::test_localhost_api_does_not_allow_wildcard_cors`
+  -> `6 passed`.
+- `python -m pytest -q tests/test_launcher_polish_contract.py::test_launcher_exposes_desktop_window_action_and_dock_presence tests/test_launcher_polish_contract.py::test_packaged_launcher_rejects_explicitly_stale_locked_runtime tests/test_macos_permission_onboarding.py::test_bundle_manifest_has_required_keys`
+  -> `3 passed`.
+
+Boundary:
+
+- The desktop-permission blocker is closed for the current installed
+  `/Applications/Aura.app` identity. If the bundle is rebuilt with a different
+  signing identity or macOS resets TCC, the live endpoint must show the new
+  truth rather than silently passing on one-shot subprocess evidence.
+- Long live desktop conversation, visible OS-control demo, Program DNA live
+  replay, RSI proof replay, and longer thermal/soak evidence remain outside
+  this checkpoint.
+
+Tracker:
+
+- Resident desktop bridge/TCC closure rises to **100% for the current installed
+  app identity**.
+- Live launch/conversation readiness remains about **98-99% locally** for
+  boot/CognitiveEngine readiness; a longer live conversation proof is still
+  required before treating daily chat reliability as fully closed.
+- Expanded daily-runtime/product closure is about **98% locally** after this
+  checkpoint, with remaining non-soak work concentrated in visible desktop demo
+  proof, live Program DNA/RSI replays, and broad reliability normalization.
+- Chrome/Kubernetes/aerospace operational maturity remains about **89-92%**
+  locally; this checkpoint removes a repeated permissions/launcher-crash class
+  and prevents a false-health path.

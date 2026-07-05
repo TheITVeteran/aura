@@ -24,7 +24,7 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "releaseAppInstanceLock" in swift
     assert '--open-gui-window' in swift
     assert "replacementReason(expectedSemver:" in swift
-    assert "if launcherReady || systemReady" in swift
+    assert "launcherReady || systemReady || conversationOperational" in swift
     assert "recovery owns post-handoff failures" in swift
     assert "if !forceRelaunch && self.existingRuntimeIsObservable()" in swift
     assert "never spawn a second" in swift
@@ -116,6 +116,11 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "progressBelowIcon" in swift
     assert "forceStopAura" in swift
     assert "guard let window else" in swift
+    assert "nativeDesktopBridgeCommandRequiresMainThread" in swift
+    assert 'command == "request_screen" || command == "request_accessibility"' in swift
+    assert "DispatchQueue.main.sync" in swift
+    assert "bridgeActivateForPermissionPrompt()" in swift
+    assert "NSRunningApplication.current.activate" in swift
 
 
 def test_launch_script_supports_gui_window_mode():
@@ -332,9 +337,13 @@ def test_packaged_launcher_rejects_explicitly_stale_locked_runtime():
     assert "private func existingRuntimeIsObservable()" in swift
     assert "fetchBootSnapshotSynchronously" in swift
     assert "snapshot.staleRuntimeFailureReason" in swift
+    assert "runtimeHasUserVisibleHandoff" in swift
+    assert "the launcher is an observer" in swift
     assert "forceStopAuraProcess()" in swift
     assert 'checks["running"]' in swift
     assert "important:mind_tick" in swift
+    assert "contract/important:mind_tick" in swift
+    assert "replacing the stale runtime instead of preserving a zombie session" in swift
     assert "important:event_loop_monitor" in swift
     assert "only an" in swift and "explicit boot contract failure" in swift
 

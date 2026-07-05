@@ -173,6 +173,8 @@ def test_bundle_manifest_has_required_keys():
     for key in (
         "NSMicrophoneUsageDescription",
         "NSCameraUsageDescription",
+        "NSScreenCaptureUsageDescription",
+        "NSAccessibilityUsageDescription",
         "NSAppleEventsUsageDescription",  # the one most often missed
         "NSSpeechRecognitionUsageDescription",
     ):

@@ -556,6 +556,61 @@ async def test_router_defers_background_local_runtime_during_foreground_quiet_wi
     assert client.calls == []
 
 
+def test_desktop_background_headroom_defers_brainstem_before_memory_spike(monkeypatch):
+    from types import SimpleNamespace
+
+    import core.brain.llm_health_router as router_module
+
+    monkeypatch.setattr(router_module, "desktop_resource_guard_enabled", lambda env=None: True)
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            pressure_pct=58.0,
+            available_gb=26.5,
+            process_rss_gb=20.0,
+            process_rss_limit_gb=40.0,
+        ),
+    )
+    ep = EndpointHealth(
+        name="Brainstem",
+        url="internal",
+        model="Qwen2.5-7B-Instruct-4bit",
+        is_local=True,
+        tier="local_fast",
+    )
+
+    reason = HealthAwareLLMRouter._desktop_background_endpoint_deferral_reason(ep)
+
+    assert reason is not None
+    assert reason.startswith("desktop_background_headroom:Brainstem:")
+
+
+def test_desktop_background_headroom_allows_reflex_with_moderate_headroom(monkeypatch):
+    from types import SimpleNamespace
+
+    import core.brain.llm_health_router as router_module
+
+    monkeypatch.setattr(router_module, "desktop_resource_guard_enabled", lambda env=None: True)
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(
+            pressure_pct=58.0,
+            available_gb=26.5,
+            process_rss_gb=20.0,
+            process_rss_limit_gb=40.0,
+        ),
+    )
+    ep = EndpointHealth(
+        name="Reflex",
+        url="internal",
+        model="Qwen2.5-1.5B-Instruct-4bit",
+        is_local=True,
+        tier="emergency",
+    )
+
+    assert HealthAwareLLMRouter._desktop_background_endpoint_deferral_reason(ep) is None
+
+
 @pytest.mark.asyncio
 async def test_router_deduplicates_repeated_background_deferral_logs(caplog):
     router = HealthAwareLLMRouter()

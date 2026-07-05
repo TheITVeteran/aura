@@ -1869,6 +1869,65 @@ class HealthAwareLLMRouter:
     def _desktop_background_local_disabled(self) -> bool:
         return desktop_resource_guard_enabled() and not self._desktop_background_local_enabled()
 
+    @staticmethod
+    def _desktop_background_endpoint_deferral_reason(ep: EndpointHealth) -> str | None:
+        """Protect live desktop Aura from background local-model memory spikes.
+
+        Background cognition should stay active, but on a 64GB-class desktop it
+        cannot freely wake extra 7B/1.5B MLX workers beside the 32B Cortex lane.
+        That pattern is what showed up in the live neural stream as a large
+        footprint spike followed by forced shedding.  Admission is endpoint
+        specific: Reflex is light enough to run with moderate headroom, while
+        Brainstem needs substantially more free unified memory.
+        """
+        if not desktop_resource_guard_enabled():
+            return None
+        name = str(getattr(ep, "name", "") or "")
+        if name not in {BRAINSTEM_ENDPOINT, FALLBACK_ENDPOINT}:
+            return None
+        try:
+            from core.utils.memory_monitor import get_memory_pressure_snapshot
+
+            snapshot = get_memory_pressure_snapshot()
+            pressure_pct = float(snapshot.pressure_pct)
+            available_gb = float(snapshot.available_gb)
+            process_rss_gb = float(snapshot.process_rss_gb)
+            process_limit_gb = float(snapshot.process_rss_limit_gb)
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            _record_router_degradation(
+                exc,
+                action="deferred desktop background local endpoint after memory probe failed",
+                severity="warning",
+            )
+            return "desktop_background_memory_probe_failed"
+
+        if name == BRAINSTEM_ENDPOINT:
+            max_pressure = float(
+                os.environ.get("AURA_BACKGROUND_BRAINSTEM_MAX_PRESSURE_PCT", "48")
+            )
+            min_available = float(
+                os.environ.get("AURA_BACKGROUND_BRAINSTEM_MIN_AVAILABLE_GB", "34")
+            )
+        else:
+            max_pressure = float(
+                os.environ.get("AURA_BACKGROUND_REFLEX_MAX_PRESSURE_PCT", "66")
+            )
+            min_available = float(
+                os.environ.get("AURA_BACKGROUND_REFLEX_MIN_AVAILABLE_GB", "20")
+            )
+        if pressure_pct >= max_pressure or available_gb < min_available:
+            return (
+                f"desktop_background_headroom:{name}:"
+                f"{pressure_pct:.1f}%/{available_gb:.1f}GB"
+                f"(need <{max_pressure:.1f}% and >={min_available:.1f}GB)"
+            )
+        if process_limit_gb > 0.0 and process_rss_gb >= max(0.0, process_limit_gb - 6.0):
+            return (
+                f"desktop_background_process_rss:{process_rss_gb:.1f}GB/"
+                f"{process_limit_gb:.1f}GB"
+            )
+        return None
+
     def _cortex_startup_quiet_window_active(self) -> bool:
         """Block background local fallbacks while Cortex is still warming or launch headroom is reserved."""
         if self._safe_boot_background_guard_active():
@@ -2539,13 +2598,20 @@ class HealthAwareLLMRouter:
                 is_bg
                 and ep.is_local
                 and self._tier_is_background_only(tier_name)
-                and (self._desktop_background_local_disabled() or self._cortex_startup_quiet_window_active())
             ):
                 last_error = (
                     "desktop_background_local_disabled"
                     if self._desktop_background_local_disabled()
                     else "foreground_quiet_window"
+                    if self._cortex_startup_quiet_window_active()
+                    else self._desktop_background_endpoint_deferral_reason(ep)
                 )
+            if (
+                is_bg
+                and ep.is_local
+                and self._tier_is_background_only(tier_name)
+                and last_error
+            ):
                 self.last_background_error = last_error
                 self._log_background_deferral(
                     scope="local_endpoint",
