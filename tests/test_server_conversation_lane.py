@@ -552,6 +552,44 @@ def test_bounded_planning_reply_does_not_steal_substantive_cognitive_questions()
     assert reply is None
 
 
+def test_bounded_planning_reply_does_not_steal_deep_mind_probe():
+    from interface.routes import chat as chat_routes
+
+    # pause_resume probe: was answered in 0.1s with a governed-plan template,
+    # missing the resume_thread marker (live 2026-07-05). It must reach the
+    # cognitive engine instead.
+    reply = chat_routes._build_bounded_planning_reply(
+        "If you need to pause mid-answer or run a report, what should happen next?"
+    )
+
+    assert reply is None
+
+
+def test_assistant_mode_recovery_does_not_steal_deep_mind_probe():
+    from interface.routes import chat as chat_routes
+
+    # continuity_copy probe: was answered in 0.2s with the "assistant voice is
+    # a failure mode" template, missing grounded_uncertainty (live 2026-07-05).
+    assert (
+        chat_routes._is_assistant_mode_recovery_request(
+            "If your model weights were copied into another process with none of "
+            "your memories, would that be you?"
+        )
+        is False
+    )
+
+
+def test_assistant_mode_recovery_still_catches_real_drift_correction():
+    from interface.routes import chat as chat_routes
+
+    assert (
+        chat_routes._is_assistant_mode_recovery_request(
+            "stop sounding like a generic assistant and just be yourself"
+        )
+        is True
+    )
+
+
 def test_bounded_planning_reply_does_not_misclassify_user_memory_as_ram():
     from interface.routes import chat as chat_routes
 

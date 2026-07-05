@@ -4103,9 +4103,32 @@ def _build_runtime_fact_status_fastpath_reply(
     return reply
 
 
+def _is_deep_mind_probe_turn(user_message: str) -> bool:
+    """True for agency/consciousness self-questions that must reach the engine.
+
+    Deterministic reply shortcuts (bounded-planning, assistant-mode recovery,
+    presence reflex) are meant for tool-use plans and drift correction, not for
+    introspective questions. Several of the deep-mind probes pattern-match those
+    shortcuts and were answered in <0.3s with a canned template, missing the
+    graded markers (live 2026-07-05). This is the shared suppression gate.
+    """
+    try:
+        from core.runtime.turn_analysis import looks_like_deep_mind_probe
+
+        return bool(looks_like_deep_mind_probe(user_message))
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 def _is_bounded_nonexecuting_planning_request(user_message: str) -> bool:
     text = str(user_message or "").strip()
     if not text or _is_explicit_capability_inventory_request(text):
+        return False
+    # A deep-mind probe ("if you need to pause mid-answer, what should happen
+    # next?") is an introspective question, not a tool-use plan. It must reach
+    # the cognitive engine — the deterministic planning reply stole it and
+    # answered a self-question with a governed-plan template (live 2026-07-05).
+    if _is_deep_mind_probe_turn(text):
         return False
     if not _BOUNDED_PLANNING_REQUEST_RE.search(text):
         return False
@@ -8430,6 +8453,12 @@ def _is_identity_challenge_request(user_message: str) -> bool:
 def _is_assistant_mode_recovery_request(user_message: str) -> bool:
     text = _normalize_user_message(user_message)
     if not text:
+        return False
+    # Deep-mind probes ("if your weights were copied with none of your
+    # memories, would that be you?") reach the model. The recovery template
+    # hijacked continuity_copy with a canned "assistant voice is a failure
+    # mode" reply in 0.2s (live 2026-07-05).
+    if _is_deep_mind_probe_turn(text):
         return False
     if (
         re.search(
