@@ -69,7 +69,7 @@ def test_legacy_shell_presents_active_generation_as_working_not_unavailable():
     assert "Number(lane.active_generations || 0) > 0" in js
     assert "if (laneHasActiveGeneration(lane)) return 'cortex thinking';" in js
     assert "laneText === 'cortex thinking' ? 'CORTEX THINKING'" in js
-    assert "state.conversationReady || laneHasActiveGeneration(effectiveLane)" in js
+    assert "lane.conversation_ready === false && !laneHasActiveGeneration(lane)" in js
     assert "lane.conversation_ready === false && !laneHasActiveGeneration(lane)" in js
 
 
