@@ -6223,7 +6223,7 @@ Tracker:
 
 ## Checkpoint 2026-07-04-40: Bounded Proof-Bundle Refresh
 
-Status: implementation validated; checkpoint commit pending.
+Status: committed and pushed (`220a12ab`).
 
 Scope:
 
@@ -6264,7 +6264,7 @@ Tracker:
 
 ## Checkpoint 2026-07-04-41: Enterprise Gate Static Hygiene Repair
 
-Status: implementation validated; checkpoint commit pending.
+Status: committed and pushed (`487a9511`).
 
 Scope:
 
@@ -6294,7 +6294,7 @@ Tracker:
 
 ## Checkpoint 2026-07-04-42: RSI Proof Selector Honesty Repair
 
-Status: implementation validated; checkpoint commit pending.
+Status: committed and pushed (`0734b313`).
 
 Scope:
 
@@ -6337,7 +6337,7 @@ Tracker:
 
 ## Checkpoint 2026-07-04-43: Desktop Reliability Single-Flight and TCC Authority Repair
 
-Status: implementation validated; checkpoint commit pending.
+Status: committed and pushed (`4137e00a`).
 
 Scope:
 
@@ -6399,7 +6399,7 @@ Tracker:
 
 ## Checkpoint 2026-07-04-44: Program DNA Complex Local-App Reconstruction Proof
 
-Status: implementation validated; checkpoint commit pending.
+Status: committed and pushed (`6ffffcc1`).
 
 Scope:
 
@@ -6472,3 +6472,62 @@ Tracker:
 - Remaining non-soak checkpoint work: final RSI proof surface replay, launched
   Aura live skill/model Program DNA replay if host load allows, and final
   tracker/report normalization.
+
+## Checkpoint 2026-07-04-45: Final Non-Soak RSI Proof Surface Replay
+
+Status: implementation validated; checkpoint commit pending.
+
+Scope:
+
+- Replayed the bounded RSI proof surfaces without booting the heavyweight MLX
+  runtime, avoiding unnecessary RAM/thermal risk while still checking the RSI
+  proof chain directly.
+- Ran the focused RSI validation tests, deterministic RSI gauntlet, and proof
+  bundle regeneration.
+- Verified the canonical proof bundle remains honest: it selects the valid
+  `Aura-G4` L3 RSI generation, records the latest `Aura-G5` generation
+  separately, and preserves the saturated-generation boundary rather than
+  claiming a new improvement where there is none.
+- Refreshed the tracked proof-bundle JSON artifacts for the current commit.
+
+Evidence:
+
+- `python -m pytest -q tests/test_rsi_validation_gauntlet.py tests/test_rsi_expansion_components.py tests/test_proof_bundle_hardening.py`
+  -> `22 passed`.
+- `python scripts/run_rsi_gauntlet.py --artifact-dir artifacts/current/rsi_gauntlet_latest --max-source-files 2500`
+  -> passed; verdict `STRONG_RSI`, duration `25.277s`, lineage curve
+  `[0.34, 0.46, 0.48072, 0.588704, 0.798864, 1.0]`, improver curve
+  `[0.2, 0.31, 0.578, 0.8696, 0.9536, 1.0]`.
+- `python tools/proof_bundle.py --output-dir artifacts/proof_bundle/latest`
+  -> passed; `all_files_generated=true`, `readiness_passed=true`, canonical
+  proof bundle `passed=true`.
+- RSI summary from `artifacts/proof_bundle/latest/CANONICAL_PROOF_BUNDLE.json`:
+  `artifacts.undeniable_rsi.passed=true`, `status=l3_rsi_proven`,
+  `selected_generation=Aura-G4`, `latest_generation=Aura-G5`,
+  `reason=all_l3_gates_passed`, `failed_requirements=[]`.
+- `artifacts/proof_bundle/latest/UNDENIABLE_RSI.json`: `passed=true`,
+  `status=l3_rsi_proven`, `baseline_score=0.8`, `candidate_score=1.0`,
+  `candidate_improved_over_baseline=true`, lineage verdict `UNDENIABLE_RSI`.
+- `python tools/aura_production_readiness_gate.py --out artifacts/current/production_readiness.json`
+  -> passed.
+
+Boundary:
+
+- This is the final non-soak RSI proof surface replay. It deliberately does not
+  rerun `tools/generate_undeniable_rsi_bundle.py` because that path boots the
+  MLX proof runtime and is not necessary for a bounded non-soak replay on a
+  memory-sensitive machine. The frozen-generation proof and canonical bundle
+  remain replayed and green.
+- The remaining long-run proof is a soak/thermal/runtime durability exercise,
+  not another RSI-selector or proof-bundle repair.
+
+Tracker:
+
+- RSI proof closure rises to about 98-99% for non-soak local evidence.
+- Expanded daily-runtime/product closure remains about 97-98% locally.
+- Chrome/Kubernetes/aerospace operational maturity closure remains about
+  88-91% locally.
+- Remaining non-soak checkpoint work: final tracker/report normalization and,
+  if host load allows, launched Aura live skill/model replay for Program DNA and
+  desktop conversation/tool behavior. Remaining soak work is the longer
+  unattended/thermal runtime proof.
