@@ -2343,6 +2343,24 @@ class CognitiveEngine:
                 "functional, bounded, and evidence-based."
             )
         try:
+            from core.introspection.capability_map import (
+                build_capability_map_context,
+                is_actionable_request,
+            )
+
+            if is_actionable_request(user_prompt):
+                # Action requests get the honest lane map so the mind
+                # decomposes to granted paths (filesystem → scripting →
+                # GUI) instead of declining whole tasks — observed live:
+                # a notes+folder+export task declined entirely when only
+                # raw GUI control was actually blocked.
+                _cap_map = build_capability_map_context()
+                if _cap_map:
+                    grounding_blocks.append("[CAPABILITY MAP]\n" + _cap_map)
+        except (ImportError, AttributeError, RuntimeError, OSError) as _cm_exc:
+            logger.debug("Capability-map grounding unavailable: %s", _cm_exc)
+
+        try:
             from core.introspection.self_forensics import (
                 build_self_forensics_context,
                 is_self_forensics_question,

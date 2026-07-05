@@ -77,3 +77,58 @@ class TestEngineWiring:
         src = inspect.getsource(cognitive_engine)
         assert "SELF-FORENSICS EVIDENCE" in src
         assert "is_self_forensics_question" in src
+
+
+class TestCapabilityMap:
+    def test_matches_the_live_declined_task(self):
+        from core.introspection.capability_map import is_actionable_request
+
+        assert is_actionable_request(
+            "can you write a note about dinosaurs using my notes app, "
+            "create a folder on my desktop titled Notes and export it there?"
+        )
+        assert is_actionable_request("make a file called ideas.txt in my documents")
+        assert not is_actionable_request("what do you think about dinosaurs")
+
+    def test_map_names_lanes_and_decomposition_rule(self):
+        from core.introspection.capability_map import build_capability_map_context
+
+        block = build_capability_map_context()
+        for token in ("FILESYSTEM", "SCRIPTING", "GUI-CONTROL", "never decline the whole task"):
+            assert token in block
+
+    def test_engine_wiring(self):
+        import inspect
+
+        from core.brain import cognitive_engine
+
+        assert "CAPABILITY MAP" in inspect.getsource(cognitive_engine)
+
+
+class TestUngroundedSelfCauseGate:
+    def test_live_fabrications_flag(self):
+        from core.conversation.response_reliability import (
+            _has_ungrounded_self_cause_claim,
+        )
+
+        assert _has_ungrounded_self_cause_claim(
+            "what was the root cause of the crash?",
+            "The crash was caused by a memory corruption issue. A module "
+            "overwrote critical system pointers.",
+        )
+
+    def test_grounded_and_honest_replies_pass(self):
+        from core.conversation.response_reliability import (
+            _has_ungrounded_self_cause_claim,
+        )
+
+        assert not _has_ungrounded_self_cause_claim(
+            "what was the root cause of the crash?",
+            "The records show my generation gate wedged during a cold load; "
+            "the launcher then sent SIGKILL while I was recovering.",
+        )
+        assert not _has_ungrounded_self_cause_claim(
+            "why did you crash",
+            "Honestly, the exact cause is unknown — my sentinel shows memory "
+            "stayed calm throughout.",
+        )

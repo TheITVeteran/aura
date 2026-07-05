@@ -2365,6 +2365,44 @@ def _is_presence_check(user_message: Any) -> bool:
     return bool(_PRESENCE_CHECK_RE.search(text))
 
 
+_SELF_CAUSE_CLAIM_RE = re.compile(
+    r"\b(?:caused\s+by|the\s+cause\s+was|due\s+to|triggered\s+by|"
+    r"root\s+cause\s+(?:was|is))\b",
+    re.IGNORECASE,
+)
+_SELF_CAUSE_EVIDENCE_MARKERS = (
+    # Terms that only appear when the reply drew on real forensics —
+    # matching the vocabulary of the self-forensics evidence block.
+    "shutdown reason", "grace flag", "sentinel", "incident", "fault",
+    "sigterm", "sigkill", "watchdog", "launcher", "coordinator",
+    "generation gate", "black box", "unknown", "not sure", "records show",
+    "logs show", "evidence",
+)
+
+
+def _has_ungrounded_self_cause_claim(user_message: Any, reply_text: Any) -> bool:
+    """Reject invented causes for Aura's own failures.
+
+    Observed live (July 4): asked why she crashed, fluent technical
+    fiction passed the vocabulary-coverage gate ('memory corruption
+    overwrote critical system pointers', 'off-by-one mistake', 'my
+    diagnostics isolated the module') — none of it true. A causal claim
+    about her own shutdown must either carry forensics-evidence markers
+    (the self-forensics grounding supplies them for truthful replies) or
+    honestly say unknown.
+    """
+    try:
+        from core.introspection.self_forensics import is_self_forensics_question
+    except ImportError:
+        return False
+    if not is_self_forensics_question(str(user_message or "")):
+        return False
+    reply_norm = _normalize(reply_text)
+    if not reply_norm or not _SELF_CAUSE_CLAIM_RE.search(reply_norm):
+        return False
+    return not any(marker in reply_norm for marker in _SELF_CAUSE_EVIDENCE_MARKERS)
+
+
 def _has_low_signal_acknowledgement_placeholder(user_message: Any, reply_text: Any) -> bool:
     if _is_presence_check(user_message):
         return False
@@ -3619,6 +3657,8 @@ def assess_user_facing_reply(
         reasons.append("foreign_name_intrusion")
     if _has_low_signal_acknowledgement_placeholder(user_message, raw):
         reasons.append("low_signal_acknowledgement_placeholder")
+    if _has_ungrounded_self_cause_claim(user_message, raw):
+        reasons.append("ungrounded_self_cause_claim")
 
     reliability_turn = is_reliability_concern(user_message)
     reliability_diagnostic_turn = _requires_reliability_diagnostic(user_message)
