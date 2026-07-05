@@ -3,8 +3,8 @@ import logging
 from typing import Any
 
 from core.config import Environment, config
-from core.runtime.service_registry import register_runtime_service
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.service_registry import register_runtime_service
 
 logger = logging.getLogger(__name__)
 
@@ -230,5 +230,43 @@ async def init_hardening_layer(orchestrator: Any):
         )
         logger.error("EventLoopMonitor failed to start: %s", exc)
         _fail_required_component("event_loop_monitor", exc)
+
+    # Unified runtime pressure: pull-based provider for the health-contract
+    # entry. Before this registration existed the contract required a service
+    # nobody provided, so the runtime could pin DEGRADED against a phantom
+    # (observed live 2026-07-05). Pull-based: no loop, nothing to die.
+    try:
+        from core.runtime.runtime_pressure import get_unified_runtime_pressure
+
+        pressure = get_unified_runtime_pressure()
+        pressure.runtime_pressure_snapshot()  # prove it can sample at boot
+        register_runtime_service(
+            "unified_runtime_pressure",
+            pressure,
+            failure_policy="degrade_with_receipt",
+            owner="core/orchestrator/initializers/hardening.py",
+            registered_by="initialize_unified_runtime_pressure",
+        )
+        hardening_status["unified_runtime_pressure"] = {
+            "state": "online",
+            "registered": True,
+            "container_key": "unified_runtime_pressure",
+        }
+        logger.info("UnifiedRuntimePressure active (pull-based, no loop).")
+    except asyncio.CancelledError:
+        raise
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        hardening_status["unified_runtime_pressure"] = {
+            "state": "failed",
+            "registered": False,
+            "error": str(exc),
+        }
+        _record_hardening_degradation(
+            exc,
+            component="unified_runtime_pressure",
+            action="runtime pressure provider boot failed; contract entry stays unhealthy",
+            severity="degraded",
+        )
+        logger.error("UnifiedRuntimePressure failed to start: %s", exc)
 
     logger.info("Hardening Layer status: %s", hardening_status)

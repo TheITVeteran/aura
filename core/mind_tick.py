@@ -341,6 +341,10 @@ class MindTick:
             self._running = False
             logger.warning("💓 MindTick: Cognitive rhythm scheduling deferred.")
             return
+        try:
+            self._owner_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._owner_loop = None
         logger.info("💓 MindTick: Cognitive rhythm started.")
 
     def is_alive(self) -> bool:
@@ -377,6 +381,24 @@ class MindTick:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
+            # Health checks call is_alive() from plain threads, where task
+            # creation is impossible — so a dead loop could never be revived
+            # by the pulse that detected it (observed live 2026-07-05: the
+            # runtime sat DEGRADED for 84 minutes with repair machinery
+            # present). Hand the repair to the owning loop instead.
+            owner_loop = getattr(self, "_owner_loop", None)
+            if owner_loop is not None and not owner_loop.is_closed():
+                def _threadsafe_repair() -> None:
+                    self._consecutive_loop_failures = 0
+                    self._running = True
+                    self._started_at = self._started_at or time.time()
+                    self._task = _schedule_mind_task(
+                        self._run_loop(), name="mind_tick.run_loop.recovered.threadsafe"
+                    )
+                    logger.warning("💓 MindTick: loop revived via owning-loop repair.")
+
+                owner_loop.call_soon_threadsafe(_threadsafe_repair)
+                logger.info("MindTick repair scheduled onto owning loop from thread.")
             return False
 
         finished_error = None

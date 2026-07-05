@@ -487,6 +487,10 @@ class EventLoopMonitor:
         self._started_at = time.perf_counter()
         self._task = get_task_tracker().create_task(self._run())
         mark_task_protected(self._task, owner="event_loop_monitor")
+        try:
+            self._owner_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._owner_loop = None
         logger.info(
             "🕒 EventLoopMonitor started (threshold=%.2fs, interval=%.1fs)",
             self.threshold,
@@ -513,7 +517,27 @@ class EventLoopMonitor:
             return True
         try:
             self.start()
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        except RuntimeError as exc:
+            # Health checks run on plain threads, where task creation raises —
+            # so a dead monitor could never be revived by the very pulse that
+            # detected it, and the runtime stayed DEGRADED for 84 minutes with
+            # working restart machinery (observed live 2026-07-05). Hand the
+            # restart to the owning loop instead.
+            owner_loop = getattr(self, "_owner_loop", None)
+            if owner_loop is not None and not owner_loop.is_closed():
+                owner_loop.call_soon_threadsafe(self.start)
+                logger.info("EventLoopMonitor restart scheduled onto owning loop from thread.")
+            else:
+                record_degradation(
+                    "event_loop_monitor",
+                    exc,
+                    severity="degraded",
+                    action="event-loop monitor restart failed; no live owning loop",
+                    enforce_failure_policy=False,
+                )
+                logger.warning("EventLoopMonitor restart failed: %s", exc)
+            return False
+        except (AttributeError, TypeError, ValueError) as exc:
             record_degradation(
                 "event_loop_monitor",
                 exc,
