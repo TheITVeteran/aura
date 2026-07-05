@@ -1925,7 +1925,14 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         )
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
-            let result = self.launchAuraIfNeeded(forceRelaunch: true)
+            _ = self.forceStopAuraProcess(preserveResidentLauncher: true)
+            self.clearBootMarker()
+            self.clearTerminalHandoffMarker()
+            self.lastSnapshot = nil
+            self.forcedRelaunchAttempted = false
+            self.autoDesktopOpenTriggered = false
+            self.spawnedFreshRuntime = false
+            let result = self.launchAuraIfNeeded(forceRelaunch: false)
             DispatchQueue.main.async {
                 self.launchInFlight = false
                 switch result {
@@ -2247,7 +2254,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         }
         if let reason = snapshot.staleRuntimeFailureReason
             ?? snapshot.replacementReason(expectedSemver: bundledSemver) {
-            _ = forceStopAuraProcess()
+            _ = forceStopAuraProcess(preserveResidentLauncher: true)
             clearBootMarker()
             clearTerminalHandoffMarker()
             lastSnapshot = nil
@@ -2415,7 +2422,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func forceStopAuraProcess() -> String {
+    private func forceStopAuraProcess(preserveResidentLauncher: Bool = false) -> String {
         explicitStopInProgress = true
         let cleanupScript = auraRoot.appendingPathComponent("aura_cleanup.py")
         let logHandle: FileHandle?
@@ -2430,7 +2437,11 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             proc.executableURL = pythonExecutable
             proc.arguments = arguments
             proc.currentDirectoryURL = auraRoot
-            proc.environment = baseAuraEnvironment()
+            var env = baseAuraEnvironment()
+            if preserveResidentLauncher {
+                env["AURA_STOP_PRESERVE_RESIDENT_LAUNCHER"] = "1"
+            }
+            proc.environment = env
             proc.standardOutput = logHandle
             proc.standardError = logHandle
             do {

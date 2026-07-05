@@ -418,7 +418,15 @@ def test_packaged_launcher_rejects_explicitly_stale_locked_runtime():
     assert "snapshot.staleRuntimeFailureReason" in swift
     assert "runtimeHasUserVisibleHandoff" in swift
     assert "the launcher is an observer" in swift
-    assert "forceStopAuraProcess()" in swift
+    assert "forceStopAuraProcess(preserveResidentLauncher: true)" in swift
+    forced_relaunch_body = swift.split("private func beginForcedRelaunch(reason: String)", 1)[1].split(
+        "private func renderSnapshot",
+        1,
+    )[0]
+    assert "forceStopAuraProcess(preserveResidentLauncher: true)" in forced_relaunch_body
+    assert "launchAuraIfNeeded(forceRelaunch: false)" in forced_relaunch_body
+    assert "launchAuraIfNeeded(forceRelaunch: true)" not in forced_relaunch_body
+    assert "AURA_STOP_PRESERVE_RESIDENT_LAUNCHER" in swift
     assert 'checks["running"]' in swift
     assert "important:mind_tick" in swift
     assert "contract/important:mind_tick" in swift
@@ -484,6 +492,10 @@ def test_stop_aura_signals_parent_before_touching_child_actors():
     assert "p.wait(timeout=stop_grace_s)" in stop_body
     assert "def stop_native_desktop_launchers()" in stop_body
     assert "Aura.app/Contents/MacOS/aura-launcher" in stop_body
+    assert "AURA_STOP_PRESERVE_RESIDENT_LAUNCHER" in stop_body
+    assert "Preserving resident Aura.app launcher bridge PID" in stop_body
+    assert "parent_pid = os.getppid()" in stop_body
+    assert "pid in {current_pid, parent_pid}" in stop_body
     assert '"--desktop", "--gui-window"' in stop_body
     assert '"--stop" not in cmdline' in stop_body
     assert "_disable_legacy_launchagent(" in stop_body

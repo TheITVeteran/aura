@@ -6683,8 +6683,11 @@ Tracker:
 
 ## Checkpoint 2026-07-05-03: Resident TCC Grant Closure + Launcher Crash Guard
 
-Status: implementation and live resident replay validated; checkpoint commit
-pending.
+Status: implemented, committed, and pushed as `1ccc2fa9`. Post-push live
+sanity found one remaining lifecycle bug: launcher-initiated runtime
+replacement could still invoke the full stop path and leave an orphaned Python
+runtime without the resident Aura.app bridge. Checkpoint 05 closes that
+follow-up.
 
 Scope:
 
@@ -6838,3 +6841,69 @@ Tracker:
 - Chrome/Kubernetes/aerospace operational maturity rises to about **90-93%**
   locally for launch/permission lifecycle and false-health prevention; broader
   maturity still needs the remaining proof matrix and soak.
+
+## Checkpoint 2026-07-05-05: Launcher-Requested Reboot Preserves Resident App
+
+Status: implementation, focused verification, rebuilt app install, and live
+resident replay complete.
+
+Scope:
+
+- Split native launcher stop semantics so a stale-runtime refresh from
+  `Aura.app` is not treated the same as an explicit emergency stop.
+- Swift now calls `forceStopAuraProcess(preserveResidentLauncher: true)` during
+  stale-runtime replacement and passes
+  `AURA_STOP_PRESERVE_RESIDENT_LAUNCHER=1` to `aura_main.py --stop`.
+- Python `stop_aura()` now honors
+  `AURA_STOP_PRESERVE_RESIDENT_LAUNCHER=1` by preserving only the resident
+  Aura.app bridge, not stale Python desktop children, and refuses to terminate
+  its own parent PID even on the non-preserve stop path.
+- Swift `beginForcedRelaunch()` now stops the existing runtime first, clears
+  handoff markers, and starts a normal single desktop runtime. It no longer
+  uses the parallel `--reboot` child path for app-driven refreshes.
+- This closes the observed post-push pattern where `/api/health/boot` stayed
+  ready but `/api/system/desktop-access` fell back to `one_shot_subprocess`
+  because the resident app had been killed, and closes the follow-up pattern
+  where preserving the resident app too broadly could briefly leave two Python
+  desktop runtimes under the same launcher.
+
+Verification:
+
+- `python -m py_compile aura_main.py scripts/one_off/aura_cleanup.py core/mind_tick.py interface/routes/system.py core/security/native_desktop_bridge.py core/security/permission_guard.py`
+  -> passed.
+- `xcrun swiftc -typecheck -framework AppKit -framework CoreGraphics -framework Foundation -framework WebKit scripts/AuraLauncher.swift`
+  -> passed.
+- `python -m pytest -q tests/test_launcher_polish_contract.py::test_packaged_launcher_rejects_explicitly_stale_locked_runtime tests/test_launcher_polish_contract.py::test_stop_aura_signals_parent_before_touching_child_actors`
+  -> `2 passed`.
+- `python -m pytest -q tests/test_launcher_polish_contract.py::test_cleanup_preserves_verified_live_runtime_unless_forced tests/test_launcher_polish_contract.py::test_cleanup_recognizes_native_launcher_process tests/test_launcher_polish_contract.py::test_cleanup_preserves_native_launcher_when_live_runtime_verified tests/test_launcher_polish_contract.py::test_cleanup_preserves_recent_native_launcher_without_force`
+  -> `4 passed`.
+- `python -m pytest -q tests/test_launcher_polish_contract.py`
+  -> `35 passed`.
+- `python -m pytest -q tests/test_mind_tick_runtime_contract.py tests/test_server_runtime_hardening.py::test_desktop_access_summary_one_shot_bridge_does_not_count_as_ready tests/test_server_runtime_hardening.py::test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_grants tests/test_server_runtime_hardening.py::test_desktop_access_summary_keeps_resident_probe_authoritative_by_default`
+  -> `10 passed`.
+
+Live Replay:
+
+- Rebuilt and installed `/Applications/Aura.app`.
+- Stopped the previous runtime and old native launcher.
+- Relaunched through the signed app bundle.
+- Process table after launch and after the handoff window: exactly one
+  `/Applications/Aura.app/Contents/MacOS/aura-launcher` parent and one
+  `aura_main.py --desktop` Python child.
+- Six live `/api/health/boot` samples: `status=ready`,
+  `boot_phase=kernel_ready`, `conversation_ready=true`, `blockers=[]`.
+- Six live `/api/system/desktop-access` samples:
+  `overall_status=ready`, `permission_confidence=direct`,
+  `blocking_permissions=[]`, `probe_transport=resident_ipc`,
+  `probe_handled_by=resident_aura_launcher`,
+  `identity_transport=resident_ipc`,
+  `parent_executable=/Applications/Aura.app/Contents/MacOS/aura-launcher`,
+  `desktop_control_ready=true`, `screen_capture_ready=true`,
+  `screen_text_ready=true`, `menu_clock_ready=true`.
+- Recent `desktop-launch.log` and `aura_json.log` tail scans contained no
+  matching `DEGRADATION`, `MindTick Loop Error`, `contract/important`,
+  `Traceback`, `one_shot`, `unhealthy`, `ERROR`, `CRITICAL`,
+  `HIGH EVENT LOOP LAG`, `MEMWATCH`, `blocked`, `denied`,
+  `Service Unavailable`, `Exception in ASGI`, `stubborn`, `SIGKILL`,
+  `orphan`, `route blocked`, `conversation_ready`, `worker_not_alive`, or
+  `lane_cold` lines in the checked windows.

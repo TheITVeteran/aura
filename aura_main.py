@@ -3174,13 +3174,15 @@ def stop_aura():
             return []
 
         launcher_suffix = "Aura.app/Contents/MacOS/aura-launcher"
+        preserve_resident_launcher = os.environ.get("AURA_STOP_PRESERVE_RESIDENT_LAUNCHER") == "1"
         current_pid = os.getpid()
+        parent_pid = os.getppid()
         stopped: list[int] = []
         candidates = []
         for proc in psutil.process_iter(["pid", "exe", "cmdline", "name"]):
             try:
                 pid = int(proc.info.get("pid") or proc.pid)
-                if pid == current_pid:
+                if pid in {current_pid, parent_pid}:
                     continue
                 exe = str(proc.info.get("exe") or "")
                 cmdline = [str(item) for item in (proc.info.get("cmdline") or [])]
@@ -3197,6 +3199,9 @@ def stop_aura():
                     and any(arg in cmdline for arg in ("--desktop", "--gui-window"))
                     and "--stop" not in cmdline
                 )
+                if is_native_launcher and preserve_resident_launcher:
+                    print(f"Preserving resident Aura.app launcher bridge PID {pid} for runtime replacement.")
+                    continue
                 if is_native_launcher or is_native_child:
                     candidates.append(proc)
             except (psutil.Error, OSError, TypeError, ValueError):
