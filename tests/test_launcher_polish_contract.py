@@ -435,6 +435,23 @@ def test_packaged_launcher_rejects_explicitly_stale_locked_runtime():
     assert "only an" in swift and "explicit boot contract failure" in swift
 
 
+def test_packaged_launcher_bounds_stop_helpers_during_runtime_refresh():
+    swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
+    stop_body = swift.split(
+        "private func forceStopAuraProcess(preserveResidentLauncher: Bool = false)",
+        1,
+    )[1].split("@objc private func openLogs", 1)[0]
+
+    assert "func runTool(arguments: [String], timeout: TimeInterval = 45.0)" in stop_body
+    assert "AURA_STOP_GRACE_SECONDS" in stop_body
+    assert '"18"' in stop_body
+    assert "Date().addingTimeInterval(timeout)" in stop_body
+    assert "Aura stop helper timed out" in stop_body
+    assert "proc.terminate()" in stop_body
+    assert "kill(proc.processIdentifier, SIGKILL)" in stop_body
+    assert "runTool(arguments: [cleanupScript.path], timeout: 20.0)" in stop_body
+
+
 def test_packaged_launcher_tracks_spawned_runtime_children_for_teardown():
     swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
 

@@ -60,6 +60,30 @@ DEFAULT_PROBES: tuple[str, ...] = (
 )
 
 
+def _read_dotenv_value(key: str, *, root: Path | None = None) -> str:
+    """Read one local .env key without logging or exposing secret values."""
+
+    env_path = (root or Path.cwd()) / ".env"
+    try:
+        lines = env_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    prefix = f"{key}="
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or not line.startswith(prefix):
+            continue
+        value = line[len(prefix) :].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        return value.strip()
+    return ""
+
+
+def _runtime_api_token() -> str:
+    return os.environ.get("AURA_API_TOKEN", "").strip() or _read_dotenv_value("AURA_API_TOKEN")
+
+
 @dataclass
 class ProbeResult:
     name: str
@@ -91,7 +115,7 @@ class LiveRuntimeProbe:
         self.events: list[dict[str, Any]] = []
         self.results: list[ProbeResult] = []
         self.headers: dict[str, str] = {}
-        token = os.environ.get("AURA_API_TOKEN", "").strip()
+        token = _runtime_api_token()
         if token:
             self.headers["X-Api-Token"] = token
 
@@ -485,7 +509,7 @@ class LiveRuntimeProbe:
                 "Cloud sync is optional; offline operation must not block local note export.",
             ],
             "hardware_observations": [
-                "No camera, microphone, screen, mouse, or keyboard hardware control is required for the utility itself.",
+                "No live sensory capture or motor hardware control is required for the utility itself.",
             ],
             "process_observations": [
                 "No daemon is required; background export workers must have bounded lifetime and visible status.",

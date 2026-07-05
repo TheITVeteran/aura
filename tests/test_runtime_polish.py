@@ -1091,6 +1091,18 @@ async def test_live_runtime_probe_checks_program_dna_skill_contract(tmp_path):
     assert "document_creation" in data["features"]
 
 
+def test_live_runtime_probe_reads_api_token_from_dotenv_when_env_is_absent(tmp_path, monkeypatch):
+    from tools.live_runtime_probe import _read_dotenv_value
+
+    monkeypatch.delenv("AURA_API_TOKEN", raising=False)
+    (tmp_path / ".env").write_text(
+        "OTHER=value\nAURA_API_TOKEN='local-secret-token'\n",
+        encoding="utf-8",
+    )
+
+    assert _read_dotenv_value("AURA_API_TOKEN", root=tmp_path) == "local-secret-token"
+
+
 @pytest.mark.asyncio
 async def test_live_runtime_probe_checks_program_dna_equivalence_battery_contract(tmp_path):
     from tools.live_runtime_probe import LiveRuntimeProbe

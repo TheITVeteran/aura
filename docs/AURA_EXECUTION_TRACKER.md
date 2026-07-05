@@ -6953,3 +6953,81 @@ Live Replay:
   `Router: Queueing background inference until admission clears...` and
   `DreamCoordinator: 'dlq_recovery' queued until admission clears...`, with no
   matching error/blocker/orphan/crash terms in the checked window.
+
+## Checkpoint 2026-07-05-07: Bounded Launcher Stop, Live Program DNA, and RSI Proof Replay
+
+Status: implementation, focused verification, app rebuild, live replay, and
+proof replay complete.
+
+Scope:
+
+- Bounded the packaged native launcher's stop helper. `Aura.app` no longer
+  waits indefinitely for `aura_main.py --stop` or cleanup helpers during
+  runtime refresh; helper subprocesses now have explicit timeouts, terminate,
+  and then SIGKILL only if they ignore termination.
+- Replacement refreshes preserve the resident Aura.app bridge while reducing
+  the graceful Python stop budget for that replacement path, so a stale runtime
+  cannot keep the visible desktop surface dark for an unbounded interval.
+- `tools/live_runtime_probe.py` now reads `AURA_API_TOKEN` from the local
+  `.env` file when the token is intentionally not exported into the packaged
+  runtime process environment. This keeps protected skill probes authenticated
+  without weakening public API authentication or printing the token.
+- The Program DNA live probe no longer includes disabled camera/microphone
+  modality words in a reconstruction payload that does not require live sensory
+  capture. The proof now exercises authorized screen/log/network/file/process
+  evidence, not camera access.
+
+Verification:
+
+- `xcrun swiftc -typecheck -framework AppKit -framework CoreGraphics -framework Foundation -framework WebKit scripts/AuraLauncher.swift`
+  -> passed.
+- `python -m pytest -q tests/test_launcher_polish_contract.py`
+  -> `36 passed`.
+- `python -m pytest -q tests/test_live_runtime_surface_regressions.py tests/test_desktop_boot_safety.py`
+  -> `104 passed`.
+- `python -m py_compile tools/live_runtime_probe.py`
+  -> passed.
+- `python -m pytest -q tests/test_runtime_polish.py -k 'live_runtime_probe'`
+  -> `9 passed, 68 deselected`.
+- `python -m pytest -q tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_program_dna_cognition_reconstruction.py`
+  -> `15 passed`.
+- `python -m pytest -q tests/test_rsi_validation_gauntlet.py tests/test_autonomous_rsi_hardening.py tests/test_rsi_sandbox_governance.py tests/test_recursive_self_improvement_loop.py tests/test_rsi_tool_creation_loosening.py tests/test_rsi_expansion_components.py`
+  -> `39 passed`.
+- `python tools/program_dna/behavioral_equivalence_battery.py --out artifacts/current/program_dna_behavioral_equivalence_latest.json`
+  -> `ok=true`, `equivalence=1.0`, `passed_cases=17`,
+  `held_out_cases=17`, `passed_scenarios=8`.
+- `python scripts/run_rsi_gauntlet.py --artifact-dir artifacts/current/rsi_gauntlet_latest --max-source-files 600`
+  -> `passed=true`, `verdict=STRONG_RSI`, `checks=17`,
+  `failed=[]`, `duration_s=411.723`. The lineage verdict recorded
+  six monotone generations with capability curve
+  `[0.34, 0.46, 0.48072, 0.588704, 0.798864, 1.0]`.
+- `python tools/live_runtime_probe.py --base-url http://127.0.0.1:8000 --only program_dna_reconstruct,program_dna_equivalence_battery --probe-timeout 90 --timeout 190 --max-rss-mb 32000 --out artifacts/current/live_program_dna_probe/latest_probe.json`
+  -> `passed=true`; `program_dna_reconstruct=true`;
+  `program_dna_equivalence_battery=true`.
+
+Live Replay:
+
+- Rebuilt and installed `/Applications/Aura.app`.
+- Restarted through `/Applications/Aura.app`.
+- Process table after restart: exactly one resident
+  `/Applications/Aura.app/Contents/MacOS/aura-launcher` parent and one
+  `aura_main.py --desktop` Python child.
+- `/api/health/boot`: `status=ready`, `ready=true`,
+  `conversation_ready=true`, `blockers=[]`.
+- `/api/health`: `status=ok`, `healthy=true`,
+  `conversation_ready=true`, `blockers=[]`.
+- `/api/system/desktop-access`: `desktop_control_ready=true`,
+  `screen_capture_ready=true`, `screen_text_ready=true`,
+  `menu_clock_ready=true`, `permission_confidence=direct`,
+  `bridge_transport=resident_ipc`, `bundle_identifier=com.aura.desktop`.
+- Recent `desktop-launch.log` tail after the rebuilt-app restart showed
+  transient warmup followed by healthy conversation pass and no active desktop
+  permission blocker.
+
+Remaining live proof item added from the current session:
+
+- Run a visible live web-interlocutor proof where Aura uses the real live
+  desktop path to open ChatGPT or Gemini in Chrome/Safari, hold at least 20
+  coherent turns, remember what the other AI said, report the conversation back
+  through Aura's UI, and demonstrate that she knows this is a general ability
+  rather than a hardcoded scenario.

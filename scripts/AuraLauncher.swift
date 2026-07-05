@@ -2432,7 +2432,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             return "Aura stop failed before cleanup logging could start: \(error.localizedDescription)"
         }
 
-        func runTool(arguments: [String]) -> Bool {
+        func runTool(arguments: [String], timeout: TimeInterval = 45.0) -> Bool {
             let proc = Process()
             proc.executableURL = pythonExecutable
             proc.arguments = arguments
@@ -2440,13 +2440,32 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             var env = baseAuraEnvironment()
             if preserveResidentLauncher {
                 env["AURA_STOP_PRESERVE_RESIDENT_LAUNCHER"] = "1"
+                env["AURA_STOP_GRACE_SECONDS"] = env["AURA_STOP_GRACE_SECONDS"] ?? "18"
             }
             proc.environment = env
             proc.standardOutput = logHandle
             proc.standardError = logHandle
             do {
                 try proc.run()
-                proc.waitUntilExit()
+                let deadline = Date().addingTimeInterval(timeout)
+                while proc.isRunning && Date() < deadline {
+                    Thread.sleep(forTimeInterval: 0.05)
+                }
+                if proc.isRunning {
+                    if let data = "Aura stop helper timed out after \(timeout)s: \(arguments.joined(separator: " "))\n"
+                        .data(using: .utf8) {
+                        logHandle?.write(data)
+                    }
+                    proc.terminate()
+                    let terminateDeadline = Date().addingTimeInterval(2.0)
+                    while proc.isRunning && Date() < terminateDeadline {
+                        Thread.sleep(forTimeInterval: 0.05)
+                    }
+                    if proc.isRunning {
+                        kill(proc.processIdentifier, SIGKILL)
+                    }
+                    return false
+                }
                 return proc.terminationStatus == 0
             } catch {
                 return false
@@ -2455,7 +2474,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
 
         let stopOK = runTool(arguments: ["-u", auraMainScript.path, "--stop"])
         let cleanupOK = fileManager.fileExists(atPath: cleanupScript.path)
-            ? runTool(arguments: [cleanupScript.path])
+            ? runTool(arguments: [cleanupScript.path], timeout: 20.0)
             : false
 
         if stopOK && cleanupOK {
