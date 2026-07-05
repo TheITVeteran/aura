@@ -10,8 +10,8 @@ async def test_program_dna_hidden_source_behavioral_equivalence_battery(tmp_path
 
     assert report["ok"] is True
     assert report["battery"] == "program_dna_hidden_source_behavioral_equivalence"
-    assert report["scenario_count"] == 7
-    assert report["passed_scenarios"] == 7
+    assert report["scenario_count"] == 8
+    assert report["passed_scenarios"] == 8
     assert report["equivalence"] == 1.0
     assert report["passed_cases"] == report["held_out_cases"]
     categories = {item["category"] for item in report["results"]}
@@ -23,6 +23,7 @@ async def test_program_dna_hidden_source_behavioral_equivalence_battery(tmp_path
         "local_db_tool",
         "auth_simulated_app",
         "missing_docs",
+        "complex_local_app",
     } <= categories
     assert all(item["hidden_source_withheld"] for item in report["results"])
     assert all(item["genome_summary"]["feature_count"] >= 1 for item in report["results"])
@@ -76,6 +77,6 @@ async def test_program_dna_equivalence_battery_skill_runs_and_writes_artifact(tm
     assert out_path.exists()
     payload = result["result"]
     assert payload["ok"] is True
-    assert payload["scenario_count"] == 7
+    assert payload["scenario_count"] == 8
     assert payload["passed_cases"] == payload["held_out_cases"]
     assert "results" not in payload

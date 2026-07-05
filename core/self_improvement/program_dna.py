@@ -1271,6 +1271,7 @@ class ProgramDNAReconstructionEngine:
             f"    {feature.name!r}: {feature.confidence!r},"
             for feature in features
         )
+        self._write_text(src / "__init__.py", '"""Generated Program DNA scaffold package."""\n')
         self._write_text(
             src / "program.py",
             (
@@ -1290,6 +1291,16 @@ class ProgramDNAReconstructionEngine:
                 "        receipt = {'feature': feature, 'payload': payload or {}, 'status': 'planned'}\n"
                 "        self.receipts.append(receipt)\n"
                 "        return receipt\n"
+            ),
+        )
+        self._write_text(
+            tests / "conftest.py",
+            (
+                "import sys\n"
+                "from pathlib import Path\n\n\n"
+                "ROOT = Path(__file__).resolve().parents[1]\n"
+                "if str(ROOT) not in sys.path:\n"
+                "    sys.path.insert(0, str(ROOT))\n"
             ),
         )
         self._write_text(
@@ -1318,7 +1329,9 @@ class ProgramDNAReconstructionEngine:
                 "- `PROGRAM_DNA_BLUEPRINT.json`\n"
                 "- `PROGRAM_GENOME.json`\n"
                 "- `VERIFICATION_PLAN.json`\n"
+                "- `src/__init__.py`\n"
                 "- `src/program.py`\n"
+                "- `tests/conftest.py`\n"
                 "- `tests/test_program_contract.py`\n\n"
                 "## Safety Boundary\n\n"
                 + "\n".join(f"- {item}" for item in blueprint.safety_boundary)
@@ -1332,15 +1345,19 @@ class ProgramDNAReconstructionEngine:
             root / "PROGRAM_DNA_BLUEPRINT.json",
             root / "PROGRAM_GENOME.json",
             root / "VERIFICATION_PLAN.json",
+            root / "src" / "__init__.py",
             root / "src" / "program.py",
+            root / "tests" / "conftest.py",
             root / "tests" / "test_program_contract.py",
             root / "README.md",
         ]
         plan.scaffold_files = [str(path) for path in files if path.exists()]
         try:
             program_path = root / "src" / "program.py"
+            conftest_path = root / "tests" / "conftest.py"
             test_path = root / "tests" / "test_program_contract.py"
             ast.parse(program_path.read_text(encoding="utf-8"), filename=str(program_path))
+            ast.parse(conftest_path.read_text(encoding="utf-8"), filename=str(conftest_path))
             ast.parse(test_path.read_text(encoding="utf-8"), filename=str(test_path))
             plan.scaffold_syntax_ok = True
         except (OSError, SyntaxError, UnicodeDecodeError) as exc:

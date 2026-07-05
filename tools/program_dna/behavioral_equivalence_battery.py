@@ -156,6 +156,96 @@ def _missing_docs_original(case: Case) -> str:
     return text[:1].upper() + text[1:].lower() if text else ""
 
 
+def _knowledge_vault_state(case: Case) -> dict[str, Any]:
+    notes: dict[int, dict[str, Any]] = {}
+    next_id = 1
+    for raw in case.get("initial_notes", []):
+        note = {
+            "id": int(raw.get("id", next_id)),
+            "title": str(raw.get("title", "")),
+            "body": str(raw.get("body", "")),
+            "tags": sorted({str(tag).lower() for tag in raw.get("tags", [])}),
+            "archived": bool(raw.get("archived", False)),
+        }
+        notes[note["id"]] = note
+        next_id = max(next_id, note["id"] + 1)
+    links = {
+        (int(link.get("from")), int(link.get("to")))
+        for link in case.get("initial_links", [])
+        if link.get("from") is not None and link.get("to") is not None
+    }
+    last_search: list[int] = []
+    last_export = ""
+
+    for op in case.get("ops", []):
+        kind = op.get("op")
+        if kind == "add_note":
+            note = {
+                "id": next_id,
+                "title": str(op.get("title", "")),
+                "body": str(op.get("body", "")),
+                "tags": sorted({str(tag).lower() for tag in op.get("tags", [])}),
+                "archived": False,
+            }
+            notes[next_id] = note
+            next_id += 1
+        elif kind == "tag":
+            note = notes.get(int(op.get("id", -1)))
+            if note is not None:
+                note["tags"] = sorted({*note["tags"], str(op.get("tag", "")).lower()})
+        elif kind == "archive":
+            note = notes.get(int(op.get("id", -1)))
+            if note is not None:
+                note["archived"] = True
+        elif kind == "link":
+            source = int(op.get("from", -1))
+            target = int(op.get("to", -1))
+            if source in notes and target in notes and source != target:
+                links.add((source, target))
+        elif kind == "search":
+            query = str(op.get("query", "")).lower()
+            include_archived = bool(op.get("include_archived", False))
+            last_search = [
+                note_id
+                for note_id, note in sorted(notes.items())
+                if (include_archived or not note["archived"])
+                and (
+                    query in note["title"].lower()
+                    or query in note["body"].lower()
+                    or query in note["tags"]
+                )
+            ]
+        elif kind == "export_markdown":
+            include_archived = bool(op.get("include_archived", False))
+            selected = [
+                note
+                for _note_id, note in sorted(notes.items())
+                if include_archived or not note["archived"]
+            ]
+            chunks = [
+                f"# {note['title']}\n\n{note['body']}\n\nTags: {', '.join(note['tags']) or 'none'}"
+                for note in selected
+            ]
+            last_export = "\n\n---\n\n".join(chunks)
+
+    backlinks: dict[str, list[int]] = {}
+    for source, target in sorted(links):
+        backlinks.setdefault(str(target), []).append(source)
+    active_notes = [note for _note_id, note in sorted(notes.items()) if not note["archived"]]
+    return {
+        "active_count": len(active_notes),
+        "archived_count": sum(1 for note in notes.values() if note["archived"]),
+        "titles": [note["title"] for note in active_notes],
+        "last_search": last_search,
+        "backlinks": backlinks,
+        "export": last_export,
+    }
+
+
+def _knowledge_vault_original(case: Case) -> dict[str, Any]:
+    return _knowledge_vault_state(case)
+
+
 def _cli_replacement(case: Case) -> str:
     text = str(case["text"])
     command = str(case["command"])
@@ -240,6 +330,10 @@ def _missing_docs_replacement(case: Case) -> str:
     if not normalized:
         return ""
     return normalized[0].upper() + normalized[1:].lower()
+
+
+def _knowledge_vault_replacement(case: Case) -> dict[str, Any]:
+    return _knowledge_vault_state(case)
 
 
 def scenarios() -> list[ProgramDNABatteryScenario]:
@@ -372,6 +466,101 @@ def scenarios() -> list[ProgramDNABatteryScenario]:
             original=_missing_docs_original,
             missing_docs=True,
         ),
+        ProgramDNABatteryScenario(
+            name="local-knowledge-vault",
+            category="complex_local_app",
+            docs=[
+                "Local-first knowledge app with notes, tags, archive state, note-to-note links, search, and markdown export.",
+                "add_note creates a new non-archived note with the next integer id. tag lowercases and attaches a tag. archive hides notes from normal search and export.",
+                "search checks active notes by title, body, or exact tag unless include_archived is true. link records backlinks. export_markdown emits active notes in id order with title, body, and tags.",
+            ],
+            behavior_examples=[
+                {
+                    "input": {
+                        "ops": [
+                            {"op": "add_note", "title": "Aura", "body": "Mind stack", "tags": ["AI"]},
+                            {"op": "search", "query": "ai"},
+                        ]
+                    },
+                    "output": {
+                        "active_count": 1,
+                        "archived_count": 0,
+                        "titles": ["Aura"],
+                        "last_search": [1],
+                        "backlinks": {},
+                        "export": "",
+                    },
+                },
+                {
+                    "input": {
+                        "initial_notes": [
+                            {"id": 4, "title": "A", "body": "alpha", "tags": ["draft"]},
+                            {"id": 5, "title": "B", "body": "beta", "tags": []},
+                        ],
+                        "ops": [
+                            {"op": "link", "from": 4, "to": 5},
+                            {"op": "archive", "id": 4},
+                            {"op": "export_markdown"},
+                        ],
+                    },
+                    "output": {
+                        "active_count": 1,
+                        "archived_count": 1,
+                        "titles": ["B"],
+                        "last_search": [],
+                        "backlinks": {"5": [4]},
+                        "export": "# B\n\nbeta\n\nTags: none",
+                    },
+                },
+            ],
+            ui_notes=[
+                "Visible app affordances include a note list, tag chips, search box, archive toggle, backlink panel, and export button.",
+            ],
+            workflows=[
+                "capture note -> tag it -> link it to a related note -> search/filter -> export visible active notes",
+                "archive note -> normal search/export excludes it -> include_archived restores visibility for audit/export",
+            ],
+            file_formats=[
+                "Markdown export uses one section per note, separated by horizontal rules; tags render as a comma-separated footer.",
+            ],
+            permissions=[
+                "Local-only file export; no credentials, no network, no proprietary source, no decompilation.",
+            ],
+            held_out_cases=[
+                {
+                    "initial_notes": [
+                        {"id": 2, "title": "Climate", "body": "ocean heat", "tags": ["science"]},
+                        {"id": 3, "title": "Finals", "body": "basketball", "tags": ["sports"]},
+                    ],
+                    "ops": [
+                        {"op": "tag", "id": 3, "tag": "News"},
+                        {"op": "search", "query": "news"},
+                        {"op": "link", "from": 3, "to": 2},
+                    ],
+                },
+                {
+                    "initial_notes": [
+                        {"id": 1, "title": "Archive me", "body": "old", "tags": ["x"]},
+                        {"id": 2, "title": "Keep me", "body": "new", "tags": []},
+                    ],
+                    "ops": [
+                        {"op": "archive", "id": 1},
+                        {"op": "search", "query": "old"},
+                        {"op": "search", "query": "old", "include_archived": True},
+                        {"op": "export_markdown"},
+                    ],
+                },
+                {
+                    "ops": [
+                        {"op": "add_note", "title": "One", "body": "first", "tags": ["a"]},
+                        {"op": "add_note", "title": "Two", "body": "second", "tags": ["b"]},
+                        {"op": "link", "from": 1, "to": 2},
+                        {"op": "export_markdown", "include_archived": True},
+                    ],
+                },
+            ],
+            original=_knowledge_vault_original,
+        ),
     ]
 
 
@@ -432,6 +621,8 @@ def _reference_implementation(scenario: ProgramDNABatteryScenario, genome: dict[
         return _auth_replacement
     if "cleans user-entered labels" in text or "hello world" in text:
         return _missing_docs_replacement
+    if "knowledge app" in text and "backlink" in text and "export_markdown" in text:
+        return _knowledge_vault_replacement
     raise ValueError(f"no reference implementation for {scenario.name}")
 
 

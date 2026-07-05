@@ -32,6 +32,20 @@ from core.self_improvement.program_dna import ProgramDNAReconstructionEngine
 from tools.program_dna.behavioral_equivalence_battery import scenarios
 
 
+def _llm_router_registered() -> bool:
+    try:
+        from core.container import ServiceContainer
+    except (ImportError, RuntimeError):
+        return False
+    for service_name in ("inference_gate", "llm_router", "cognitive_engine"):
+        try:
+            if ServiceContainer.get(service_name, default=None) is not None:
+                return True
+        except (AttributeError, RuntimeError):
+            continue
+    return False
+
+
 def _spec_docs(scenario: Any) -> list[str]:
     return [
         *scenario.docs,
@@ -46,26 +60,38 @@ def _spec_docs(scenario: Any) -> list[str]:
 async def run_live_reconstruction(*, out: Path | None = None) -> dict[str, Any]:
     engine = ProgramDNAReconstructionEngine(project_root=REPO_ROOT)
     results: list[dict[str, Any]] = []
+    router_available = _llm_router_registered()
 
     for scenario in scenarios():
         held_out = [
             {"input": case, "expected": scenario.original(case)}
             for case in scenario.held_out_cases
         ]
-        outcome = await engine.reconstruct_executable_via_cognition(
-            target=scenario.name,
-            spec_docs=_spec_docs(scenario),
-            train_examples=scenario.behavior_examples,
-            held_out=held_out,
-            fn_name="reconstructed",
-            authorization="educational",
-            objective=f"clean-room reconstruction study for {scenario.category}",
-        )
+        if router_available:
+            outcome = await engine.reconstruct_executable_via_cognition(
+                target=scenario.name,
+                spec_docs=_spec_docs(scenario),
+                train_examples=scenario.behavior_examples,
+                held_out=held_out,
+                fn_name="reconstructed",
+                authorization="educational",
+                objective=f"clean-room reconstruction study for {scenario.category}",
+            )
+        else:
+            outcome = {
+                "status": "conjecture",
+                "held_out_passed": 0,
+                "held_out_total": len(held_out),
+                "equivalence": 0.0,
+                "failures": [],
+                "reason": "no_llm_router_registered",
+            }
         results.append(
             {
                 "name": scenario.name,
                 "category": scenario.category,
                 "status": outcome.get("status"),
+                "reason": outcome.get("reason", ""),
                 "held_out_passed": outcome.get("held_out_passed", 0),
                 "held_out_total": outcome.get("held_out_total", len(held_out)),
                 "equivalence": outcome.get("equivalence", 0.0),
@@ -85,6 +111,7 @@ async def run_live_reconstruction(*, out: Path | None = None) -> dict[str, Any]:
         "case_equivalence": passed_cases / total_cases if total_cases else 0.0,
         "policy": "spec-only (docs + examples); no source, no decompilation; held-out differential verification in sandbox",
         "honesty": "partial coverage is reported as-is; epistemic status is supported/refuted/conjecture per held-out outcome",
+        "router_available": router_available,
         "results": results,
     }
 

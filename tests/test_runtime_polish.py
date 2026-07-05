@@ -1106,10 +1106,10 @@ async def test_live_runtime_probe_checks_program_dna_equivalence_battery_contrac
                 "artifact": str(artifact),
                 "result": {
                     "ok": True,
-                    "scenario_count": 7,
-                    "passed_scenarios": 7,
-                    "held_out_cases": 14,
-                    "passed_cases": 14,
+                    "scenario_count": 8,
+                    "passed_scenarios": 8,
+                    "held_out_cases": 17,
+                    "passed_cases": 17,
                     "equivalence": 1.0,
                 },
             }
@@ -1119,8 +1119,8 @@ async def test_live_runtime_probe_checks_program_dna_equivalence_battery_contrac
     detail, data = await probe._program_dna_equivalence_battery()
 
     assert "equivalence battery" in detail
-    assert data["scenario_count"] == 7
-    assert data["passed_cases"] == 14
+    assert data["scenario_count"] == 8
+    assert data["passed_cases"] == 17
     assert data["equivalence"] == 1.0
 
 

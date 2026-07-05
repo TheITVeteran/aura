@@ -26,7 +26,8 @@ class ProgramDNAEquivalenceBatterySkill(BaseSkill):
     name = "program_dna_equivalence_battery"
     description = (
         "Run the hidden-source Program DNA behavioral equivalence battery across "
-        "CLI, GUI, file converter, web, DB, simulated-auth, and missing-doc archetypes."
+        "CLI, GUI, file converter, web, DB, simulated-auth, missing-doc, and "
+        "complex local-app archetypes."
     )
     input_model = ProgramDNAEquivalenceBatteryInput
     timeout_seconds = 20.0

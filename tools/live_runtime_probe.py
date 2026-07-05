@@ -579,7 +579,7 @@ class LiveRuntimeProbe:
         body = result.get("result") if isinstance(result.get("result"), dict) else result
         if not isinstance(body, dict) or not body.get("ok"):
             raise AssertionError(f"program_dna_equivalence_battery returned malformed body: {result}")
-        if body.get("scenario_count") != 7 or body.get("passed_scenarios") != 7:
+        if body.get("scenario_count") != 8 or body.get("passed_scenarios") != 8:
             raise AssertionError(f"program_dna_equivalence_battery did not pass all scenarios: {result}")
         if body.get("passed_cases") != body.get("held_out_cases") or body.get("equivalence") != 1.0:
             raise AssertionError(f"program_dna_equivalence_battery failed held-out equivalence: {result}")

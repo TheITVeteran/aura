@@ -6396,3 +6396,79 @@ Tracker:
   proof if host load allows, and final tracker/report normalization.
 - Remaining soak work: longer unattended/thermal/runtime soak after the
   non-soak proofs are clean.
+
+## Checkpoint 2026-07-04-44: Program DNA Complex Local-App Reconstruction Proof
+
+Status: implementation validated; checkpoint commit pending.
+
+Scope:
+
+- Expanded the hidden-source Program DNA behavioral-equivalence battery from 7
+  to 8 scenarios with a more complex local-app target,
+  `local-knowledge-vault`.
+- The new target models a realistic local knowledge app: notes/documents, tags,
+  archive state, note-to-note links, search, backlinks, markdown export,
+  local-only permissions, and multi-step workflows.
+- Kept the source boundary clean. The engine receives docs, examples,
+  workflows, file-format notes, UI notes, and permissions; the private original
+  behavior remains a held-out oracle for differential verification.
+- Updated the live runtime probe contract and Program DNA skill description so
+  the complex local-app category is required through the live skill surface, not
+  only the developer-only battery.
+- Fixed generated scaffold portability. Program DNA scaffolds now emit
+  `src/__init__.py` and `tests/conftest.py`, so their generated tests work from
+  normal repo-root invocation as well as from the scaffold directory.
+- Added a clean live cognition probe preflight: if no LLM router/inference
+  service is registered in the current process, the probe records
+  `router_available=false` and clean `conjecture` rows instead of spamming
+  repeated degradation/fault logs for every scenario.
+
+Evidence:
+
+- `python -m pytest -q tests/test_program_dna_behavioral_equivalence_battery.py`
+  -> `4 passed`.
+- `python tools/program_dna/behavioral_equivalence_battery.py --out artifacts/current/program_dna_behavioral_equivalence_latest.json`
+  -> passed; `8/8` scenarios, `17/17` held-out cases, equivalence `1.0`,
+  falsification self-test passed.
+- Complex local-app result in
+  `artifacts/current/program_dna_behavioral_equivalence_latest.json`:
+  `local-knowledge-vault`, `complex_local_app`, `3/3` held-out cases,
+  `14` inferred features/workflows.
+- Program DNA generated the concrete complex-app scaffold at
+  `artifacts/current/program_dna_complex_app_reconstruction/local-knowledge-vault`
+  with `13` evidence items, `14` features, `14` black-box tests, `14` UI tests,
+  `4` edge-case tests, and `scaffold_syntax_ok=true`.
+- `python -m pytest -q artifacts/current/program_dna_complex_app_reconstruction/local-knowledge-vault/tests`
+  -> `2 passed`.
+- `python -m pytest -q tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_program_dna_cognition_reconstruction.py tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_equivalence_battery_contract tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_skill_contract`
+  -> `17 passed`.
+- `python tools/program_dna_live_reconstruction_probe.py --out artifacts/current/program_dna_live_reconstruction_latest.json`
+  -> ran cleanly; `router_available=false`, all scenarios `conjecture` because
+  this Codex-side process has no registered LLM router/inference gate.
+- `python -m ruff check --select F,E9 ...` over changed Program DNA/live-probe
+  files and tests -> passed.
+- `python tools/aura_enterprise_gate.py --root . --baseline config/aura_enterprise_gate_baseline.json --fail-on-regression --out artifacts/current/enterprise_gate.json`
+  -> passed.
+- `git diff --check` -> passed.
+
+Boundary:
+
+- This materially strengthens the Program DNA proof surface for a complex local
+  application and emits a real scaffold/test artifact. It still does not prove
+  arbitrary closed-source cloning, proprietary source recovery, DRM bypass, or
+  exact equivalence for applications without authorized observations.
+- The live model-synthesized reconstruction path was measured but not proven in
+  this Codex process because no live LLM router was registered. A launched Aura
+  runtime proof should rerun the same probe through the live skill/model lane
+  when host load allows.
+
+Tracker:
+
+- Program DNA reconstruction closure rises to about 93-95% for authorized,
+  public, or user-owned clean-room reconstruction and study.
+- Expanded daily-runtime/product closure remains about 97-98% locally.
+- Chrome/Kubernetes/aerospace operational maturity closure remains about
+  88-91% locally.
+- Remaining non-soak checkpoint work: final RSI proof surface replay, launched
+  Aura live skill/model Program DNA replay if host load allows, and final
+  tracker/report normalization.

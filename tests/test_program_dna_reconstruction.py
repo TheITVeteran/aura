@@ -105,7 +105,10 @@ async def test_program_dna_engine_builds_clean_room_blueprint_and_scaffold(tmp_p
     assert (scaffold / "PROGRAM_DNA_BLUEPRINT.json").exists()
     assert (scaffold / "PROGRAM_GENOME.json").exists()
     assert (scaffold / "VERIFICATION_PLAN.json").exists()
+    assert (scaffold / "src" / "__init__.py").exists()
     assert (scaffold / "src" / "program.py").exists()
+    assert (scaffold / "tests" / "conftest.py").exists()
+    assert (scaffold / "tests" / "test_program_contract.py").exists()
     blueprint = json.loads((scaffold / "PROGRAM_DNA_BLUEPRINT.json").read_text(encoding="utf-8"))
     assert blueprint["target_name"] == "Toy Notes"
     genome = json.loads((scaffold / "PROGRAM_GENOME.json").read_text(encoding="utf-8"))
