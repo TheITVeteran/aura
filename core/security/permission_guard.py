@@ -180,7 +180,7 @@ class PermissionGuard(AuraBaseModule):
         return direct
 
     async def _native_bridge_permission_result(
-        self, ptype: PermissionType, *, force_one_shot: bool = True
+        self, ptype: PermissionType, *, force_one_shot: bool = False
     ) -> dict[str, Any] | None:
         """Return effective Aura.app permission when the native bridge is trusted.
 
@@ -201,11 +201,10 @@ class PermissionGuard(AuraBaseModule):
         try:
             from core.security.native_desktop_bridge import probe_native_desktop_bridge
 
-            # Two truth modes: the cached EFFECTIVE path (rare, 30s+ cache)
-            # forces one-shot native truth — the pinned contract. Health
-            # polls (every minute, ~0.6s budget) pass force_one_shot=False:
-            # the underlying one-shot call takes up to 5s, and forcing it
-            # per poll was the permanent "PROBE FAIL" Bryan saw.
+            # The resident Aura.app bridge is the only production readiness
+            # authority. One-shot subprocess probes are diagnostic-only because
+            # they create transient launcher processes and can inherit the wrong
+            # TCC identity.
             native_probe = await asyncio.to_thread(
                 probe_native_desktop_bridge,
                 force=force_one_shot,
@@ -567,11 +566,9 @@ class PermissionGuard(AuraBaseModule):
         )
 
     async def _check_accessibility_permission(self) -> dict[str, Any]:
-        # Effective (cached, rare) path: one-shot native truth wins — the
-        # app bridge's grant is what determines whether Aura can act.
-        native_result = await self._native_bridge_permission_result(
-            PermissionType.ACCESSIBILITY, force_one_shot=True
-        )
+        # The resident app bridge is the production authority; one-shot probes
+        # are diagnostic-only and must not make the desktop surface look ready.
+        native_result = await self._native_bridge_permission_result(PermissionType.ACCESSIBILITY)
         if native_result is not None:
             return native_result
         loop = asyncio.get_running_loop()

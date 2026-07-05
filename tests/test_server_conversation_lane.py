@@ -4403,6 +4403,129 @@ async def test_api_chat_desktop_self_process_no_reply_uses_grounded_repair(monke
 
 
 @pytest.mark.asyncio
+async def test_api_chat_desktop_runtime_path_no_reply_uses_grounded_route_truth(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    kernel_calls = []
+    completed_exchanges = []
+    output_receipts = []
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            kernel_calls.append("process")
+            raise AssertionError("runtime-path desktop repair must not use KernelInterface fallback")
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-runtime-path"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    async def _no_cognitive_reply(*_args, **kwargs):
+        trace = kwargs.get("turn_trace")
+        if isinstance(trace, dict):
+            trace.update(
+                {
+                    "engine_think_invoked": True,
+                    "cognitive_engine_reply_accepted": False,
+                    "cognitive_engine_reply_failed": True,
+                    "live_mind_context_present": True,
+                    "live_mind_snapshot_present": True,
+                    "live_mind_snapshot_ready": True,
+                    "live_mind_required_subsystems_ok": True,
+                    "response_path": "cognitive_engine_no_acceptable_reply",
+                    **_bound_live_mind_controls_trace(),
+                }
+            )
+        return None
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _no_cognitive_reply)
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_mark_conversation_lane_state",
+        lambda reason, state="failed": {
+            "conversation_ready": True,
+            "state": state,
+            "reason": reason,
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+        },
+    )
+    monkeypatch.setattr(chat_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "Live route probe: in one concise paragraph, explain what runtime path "
+                "you are speaking through right now and include the exact phrase resident bridge truth."
+            )
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    lowered = payload["response"].lower()
+    assert response.status_code == 200
+    assert payload["status"] == "cognitive_engine_runtime_fact_grounding"
+    assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
+    assert payload["response_confidence"] == "high"
+    assert payload["live_turn_contract"]["full_mind_path"] is True
+    assert payload["live_turn_contract"]["bounded_contract_used"] is False
+    assert "failed closed instead of sending an ungrounded answer" not in lowered
+    assert "resident bridge truth" in lowered
+    assert "desktop ui" in lowered
+    assert "/api/chat" in lowered
+    assert "cognitiveengine" in lowered
+    assert "cortex (32b)" in lowered
+    assert "claude" not in lowered
+    assert kernel_calls == []
+    assert len(completed_exchanges) == 1
+    assert completed_exchanges[0][1]["record_experience"] is True
+    assert output_receipts[0][1]["metadata"]["path"] == "cognitive_engine_runtime_fact_grounding"
+    assert output_receipts[0][1]["metadata"]["response_confidence"] == "high"
+
+
+@pytest.mark.asyncio
 async def test_api_chat_desktop_identity_no_reply_uses_evidence_bound_repair(monkeypatch):
     from interface import server as server_module
     from interface.routes import chat as chat_routes

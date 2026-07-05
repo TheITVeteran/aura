@@ -1000,7 +1000,7 @@ def test_desktop_access_summary_menu_clock_probe_is_bounded(monkeypatch):
     assert payload["menu_clock_error"]
 
 
-def test_desktop_access_summary_reconciles_partial_resident_probe_with_one_shot(monkeypatch):
+def test_desktop_access_summary_keeps_resident_probe_authoritative_by_default(monkeypatch):
     import core.security.permission_guard as permission_guard_module
     from interface.routes import system as system_routes
 
@@ -1074,14 +1074,14 @@ def test_desktop_access_summary_reconciles_partial_resident_probe_with_one_shot(
     finally:
         system_routes._desktop_access_cache.update(original_cache)
 
-    assert payload["overall_status"] == "ready"
-    assert payload["permission_confidence"] == "direct"
-    assert payload["desktop_control_ready"] is True
-    assert payload["screen_text_ready"] is True
-    assert payload["blocking_permissions"] == []
-    assert payload["native_bridge_probe"]["resident_reconciled"] is True
-    assert payload["native_bridge_probe"]["resident_bridge_probe"]["accessibility"] is False
-    assert probe_calls == [(False, False), (True, True)]
+    assert payload["overall_status"] == "partial"
+    assert payload["permission_confidence"] == "partial_direct"
+    assert payload["desktop_control_ready"] is False
+    assert payload["screen_text_ready"] is False
+    assert "accessibility" in payload["blocking_permissions"]
+    assert payload["native_bridge_probe"]["bridge_transport"] == "resident_ipc"
+    assert "resident_reconciled" not in payload["native_bridge_probe"]
+    assert probe_calls == [(False, False)]
 
 
 def test_desktop_access_summary_explains_denied_current_native_bridge(monkeypatch):

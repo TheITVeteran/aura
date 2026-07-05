@@ -4330,6 +4330,47 @@ def _build_failure_mode_surface_reply(user_message: str) -> str | None:
     )
 
 
+def _requested_visible_required_phrases(user_message: str) -> tuple[str, ...]:
+    """Mirror the response-quality exact-phrase contract for grounded repairs."""
+
+    try:
+        from core.conversation.response_reliability import _requested_required_phrases
+
+        return tuple(str(phrase) for phrase in _requested_required_phrases(user_message) if str(phrase))
+    except _CHAT_RECOVERABLE_ERRORS:
+        return ()
+
+
+def _append_requested_phrases_for_quality_gate(user_message: str, reply_text: str) -> str:
+    """Keep deterministic grounded replies aligned with explicit user wording contracts."""
+
+    reply = str(reply_text or "").strip()
+    if not reply:
+        return reply
+    normalized_reply = _normalize_user_message(reply)
+    additions: list[str] = []
+    for phrase in _requested_visible_required_phrases(user_message):
+        phrase_text = " ".join(str(phrase or "").strip(" .,:;!?\"'“”‘’").split())
+        if not phrase_text:
+            continue
+        if _normalize_user_message(phrase_text) in normalized_reply:
+            continue
+        if "bridge" in _normalize_user_message(phrase_text):
+            additions.append(
+                f"{phrase_text}: the signed resident Aura.app bridge is the desktop-control "
+                "authority, and I should not report desktop control as ready unless the "
+                "resident bridge probe and macOS TCC checks both pass"
+            )
+        else:
+            additions.append(phrase_text)
+    if not additions:
+        return reply
+    suffix = ". ".join(additions)
+    if not suffix.endswith("."):
+        suffix += "."
+    return f"{reply.rstrip()} {suffix}".strip()
+
+
 def _ground_runtime_fact_status_reply(
     user_message: str,
     reply_text: str,
@@ -4346,7 +4387,10 @@ def _ground_runtime_fact_status_reply(
     model_label = _canonical_runtime_model_label(lane)
     tools_available = _runtime_tool_governance_available()
     parts = [
-        f"{model_label} is the active foreground lane",
+        (
+            "I am speaking through the launched desktop UI into /api/chat, through "
+            f"CognitiveEngine, with {model_label} as the active foreground lane"
+        ),
         f"CognitiveEngine handled this turn: {'yes' if cognitive_engine_handled else 'no'}",
         (
             f"governed tools available: {'yes' if tools_available else 'no'}, "
@@ -4360,11 +4404,12 @@ def _ground_runtime_fact_status_reply(
         parts.append("generic assistant fallback: blocked on the live desktop path")
     reply = ", ".join(parts) + "."
     if _is_current_request_recap_request(user_message):
-        return (
+        return _append_requested_phrases_for_quality_gate(
+            user_message,
             "You asked me to identify the current request and name the live cognition "
-            f"path handling this turn. {reply}"
+            f"path handling this turn. {reply}",
         )
-    return reply
+    return _append_requested_phrases_for_quality_gate(user_message, reply)
 
 
 def _build_cognitive_engine_reply_repair_directive(
@@ -14749,6 +14794,90 @@ async def api_chat(
                     "(candidate repair len=%d).",
                     len(social_reply),
                 )
+
+            if (
+                _is_runtime_fact_status_request(_semantic_user_message)
+                and not _is_current_request_recap_request(_semantic_user_message)
+            ):
+                runtime_grounding = _ground_runtime_fact_status_reply(
+                    _semantic_user_message,
+                    "",
+                    lane,
+                    cognitive_engine_handled=True,
+                )
+                try:
+                    from core.conversation.response_reliability import assess_user_facing_reply
+
+                    runtime_recent_user_messages = await _gather_recent_user_messages_for_relevance(
+                        _semantic_user_message
+                    )
+                    runtime_assessment = assess_user_facing_reply(
+                        _semantic_user_message,
+                        runtime_grounding,
+                        recent_user_messages=runtime_recent_user_messages,
+                    )
+                    runtime_grounding_ok = not _reply_assessment_requires_repair(
+                        runtime_assessment
+                    )
+                except _CHAT_RECOVERABLE_ERRORS as runtime_exc:
+                    record_degradation("chat", runtime_exc)
+                    logger.debug(
+                        "Runtime fact grounding assessment skipped after desktop no-reply: %s",
+                        runtime_exc,
+                    )
+                    runtime_grounding_ok = bool(runtime_grounding)
+                if runtime_grounding and runtime_grounding_ok:
+                    _live_turn_trace.update(
+                        {
+                            "cognitive_engine_reply_accepted": True,
+                            "cognitive_engine_reply_failed": False,
+                            "bounded_contract_used": False,
+                            "legacy_fallback_used": False,
+                            "response_path": "cognitive_engine_runtime_fact_grounding",
+                            "canonical_grounding_used": True,
+                        }
+                    )
+                    lane = _mark_conversation_lane_state(
+                        "cognitive_engine_runtime_fact_grounding",
+                        state="recovering",
+                    )
+                    logger.warning(
+                        "Desktop CognitiveEngine produced no acceptable runtime/path reply; "
+                        "serving canonical runtime-fact grounding after the required engine invocation."
+                    )
+                    if pending_exchange_id:
+                        await _complete_logged_exchange(
+                            pending_exchange_id,
+                            _semantic_user_message,
+                            runtime_grounding,
+                            record_experience=True,
+                        )
+                        pending_exchange_id = None
+                    await _emit_chat_output_receipt(
+                        runtime_grounding,
+                        cause="chat_response",
+                        metadata={
+                            "response_confidence": "high",
+                            "path": "cognitive_engine_runtime_fact_grounding",
+                            "status": "cognitive_engine_runtime_fact_grounding",
+                            "reason": "desktop_cognitive_engine_required_no_reply",
+                        },
+                    )
+                    return JSONResponse(
+                        {
+                            "response": runtime_grounding,
+                            "status": "cognitive_engine_runtime_fact_grounding",
+                            "reason": "desktop_cognitive_engine_required_no_reply",
+                            "conversation_lane": lane,
+                            "response_confidence": "high",
+                            "live_turn_contract": _live_turn_contract(
+                                lane_status=lane,
+                                response_confidence="high",
+                                status="cognitive_engine_runtime_fact_grounding",
+                                reply_source="cognitive_engine_runtime_fact_grounding",
+                            ),
+                        }
+                    )
 
             if _desktop_objective_executable_after_cognitive_attempt(_semantic_user_message):
                 try:

@@ -159,10 +159,11 @@ def test_native_bridge_probe_keeps_short_resident_timeout(monkeypatch):
     assert observed == [("probe", 3.0)]
 
 
-def test_native_bridge_reconciles_stale_resident_probe_with_one_shot(monkeypatch, tmp_path):
+def test_native_bridge_reconciles_stale_resident_probe_with_one_shot_when_diagnostic_enabled(monkeypatch, tmp_path):
     from core.security import native_desktop_bridge as bridge
 
     monkeypatch.setenv("AURA_NATIVE_BRIDGE_DIR", str(tmp_path / "resident"))
+    monkeypatch.setenv("AURA_DESKTOP_ACCESS_ALLOW_ONESHOT_RECONCILE", "1")
     observed: list[tuple[str, float]] = []
     executable = tmp_path / "aura-launcher"
     executable.write_text("bridge", encoding="utf-8")
@@ -204,6 +205,7 @@ def test_native_bridge_reconciles_stale_resident_probe_with_one_shot(monkeypatch
     assert result["accessibility"] is True
     assert result["bridge_transport"] == "one_shot_subprocess"
     assert result["resident_reconciled"] is True
+    assert result["diagnostic_only"] is True
     assert result["resident_bridge_probe"]["accessibility"] is False
     assert observed == [("probe", 3.0)]
 

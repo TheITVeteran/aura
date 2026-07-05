@@ -6604,3 +6604,79 @@ Tracker:
 - Remaining non-soak checkpoint work: post-TCC visible desktop action replay,
   live Program DNA/model skill replay, final RSI live proof replay if host load
   allows, and continued Chrome/Kubernetes/aerospace reliability tightening.
+
+## Checkpoint 2026-07-05-02: Runtime-Path Repair + Resident Bridge Authority
+
+Status: implementation and live replay validated; checkpoint commit pending.
+
+Scope:
+
+- Kept the resident Aura.app bridge as the only production desktop-access
+  authority. One-shot native bridge reconciliation is now diagnostic-only and
+  opt-in through `AURA_DESKTOP_ACCESS_ALLOW_ONESHOT_RECONCILE`.
+- Kept protected foreground tool deferrals neutral: deferrals no longer train as
+  tool failures, create memory/ACG failure effects, or inflate self-repair
+  pressure.
+- Patched live desktop chat repair for runtime/path/status questions. If the
+  required CognitiveEngine turn is invoked but yields no acceptable user-facing
+  text, the route now binds the answer to canonical runtime evidence instead of
+  returning the generic fail-closed sentence.
+- Runtime-path grounding now names the actual launched desktop route:
+  desktop UI -> `/api/chat` -> CognitiveEngine -> local Cortex foreground lane.
+- Grounded runtime repairs now obey exact requested phrase contracts, including
+  the live `resident bridge truth` probe.
+- The repair stays narrow: current-request/recall probes are not rescued by
+  runtime-status grounding unless the recall contract itself is satisfied.
+
+Evidence:
+
+- `python -m py_compile interface/routes/chat.py` -> passed.
+- `python -m pytest -q tests/test_server_conversation_lane.py::test_api_chat_desktop_runtime_path_no_reply_uses_grounded_route_truth tests/test_chat_reliability_proof.py::test_reliability_gate_rejects_missing_requested_phrase_and_runtime_path tests/test_chat_reliability_proof.py::test_reliability_gate_rejects_external_provider_path_hallucination`
+  -> `3 passed`.
+- `python -m pytest -q tests/test_server_conversation_lane.py::test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_kernel_fallback tests/test_server_conversation_lane.py::test_api_chat_desktop_discards_bounded_repair_when_full_mind_path_not_proven tests/test_server_conversation_lane.py::test_api_chat_desktop_self_process_no_reply_uses_grounded_repair tests/test_server_conversation_lane.py::test_api_chat_desktop_runtime_path_no_reply_uses_grounded_route_truth tests/test_server_conversation_lane.py::test_api_chat_desktop_identity_no_reply_uses_evidence_bound_repair tests/test_server_conversation_lane.py::test_api_chat_desktop_capability_no_reply_fails_closed_without_inventory_repair`
+  -> `6 passed`.
+- `python -m pytest -q tests/test_permission_guard_cache.py tests/test_native_desktop_bridge.py tests/test_server_runtime_hardening.py::test_desktop_access_summary_keeps_resident_probe_authoritative_by_default tests/test_server_runtime_hardening.py::test_desktop_access_summary_explains_denied_current_native_bridge tests/test_server_runtime_hardening.py::test_desktop_access_screen_request_uses_resident_signed_bridge tests/test_server_runtime_hardening.py::test_desktop_access_accessibility_request_uses_resident_signed_bridge tests/test_runtime_polish.py::test_desktop_access_oneshot_reconcile_is_explicit_diagnostic_only tests/test_runtime_polish.py::test_background_tool_deferrals_do_not_train_as_failures`
+  -> `24 passed`.
+- `python -m pytest -q tests/test_chat_reliability_proof.py::test_reliability_gate_rejects_missing_requested_phrase_and_runtime_path tests/test_chat_reliability_proof.py::test_reliability_gate_rejects_external_provider_path_hallucination tests/test_chat_reliability_proof.py::test_friendly_failure_floors_do_not_count_as_successful_answers tests/test_chat_reliability_proof.py::test_operational_answer_path_failure_is_treated_as_failed_repair_floor tests/test_server_conversation_lane.py::test_api_chat_desktop_runtime_path_no_reply_uses_grounded_route_truth`
+  -> `5 passed`.
+- `git diff --check` -> passed.
+- Live launched Aura replay on `/Applications/Aura.app`:
+  `POST http://127.0.0.1:8000/api/chat` with desktop headers and prompt
+  `Live route probe... include the exact phrase resident bridge truth` returned
+  HTTP `200` in `8.85s`.
+- Live replay response included `/api/chat`, `CognitiveEngine`, `Cortex (32B)`,
+  and the exact phrase `resident bridge truth`.
+- Live replay contract reported `full_mind_path=true`,
+  `engine_think_invoked=true`, `cognitive_engine_reply_accepted=true`,
+  `bounded_contract_used=false`, `legacy_fallback_used=false`, and
+  `response_path=cognitive_engine_runtime_fact_grounding`.
+- Live `/api/health` after replay: `status=ok`, `conversation_ready=true`,
+  foreground endpoint `Cortex`, recurrent depth active.
+- Live process table after replay: one `aura-launcher`, one
+  `aura_main.py --desktop`, expected sentinel/worker children, no
+  `native-desktop-bridge` one-shot process.
+
+Boundary:
+
+- This fixes the specific live-runtime 503/canned-failure behavior for
+  runtime-path/status probes after a failed model draft.
+- It does not grant macOS TCC permissions. Live `/api/system/desktop-access`
+  still reports Screen Recording and Accessibility denied for the signed
+  `com.aura.desktop` identity; visible OS-control replay remains blocked until
+  those grants become true in macOS.
+- It does not replace the remaining live Program DNA/model-skill replay, final
+  RSI replay, or longer soak/thermal reliability proof.
+
+Tracker:
+
+- Live launch/conversation readiness closure rises to about 98-99% locally for
+  boot/health/CognitiveEngine/Cortex route truth.
+- Resident desktop bridge truth closure remains about 90-92%; the code path is
+  now resident-authoritative, but macOS TCC grants are still denied.
+- Expanded daily-runtime/product closure remains about 97-98% locally, with
+  visible desktop OS-control proof gated on TCC.
+- Chrome/Kubernetes/aerospace operational maturity remains about 88-91%
+  locally; this checkpoint removes one repeat live-route failure class.
+- Remaining non-soak checkpoint work: post-TCC visible desktop action replay,
+  live Program DNA/model skill replay, final RSI live proof replay if host load
+  allows, and continued reliability tightening.

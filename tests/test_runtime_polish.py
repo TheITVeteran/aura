@@ -1784,3 +1784,11 @@ def test_background_tool_deferrals_do_not_train_as_failures():
         assert 'result.get("status", "") or "").lower() == "deferred"' in source
         assert "Tool %s execution deferred" in source
         assert "return result\n            logger.info(\"Tool %s execution completed" in source
+
+
+def test_desktop_access_oneshot_reconcile_is_explicit_diagnostic_only():
+    system_route = (PROJECT_ROOT / "interface" / "routes" / "system.py").read_text(encoding="utf-8")
+
+    assert "AURA_DESKTOP_ACCESS_ALLOW_ONESHOT_RECONCILE" in system_route
+    assert "prefer_one_shot=True" in system_route
+    assert 'one_shot_probe["diagnostic_only"] = True' in system_route

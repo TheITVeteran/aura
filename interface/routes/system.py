@@ -1271,6 +1271,8 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                         bool(native_probe.get(key))
                         for key in ("screen_recording", "accessibility", "automation")
                     )
+                    and os.getenv("AURA_DESKTOP_ACCESS_ALLOW_ONESHOT_RECONCILE", "0")
+                    in {"1", "true", "TRUE", "yes", "YES"}
                 ):
                     one_shot_probe = await asyncio.wait_for(
                         asyncio.to_thread(
@@ -1296,6 +1298,7 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                     ):
                         one_shot_probe["resident_bridge_probe"] = native_probe
                         one_shot_probe["resident_reconciled"] = True
+                        one_shot_probe["diagnostic_only"] = True
                         native_probe = one_shot_probe
                 payload["native_bridge_probe"] = (
                     native_probe if isinstance(native_probe, dict)

@@ -161,8 +161,13 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["status"], "active_native_bridge")
         self.assertTrue(result["native_bridge"])
 
-    async def test_effective_check_forces_one_shot_native_app_permission_truth(self):
+    async def test_effective_check_keeps_resident_native_app_permission_truth(self):
         guard = PermissionGuard()
+        guard._accessibility_preflight_probe = lambda: {
+            "granted": False,
+            "status": "denied",
+            "guidance": "direct denied",
+        }
         calls = []
 
         def _probe(*, force=False, prefer_one_shot=False):
@@ -193,9 +198,9 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
         ):
             result = await guard.check_permission(PermissionType.ACCESSIBILITY)
 
-        self.assertTrue(result["granted"])
-        self.assertEqual(result["status"], "active_native_bridge")
-        self.assertEqual(calls, [(True, True)])
+        self.assertFalse(result["granted"])
+        self.assertEqual(result["status"], "denied")
+        self.assertNotIn((True, True), calls)
 
     async def test_effective_check_falls_back_to_current_process_when_native_bridge_denies(self):
         guard = PermissionGuard()
