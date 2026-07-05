@@ -37,6 +37,12 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "requiresProtectedFolderFallback" in swift
     assert 'desktop-terminal-launch.command' in swift
     assert 'desktop-terminal-launch.marker' in swift
+    assert 'desktop-gui-window.marker' in swift
+    assert "desktopWindowLaunchInProgress" in swift
+    assert "guiWindowHelperIsRunning" in swift
+    assert "markGuiWindowLaunch" in swift
+    assert "clearGuiWindowLaunchMarker" in swift
+    assert "single-flight" in swift
     assert "terminalHandoffIsFresh" in swift
     assert "terminalHandoffIsStaleWithoutRuntime" in swift
     assert "age >= staleMarkerWithoutRuntimeWindow" in swift

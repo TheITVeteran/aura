@@ -119,10 +119,20 @@ class PermissionGuard(AuraBaseModule):
         itself can prove the grant for the current process identity. This method
         provides that stricter evidence without mutating the normal cache.
         """
-        # Fast local probes first (ctypes/CG calls, microseconds): if THIS
-        # process holds the grant, that is the truth and we are done. The
-        # native app bridge is the fallback for "python denied but Aura.app
-        # can act" — never the first hop inside a sub-second probe budget.
+        # The signed Aura.app bridge is the authority for desktop control.  The
+        # cognitive runtime is usually a Python child; Python's own TCC state
+        # can be granted or denied independently and must not override the
+        # visible app's grant.  The desktop-access route primes the native
+        # bridge cache before calling this method, so this is normally a cheap
+        # cache read; local Python probes are fallback evidence only.
+        native_result = await self._native_bridge_permission_result(
+            ptype, force_one_shot=False
+        )
+        if native_result is not None:
+            direct = dict(native_result)
+            direct["direct_probe"] = True
+            return direct
+
         local_result: dict[str, Any] | None = None
         if ptype == PermissionType.SCREEN:
             loop = asyncio.get_running_loop()
@@ -136,13 +146,7 @@ class PermissionGuard(AuraBaseModule):
             direct = dict(local_result)
             direct["direct_probe"] = True
             return direct
-
-        native_result = await self._native_bridge_permission_result(
-            ptype, force_one_shot=False
-        )
-        if native_result is not None:
-            result = native_result
-        elif local_result is not None:
+        if local_result is not None:
             result = local_result
         elif ptype == PermissionType.SCREEN:
             result = {

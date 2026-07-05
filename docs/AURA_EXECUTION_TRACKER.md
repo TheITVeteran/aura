@@ -6334,3 +6334,65 @@ Tracker:
   87-90% locally. The next reliability checkpoint should focus on broad
   operational hardening and live-path friction rather than proof artifact
   selection.
+
+## Checkpoint 2026-07-04-43: Desktop Reliability Single-Flight and TCC Authority Repair
+
+Status: implementation validated; checkpoint commit pending.
+
+Scope:
+
+- Hardened the macOS launcher against duplicate visible Aura desktop windows.
+  `Open Aura` and auto-open now use a fresh GUI-window marker plus a live helper
+  process check, so repeated launcher clicks do not spawn multiple dock-visible
+  Aura helper sessions while one window is already open or opening.
+- Repaired desktop permission authority order. The signed resident Aura.app
+  native bridge is now the authoritative desktop-control permission source for
+  direct desktop probes; Python/Codex/Terminal TCC state is only fallback
+  evidence. This aligns the UI with the app identity the user actually grants in
+  macOS Privacy & Security.
+- Rebuilt and reinstalled `/Applications/Aura.app` with the stable signed
+  identity `com.aura.desktop` and executable `aura-launcher`.
+- Rechecked background cognition/autonomy contract tests so safe boot does not
+  silently suppress the background loops the live product is expected to run.
+- Rechecked memory panel fallback/error rendering and health-router background
+  deferral deduplication as part of the Chrome/Kubernetes/aerospace reliability
+  standard: no blank panels, no repeated noisy deferral floods, and no duplicate
+  live Aura helpers from one launch surface.
+
+Evidence:
+
+- `python -m pytest tests/test_launcher_polish_contract.py tests/test_native_desktop_bridge.py tests/test_runtime_polish.py::test_background_loop_runs_during_desktop_safe_boot tests/test_runtime_polish.py::test_background_loop_start_allows_explicit_desktop_background_cognition tests/test_runtime_polish.py::test_orchestrator_background_runs_under_safe_boot_but_honors_explicit_disable tests/test_llm_health_router_timeout.py::test_router_deduplicates_repeated_background_deferral_logs tests/test_llm_health_router_timeout.py::test_router_defers_background_local_runtime_during_foreground_quiet_window -q`
+  -> `46 passed`.
+- `xcrun swiftc -parse scripts/AuraLauncher.swift` -> passed.
+- `python -m py_compile core/security/permission_guard.py` -> passed.
+- `python tools/aura_production_readiness_gate.py --out artifacts/current/production_readiness.json`
+  -> passed.
+- `python tools/aura_enterprise_gate.py --root . --baseline config/aura_enterprise_gate_baseline.json --fail-on-regression --out artifacts/current/enterprise_gate.json`
+  -> passed.
+- `git diff --check` -> passed.
+- `/Applications/Aura.app` and `/Applications/Aura.app/Contents/MacOS/aura-launcher`
+  codesign identity verified as `Identifier=com.aura.desktop`,
+  `Authority=Aura Local Code Signing`, `CDHash=f254d5fb468493bcf5f4b0580835bb36948ca389`.
+- `/Applications/Aura.app/Contents/Info.plist` verified
+  `CFBundleIdentifier=com.aura.desktop` and `CFBundleExecutable=aura-launcher`.
+
+Boundary:
+
+- This closes the duplicate launcher-helper class and the Python-vs-Aura.app TCC
+  authority mismatch in code. macOS can still require the user to toggle or
+  re-add Aura.app after a new local signature, but the runtime no longer treats
+  Python's TCC row as stronger evidence than the signed Aura.app bridge.
+- This is not the 24-72 hour soak and not the final visible multi-turn desktop
+  demo. Those remain separate evidence surfaces because they consume live host
+  resources and must be run from a clean checkpoint.
+
+Tracker:
+
+- Expanded daily-runtime/product closure rises to about 97-98% locally.
+- Chrome/Kubernetes/aerospace operational maturity closure rises to about
+  88-91% locally.
+- Remaining non-soak checkpoint work: Program DNA complex-app reconstruction
+  proof, final RSI proof surface replay, live launched desktop conversation/tool
+  proof if host load allows, and final tracker/report normalization.
+- Remaining soak work: longer unattended/thermal/runtime soak after the
+  non-soak proofs are clean.

@@ -907,6 +907,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private var lockDirectory: URL!
     private var bootMarkerFile: URL!
     private var terminalHandoffMarkerFile: URL!
+    private var guiWindowMarkerFile: URL!
     private var spawnLockFile: URL!
     private var appInstanceLockFile: URL!
     private var nativeBridgeRequestDirectory: URL!
@@ -931,6 +932,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private let launchedAt = Date()
     private let staleMarkerWithoutRuntimeWindow: TimeInterval = 8.0
     private let terminalHandoffWindow: TimeInterval = 75.0
+    private let guiWindowLaunchWindow: TimeInterval = 25.0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         do {
@@ -1044,6 +1046,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         logFile = logDirectory.appendingPathComponent("desktop-launch.log")
         bootMarkerFile = lockDirectory.appendingPathComponent("desktop-app-launch.marker")
         terminalHandoffMarkerFile = lockDirectory.appendingPathComponent("desktop-terminal-launch.marker")
+        guiWindowMarkerFile = lockDirectory.appendingPathComponent("desktop-gui-window.marker")
         spawnLockFile = lockDirectory.appendingPathComponent("desktop-app-launch.lock")
         appInstanceLockFile = lockDirectory.appendingPathComponent("desktop-app-instance.lock")
         let nativeBridgeDirectory = auraHome.appendingPathComponent("native_bridge", isDirectory: true)
@@ -2000,6 +2003,44 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         return age >= 0 && age < terminalHandoffWindow
     }
 
+    private func guiWindowLaunchAge() -> TimeInterval? {
+        guard let text = try? String(contentsOf: guiWindowMarkerFile, encoding: .utf8) else {
+            return nil
+        }
+        guard let epoch = Double(text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            return nil
+        }
+        return Date().timeIntervalSince1970 - epoch
+    }
+
+    private func guiWindowLaunchIsFresh() -> Bool {
+        guard let age = guiWindowLaunchAge() else {
+            return false
+        }
+        return age >= 0 && age < guiWindowLaunchWindow
+    }
+
+    private func markGuiWindowLaunch() {
+        let payload = "\(Date().timeIntervalSince1970)\n"
+        try? payload.write(to: guiWindowMarkerFile, atomically: true, encoding: .utf8)
+    }
+
+    private func clearGuiWindowLaunchMarker() {
+        try? fileManager.removeItem(at: guiWindowMarkerFile)
+    }
+
+    private func guiWindowHelperIsRunning() -> Bool {
+        spawnedProcessesLock.lock()
+        defer { spawnedProcessesLock.unlock() }
+        return spawnedProcesses.contains { proc in
+            proc.isRunning && (proc.arguments ?? []).contains("--gui-window")
+        }
+    }
+
+    private func desktopWindowLaunchInProgress() -> Bool {
+        guiWindowHelperIsRunning() || guiWindowLaunchIsFresh()
+    }
+
     private func runtimeLockFileURL() -> URL {
         lockDirectory.appendingPathComponent("orchestrator.lock")
     }
@@ -2302,14 +2343,20 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             footerLabel.stringValue = "Aura is already handling the desktop-window request. Give it a moment before trying again."
             return
         }
+        if desktopWindowLaunchInProgress() {
+            footerLabel.stringValue = "Aura’s desktop window is already open or opening. I’m keeping this launch single-flight."
+            return
+        }
         if existingRuntimeIsObservable() {
             do {
+                markGuiWindowLaunch()
                 try spawnAuxiliaryAura(arguments: ["--open-gui-window"])
                 autoDesktopOpenTriggered = true
                 NSApp.activate(ignoringOtherApps: true)
                 NSRunningApplication.current.activate(options: [])
                 NSApp.requestUserAttention(.informationalRequest)
             } catch {
+                clearGuiWindowLaunchMarker()
                 footerLabel.stringValue = "Aura’s desktop window could not be opened. Check the launcher logs."
             }
             return
@@ -2405,7 +2452,12 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         if terminalHandoffIsFresh() {
             return true
         }
+        if desktopWindowLaunchInProgress() {
+            autoDesktopOpenTriggered = true
+            return true
+        }
         do {
+            markGuiWindowLaunch()
             try spawnAuxiliaryAura(arguments: ["--open-gui-window"])
             autoDesktopOpenTriggered = true
             NSApp.activate(ignoringOtherApps: true)
@@ -2413,6 +2465,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             NSApp.requestUserAttention(.informationalRequest)
             return true
         } catch {
+            clearGuiWindowLaunchMarker()
             footerLabel.stringValue = "Aura is ready, but the desktop window didn’t open automatically. Use Open Desktop Window."
             return false
         }
