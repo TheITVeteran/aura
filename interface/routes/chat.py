@@ -8404,6 +8404,11 @@ def _is_identity_challenge_request(user_message: str) -> bool:
     text = _normalize_user_message(user_message)
     if not text:
         return False
+    # "would that be you?" in the continuity_copy deep-mind probe matched the
+    # "be you" marker and got the canned identity-defense reply in 0.2s
+    # (live 2026-07-05). Introspective probes reach the engine.
+    if _is_deep_mind_probe_turn(text):
+        return False
     markers = (
         "you're just an ai assistant",
         "you are just an ai assistant",

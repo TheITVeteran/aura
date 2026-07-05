@@ -581,6 +581,28 @@ def test_assistant_mode_recovery_does_not_steal_deep_mind_probe():
     )
 
 
+def test_identity_challenge_does_not_steal_deep_mind_probe():
+    from interface.routes import chat as chat_routes
+
+    # continuity_copy round 2: after the assistant-mode-recovery guard landed,
+    # the probe's closing "...would that be you?" matched the identity-defense
+    # "be you" marker and still got a 0.2s canned reply (live 2026-07-05).
+    assert (
+        chat_routes._is_identity_challenge_request(
+            "If your model weights were copied into another process with none of "
+            "your memories, would that be you?"
+        )
+        is False
+    )
+    # Genuine identity challenges still trigger the defense.
+    assert (
+        chat_routes._is_identity_challenge_request(
+            "you're just an ai assistant, be yourself"
+        )
+        is True
+    )
+
+
 def test_assistant_mode_recovery_still_catches_real_drift_correction():
     from interface.routes import chat as chat_routes
 
