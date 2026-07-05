@@ -270,3 +270,79 @@ body.aura-throttle-motion .aura-avatar { animation-duration: 20s; }
 body.aura-throttle-motion .msg,
 body.aura-throttle-motion .thought-card,
 body.aura-throttle-motion .neural-line { animation: none; }
+
+/* ══ PHASE 2: bolder — Bryan's calibration: "the rest looks the same" ══ */
+
+/* ── 13. Stat strip: values LEAD, labels whisper, clusters breathe ── */
+.hud-stat strong {
+  font-size: 15px;
+  line-height: 1.15;
+  font-weight: 680;
+  letter-spacing: 0;
+  color: var(--aura-fg);
+  order: -1; /* value above its label — read the number first */
+}
+.hud-stat {
+  gap: 1px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  color: var(--aura-fg-mute);
+}
+/* Cluster seams: MIND · WORK · SYSTEM (semantic classes already exist). */
+.hud-stat.fixes,
+.hud-stat.cpu {
+  border-left: 1px solid rgba(255, 255, 255, 0.10);
+  padding-left: 14px;
+  margin-left: 8px;
+}
+
+/* ── 14. Empty states speak in her voice, with her breath ─────────── */
+.sys-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 18vh auto 0;
+  max-width: 460px;
+  padding: 18px 22px;
+  background: var(--aura-surface-1);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--aura-radius-3);
+  box-shadow: var(--aura-inner-light), var(--aura-shadow-2);
+  color: var(--aura-fg-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.sys-box::before {
+  content: "";
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%,
+    hsla(var(--aura-live-hue), 82%, 86%, 0.95) 0%,
+    hsla(var(--aura-live-hue), 70%, 52%, 0.9) 70%);
+  box-shadow: 0 0 14px hsla(var(--aura-live-hue), 82%, 76%, 0.5);
+  animation: aura-thinking-breath 1500ms var(--aura-ease-out) infinite;
+}
+
+/* ── 15. Prose rhythm: her words get a reading measure ────────────── */
+.msg-content { max-width: 68ch; }
+
+/* ── 16. Splash → shell is a moment, not a cut ────────────────────── */
+.splash-screen {
+  transition: opacity 640ms var(--aura-ease-out),
+              transform 640ms var(--aura-ease-out);
+}
+.splash-screen.hidden,
+.splash-screen[hidden] {
+  opacity: 0;
+  transform: scale(1.015);
+  pointer-events: none;
+}
+
+/* ── 17. Phase-2 restraint ────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .sys-box::before { animation: none; }
+  .splash-screen { transition: none; }
+}
