@@ -6291,3 +6291,46 @@ Tracker:
 - Expanded daily-runtime/product closure remains about 97%.
 - Chrome/Kubernetes/aerospace operational maturity closure remains about
   86-90% locally, with the enterprise static ratchet back to clean.
+
+## Checkpoint 2026-07-04-42: RSI Proof Selector Honesty Repair
+
+Status: implementation validated; checkpoint commit pending.
+
+Scope:
+
+- Fixed `tools/proof_bundle.py` so the proof bundle evaluates every frozen RSI
+  generation instead of treating the newest saturated generation as the only
+  possible proof surface.
+- The canonical proof bundle now selects the latest passing L3 evidence
+  generation (`Aura-G4`) while still recording the newest saturated generation
+  (`Aura-G5`) and its failed improvement requirement.
+- Added a regression test that creates a passing generation followed by a
+  saturated non-improving generation and verifies the selector keeps both facts
+  visible.
+
+Evidence:
+
+- `python -m py_compile tools/proof_bundle.py tests/test_proof_bundle_hardening.py`
+  -> passed.
+- `python -m pytest -q tests/test_proof_bundle_hardening.py tests/test_long_horizon_kickoff.py::TestLongHorizonInfrastructure::test_proof_bundle_importable`
+  -> `3 passed`.
+- `python tools/proof_bundle.py --output-dir artifacts/proof_bundle/latest`
+  -> passed; canonical proof bundle `passed=true`.
+- RSI evidence in `artifacts/proof_bundle/latest/CANONICAL_PROOF_BUNDLE.json`:
+  selected generation `Aura-G4`, latest generation `Aura-G5`, and `Aura-G5`
+  explicitly records `candidate_improved_over_baseline` as the failed
+  requirement.
+
+Boundary:
+
+- This closes the proof-bundle RSI selector mismatch. It does not claim the
+  saturated `Aura-G5` generation produced a new improvement; it preserves that
+  as a visible non-proof row.
+
+Tracker:
+
+- Expanded daily-runtime/product closure remains about 97%.
+- Chrome/Kubernetes/aerospace operational maturity closure remains about
+  87-90% locally. The next reliability checkpoint should focus on broad
+  operational hardening and live-path friction rather than proof artifact
+  selection.

@@ -21,7 +21,7 @@
       "core/runtime/activation_audit.py"
     ]
   },
-  "generated_at": 1783208686.568722,
+  "generated_at": 1783209529.015231,
   "live_audit_required_env": "AURA_PROOF_BUNDLE_LIVE_ACTIVATION_AUDIT=1",
   "live_audit_skipped": true,
   "live_missing_required": [],

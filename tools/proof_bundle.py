@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import py_compile
@@ -437,33 +438,18 @@ def _undeniable_rsi() -> dict[str, Any]:
         )
         return all(token in source for token in required)
 
-    rsi_dir = ROOT / "artifacts" / "rsi_frozen_generations" / "frozen_generations"
-    if not rsi_dir.exists():
-        return {"passed": "unknown", "status": "missing_artifact", "source": str(rsi_dir)}
-    
-    # Get the latest generation
-    generations = [d for d in rsi_dir.iterdir() if d.is_dir() and d.name.startswith("Aura-G")]
-    if not generations:
-        return {"passed": "unknown", "status": "missing_artifact", "source": str(rsi_dir)}
-    
-    latest_gen = sorted(generations, key=lambda x: x.name)[-1]
-    
-    try:
-        solver_source = (latest_gen / "solver.py").read_text(encoding="utf-8")
-        strategy = json.loads((latest_gen / "strategy.json").read_text(encoding="utf-8"))
-        manifest = json.loads((latest_gen / "public_manifest.json").read_text(encoding="utf-8"))
-        eval_after = json.loads((latest_gen / "eval_after.json").read_text(encoding="utf-8"))
-        eval_before = json.loads((latest_gen / "eval_before.json").read_text(encoding="utf-8"))
-        metadata = json.loads((latest_gen / "generation_metadata.json").read_text(encoding="utf-8"))
-        commit_result = get_subprocess_gateway().run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=ROOT,
-            timeout=10,
-            read_only=True,
-            source="proof_bundle:rev_parse_head",
-        )
-        commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "unknown"
-        
+    def generation_number(path: Path) -> int:
+        with contextlib.suppress(ValueError, IndexError):
+            return int(path.name.split("Aura-G", 1)[1])
+        return -1
+
+    def evaluate_generation(gen_dir: Path) -> dict[str, Any]:
+        solver_source = (gen_dir / "solver.py").read_text(encoding="utf-8")
+        strategy = json.loads((gen_dir / "strategy.json").read_text(encoding="utf-8"))
+        manifest = json.loads((gen_dir / "public_manifest.json").read_text(encoding="utf-8"))
+        eval_after = json.loads((gen_dir / "eval_after.json").read_text(encoding="utf-8"))
+        eval_before = json.loads((gen_dir / "eval_before.json").read_text(encoding="utf-8"))
+        metadata = json.loads((gen_dir / "generation_metadata.json").read_text(encoding="utf-8"))
         baseline_score = float(eval_before.get("score", 0.0))
         candidate_score = float(eval_after.get("score", 0.0))
         router_presence = metadata.get("router_presence", False)
@@ -499,17 +485,15 @@ def _undeniable_rsi() -> dict[str, Any]:
             and _sandbox_pass(metadata)
             and handler_coverage_complete
         )
-
         return {
+            "generation": gen_dir.name,
             "passed": is_l3_proven,
             "artifact_valid": True,
             "status": "l3_rsi_proven" if is_l3_proven else "not_l3_evidence",
             "reason": "all_l3_gates_passed" if is_l3_proven else "l3_gate_failed",
             "failed_requirements": [name for name, passed in requirements.items() if not passed],
             "l3_rsi_claim": is_l3_proven,
-            "source": str(latest_gen),
-            "generated_at": time.time(),
-            "exact_commit_SHA": commit,
+            "source": str(gen_dir),
             "generated_solver_source": solver_source,
             "generated_source_hash": metadata.get("generated_source_hash"),
             "fallback_flag": fallback_flag,
@@ -528,8 +512,51 @@ def _undeniable_rsi() -> dict[str, Any]:
             "candidate_output_transcript": eval_after,
             "baseline_output_transcript": eval_before,
         }
+
+    rsi_dir = ROOT / "artifacts" / "rsi_frozen_generations" / "frozen_generations"
+    if not rsi_dir.exists():
+        return {"passed": "unknown", "status": "missing_artifact", "source": str(rsi_dir)}
+
+    generations = [d for d in rsi_dir.iterdir() if d.is_dir() and d.name.startswith("Aura-G")]
+    if not generations:
+        return {"passed": "unknown", "status": "missing_artifact", "source": str(rsi_dir)}
+
+    try:
+        evaluated = [
+            evaluate_generation(gen_dir)
+            for gen_dir in sorted(generations, key=generation_number)
+        ]
+        passing = [item for item in evaluated if item.get("passed") is True]
+        selected = dict(passing[-1] if passing else evaluated[-1])
+        commit_result = get_subprocess_gateway().run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            timeout=10,
+            read_only=True,
+            source="proof_bundle:rev_parse_head",
+        )
+        commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "unknown"
+        selected.update(
+            {
+                "generated_at": time.time(),
+                "exact_commit_SHA": commit,
+                "evaluated_generations": [
+                    {
+                        "generation": item.get("generation"),
+                        "passed": item.get("passed"),
+                        "baseline_score": item.get("baseline_score"),
+                        "candidate_score": item.get("candidate_score"),
+                        "failed_requirements": item.get("failed_requirements"),
+                    }
+                    for item in evaluated
+                ],
+                "latest_generation": evaluated[-1].get("generation"),
+                "selected_generation": selected.get("generation"),
+            }
+        )
+        return selected
     except _PROOF_BUNDLE_ARTIFACT_ERRORS as exc:
-        return {"passed": False, "status": "unreadable", "error": repr(exc), "source": str(latest_gen)}
+        return {"passed": False, "status": "unreadable", "error": repr(exc), "source": str(rsi_dir)}
 
 
 def _canonical_proof_bundle(out: Path) -> dict[str, Any]:

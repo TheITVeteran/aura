@@ -23,7 +23,7 @@
     },
     "CANONICAL_PROOF_BUNDLE.json": {
       "exists": true,
-      "passed": false,
+      "passed": true,
       "summary": {}
     },
     "DECISIVE_RESULTS.json": {
@@ -87,13 +87,13 @@
     "SELF_REPAIR_LINEAGE.json": "artifacts/proof_bundle/latest/SELF_REPAIR_LINEAGE.json",
     "STDP_EXTERNAL_VALIDATION.json": "artifacts/proof_bundle/latest/STDP_EXTERNAL_VALIDATION.json"
   },
-  "generated_at": 1783208691.957191,
+  "generated_at": 1783209534.3799272,
   "git": {
-    "commit": "dfd262c6ff90d0b46a26c9053f04c64333180590",
+    "commit": "487a95110ba79e0ce3a23866cea9035fbb5f7e96",
     "status": "unavailable_without_git_subprocess"
   },
-  "passed": false,
-  "readiness_passed": false,
+  "passed": true,
+  "readiness_passed": true,
   "required_files": [
     "DECISIVE_RESULTS.json",
     "CAA_32B_RESULTS.json",
