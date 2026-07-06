@@ -416,6 +416,7 @@ class ProgramDNAReconstructionEngine:
         objective: str = "",
         temperature: float = 0.1,
         max_tokens: int = 900,
+        sandbox_profile: str = "general",
     ) -> dict[str, Any]:
         """Reconstruct RUNNABLE behavior from spec only, then verify it honestly.
 
@@ -479,10 +480,21 @@ class ProgramDNAReconstructionEngine:
             }
 
         evaluator = None
+        profile = str(sandbox_profile or "general").strip().lower()
         try:
-            from core.discovery.code_eval import SafeCodeEvaluator
+            if profile == "strict":
+                from core.discovery.code_eval import SafeCodeEvaluator
 
-            evaluator = SafeCodeEvaluator(timeout_seconds=5.0)
+                evaluator = SafeCodeEvaluator(timeout_seconds=5.0)
+            else:
+                # General profile: curated-capability sandbox (real stdlib,
+                # attribute access) so realistic programs — not just toy
+                # pure-operator functions — can be reconstructed and verified.
+                from core.discovery.reconstruction_sandbox import (
+                    GeneralReconstructionEvaluator,
+                )
+
+                evaluator = GeneralReconstructionEvaluator(timeout_seconds=5.0)
         except (ImportError, RuntimeError) as exc:
             self._record_degradation("program_dna_reconstruction.sandbox", exc, severity="warning")
 
