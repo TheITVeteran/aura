@@ -2107,8 +2107,19 @@ async def _maybe_think(engine: Any, prompt: str, context: dict[str, Any]) -> str
         if isinstance(result, str):
             return result
         if isinstance(result, dict):
-            return str(result.get("response") or result.get("text") or result.get("content") or "")
-        return str(getattr(result, "response", "") or getattr(result, "text", "") or "")
+            for key in ("content", "response", "text", "message", "reply"):
+                if result.get(key):
+                    return str(result[key])
+            return ""
+        # think() returns a ThinkingResult whose text lives in `.content`
+        # (this is what /api/think reads) — the previous extraction only checked
+        # `.response`/`.text`, so every real composition was dropped and the loop
+        # fell back to a canned default. Check `.content` first.
+        for attr in ("content", "response", "text", "message", "reply"):
+            value = getattr(result, attr, "")
+            if value:
+                return str(value)
+        return ""
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation(
             "web_interlocutor.cognitive_compose",
