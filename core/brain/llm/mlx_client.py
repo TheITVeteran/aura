@@ -2289,6 +2289,35 @@ class MLXLocalClient:
         if not had_active_request and not had_process:
             return False
 
+        # Never TEAR DOWN a worker that is still LOADING the model. force_abort
+        # unconditionally kills the worker and resets the lane — appropriate for
+        # a wedged generation, but catastrophic during a load: killing a
+        # mid-reload worker restarts the ~30-45s reload, and the next foreground
+        # turn "times out" against the restarted load too — a self-perpetuating
+        # cold-lane cascade (observed live during the 200-turn soak, 2026-07-06:
+        # a trivial math turn timed out at 60s while the 18GB model was mid-
+        # reload, killing it and restarting the load, over and over). Resolve the
+        # timed-out caller's future so it returns control, but leave the loading
+        # worker alive so the load can finish and serve the next turn. A load
+        # that is genuinely stuck is handled by the reaper / memory watchdog.
+        if process is not None and process.is_alive() and not self._init_done:
+            logger.warning(
+                "🟡 [MLX] Timeout while the worker is still loading the model; NOT "
+                "tearing it down (would restart the reload). Letting the load finish (%s).",
+                reason,
+            )
+            loading_abort_payload = {
+                "status": "error",
+                "action": "generate",
+                "id": self._current_request_id,
+                "message": reason,
+                "force_aborted": True,
+                "worker_still_loading": True,
+            }
+            for future in pending_futures.values():
+                _set_shared_future_result(future, loading_abort_payload)
+            return False
+
         logger.error(
             "🛑 [MLX] Force-aborting active generation for %s (%s).",
             os.path.basename(self.model_path),
