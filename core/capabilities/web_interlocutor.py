@@ -1449,10 +1449,12 @@ class WebInterlocutorSession:
             f"Objective: {objective or 'learn something useful through a real conversation'}\n\n"
             "Opening message:"
         )
-        generated = await _maybe_think(self.cognitive_engine or context.get("brain"), prompt, context)
-        cleaned = _clean_message(generated)
-        if _message_is_substantive(cleaned):
-            return cleaned[:1200]
+        engine = self.cognitive_engine or context.get("brain")
+        for _attempt in range(3):
+            generated = await _maybe_think(engine, prompt, context)
+            cleaned = _clean_message(generated)
+            if _message_is_substantive(cleaned):
+                return cleaned[:1200]
         return self._default_opening(objective)
 
     async def _wait_for_new_reply(
@@ -1531,10 +1533,15 @@ class WebInterlocutorSession:
             "Do not mention implementation details, receipts, or automation.\n\n"
             f"Objective: {objective}\n\nTranscript so far:\n{transcript}\n\nNext message:"
         )
-        generated = await _maybe_think(self.cognitive_engine or context.get("brain"), prompt, context)
-        cleaned = _clean_message(generated)
-        if _message_is_substantive(cleaned) and not _message_was_recently_sent(cleaned, turns):
-            return cleaned[:1200]
+        # Retry a couple of times before falling back to a canned line: a
+        # single thin/deferred inference under load must NOT turn her genuine
+        # follow-up into a script (that was the turn-2 regression Bryan caught).
+        engine = self.cognitive_engine or context.get("brain")
+        for _attempt in range(3):
+            generated = await _maybe_think(engine, prompt, context)
+            cleaned = _clean_message(generated)
+            if _message_is_substantive(cleaned) and not _message_was_recently_sent(cleaned, turns):
+                return cleaned[:1200]
         return self._default_followup(turns)
 
     async def _grounded_challenge(
