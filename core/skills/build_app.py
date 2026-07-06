@@ -16,17 +16,21 @@ from core.skills.base_skill import BaseSkill
 class BuildAppInput(BaseModel):
     spec: str = Field(..., description="What app to build, e.g. 'a playable checkers game'.")
     out_dir: str = Field("artifacts/live_apps", description="Where to write the app file.")
-    max_tokens: int = Field(6000, description="Generation budget for the app.")
+    max_tokens: int = Field(9000, description="Generation budget for the app.")
+    max_iters: int = Field(3, description="Max research/build/test iterations (1-6).")
 
 
 class BuildAppSkill(BaseSkill):
     name = "build_app"
     description = (
         "Build a real, runnable single-file web app (game, tool, or toy) from a natural "
-        "description, validate that it actually works, and write it to disk to open and use."
+        "description: research it, build it, functionally TEST that it actually works, "
+        "persist until it does, and retain the lesson. Writes it to disk to open and use."
     )
     input_model = BuildAppInput
-    timeout_seconds = 240.0
+    # The verified loop researches + generates + tests + repairs across several
+    # iterations on the 32B, so it needs a generous budget.
+    timeout_seconds = 1500.0
     metabolic_cost = 3
     effect_scope = "read_write_artifacts"
     requires_approval = False
@@ -43,7 +47,10 @@ class BuildAppSkill(BaseSkill):
         from core.capabilities.self_taught_builder import build_app_verified
 
         result = await build_app_verified(
-            params.spec, out_dir=params.out_dir, max_tokens=params.max_tokens,
+            params.spec,
+            out_dir=params.out_dir,
+            max_tokens=params.max_tokens,
+            max_iters=max(1, min(int(params.max_iters or 3), 6)),
         )
         payload = result.to_dict()
         return {
