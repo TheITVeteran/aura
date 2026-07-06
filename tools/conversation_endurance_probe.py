@@ -185,20 +185,34 @@ def _chat(base: str, session: str, message: str, timeout: float) -> str:
 
 
 def _server_rss_mb() -> float | None:
+    """RSS of the whole aura_main process TREE (parent + children).
+
+    The MLX worker that holds the ~20GB model is a spawned CHILD process whose
+    cmdline does NOT contain 'aura_main.py' — matching only on that string
+    measured the ~900MB orchestrator and completely missed the process that
+    actually hit the 35GB lethal ceiling (July 3). Sum the full tree so the RSS
+    series answers the real out-of-memory question.
+    """
     try:
         import psutil
     except ImportError:
         return None
 
+    seen: set[int] = set()
     total = 0
     matched = False
-    for proc in psutil.process_iter(["cmdline"]):
+    for proc in psutil.process_iter(["cmdline", "pid"]):
         try:
             cmdline = " ".join(str(part) for part in (proc.info.get("cmdline") or []))
             if "aura_main.py" not in cmdline:
                 continue
             matched = True
-            total += proc.memory_info().rss
+            for target in [proc, *proc.children(recursive=True)]:
+                pid = target.pid
+                if pid in seen:
+                    continue
+                seen.add(pid)
+                total += target.memory_info().rss
         except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError, TypeError, ValueError):
             continue
     if not matched:
