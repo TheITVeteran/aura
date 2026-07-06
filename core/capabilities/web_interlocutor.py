@@ -20,6 +20,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 import urllib.parse
@@ -43,6 +44,14 @@ _MIN_UNLABELED_REPLY_CONTENT_WORDS = 12
 _MIN_OUTBOUND_MESSAGE_CHARS = 24
 _DEFAULT_WAIT_S = 45.0
 _DEFAULT_STABLE_POLLS = 2
+_COMPOSE_TIMEOUT_S = max(
+    8.0,
+    float(os.getenv("AURA_WEB_INTERLOCUTOR_COMPOSE_TIMEOUT_S", "18") or "18"),
+)
+_FACTCHECK_TIMEOUT_S = max(
+    1.0,
+    float(os.getenv("AURA_WEB_INTERLOCUTOR_FACTCHECK_TIMEOUT_S", "6") or "6"),
+)
 
 
 def _mark_web_interlocutor_progress(source: str) -> None:
@@ -658,7 +667,9 @@ class ChromeVisibleDialogueBrowser:
                 data = {}
             if not data.get("ok"):
                 return {"ok": False, "stage": "chatgpt_focus", "error": data.get("error", "composer_not_ready")}
-        pasted = await asyncio.to_thread(self._chatgpt_paste, text)
+        pasted = await asyncio.to_thread(self._chatgpt_set_composer_text, text)
+        if not pasted.get("ok"):
+            pasted = await asyncio.to_thread(self._chatgpt_paste, text)
         if not pasted.get("ok"):
             return {"ok": False, "stage": "chatgpt_paste", **pasted}
         click_js = r"""
@@ -673,10 +684,127 @@ class ChromeVisibleDialogueBrowser:
         except (RuntimeError, json.JSONDecodeError):
             clicked = {"ok": False}
         if clicked.get("ok"):
-            return {"ok": True, "stage": "submit", "method": "chatgpt_dom", "focus": data}
+            verified = await self._verify_chatgpt_sent_message(text, timeout_s=8.0)
+            return {
+                "ok": bool(verified.get("ok")),
+                "stage": "submit",
+                "method": "chatgpt_dom",
+                "focus": data,
+                "input": pasted,
+                "verification": verified,
+                "error": "" if verified.get("ok") else "sent_message_not_visible_after_dom_submit",
+            }
         # fallback: Enter submits in ChatGPT
         enter = await asyncio.to_thread(self._chatgpt_press_return)
-        return {"ok": bool(enter.get("ok")), "stage": "submit", "method": "chatgpt_paste_return", "submission": enter}
+        if not enter.get("ok"):
+            return {
+                "ok": False,
+                "stage": "submit",
+                "method": "chatgpt_paste_return",
+                "input": pasted,
+                "submission": enter,
+                "error": "chatgpt_return_submit_failed",
+            }
+        verified = await self._verify_chatgpt_sent_message(text, timeout_s=8.0)
+        return {
+            "ok": bool(verified.get("ok")),
+            "stage": "submit",
+            "method": "chatgpt_paste_return",
+            "input": pasted,
+            "submission": enter,
+            "verification": verified,
+            "error": "" if verified.get("ok") else "sent_message_not_visible_after_return_submit",
+        }
+
+    def _chatgpt_set_composer_text(self, text: str) -> dict[str, Any]:
+        message_json = json.dumps(str(text or ""))
+        js = f"""
+(() => {{
+  if (location.hostname.indexOf('chatgpt.com') === -1) return JSON.stringify({{ok:false, error:'not_chatgpt'}});
+  const text = {message_json};
+  const el = document.getElementById('prompt-textarea');
+  if (!el) return JSON.stringify({{ok:false, error:'composer_not_found'}});
+  el.scrollIntoView({{block:'center', inline:'nearest'}});
+  el.focus();
+  try {{ document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); }} catch(e) {{}}
+  try {{
+    const dt = new DataTransfer();
+    dt.setData('text/plain', text);
+    const paste = new ClipboardEvent('paste', {{clipboardData: dt, bubbles:true, cancelable:true}});
+    el.dispatchEvent(paste);
+  }} catch(e) {{}}
+  let current = (el.innerText || el.textContent || '').trim();
+  const needle = text.slice(0, Math.min(48, text.length));
+  if (!current || (needle && current.indexOf(needle) === -1)) {{
+    el.textContent = '';
+    const p = document.createElement('p');
+    p.textContent = text;
+    el.appendChild(p);
+  }}
+  try {{
+    el.dispatchEvent(new InputEvent('input', {{bubbles:true, cancelable:true, inputType:'insertText', data:text}}));
+  }} catch(e) {{
+    el.dispatchEvent(new Event('input', {{bubbles:true, cancelable:true}}));
+  }}
+  el.dispatchEvent(new Event('change', {{bubbles:true}}));
+  current = (el.innerText || el.textContent || '').trim();
+  const ok = !!current && (!needle || current.indexOf(needle) !== -1);
+  return JSON.stringify({{
+    ok,
+    method:'chatgpt_dom_input',
+    visible_chars: current.length,
+    contains_prefix: ok,
+    preview: current.slice(0, 160)
+  }});
+}})()
+"""
+        try:
+            data = json.loads(self._run_chrome_js(js, 8.0) or "{}")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            return {"ok": False, "error": f"chatgpt_dom_input_failed:{type(exc).__name__}:{exc}"}
+        return data if isinstance(data, dict) else {"ok": False, "error": "chatgpt_dom_input_not_dict"}
+
+    async def _verify_chatgpt_sent_message(self, text: str, *, timeout_s: float = 8.0) -> dict[str, Any]:
+        deadline = time.monotonic() + max(0.5, float(timeout_s or 0.5))
+        last: dict[str, Any] = {}
+        while time.monotonic() < deadline:
+            last = await asyncio.to_thread(self._chatgpt_sent_message_visible, text)
+            if last.get("ok"):
+                return last
+            await asyncio.sleep(0.35)
+        if last:
+            return last
+        return {"ok": False, "error": "sent_message_visibility_timeout"}
+
+    def _chatgpt_sent_message_visible(self, text: str) -> dict[str, Any]:
+        message_json = json.dumps(str(text or ""))
+        js = f"""
+(() => {{
+  const text = {message_json};
+  const normalize = (s) => (s || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+  const sent = normalize(text);
+  const prefix = sent.slice(0, Math.min(90, sent.length));
+  const userMessages = Array.from(document.querySelectorAll('[data-message-author-role="user"]'))
+    .map((m) => normalize(m.innerText || m.textContent || ''))
+    .filter(Boolean);
+  const body = normalize(document.body && document.body.innerText || '');
+  const matched = !!prefix && (
+    userMessages.some((m) => m.indexOf(prefix) !== -1 || prefix.indexOf(m.slice(0, Math.min(60, m.length))) !== -1)
+    || body.indexOf(prefix) !== -1
+  );
+  return JSON.stringify({{
+    ok: matched,
+    user_message_count: userMessages.length,
+    latest_user_message: (userMessages[userMessages.length - 1] || '').slice(0, 220),
+    prefix
+  }});
+}})()
+"""
+        try:
+            data = json.loads(self._run_chrome_js(js, 6.0) or "{}")
+        except (RuntimeError, json.JSONDecodeError) as exc:
+            return {"ok": False, "error": f"sent_message_verify_failed:{type(exc).__name__}:{exc}"}
+        return data if isinstance(data, dict) else {"ok": False, "error": "sent_message_verify_not_dict"}
 
     def _chatgpt_paste(self, text: str) -> dict[str, Any]:
         script = f"""
@@ -1530,11 +1658,12 @@ class WebInterlocutorSession:
                 continue
             delta = _extract_new_interlocutor_text_from_snapshots(before, snap, sent_text)
             if delta:
-                if snap.text_hash == last_hash:
+                delta_hash = hashlib.sha256(delta.encode("utf-8")).hexdigest()[:16]
+                if delta_hash == last_hash:
                     stable_count += 1
                 else:
                     stable_count = 1
-                    last_hash = snap.text_hash
+                    last_hash = delta_hash
                 best = snap
                 best_delta = delta
                 if stable_count >= _DEFAULT_STABLE_POLLS:
@@ -1554,9 +1683,12 @@ class WebInterlocutorSession:
         # something Aura's local corpus contradicts, she challenges it instead
         # of politely continuing. Same mind, willing to disagree — but only with
         # grounds.
+        _mark_web_interlocutor_progress("web_interlocutor.grounded_challenge.start")
         challenge = await self._grounded_challenge(turns, context)
         if challenge:
+            _mark_web_interlocutor_progress("web_interlocutor.grounded_challenge.accepted")
             return challenge
+        _mark_web_interlocutor_progress("web_interlocutor.grounded_challenge.skipped")
         transcript = _render_transcript(turns)
         prompt = (
             "You are Aura continuing a visible web conversation with another AI or web chat surface. "
@@ -1573,6 +1705,7 @@ class WebInterlocutorSession:
             engine, prompt, context,
             fallback=lambda: self._default_followup(turns),
             reject_if_recent=turns,
+            attempts=2,
         )
 
     async def _compose_with_retry(
@@ -1586,13 +1719,22 @@ class WebInterlocutorSession:
         attempts: int = 5,
     ) -> str:
         for attempt in range(attempts):
+            _mark_web_interlocutor_progress(
+                f"web_interlocutor.compose.attempt.{attempt + 1}"
+            )
             generated = await _maybe_think(engine, prompt, context)
             cleaned = _clean_message(generated)
             recently_sent = bool(
                 reject_if_recent and _message_was_recently_sent(cleaned, reject_if_recent)
             )
             if _message_is_substantive(cleaned) and not recently_sent:
+                _mark_web_interlocutor_progress(
+                    f"web_interlocutor.compose.accepted.{attempt + 1}"
+                )
                 return cleaned[:1200]
+            _mark_web_interlocutor_progress(
+                f"web_interlocutor.compose.rejected.{attempt + 1}"
+            )
             if attempt < attempts - 1:
                 await asyncio.sleep(1.2)
         return fallback()
@@ -1618,15 +1760,19 @@ class WebInterlocutorSession:
             return ""
         corpus_search = context.get("corpus_search") or _default_corpus_search
         try:
-            contradictions = await asyncio.to_thread(
-                factcheck_reply, last_reply, corpus_search=corpus_search,
+            contradictions = await asyncio.wait_for(
+                asyncio.to_thread(factcheck_reply, last_reply, corpus_search=corpus_search),
+                timeout=_FACTCHECK_TIMEOUT_S,
             )
-        except (RuntimeError, OSError, TypeError, ValueError) as exc:
+        except (asyncio.TimeoutError, TimeoutError, RuntimeError, OSError, TypeError, ValueError) as exc:
             record_degradation(
                 "web_interlocutor.factcheck",
                 exc,
                 severity="warning",
-                action="skipped grounded pushback after corpus factcheck failed",
+                action=(
+                    "skipped grounded pushback after bounded corpus factcheck failed "
+                    f"within {_FACTCHECK_TIMEOUT_S:.1f}s"
+                ),
             )
             return ""
         if not contradictions:
@@ -1746,6 +1892,32 @@ class WebInterlocutorSession:
 
     @staticmethod
     def _default_followup(turns: list[WebInterlocutorTurn]) -> str:
+        last_reply = str(turns[-1].observed_reply if turns else "").lower()
+        if "counterfactual" in last_reply or "ablation" in last_reply:
+            return (
+                "The counterfactual piece matters. How would you design the delayed test so an evaluator "
+                "can tell whether retrieved memory actually caused the later decision rather than prompt leakage?"
+            )
+        if "agency" in last_reply or "choice" in last_reply:
+            return (
+                "For agency, what observable behavior would separate a real preference-sensitive choice "
+                "from a system merely choosing whichever option the prompt made easiest?"
+            )
+        if "tool" in last_reply or "receipt" in last_reply:
+            return (
+                "On tool use, what receipt would convince you the tool result changed the next plan, "
+                "instead of being logged after the fact as decorative evidence?"
+            )
+        if "self-model" in last_reply or "self model" in last_reply or "capability" in last_reply:
+            return (
+                "For self-modeling, what would be a falsifiable sign that the system knows its own limits "
+                "well enough to route differently, not just describe limits in words?"
+            )
+        if "failure" in last_reply or "distrust" in last_reply:
+            return (
+                "Which failure would make you distrust the whole proof fastest, and what guard would catch "
+                "that failure before it reaches a user?"
+            )
         index = len(turns) % 4
         if index == 1:
             return "That is useful. What is one concrete example, one limitation, and one surprising implication of that point?"
@@ -1808,7 +1980,15 @@ class WebInterlocutorJobManager:
             try:
                 _mark_web_interlocutor_progress(f"web_interlocutor.background_job.{job_id}.started")
                 factory = session_factory or WebInterlocutorSession
-                session = factory()
+                brain = (context or {}).get("brain") if isinstance(context, dict) else None
+                try:
+                    session = (
+                        factory(cognitive_engine=brain)
+                        if brain is not None
+                        else factory()
+                    )
+                except TypeError:
+                    session = factory()
 
                 def _progress(partial: WebInterlocutorResult) -> None:
                     job.result = partial.to_dict() if hasattr(partial, "to_dict") else dict(partial or {})
@@ -1849,15 +2029,27 @@ class WebInterlocutorJobManager:
         return {"ok": True, "status": "queued", "job": job.to_dict()}
 
     def status(self, job_id: str = "") -> dict[str, Any]:
+        def _with_progress(payload: dict[str, Any]) -> dict[str, Any]:
+            try:
+                from core.runtime.liveness import get_runtime_service_progress
+
+                payload["runtime_progress"] = get_runtime_service_progress("web_interlocutor")
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+                payload["runtime_progress"] = {"ok": False}
+            return payload
+
         if job_id:
             job = self._jobs.get(job_id)
             if not job:
                 return {"ok": False, "status": "not_found", "error": f"Unknown web interlocutor job {job_id!r}."}
-            return {"ok": True, "status": job.status, "job": job.to_dict()}
+            return {"ok": True, "status": job.status, "job": _with_progress(job.to_dict())}
         return {
             "ok": True,
             "status": "listed",
-            "jobs": [job.to_dict() for job in sorted(self._jobs.values(), key=lambda item: item.started_at)],
+            "jobs": [
+                _with_progress(job.to_dict())
+                for job in sorted(self._jobs.values(), key=lambda item: item.started_at)
+            ],
         }
 
     def cancel(self, job_id: str) -> dict[str, Any]:
@@ -2136,6 +2328,23 @@ def _message_is_substantive(text: str) -> bool:
         return False
     if _normalize_line(cleaned) in {"false", "true", "none", "null", "nil", "0", "1"}:
         return False
+    lowered = cleaned.lower()
+    task_echo_markers = (
+        "visible live proof",
+        "use her full cognitive path",
+        "use aura's full cognitive path",
+        "hold a substantive 20-turn conversation",
+        "store a memory summary",
+        "with receipts",
+        "the user's objective",
+        "this objective:",
+        "i want to discuss this objective",
+        "objective:",
+        "max_turns",
+        "proof_evaluation_contract",
+    )
+    if any(marker in lowered for marker in task_echo_markers):
+        return False
     words = re.findall(r"[a-zA-Z][a-zA-Z']{2,}", cleaned.lower())
     content_words = [word for word in words if word not in _NON_REPLY_WORDS]
     return len(content_words) >= 5
@@ -2240,6 +2449,24 @@ def _default_corpus_search(query: str, limit: int) -> list[dict[str, Any]]:
     ]
 
 
+def _coerce_composition_text(result: Any) -> str:
+    """Extract generated text from any router/engine return shape. think()
+    returns a ThinkingResult whose text is in `.content`; the router returns a
+    plain string; some paths return a dict — handle all of them."""
+    if isinstance(result, str):
+        return result
+    if isinstance(result, dict):
+        for key in ("content", "response", "text", "message", "reply"):
+            if result.get(key):
+                return str(result[key])
+        return ""
+    for attr in ("content", "response", "text", "message", "reply"):
+        value = getattr(result, attr, "")
+        if value:
+            return str(value)
+    return ""
+
+
 async def _maybe_think(engine: Any, prompt: str, context: dict[str, Any]) -> str:
     if engine is None:
         return ""
@@ -2250,46 +2477,83 @@ async def _maybe_think(engine: Any, prompt: str, context: dict[str, Any]) -> str
         # 'missing_requested_phrase'). Mark it as a non-user-facing tool
         # composition, but still prefer the cortex tier so the real mind writes
         # it.
+        base_context = dict(context or {})
+        request_origin = str(base_context.get("origin") or "web_interlocutor").strip() or "web_interlocutor"
+        origin = "web_interlocutor"
         think_context = {
-            **dict(context or {}),
-            "origin": "web_interlocutor",
+            **base_context,
+            "origin": origin,
+            "request_origin": request_origin,
+            "visible_request_origin": request_origin,
             "tool_origin": "web_interlocutor",
             "purpose": "interlocutor_message",
+            "web_interlocutor_contract": True,
             "prefer_tier": "primary",
+            # The visible web job may be queued so the HTTP request can return,
+            # but composing each message is foreground, user-visible cognition.
+            # Keep it out of background-quality throttles/reply paths.
+            "background": False,
+            "is_background": False,
+            "protected_foreground_lane": True,
+            "foreground_request": True,
+            "live_user_path_required": True,
+            "proof_evaluation_contract": False,
+            "web_interlocutor_proof_contract": bool(base_context.get("proof_evaluation_contract")),
+            "user_anchor": request_origin in {"desktop_ui", "desktop", "user", "voice", "chat"},
             "user_visible_browser_action": True,
+            "suppress_user_memory_append": True,
+            "suppress_working_memory_user_append": True,
         }
+        # Compose through the DIRECT generation path, NOT the 8-phase think()
+        # pipeline. This is GENERAL: composing a message for an interlocutor or
+        # any tool is a generation, not a TASK for the executive to plan and
+        # execute. think() routes the composition PROMPT through task-detection
+        # ("TASK detected via heuristics" / temporal_obligation_active), which
+        # derails it and drops the real message so the loop falls back to a
+        # canned line. engine.generate() -> router.think() goes straight to her
+        # steered cortex (her real voice) and returns clean text — foreground,
+        # non-deferred, and free of the user-reply gates.
+        gen_kwargs = {
+            "origin": origin,
+            "purpose": "conversation",
+            "use_strategies": False,
+            "prefer_tier": "primary",
+            "is_background": False,
+            "temperature": float(base_context.get("compose_temperature", 0.7) or 0.7),
+            "max_tokens": int(base_context.get("compose_max_tokens", 420) or 420),
+        }
+        if hasattr(engine, "generate"):
+            try:
+                result = engine.generate(prompt, **gen_kwargs)
+                if asyncio.iscoroutine(result):
+                    result = await asyncio.wait_for(result, timeout=_COMPOSE_TIMEOUT_S)
+                text = _coerce_composition_text(result)
+                if text.strip():
+                    return text
+            except (asyncio.TimeoutError, TimeoutError, TypeError, ValueError, RuntimeError, AttributeError) as exc:
+                logger.debug("web_interlocutor direct compose failed, will try think(): %s", exc)
+        # Fallback to the 8-phase think() path only if generate is unavailable
+        # or returned nothing.
         if hasattr(engine, "think"):
-            result = engine.think(prompt, context=think_context)
+            try:
+                result = engine.think(prompt, context=think_context, origin=origin)
+            except TypeError as exc:
+                if "origin" not in str(exc) or "unexpected" not in str(exc):
+                    raise
+                result = engine.think(prompt, context=think_context)
             if asyncio.iscoroutine(result):
-                result = await result
-        elif hasattr(engine, "generate"):
-            result = engine.generate(prompt=prompt, context=think_context)
-            if asyncio.iscoroutine(result):
-                result = await result
-        else:
-            return ""
-        if isinstance(result, str):
-            return result
-        if isinstance(result, dict):
-            for key in ("content", "response", "text", "message", "reply"):
-                if result.get(key):
-                    return str(result[key])
-            return ""
-        # think() returns a ThinkingResult whose text lives in `.content`
-        # (this is what /api/think reads) — the previous extraction only checked
-        # `.response`/`.text`, so every real composition was dropped and the loop
-        # fell back to a canned default. Check `.content` first.
-        for attr in ("content", "response", "text", "message", "reply"):
-            value = getattr(result, attr, "")
-            if value:
-                return str(value)
+                result = await asyncio.wait_for(result, timeout=_COMPOSE_TIMEOUT_S)
+            return _coerce_composition_text(result)
         return ""
-    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+    except (asyncio.TimeoutError, TimeoutError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
         record_degradation(
             "web_interlocutor.cognitive_compose",
             exc,
             severity="warning",
-            action="used deterministic web-interlocutor message composition after cognitive compose failed",
+            action=(
+                "used deterministic web-interlocutor message composition after bounded "
+                f"cognitive compose failed within {_COMPOSE_TIMEOUT_S:.1f}s"
+            ),
         )
         return ""
 
