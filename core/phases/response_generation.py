@@ -33,6 +33,15 @@ from . import BasePhase
 
 logger = logging.getLogger(__name__)
 
+# Explicit tool compositions (e.g. composing an outbound message to ANOTHER AI
+# in a web-interlocutor conversation) are non-user-facing, so they correctly
+# skip the user-facing reply gates — but they are NOT autonomous background
+# chatter either. They were explicitly requested and MUST produce real cortex
+# output, so they are exempt from the idle/background suppression that protects
+# against autonomous thought leaking. This is what lets her actually THINK a
+# reply to ChatGPT instead of falling back to a canned default.
+_EXPLICIT_TOOL_COMPOSITION_ORIGINS = frozenset({"web_interlocutor"})
+
 _DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS = {
     "missing_requested_self_process_coverage",
     "missing_requested_paragraph_count",
@@ -552,7 +561,8 @@ class ResponseGenerationPhase(BasePhase):
                 logger.error("SubstrateVoiceEngine compile failed: %s", _sve_exc, exc_info=True)
 
             is_background = not background_policy.is_user_facing_origin(origin)
-            if is_background and not is_test_run:
+            explicit_tool_composition = origin in _EXPLICIT_TOOL_COMPOSITION_ORIGINS
+            if is_background and not is_test_run and not explicit_tool_composition:
                 try:
                     orchestrator = self.container.get("orchestrator", default=None)
                     reason = response_policy.background_response_suppression_reason(
