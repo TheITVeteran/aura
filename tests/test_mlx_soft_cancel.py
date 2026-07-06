@@ -187,3 +187,126 @@ def test_soft_cancelled_ok_response_bypasses_empty_telemetry_and_retries():
     assert 0 < idx_cancel < idx_completed, (
         "soft-cancel branch must return before the user-facing completion mark"
     )
+
+
+# ── warm-lane preservation on abandoned requests ───────────────────────
+#
+# Historically every abandoned request recycled the worker even when it was
+# alive and merely slow — a full model reload during which arriving turns
+# died (observed live as soak death-clusters). The resolver now keeps the
+# warm lane when the worker acknowledges the soft-cancel and reboots only
+# unacknowledged (truly wedged) workers.
+
+
+class _AliveProcess:
+    def is_alive(self):
+        return True
+
+
+class _DeadProcess:
+    def is_alive(self):
+        return False
+
+
+def _resolver_client(*, cancel_value: int, alive: bool = True, heartbeat_fresh: bool = True):
+    client = MLXLocalClient.__new__(MLXLocalClient)
+    client.model_path = "/models/Qwen2.5-32B-Instruct-4bit"
+    client._cancel_seq = _Value(cancel_value)
+    client._process = _AliveProcess() if alive else _DeadProcess()
+    client._last_heartbeat = time.time() if heartbeat_fresh else time.time() - 300.0
+    client._degraded_events = []
+    client._reboots = []
+
+    def _record(name, **kwargs):
+        client._degraded_events.append((name, kwargs))
+
+    async def _reboot(reason="", mark_failed=False):
+        client._reboots.append((reason, mark_failed))
+
+    client._record_degraded_event = _record
+    client.reboot_worker = _reboot
+    return client
+
+
+def _run(coro):
+    import asyncio
+
+    return asyncio.get_event_loop_policy().new_event_loop().run_until_complete(coro)
+
+
+def test_ack_wait_succeeds_when_cancel_cleared_and_worker_alive():
+    client = _resolver_client(cancel_value=0)
+    assert _run(client._soft_cancel_acknowledged(timeout_s=1.0)) is True
+
+
+def test_ack_wait_fails_when_worker_dead():
+    client = _resolver_client(cancel_value=0, alive=False)
+    assert _run(client._soft_cancel_acknowledged(timeout_s=1.0)) is False
+
+
+def test_ack_wait_times_out_when_cancel_never_observed():
+    client = _resolver_client(cancel_value=99)
+    start = time.monotonic()
+    assert _run(client._soft_cancel_acknowledged(timeout_s=0.6)) is False
+    assert time.monotonic() - start < 5.0
+
+
+def test_ack_wait_fails_on_stale_heartbeat():
+    client = _resolver_client(cancel_value=0, heartbeat_fresh=False)
+    assert _run(client._soft_cancel_acknowledged(timeout_s=0.6)) is False
+
+
+def test_recoverable_abandon_with_ack_preserves_warm_lane():
+    client = _resolver_client(cancel_value=0)
+    _run(client._resolve_deferred_reboot("recoverable_token_progress_stalled"))
+    assert client._reboots == [], "acknowledged soft-cancel must not reboot the warm worker"
+    assert any(
+        name == "warm_lane_preserved_after_soft_cancel" for name, _ in client._degraded_events
+    )
+
+
+def test_recoverable_abandon_without_ack_reboots_softly():
+    client = _resolver_client(cancel_value=99)
+    import os
+
+    os.environ["AURA_MLX_SOFT_CANCEL_ACK_WAIT_S"] = "0.5"
+    try:
+        _run(client._resolve_deferred_reboot("recoverable_token_progress_stalled"))
+    finally:
+        os.environ.pop("AURA_MLX_SOFT_CANCEL_ACK_WAIT_S", None)
+    assert client._reboots == [("token_progress_stalled", False)]
+
+
+def test_nonrecoverable_abandon_reboots_immediately_marked_failed():
+    client = _resolver_client(cancel_value=99)
+    _run(client._resolve_deferred_reboot("token_progress_stalled"))
+    assert client._reboots == [("token_progress_stalled", True)]
+
+
+def test_recoverable_but_nonpreservable_reason_still_reboots():
+    client = _resolver_client(cancel_value=0)
+    _run(client._resolve_deferred_reboot("recoverable_empty_generation"))
+    assert client._reboots == [("empty_generation", False)]
+
+
+# ── worker-side stale-flag hygiene ─────────────────────────────────────
+
+
+def test_clear_stale_soft_cancel_resets_foreign_seq():
+    from core.brain.llm.mlx_worker import clear_stale_soft_cancel
+
+    channel = _Value(41)
+    clear_stale_soft_cancel(channel, 42)
+    assert channel.value == 0
+
+
+def test_clear_stale_soft_cancel_keeps_own_and_zero():
+    from core.brain.llm.mlx_worker import clear_stale_soft_cancel
+
+    own = _Value(42)
+    clear_stale_soft_cancel(own, 42)
+    assert own.value == 42  # a cancel already aimed at this job survives
+
+    idle = _Value(0)
+    clear_stale_soft_cancel(idle, 42)
+    assert idle.value == 0

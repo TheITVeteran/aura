@@ -1950,6 +1950,23 @@ def soft_cancel_requested(cancel_seq: Any, job_seq: int) -> bool:
         return False
 
 
+def clear_stale_soft_cancel(cancel_seq: Any, job_seq: int) -> None:
+    """Reset a cancel flag left over from a job that ended before observing it.
+
+    Shared-memory hygiene at job start: a stale flag must not cancel an
+    unrelated new job, and must not wedge the parent's soft-cancel ack-wait
+    (which treats a cleared flag as proof the worker's token loop is alive).
+    """
+    if cancel_seq is None:
+        return
+    try:
+        stale = int(getattr(cancel_seq, "value", 0))
+        if stale not in (0, int(job_seq)):
+            cancel_seq.value = 0
+    except (TypeError, ValueError, OSError):
+        logger.debug("Stale soft-cancel clear failed; continuing.")
+
+
 def _speculative_eligible(draft_model: Any, generation_kwargs: dict, job: dict) -> bool:
     """Speculative decoding is only safe on the plain generation path.
 
@@ -2659,6 +2676,7 @@ def _mlx_worker_loop(
                                     role_continuation_hit = False
                                     job_seq = _safe_int(job.get("seq"), 0)
                                     soft_cancelled = False
+                                    clear_stale_soft_cancel(cancel_seq, job_seq)
 
                                     # ── Token Sentinel: mid-generation cognitive intervention ──
                                     # Creates a lightweight monitor that checks for capitulation,

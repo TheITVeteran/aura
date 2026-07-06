@@ -2265,6 +2265,85 @@ class MLXLocalClient:
         )
         return {"requested": True, "reason": reason, "active_seq": active_seq}
 
+    # Deferred-reboot reasons (after the recoverable_ prefix is stripped) that
+    # follow a soft-cancel and are therefore eligible for warm-lane
+    # preservation when the worker acknowledges the cancel.
+    _SOFT_CANCEL_PRESERVABLE_REASONS = frozenset(
+        {
+            "first_token_sla_exceeded",
+            "token_progress_stalled",
+            "generation_deadline_reached",
+        }
+    )
+
+    async def _soft_cancel_acknowledged(self, timeout_s: float | None = None) -> bool:
+        """Wait (bounded) for the worker to acknowledge a soft-cancel.
+
+        Acknowledgement = the worker cleared the shared cancel flag (it
+        demonstrably passed through its token loop) while staying alive with
+        fresh heartbeats. When this returns True the orphaned generation has
+        already been dropped worker-side — late text cannot bleed into the
+        next turn because its request id is no longer pending — so the warm
+        model can be preserved instead of paying a ~60-90s reload.
+        """
+        if timeout_s is None:
+            try:
+                timeout_s = float(os.environ.get("AURA_MLX_SOFT_CANCEL_ACK_WAIT_S", "12"))
+            except ValueError:
+                timeout_s = 12.0
+        cancel_seq = getattr(self, "_cancel_seq", None)
+        if cancel_seq is None:
+            return False
+        deadline = time.monotonic() + max(0.5, float(timeout_s))
+        while time.monotonic() < deadline:
+            process = self._process
+            if process is None or not process.is_alive():
+                return False
+            try:
+                cancel_cleared = int(getattr(cancel_seq, "value", 0)) == 0
+            except (OSError, ValueError):
+                return False
+            heartbeat_fresh = (
+                self._last_heartbeat > 0.0
+                and (time.time() - self._last_heartbeat) < 20.0
+            )
+            if cancel_cleared and heartbeat_fresh:
+                return True
+            await asyncio.sleep(0.25)
+        return False
+
+    async def _resolve_deferred_reboot(self, deferred: str) -> None:
+        """Resolve an abandoned-request verdict: preserve the warm lane or reboot.
+
+        Historically EVERY abandoned request recycled the worker ("so late
+        text cannot bleed into the next turn") — a full model reload during
+        which arriving turns died, observed live as soak death-clusters. The
+        soft-cancel channel already isolates the orphaned output; what was
+        missing is verifying the worker actually observed the cancel. Now:
+        recoverable abandons keep the warm worker when the cancel is
+        acknowledged, and only unacknowledged (truly wedged) workers reboot.
+        """
+        recoverable = deferred.startswith("recoverable_")
+        reason = deferred.removeprefix("recoverable_")
+        if recoverable and reason in self._SOFT_CANCEL_PRESERVABLE_REASONS:
+            if await self._soft_cancel_acknowledged():
+                logger.info(
+                    "♻️✅ [MLX] Worker acknowledged soft-cancel after %s — warm lane preserved, no reboot.",
+                    reason,
+                )
+                self._record_degraded_event(
+                    "warm_lane_preserved_after_soft_cancel",
+                    detail=f"{os.path.basename(self.model_path)}:{reason}",
+                    severity="warning",
+                    foreground_request=False,
+                )
+                return
+            logger.warning(
+                "🛑 [MLX] No soft-cancel acknowledgement after %s — worker presumed wedged; rebooting.",
+                reason,
+            )
+        await self.reboot_worker(reason=reason, mark_failed=not recoverable)
+
     def force_abort_active_generation(self, reason: str = "hard_generation_deadline") -> bool:
         """Thread-safe emergency abort for a wedged generation.
 
@@ -3662,9 +3741,7 @@ class MLXLocalClient:
             if foreground_owner_cm is not None:
                 await foreground_owner_cm.__aexit__(None, None, None)
             if _deferred_reboot:
-                recoverable = str(_deferred_reboot).startswith("recoverable_")
-                reboot_reason = str(_deferred_reboot).removeprefix("recoverable_")
-                await self.reboot_worker(reason=reboot_reason, mark_failed=not recoverable)
+                await self._resolve_deferred_reboot(str(_deferred_reboot))
             return None
         try:
             # Check steering liveness
@@ -3704,11 +3781,9 @@ class MLXLocalClient:
             self._release_request_lock()
             if foreground_owner_cm is not None:
                 await foreground_owner_cm.__aexit__(None, None, None)
-            # Reboot AFTER releasing _request_lock to avoid lock-ordering deadlock
+            # Resolve AFTER releasing _request_lock to avoid lock-ordering deadlock
             if _deferred_reboot:
-                recoverable = str(_deferred_reboot).startswith("recoverable_")
-                reboot_reason = str(_deferred_reboot).removeprefix("recoverable_")
-                await self.reboot_worker(reason=reboot_reason, mark_failed=not recoverable)
+                await self._resolve_deferred_reboot(str(_deferred_reboot))
 
     async def _generate_inner(
         self,
@@ -4099,10 +4174,15 @@ class MLXLocalClient:
             if self._worker_unhealthy(stale_after=self._stale_after(during_generation=True)):
                 self._deferred_reboot_reason = "generation_timeout_unhealthy"
             elif foreground_request:
+                # Ask the worker to drop the orphaned generation between
+                # tokens; if it acknowledges, the warm lane survives (see
+                # _resolve_deferred_reboot). Only an unacknowledged cancel
+                # still costs a recycle.
+                self.soft_cancel_active_generation("abandoned_generation_deadline")
                 self._deferred_reboot_reason = "recoverable_generation_deadline_reached"
                 logger.warning(
-                    "⏳ [MLX] Deadline reached while worker still looks healthy; recycling foreground lane "
-                    "so abandoned text cannot block or bleed into the next turn."
+                    "⏳ [MLX] Deadline reached while worker still looks healthy; "
+                    "soft-cancelling the abandoned generation and preserving the warm lane if acknowledged."
                 )
             else:
                 logger.warning(

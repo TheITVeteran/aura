@@ -34,6 +34,9 @@ class _FakeOrphan:
 
 
 def test_orphan_reclaimed_before_memory_admission(monkeypatch):
+    # Disable the bounded reclaim re-poll so the contrived always-blocked
+    # memcheck fails fast instead of spinning the full production window.
+    monkeypatch.setenv("AURA_MLX_SPAWN_RECLAIM_WAIT_S", "0")
     client = mc.MLXLocalClient(model_path="mlx-community/Qwen2.5-32B-Instruct-4bit")
     try:
         events: list[str] = []
@@ -52,8 +55,10 @@ def test_orphan_reclaimed_before_memory_admission(monkeypatch):
         with pytest.raises(RuntimeError, match="memory_pressure_refused_worker_spawn"):
             client._spawn_worker_blocking()
 
-        # The fix: reclamation runs FIRST, then the admission check. Before the
-        # fix the memcheck raised before the orphan was ever killed.
-        assert events == ["kill", "memcheck"]
+        # The contract: reclamation runs FIRST, then the admission check
+        # (which the bounded reclaim-wait may legitimately re-poll). Before
+        # the fix the memcheck raised before the orphan was ever killed.
+        assert events[0] == "kill"
+        assert "memcheck" in events[1:]
     finally:
         client.close()
