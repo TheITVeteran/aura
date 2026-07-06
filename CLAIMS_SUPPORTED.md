@@ -59,8 +59,11 @@ This document lists the scientifically defensible, evidence-backed engineering c
 * **Classification**: `causally demonstrated`
 * **Definition**: Non-reactive action selection mediated by counterfactual choice scores and explicitly signed intent blocks (Will Decisions).
 * **Code / Evidence Path**:
-  - Unified Will decision: [core/runtime/task_ownership.py](file://<AURA_ROOT>/core/runtime/task_ownership.py)
+  - Unified Will decision: [core/governance/will.py](file://<AURA_ROOT>/core/governance/will.py) (`UnifiedWill.decide` → `WillDecision` with cryptographic receipt IDs and outcome/veto logic)
+  - Authority enforcement: [core/executive/authority_gateway.py](file://<AURA_ROOT>/core/executive/authority_gateway.py)
   - Telemetry receipt files: Dynamically generated `RECEIPTS.jsonl` traces under active runtime profiles.
+
+  > Correction (2026-07-06): this entry previously cited `core/runtime/task_ownership.py`, which is generic asyncio task-lifecycle tracking ("use this instead of raw asyncio.create_task") and has nothing to do with Will or decision logic. The real Will logic is `core/governance/will.py`.
 
 ## 9. Boxed Entity Confinement Safety
 * **Classification**: `locally demonstrated`

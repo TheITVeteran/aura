@@ -1952,7 +1952,29 @@ def _live_task_attempt_timeout_seconds() -> float:
     return min(180.0, max(45.0, value))
 
 
-DNU_BASELINE_MAX_TOKENS = 160
+def _dnu_baseline_max_tokens() -> int:
+    """Token budget for the comparison baselines.
+
+    FAIRNESS FIX (2026-07-06): the previous fixed value of 160 tokens
+    handicapped the baselines. The baseline system prompt instructs the model
+    to "Think step-by-step", but 160 tokens cannot hold a step-by-step
+    derivation for a coding/planning/self-debug task — the model runs out of
+    tokens before it can emit an <answer> tag, scoring 'no_answer'. Meanwhile
+    full_aura runs the same task through a 240s live path plus the
+    deterministic solve_strict_proof_prompt symbolic solver. Comparing an
+    unbounded, solver-assisted condition against a 160-token-strangled one is
+    not a fair baseline. A fair baseline is the SAME model with a COMPARABLE
+    reasoning budget and no architecture. Default raised to 2048; override with
+    AURA_DNU_BASELINE_MAX_TOKENS. See docs/DNU_BASELINE_FAIRNESS_AUDIT.md.
+    """
+    raw = os.environ.get("AURA_DNU_BASELINE_MAX_TOKENS", "2048")
+    try:
+        return max(160, int(raw))
+    except (TypeError, ValueError):
+        return 2048
+
+
+DNU_BASELINE_MAX_TOKENS = _dnu_baseline_max_tokens()
 
 
 def _iter_router_generation_clients(router):

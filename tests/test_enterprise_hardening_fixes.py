@@ -1931,7 +1931,12 @@ def test_dnu_baselines_are_bounded_and_marked_as_benchmark_calls():
     assert "strict_value_contract=True" not in baseline_block
     assert "proof_evaluation_contract=True" not in baseline_block
     assert "repetition_penalty=1.35" in baseline_block
-    assert "DNU_BASELINE_MAX_TOKENS = 160" in source
+    # Baseline fairness (2026-07-06): the 160-token cap handicapped baselines
+    # (couldn't reason step-by-step as instructed) vs a solver-assisted,
+    # 240s-budget full_aura — see docs/DNU_BASELINE_FAIRNESS_AUDIT.md. The cap
+    # is now an env-overridable fair default (2048), not a pinned 160.
+    assert "DNU_BASELINE_MAX_TOKENS = _dnu_baseline_max_tokens()" in source
+    assert 'os.environ.get("AURA_DNU_BASELINE_MAX_TOKENS", "2048")' in source
     assert "max_tokens=DNU_BASELINE_MAX_TOKENS" in baseline_block
     assert "num_predict=DNU_BASELINE_MAX_TOKENS" in baseline_block
     assert "max_tokens=96" not in baseline_block

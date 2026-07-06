@@ -15,13 +15,13 @@ Final closure statement: Aura passed the configured local final-proof gates for 
 | **5. System 2 Planning/Search** | `locally demonstrated` | `core/cognition/mcts_world_model.py`, tree planning and counterfactual search tests |
 | **6. Self-Repair** | `locally demonstrated` | `core/runtime/self_repair_ladder.py`, diagnostic self-healing loops |
 | **7. Self-Modification** | `locally demonstrated` | `core/self_modification/mutation_safety.py`, sandboxed patch proposals |
-| **8. Operational Volition** | `causally demonstrated` | `core/runtime/task_ownership.py`, `UnifiedWill` decision logs in `RECEIPTS.jsonl` |
+| **8. Operational Volition** | `causally demonstrated` | `core/governance/will.py` (`UnifiedWill.decide` → `WillDecision` with cryptographic receipt IDs), `core/executive/authority_gateway.py`, `UnifiedWill` decision logs in `RECEIPTS.jsonl` |
 | **9. Autonomous Agency** | `locally demonstrated` | `core/autonomy/autonomous_research_orchestrator.py`, multi-step goal decomposition |
 | **10. Emergent Intelligence** | `not proven` | Blocker: Requires large-scale out-of-distribution model evaluations beyond local compute limits |
 | **11. Entity-in-a-Box Behavior** | `locally demonstrated` | `tests/test_sandbox_hardening.py`, confinement boundary recognition tests |
 | **12. External Real-World Validation** | `not proven` | Blocker: Requires independent, external third-party evaluation and live production network |
 | **13. DNU AGI** | `not proven` | `artifacts/current/agi_live/` passed the configured local 100-task battery, but AGI itself remains unproven |
-| **14. AGI-Candidate** | `locally demonstrated` | `artifacts/current/agi_live/`, `artifacts/current/external_live_validation/`, `artifacts/current/agency_emergence_boxed_entity/`, `artifacts/current/unified_system_scenario/`, receipt coverage, ablations, baselines, and Aletheia Tier 5 evidence |
+| **14. AGI-Candidate** | `locally demonstrated` | `artifacts/current/agi_live/`, `artifacts/current/external_live_validation/`, `artifacts/current/agency_emergence_boxed_entity/`, `artifacts/current/unified_system_scenario/`, receipt coverage, ablations, baselines, and Aletheia Tier 5 evidence. **⚠️ Scope (2026-07-06): the `agi_live` baseline comparison was token-handicapped (160-token baseline vs solver-assisted full_aura) and its ablations isolate System 2 only — see [docs/DNU_BASELINE_FAIRNESS_AUDIT.md](docs/DNU_BASELINE_FAIRNESS_AUDIT.md). That bundle demonstrates System 2 symbolic reasoning, NOT the whole architecture; baseline numbers are superseded pending an honest re-run.** |
 | **15. Local Production Gate Readiness** | `locally demonstrated` | Pass status of configured local readiness gates, production surface lint, and artifact consistency |
 | **16. Mature RSI** | `not proven` | Blocker: Safety filters and local model capability restrict autonomous non-interactive improvement |
 | **17. Subjective Consciousness** | `not proven` | Strictly unsupported. Qualitative experience, qualia, and personhood are not scientifically provable |
