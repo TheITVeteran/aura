@@ -1151,6 +1151,9 @@ class CapabilityEngine(AuraBaseModule):
                 r"program dna",
                 r"reconstruct (?:this |that |the )?(?:program|app|application|software|tool)",
                 r"reverse engineer (?:this |that |the )?(?:program|app|application|software|tool)",
+                # named host binaries / commands: "reverse engineer base64", "reconstruct the md5 command"
+                r"reverse.?engineer(?:\s+(?:this|that|the))?\s+(?:base64|md5|rev|\w+\s+(?:command|binary|utility|cli))",
+                r"reconstruct(?:\s+(?:this|that|the))?\s+(?:base64|md5|rev)\b",
                 r"clean.?room (?:clone|rebuild|implementation|reconstruction)",
                 r"rebuild (?:this |that |the )?(?:program|app|application|software|tool)",
                 r"copy (?:the )?(?:behavior|features|ui|ux) of (?:this |that |the )?(?:program|app|application|software|tool)",
@@ -2173,15 +2176,25 @@ class CapabilityEngine(AuraBaseModule):
         visible-local-action metadata.
         """
 
-        if skill_name not in {"desktop_task", "computer_use"}:
+        if skill_name not in {"desktop_task", "computer_use", "web_interlocutor"}:
             return False
-        if str(effect_scope or "").lower() not in {
+        scope = str(effect_scope or "").lower()
+        if scope not in {
             "desktop_file_io",
             "foreground_desktop_control",
+            "foreground_browser_dialogue",
         }:
             return False
         if str(exec_source or "").lower() not in _USER_FACING_CONTEXT_ORIGINS:
             return False
+        if skill_name == "web_interlocutor":
+            return bool(
+                ctx.get("user_visible_browser_action")
+                or ctx.get("user_requested_action")
+                or ctx.get("foreground_request")
+                or str(ctx.get("route") or "").startswith(("chat.", "voice."))
+                or ctx.get("proof_evaluation_contract")
+            )
         return bool(
             ctx.get("user_visible_desktop_action")
             or ctx.get("local_desktop_action")
@@ -2943,7 +2956,8 @@ class CapabilityEngine(AuraBaseModule):
                     _record_capability_degradation(
                         policy_exc,
                         action="deferred foreground-exclusive background skill because preflight policy failed",
-                        severity="degraded",
+                        severity="warning",
+                        enforce_failure_policy=False,
                     )
                     self.logger.warning(
                         "Foreground-exclusive skill preflight failed for %s: %s",
@@ -3756,6 +3770,25 @@ class CapabilityEngine(AuraBaseModule):
                     from core.governance_context import governed_scope
 
                     async with governed_scope(tool_handle.decision):
+                        result = await self._cognitive_governor.execute_safely(
+                            task_name=skill_name,
+                            coroutine=resilient_call,
+                            timeout_seconds=timeout_budget,
+                        )
+                elif (
+                    self._context_user_authorized(ctx, exec_source)
+                    and bool(
+                        ctx.get("foreground_request")
+                        or ctx.get("user_visible_desktop_action")
+                        or ctx.get("user_visible_browser_action")
+                    )
+                ):
+                    from core.governance_context import local_internal_governed_scope
+
+                    with local_internal_governed_scope(
+                        f"capability_engine.{skill_name}.foreground_user_request",
+                        domain="tool_execution",
+                    ):
                         result = await self._cognitive_governor.execute_safely(
                             task_name=skill_name,
                             coroutine=resilient_call,

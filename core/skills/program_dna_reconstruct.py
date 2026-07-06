@@ -29,7 +29,7 @@ class ProgramDNAInput(BaseModel):
     )
     analysis_mode: str = Field(
         "reconstruct",
-        description="reconstruct | study | observe | monitor | defensive_analysis",
+        description="reconstruct | reverse_engineer | study | observe | monitor | defensive_analysis",
     )
     source_paths: list[str] = Field(default_factory=list)
     observed_behaviors: list[str] = Field(default_factory=list)
@@ -83,6 +83,16 @@ class ProgramDNAReconstructSkill(BaseSkill):
 
             engine = program_dna.register_program_dna_reconstruction_engine(project_root=Path.cwd())
 
+        # Runnable reverse-engineering: observe a REAL host binary, reconstruct
+        # its behavior via cognition, and VERIFY against held-out real outputs.
+        # Preferred whenever the target is a known safe host binary — that is
+        # the strongest, verifiable answer — for both the explicit
+        # reverse_engineer mode and the default reconstruct mode.
+        if params.analysis_mode in {"reverse_engineer", "reconstruct"}:
+            reverse = await self._reverse_engineer_host(engine, params.target)
+            if reverse is not None:
+                return reverse
+
         result = await engine.reconstruct(params.model_dump())
         payload = result.to_dict() if hasattr(result, "to_dict") else dict(result)
         feature_names = [feature.get("name") for feature in payload.get("features", [])]
@@ -93,6 +103,34 @@ class ProgramDNAReconstructSkill(BaseSkill):
             "features": feature_names,
             "result": payload,
             "summary": self._summary(payload, feature_names),
+        }
+
+    async def _reverse_engineer_host(self, engine: Any, target_label: str) -> dict[str, Any] | None:
+        """Runnable reverse-engineering of a real host binary, verified against
+        held-out real outputs. Returns None if the target is not a known safe
+        host binary (caller falls back to structural reconstruction)."""
+        try:
+            from core.self_improvement.host_reconstruction import (
+                resolve_target,
+                reverse_engineer_host_binary,
+            )
+        except ImportError:
+            return None
+        target = resolve_target(target_label)
+        if target is None:
+            return None
+        report = await reverse_engineer_host_binary(engine, target)
+        status = report.get("status")
+        return {
+            "ok": status == "supported",
+            "skill": self.name,
+            "target": report.get("target"),
+            "result": report,
+            "summary": (
+                f"Reverse-engineered {report.get('target')} from behavior only "
+                f"(no source): {report.get('held_out_passed')}/{report.get('held_out_total')} "
+                f"held-out cases reproduced — epistemic status: {status}."
+            ),
         }
 
     def _summary(self, payload: dict[str, Any], feature_names: list[str]) -> str:
