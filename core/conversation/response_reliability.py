@@ -1385,6 +1385,13 @@ _USE_REQUIRED_PHRASE_RE = re.compile(
 )
 
 
+# Heads that mark a scope/brevity instruction ("include nothing else"), not a
+# literal phrase the reply must contain.
+_BREVITY_PSEUDO_PHRASE_HEADS = frozenset(
+    {"nothing", "no", "only", "just", "anything", "everything", "none"}
+)
+
+
 def _requested_required_phrases(user_message: Any) -> tuple[str, ...]:
     text = str(user_message or "")
     if not text:
@@ -1402,6 +1409,11 @@ def _requested_required_phrases(user_message: Any) -> tuple[str, ...]:
             # Avoid treating a full instruction clause as a required phrase when
             # the user wrote something like "use your own voice and include X".
             if len(_WORD_RE.findall(phrase)) > 8:
+                continue
+            # "include nothing else", "include only the answer" are BREVITY/scope
+            # instructions, not a literal phrase to echo. Treating them as a
+            # required phrase made a valid short reply fail 'missing_requested_phrase'.
+            if phrase.lower().split()[0] in _BREVITY_PSEUDO_PHRASE_HEADS:
                 continue
             phrases.append(phrase.lower())
     return tuple(dict.fromkeys(phrases))
