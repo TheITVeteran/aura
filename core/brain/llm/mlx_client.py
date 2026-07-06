@@ -1882,6 +1882,23 @@ class MLXLocalClient:
 
     def note_lane_recovering(self, reason: str) -> None:
         self._warmup_in_flight = False
+        # A foreground warmup can be refused by the unified-memory guard even
+        # though the primary worker is already alive and initialized. Marking
+        # that as recovering strands the live desktop lane behind
+        # lane_recovering + visible_conversation_probe_missing. In that case the
+        # correct next step is to let the foreground turn prove visible
+        # readiness, not spawn or recycle another model process.
+        if str(reason or "") == "foreground_warmup_deferred_memory_pressure":
+            try:
+                worker_ready = bool(self.is_alive() and self._init_done)
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+                worker_ready = False
+            if worker_ready:
+                now = time.time()
+                self._last_ready_at = max(float(self._last_ready_at or 0.0), now)
+                self._last_progress_at = max(float(self._last_progress_at or 0.0), now)
+                self._set_lane_state("ready")
+                return
         self._set_lane_state("recovering", reason)
 
     def _lane_runtime_failure(self) -> str:
@@ -2393,6 +2410,30 @@ class MLXLocalClient:
             logger.debug("Orphan reclamation scan failed (non-fatal): %s", orphan_exc)
 
         memory_block = _memory_pressure_blocks_worker_spawn(self.model_path)
+        if memory_block and not self._is_deep_solver_lane():
+            # A worker we just killed (orphan reclamation above, or a prior
+            # generation-timeout force-abort) frees ~18GB, but the OS reclaim of
+            # wired Metal memory lags process exit. Checking headroom instantly
+            # sees the pre-reclaim number and refuses — which takes the whole
+            # conversation lane COLD even though the memory is about to be free.
+            # Observed live during the 200-turn soak (2026-07-06): a Cortex
+            # generation timed out, the worker was killed, respawn was refused
+            # at 20.3GB < 24GB while the killed worker's 18.6GB had not yet been
+            # reclaimed, and a cluster of turns died until pressure eased. Wait
+            # (bounded) for reclaim and re-check before refusing. Runs in
+            # _spawn_worker_blocking's executor thread, so the sleep does not
+            # block the event loop; the deep-solver lane still refuses instantly.
+            reclaim_wait_s = _env_float("AURA_MLX_SPAWN_RECLAIM_WAIT_S", 15.0)
+            reclaim_deadline = time.monotonic() + max(0.0, reclaim_wait_s)
+            waited = False
+            while memory_block and time.monotonic() < reclaim_deadline:
+                waited = True
+                time.sleep(1.5)
+                memory_block = _memory_pressure_blocks_worker_spawn(self.model_path)
+            if waited and not memory_block:
+                logger.info(
+                    "🟢 [MLX] Headroom recovered after worker reclaim; proceeding with spawn."
+                )
         if memory_block:
             error = RuntimeError(f"memory_pressure_refused_worker_spawn:{memory_block}")
             if self._is_deep_solver_lane():
