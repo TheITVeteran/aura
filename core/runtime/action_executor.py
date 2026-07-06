@@ -133,7 +133,25 @@ class ActionExecutor:
                 elif domain == ActionDomain.FILE_WRITE:
                     gateway = get_file_write_gateway()
                     path = params.get("path")
-                    if "text" in params:
+                    op = str(params.get("op", "") or "").lower()
+                    if op == "delete":
+                        deleted = await gateway.delete_path_async(
+                            path,
+                            recursive=bool(params.get("recursive", False)),
+                            source=source,
+                        )
+                        result = {"ok": True, "path": str(path), "deleted": deleted}
+                    elif op == "move":
+                        final = await gateway.move_path_async(
+                            path, params.get("destination"), source=source
+                        )
+                        result = {"ok": True, "path": str(path), "destination": final}
+                    elif op == "copy":
+                        final = await gateway.copy_path_async(
+                            path, params.get("destination"), source=source
+                        )
+                        result = {"ok": True, "path": str(path), "destination": final}
+                    elif "text" in params:
                         await gateway.write_text_async(path, params["text"], source=source)
                         result = {"ok": True, "path": str(path)}
                     elif "payload" in params:

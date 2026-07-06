@@ -166,6 +166,100 @@ class FileWriteGateway:
         except FileNotFoundError:
             return False
 
+    async def delete_path_async(
+        self, path: PathLike, *, recursive: bool = False, source: str = "unknown"
+    ) -> bool:
+        """Delete a file or directory tree under governance, off the event loop.
+
+        Directories require ``recursive=True`` — refusing an implicit tree
+        delete is the difference between "remove this file" and "remove
+        everything under here", and callers must state which they mean.
+
+        Returns True if something was deleted, False if the path was absent.
+        """
+        target = _coerce_path_allow_dir(path)
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.delete_path:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+
+        def _delete() -> bool:
+            if not target.exists():
+                return False
+            if target.is_dir():
+                if not recursive:
+                    raise IsADirectoryError(
+                        f"refusing to delete directory without recursive=True: {target}"
+                    )
+                import shutil
+
+                shutil.rmtree(target)
+                return True
+            target.unlink()
+            return True
+
+        import asyncio
+
+        return await asyncio.to_thread(_delete)
+
+    async def move_path_async(
+        self, path: PathLike, destination: PathLike, *, source: str = "unknown"
+    ) -> str:
+        """Move a file or directory under governance, off the event loop.
+
+        Returns the final destination path as a string.
+        """
+        src = _coerce_path_allow_dir(path)
+        dst = _coerce_path_allow_dir(destination)
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.move_path:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+
+        def _move() -> str:
+            if not src.exists():
+                raise FileNotFoundError(f"move source does not exist: {src}")
+            import shutil
+
+            return str(shutil.move(str(src), str(dst)))
+
+        import asyncio
+
+        return await asyncio.to_thread(_move)
+
+    async def copy_path_async(
+        self, path: PathLike, destination: PathLike, *, source: str = "unknown"
+    ) -> str:
+        """Copy a file or directory tree under governance, off the event loop.
+
+        Returns the final destination path as a string.
+        """
+        src = _coerce_path_allow_dir(path)
+        dst = _coerce_path_allow_dir(destination)
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.copy_path:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+
+        def _copy() -> str:
+            if not src.exists():
+                raise FileNotFoundError(f"copy source does not exist: {src}")
+            import shutil
+
+            if src.is_dir():
+                return str(shutil.copytree(str(src), str(dst)))
+            return str(shutil.copy2(str(src), str(dst)))
+
+        import asyncio
+
+        return await asyncio.to_thread(_copy)
+
     def drain_text(self, path: PathLike, *, encoding: str = "utf-8", source: str = "unknown") -> str:
         """Atomically drain a text queue file and return its previous contents.
 
@@ -232,6 +326,13 @@ def _coerce_target(path: PathLike) -> Path:
     if target.exists() and target.is_dir():
         raise IsADirectoryError(f"target path is a directory: {target}")
     return target
+
+
+def _coerce_path_allow_dir(path: PathLike) -> Path:
+    """Coerce a path argument for operations that legitimately act on directories."""
+    if path is None:
+        raise ValueError("target path is required")
+    return Path(path).expanduser()
 
 
 _gateway: FileWriteGateway | None = None

@@ -4,12 +4,8 @@ from core.governance.will import ActionDomain
 import contextlib
 import logging
 import os
-import re
-import shutil
-import sys
 import tempfile
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 
 from core.skills.base_skill import BaseSkill
@@ -189,15 +185,20 @@ class FileOperationSkill(BaseSkill):
                     # Double-check containment before destructive ops
                     if not self._is_within_root(full_path):
                         return {"ok": False, "error": "Delete blocked: path outside workspace"}
-                    
+
                     is_dir = await asyncio.to_thread(os.path.isdir, full_path)
-                    if is_dir:
+                    real_target = await asyncio.to_thread(os.path.realpath, full_path)
+                    if is_dir and real_target == self.root_dir:
                         # Safety: refuse to delete root or top-level dirs
-                        if os.path.realpath(full_path) == self.root_dir:
-                            return {"ok": False, "error": "Cannot delete workspace root", "path": path}
-                        await asyncio.to_thread(shutil.rmtree, full_path)
-                    else:
-                        await asyncio.to_thread(os.remove, full_path)
+                        return {"ok": False, "error": "Cannot delete workspace root", "path": path}
+                    result = await ActionExecutor.execute(
+                        domain=ActionDomain.FILE_WRITE,
+                        action_name="file_operation.delete",
+                        params={"op": "delete", "path": full_path, "recursive": is_dir},
+                        source="file_operation",
+                    )
+                    if not result.get("ok"):
+                        return {"ok": False, "error": result.get("error", "delete failed"), "path": path}
                     return {"ok": True, "summary": f"Deleted {path}", "path": path}
                 return {"ok": False, "error": "File not found", "path": path}
 
@@ -209,8 +210,15 @@ class FileOperationSkill(BaseSkill):
                     full_dest = self._safe_resolve(dest_path)
                 except PermissionError as e:
                     return {"ok": False, "error": str(e)}
-                
-                await asyncio.to_thread(shutil.move, full_path, full_dest)
+
+                result = await ActionExecutor.execute(
+                    domain=ActionDomain.FILE_WRITE,
+                    action_name="file_operation.move",
+                    params={"op": "move", "path": full_path, "destination": full_dest},
+                    source="file_operation",
+                )
+                if not result.get("ok"):
+                    return {"ok": False, "error": result.get("error", "move failed"), "path": path}
                 return {"ok": True, "summary": f"Moved {path} to {dest_path}", "path": path, "destination": dest_path}
 
             elif action == "copy":
@@ -221,12 +229,15 @@ class FileOperationSkill(BaseSkill):
                     full_dest = self._safe_resolve(dest_path)
                 except PermissionError as e:
                     return {"ok": False, "error": str(e)}
-                
-                is_dir = await asyncio.to_thread(os.path.isdir, full_path)
-                if is_dir:
-                    await asyncio.to_thread(shutil.copytree, full_path, full_dest)
-                else:
-                    await asyncio.to_thread(shutil.copy2, full_path, full_dest)
+
+                result = await ActionExecutor.execute(
+                    domain=ActionDomain.FILE_WRITE,
+                    action_name="file_operation.copy",
+                    params={"op": "copy", "path": full_path, "destination": full_dest},
+                    source="file_operation",
+                )
+                if not result.get("ok"):
+                    return {"ok": False, "error": result.get("error", "copy failed"), "path": path}
                 return {"ok": True, "summary": f"Copied {path} to {dest_path}", "path": path, "destination": dest_path}
 
             elif action == "patch":

@@ -1,5 +1,6 @@
 import logging
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime
 
 from core.runtime.errors import record_degradation
@@ -7,6 +8,22 @@ from core.runtime.runtime_settings import get_runtime_setting
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Senses.Notifications")
+
+
+@dataclass(frozen=True)
+class DeliveryResult:
+    """Honest outcome of a notification attempt.
+
+    ``delivered`` is True only when the OS accepted the notification.
+    ``status`` is one of: delivered, disabled, suppressed_quiet_hours, failed.
+    """
+
+    delivered: bool
+    status: str
+    detail: str = ""
+
+    def __bool__(self) -> bool:  # truthiness == was it actually delivered
+        return self.delivered
 
 
 def _parse_hhmm(value: object) -> tuple[int, int] | None:
@@ -58,21 +75,38 @@ class DesktopNotifier:
     """Handles native OS desktop notifications (macOS focuses)."""
 
     @staticmethod
-    def send(title: str, message: str, subtitle: str | None = None, sound: str = "Tink") -> None:
+    def send(title: str, message: str, subtitle: str | None = None, sound: str = "Tink") -> DeliveryResult:
         """Send a native macOS desktop notification.
-        
+
         Args:
             title: The bold title of the notification (e.g. "Aura")
             message: The body text
             subtitle: Optional subtitle
             sound: System sound to play (e.g. "Glass", "Basso", "Purr", "Tink")
+
+        Returns:
+            DeliveryResult stating whether the user was actually reached.
+            Callers must not assume delivery — quiet hours, the notify.enabled
+            setting, or an osascript failure all yield delivered=False.
         """
-        if not _notifications_allowed():
-            logger.debug(
-                "🔕 Notification suppressed by user settings (notify.enabled/quiet hours): %s",
-                title,
+        if not bool(get_runtime_setting("notify.enabled", True)):
+            logger.debug("🔕 Notification suppressed: notifications disabled in settings: %s", title)
+            return DeliveryResult(
+                delivered=False,
+                status="disabled",
+                detail="Notifications are disabled in user settings (notify.enabled=false).",
             )
-            return
+        if _within_quiet_hours(
+            datetime.now(),
+            get_runtime_setting("notify.quiet_hours_start", "22:00"),
+            get_runtime_setting("notify.quiet_hours_end", "08:00"),
+        ):
+            logger.debug("🔕 Notification suppressed by quiet hours: %s", title)
+            return DeliveryResult(
+                delivered=False,
+                status="suppressed_quiet_hours",
+                detail="Within the user's configured quiet hours window.",
+            )
         try:
             # Escape strings to prevent shell injection via AppleScript
             safe_title = title.replace('"', '\\"')
@@ -103,14 +137,16 @@ class DesktopNotifier:
                     result.stderr,
                 )
             logger.debug("Pushed macOS notification: %s | %s", title, message)
+            return DeliveryResult(delivered=True, status="delivered")
         except (subprocess.SubprocessError, OSError) as e:
             record_degradation('notifications', e)
             logger.error("Failed to send desktop notification: %s", e)
+            return DeliveryResult(delivered=False, status="failed", detail=str(e)[:300])
 
     @staticmethod
-    def push_insight(message: str) -> None:
+    def push_insight(message: str) -> DeliveryResult:
         """Helper to push a standard Aura insight notification."""
-        DesktopNotifier.send(
+        return DesktopNotifier.send(
             title="Aura Insight",
             message=message,
             sound="Glass"

@@ -24,6 +24,7 @@ EXPECTED_REGISTERED_SKILLS = {
     "ManageAbilities",
     "add_belief",
     "auto_refactor",
+    "build_app",
     "clock",
     "code_repl",
     "coding_skill",
@@ -44,6 +45,7 @@ EXPECTED_REGISTERED_SKILLS = {
     "free_search",
     "grounded_search",
     "image_gen",
+    "improve_own_code",
     "install_package",
     "inter_agent_comm",
     "internal_sandbox",
@@ -303,7 +305,7 @@ def _redirect_runtime_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 def test_registered_skill_surface_matches_expected_catalog(skill_registry):
     assert set(skill_registry) == EXPECTED_REGISTERED_SKILLS
-    assert len(skill_registry) == 70
+    assert len(skill_registry) == 72
 
 
 @pytest.mark.asyncio
