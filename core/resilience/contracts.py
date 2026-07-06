@@ -42,7 +42,18 @@ logger = logging.getLogger("Aura.Contracts")
 
 T = TypeVar("T")
 
-_ENFORCE = os.environ.get("AURA_CONTRACTS_ENFORCE", "0") == "1"
+def _resolve_enforce() -> bool:
+    # Canonical definition lives in core.runtime.mode (the single strictness
+    # resolver); fall back to the raw env read if mode is unavailable at import.
+    try:
+        from core.runtime.mode import contracts_enforced
+
+        return contracts_enforced()
+    except (ImportError, AttributeError, RuntimeError):
+        return os.environ.get("AURA_CONTRACTS_ENFORCE", "0") == "1"
+
+
+_ENFORCE = _resolve_enforce()
 
 # Guarded-callable failure envelope: user-supplied callables (checks, guards,
 # actions, hooks, channels) may raise anything. House discipline forbids broad

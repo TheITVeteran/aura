@@ -186,7 +186,12 @@ class AutonomousOutputGate:
         - secondary: Background logs/process trace (secondary_queue)
         - both: Send to both
 
-        INVARIANT: Every primary emission passes through the Unified Will.
+        INVARIANT: Every primary emission is governed by the Unified Will, or —
+        if the Will engine itself is unavailable — fails closed. Autonomous
+        output is rerouted to the background sink; a user-awaited reply is still
+        delivered (never silently dropped) but is marked governance_degraded and
+        recorded CRITICAL so the bypass is audited, never claimed as governed.
+        No autonomous content ever reaches the user ungoverned.
         """
         if not content:
             return
@@ -195,17 +200,19 @@ class AutonomousOutputGate:
         target, metadata = self._foreground_policy(content, origin, target, metadata)
 
         # ── UNIFIED WILL HARD GATE ────────────────────────────────────
-        # Nothing user-visible happens without a WillReceipt.
+        # Nothing user-visible reaches the user ungoverned. If the Will engine
+        # itself throws, we fail closed rather than fall through and emit.
+        _trusted_reply = origin in ("user", "voice", "admin")
         if target in ("primary", "both"):
             try:
                 from core.will import ActionDomain, get_will
                 _will = get_will()
-                _domain = ActionDomain.RESPONSE if origin in ("user", "voice", "admin") else ActionDomain.EXPRESSION
+                _domain = ActionDomain.RESPONSE if _trusted_reply else ActionDomain.EXPRESSION
                 _decision = _will.decide(
                     content=content[:200],
                     source=f"output_gate:{origin}",
                     domain=_domain,
-                    priority=0.9 if origin in ("user", "voice", "admin") else 0.5,
+                    priority=0.9 if _trusted_reply else 0.5,
                 )
                 if not _decision.is_approved():
                     logger.info("OutputGate: Unified Will blocked emission from %s: %s", origin, _decision.reason)
@@ -217,6 +224,37 @@ class AutonomousOutputGate:
             except (ImportError, AttributeError, RuntimeError) as _will_err:
                 record_degradation('output_gate', _will_err)
                 logger.debug("OutputGate: Will gate degraded: %s", _will_err)
+                # FAIL CLOSED — the pre-fix behavior fell through here and
+                # emitted to primary with no WillReceipt, silently breaking the
+                # stated invariant. Autonomous output has no waiting user, so it
+                # is routed to the background sink. A direct reply the user is
+                # waiting on is still delivered (dropping it reproduces the
+                # "no reply when I talk" failure), but marked ungoverned and
+                # recorded CRITICAL so the bypass is audited, not hidden.
+                if _trusted_reply:
+                    metadata["will_receipt_id"] = None
+                    metadata["governance_degraded"] = True
+                    record_degradation(
+                        'output_gate.will_unavailable_user_reply',
+                        _will_err,
+                        severity="critical",
+                        action="delivered a user-awaited reply marked governance_degraded after the Will engine threw",
+                    )
+                else:
+                    logger.warning(
+                        "🛡️ OutputGate: Will engine unavailable — failing closed; routing autonomous %s off the primary channel.",
+                        origin,
+                    )
+                    record_degradation(
+                        'output_gate.will_unavailable_autonomous',
+                        _will_err,
+                        severity="critical",
+                        action="rerouted autonomous emission off the primary channel because the Will engine threw",
+                    )
+                    if target == "both":
+                        target = "secondary"
+                    else:  # target == "primary"
+                        return
 
         current_task = asyncio.current_task()
         if current_task is not None and not getattr(current_task, "_aura_supervised", False):

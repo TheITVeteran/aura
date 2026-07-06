@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
@@ -223,6 +224,82 @@ def is_safe() -> bool:
     return get_mode() == AuraMode.SAFE
 
 
+# ── Governance strictness: the single cross-reference ──────────────────────
+# Historically four independent switches decided "am I hardened?" and none
+# referenced the others: contracts.py (AURA_CONTRACTS_ENFORCE), Will
+# (AURA_STRICT_WILL / AURA_GOVERNANCE_MODE), this module (AURA_MODE), and
+# governance_context (AURA_GOVERNANCE_MODE). An operator could set
+# AURA_MODE=production believing the runtime was hardened while Will's
+# default-deny stayed asleep. This resolver is the one place that reads every
+# signal, so consumers cross-reference through it, and it flags the case where
+# the capability mode claims production but governance is not actually hard.
+#
+# Design note (deliberate): AURA_MODE is the *capability* manifest (what side
+# effects are live). Governance hardening (Will default-deny, contract
+# fail-closed) is a *separate, explicit* switch so that turning on production
+# capabilities does not silently flip default-deny across every consumer — the
+# offline suite runs at the production default and must not become fail-closed
+# implicitly. Consistency is surfaced loudly at startup instead.
+@dataclass(frozen=True)
+class GovernanceStrictness:
+    strict_will: bool           # Will default-deny active
+    enforce_contracts: bool     # DbC violations fail closed
+    governance_production: bool # governance_context raises on violations
+    mode_claims_production: bool
+    hardened: bool              # the load-bearing gate (Will default-deny)
+    consistent: bool            # not (mode claims production but unhardened)
+    advisory: str = ""
+
+
+def governance_strictness() -> GovernanceStrictness:
+    """Resolve every governance-hardening signal in one place."""
+    gov_mode = os.environ.get("AURA_GOVERNANCE_MODE", "").strip().lower()
+    strict_will = (
+        os.environ.get("AURA_STRICT_WILL") == "1" or gov_mode in {"production", "strict"}
+    )
+    enforce_contracts = os.environ.get("AURA_CONTRACTS_ENFORCE", "0") == "1"
+    governance_production = gov_mode == "production"
+    mode_claims_production = get_mode() in (AuraMode.PRODUCTION, AuraMode.LIVE)
+    hardened = strict_will
+    consistent = (not mode_claims_production) or hardened
+    advisory = ""
+    if not consistent:
+        advisory = (
+            "AURA_MODE claims production/live but governance is NOT hardened: "
+            "Will default-deny is off. Set AURA_GOVERNANCE_MODE=production to "
+            "harden Will and AURA_CONTRACTS_ENFORCE=1 to fail contracts closed."
+        )
+    return GovernanceStrictness(
+        strict_will=strict_will,
+        enforce_contracts=enforce_contracts,
+        governance_production=governance_production,
+        mode_claims_production=mode_claims_production,
+        hardened=hardened,
+        consistent=consistent,
+        advisory=advisory,
+    )
+
+
+def strict_will_active() -> bool:
+    """Will default-deny gate. Canonical definition, read by core.governance.will."""
+    return governance_strictness().strict_will
+
+
+def contracts_enforced() -> bool:
+    """DbC fail-closed gate. Canonical definition, read by core.resilience.contracts."""
+    return governance_strictness().enforce_contracts
+
+
+def governance_production_active() -> bool:
+    """governance_context hard-raise gate."""
+    return governance_strictness().governance_production
+
+
+def governance_hardened() -> bool:
+    """True when the runtime's governance is actually fail-closed."""
+    return governance_strictness().hardened
+
+
 def allows_self_modification() -> bool:
     """True if the current mode allows self-modification."""
     return get_active_manifest()["allows_self_modification"]
@@ -315,6 +392,30 @@ def validate_mode_at_startup() -> None:
                 os.environ["AURA_AUTONOMY_LEVEL"] = str(max_autonomy_level())
         except ValueError:
             logger.warning("Invalid AURA_AUTONOMY_LEVEL=%r; ignoring.", autonomy_env)
+
+    # Governance-hardening consistency: close the "I set AURA_MODE=production
+    # so I must be hardened" trap by surfacing the disagreement loudly.
+    strictness = governance_strictness()
+    if not strictness.consistent:
+        logger.warning("⚠️  GOVERNANCE NOT HARDENED: %s", strictness.advisory)
+        try:
+            from core.runtime.errors import record_degradation
+
+            record_degradation(
+                "runtime.mode",
+                RuntimeError(strictness.advisory),
+                severity="warning",
+                action="ran with production capabilities but non-hardened governance",
+            )
+        except (ImportError, AttributeError, RuntimeError):
+            pass
+    else:
+        logger.info(
+            "Governance: strict_will=%s enforce_contracts=%s (hardened=%s)",
+            strictness.strict_will,
+            strictness.enforce_contracts,
+            strictness.hardened,
+        )
 
     if mode == AuraMode.SAFE:
         logger.warning("🔒 SAFE MODE ACTIVE: All autonomous behavior disabled.")

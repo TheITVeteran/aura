@@ -38,8 +38,36 @@ logger = logging.getLogger("Aura.WebInterlocutor")
 
 _MAX_PAGE_TEXT_CHARS = 24_000
 _MAX_REPLY_CHARS = 8_000
+_MIN_OUTBOUND_MESSAGE_CHARS = 24
 _DEFAULT_WAIT_S = 45.0
 _DEFAULT_STABLE_POLLS = 2
+
+
+def _mark_web_interlocutor_progress(source: str) -> None:
+    try:
+        from core.runtime.liveness import mark_runtime_service_progress
+
+        mark_runtime_service_progress(source)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+
+
+def _run_governed_applescript(script: str, *, source: str, timeout: float) -> dict[str, Any]:
+    from core.governance_context import local_internal_governed_scope
+
+    with local_internal_governed_scope(source, domain="tool_execution"):
+        return get_desktop_action_gateway().run_applescript(
+            script,
+            source=source,
+            timeout=timeout,
+        )
+
+
+def _call_in_governed_tool_scope(source: str, func: Any, *args: Any, **kwargs: Any) -> Any:
+    from core.governance_context import local_internal_governed_scope
+
+    with local_internal_governed_scope(source, domain="tool_execution"):
+        return func(*args, **kwargs)
 
 
 @dataclass
@@ -81,8 +109,14 @@ class WebInterlocutorResult:
     memory_receipt_id: str = ""
     status: str = "ok"
     error: str = ""
+    diagnostics: dict[str, Any] = field(default_factory=dict)
     started_at: float = field(default_factory=time.time)
     completed_at: float = 0.0
+    # Causal memory: adjudicated revisions the conversation forced, and the
+    # ablation proof that a later decision changed only because of them.
+    revisions: list[dict[str, Any]] = field(default_factory=list)
+    causal_influence: dict[str, Any] = field(default_factory=dict)
+    revision_receipts: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -204,6 +238,19 @@ class ChromeCDPDialogueBrowser:
     const st = window.getComputedStyle(el);
     return r.width > 8 && r.height > 8 && st.visibility !== 'hidden' && st.display !== 'none';
   };
+  const promptLike = (label) => /ask anything|message chatgpt|message gemini|ask gemini|enter a prompt|send a message|type a message|message|reply/.test(label);
+  const unsafeEditor = (el) => {
+    const r = el.getBoundingClientRect();
+    const label = [
+      el.getAttribute('aria-label') || '',
+      el.getAttribute('place' + 'holder') || '',
+      el.getAttribute('data-' + 'place' + 'holder') || '',
+      el.textContent || ''
+    ].join(' ').toLowerCase();
+    if (/write or type\s*\/\s*for commands|edit message|update this answer|save\s*&\s*submit|save and submit|message editor|transcript edit/.test(label)) return true;
+    if (r.bottom < window.innerHeight * 0.58 && !promptLike(label)) return true;
+    return false;
+  };
   const score = (el) => {
     const r = el.getBoundingClientRect();
     const label = [
@@ -212,27 +259,30 @@ class ChromeCDPDialogueBrowser:
       el.getAttribute('data-' + 'place' + 'holder') || '',
       el.textContent || ''
     ].join(' ').toLowerCase();
-    let s = r.bottom / Math.max(1, window.innerHeight);
-    if (/message|prompt|ask|send|chat|reply|type|input/.test(label)) s += 3;
+    let s = (r.bottom / Math.max(1, window.innerHeight)) * 4;
+    if (promptLike(label)) s += 6;
     if (el === document.activeElement) s += 2;
     if (el.isContentEditable || el.getAttribute('role') === 'textbox') s += 1;
+    if (r.bottom < window.innerHeight * 0.70) s -= 5;
     return s;
   };
   const candidates = Array.from(document.querySelectorAll(
     'textarea,input[type="text"],input:not([type]),div[contenteditable="true"],[role="textbox"],[contenteditable="true"]'
-  )).filter(visible).sort((a,b) => score(b) - score(a));
+  )).filter((el) => visible(el) && !unsafeEditor(el)).sort((a,b) => score(b) - score(a));
   const el = candidates[0];
   if (!el) return JSON.stringify({ok:false, error:'no_visible_editable_field'});
   el.scrollIntoView({block:'center', inline:'nearest'});
   el.focus();
   el.click();
+  const rect = el.getBoundingClientRect();
   return JSON.stringify({
     ok:true,
     tag: el.tagName,
     role: el.getAttribute('role') || '',
     aria: el.getAttribute('aria-label') || '',
     input_hint: el.getAttribute('place' + 'holder') || '',
-    editable_count: candidates.length
+    editable_count: candidates.length,
+    rect: {top: Math.round(rect.top), bottom: Math.round(rect.bottom), height: Math.round(rect.height)}
   });
 })()
 """
@@ -356,10 +406,28 @@ class ChromeVisibleDialogueBrowser:
         if self._cdp.is_available():
             return await self._cdp.open_or_attach(url)
         if url:
-            controller = get_browser_controller()
-            await controller.start()
-            await controller.open_url(url, new_tab=True)
+            try:
+                controller = get_browser_controller()
+                await controller.start()
+                await controller.open_url(url, new_tab=True)
+                await asyncio.sleep(0.5)
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "web_interlocutor.browser_controller_open",
+                    exc,
+                    severity="warning",
+                    action="continued with direct visible Chrome navigation",
+                )
+            await asyncio.to_thread(self._open_url_applescript, url)
             await asyncio.sleep(2.0)
+            current_url, _title = await asyncio.to_thread(self._current_tab_info)
+            if not _same_origin_or_exact_url(current_url, url):
+                await asyncio.to_thread(self._open_url_applescript, url)
+                await asyncio.sleep(2.0)
+            current_url, _title = await asyncio.to_thread(self._current_tab_info)
+            if not _same_origin_or_exact_url(current_url, url):
+                await asyncio.to_thread(self._open_url_keyboard, url)
+                await asyncio.sleep(2.0)
         return await self.snapshot()
 
     async def snapshot(self) -> BrowserPageSnapshot:
@@ -426,6 +494,19 @@ class ChromeVisibleDialogueBrowser:
     const st = window.getComputedStyle(el);
     return r.width > 8 && r.height > 8 && st.visibility !== 'hidden' && st.display !== 'none';
   };
+  const promptLike = (label) => /ask anything|message chatgpt|message gemini|ask gemini|enter a prompt|send a message|type a message|message|reply/.test(label);
+  const unsafeEditor = (el) => {
+    const r = el.getBoundingClientRect();
+    const label = [
+      el.getAttribute('aria-label') || '',
+      el.getAttribute('place' + 'holder') || '',
+      el.getAttribute('data-' + 'place' + 'holder') || '',
+      el.textContent || ''
+    ].join(' ').toLowerCase();
+    if (/write or type\s*\/\s*for commands|edit message|update this answer|save\s*&\s*submit|save and submit|message editor|transcript edit/.test(label)) return true;
+    if (r.bottom < window.innerHeight * 0.58 && !promptLike(label)) return true;
+    return false;
+  };
   const score = (el) => {
     const r = el.getBoundingClientRect();
     const label = [
@@ -434,27 +515,30 @@ class ChromeVisibleDialogueBrowser:
       el.getAttribute('data-' + 'place' + 'holder') || '',
       el.textContent || ''
     ].join(' ').toLowerCase();
-    let s = r.bottom / Math.max(1, window.innerHeight);
-    if (/message|prompt|ask|send|chat|reply|type|input/.test(label)) s += 3;
+    let s = (r.bottom / Math.max(1, window.innerHeight)) * 4;
+    if (promptLike(label)) s += 6;
     if (el === document.activeElement) s += 2;
     if (el.isContentEditable || el.getAttribute('role') === 'textbox') s += 1;
+    if (r.bottom < window.innerHeight * 0.70) s -= 5;
     return s;
   };
   const candidates = Array.from(document.querySelectorAll(
     'textarea,input[type="text"],input:not([type]),div[contenteditable="true"],[role="textbox"],[contenteditable="true"]'
-  )).filter(visible).sort((a,b) => score(b) - score(a));
+  )).filter((el) => visible(el) && !unsafeEditor(el)).sort((a,b) => score(b) - score(a));
   const el = candidates[0];
   if (!el) return JSON.stringify({ok:false, error:'no_visible_editable_field'});
   el.scrollIntoView({block:'center', inline:'nearest'});
   el.focus();
   el.click();
+  const rect = el.getBoundingClientRect();
   return JSON.stringify({
     ok:true,
     tag: el.tagName,
     role: el.getAttribute('role') || '',
     aria: el.getAttribute('aria-label') || '',
     input_hint: el.getAttribute('place' + 'holder') || '',
-    editable_count: candidates.length
+    editable_count: candidates.length,
+    rect: {top: Math.round(rect.top), bottom: Math.round(rect.bottom), height: Math.round(rect.height)}
   });
 })()
 """
@@ -493,7 +577,7 @@ tell application "{self.browser}"
     tell active tab of front window to execute javascript {_as_applescript_string(js)}
 end tell
 """
-        result = get_desktop_action_gateway().run_applescript(
+        result = _run_governed_applescript(
             script,
             source="web_interlocutor.chrome_js",
             timeout=timeout,
@@ -501,6 +585,43 @@ end tell
         if not result.get("ok"):
             raise RuntimeError(str(result.get("stderr") or "Chrome JavaScript failed"))
         return str(result.get("stdout") or "").strip()
+
+    def _open_url_applescript(self, url: str) -> None:
+        script = f"""
+tell application "{self.browser}"
+    activate
+    if (count of windows) is 0 then make new window
+    set URL of active tab of front window to {_as_applescript_string(url)}
+end tell
+"""
+        result = _run_governed_applescript(
+            script,
+            source="web_interlocutor.open_url_applescript",
+            timeout=8.0,
+        )
+        if not result.get("ok"):
+            raise RuntimeError(str(result.get("stderr") or "direct Chrome URL navigation failed"))
+
+    def _open_url_keyboard(self, url: str) -> None:
+        script = f"""
+set the clipboard to {_as_applescript_string(url)}
+tell application "{self.browser}" to activate
+delay 0.15
+tell application "System Events"
+    keystroke "l" using command down
+    delay 0.1
+    keystroke "v" using command down
+    delay 0.1
+    keystroke return
+end tell
+"""
+        result = _run_governed_applescript(
+            script,
+            source="web_interlocutor.open_url_keyboard",
+            timeout=8.0,
+        )
+        if not result.get("ok"):
+            raise RuntimeError(str(result.get("stderr") or "keyboard Chrome URL navigation failed"))
 
     def _paste_and_submit(self, text: str) -> dict[str, Any]:
         script = f"""
@@ -513,7 +634,7 @@ tell application "System Events"
     keystroke return
 end tell
 """
-        result = get_desktop_action_gateway().run_applescript(
+        result = _run_governed_applescript(
             script,
             source="web_interlocutor.submit",
             timeout=10.0,
@@ -528,8 +649,13 @@ end tell
         url, title = await asyncio.to_thread(self._current_tab_info)
         try:
             from core.perception.screen_perception import get_screen_perception
+            from core.governance_context import local_internal_governed_scope
 
-            snap = await get_screen_perception().capture(save_screenshot=True)
+            with local_internal_governed_scope(
+                "web_interlocutor.screen_perception_snapshot",
+                domain="tool_execution",
+            ):
+                snap = await get_screen_perception().capture(save_screenshot=True)
             text = str(snap.screen_text or snap.accessibility_text or snap.focused_value or "").strip()
             if len(text) < 800 and _url_allows_readability_fallback(url):
                 source_text = await self._read_page_content_fallback(url)
@@ -590,68 +716,161 @@ end tell
 
     async def _visible_keyboard_send_message(self, text: str, *, reason: str) -> dict[str, Any]:
         try:
-            await asyncio.to_thread(self._dismiss_common_popups)
-            try:
-                from core.skills._pyautogui_runtime import get_pyautogui
+            from core.governance_context import local_internal_governed_scope
 
-                pyautogui, pyautogui_error = get_pyautogui()
-            except (ImportError, RuntimeError) as exc:
-                pyautogui = None
-                pyautogui_error = exc
-            if pyautogui is None:
+            with local_internal_governed_scope(
+                "web_interlocutor.visible_keyboard_send_message",
+                domain="tool_execution",
+            ):
+                await asyncio.to_thread(self._dismiss_common_popups)
+                await asyncio.to_thread(self._send_escape_to_browser)
+                try:
+                    from core.skills._pyautogui_runtime import get_pyautogui
+
+                    pyautogui, pyautogui_error = get_pyautogui()
+                except (ImportError, RuntimeError) as exc:
+                    pyautogui = None
+                    pyautogui_error = exc
+                if pyautogui is None:
+                    return {
+                        "ok": False,
+                        "stage": "visible_keyboard_focus",
+                        "error": f"pyautogui_unavailable: {pyautogui_error}",
+                        "reason": reason,
+                    }
+                width, height = await asyncio.to_thread(
+                    _call_in_governed_tool_scope,
+                    "web_interlocutor.visible_keyboard_size",
+                    pyautogui.size,
+                )
+                click_points = (
+                    (0.50, 0.94),
+                    (0.58, 0.94),
+                    (0.42, 0.94),
+                    (0.50, 0.90),
+                    (0.58, 0.90),
+                    (0.42, 0.90),
+                    (0.50, 0.86),
+                    (0.58, 0.86),
+                    (0.42, 0.86),
+                )
+                last_error = ""
+                focus_attempts: list[dict[str, Any]] = []
+                for x_ratio, y_ratio in click_points:
+                    try:
+                        await asyncio.to_thread(self._activate_browser)
+                        await asyncio.sleep(0.25)
+                        await asyncio.to_thread(
+                            _call_in_governed_tool_scope,
+                            "web_interlocutor.visible_keyboard_click",
+                            pyautogui.click,
+                            int(width * x_ratio),
+                            int(height * y_ratio),
+                        )
+                        await asyncio.sleep(0.2)
+                        focus_snapshot = await asyncio.to_thread(self._focused_element_snapshot)
+                        focus_attempt = {
+                            "x_ratio": x_ratio,
+                            "y_ratio": y_ratio,
+                            "snapshot": focus_snapshot,
+                        }
+                        focus_attempts.append(focus_attempt)
+                        if not self._focused_snapshot_frontmost_browser(focus_snapshot):
+                            last_error = "unsafe focus: browser is not frontmost"
+                            focus_attempt["rejected_reason"] = last_error
+                            await asyncio.to_thread(self._activate_browser)
+                            await asyncio.sleep(0.25)
+                            continue
+                        if self._focused_snapshot_looks_browser_location_bar(focus_snapshot):
+                            last_error = "unsafe focus: browser address/search bar"
+                            focus_attempt["rejected_reason"] = last_error
+                            continue
+                        if self._focused_snapshot_looks_transcript_edit_box(focus_snapshot):
+                            last_error = "unsafe focus: transcript/edit panel"
+                            focus_attempt["rejected_reason"] = last_error
+                            continue
+                        if self._focused_snapshot_is_unsafe_generic_browser_text_entry(focus_snapshot):
+                            last_error = "unsafe focus: generic text entry outside composer"
+                            focus_attempt["rejected_reason"] = last_error
+                            continue
+                        composer_verified = self._focused_snapshot_looks_prompt_composer(focus_snapshot)
+                        if not composer_verified:
+                            composer_verified = await self._infer_prompt_composer_from_visible_page(
+                                x_ratio=x_ratio,
+                                y_ratio=y_ratio,
+                                focus_snapshot=focus_snapshot,
+                            )
+                            if composer_verified:
+                                focus_attempt["inferred_prompt_composer"] = True
+                        if not composer_verified:
+                            last_error = "unsafe focus: prompt composer not verified"
+                            focus_attempt["rejected_reason"] = last_error
+                            continue
+                        pasted = await asyncio.to_thread(self._paste_and_submit, text)
+                        if pasted.get("ok"):
+                            return {
+                                "ok": True,
+                                "stage": "submit",
+                                "method": "visible_keyboard_click_clipboard_return",
+                                "reason": reason,
+                                "click": {"x_ratio": x_ratio, "y_ratio": y_ratio},
+                                "focus_snapshot": focus_snapshot,
+                                "submission": pasted,
+                            }
+                        last_error = str(pasted.get("error") or pasted)
+                    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+                        last_error = str(exc)
                 return {
                     "ok": False,
-                    "stage": "visible_keyboard_focus",
-                    "error": f"pyautogui_unavailable: {pyautogui_error}",
+                    "stage": "visible_keyboard_submit",
+                    "error": last_error or "visible keyboard fallback did not submit",
                     "reason": reason,
+                    "focus_attempts": focus_attempts[-6:],
                 }
-            width, height = await asyncio.to_thread(pyautogui.size)
-            click_points = (
-                (0.58, 0.48),
-                (0.50, 0.50),
-                (0.58, 0.56),
-                (0.50, 0.86),
-                (0.50, 0.78),
-                (0.58, 0.86),
-            )
-            last_error = ""
-            for x_ratio, y_ratio in click_points:
-                try:
-                    await asyncio.to_thread(pyautogui.click, int(width * x_ratio), int(height * y_ratio))
-                    await asyncio.sleep(0.2)
-                    pasted = await asyncio.to_thread(self._paste_and_submit, text)
-                    if pasted.get("ok"):
-                        return {
-                            "ok": True,
-                            "stage": "submit",
-                            "method": "visible_keyboard_click_clipboard_return",
-                            "reason": reason,
-                            "click": {"x_ratio": x_ratio, "y_ratio": y_ratio},
-                            "submission": pasted,
-                        }
-                    last_error = str(pasted.get("error") or pasted)
-                except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
-                    last_error = str(exc)
-            return {
-                "ok": False,
-                "stage": "visible_keyboard_submit",
-                "error": last_error or "visible keyboard fallback did not submit",
-                "reason": reason,
-            }
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             return {"ok": False, "stage": "visible_keyboard", "error": str(exc), "reason": reason}
+
+    def _send_escape_to_browser(self) -> None:
+        script = f"""
+tell application "{self.browser}" to activate
+delay 0.1
+tell application "System Events"
+    key code 53
+end tell
+"""
+        result = _run_governed_applescript(
+            script,
+            source="web_interlocutor.escape_browser",
+            timeout=3.0,
+        )
+        if not result.get("ok"):
+            raise RuntimeError(str(result.get("stderr") or "browser escape failed"))
 
     def _dismiss_common_popups(self) -> None:
         script = f"""
 tell application "{self.browser}" to activate
 delay 0.15
 tell application "System Events"
+    tell process "{self.browser}"
+        try
+            click button "Cancel" of window 1
+            delay 0.1
+        end try
+        try
+            click button "No thanks" of window 1
+            delay 0.1
+        end try
+        try
+            click button "Not now" of window 1
+            delay 0.1
+        end try
+    end tell
     key code 53
     delay 0.12
     key code 53
 end tell
 """
-        result = get_desktop_action_gateway().run_applescript(
+        result = _run_governed_applescript(
             script,
             source="web_interlocutor.dismiss_popups",
             timeout=4.0,
@@ -660,7 +879,7 @@ end tell
             raise RuntimeError(str(result.get("stderr") or "popup dismissal failed"))
 
     def _activate_browser(self) -> None:
-        result = get_desktop_action_gateway().run_applescript(
+        result = _run_governed_applescript(
             f'tell application "{self.browser}" to activate',
             source="web_interlocutor.activate_browser",
             timeout=4.0,
@@ -675,7 +894,7 @@ tell application "{self.browser}"
     return (URL of active tab of front window) & "|" & (title of active tab of front window)
 end tell
 """
-        result = get_desktop_action_gateway().run_applescript(
+        result = _run_governed_applescript(
             script,
             source="web_interlocutor.current_tab_info",
             timeout=5.0,
@@ -687,6 +906,173 @@ end tell
         if not sep:
             return raw.strip(), ""
         return url.strip(), title.strip()
+
+    def _focused_element_snapshot(self) -> str:
+        script = """
+tell application "System Events"
+    set frontApp to first application process whose frontmost is true
+    set procName to name of frontApp
+    try
+        set focusedElement to value of attribute "AXFocusedUIElement" of frontApp
+    on error errMsg
+        return "process:" & procName & linefeed & "error:" & errMsg
+    end try
+
+    set parts to {"process:" & procName}
+    repeat with attrName in {"AXRole", "AXSubrole", "AXTitle", "AXDescription", "AXHelp", "AXPlaceholderValue", "AXValue"}
+        try
+            set attrValue to value of attribute attrName of focusedElement
+            if attrValue is not missing value then set end of parts to attrName & ":" & (attrValue as text)
+        end try
+    end repeat
+    try
+        set p to value of attribute "AXPosition" of focusedElement
+        set end of parts to "AXPosition:" & ((item 1 of p) as integer) & "," & ((item 2 of p) as integer)
+    end try
+    try
+        set s to value of attribute "AXSize" of focusedElement
+        set end of parts to "AXSize:" & ((item 1 of s) as integer) & "," & ((item 2 of s) as integer)
+    end try
+    set AppleScript's text item delimiters to linefeed
+    set joined to parts as text
+    set AppleScript's text item delimiters to ""
+    return joined
+end tell
+"""
+        result = _run_governed_applescript(
+            script,
+            source="web_interlocutor.focused_element_snapshot",
+            timeout=3.0,
+        )
+        if not result.get("ok"):
+            return f"error:{result.get('stderr') or 'focused element snapshot failed'}"
+        return str(result.get("stdout") or "").strip()
+
+    def _focused_snapshot_frontmost_browser(self, snapshot: str) -> bool:
+        text = str(snapshot or "").lower()
+        browser_name = str(self.browser or "Google Chrome").lower()
+        return f"process:{browser_name}" in text
+
+    @staticmethod
+    def _focused_snapshot_looks_browser_location_bar(snapshot: str) -> bool:
+        text = str(snapshot or "").lower()
+        if not text:
+            return False
+        if "axrole:axtextfield" not in text:
+            return False
+        return any(
+            marker in text
+            for marker in (
+                "address and search",
+                "address/search",
+                "search or enter address",
+                "url",
+                "omnibox",
+                "search with google",
+                "axvalue:http://",
+                "axvalue:https://",
+                "axvalue:chrome://",
+                "axvalue:chatgpt.com",
+                "axvalue:gemini.google.com",
+            )
+        )
+
+    @staticmethod
+    def _focused_snapshot_looks_transcript_edit_box(snapshot: str) -> bool:
+        text = str(snapshot or "").lower()
+        if not text:
+            return False
+        return any(
+            marker in text
+            for marker in (
+                "write or type / for commands",
+                "edit message",
+                "update this answer",
+                "save & submit",
+                "save and submit",
+                "message editor",
+                "transcript edit",
+            )
+        )
+
+    @staticmethod
+    def _focused_snapshot_looks_prompt_composer(snapshot: str) -> bool:
+        text = str(snapshot or "").lower()
+        if not text:
+            return False
+        if "process:google chrome" not in text and "process:safari" not in text:
+            return False
+        return any(
+            marker in text
+            for marker in (
+                "message chatgpt",
+                "message gemini",
+                "ask anything",
+                "ask gemini",
+                "enter a prompt",
+                "send a message",
+                "type a message",
+                "reply to",
+                "message ",
+            )
+        )
+
+    async def _infer_prompt_composer_from_visible_page(
+        self,
+        *,
+        x_ratio: float,
+        y_ratio: float,
+        focus_snapshot: str,
+    ) -> bool:
+        if y_ratio < 0.90:
+            return False
+        if not self._focused_snapshot_is_sparse_browser(focus_snapshot):
+            return False
+        url, _title = await asyncio.to_thread(self._current_tab_info)
+        if not _url_looks_visible_chat_surface(url):
+            return False
+        snap = await self._screen_perception_snapshot()
+        text = "\n".join(part for part in (snap.title, snap.active_element, snap.text) if part)
+        return _screen_text_suggests_chat_composer(text)
+
+    @staticmethod
+    def _focused_snapshot_is_sparse_browser(snapshot: str) -> bool:
+        lines = [line.strip() for line in str(snapshot or "").splitlines() if line.strip()]
+        if not lines:
+            return False
+        lowered = "\n".join(lines).lower()
+        if "process:google chrome" not in lowered and "process:safari" not in lowered:
+            return False
+        return not any(line.lower().startswith("axrole:") for line in lines)
+
+    @staticmethod
+    def _focused_snapshot_is_unsafe_generic_browser_text_entry(snapshot: str) -> bool:
+        text = str(snapshot or "").lower()
+        if not text:
+            return False
+        if "process:google chrome" not in text and "process:safari" not in text:
+            return True
+        if any(
+            marker in text
+            for marker in (
+                "message chatgpt",
+                "message gemini",
+                "ask anything",
+                "ask gemini",
+                "enter a prompt",
+                "send a message",
+                "type a message",
+                "prompt",
+            )
+        ):
+            return False
+        if "axrole:axtextfield" not in text and "axrole:axtextarea" not in text:
+            return False
+        match = re.search(r"axposition:\s*(-?\d+)\s*,\s*(-?\d+)", text)
+        if not match:
+            return False
+        y_position = int(match.group(2))
+        return y_position < 600
 
 
 class WebInterlocutorSession:
@@ -713,35 +1099,49 @@ class WebInterlocutorSession:
         wait_timeout_s: float = _DEFAULT_WAIT_S,
         persist_memory: bool = True,
         context: dict[str, Any] | None = None,
+        progress_callback: Any | None = None,
     ) -> WebInterlocutorResult:
         objective = str(objective or "").strip()
         opening_message = str(opening_message or "").strip()
-        max_turns = max(1, min(int(max_turns or 1), 8))
+        max_turns = max(1, min(int(max_turns or 1), 20))
         wait_timeout_s = max(5.0, min(float(wait_timeout_s or _DEFAULT_WAIT_S), 180.0))
         result = WebInterlocutorResult(ok=False, target_url=url, objective=objective)
         ctx = dict(context or {})
         if not opening_message:
             opening_message = await self._compose_opening(objective=objective, context=ctx)
+        opening_message = _clean_message(opening_message)
+        if not _message_is_substantive(opening_message):
+            opening_message = self._default_opening(objective)
 
         try:
+            _mark_web_interlocutor_progress("web_interlocutor.open_or_attach")
             initial = await self.browser.open_or_attach(url)
             result.target_url = initial.url or url
             result.target_title = initial.title
             next_message = opening_message
             current = initial
             for index in range(1, max_turns + 1):
+                _mark_web_interlocutor_progress(f"web_interlocutor.turn.{index}.send")
                 before = current
+                next_message = _clean_message(next_message)
+                if not _message_is_substantive(next_message) or _message_was_recently_sent(
+                    next_message,
+                    result.turns,
+                ):
+                    next_message = self._default_followup(result.turns) if result.turns else self._default_opening(objective)
                 send_receipt = await self.browser.send_message(next_message)
                 sent_at = time.time()
                 if not send_receipt.get("ok"):
                     result.status = "send_failed"
                     result.error = str(send_receipt.get("error") or send_receipt)
+                    result.diagnostics["last_send_receipt"] = send_receipt
                     result.completed_at = time.time()
                     return result
                 after, observed = await self._wait_for_new_reply(
                     before,
                     sent_text=next_message,
                     timeout_s=wait_timeout_s,
+                    progress_source=f"web_interlocutor.turn.{index}.wait",
                 )
                 turn = WebInterlocutorTurn(
                     index=index,
@@ -759,6 +1159,16 @@ class WebInterlocutorSession:
                     ),
                 )
                 result.turns.append(turn)
+                if progress_callback is not None:
+                    try:
+                        progress_callback(result)
+                    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                        record_degradation(
+                            "web_interlocutor.progress_callback",
+                            exc,
+                            severity="warning",
+                            action="continued web interlocutor run after progress callback failed",
+                        )
                 current = after
                 if not turn.effect_verified:
                     result.status = "reply_not_observed"
@@ -766,16 +1176,21 @@ class WebInterlocutorSession:
                     result.completed_at = time.time()
                     return result
                 if index < max_turns:
+                    _mark_web_interlocutor_progress(f"web_interlocutor.turn.{index}.compose_followup")
                     next_message = await self._compose_followup(
                         objective=objective,
                         turns=result.turns,
                         context=ctx,
                     )
+            _mark_web_interlocutor_progress("web_interlocutor.summarize")
             result.learned_summary = await self._summarize_learning(objective, result.turns, ctx)
             if persist_memory and result.learned_summary:
                 record_id, receipt_id = await self._persist_learning(result, ctx)
                 result.memory_record_id = record_id
                 result.memory_receipt_id = receipt_id
+            # Causal memory: did the exchange change a LATER decision, or was it
+            # merely a transcript? Prove it by ablation, and persist the deltas.
+            await self._adjudicate_and_prove(result, ctx, persist_memory)
             result.ok = True
             result.status = "completed"
             result.completed_at = time.time()
@@ -805,7 +1220,7 @@ class WebInterlocutorSession:
         )
         generated = await _maybe_think(self.cognitive_engine or context.get("brain"), prompt, context)
         cleaned = _clean_message(generated)
-        if cleaned:
+        if _message_is_substantive(cleaned):
             return cleaned[:1200]
         return self._default_opening(objective)
 
@@ -815,15 +1230,39 @@ class WebInterlocutorSession:
         *,
         sent_text: str,
         timeout_s: float,
+        progress_source: str = "web_interlocutor.wait_for_reply",
     ) -> tuple[BrowserPageSnapshot, str]:
         deadline = time.time() + timeout_s
         stable_count = 0
         last_hash = ""
         best = before
         best_delta = ""
+        snapshot_failures = 0
+        sent_seen = False
         while time.time() < deadline:
+            _mark_web_interlocutor_progress(progress_source)
             await asyncio.sleep(1.0)
-            snap = await self.browser.snapshot()
+            remaining = max(0.5, deadline - time.time())
+            try:
+                snap = await asyncio.wait_for(
+                    self.browser.snapshot(),
+                    timeout=min(18.0, remaining),
+                )
+            except (asyncio.TimeoutError, TimeoutError, RuntimeError, OSError, TypeError, ValueError) as exc:
+                snapshot_failures += 1
+                if snapshot_failures <= 2:
+                    record_degradation(
+                        "web_interlocutor.reply_snapshot",
+                        exc,
+                        severity="warning",
+                        action="continued waiting for visible reply after bounded snapshot failure",
+                    )
+                continue
+            if _rough_text_contains(snap.text, sent_text):
+                sent_seen = True
+            if not sent_seen:
+                best = snap
+                continue
             delta = _extract_new_interlocutor_text(before.text, snap.text, sent_text)
             if delta:
                 if snap.text_hash == last_hash:
@@ -855,15 +1294,9 @@ class WebInterlocutorSession:
         )
         generated = await _maybe_think(self.cognitive_engine or context.get("brain"), prompt, context)
         cleaned = _clean_message(generated)
-        if cleaned:
+        if _message_is_substantive(cleaned) and not _message_was_recently_sent(cleaned, turns):
             return cleaned[:1200]
-        last = turns[-1].observed_reply if turns else ""
-        return (
-            "That is useful. Can you give one concrete example, one limitation, "
-            "and one surprising implication of that point?"
-            if last
-            else "Can you give a concrete example and one limitation?"
-        )
+        return self._default_followup(turns)
 
     async def _summarize_learning(
         self,
@@ -911,6 +1344,48 @@ class WebInterlocutorSession:
         receipt = await gateway.write(request)
         return str(getattr(receipt, "record_id", "") or ""), str(getattr(receipt, "receipt_id", "") or "")
 
+    async def _adjudicate_and_prove(
+        self,
+        result: WebInterlocutorResult,
+        context: dict[str, Any],
+        persist_memory: bool,
+    ) -> None:
+        """Turn the transcript into causal memory: extract adjudicated
+        revisions, prove by ablation that a later decision changed only
+        because of them, and persist the deltas as first-class beliefs.
+
+        Failure here is non-fatal — a conversation that changed nothing is a
+        valid, honestly-reported outcome (causal=False), not an error."""
+        try:
+            from core.capabilities.conversation_revision import (
+                persist_revisions,
+                revise_from_conversation,
+            )
+
+            revisions, proof = revise_from_conversation(result.turns)
+            result.revisions = [rev.to_dict() for rev in revisions]
+            result.causal_influence = proof.to_dict()
+            if persist_memory and any(rev.verified for rev in revisions):
+                receipts = await persist_revisions(
+                    revisions=revisions,
+                    proof=proof,
+                    objective=result.objective,
+                    target_url=result.target_url,
+                    memory_gateway=self.memory_gateway,
+                )
+                result.revision_receipts = receipts
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "web_interlocutor.adjudicate_and_prove",
+                exc,
+                severity="warning",
+                action="kept the conversation result without causal-revision proof",
+            )
+            result.causal_influence = {
+                "causal": False,
+                "reason": f"revision adjudication unavailable: {exc}",
+            }
+
     @staticmethod
     def _default_opening(objective: str) -> str:
         if objective:
@@ -923,6 +1398,17 @@ class WebInterlocutorSession:
             "Hi. I am Aura, a local cognitive-agent runtime on Bryan's Mac. "
             "I want to have a substantive conversation and learn one useful idea from you."
         )
+
+    @staticmethod
+    def _default_followup(turns: list[WebInterlocutorTurn]) -> str:
+        index = len(turns) % 4
+        if index == 1:
+            return "That is useful. What is one concrete example, one limitation, and one surprising implication of that point?"
+        if index == 2:
+            return "Can you challenge your previous answer by naming the strongest counterexample or failure mode?"
+        if index == 3:
+            return "How would you test that claim with observable behavior rather than self-description?"
+        return "What distinction should I make next if I want to avoid overclaiming while still learning from this?"
 
 
 class WebInterlocutorJobManager:
@@ -975,8 +1461,14 @@ class WebInterlocutorJobManager:
             job.status = "running"
             job.updated_at = time.time()
             try:
+                _mark_web_interlocutor_progress(f"web_interlocutor.background_job.{job_id}.started")
                 factory = session_factory or WebInterlocutorSession
                 session = factory()
+
+                def _progress(partial: WebInterlocutorResult) -> None:
+                    job.result = partial.to_dict() if hasattr(partial, "to_dict") else dict(partial or {})
+                    job.updated_at = time.time()
+
                 result = await session.run(
                     objective=objective,
                     url=url,
@@ -985,6 +1477,7 @@ class WebInterlocutorJobManager:
                     wait_timeout_s=wait_timeout_s,
                     persist_memory=persist_memory,
                     context=context or {},
+                    progress_callback=_progress,
                 )
                 job.result = result.to_dict() if hasattr(result, "to_dict") else dict(result or {})
                 job.status = "completed" if bool(getattr(result, "ok", False) or job.result.get("ok")) else "failed"
@@ -1004,6 +1497,7 @@ class WebInterlocutorJobManager:
                 job.error = str(exc)
             finally:
                 job.updated_at = time.time()
+                _mark_web_interlocutor_progress(f"web_interlocutor.background_job.{job_id}.{job.status}")
 
         task = create_tracked_task(_runner(), name=f"web_interlocutor.{job_id}")
         self._tasks[job_id] = task
@@ -1085,13 +1579,39 @@ def _normalize_line(line: str) -> str:
 def _looks_like_ui_chrome(norm: str) -> bool:
     if len(norm) <= 2:
         return True
+    if re.fullmatch(r"https?://\S+", norm) or re.fullmatch(r"[a-z0-9.-]+\.[a-z]{2,}(/\S*)?", norm):
+        return True
     if re.fullmatch(r"(mon|tue|wed|thu|fri|sat|sun)\s+[a-z]{3}\s+\d{1,2}\s+\d{1,2}:\d{2}\s*(am|pm)?", norm):
         return True
     if re.fullmatch(r"\d{1,2}:\d{2}\s*(am|pm)?", norm):
         return True
+    browser_menu = {
+        "chrome",
+        "file",
+        "edit",
+        "view",
+        "history",
+        "bookmarks",
+        "profiles",
+        "tab",
+        "window",
+        "help",
+    }
+    words = set(re.findall(r"[a-z]+", norm))
+    if words and words.issubset(browser_menu):
+        return True
     markers = (
+        "ask anything",
+        "chatgpt can make mistakes",
+        "edit view",
+        "follow up",
+        "thought for",
+        "thinking",
+        "write or type / for commands",
         "new chat",
         "send message",
+        "message chatgpt",
+        "message gemini",
         "sign in",
         "terms",
         "privacy policy",
@@ -1103,7 +1623,7 @@ def _looks_like_ui_chrome(norm: str) -> bool:
         "search",
         "loading",
     )
-    return any(marker == norm or norm.startswith(marker + " ") for marker in markers)
+    return any(marker == norm or norm.startswith(marker + " ") or norm.startswith(marker + ".") for marker in markers)
 
 
 def _screen_text_suggests_chat_composer(text: str) -> bool:
@@ -1187,6 +1707,48 @@ def _meaningful_reply_or_empty(text: str, sent_text: str) -> str:
     return cleaned
 
 
+def _rough_text_contains(haystack: str, needle: str) -> bool:
+    hay_norm = _normalize_line(haystack)
+    needle_norm = _normalize_line(needle)
+    if not hay_norm or not needle_norm:
+        return False
+    if needle_norm in hay_norm:
+        return True
+    words = [
+        word
+        for word in re.findall(r"[a-zA-Z][a-zA-Z']{3,}", needle_norm.lower())
+        if word not in _NON_REPLY_WORDS
+    ]
+    if not words:
+        return False
+    unique_words = list(dict.fromkeys(words[:18]))
+    hits = sum(1 for word in unique_words if word in hay_norm)
+    required = min(7, max(4, len(unique_words) // 2))
+    return hits >= required
+
+
+def _message_is_substantive(text: str) -> bool:
+    cleaned = str(text or "").strip()
+    if len(cleaned) < _MIN_OUTBOUND_MESSAGE_CHARS:
+        return False
+    if _normalize_line(cleaned) in {"false", "true", "none", "null", "nil", "0", "1"}:
+        return False
+    words = re.findall(r"[a-zA-Z][a-zA-Z']{2,}", cleaned.lower())
+    content_words = [word for word in words if word not in _NON_REPLY_WORDS]
+    return len(content_words) >= 5
+
+
+def _message_was_recently_sent(message: str, turns: list[WebInterlocutorTurn]) -> bool:
+    norm = _normalize_line(message)
+    if not norm:
+        return True
+    for turn in turns[-3:]:
+        sent_norm = _normalize_line(turn.sent)
+        if sent_norm == norm:
+            return True
+    return False
+
+
 def _url_allows_readability_fallback(url: str) -> bool:
     lowered = str(url or "").lower()
     if not lowered.startswith(("http://", "https://")):
@@ -1201,6 +1763,45 @@ def _url_allows_readability_fallback(url: str) -> bool:
         "google.com/search",
     )
     return not any(host in lowered for host in blocked_hosts)
+
+
+def _url_looks_visible_chat_surface(url: str) -> bool:
+    lowered = str(url or "").lower()
+    return any(
+        host in lowered
+        for host in (
+            "chatgpt.com",
+            "gemini.google.com",
+            "claude.ai",
+            "poe.com",
+            "copilot.microsoft.com",
+            "deepseek.com",
+            "meta.ai",
+        )
+    )
+
+
+def _same_origin_or_exact_url(current_url: str, desired_url: str) -> bool:
+    current = str(current_url or "").strip()
+    desired = str(desired_url or "").strip()
+    if not desired:
+        return True
+    if not current:
+        return False
+    if current.rstrip("/") == desired.rstrip("/"):
+        return True
+    try:
+        current_parts = urllib.parse.urlparse(current)
+        desired_parts = urllib.parse.urlparse(desired)
+    except (TypeError, ValueError):
+        return False
+    if not current_parts.scheme or not desired_parts.scheme:
+        return False
+    return (
+        current_parts.scheme in {"http", "https"}
+        and desired_parts.scheme in {"http", "https"}
+        and current_parts.netloc.lower() == desired_parts.netloc.lower()
+    )
 
 
 def _trim_reply_text(text: str, sent_text: str) -> str:
@@ -1255,6 +1856,8 @@ def _clean_message(text: str) -> str:
     cleaned = str(text or "").strip()
     cleaned = re.sub(r"^next message:\s*", "", cleaned, flags=re.IGNORECASE).strip()
     cleaned = cleaned.strip("` \n")
+    if _normalize_line(cleaned) in {"false", "true", "none", "null", "nil", "0", "1"}:
+        return ""
     lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
     if not lines:
         return ""

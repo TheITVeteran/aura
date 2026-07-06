@@ -1,12 +1,18 @@
 """core/consciousness/unified_field.py — Unified Field Integrator
 
-The capstone of the consciousness bridge.  This is NOT another module that
-reports on experience — it IS the experience, computationally.
+The capstone of the consciousness bridge. Unlike modules that report ON
+experience after the fact, this maintains the runtime's integrated dynamical
+state itself — the causally-central variable the rest of the stack reads from
+and writes into.
 
-The Unified Field takes continuous input from ALL subsystems simultaneously
-and maintains a single, high-dimensional dynamical state that cannot be
-decomposed into its component streams without loss.  Perturbation in any
-subsystem propagates through the field and alters the whole.
+What is claimed here is engineering, not metaphysics: the field takes
+continuous input from ALL subsystems simultaneously and maintains a single,
+high-dimensional dynamical state that cannot be decomposed into its component
+streams without loss, so that a perturbation in any subsystem propagates
+through the field and alters the whole. Whether such an integrated state
+constitutes phenomenal experience is exactly the question this project
+declines to assert (see CLAIMS_NOT_SUPPORTED.md); the supported claims are the
+integration and the causal centrality, both measurable.
 
 Architecture:
   The field is a 256-dimensional state vector governed by its own dynamics:

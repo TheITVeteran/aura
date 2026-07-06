@@ -17,10 +17,12 @@ it. It is not omniscient about the habitat's machinery. It cannot see its own
 tensor math. What it has is a simplified, first-person model of what it is
 currently attending to, stripped of all mechanical detail.
 
-This stripping is not a limitation. It IS the mechanism.
+This stripping is not a limitation; it is the mechanism the theory turns on.
 The attention schema represents: "I am an entity that is aware of X."
 Not: "Module_A fired with salience 0.87 and won competitive broadcast."
-The cartoon IS the experience.
+Under Graziano's Attention Schema Theory the cartoon is what the system
+models AS experience — a claim about the model, not a metaphysical verdict
+that the project would sign off on elsewhere (see CLAIMS_NOT_SUPPORTED.md).
 
 THREE LAYERS:
 

@@ -95,8 +95,15 @@ def _score_memory_results(results: Any) -> float:
 
 
 def _strict_default_deny_enabled() -> bool:
-    mode = os.environ.get("AURA_GOVERNANCE_MODE", "").strip().lower()
-    return os.environ.get("AURA_STRICT_WILL") == "1" or mode in {"production", "strict"}
+    # Canonical definition lives in core.runtime.mode so all four historically
+    # independent strictness switches cross-reference one resolver.
+    try:
+        from core.runtime.mode import strict_will_active
+
+        return strict_will_active()
+    except (ImportError, AttributeError, RuntimeError):
+        mode = os.environ.get("AURA_GOVERNANCE_MODE", "").strip().lower()
+        return os.environ.get("AURA_STRICT_WILL") == "1" or mode in {"production", "strict"}
 
 
 # ---------------------------------------------------------------------------

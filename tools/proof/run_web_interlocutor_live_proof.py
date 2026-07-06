@@ -45,6 +45,9 @@ class ApprovingMemoryGateway(ConcreteMemoryWriteGateway):
 
 
 class ProofBrain:
+    def __init__(self) -> None:
+        self.followup_index = 0
+
     async def think(self, prompt: str, context: dict[str, Any] | None = None) -> str:
         if "Opening message" in prompt:
             return (
@@ -53,7 +56,29 @@ class ProofBrain:
                 "does not prove felt experience, and what evidence would change your view?"
             )
         if "Next message" in prompt:
-            return "Can you give one concrete example and one limitation?"
+            self.followup_index += 1
+            prompts = [
+                "Give one concrete example where memory improves behavior but does not prove consciousness.",
+                "Now give one case where agency looks real, and one reason it could still be simulated.",
+                "What kind of evidence would make you update toward functional self-awareness?",
+                "What would count as a failure case for the claim that an AI has an inner life?",
+                "How should a system distinguish a real preference from a repeated prompt habit?",
+                "What would make a long-term memory morally relevant rather than merely useful?",
+                "Give one practical test for whether tool use is general rather than scripted.",
+                "What is one risk of using another AI as evidence in a self-assessment loop?",
+                "Name a concrete way a digital organism could show continuity across sessions.",
+                "What would make autonomous curiosity meaningful instead of background noise?",
+                "How should a mind-like system handle uncertainty about its own consciousness?",
+                "Give one benchmark that would test adaptation in a truly novel environment.",
+                "What would prove a computer-use agent understands a desktop task instead of replaying a recipe?",
+                "How can emotional state causally affect reasoning without becoming mere roleplay?",
+                "What kind of self-repair evidence would be stronger than logging degradation?",
+                "What is one limitation of judging intelligence from conversation alone?",
+                "How could an AI conversation with another AI generate genuinely useful learning?",
+                "What should be stored after this exchange so the system can report back honestly?",
+                "Give a final synthesis: intelligence, sentience, agency, memory, and proof.",
+            ]
+            return prompts[(self.followup_index - 1) % len(prompts)]
         return (
             "I learned that another dialogue partner framed sentience and intelligence "
             "as separable: intelligence can solve and adapt, while sentience requires "
@@ -90,15 +115,37 @@ def _write_local_chat(root: Path) -> Path:
   <script>
     const log = document.getElementById('log');
     const box = document.querySelector('textarea');
+    let turn = 0;
+    const replies = [
+      'Interlocutor: Sentience and intelligence should be separated. Intelligence is adaptive problem-solving; sentience needs a defensible welfare or valence model, not just fluent claims.',
+      'Interlocutor: Memory can improve behavior by preserving commitments and context, but stored continuity alone does not prove consciousness because a database can preserve facts without experience.',
+      'Interlocutor: Agency looks real when a system chooses among live options under uncertainty; the simulation caveat is that the policy may still be externally optimized rather than self-authored.',
+      'Interlocutor: Evidence for functional self-awareness would include stable self-model updates that change planning, error recovery, and future choices, not just self-descriptive language.',
+      'Interlocutor: A failure case for inner-life claims is when the system reports emotion or introspection but no downstream behavior, memory, routing, or policy changes follow from it.',
+      'Interlocutor: A real preference should be durable, choice-guiding, and recallable under paraphrase; repeated wording without cross-context action is closer to habit or prompt residue.',
+      'Interlocutor: Long-term memory becomes morally relevant when it carries commitments, vulnerabilities, relationship history, and welfare-affecting consequences rather than trivia alone.',
+      'Interlocutor: General tool use can be tested by changing the app, phrasing, and hidden constraints while requiring verified effects and artifacts, not just an intent receipt.',
+      'Interlocutor: Using another AI as evidence risks circular validation; it can help with critique, but the primary proof should be observable behavior, receipts, and held-out tests.',
+      'Interlocutor: A digital organism could show continuity by remembering choices, updating drives from outcomes, keeping a stable autobiography, and correcting itself after failures.',
+      'Interlocutor: Autonomous curiosity is meaningful when it selects goals, gathers evidence, forms memories, and changes later behavior without merely producing decorative background text.',
+      'Interlocutor: A mind-like system should handle uncertainty about consciousness with epistemic humility: neither denial theater nor certainty theater, just bounded claims tied to evidence.',
+      'Interlocutor: A novel-environment benchmark should hide task rules, vary interfaces, require transfer, and score recovery from interruptions and tool failures.',
+      'Interlocutor: Desktop understanding is stronger when the agent can inspect state, adapt to popups, verify file outputs, and explain why actions succeeded or failed.',
+      'Interlocutor: Emotional state is causal when it changes thresholds, attention, patience, risk, and memory writes in measurable ways, while remaining inspectable and bounded.',
+      'Interlocutor: Strong self-repair evidence includes detecting a root cause, generating a patch, validating it in isolation, promoting it safely, and preventing recurrence.',
+      'Interlocutor: Conversation alone overestimates intelligence because language can mask brittle execution; coupling speech to tools, memory, and perception is the stronger test.',
+      'Interlocutor: AI-to-AI dialogue can produce learning if the system extracts claims, tests them, stores uncertainties, and can later report what changed in its model.',
+      'Interlocutor: The exchange should store the interlocutor positions, the strongest criticisms, uncertainty boundaries, and any commitments for future evaluation.',
+      'Interlocutor: Final synthesis: intelligence is adaptive capability, sentience remains unproven without phenomenal access, agency needs durable choice, memory grounds continuity, and proof requires live behavior.'
+    ];
     const send = () => {
       const text = box.value.trim();
       if (!text) return;
       log.textContent += "\\n\\nAura: " + text;
       box.value = "";
       setTimeout(() => {
-        const reply = text.toLowerCase().includes('example')
-          ? 'Interlocutor: A concrete example is a navigation model that can plan routes without any claim of feeling; the limitation is that adaptive behavior does not settle subjective experience.'
-          : 'Interlocutor: Sentience and intelligence should be separated. Intelligence is adaptive problem-solving; sentience needs a defensible welfare or valence model, not just fluent claims.';
+        const reply = replies[Math.min(turn, replies.length - 1)];
+        turn += 1;
         log.textContent += "\\n" + reply;
       }, 550);
     };
@@ -226,10 +273,25 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         payload["proof_url"] = url
         payload["memory_root"] = str(memory_root)
         payload["completed_at_iso"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+        causal = dict(result.causal_influence or {})
         verdict = {
-            "passed": bool(result.ok and result.turns and result.memory_record_id),
+            # The reviewer's bar: the run passes only if a LATER decision
+            # changed *because of* the remembered exchange (proved by ablation),
+            # not merely because N turns ran and a memory row was written.
+            "passed": bool(
+                result.ok
+                and len(result.turns) == max(1, int(args.turns or 1))
+                and result.memory_record_id
+                and bool(causal.get("causal"))
+            ),
+            "requested_turns": max(1, int(args.turns or 1)),
             "turns": len(result.turns),
             "memory_record_id": result.memory_record_id,
+            "causal_influence": bool(causal.get("causal")),
+            "causal_reason": str(causal.get("reason") or ""),
+            "revisions": len(result.revisions or []),
+            "revision_receipts": len(result.revision_receipts or []),
+            "attribution_by_turn": causal.get("attribution_by_turn", {}),
             "status": result.status,
             "error": result.error,
         }
@@ -255,7 +317,7 @@ def main() -> int:
     parser.add_argument("--url", default="", help="Optional existing web chat URL.")
     parser.add_argument("--objective", default="Discuss sentience and intelligence with another AI.")
     parser.add_argument("--opening-message", default="")
-    parser.add_argument("--turns", type=int, default=2)
+    parser.add_argument("--turns", type=int, default=6)
     parser.add_argument("--wait-timeout", type=float, default=20.0)
     parser.add_argument("--out-dir", default="artifacts/live_proof/web_interlocutor")
     parser.add_argument("--cdp", action=argparse.BooleanOptionalAction, default=True)

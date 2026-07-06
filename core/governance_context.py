@@ -102,6 +102,17 @@ class GovernanceViolationError(RuntimeError):
 GovernanceViolation = GovernanceViolationError
 
 
+def _governance_production_active() -> bool:
+    # Canonical definition lives in core.runtime.mode (the single strictness
+    # resolver); the raw env read is the fallback if mode is unavailable.
+    try:
+        from core.runtime.mode import governance_production_active
+
+        return governance_production_active()
+    except (ImportError, AttributeError, RuntimeError):
+        return os.getenv("AURA_GOVERNANCE_MODE", "").strip().lower() == "production"
+
+
 def governance_runtime_active() -> bool:
     """Return True when the runtime should enforce hard governance.
 
@@ -366,7 +377,7 @@ def require_governance(
                     token.domain,
                 )
                 _record_violation(f"{operation}:domain:{token.domain}")
-                if strict or os.getenv("AURA_GOVERNANCE_MODE", "").strip().lower() == "production":
+                if strict or _governance_production_active():
                     raise GovernanceViolation(
                         f"{operation} requires governance domain {sorted(normalized_allowed)} "
                         f"but active token domain is {token.domain}"
