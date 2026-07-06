@@ -449,7 +449,18 @@ class ProgramDNAReconstructionEngine:
         try:
             from core.brain.llm.code_generator import LLMCodeGenerator, extract_python_code
 
-            generator = LLMCodeGenerator()
+            # The steered persona cortex corrupts symbolic code tokens; route
+            # code synthesis through the un-steered local code model when it is
+            # available (its whole reason to exist), falling back to the default
+            # router only if the un-steered weights are absent.
+            code_router = None
+            try:
+                from core.brain.llm.local_code_model import get_local_code_model
+
+                code_router = get_local_code_model()
+            except (ImportError, RuntimeError, OSError):
+                code_router = None
+            generator = LLMCodeGenerator(router=code_router) if code_router else LLMCodeGenerator()
             raw = await generator.generate_async(
                 prompt,
                 context={
