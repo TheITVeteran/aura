@@ -43,7 +43,20 @@ def _classify_forwarded_log(
     lowered_message = str(message or "").lower()
     lowered_error_type = str(error_type or "").lower()
     final_severity = str(severity or "critical").lower()
-    classification = "system_crash" if final_severity == "critical" else "background_degraded"
+    # [FIX] Intercepted Python log messages are degradation handler output,
+    # NOT actual system crashes.  Classifying every CRITICAL log as
+    # "system_crash" (weight 1.0) created a feedback amplification loop:
+    #   health check → CRITICAL log → omni_log_critical degraded event →
+    #   failure pressure spike → more health failures → more CRITICAL logs →
+    #   pressure spiral to 0.88 → mind_tick blocked → orchestrator UNHEALTHY
+    #   → meta-evolution aborted → chat repair failure → cascade.
+    # Only genuine unhandled exceptions from exception hooks (sys_excepthook,
+    # asyncio_handler, threading_excepthook) warrant "system_crash".  Log-
+    # intercepted messages are at worst "background_degraded".
+    if lowered_source.startswith("log_"):
+        classification = "background_degraded"
+    else:
+        classification = "system_crash" if final_severity == "critical" else "background_degraded"
 
     if lowered_source.startswith(("log_error", "log_critical")) and (
         " - info - " in lowered_message

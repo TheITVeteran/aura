@@ -318,7 +318,15 @@ class MindTick:
                 self.orchestrator,
                 min_idle_seconds=180.0,
                 max_memory_percent=78.0,
-                max_failure_pressure=0.25,
+                # [FIX] The old threshold of 0.25 was too aggressive: transient
+                # errors blocked all cognitive work, preventing
+                # _last_successful_tick_at from advancing, which triggered the
+                # health contract to report mind_tick as an IMPORTANT-tier
+                # failure — cascading to orchestrator UNHEALTHY, meta-evolution
+                # abort, and chat repair failures.  0.70 keeps the safety gate
+                # active for genuine cascading failures while letting the tick
+                # survive normal transient degradation.
+                max_failure_pressure=0.70,
                 require_conversation_ready=False,
                 allow_no_user_anchor=True,
             )
@@ -394,11 +402,18 @@ class MindTick:
     def is_alive(self) -> bool:
         """Return true only while the supervised loop is running and progressing."""
         task_alive = bool(self._task and not self._task.done())
-        if not self._running or not task_alive or self._consecutive_loop_failures >= 3:
+        if not self._running or not task_alive:
             if not self._attempt_liveness_repair():
                 return False
             task_alive = bool(self._task and not self._task.done())
-        if self._last_successful_tick_at <= 0.0 and self._last_loop_progress_at <= 0.0:
+        if (
+            float(getattr(self, "_last_successful_tick_at", 0.0) or 0.0) <= 0.0
+            and float(getattr(self, "_last_loop_progress_at", 0.0) or 0.0) <= 0.0
+        ):
+            if int(getattr(self, "_consecutive_loop_failures", 0) or 0) >= 3:
+                if not self._attempt_liveness_repair(reason="repeated loop failures before first progress"):
+                    return False
+                return bool(self._task and not self._task.done())
             return bool(self._started_at and (time.time() - self._started_at) <= 180.0)
         now = time.time()
         freshest_progress = max(
@@ -407,6 +422,10 @@ class MindTick:
         )
         if freshest_progress > 0.0 and (now - freshest_progress) <= 300.0:
             return True
+        if int(getattr(self, "_consecutive_loop_failures", 0) or 0) >= 3:
+            if not self._attempt_liveness_repair(reason="repeated loop failures without fresh progress"):
+                return False
+            return bool(self._task and not self._task.done())
         if task_alive:
             age = now - freshest_progress if freshest_progress > 0.0 else now - float(getattr(self, "_started_at", now) or now)
             self._attempt_liveness_repair(

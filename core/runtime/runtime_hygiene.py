@@ -768,6 +768,30 @@ class RuntimeHygieneManager:
                     if child_pid > 0:
                         active_registered_pids.add(child_pid)
                     continue
+                # [FIX] Auto-adopt direct children that match known Aura worker
+                # name patterns (e.g. MLXWorker-*).  These are spawned via
+                # multiprocessing but their cmdline may not match the generic
+                # spawn signature.  A timing race between _spawn_worker_blocking
+                # and register_process_handle can leave the worker unregistered
+                # for one hygiene cycle, producing a transient "1 unregistered
+                # child process(es)" StabilityGuardian alert.
+                if _process_ppid(child) == int(os.getpid()):
+                    child_name = _process_name(child)
+                    if child_name and any(
+                        tag in child_name for tag in ("MLXWorker", "AuraWorker", "Aura")
+                    ):
+                        self.register_process_handle(
+                            child,
+                            kind="multiprocessing",
+                            name=child_name,
+                            source="psutil.adopt_named_worker_during_summary",
+                            command=" ".join(_process_cmdline(child))[:240],
+                        )
+                        active_registered += 1
+                        active_multiprocessing += 1
+                        if child_pid > 0:
+                            active_registered_pids.add(child_pid)
+                        continue
                 if self._is_owned_descendant_process(
                     child,
                     active_registered_pids=active_registered_pids,
