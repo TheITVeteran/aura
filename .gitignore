@@ -168,3 +168,4 @@ artifacts/lora_consolidation/adapter/
 artifacts/lora_consolidation/dataset/
 artifacts/lora_consolidation/merge/
 artifacts/reliability/runs/
+tools/appcheck/node_modules/

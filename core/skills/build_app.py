@@ -37,9 +37,12 @@ class BuildAppSkill(BaseSkill):
         elif not isinstance(params, BuildAppInput):
             params = BuildAppInput.model_validate(params)
 
-        from core.capabilities.app_builder import build_app
+        # Self-taught, test-driven build: recall prior lessons, research the task
+        # (concepts + reference code), generate, FUNCTIONALLY test that it works,
+        # feed the exact failure back, persist, and retain the general lesson.
+        from core.capabilities.self_taught_builder import build_app_verified
 
-        result = await build_app(
+        result = await build_app_verified(
             params.spec, out_dir=params.out_dir, max_tokens=params.max_tokens,
         )
         payload = result.to_dict()
@@ -48,12 +51,13 @@ class BuildAppSkill(BaseSkill):
             "skill": self.name,
             "spec": result.spec,
             "path": result.path,
+            "playable": result.playable,
             "result": payload,
             "summary": (
-                f"Built '{result.spec}' -> {result.path} ({result.bytes_written} bytes, "
-                f"{result.attempts} attempt(s), validation={'passed' if result.ok else result.error})"
-                if result.ok
-                else f"Could not build '{result.spec}': {result.error}"
+                f"Built '{result.spec}' -> {result.path}: "
+                f"playable={result.playable} after {result.iterations} test-driven iteration(s); "
+                f"researched {len(result.research_used)} source(s), recalled "
+                f"{len(result.recalled_lessons)} prior lesson(s). Lesson retained."
             ),
         }
 
