@@ -86,7 +86,11 @@ def test_event_bus_records_degraded_health_without_callback_raise(monkeypatch):
 
     health = registry.get("event_bus")
     assert health is not None
-    assert health.status == "failed_closed"
+    # A redis-publish TimeoutError → local-only fallback is graceful
+    # degradation, not a service death: the bus keeps working. A bare timeout
+    # no longer marks a fail-closed subsystem failed_closed (it would have
+    # cascaded to a mind-wide lockdown; see test_runtime_error_architecture).
+    assert health.status == "degraded"
     assert bus.get_status()["degraded"] is True
     assert bus.get_status()["alive"] is False
 

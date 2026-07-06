@@ -52,6 +52,49 @@ def test_record_degradation_preserves_fail_closed_policy(monkeypatch):
         install_failure_policy_resolver(None)
 
 
+def test_timeout_on_fail_closed_subsystem_does_not_escalate(monkeypatch):
+    """A timeout is backpressure, not a service death.
+
+    Bounded background timeouts on fail-closed subsystems (sovereign_pruner,
+    dialectical_crucible, cognitive_engine→agency_core) repeatedly cascaded to
+    unified_failure_lockdown 1.00 by raising a CRITICAL SERVICE FAILURE
+    (observed live 2026-07-04/05). Genuine faults must still fail closed; bare
+    timeouts must not.
+    """
+    import asyncio
+
+    from core.runtime.errors import record_degradation
+    from core.runtime.service_registry import install_failure_policy_resolver
+
+    install_failure_policy_resolver(
+        lambda name: "fail-closed" if name == "critical_service" else None
+    )
+    monkeypatch.setenv("AURA_MODE", "production")
+
+    try:
+        # TimeoutError and asyncio.TimeoutError are demoted: recorded, never raised.
+        for timeout_error in (TimeoutError("slow"), asyncio.TimeoutError()):
+            record = record_degradation(
+                "critical_service",
+                timeout_error,
+                severity="degraded",
+                action="bounded background wait expired",
+            )
+            assert "CRITICAL SERVICE FAILURE" not in (record.error_message or "")
+            assert record.severity != "critical"
+
+        # A genuine fault on the same fail-closed subsystem still fails closed.
+        with pytest.raises(RuntimeError, match="CRITICAL SERVICE FAILURE"):
+            record_degradation(
+                "critical_service",
+                RuntimeError("corruption"),
+                severity="warning",
+                action="genuine fault",
+            )
+    finally:
+        install_failure_policy_resolver(None)
+
+
 def test_metrics_reads_services_through_low_level_registry(monkeypatch):
     import inspect
     import numpy as np

@@ -143,7 +143,13 @@ def test_fail_closed_service_degradation_raises_before_shutdown(
     clean_container_and_shutdown,
     monkeypatch,
 ):
-    """Live fail-closed services still raise before the runtime enters shutdown."""
+    """Live fail-closed services still raise on a genuine fault before shutdown.
+
+    A bare TimeoutError is now demoted to backpressure everywhere (a slow
+    background pass must not lock the mind down — see test_runtime_error_
+    architecture.test_timeout_on_fail_closed_subsystem_does_not_escalate), so
+    this contract is proven with a genuine fault, which must still fail closed.
+    """
     from core.container import ServiceContainer
 
     monkeypatch.setenv("AURA_MODE", "live")
@@ -156,7 +162,7 @@ def test_fail_closed_service_degradation_raises_before_shutdown(
     with pytest.raises(RuntimeError, match="CRITICAL SERVICE FAILURE"):
         record_degradation(
             "critical_unit",
-            TimeoutError("late cleanup"),
+            RuntimeError("state corruption"),
             severity="degraded",
             action="unit test",
         )

@@ -273,6 +273,21 @@ def record_degradation(
         else:
             raise StateCoherenceFailure(f"Fail-Closed: State corruption risk detected in {subsystem}. original_error={error}")
 
+    # A timeout is backpressure, not a service death. A bounded wait expiring
+    # (asyncio.wait_for, generation-gate timeout) under load means the work
+    # yielded — the subsystem is slow, not broken. Escalating every such
+    # timeout on a fail-closed subsystem to a CRITICAL SERVICE FAILURE that
+    # RAISES drove the whole mind into unified_failure_lockdown 1.00 again and
+    # again this cycle: sovereign_pruner, dialectical_crucible, and
+    # cognitive_engine→agency_core goal-genesis all cascaded to a locked-down,
+    # tool-blocked, unhealthy runtime from a single slow background pass
+    # (observed live 2026-07-04/05). Genuine faults — crashes, corruption,
+    # validation, contract breaches — still fail closed with full force; only
+    # bare timeouts are demoted to a visible-but-non-fatal degradation.
+    # ``enforce_failure_policy=False`` callers opt out of the escalation
+    # entirely (they own their own backpressure discipline).
+    _is_timeout = isinstance(error, (TimeoutError, _asyncio.TimeoutError))
+
     failure_policy_violation = False
     failure_policy_error = ""
     try:
@@ -280,7 +295,7 @@ def record_degradation(
         if not _shutting_down and get_mode() in (AuraMode.PRODUCTION, AuraMode.LIVE):
             from core.runtime.service_registry import get_service_failure_policy
 
-            if get_service_failure_policy(subsystem) == "fail-closed":
+            if get_service_failure_policy(subsystem) == "fail-closed" and not _is_timeout:
                 if severity in ("critical", "degraded", "warning"):
                     failure_policy_violation = True
                     failure_policy_error = (
