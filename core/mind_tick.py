@@ -188,6 +188,7 @@ class MindTick:
         self._last_tick_metadata: TickMetadata | None = None
         self._started_at = 0.0
         self._last_successful_tick_at = 0.0
+        self._last_loop_progress_at = 0.0
         self._consecutive_loop_failures = 0
         self._last_deferred_cortex_health_log_at = 0.0
         self._last_liveness_repair_at = 0.0
@@ -296,6 +297,20 @@ class MindTick:
         logger.info("✅ MindTick: Hot-reload complete. %d phases active.", len(self.phases))
 
     def _background_reasoning_pause_reason(self, state: AuraState | None = None) -> str:
+        # Yield the background kernel tick while the foreground conversation lane
+        # holds the model. Otherwise a soak's back-to-back turns saturate the
+        # generation gate, this tick blocks on kernel.tick() for minutes, the
+        # iteration never marks progress, and mind_tick is falsely declared dead
+        # → runtime DEGRADED → GUI reverts to "Connecting to runtime"
+        # (observed 2026-07-06).
+        try:
+            from core.runtime.backpressure import foreground_inference_active
+
+            if foreground_inference_active():
+                return "foreground_inference_active"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+
         try:
             from core.runtime.background_policy import background_activity_reason
 
@@ -383,11 +398,24 @@ class MindTick:
             if not self._attempt_liveness_repair():
                 return False
             task_alive = bool(self._task and not self._task.done())
-        if self._last_successful_tick_at <= 0.0:
+        if self._last_successful_tick_at <= 0.0 and self._last_loop_progress_at <= 0.0:
             return bool(self._started_at and (time.time() - self._started_at) <= 180.0)
-        return (time.time() - self._last_successful_tick_at) <= 300.0
+        now = time.time()
+        freshest_progress = max(
+            float(getattr(self, "_last_successful_tick_at", 0.0) or 0.0),
+            float(getattr(self, "_last_loop_progress_at", 0.0) or 0.0),
+        )
+        if freshest_progress > 0.0 and (now - freshest_progress) <= 300.0:
+            return True
+        if task_alive:
+            age = now - freshest_progress if freshest_progress > 0.0 else now - float(getattr(self, "_started_at", now) or now)
+            self._attempt_liveness_repair(
+                reason=f"stale progress for {age:.1f}s",
+                cancel_existing=True,
+            )
+        return False
 
-    def _attempt_liveness_repair(self) -> bool:
+    def _attempt_liveness_repair(self, *, reason: str = "", cancel_existing: bool = False) -> bool:
         """Restart the supervised cognitive loop when a live runtime loses it.
 
         This is deliberately narrow: it only repairs a runtime that already
@@ -407,6 +435,17 @@ class MindTick:
             return False
         self._last_liveness_repair_at = now
 
+        existing_task = getattr(self, "_task", None)
+        if cancel_existing and existing_task is not None and not existing_task.done():
+            try:
+                existing_task.cancel()
+            except _MIND_BOUNDARY_ERRORS as exc:
+                _record_mind_degradation(
+                    exc,
+                    action="continued MindTick liveness repair after stale loop cancel failed",
+                    severity="warning",
+                )
+
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -420,7 +459,9 @@ class MindTick:
                 def _threadsafe_repair() -> None:
                     self._consecutive_loop_failures = 0
                     self._running = True
-                    self._started_at = self._started_at or time.time()
+                    self._started_at = time.time()
+                    self._last_successful_tick_at = 0.0
+                    self._last_loop_progress_at = time.time()
                     self._task = _schedule_mind_task(
                         self._run_loop(), name="mind_tick.run_loop.recovered.threadsafe"
                     )
@@ -446,7 +487,9 @@ class MindTick:
 
         self._consecutive_loop_failures = 0
         self._running = True
-        self._started_at = self._started_at or time.time()
+        self._started_at = time.time()
+        self._last_successful_tick_at = 0.0
+        self._last_loop_progress_at = time.time()
         self._task = _schedule_mind_task(
             self._run_loop(),
             name=f"mind_tick.run_loop.recovered.{int(getattr(self, '_liveness_repair_count', 0) or 0) + 1}",
@@ -463,7 +506,7 @@ class MindTick:
         detail = (
             f"{type(finished_error).__name__}: {finished_error}"
             if finished_error is not None
-            else "liveness probe found MindTick loop missing or stopped"
+            else (reason or "liveness probe found MindTick loop missing, stopped, or stale")
         )
         logger.warning("💓 MindTick: Repaired stalled cognitive rhythm (%s).", detail)
         record_degraded_event(
@@ -486,6 +529,7 @@ class MindTick:
             "tick_count": int(getattr(self, "_tick_count", 0) or 0),
             "consecutive_failures": int(getattr(self, "_consecutive_loop_failures", 0) or 0),
             "last_successful_tick_at": float(getattr(self, "_last_successful_tick_at", 0.0) or 0.0),
+            "last_loop_progress_at": float(getattr(self, "_last_loop_progress_at", 0.0) or 0.0),
             "liveness_repair_count": int(getattr(self, "_liveness_repair_count", 0) or 0),
         }
 
@@ -513,6 +557,7 @@ class MindTick:
             sleep_time_override: float | None = None
             try:
                 start_time = asyncio.get_running_loop().time()
+                self._last_loop_progress_at = time.time()
                 
                 # 1. Get the latest state
                 from infrastructure.watchdog import get_watchdog
@@ -832,7 +877,18 @@ class MindTick:
                                 logger.debug("💓 MindTick: Deferring background kernel tick (%s).", _bg_pause)
                             return current_state
                         try:
-                            entry = await kernel.tick(objective, priority=False)
+                            # Bound the background kernel tick. A background
+                            # cognition step must never freeze the whole tick
+                            # iteration: if it can't finish promptly the model is
+                            # contended, so abort and let the loop iterate (which
+                            # marks progress and keeps mind_tick reported alive).
+                            _bg_tick_timeout = float(
+                                os.getenv("AURA_MIND_TICK_KERNEL_TIMEOUT_S", "45")
+                            )
+                            entry = await asyncio.wait_for(
+                                kernel.tick(objective, priority=False),
+                                timeout=_bg_tick_timeout,
+                            )
                             if entry is not None:
                                 # Kernel ran successfully — fetch the committed state
                                 committed = await self.orchestrator.state_repo.get_current()
@@ -852,6 +908,17 @@ class MindTick:
                                     context={"tick_count": self._tick_count},
                                 )
                                 return current_state
+                        except TimeoutError:
+                            # Expected backpressure: the model is contended by the
+                            # foreground lane. Not a failure — yield and let the
+                            # next iteration try. NO hard degradation (that would
+                            # climb _consecutive_loop_failures and self-inflict the
+                            # false-dead state this bound exists to prevent).
+                            if self._tick_count % 30 == 0:
+                                logger.debug(
+                                    "💓 MindTick: background kernel tick yielded to a contended model."
+                                )
+                            return current_state
                         except _MIND_BOUNDARY_ERRORS as _kt_err:
                             _record_mind_degradation(_kt_err)
                             logger.warning("💓 MindTick: Kernel tick failed (%s).", _kt_err)
@@ -1054,7 +1121,18 @@ class MindTick:
                 if prediction and current_state.state_id != state.state_id and hasattr(self, 'predictive_engine') and self.predictive_engine:
                     actual = self._get_actual_from_state(current_state)
                     if actual:
-                        error = await self.predictive_engine.evaluate(prediction, actual, current_state)
+                        try:
+                            error = await self.predictive_engine.evaluate(prediction, actual, current_state)
+                        except _MIND_BOUNDARY_ERRORS as exc:
+                            _record_mind_degradation(
+                                exc,
+                                action="continued MindTick after predictive evaluation failed",
+                                severity="warning",
+                            )
+                            logger.warning("⚠️ MindTick: Prediction evaluation failed: %s", exc)
+                            error = None
+                        if error is None:
+                            continue
                         logger.info("💥 MindTick: Surprise signal: %s", f"{error.surprise_signal:.2f}")
                         # Feed surprise into affect update (arousal/curiosity)
                         current_state.affect.arousal = min(1.0, current_state.affect.arousal + error.surprise_signal * 0.2)

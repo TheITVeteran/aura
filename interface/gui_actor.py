@@ -180,6 +180,19 @@ def _heartbeat_response_state(resp: Any) -> str:
         and conversation_warming_only
     ):
         return "warming"
+    # Degraded-but-conversational: every required probe passes and the
+    # conversation lane is ready, but an *important*-tier background loop
+    # (mind_tick, event_loop_monitor, unified_runtime_pressure) is degraded,
+    # so `healthy` is False. The user can still chat — the watchdog must NOT
+    # rip the live UI away and revert to "Connecting to runtime" over a
+    # background loop (observed 2026-07-06: mind_tick dead → reconnect surface
+    # while conversation worked).
+    if (
+        bool(payload.get("runtime_probe_healthy", False))
+        and bool(probes.get("all_passed", False))
+        and payload.get("conversation_ready") is True
+    ):
+        return "degraded_ready"
     return "unhealthy"
 
 
@@ -382,6 +395,21 @@ def gui_actor_entry(port: int, token: str = None):
                             logger.info(
                                 "[GUI WATCHDOG] Runtime probes pass; conversation lane is warming "
                                 "and will be demand-warmed by the next foreground turn."
+                            )
+                            last_warming_log = now
+                    elif heartbeat_state == "degraded_ready":
+                        # Conversation works; only a background loop is degraded.
+                        # Keep the live UI — do NOT count this toward the
+                        # reconnect-surface threshold. The user can still talk to
+                        # her while the runtime self-heals the background loop.
+                        if not _boot_completed:
+                            _boot_completed = True
+                        consecutive_failures = 0
+                        now = time.monotonic()
+                        if now - last_warming_log > 120.0:
+                            logger.info(
+                                "[GUI WATCHDOG] Runtime degraded on a background loop but "
+                                "conversation is ready; keeping the live UI."
                             )
                             last_warming_log = now
                     else:

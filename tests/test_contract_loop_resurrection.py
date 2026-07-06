@@ -128,6 +128,61 @@ class TestMindTickThreadRevival:
         assert tick._attempt_liveness_repair() is False
         assert len(scheduled) == 1
 
+    def test_background_kernel_tick_yields_under_foreground_inference(self, monkeypatch):
+        # A soak's back-to-back turns saturate the generation gate; the
+        # background kernel tick must yield instead of blocking (which froze
+        # the iteration and falsely marked mind_tick dead, 2026-07-06).
+        import core.runtime.backpressure as bp
+        from core.mind_tick import MindTick
+
+        monkeypatch.setattr(bp, "foreground_inference_active", lambda: True)
+        tick = MindTick.__new__(MindTick)
+        tick.orchestrator = SimpleNamespace(_flow_controller=None)
+        assert tick._background_reasoning_pause_reason() == "foreground_inference_active"
+
+
+class TestGuiDegradedReadyKeepsUI:
+    def test_degraded_ready_when_conversation_works_but_loop_degraded(self):
+        from interface.gui_actor import _heartbeat_response_state
+
+        class _Resp:
+            status_code = 503
+
+            @staticmethod
+            def json():
+                return {
+                    "healthy": False,
+                    "status": "booting",
+                    "runtime_probe_healthy": True,
+                    "conversation_ready": True,
+                    "boot_phase": "kernel_warming",
+                    "blockers": ["healthy", "runtime_contract_healthy", "important:mind_tick"],
+                    "required_probes": {"all_passed": True},
+                }
+
+        # Conversation works; only a background loop is degraded → keep the UI.
+        assert _heartbeat_response_state(_Resp()) == "degraded_ready"
+
+    def test_truly_down_is_still_unhealthy(self):
+        from interface.gui_actor import _heartbeat_response_state
+
+        class _Resp:
+            status_code = 503
+
+            @staticmethod
+            def json():
+                return {
+                    "healthy": False,
+                    "status": "booting",
+                    "runtime_probe_healthy": False,
+                    "conversation_ready": False,
+                    "boot_phase": "kernel_booting",
+                    "blockers": ["healthy", "inference"],
+                    "required_probes": {"all_passed": False},
+                }
+
+        assert _heartbeat_response_state(_Resp()) == "unhealthy"
+
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
