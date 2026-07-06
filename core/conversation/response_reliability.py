@@ -3313,9 +3313,14 @@ def _has_unexpected_cjk_intrusion(user_message: Any, reply_text: Any) -> bool:
 
 def _has_surface_nonsense_drift(user_message: Any, reply_text: Any) -> bool:
     raw = str(reply_text or "")
-    if not _SURFACE_NONSENSE_DRIFT_RE.search(raw):
+    # Source URLs are expected in grounded search/tool answers.  The legacy
+    # drift pattern includes ``:/`` to catch malformed emotive fragments, which
+    # would otherwise make every ``https://`` citation look like nonsense.
+    raw_without_urls = re.sub(r"https?://\S+", "", raw)
+    prompt_without_urls = re.sub(r"https?://\S+", "", str(user_message or ""))
+    if not _SURFACE_NONSENSE_DRIFT_RE.search(raw_without_urls):
         return False
-    return not _SURFACE_NONSENSE_DRIFT_RE.search(str(user_message or ""))
+    return not _SURFACE_NONSENSE_DRIFT_RE.search(prompt_without_urls)
 
 
 def _has_truncated_tail(reply_text: Any) -> bool:

@@ -1374,17 +1374,65 @@ class ResponseGenerationPhase(BasePhase):
                     "🛑 ResponseGeneration Phase TIMEOUT (%.0fs). Logic took too long.",
                     request_timeout + 4.0,
                 )
-                # [STABILITY v55] Don't inject a robotic timeout message into
-                # working memory.  Return state unchanged (no response text)
-                # so the Kernel reports empty and chat.py fires the protected
-                # foreground lane as a rescue rather than showing
-                # "My cognitive process timed out" to the user.
-                return state
+                required_tool_hit = self._successful_required_search_payload(state, contract)
+                if required_tool_hit and not is_background:
+                    skill_name, payload = required_tool_hit
+                    response_text = self._render_required_search_answer_from_payload(
+                        payload=payload,
+                    )
+                    state.response_modifiers["required_tool_timeout_repaired"] = {
+                        "skill": skill_name,
+                        "method": "deterministic_grounded_evidence",
+                    }
+                    logger.warning(
+                        "🛡️ ResponseGeneration answered from successful %s evidence after Cortex timeout.",
+                        skill_name,
+                    )
+                else:
+                    # [STABILITY v55] Don't inject a robotic timeout message into
+                    # working memory.  Return state unchanged (no response text)
+                    # so the Kernel reports empty and chat.py fires the protected
+                    # foreground lane as a rescue rather than showing
+                    # "My cognitive process timed out" to the user.
+                    return state
 
             # Handle None response from router.think()
             if response_text is None:
-                logger.debug("💭 ResponseGeneration: LLM returned None. Skipping this tick.")
-                return state
+                required_tool_hit = self._successful_required_search_payload(state, contract)
+                if required_tool_hit and not is_background:
+                    skill_name, payload = required_tool_hit
+                    response_text = self._render_required_search_answer_from_payload(
+                        payload=payload,
+                    )
+                    state.response_modifiers["required_tool_empty_repaired"] = {
+                        "skill": skill_name,
+                        "method": "deterministic_grounded_evidence",
+                    }
+                    logger.warning(
+                        "🛡️ ResponseGeneration answered from successful %s evidence after empty Cortex result.",
+                        skill_name,
+                    )
+                else:
+                    logger.debug("💭 ResponseGeneration: LLM returned None. Skipping this tick.")
+                    return state
+            if not str(response_text or "").strip():
+                required_tool_hit = self._successful_required_search_payload(state, contract)
+                if required_tool_hit and not is_background:
+                    skill_name, payload = required_tool_hit
+                    response_text = self._render_required_search_answer_from_payload(
+                        payload=payload,
+                    )
+                    state.response_modifiers["required_tool_empty_repaired"] = {
+                        "skill": skill_name,
+                        "method": "deterministic_grounded_evidence",
+                    }
+                    logger.warning(
+                        "🛡️ ResponseGeneration answered from successful %s evidence after blank Cortex result.",
+                        skill_name,
+                    )
+                else:
+                    logger.debug("💭 ResponseGeneration: LLM returned blank text. Skipping this tick.")
+                    return state
             if not is_background:
                 if (
                     origin != "test"

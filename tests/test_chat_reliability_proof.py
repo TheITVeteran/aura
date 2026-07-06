@@ -1992,3 +1992,31 @@ def test_runtime_path_probe_is_operational_status_not_self_reflection():
     assert assessment.ok
     assert "off_topic_self_reflection_reply" not in assessment.reasons
     assert "missing_requested_self_process_coverage" not in assessment.reasons
+
+
+def test_grounded_source_urls_do_not_trigger_surface_nonsense_drift():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Search the web for one current NASA page about Europa and answer with the source.",
+        (
+            "I found Europa: Jupiter's Ocean World. Europa is one of Jupiter's moons "
+            "and a target in the search for habitable worlds. "
+            "Source: https://science.nasa.gov/jupiter/moons/europa/"
+        ),
+    )
+
+    assert assessment.ok
+    assert "surface_nonsense_drift" not in assessment.reasons
+
+
+def test_malformed_surface_fragment_still_triggers_surface_nonsense_drift():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "You with me?",
+        "I'll be quiet for a while :/",
+    )
+
+    assert assessment.retryable
+    assert "surface_nonsense_drift" in assessment.reasons

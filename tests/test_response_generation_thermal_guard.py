@@ -92,6 +92,18 @@ class _FalseSearchInabilityRouter(_Router):
         )
 
 
+class _TimeoutSearchRouter(_Router):
+    async def think(self, **kwargs):
+        self.calls.append(kwargs)
+        raise TimeoutError()
+
+
+class _BlankSearchRouter(_Router):
+    async def think(self, **kwargs):
+        self.calls.append(kwargs)
+        return ""
+
+
 @pytest.mark.asyncio
 async def test_response_generation_downshifts_on_thermal_pressure(monkeypatch):
     state = AuraState()
@@ -239,6 +251,60 @@ async def test_response_generation_repairs_false_search_inability_after_evidence
     assert "Europa: Jupiter's Ocean World" in reply
     assert "science.nasa.gov/jupiter/moons/europa" in reply
     assert "can't execute web searches" not in reply.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("router_cls", "receipt_key"),
+    [
+        (_TimeoutSearchRouter, "required_tool_timeout_repaired"),
+        (_BlankSearchRouter, "required_tool_empty_repaired"),
+    ],
+)
+async def test_response_generation_answers_from_search_evidence_when_cortex_fails(
+    monkeypatch,
+    router_cls,
+    receipt_key,
+):
+    state = AuraState()
+    state.cognition.current_objective = (
+        "Search the web for one current NASA page about Europa, then answer with the source title and one sentence."
+    )
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.REACTIVE
+    state.response_modifiers["matched_skills"] = ["web_search"]
+
+    router = router_cls()
+    capability = _SearchCapability()
+    phase = ResponseGenerationPhase(
+        _Container({"llm_router": router, "capability_engine": capability})
+    )
+
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "system", "content": "context"}],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+
+    new_state = await phase.execute(
+        state,
+        context={
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "visible_user_message": state.cognition.current_objective,
+            "max_tokens": 512,
+        },
+    )
+
+    assert capability.calls
+    assert new_state.response_modifiers["last_skill_ok"] is True
+    assert new_state.response_modifiers[receipt_key]["skill"] == "web_search"
+    reply = new_state.cognition.last_response
+    assert "Europa: Jupiter's Ocean World" in reply
+    assert "science.nasa.gov/jupiter/moons/europa" in reply
 
 
 @pytest.mark.asyncio
