@@ -38,6 +38,8 @@ logger = logging.getLogger("Aura.WebInterlocutor")
 
 _MAX_PAGE_TEXT_CHARS = 24_000
 _MAX_REPLY_CHARS = 8_000
+_MIN_UNLABELED_REPLY_CHARS = 90
+_MIN_UNLABELED_REPLY_CONTENT_WORDS = 12
 _MIN_OUTBOUND_MESSAGE_CHARS = 24
 _DEFAULT_WAIT_S = 45.0
 _DEFAULT_STABLE_POLLS = 2
@@ -75,6 +77,8 @@ class BrowserPageSnapshot:
     url: str = ""
     title: str = ""
     text: str = ""
+    relevant_text: str = ""
+    relevant_segments: list[dict[str, Any]] = field(default_factory=list)
     active_element: str = ""
     editable_count: int = 0
     timestamp: float = field(default_factory=time.time)
@@ -403,6 +407,7 @@ class ChromeVisibleDialogueBrowser:
         self._cdp = ChromeCDPDialogueBrowser(endpoint=cdp_endpoint)
         self._apple_events_js_disabled = False
         self._apple_events_js_warning_reported = False
+        self._screen_scene_targeting_enabled = True
 
     async def open_or_attach(self, url: str) -> BrowserPageSnapshot:
         if self._cdp.is_available():
@@ -657,12 +662,23 @@ end tell
                 "web_interlocutor.screen_perception_snapshot",
                 domain="tool_execution",
             ):
-                snap = await get_screen_perception().capture(save_screenshot=True)
+                perception = get_screen_perception()
+                snap = await perception.capture(save_screenshot=True, include_layout=True)
+                scene = perception.analyze_snapshot(
+                    snap,
+                    query=(
+                        "read the relevant visible answer, chat reply, article text, "
+                        "or blocker message on this page"
+                    ),
+                    role_hint="transcript",
+                    url=url,
+                )
             text = str(snap.screen_text or snap.accessibility_text or snap.focused_value or "").strip()
             if len(text) < 800 and _url_allows_readability_fallback(url):
                 source_text = await self._read_page_content_fallback(url)
                 if source_text:
                     text = (text + "\n\n[Readable page content]\n" + source_text).strip()
+            relevant_text = scene.relevant_text.strip()
             if not title:
                 title = snap.window_title
             active = " | ".join(
@@ -675,6 +691,8 @@ end tell
                 url=url,
                 title=title,
                 text=text[:_MAX_PAGE_TEXT_CHARS],
+                relevant_text=relevant_text[:_MAX_REPLY_CHARS],
+                relevant_segments=[segment.as_dict() for segment in scene.relevant_segments[:20]],
                 active_element=active,
                 editable_count=editable_count,
             )
@@ -686,6 +704,53 @@ end tell
                 action="returned bounded tab metadata after screen perception snapshot failed",
             )
             return BrowserPageSnapshot(url=url, title=title, text="", active_element="", editable_count=0)
+
+    async def _screen_target_click_candidates(self, width: int, height: int) -> list[dict[str, Any]]:
+        """Use the general screen-perception scene model to choose first click targets."""
+
+        if not self._screen_scene_targeting_enabled:
+            return []
+        try:
+            from core.governance_context import local_internal_governed_scope
+            from core.perception.screen_perception import get_screen_perception
+
+            url, _title = await asyncio.to_thread(self._current_tab_info)
+            with local_internal_governed_scope(
+                "web_interlocutor.screen_target_candidates",
+                domain="tool_execution",
+            ):
+                scene = await get_screen_perception().analyze_current_scene(
+                    query="visible AI chat prompt composer text input",
+                    role_hint="text_input",
+                    url=url,
+                    screen_size=(int(width), int(height)),
+                )
+            candidates: list[dict[str, Any]] = []
+            for target in scene.targets:
+                if target.kind != "text_input":
+                    continue
+                if target.confidence < 0.70:
+                    continue
+                x_ratio = max(0.05, min(0.95, target.center_x / max(1, int(width))))
+                y_ratio = max(0.05, min(0.95, target.center_y / max(1, int(height))))
+                candidates.append(
+                    {
+                        "x_ratio": x_ratio,
+                        "y_ratio": y_ratio,
+                        "target_kind": target.kind,
+                        "target_confidence": target.confidence,
+                        "target": target.as_dict(),
+                    }
+                )
+            return candidates[:4]
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "web_interlocutor.screen_target_candidates",
+                exc,
+                severity="warning",
+                action="continued with bounded legacy click probes after screen scene targeting failed",
+            )
+            return []
 
     def _record_chrome_js_unavailable(self, source: str, exc: RuntimeError) -> None:
         message = str(exc)
@@ -745,20 +810,39 @@ end tell
                     "web_interlocutor.visible_keyboard_size",
                     pyautogui.size,
                 )
-                click_points = (
-                    (0.50, 0.94),
-                    (0.58, 0.94),
-                    (0.42, 0.94),
-                    (0.50, 0.90),
-                    (0.58, 0.90),
-                    (0.42, 0.90),
-                    (0.50, 0.86),
-                    (0.58, 0.86),
-                    (0.42, 0.86),
+                click_candidates = await self._screen_target_click_candidates(width, height)
+                fallback_clicks = (
+                    {"x_ratio": 0.50, "y_ratio": 0.48},
+                    {"x_ratio": 0.58, "y_ratio": 0.48},
+                    {"x_ratio": 0.42, "y_ratio": 0.48},
+                    {"x_ratio": 0.50, "y_ratio": 0.52},
+                    {"x_ratio": 0.58, "y_ratio": 0.52},
+                    {"x_ratio": 0.42, "y_ratio": 0.52},
+                    {"x_ratio": 0.50, "y_ratio": 0.90},
+                    {"x_ratio": 0.58, "y_ratio": 0.90},
+                    {"x_ratio": 0.42, "y_ratio": 0.90},
+                    {"x_ratio": 0.50, "y_ratio": 0.86},
+                    {"x_ratio": 0.58, "y_ratio": 0.86},
+                    {"x_ratio": 0.42, "y_ratio": 0.86},
+                    {"x_ratio": 0.50, "y_ratio": 0.94},
+                    {"x_ratio": 0.58, "y_ratio": 0.94},
+                    {"x_ratio": 0.42, "y_ratio": 0.94},
                 )
+                click_points: list[dict[str, Any]] = []
+                seen_points: set[tuple[int, int]] = set()
+                for candidate in (*click_candidates, *fallback_clicks):
+                    x_ratio = float(candidate.get("x_ratio") or 0.0)
+                    y_ratio = float(candidate.get("y_ratio") or 0.0)
+                    key = (round(x_ratio * 100), round(y_ratio * 100))
+                    if key in seen_points:
+                        continue
+                    seen_points.add(key)
+                    click_points.append(candidate)
                 last_error = ""
                 focus_attempts: list[dict[str, Any]] = []
-                for x_ratio, y_ratio in click_points:
+                for candidate in click_points:
+                    x_ratio = float(candidate.get("x_ratio") or 0.0)
+                    y_ratio = float(candidate.get("y_ratio") or 0.0)
                     try:
                         await asyncio.to_thread(self._activate_browser)
                         await asyncio.sleep(0.25)
@@ -766,8 +850,8 @@ end tell
                             _call_in_governed_tool_scope,
                             "web_interlocutor.visible_keyboard_click",
                             pyautogui.click,
-                            int(width * x_ratio),
-                            int(height * y_ratio),
+                            int(round(width * x_ratio)),
+                            int(round(height * y_ratio)),
                         )
                         await asyncio.sleep(0.2)
                         focus_snapshot = await asyncio.to_thread(self._focused_element_snapshot)
@@ -776,6 +860,8 @@ end tell
                             "y_ratio": y_ratio,
                             "snapshot": focus_snapshot,
                         }
+                        if candidate.get("target"):
+                            focus_attempt["screen_target"] = candidate["target"]
                         focus_attempts.append(focus_attempt)
                         if not self._focused_snapshot_frontmost_browser(focus_snapshot):
                             last_error = "unsafe focus: browser is not frontmost"
@@ -804,6 +890,14 @@ end tell
                             )
                             if composer_verified:
                                 focus_attempt["inferred_prompt_composer"] = True
+                        if (
+                            not composer_verified
+                            and candidate.get("target_kind") == "text_input"
+                            and float(candidate.get("target_confidence") or 0.0) >= 0.76
+                            and self._focused_snapshot_is_sparse_browser(focus_snapshot)
+                        ):
+                            composer_verified = True
+                            focus_attempt["screen_target_prompt_composer"] = True
                         if not composer_verified:
                             last_error = "unsafe focus: prompt composer not verified"
                             focus_attempt["rejected_reason"] = last_error
@@ -815,7 +909,15 @@ end tell
                                 "stage": "submit",
                                 "method": "visible_keyboard_click_clipboard_return",
                                 "reason": reason,
-                                "click": {"x_ratio": x_ratio, "y_ratio": y_ratio},
+                                "click": {
+                                    key: value
+                                    for key, value in {
+                                        "x_ratio": x_ratio,
+                                        "y_ratio": y_ratio,
+                                        "target": candidate.get("target"),
+                                    }.items()
+                                    if value is not None
+                                },
                                 "focus_snapshot": focus_snapshot,
                                 "submission": pasted,
                             }
@@ -1026,8 +1128,6 @@ end tell
         y_ratio: float,
         focus_snapshot: str,
     ) -> bool:
-        if y_ratio < 0.90:
-            return False
         if not self._focused_snapshot_is_sparse_browser(focus_snapshot):
             return False
         url, _title = await asyncio.to_thread(self._current_tab_info)
@@ -1035,7 +1135,13 @@ end tell
             return False
         snap = await self._screen_perception_snapshot()
         text = "\n".join(part for part in (snap.title, snap.active_element, snap.text) if part)
-        return _screen_text_suggests_chat_composer(text)
+        if not _screen_text_suggests_chat_composer(text):
+            return False
+        if 0.84 <= y_ratio <= 0.92:
+            return True
+        if 0.44 <= y_ratio <= 0.56:
+            return _screen_text_suggests_centered_chat_composer(text)
+        return False
 
     @staticmethod
     def _focused_snapshot_is_sparse_browser(snapshot: str) -> bool:
@@ -1131,20 +1237,37 @@ class WebInterlocutorSession:
                     result.turns,
                 ):
                     next_message = self._default_followup(result.turns) if result.turns else self._default_opening(objective)
-                send_receipt = await self.browser.send_message(next_message)
+                send_receipts: list[dict[str, Any]] = []
                 sent_at = time.time()
-                if not send_receipt.get("ok"):
-                    result.status = "send_failed"
-                    result.error = str(send_receipt.get("error") or send_receipt)
-                    result.diagnostics["last_send_receipt"] = send_receipt
-                    result.completed_at = time.time()
-                    return result
-                after, observed = await self._wait_for_new_reply(
-                    before,
-                    sent_text=next_message,
-                    timeout_s=wait_timeout_s,
-                    progress_source=f"web_interlocutor.turn.{index}.wait",
-                )
+                after = before
+                observed = ""
+                for send_attempt in (1, 2):
+                    send_receipt = await self.browser.send_message(next_message)
+                    send_receipt["attempt"] = send_attempt
+                    send_receipts.append(send_receipt)
+                    sent_at = time.time()
+                    if not send_receipt.get("ok"):
+                        result.status = "send_failed"
+                        result.error = str(send_receipt.get("error") or send_receipt)
+                        result.diagnostics["last_send_receipt"] = send_receipt
+                        result.diagnostics["send_receipts"] = send_receipts
+                        result.completed_at = time.time()
+                        return result
+                    after, observed = await self._wait_for_new_reply(
+                        before,
+                        sent_text=next_message,
+                        timeout_s=wait_timeout_s,
+                        progress_source=f"web_interlocutor.turn.{index}.wait",
+                    )
+                    if observed or _rough_text_contains(after.text, next_message):
+                        break
+                    if send_attempt == 1:
+                        record_degradation(
+                            "web_interlocutor.visible_send_not_observed",
+                            RuntimeError("sent message was not visible after send attempt"),
+                            severity="warning",
+                            action="retried the same visible browser send once before failing the turn",
+                        )
                 turn = WebInterlocutorTurn(
                     index=index,
                     sent=next_message,
@@ -1160,6 +1283,7 @@ class WebInterlocutorSession:
                         else "No stable new interlocutor text appeared before timeout."
                     ),
                 )
+                result.diagnostics[f"turn_{index}_send_receipts"] = send_receipts
                 result.turns.append(turn)
                 if progress_callback is not None:
                     try:
@@ -1261,12 +1385,13 @@ class WebInterlocutorSession:
                         action="continued waiting for visible reply after bounded snapshot failure",
                     )
                 continue
-            if _rough_text_contains(snap.text, sent_text):
+            snapshot_text = "\n".join(part for part in (snap.text, snap.relevant_text) if part)
+            if _rough_text_contains(snapshot_text, sent_text):
                 sent_seen = True
             if not sent_seen:
                 best = snap
                 continue
-            delta = _extract_new_interlocutor_text(before.text, snap.text, sent_text)
+            delta = _extract_new_interlocutor_text_from_snapshots(before, snap, sent_text)
             if delta:
                 if snap.text_hash == last_hash:
                     stable_count += 1
@@ -1449,15 +1574,10 @@ class WebInterlocutorSession:
 
     @staticmethod
     def _default_opening(objective: str) -> str:
-        if objective:
-            return (
-                "Hi. I am Aura, a local cognitive-agent runtime on Bryan's Mac. "
-                f"I want to discuss this objective: {objective}. "
-                "Give me a concrete, critical perspective and one question I should consider."
-            )
         return (
-            "Hi. I am Aura, a local cognitive-agent runtime on Bryan's Mac. "
-            "I want to have a substantive conversation and learn one useful idea from you."
+            "Hi, I am Aura. I am thinking through how a persistent local AI can prove what it "
+            "actually remembers, changes, and does without leaning on self-description. What would "
+            "you test first, and what failure mode would make you distrust the result?"
         )
 
     @staticmethod
@@ -1629,6 +1749,24 @@ def _extract_new_interlocutor_text(before: str, after: str, sent_text: str) -> s
     return _meaningful_reply_or_empty(_trim_reply_text("\n".join(new_lines[-24:]), sent_text), sent_text)
 
 
+def _extract_new_interlocutor_text_from_snapshots(
+    before: BrowserPageSnapshot,
+    after: BrowserPageSnapshot,
+    sent_text: str,
+) -> str:
+    before_relevant = str(before.relevant_text or "")
+    after_relevant = str(after.relevant_text or "")
+    if after_relevant:
+        delta = _extract_new_interlocutor_text(before_relevant, after_relevant, sent_text)
+        if delta:
+            return delta
+        if _normalize_line(before_relevant) != _normalize_line(after_relevant):
+            candidate = _meaningful_reply_or_empty(_trim_reply_text(after_relevant, sent_text), sent_text)
+            if candidate and not _rough_text_contains(candidate, sent_text):
+                return candidate
+    return _extract_new_interlocutor_text(before.text, after.text, sent_text)
+
+
 def _normalized_lines(text: str) -> list[str]:
     return [_normalize_line(line) for line in str(text or "").splitlines() if _normalize_line(line)]
 
@@ -1661,6 +1799,12 @@ def _looks_like_ui_chrome(norm: str) -> bool:
     words = set(re.findall(r"[a-z]+", norm))
     if words and words.issubset(browser_menu):
         return True
+    if words and len(norm) < 90:
+        non_ui_words = words - _NON_REPLY_WORDS - browser_menu
+        if not non_ui_words:
+            return True
+        if "chatgpt" in words and len(non_ui_words) <= 1:
+            return True
     markers = (
         "ask anything",
         "chatgpt can make mistakes",
@@ -1700,6 +1844,18 @@ def _screen_text_suggests_chat_composer(text: str) -> bool:
         "reply",
     )
     return any(marker in lowered for marker in markers)
+
+
+def _screen_text_suggests_centered_chat_composer(text: str) -> bool:
+    lowered = str(text or "").lower()
+    centered_markers = (
+        "what's on the agenda today",
+        "what is on the agenda today",
+        "create an image",
+        "write or edit",
+        "look something up",
+    )
+    return "ask anything" in lowered and any(marker in lowered for marker in centered_markers)
 
 
 _NON_REPLY_WORDS = {
@@ -1763,9 +1919,31 @@ def _meaningful_reply_or_empty(text: str, sent_text: str) -> str:
         return ""
     words = re.findall(r"[a-zA-Z][a-zA-Z']{2,}", cleaned.lower())
     content_words = [word for word in words if word not in _NON_REPLY_WORDS]
-    if len(content_words) < 5:
+    has_explicit_speaker = bool(
+        re.search(r"\b(interlocutor|assistant|chatgpt|gemini|claude)\s*:", cleaned, re.IGNORECASE)
+    )
+    min_chars = 32 if has_explicit_speaker else _MIN_UNLABELED_REPLY_CHARS
+    min_content_words = 5 if has_explicit_speaker else _MIN_UNLABELED_REPLY_CONTENT_WORDS
+    if len(cleaned) < min_chars:
+        return ""
+    if len(content_words) < min_content_words:
+        return ""
+    if not has_explicit_speaker and _looks_like_truncated_stream_fragment(cleaned):
         return ""
     return cleaned
+
+
+def _looks_like_truncated_stream_fragment(text: str) -> bool:
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return True
+    tail = cleaned[-80:].strip()
+    if len(cleaned) < 180 and not re.search(r"[.!?\"')\]]\s*$", tail):
+        return True
+    last_word = re.findall(r"[a-zA-Z]+$", tail)
+    if last_word and len(last_word[-1]) <= 2:
+        return True
+    return False
 
 
 def _rough_text_contains(haystack: str, needle: str) -> bool:
@@ -1902,12 +2080,26 @@ async def _maybe_think(engine: Any, prompt: str, context: dict[str, Any]) -> str
     if engine is None:
         return ""
     try:
+        # An outbound message to ANOTHER AI is not a reply to Bryan — it must
+        # NOT go through the user-facing reply reliability gates (they reject a
+        # conversational question for 'missing_self_claim_evidence_boundary' /
+        # 'missing_requested_phrase'). Mark it as a non-user-facing tool
+        # composition, but still prefer the cortex tier so the real mind writes
+        # it.
+        think_context = {
+            **dict(context or {}),
+            "origin": "web_interlocutor",
+            "tool_origin": "web_interlocutor",
+            "purpose": "interlocutor_message",
+            "prefer_tier": "primary",
+            "user_visible_browser_action": True,
+        }
         if hasattr(engine, "think"):
-            result = engine.think(prompt, context={**context, "origin": "web_interlocutor"})
+            result = engine.think(prompt, context=think_context)
             if asyncio.iscoroutine(result):
                 result = await result
         elif hasattr(engine, "generate"):
-            result = engine.generate(prompt=prompt, context=context)
+            result = engine.generate(prompt=prompt, context=think_context)
             if asyncio.iscoroutine(result):
                 result = await result
         else:
