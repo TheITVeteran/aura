@@ -1031,14 +1031,33 @@ class CognitiveHeartbeat:
                     return max(0.0, min(100.0, raw))
                 return max(0.0, min(100.0, raw * 100.0))
 
-            # Resource metrics lookup
+            # Resource metrics lookup. The integrity report carries the KERNEL
+            # PROCESS share (cpu/cores, process memory_percent) and reads 0.0
+            # when the report is stale — which left the neural-stream CPU/RAM
+            # gauges dead at 0% (observed live 2026-07-06). The panel wants live
+            # SYSTEM load, so read it directly and non-blocking: virtual_memory
+            # for RAM (exact), and the 1-min load average as a CPU proxy (never
+            # the cold-start 0 that cpu_percent(interval=None) returns, and it
+            # doesn't block the event loop the way interval>0 would).
             cpu_usage = 0.0
             ram_usage = 0.0
             integrity = self._integrity_monitor
             if integrity:
                 stats = integrity.get_stats()
-                cpu_usage = stats.get("cpu_percent", 0.0)
-                ram_usage = stats.get("memory_percent", 0.0)
+                cpu_usage = float(stats.get("cpu_percent", 0.0) or 0.0)
+                ram_usage = float(stats.get("memory_percent", 0.0) or 0.0)
+            try:
+                import psutil
+
+                system_ram = float(psutil.virtual_memory().percent)
+                if system_ram > 0.0:
+                    ram_usage = system_ram
+                if cpu_usage <= 0.0:
+                    load1 = float(psutil.getloadavg()[0])
+                    cores = max(1, int(psutil.cpu_count() or 1))
+                    cpu_usage = max(0.0, min(100.0, load1 / cores * 100.0))
+            except (ImportError, OSError, RuntimeError, AttributeError, ValueError, IndexError):
+                pass
 
             # Mycelial metrics lookup
             mycelial_data = {"nodes": 0, "edges": 0, "health": "offline"}
