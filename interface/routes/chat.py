@@ -11931,7 +11931,7 @@ def _build_grounded_introspection_reply(
     _normalized_for_numbers = _normalize_user_message(user_message)
     if any(marker in _normalized_for_numbers for marker in _numeric_markers):
         _affect_source = substrate_affect or dict(
-            (voice_state.get("substrate_snapshot") or {})
+            voice_state.get("substrate_snapshot") or {}
         )
         _val = _affect_source.get("valence")
         _aro = _affect_source.get("arousal")
@@ -16411,6 +16411,44 @@ async def api_chat(
             "status": "error",
             "response_confidence": "degraded",
         }, status_code=status_code)
+    except Exception as e:  # noqa: BLE001 — last-resort turn-death floor
+        # A turn must NEVER surface as HTTP 500. Exceptions outside
+        # _CHAT_RECOVERABLE_ERRORS still reached the global handler and killed
+        # the turn with a 500 — observed live during the soak: the local 32B
+        # timed out, the cloud fallback returned google.genai ClientError 429
+        # RESOURCE_EXHAUSTED (not a RuntimeError), and it escaped to a 500.
+        # Fail closed with an honest grounded reply and a 200 instead.
+        try:
+            await _cancel_kernel_task_if_pending("chat_error_uncaught")
+        except BaseException:  # noqa: BLE001 — cleanup must not mask the floor
+            pass
+        record_degradation("chat.uncaught_turn_error", e)
+        logger.error("Chat uncaught error (turn-death floor engaged): %s", e, exc_info=True)
+        error_reply = (
+            "I hit an error before I could finish that thought — the model lane "
+            "was unavailable and the fallback was rate-limited. I kept this turn's "
+            "context; say the word and I'll pick it back up."
+        )
+        try:
+            if pending_exchange_id:
+                await _complete_logged_exchange(
+                    pending_exchange_id,
+                    body.message,
+                    error_reply,
+                    record_experience=not is_benchmark,
+                )
+                pending_exchange_id = None
+        except BaseException:  # noqa: BLE001 — logging must not break the floor
+            pass
+        return JSONResponse(
+            {
+                "response": error_reply,
+                "status": "error",
+                "error_type": type(e).__name__,
+                "response_confidence": "degraded",
+            },
+            status_code=200,
+        )
     finally:
         if foreground_slot_acquired:
             _foreground_chat_lock.release(foreground_lock_token)
