@@ -46,7 +46,10 @@ _DEFAULT_WAIT_S = 45.0
 _DEFAULT_STABLE_POLLS = 2
 _COMPOSE_TIMEOUT_S = max(
     8.0,
-    float(os.getenv("AURA_WEB_INTERLOCUTOR_COMPOSE_TIMEOUT_S", "18") or "18"),
+    # The FIRST composition of a conversation is cold (no warm cache) and can
+    # exceed a tight budget on the 32B — an 18s cap timed out the opening turn
+    # and forced a canned default. Give her real cortex room to answer.
+    float(os.getenv("AURA_WEB_INTERLOCUTOR_COMPOSE_TIMEOUT_S", "55") or "55"),
 )
 _FACTCHECK_TIMEOUT_S = max(
     1.0,
