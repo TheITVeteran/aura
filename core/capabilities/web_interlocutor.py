@@ -81,6 +81,7 @@ class BrowserPageSnapshot:
     relevant_segments: list[dict[str, Any]] = field(default_factory=list)
     active_element: str = ""
     editable_count: int = 0
+    generating: bool = False
     timestamp: float = field(default_factory=time.time)
 
     @property
@@ -464,8 +465,18 @@ class ChromeVisibleDialogueBrowser:
   // the whole-page innerText (which is menus/UI). Far cleaner reply detection.
   let pageText;
   let editableCount = editables.length;
+  let generating = false;
   if (location.hostname.indexOf('chatgpt.com') !== -1) {
+    // Scroll to the latest turn so the newest message is rendered and read.
     const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
+    if (msgs.length) { try { msgs[msgs.length-1].scrollIntoView({block:'end'}); } catch(e) {} }
+    // ChatGPT is still streaming while the composer button is in its STOP state
+    // (its aria-label toggles Send prompt <-> Stop streaming) or a streaming node
+    // exists — do NOT treat a mid-stream pause as a finished reply.
+    const submitBtn = document.querySelector('#composer-submit-button, [data-testid="send-button"], [data-testid="stop-button"]');
+    const submitLabel = submitBtn ? (submitBtn.getAttribute('aria-label') || '').toLowerCase() : '';
+    generating = submitLabel.indexOf('stop') !== -1
+      || !!document.querySelector('[data-testid="stop-button"], .result-streaming, .streaming-animation');
     if (msgs.length) {
       pageText = msgs.map(m => (m.getAttribute('data-message-author-role') + ': ' + (m.innerText || '')).trim()).join('\n\n').slice(0, 24000);
     } else {
@@ -480,7 +491,8 @@ class ChromeVisibleDialogueBrowser:
     title: document.title || '',
     text: pageText,
     active_element: activeLabel,
-    editable_count: editableCount
+    editable_count: editableCount,
+    generating: generating
   });
 })()
 """
@@ -499,6 +511,7 @@ class ChromeVisibleDialogueBrowser:
             text=str(data.get("text") or "")[:_MAX_PAGE_TEXT_CHARS],
             active_element=str(data.get("active_element") or ""),
             editable_count=int(data.get("editable_count") or 0),
+            generating=bool(data.get("generating", False)),
         )
 
     async def send_message(self, text: str) -> dict[str, Any]:
@@ -1496,6 +1509,16 @@ class WebInterlocutorSession:
                 sent_seen = True
             if not sent_seen:
                 best = snap
+                continue
+            # While the interlocutor is still generating (ChatGPT streams its
+            # answer, with mid-stream pauses), do NOT accept the partial text as
+            # final — that made her fire the next turn before ChatGPT finished.
+            # Reset stability and keep waiting until generation stops.
+            if getattr(snap, "generating", False):
+                stable_count = 0
+                last_hash = ""
+                best = snap
+                best_delta = _extract_new_interlocutor_text_from_snapshots(before, snap, sent_text) or best_delta
                 continue
             delta = _extract_new_interlocutor_text_from_snapshots(before, snap, sent_text)
             if delta:
