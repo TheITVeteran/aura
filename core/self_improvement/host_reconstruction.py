@@ -31,6 +31,10 @@ class HostBinaryTarget:
     case_key: str = "text"
     train_inputs: list[str] = field(default_factory=list)
     held_out_inputs: list[str] = field(default_factory=list)
+    # Focused behavior description used INSTEAD of the man page when the man
+    # page is huge/misleading (e.g. jq documents a whole language, but we only
+    # exercise one invocation). The observed examples remain the ground truth.
+    behavior_hint: str = ""
 
 
 # Curated real targets whose observable behavior is reconstructable and whose
@@ -53,10 +57,26 @@ KNOWN_TARGETS: dict[str, HostBinaryTarget] = {
     ),
 }
 
+KNOWN_TARGETS["jq"] = HostBinaryTarget(
+    name="jq",
+    binary="jq",
+    man_topic="jq",
+    argv=lambda _p: ["."],  # the identity filter: pretty-print JSON
+    train_inputs=['{"b":2,"a":1}', '[1,2,3]', '{"name":"Aura","n":42}', '{"nested":{"k":[true,false,null]}}'],
+    held_out_inputs=['{"list":[{"id":1},{"id":2}]}', '{"a":{"b":{"c":1}}}', '["x","y","z"]', '{"flag":true,"count":10}'],
+    behavior_hint=(
+        "This is `jq '.'` — the identity filter. It reads one JSON value from stdin and "
+        "pretty-prints it to stdout: 2-space indentation, object keys kept in their INPUT "
+        "order (not sorted), non-ASCII kept as UTF-8 (not \\u-escaped), and a trailing "
+        "newline. Reconstruct exactly that formatting."
+    ),
+)
+
 _ALIASES = {
     "base64": "base64", "b64": "base64", "the base64 tool": "base64",
     "rev": "rev", "reverse": "rev",
     "md5": "md5", "md5sum": "md5", "the md5 tool": "md5",
+    "jq": "jq", "jq .": "jq", "the jq tool": "jq", "jq app": "jq",
 }
 
 
@@ -118,13 +138,17 @@ def train_observations(target: HostBinaryTarget) -> list[dict[str, Any]]:
 
 
 def spec_docs(target: HostBinaryTarget) -> list[str]:
-    return [
+    docs = [
         f"Reconstruct the observable stdout behavior of the `{target.name}` command.",
         f"The function receives one dict argument with key '{target.case_key}' (the stdin payload) "
         f"and must return the EXACT stdout the real program produces, including trailing newlines.",
-        "Specification (the program's own man page — observable, not source):",
-        read_man(target.man_topic),
     ]
+    if target.behavior_hint:
+        docs.append("Behavior: " + target.behavior_hint)
+    else:
+        docs.append("Specification (the program's own man page — observable, not source):")
+        docs.append(read_man(target.man_topic))
+    return docs
 
 
 async def reverse_engineer_host_binary(

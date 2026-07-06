@@ -1147,13 +1147,19 @@ class CapabilityEngine(AuraBaseModule):
                 r"self.?learn",
                 r"train (?:yourself|on this)",
             ],
+            "build_app": [
+                r"build (?:me )?(?:a |an )?[\w\s-]{0,30}?(?:app|game|tool|widget)",
+                r"(?:make|create|write) (?:me )?(?:a |an )?[\w\s-]{0,30}?(?:app|game)",
+                r"recreate (?:my |the )?[\w\s-]{0,30}?(?:app|game)",
+                r"(?:checkers|chess|tic.?tac.?toe|snake|calculator|pong) (?:app|game)",
+            ],
             "program_dna_reconstruct": [
                 r"program dna",
                 r"reconstruct (?:this |that |the )?(?:program|app|application|software|tool)",
                 r"reverse engineer (?:this |that |the )?(?:program|app|application|software|tool)",
-                # named host binaries / commands: "reverse engineer base64", "reconstruct the md5 command"
-                r"reverse.?engineer(?:\s+(?:this|that|the))?\s+(?:base64|md5|rev|\w+\s+(?:command|binary|utility|cli))",
-                r"reconstruct(?:\s+(?:this|that|the))?\s+(?:base64|md5|rev)\b",
+                # named host binaries / commands: "reverse engineer base64", "reconstruct the md5 command", "reverse engineer jq"
+                r"reverse.?engineer(?:\s+(?:this|that|the))?\s+(?:base64|md5|rev|jq|\w+\s+(?:command|binary|utility|cli))",
+                r"reconstruct(?:\s+(?:this|that|the))?\s+(?:base64|md5|rev|jq)\b",
                 r"clean.?room (?:clone|rebuild|implementation|reconstruction)",
                 r"rebuild (?:this |that |the )?(?:program|app|application|software|tool)",
                 r"copy (?:the )?(?:behavior|features|ui|ux) of (?:this |that |the )?(?:program|app|application|software|tool)",
@@ -3760,7 +3766,11 @@ class CapabilityEngine(AuraBaseModule):
                 # Execute safely via the Governor to prevent cascading API failures
                 async def resilient_call():
                     return await self._execute_with_retry(
-                        skill_instance, skill_name, exec_params, ctx
+                        skill_instance,
+                        skill_name,
+                        exec_params,
+                        ctx,
+                        execution_timeout=timeout_budget,
                     )
 
                 exec_start = time.monotonic()
@@ -3978,12 +3988,23 @@ class CapabilityEngine(AuraBaseModule):
         return filtered_params
 
     async def _execute_with_retry(
-        self, skill: Any, skill_name: str, params: dict[str, Any], context: dict[str, Any]
+        self,
+        skill: Any,
+        skill_name: str,
+        params: dict[str, Any],
+        context: dict[str, Any],
+        *,
+        execution_timeout: float | None = None,
     ) -> dict[str, Any]:
         """Executes a skill method with a retry loop for transient failures."""
         last_error = "Unknown"
         attempt = 0
         output: Any = None
+        try:
+            timeout_s = float(execution_timeout or self.timeout)
+        except (TypeError, ValueError):
+            timeout_s = float(self.timeout)
+        timeout_s = max(1.0, timeout_s)
         # Sensorimotor grounding: commit an expected world-state BEFORE
         # executing; verify reality (not the tool's claim) after. A tool
         # reporting success without the predicted effect is recorded as
@@ -4003,11 +4024,11 @@ class CapabilityEngine(AuraBaseModule):
 
                 if hasattr(skill, "safe_execute") and callable(skill.safe_execute):
                     output = await asyncio.wait_for(
-                        skill.safe_execute(params, context), timeout=self.timeout
+                        skill.safe_execute(params, context), timeout=timeout_s
                     )
                 else:
                     inputs = self._prepare_inputs(skill, params, context)
-                    output = await self._call_method(skill, inputs)
+                    output = await self._call_method(skill, inputs, timeout_s=timeout_s)
 
                 if self._check_success(output):
                     if _sm_predicate is not None and ground_result is not None:
@@ -4039,7 +4060,9 @@ class CapabilityEngine(AuraBaseModule):
                     e,
                     action="retried transient skill execution failure or returned retry exhaustion",
                 )
-                last_error = str(e)
+                last_error = str(e).strip()
+                if not last_error and isinstance(e, TimeoutError):
+                    last_error = f"{skill_name} timed out after {timeout_s:.1f}s"
                 if not self._is_transient(last_error):
                     break
 
@@ -4070,14 +4093,23 @@ class CapabilityEngine(AuraBaseModule):
             return True
         return skill_name == "desktop_task"
 
-    async def _call_method(self, skill: Any, inputs: dict[str, Any]) -> Any:
+    async def _call_method(
+        self,
+        skill: Any,
+        inputs: dict[str, Any],
+        *,
+        timeout_s: float | None = None,
+    ) -> Any:
         """Calls the skill method, handling both sync and async."""
         # If the skill is not core and we have source code (forged), we should sandbox it.
         # For simplicity, we assume skills loaded from skilled_dir aren't core.
 
         method = skill.execute if hasattr(skill, "execute") else skill
         if inspect.iscoroutinefunction(method):
-            return await asyncio.wait_for(method(**inputs), timeout=self.timeout)
+            return await asyncio.wait_for(
+                method(**inputs),
+                timeout=max(1.0, float(timeout_s or self.timeout)),
+            )
 
         # If RestrictedPython is available and NOT core, we could potentially wrap it,
         # but for now we focus on FORGED skills which provide source.
