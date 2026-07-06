@@ -1763,9 +1763,6 @@ class InferenceGate:
                             self._mlx_client.note_lane_recovering(
                                 "foreground_warmup_deferred_memory_pressure"
                             )
-                        lane_after_deferral = self.get_conversation_status()
-                        if self._lane_can_attempt_visible_conversation_turn(lane_after_deferral):
-                            return lane_after_deferral
                         raise RuntimeError(f"foreground_warmup_deferred:{warmup_deferral}")
                     self._extend_startup_quiet_window(20.0)
                     self._prewarm_task = get_task_tracker().create_task(
@@ -3064,45 +3061,24 @@ class InferenceGate:
             )
         except TimeoutError:
             reason = f"inference_gate_generation_timeout:{label}:{generation_timeout_s:.1f}s"
-            # force_abort_active_generation KILLS the worker (unloads the ~18GB
-            # Cortex model) — there is no soft-cancel path. That is only worth it
-            # when a FOREGROUND user is waiting and needs the worker freed for
-            # their next turn. For BACKGROUND timeouts (mind_tick, narrative
-            # streams, tertiary 60s budgets) nothing is waiting, so killing the
-            # shared worker just cold-lands the conversation lane and makes the
-            # NEXT foreground turn 503 while the model reloads. Observed live
-            # during the 200-turn soak (2026-07-06): background/tertiary timeouts
-            # force-killed the shared 32B worker 100+ times, thrashing the lane
-            # (RSS 21GB→1GB→reload cycles). Background timeouts now abandon the
-            # await WITHOUT killing the worker — the orphaned generation finishes
-            # on its own and the worker returns to idle, keeping the lane warm.
-            kill_worker = bool(foreground_request)
-            logger.log(
-                logging.ERROR if kill_worker else logging.INFO,
-                "🛑 %s generation exceeded inference-gate timeout %.1fs; %s.",
+            logger.error(
+                "🛑 %s generation exceeded inference-gate timeout %.1fs; aborting local client.",
                 label,
                 generation_timeout_s,
-                "aborting local client" if kill_worker
-                else "abandoning background generation without killing the shared worker",
             )
-            if kill_worker:
-                abort = getattr(client, "force_abort_active_generation", None)
-                if callable(abort):
-                    try:
-                        abort(reason=reason)
-                    except _INFERENCE_RECOVERABLE_ERRORS as abort_exc:
-                        _record_inference_degradation(
-                            abort_exc,
-                            action="continued after local client abort hook failed",
-                            severity="error",
-                        )
+            abort = getattr(client, "force_abort_active_generation", None)
+            if callable(abort):
+                try:
+                    abort(reason=reason)
+                except _INFERENCE_RECOVERABLE_ERRORS as abort_exc:
+                    _record_inference_degradation(
+                        abort_exc,
+                        action="continued after local client abort hook failed",
+                        severity="error",
+                    )
             _record_inference_degradation(
                 TimeoutError(reason),
-                action=(
-                    "returned control after foreground generation exceeded inference-gate timeout"
-                    if kill_worker
-                    else "abandoned background generation on timeout; kept shared worker warm"
-                ),
+                action="returned control after local generation exceeded inference-gate timeout",
                 severity="error" if foreground_request else "warning",
             )
             return None
