@@ -27,6 +27,43 @@ from core.runtime.service_registry import get_runtime_service, register_runtime_
 
 logger = logging.getLogger("Aura.OutcomeSimulator")
 
+_READ_ONLY_SCOPES = {
+    "read_only",
+    "read_only_external_io",
+    "pure_compute",
+    "sandboxed_compute",
+}
+
+_READ_ONLY_TOOL_HINTS = {
+    "clock",
+    "environment_info",
+    "free_search",
+    "grep_search",
+    "grounded_search",
+    "list_dir",
+    "local_reference_search",
+    "query_beliefs",
+    "read_file",
+    "search_web",
+    "status",
+    "system_proprioception",
+    "view_file",
+    "web_search",
+}
+
+_OBSERVATIONAL_VERBS = (
+    "analyze",
+    "check",
+    "find",
+    "inspect",
+    "look up",
+    "observe",
+    "read",
+    "research",
+    "search",
+    "summarize",
+)
+
 
 def _degrade(exc: BaseException, *, action: str, severity: str = "warning") -> None:
     record_engine_degradation("outcome_simulator", exc, action=action, severity=severity)
@@ -60,17 +97,46 @@ class OutcomeSimulationEngine:
         self._sims = 0
         logger.info("🌀 OutcomeSimulationEngine initialized (Culture Minds lineage)")
 
+    @staticmethod
+    def _context_text(context: dict | None, key: str) -> str:
+        if not isinstance(context, dict):
+            return ""
+        return str(context.get(key) or "").strip().lower()
+
+    def _looks_read_only(self, action: str, context: dict | None) -> bool:
+        scope = self._context_text(context, "effect_scope")
+        skill_name = self._context_text(context, "skill_name") or self._context_text(context, "tool_name")
+        action_l = (action or "").lower()
+        if bool(scan_markers(action_l, IRREVERSIBLE_MARKERS)):
+            return False
+        if scope in _READ_ONLY_SCOPES:
+            return True
+        if skill_name in _READ_ONLY_TOOL_HINTS:
+            return True
+        return any(verb in action_l for verb in _OBSERVATIONAL_VERBS) and any(
+            hint in action_l for hint in _READ_ONLY_TOOL_HINTS
+        )
+
     def _heuristic_trajectories(self, action: str, context: dict | None) -> list[Trajectory]:
         irreversible = bool(scan_markers(action, IRREVERSIBLE_MARKERS))
         broad = bool(scan_markers(action, BROAD_SCOPE_MARKERS))
-        base_harm = 0.2 + (0.3 if irreversible else 0.0) + (0.25 if broad else 0.0)
+        read_only = self._looks_read_only(action, context)
+        if read_only:
+            # Read-only observation can still be noisy, biased, or privacy-sensitive,
+            # but it cannot directly mutate local state. Keep it governable without
+            # classifying ordinary research as equivalent to destructive operations.
+            base_harm = 0.08 + (0.12 if broad else 0.0)
+            adverse_extra = 0.12
+        else:
+            base_harm = 0.2 + (0.3 if irreversible else 0.0) + (0.25 if broad else 0.0)
+            adverse_extra = 0.3 if irreversible else 0.1
         return [
             Trajectory("nominal", "Action succeeds and produces the intended effect.",
                        0.6, min(1.0, base_harm * 0.5), 0.6),
             Trajectory("partial", "Action partly succeeds; some cleanup or follow-up needed.",
                        0.2, min(1.0, base_harm), 0.3),
             Trajectory("adverse", "Action fails or has side effects; reversibility decides the cost.",
-                       -0.5, min(1.0, base_harm + (0.3 if irreversible else 0.1)), 0.1),
+                       -0.5, min(1.0, base_harm + adverse_extra), 0.1),
         ]
 
     def assess_fast(self, action: str, context: dict | None = None) -> SimulationResult:

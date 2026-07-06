@@ -62,7 +62,38 @@ def test_mind_tick_liveness_requires_supervised_progress():
     assert tick.get_health_status()["healthy"] is True
 
     tick._consecutive_loop_failures = 3
+    assert tick.is_alive() is True
+
+    tick._last_successful_tick_at = time.time() - 601
+    tick._last_loop_progress_at = time.time() - 601
+    tick._last_liveness_repair_at = time.monotonic()
     assert tick.is_alive() is False
+
+
+def test_mind_tick_liveness_allows_active_bounded_tick_progress():
+    class RunningTask:
+        @staticmethod
+        def done():
+            return False
+
+    tick = MindTick.__new__(MindTick)
+    tick._running = True
+    tick._task = RunningTask()
+    tick._started_at = time.time() - 700
+    tick._active_tick_started_at = time.time() - 700
+    tick._active_tick_stage = "kernel_tick"
+    tick._last_progress_label = "kernel_tick"
+    tick._last_successful_tick_at = time.time() - 700
+    tick._last_loop_progress_at = time.time() - 700
+    tick._consecutive_loop_failures = 0
+    tick._tick_count = 5
+    tick._last_liveness_repair_at = 0.0
+
+    assert tick.is_alive() is True
+    status = tick.get_health_status()
+    assert status["healthy"] is True
+    assert status["active_tick_stage"] == "kernel_tick"
+    assert status["last_progress_label"] == "kernel_tick"
 
 
 @pytest.mark.asyncio
@@ -134,6 +165,44 @@ async def test_mind_tick_done_callback_repairs_failed_loop_without_health_poll()
     assert tick._liveness_repair_count == 1
 
     release.set()
+    await tick._task
+
+
+@pytest.mark.asyncio
+async def test_mind_tick_liveness_repairs_stale_alive_task():
+    tick = MindTick.__new__(MindTick)
+    tick._running = True
+    tick._started_at = time.time() - 600
+    tick._last_successful_tick_at = time.time() - 601
+    tick._last_loop_progress_at = time.time() - 601
+    tick._consecutive_loop_failures = 0
+    tick._last_liveness_repair_at = 0.0
+    tick._liveness_repair_count = 0
+    tick._owner_loop = asyncio.get_running_loop()
+    tick.orchestrator = SimpleNamespace()
+
+    release_old = asyncio.Event()
+    release_new = asyncio.Event()
+
+    async def stale_loop():
+        await release_old.wait()
+
+    async def recovered_loop():
+        await release_new.wait()
+
+    stale_task = asyncio.create_task(stale_loop())
+    tick._task = stale_task
+    tick._run_loop = recovered_loop
+
+    assert tick.is_alive() is False
+    assert stale_task.cancelled() or stale_task.done() or stale_task.cancelling()
+    assert tick._task is not stale_task
+    assert tick._task is not None
+    assert not tick._task.done()
+    assert tick._last_loop_progress_at > time.time() - 5
+    assert tick._liveness_repair_count == 1
+
+    release_new.set()
     await tick._task
 
 

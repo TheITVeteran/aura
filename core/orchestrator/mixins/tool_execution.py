@@ -204,11 +204,11 @@ class ToolExecutionMixin:
             risk_level = "medium"
         else:
             risk_level = "low"
+        effect_scope = self._tool_effect_scope(tool_name)
 
         # ── EDI PROGRESSIVE AUTONOMY GATE ────────────────────────────────
         edi = ServiceContainer.get("edi", default=None)
         if edi:
-            effect_scope = self._tool_effect_scope(tool_name)
             user_authorized = self._coerce_tool_origin(_origin) in _USER_FACING_TOOL_ORIGINS
             allowed, reason = edi.can_do(
                 tool_name,
@@ -230,8 +230,13 @@ class ToolExecutionMixin:
         # are synchronous heuristics in the hot path.
         try:
             _conscience = ServiceContainer.get("kokoro", default=None)
-            _action_text = f"{tool_name} {str(args)[:200]}"
-            _ctx = {"risk_level": risk_level}
+            _action_text = f"{tool_name} [{effect_scope}] {str(args)[:200]}"
+            _ctx = {
+                "risk_level": risk_level,
+                "effect_scope": effect_scope,
+                "skill_name": tool_name,
+                "tool_name": tool_name,
+            }
             if _conscience is not None:
                 _verdict = _conscience.quick_check(_action_text, context=_ctx)
                 # Escalate the rare borderline-with-real-concern case to a full,

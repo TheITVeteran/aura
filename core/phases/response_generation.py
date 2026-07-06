@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -53,6 +54,22 @@ _DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS = {
 }
 _LOCAL_REPAIRABLE_RESPONSE_REASONS = _DOWNSTREAM_REPAIRABLE_RESPONSE_REASONS | {
     "generic_assistant_language",
+}
+_TOOL_FALSE_INABILITY_RE = re.compile(
+    r"\b(?:"
+    r"i\s+(?:can't|cannot|can\s+not|am\s+unable\s+to|don't\s+have\s+access\s+to|"
+    r"do\s+not\s+have\s+access\s+to|lack(?:\s+the)?\s+ability\s+to|can't\s+directly)|"
+    r"i'm\s+unable\s+to|i\s+am\s+unable\s+to"
+    r")\b[^.\n]{0,180}\b(?:"
+    r"browse|search|web|internet|look\s+up|fetch|access|open|visit"
+    r")\b",
+    re.IGNORECASE,
+)
+_SEARCH_SKILL_NAMES = {
+    "free_search",
+    "grounded_search",
+    "search_web",
+    "web_search",
 }
 
 
@@ -104,6 +121,342 @@ class ResponseGenerationPhase(BasePhase):
             messages[0]["content"] = f"{str(messages[0].get('content', '')).rstrip()}\n\n{block}"
         else:
             messages.insert(0, {"role": "system", "content": block})
+
+    @staticmethod
+    def _sanitize_grounding_payload(payload: Any) -> dict[str, Any]:
+        """Keep tool evidence useful without flooding prompts or memory."""
+
+        if not isinstance(payload, dict):
+            return {"ok": False, "result": str(payload or "")[:1200]}
+
+        compact: dict[str, Any] = {}
+        scalar_keys = (
+            "ok",
+            "query",
+            "answer",
+            "summary",
+            "message",
+            "source",
+            "url",
+            "title",
+            "provenance",
+            "offline_fallback",
+            "web_error",
+            "confidence",
+            "count",
+            "mode",
+        )
+        for key in scalar_keys:
+            if key not in payload:
+                continue
+            value = payload.get(key)
+            if isinstance(value, str):
+                compact[key] = value[:4000]
+            elif isinstance(value, (bool, int, float)) or value is None:
+                compact[key] = value
+            else:
+                compact[key] = str(value)[:1000]
+
+        def _compact_items(items: Any, *, limit: int = 5) -> list[dict[str, Any]]:
+            compact_items: list[dict[str, Any]] = []
+            if not isinstance(items, list):
+                return compact_items
+            for item in items[:limit]:
+                if not isinstance(item, dict):
+                    continue
+                compact_items.append(
+                    {
+                        "title": str(item.get("title") or "")[:300],
+                        "url": str(item.get("url") or item.get("source") or "")[:500],
+                        "snippet": str(
+                            item.get("snippet")
+                            or item.get("content")
+                            or item.get("text")
+                            or ""
+                        )[:1200],
+                    }
+                )
+            return [item for item in compact_items if any(item.values())]
+
+        results = _compact_items(payload.get("results"), limit=5)
+        if results:
+            compact["results"] = results
+        citations = _compact_items(payload.get("citations"), limit=5)
+        if citations:
+            compact["citations"] = citations
+        chunks = _compact_items(payload.get("chunks"), limit=3)
+        if chunks:
+            compact["chunks"] = chunks
+
+        content = str(payload.get("content") or payload.get("result") or "").strip()
+        if content and "content" not in compact:
+            compact["content"] = content[:6000]
+        return compact
+
+    @classmethod
+    def _render_skill_result_block(
+        cls,
+        *,
+        skill_name: str,
+        payload: dict[str, Any],
+    ) -> str:
+        status = "✅" if payload.get("ok") else "⚠️"
+        parts: list[str] = []
+        for key in ("query", "answer", "summary", "message", "title", "source", "url", "content"):
+            value = str(payload.get(key) or "").strip()
+            if value:
+                label = key.replace("_", " ").title()
+                parts.append(f"{label}: {value[:1600]}")
+        results = payload.get("results")
+        if isinstance(results, list) and results:
+            rendered_results = []
+            for idx, item in enumerate(results[:5], start=1):
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title") or "").strip()
+                url = str(item.get("url") or "").strip()
+                snippet = str(item.get("snippet") or "").strip()
+                rendered_results.append(
+                    f"{idx}. {title or 'Untitled'}"
+                    + (f" — {url}" if url else "")
+                    + (f" — {snippet[:500]}" if snippet else "")
+                )
+            if rendered_results:
+                parts.append("Results:\n" + "\n".join(rendered_results))
+        if not parts:
+            parts.append(json.dumps(payload, ensure_ascii=True, default=str)[:2400])
+        return f"[SKILL RESULT: {skill_name}] {status} " + "\n".join(parts)
+
+    @staticmethod
+    def _first_sentence(text: str, *, fallback: str = "") -> str:
+        cleaned = " ".join(str(text or "").strip().split())
+        if not cleaned:
+            return fallback
+        match = re.search(r"(.+?[.!?])(?:\s|$)", cleaned)
+        return (match.group(1) if match else cleaned).strip()
+
+    @classmethod
+    def _successful_required_search_payload(
+        cls,
+        state: AuraState,
+        contract: Any,
+    ) -> tuple[str, dict[str, Any]] | None:
+        if not getattr(contract, "requires_search", False):
+            return None
+        if state.response_modifiers.get("last_skill_ok") is not True:
+            return None
+        skill_name = str(state.response_modifiers.get("last_skill_run") or "").strip()
+        if skill_name not in _SEARCH_SKILL_NAMES:
+            return None
+        payload = state.response_modifiers.get("last_skill_result_payload")
+        if not isinstance(payload, dict):
+            return None
+        return skill_name, payload
+
+    @classmethod
+    def _render_required_search_answer_from_payload(
+        cls,
+        *,
+        payload: dict[str, Any],
+    ) -> str:
+        results = payload.get("results")
+        first_result = next(
+            (item for item in results if isinstance(item, dict)),
+            {},
+        ) if isinstance(results, list) else {}
+        title = str(
+            first_result.get("title")
+            or payload.get("title")
+            or payload.get("source_title")
+            or ""
+        ).strip()
+        url = str(
+            first_result.get("url")
+            or payload.get("url")
+            or payload.get("source")
+            or ""
+        ).strip()
+        evidence_text = str(
+            payload.get("answer")
+            or payload.get("summary")
+            or first_result.get("snippet")
+            or payload.get("message")
+            or ""
+        ).strip()
+        if not evidence_text:
+            evidence_text = "The search returned evidence, but the result did not include a usable snippet."
+        sentence = cls._first_sentence(evidence_text, fallback=evidence_text)
+
+        if title and url:
+            return f"I found {title}. {sentence} Source: {url}"
+        if title:
+            return f"I found {title}. {sentence}"
+        if url:
+            return f"I found a relevant source. {sentence} Source: {url}"
+        return sentence
+
+    @classmethod
+    def _repair_false_required_tool_inability(
+        cls,
+        *,
+        state: AuraState,
+        contract: Any,
+        response_text: str,
+    ) -> str:
+        hit = cls._successful_required_search_payload(state, contract)
+        if not hit:
+            return response_text
+        skill_name, payload = hit
+        if not _TOOL_FALSE_INABILITY_RE.search(str(response_text or "")):
+            return response_text
+        repaired = cls._render_required_search_answer_from_payload(payload=payload)
+        state.response_modifiers["required_tool_false_inability_repaired"] = {
+            "skill": skill_name,
+            "method": "deterministic_grounded_evidence",
+        }
+        logger.warning(
+            "🛡️ ResponseGeneration replaced false %s inability after successful required evidence.",
+            skill_name,
+        )
+        return repaired
+
+    async def _execute_required_search_evidence(
+        self,
+        *,
+        state: AuraState,
+        objective: str,
+        contract: Any,
+        origin: str,
+        runtime_context: dict[str, Any],
+    ) -> bool:
+        """Run mandatory read-only search before the model narrates a search turn."""
+
+        if not getattr(contract, "requires_search", False):
+            return False
+        if getattr(contract, "tool_evidence_available", False):
+            return False
+
+        query = str(getattr(contract, "search_query", "") or objective or "").strip()
+        query = re.sub(
+            r"\s+(?:and\s+tell me|then\s+tell me|and\s+answer|then\s+answer|and\s+give me|then\s+give me)\b.*$",
+            "",
+            query,
+            flags=re.IGNORECASE,
+        ).strip(" .?!,:;")
+        if not query:
+            return False
+
+        cap = self.container.get("capability_engine", default=None)
+        if cap is None or not hasattr(cap, "execute"):
+            return False
+
+        skill_name = "web_search"
+        matched = state.response_modifiers.get("matched_skills") or []
+        if isinstance(matched, str):
+            matched = [matched]
+        for candidate in matched:
+            resolved = candidate
+            if hasattr(cap, "resolve_skill_name"):
+                try:
+                    resolved = cap.resolve_skill_name(str(candidate))
+                except (AttributeError, RuntimeError, TypeError, ValueError):
+                    resolved = str(candidate)
+            if str(resolved) in {"web_search", "search_web", "free_search", "grounded_search"}:
+                skill_name = str(resolved)
+                break
+
+        context = {
+            "origin": origin,
+            "source": origin,
+            "route": "response_generation.required_search_evidence",
+            "objective": objective,
+            "message": objective,
+            "user_requested_action": True,
+            "risk_level": "low",
+            "effect_scope": "read_only_external_io",
+            "skill_name": skill_name,
+            "tool_name": skill_name,
+            "foreground_request": True,
+            "desktop_cognitive_engine_required": bool(
+                runtime_context.get("desktop_cognitive_engine_required")
+                or runtime_context.get("cognitive_engine_required")
+            ),
+        }
+
+        try:
+            result = await asyncio.wait_for(
+                cap.execute(
+                    skill_name,
+                    {
+                        "query": query,
+                        "num_results": 5,
+                        "deep": False,
+                        "retain": True,
+                    },
+                    context,
+                ),
+                timeout=35.0,
+            )
+        except (
+            OSError,
+            ConnectionError,
+            TimeoutError,
+            RuntimeError,
+            AttributeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            _record_response_generation_degradation(
+                exc,
+                action="continued search turn after mandatory search evidence execution failed",
+                severity="warning",
+            )
+            return False
+
+        payload = self._sanitize_grounding_payload(result)
+        ok = bool(payload.get("ok"))
+        payload.setdefault("query", query)
+        payload.setdefault("ok", ok)
+
+        state.response_modifiers["last_skill_run"] = skill_name
+        state.response_modifiers["last_skill_ok"] = ok
+        state.response_modifiers["last_skill_turn_marker"] = state.response_modifiers.get(
+            "evidence_turn_marker"
+        )
+        state.response_modifiers["last_skill_result_payload"] = payload
+        state.response_modifiers["required_search_evidence_executed"] = {
+            "skill": skill_name,
+            "ok": ok,
+            "query": query[:240],
+        }
+        state.cognition.working_memory.append(
+            {
+                "role": "system",
+                "content": self._render_skill_result_block(
+                    skill_name=skill_name,
+                    payload=payload,
+                ),
+                "metadata": {
+                    "type": "skill_result",
+                    "skill": skill_name,
+                    "ok": ok,
+                    "query": query[:240],
+                    "turn_marker": state.response_modifiers.get("evidence_turn_marker"),
+                },
+                "timestamp": time.time(),
+            }
+        )
+        try:
+            state.cognition.trim_working_memory()
+        except AttributeError:
+            pass
+        logger.info(
+            "🔎 ResponseGeneration: executed required search evidence via %s (ok=%s query=%s).",
+            skill_name,
+            ok,
+            query[:120],
+        )
+        return True
 
     @classmethod
     def _inject_live_runtime_grounding(
@@ -619,6 +972,22 @@ class ResponseGenerationPhase(BasePhase):
                 is_user_facing=not is_background and not is_test_run,
             )
             state.response_modifiers["response_contract"] = contract.to_dict()
+            if not is_background and not is_test_run:
+                search_executed = await self._execute_required_search_evidence(
+                    state=state,
+                    objective=objective,
+                    contract=contract,
+                    origin=origin,
+                    runtime_context=kwargs.get("context") if isinstance(kwargs.get("context"), dict) else {},
+                )
+                if search_executed:
+                    messages = ContextAssembler.build_messages(state, objective)
+                    contract = build_response_contract(
+                        state,
+                        objective,
+                        is_user_facing=True,
+                    )
+                    state.response_modifiers["response_contract"] = contract.to_dict()
             if (
                 contract.reason != "ordinary_dialogue"
                 and messages
@@ -1290,6 +1659,12 @@ class ResponseGenerationPhase(BasePhase):
             if dialogue_retried:
                 logger.info("🗣️ ResponseGeneration: retried draft to satisfy dialogue contract.")
 
+            cleaned_response = self._repair_false_required_tool_inability(
+                state=state,
+                contract=contract,
+                response_text=cleaned_response,
+            )
+
             # 6. Clean response
             cleaned_response = self._clean_response(
                 cleaned_response,
@@ -1337,6 +1712,12 @@ class ResponseGenerationPhase(BasePhase):
                         "🛡️ ResponseGeneration repaired instruction shape after voice shaping (%s).",
                         ",".join(repair_reasons) or "unknown",
                     )
+
+            cleaned_response = self._repair_false_required_tool_inability(
+                state=state,
+                contract=contract,
+                response_text=cleaned_response,
+            )
 
             # 6c. Skip emission for background tasks if they produced no meaningful content
             if is_background and not cleaned_response:

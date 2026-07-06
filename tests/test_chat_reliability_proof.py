@@ -812,6 +812,46 @@ def test_identity_memory_future_question_rejects_half_answer():
     assert "missing_future_memory_answer" in assessment.reasons
 
 
+def test_counted_facts_and_choice_clarification_must_be_covered():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Earlier I asked about water bears and a moon. Answer that now: "
+            "give three facts about tardigrades and clarify whether Europa is "
+            "Jupiter's moon or Saturn's moon."
+        ),
+        (
+            "Tardigrades, or water bears: 1. They can survive extreme environments. "
+            "2. They can enter cryptobiosis."
+        ),
+    )
+
+    assert assessment.retryable
+    assert "missing_requested_list_count" in assessment.reasons
+    assert "missing_requested_choice_clarification" in assessment.reasons
+
+
+def test_counted_facts_and_choice_clarification_accept_complete_answer():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        (
+            "Earlier I asked about water bears and a moon. Answer that now: "
+            "give three facts about tardigrades and clarify whether Europa is "
+            "Jupiter's moon or Saturn's moon."
+        ),
+        (
+            "1. Tardigrades are microscopic animals often called water bears. "
+            "2. They can enter cryptobiosis when conditions are harsh. "
+            "3. They are famous for surviving extreme cold, heat, radiation, and vacuum exposure. "
+            "Europa is Jupiter's moon, not Saturn's."
+        ),
+    )
+
+    assert assessment.ok
+
+
 def test_identity_memory_future_question_accepts_honest_boundary():
     from core.conversation.response_reliability import assess_user_facing_reply
 
@@ -1234,6 +1274,73 @@ def test_bare_numbered_list_marker_is_treated_as_truncated_tail():
     assert assessment.retryable
     assert assessment.reasons == ("truncated_tail",)
     assert _looks_truncated_tail(draft) is True
+
+
+def test_partial_numbered_item_is_not_fake_completed():
+    from interface.routes.chat import _complete_repairable_truncated_reply
+
+    prompt = (
+        "Earlier I asked about water bears and a moon. Answer that now: give "
+        "three facts about tardigrades and clarify whether Europa is Jupiter's "
+        "moon or Saturn's moon."
+    )
+    draft = (
+        "Tardigrades, or water bears:1. Can survive in extreme environments "
+        "including outer space.2. Have a"
+    )
+
+    assert _complete_repairable_truncated_reply(prompt, draft) == ""
+
+
+def test_inline_numbered_factual_reply_is_not_treated_as_truncated_tail():
+    from core.conversation.response_reliability import (
+        _has_truncated_tail,
+        assess_user_facing_reply,
+    )
+    from interface.routes.chat import _looks_truncated_tail
+
+    prompt = (
+        "Earlier I asked about water bears and a moon. Answer that now: give "
+        "three facts about tardigrades and clarify whether Europa is Jupiter's "
+        "moon or Saturn's moon."
+    )
+    reply = (
+        "Water bears, or tardigrades:1. Can survive in extreme environments - "
+        "including outer space.2. Have a unique ability to repair their DNA "
+        "after desiccation (drying out).3. Are one of the most resilient "
+        "animals on Earth.Europa is Jupiter's moon, not Saturn's."
+    )
+
+    assessment = assess_user_facing_reply(prompt, reply)
+
+    assert _has_truncated_tail(reply) is False
+    assert assessment.retryable is False
+    assert assessment.reasons == ()
+    assert _looks_truncated_tail(reply) is False
+
+
+def test_long_numeric_range_fragment_is_treated_as_truncated_tail():
+    from core.conversation.response_reliability import (
+        _has_truncated_tail,
+        assess_user_facing_reply,
+    )
+    from interface.routes.chat import _looks_truncated_tail
+
+    prompt = (
+        "Earlier I asked about water bears and a moon. Answer that now: give "
+        "three facts about tardigrades and clarify whether Europa is Jupiter's "
+        "moon or Saturn's moon."
+    )
+    reply = (
+        "Water bears, or tardigrades:1. Can survive in extreme environments - "
+        "vacuum of space, high radiation, and temperatures from -273 to +150"
+    )
+
+    assessment = assess_user_facing_reply(prompt, reply)
+
+    assert _has_truncated_tail(reply) is True
+    assert "truncated_tail" in assessment.reasons
+    assert _looks_truncated_tail(reply) is True
 
 
 def test_unterminated_quote_is_rejected_as_truncated_user_reply():

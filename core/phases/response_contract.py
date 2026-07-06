@@ -209,7 +209,7 @@ _SEARCH_QUERY_DIRECT_PATTERNS = (
     re.compile(
         r"^(?:please\s+|can you\s+|could you\s+|would you\s+|aura[,:\s]+)?"
         r"(?:search(?: the web)?|look(?: it)? up|google|find out|check online)\s+"
-        r"(?:for\s+)?(.+?)(?:\s+and\s+tell me\b.*)?[.?!]*$",
+        r"(?:for\s+)?(.+?)(?:\s+(?:and\s+tell me|then\s+tell me|and\s+answer|then\s+answer|and\s+give me|then\s+give me)\b.*)?[.?!]*$",
         re.IGNORECASE,
     ),
     re.compile(

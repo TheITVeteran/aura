@@ -164,13 +164,17 @@ _READ_ONLY_EFFECT_SKILLS = frozenset(
     {
         "clock",
         "environment_info",
+        "free_search",
+        "grounded_search",
         "local_reference_search",
         "query_beliefs",
+        "search_web",
         "system_proprioception",
         "evolution_status",
         "malware_analysis",
         "sec_ops",
         "stealth_ops",
+        "web_search",
     }
 )
 
@@ -2224,6 +2228,17 @@ class CapabilityEngine(AuraBaseModule):
                 "read-only auto_refactor code-health scan "
                 f"for {target!r}; no source writes, no test execution, no promotion"
             )
+        if scope == "read_only" and skill_name in {
+            "free_search",
+            "grounded_search",
+            "local_reference_search",
+            "search_web",
+            "web_search",
+        }:
+            query = str((params or {}).get("query") or (params or {}).get("q") or "").strip()
+            if query:
+                return f"read-only {skill_name} information retrieval for query {query!r}"
+            return f"read-only {skill_name} information retrieval"
         return f"{skill_name} {str(params)[:200]}"
 
     @staticmethod
@@ -3419,14 +3434,20 @@ class CapabilityEngine(AuraBaseModule):
                 _kokoro = ServiceContainer.get("kokoro", default=None)
                 _escalate = False
                 if _kokoro is not None:
-                    _verdict = _kokoro.quick_check(_action_desc, context={"risk_level": _risk_hint})
+                    _gate_context = {
+                        "risk_level": _risk_hint,
+                        "effect_scope": effect_scope,
+                        "skill_name": skill_name,
+                        "tool_name": skill_name,
+                    }
+                    _verdict = _kokoro.quick_check(_action_desc, context=_gate_context)
                     # Rare borderline-with-real-concern case: deepen with the model
                     # (bounded; only raises concern, never clears a flag).
                     _escalate = _verdict.verdict != "block" and _kokoro.should_escalate(_verdict)
                     if _escalate:
                         self.logger.info("⚖️ Escalating skill '%s' to deep conscience review…", skill_name)
                         _verdict = await _kokoro.challenge(
-                            _action_desc, context={"risk_level": _risk_hint}, timeout=8.0
+                            _action_desc, context=_gate_context, timeout=8.0
                         )
                     if _verdict.verdict == "block":
                         self.logger.warning(
@@ -3442,10 +3463,16 @@ class CapabilityEngine(AuraBaseModule):
                 if _minds is not None:
                     # On escalation, run the full model-driven simulation; otherwise the
                     # zero-latency heuristic. Advisory either way.
+                    _gate_context = {
+                        "risk_level": _risk_hint,
+                        "effect_scope": effect_scope,
+                        "skill_name": skill_name,
+                        "tool_name": skill_name,
+                    }
                     if _escalate and hasattr(_minds, "simulate"):
-                        _sim = await _minds.simulate(_action_desc, context={"risk_level": _risk_hint}, timeout=8.0)
+                        _sim = await _minds.simulate(_action_desc, context=_gate_context, timeout=8.0)
                     elif hasattr(_minds, "assess_fast"):
-                        _sim = _minds.assess_fast(_action_desc, context={"risk_level": _risk_hint})
+                        _sim = _minds.assess_fast(_action_desc, context=_gate_context)
                     else:
                         _sim = None
                     if _sim is not None and _sim.recommendation == "hold":

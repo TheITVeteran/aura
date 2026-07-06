@@ -5,6 +5,7 @@ import pytest
 from core.capability_engine import CapabilityEngine, SkillMetadata
 from core.container import ServiceContainer
 from core.guardians.user_advocate import UserAdvocateWatchdog
+from core.sim.outcome_simulator import OutcomeSimulationEngine
 
 
 def _quiet_logger():
@@ -65,6 +66,27 @@ def test_stateful_code_still_requires_irreversible_confirmation():
     )
 
 
+def test_web_search_execution_scope_is_read_only_not_external_mutation():
+    engine = _engine_with_skill("web_search")
+    meta = engine.skills["web_search"]
+
+    scope = engine._effect_scope_for_execution(
+        "web_search",
+        meta,
+        {"query": "latest climate research"},
+        {"origin": "background"},
+    )
+
+    assert scope == "read_only"
+    assert engine._edi_risk_for("web_search", meta, {"query": "latest climate research"}, scope) == "low"
+    description = CapabilityEngine._action_description_for_user_advocate(
+        "web_search",
+        {"query": "latest climate research"},
+        scope,
+    )
+    assert "read-only web_search information retrieval" in description
+
+
 def test_foreground_desktop_control_still_requires_irreversible_confirmation():
     assert (
         CapabilityEngine._user_advocate_irreversible_for(
@@ -107,6 +129,98 @@ def test_background_desktop_task_does_not_auto_confirm():
         )
         is False
     )
+
+
+def test_user_visible_web_interlocutor_auto_confirms_foreground_request():
+    assert (
+        CapabilityEngine._user_advocate_auto_confirmed_for(
+            "web_interlocutor",
+            {
+                "origin": "desktop_ui",
+                "route": "chat.live_runtime_proof.web_interlocutor",
+                "foreground_request": True,
+                "user_requested_action": True,
+                "user_visible_browser_action": True,
+            },
+            "desktop_ui",
+            "foreground_browser_dialogue",
+        )
+        is True
+    )
+
+
+def test_background_web_interlocutor_does_not_auto_confirm():
+    assert (
+        CapabilityEngine._user_advocate_auto_confirmed_for(
+            "web_interlocutor",
+            {
+                "foreground_request": True,
+                "user_requested_action": True,
+                "user_visible_browser_action": True,
+            },
+            "background",
+            "foreground_browser_dialogue",
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_execute_with_retry_uses_skill_execution_timeout(monkeypatch):
+    engine = _engine_with_skill("web_interlocutor")
+    engine.max_retries = 1
+    engine.timeout = 1.0
+
+    class SlowVisibleSkill:
+        async def safe_execute(self, params, context):
+            return {"ok": True, "status": "completed"}
+
+    observed_timeouts = []
+
+    async def fake_wait_for(coro, timeout):
+        observed_timeouts.append(timeout)
+        return await coro
+
+    monkeypatch.setattr("core.capability_engine.asyncio.wait_for", fake_wait_for)
+
+    result = await engine._execute_with_retry(
+        SlowVisibleSkill(),
+        "web_interlocutor",
+        {},
+        {},
+        execution_timeout=420.0,
+    )
+
+    assert result["ok"] is True
+    assert observed_timeouts == [420.0]
+
+
+@pytest.mark.asyncio
+async def test_execute_with_retry_reports_blank_timeout_with_skill_context(monkeypatch):
+    engine = _engine_with_skill("web_interlocutor")
+    engine.max_retries = 1
+    engine.timeout = 1.0
+
+    class TimingOutVisibleSkill:
+        async def safe_execute(self, params, context):
+            return {"ok": True}
+
+    async def fake_wait_for(coro, timeout):
+        coro.close()
+        raise TimeoutError()
+
+    monkeypatch.setattr("core.capability_engine.asyncio.wait_for", fake_wait_for)
+
+    result = await engine._execute_with_retry(
+        TimingOutVisibleSkill(),
+        "web_interlocutor",
+        {},
+        {},
+        execution_timeout=420.0,
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "web_interlocutor timed out after 420.0s"
 
 
 def test_auto_refactor_scan_is_read_only_not_privileged_mutation():
@@ -177,6 +291,20 @@ def test_auto_refactor_read_only_scan_presents_user_benefit_to_guardian():
     assert benefit
     assert review.verdict == "for_user"
     assert review.flags == []
+
+
+def test_outcome_simulator_allows_read_only_external_web_search():
+    result = OutcomeSimulationEngine().assess_fast(
+        "web_search [read_only_external_io] {'query': 'latest research on Europa'}",
+        context={
+            "effect_scope": "read_only_external_io",
+            "skill_name": "web_search",
+            "tool_name": "web_search",
+        },
+    )
+
+    assert result.recommendation == "act"
+    assert result.worst_case_harm < OutcomeSimulationEngine.HOLD_HARM_THRESHOLD
 
 
 def test_auto_refactor_mutation_remains_privileged():

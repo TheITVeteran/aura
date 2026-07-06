@@ -676,6 +676,28 @@ _STALE_CONTEXT_TOOL_BLEED_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_STALE_PRIOR_TOPIC_BLEED_RE = re.compile(
+    r"\b(?:"
+    r"you(?:'d| had| were| are|)?\s+(?:just\s+)?asked\s+(?:me\s+)?about\b"
+    r"|you(?:'d| had| were| are|)?\s+(?:just\s+)?asking\s+(?:me\s+)?about\b"
+    r"|earlier\s+you\s+(?:asked|mentioned|said)\b"
+    r"|before\s+that\s+you\s+(?:asked|mentioned|said)\b"
+    r"|the\s+(?:last|previous|earlier)\s+(?:question|topic|request)\s+(?:was|is)\b"
+    r")",
+    re.IGNORECASE,
+)
+_RECALL_OR_HISTORY_REQUEST_RE = re.compile(
+    r"\b(?:remember|recall|earlier|previous|last\s+(?:thing|question|topic|request|turn)|"
+    r"what\s+(?:did|was)\s+(?:i|we|you)|what\s+were\s+we|what\s+was\s+the\s+topic|"
+    r"where\s+were\s+we|continue|resume)\b",
+    re.IGNORECASE,
+)
+_BARE_NUMERIC_RANGE_TAIL_RE = re.compile(
+    r"(?:\b(?:from|between|range(?:s|d)?|temperature(?:s)?|including|up\s+to|down\s+to)\b"
+    r"[^.!?\n]{0,80}\b(?:to|and|-|through)\s*[+-]?\d+(?:\.\d+)?"
+    r"|[+-]?\d+(?:\.\d+)?\s*(?:to|-|through)\s*[+-]?\d+(?:\.\d+)?)$",
+    re.IGNORECASE,
+)
 _SOCIAL_PRESENCE_TEMPLATE_RE = re.compile(
     r"\bhey[.!]?\s+i'?m here with you\b|\bi can answer clearly from the active turn\b",
     re.IGNORECASE,
@@ -888,7 +910,7 @@ _RUNTIME_PATH_REQUEST_RE = re.compile(
     r"mind/cognition path|cognition path|cognitive path|mind path|"
     r"what path (?:are|is)|which path (?:are|is)|"
     r"what runtime path|which runtime path|runtime path (?:are|is)|"
-    r"route probe|desktop route|live desktop route|"
+    r"route probe|desktop route|live route|live desktop route|"
     r"model lane|foreground lane|conversation lane|cortex lane"
     r")\b",
     re.IGNORECASE,
@@ -1207,6 +1229,15 @@ _NUMBERED_SENTENCE_REQUEST_RE = re.compile(
     rf"\b{_COUNT_TOKEN_RE}\s+(?:concise\s+|short\s+|brief\s+|clear\s+)?numbered\s+sentences?\b",
     re.IGNORECASE,
 )
+_FACT_COUNT_REQUEST_RE = re.compile(
+    rf"\b{_COUNT_TOKEN_RE}\s+(?:quick\s+|concise\s+|short\s+|brief\s+|clear\s+)?facts?\b",
+    re.IGNORECASE,
+)
+_CHOICE_CLARIFICATION_RE = re.compile(
+    r"\bclarify\s+whether\s+(?P<subject>[A-Za-z0-9][A-Za-z0-9 '\u2019-]{1,80}?)\s+"
+    r"(?:is|are|was|were)\s+(?P<left>[^?.!,;]{2,90}?)\s+or\s+(?P<right>[^?.!,;]{2,90})",
+    re.IGNORECASE,
+)
 _ACTION_WORD_COUNT_REQUEST_RE = re.compile(
     rf"\b(?:answer|respond|reply|say|output)\s+(?:directly\s+)?"
     rf"(?:(?:in|with|using|exactly|only)\s+)?{_COUNT_TOKEN_RE}"
@@ -1481,6 +1512,75 @@ def _bullet_count(reply_text: Any) -> int:
     return _nonempty_list_item_count(reply_text)
 
 
+def _inline_numbered_item_count(reply_text: Any) -> int:
+    text = str(reply_text or "")
+    matches = re.findall(r"(?<!\d)(?:^|[\s:.;])\d{1,2}[\.)]\s*\S", text)
+    return len(matches)
+
+
+def _factual_unit_count(reply_text: Any) -> int:
+    """Estimate how many discrete facts a reply actually supplied."""
+
+    normalized = normalize_user_facing_format(reply_text)
+    if not normalized:
+        return 0
+    inline_numbered = _inline_numbered_item_count(normalized)
+    if inline_numbered:
+        return inline_numbered
+    list_count = _bullet_count(normalized)
+    if list_count:
+        return list_count
+    sentence_units = [
+        part.strip()
+        for part in re.split(r"(?<=[.!?])\s+|(?:\s*;\s*)", normalized)
+        if _word_count(part) >= 3
+    ]
+    comma_fact_count = 0
+    for sentence in sentence_units:
+        if "," not in sentence or " and " not in sentence.lower():
+            continue
+        if not re.search(
+            r"\b(?:can|could|are|were|is|was|have|has|survive|tolerate|enter|repair)\b",
+            sentence,
+            re.IGNORECASE,
+        ):
+            continue
+        parts = [
+            part.strip()
+            for part in re.split(r",\s+|\s+\band\b\s+", sentence, flags=re.IGNORECASE)
+            if _word_count(part) >= 2
+        ]
+        if len(parts) >= 3:
+            comma_fact_count = max(comma_fact_count, len(parts))
+    return max(len(sentence_units), comma_fact_count)
+
+
+def _keywords_for_choice(text: str) -> set[str]:
+    stop = {"the", "a", "an", "is", "are", "was", "were", "moon", "planet", "one", "it", "its"}
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", str(text or "").lower())
+        if len(token) >= 3 and token not in stop
+    }
+
+
+def _missing_choice_clarification(user_message: Any, reply_text: Any) -> bool:
+    user = str(user_message or "")
+    reply = _normalize(reply_text)
+    if not user or not reply:
+        return False
+    for match in _CHOICE_CLARIFICATION_RE.finditer(user):
+        subject_terms = _keywords_for_choice(match.group("subject"))
+        left_terms = _keywords_for_choice(match.group("left"))
+        right_terms = _keywords_for_choice(match.group("right"))
+        if subject_terms and not any(term in reply for term in subject_terms):
+            return True
+        if left_terms or right_terms:
+            if not any(term in reply for term in (left_terms | right_terms)):
+                return True
+    return False
+
+
 def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[str]:
     user = str(user_message or "")
     reply = str(reply_text or "").strip()
@@ -1506,6 +1606,14 @@ def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[st
             reasons.append("empty_requested_list_item")
         if _bullet_count(reply) < requested_list_items:
             reasons.append("missing_requested_list_count")
+
+    requested_facts = _requested_count(_FACT_COUNT_REQUEST_RE, user)
+    if requested_facts and requested_facts > 1:
+        if _factual_unit_count(reply) < requested_facts:
+            reasons.append("missing_requested_list_count")
+
+    if _missing_choice_clarification(user, reply):
+        reasons.append("missing_requested_choice_clarification")
 
     if _FOLLOWUP_QUESTION_REQUEST_RE.search(user) and "?" not in reply:
         reasons.append("missing_requested_followup_question")
@@ -2804,12 +2912,15 @@ def _has_stale_context_topic_bleed(prompt: Any, reply_text: Any) -> bool:
     if not (is_live_self_reflection_turn(prompt) or is_status_check_turn(prompt)):
         return False
     prompt_norm = _normalize(prompt)
+    if _RECALL_OR_HISTORY_REQUEST_RE.search(prompt_norm):
+        return False
+    if _STALE_PRIOR_TOPIC_BLEED_RE.search(str(reply_text or "")):
+        return True
     if any(
         marker in prompt_norm
         for marker in (
             "tool",
             "tools",
-            "desktop",
             "open",
             "folder",
             "file",
@@ -3223,7 +3334,7 @@ def _has_truncated_tail(reply_text: Any) -> bool:
             return True
     if body.count("“") != body.count("”"):
         return True
-    if re.search(r'(?<!\d)[.!?]["”’)]?\d+[.)](?:\s*|$)', body):
+    if re.search(r'(?<!\d)[.!?]["”’)]?\s*\d+[.)]\s*$', body):
         return True
     if _STRUCTURAL_INCOMPLETE_TAIL_RE.search(body):
         return True
@@ -3233,10 +3344,27 @@ def _has_truncated_tail(reply_text: Any) -> bool:
         return True
     if _PUNCTUATED_INCOMPLETE_TAIL_RE.search(body):
         return True
+    if (
+        len(body) >= 80
+        and _word_count(body) >= 12
+        and not body.endswith((".", "!", "?", "\"", "'", "”", "’", ")", "]"))
+        and _BARE_NUMERIC_RANGE_TAIL_RE.search(body)
+    ):
+        return True
     terminal_word_match = re.search(r"([A-Za-z]+)[.!?\"'”’)\]]*$", body)
     if terminal_word_match and len(body) >= 40:
         terminal_word = terminal_word_match.group(1).lower()
-        if len(terminal_word) <= 2 and terminal_word not in _ALLOWED_SHORT_TAIL_WORDS:
+        terminal_start = terminal_word_match.start(1)
+        possessive_suffix = (
+            terminal_word == "s"
+            and terminal_start > 0
+            and body[terminal_start - 1] in ("'", "’")
+        )
+        if (
+            len(terminal_word) <= 2
+            and terminal_word not in _ALLOWED_SHORT_TAIL_WORDS
+            and not possessive_suffix
+        ):
             return True
     if body.endswith(("...", "…")):
         return True
@@ -3814,6 +3942,7 @@ def assess_user_facing_reply(
         "empty_requested_list_item",
         "missing_requested_paragraph_count",
         "missing_requested_list_count",
+        "missing_requested_choice_clarification",
         "missing_requested_word_count",
         "missing_requested_followup_question",
         "missing_requested_phrase",

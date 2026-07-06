@@ -189,6 +189,9 @@ class MindTick:
         self._started_at = 0.0
         self._last_successful_tick_at = 0.0
         self._last_loop_progress_at = 0.0
+        self._last_progress_label = "not_started"
+        self._active_tick_started_at = 0.0
+        self._active_tick_stage = "idle"
         self._consecutive_loop_failures = 0
         self._last_deferred_cortex_health_log_at = 0.0
         self._last_liveness_repair_at = 0.0
@@ -229,6 +232,18 @@ class MindTick:
         self.default_timeout = 5.0
         
         self._bootstrap_phases()
+
+    @staticmethod
+    def _float_env(name: str, default: float) -> float:
+        try:
+            return float(os.getenv(name, str(default)))
+        except (TypeError, ValueError):
+            return float(default)
+
+    def _mark_loop_progress(self, label: str) -> None:
+        """Record supervised-loop progress without claiming a completed tick."""
+        self._last_loop_progress_at = time.time()
+        self._last_progress_label = str(label or "progress")[:80]
 
     def _bootstrap_phases(self):
         """Initialize and register the 8 core cognitive phases."""
@@ -387,6 +402,9 @@ class MindTick:
         
         self._running = True
         self._started_at = time.time()
+        self._active_tick_started_at = 0.0
+        self._active_tick_stage = "starting"
+        self._mark_loop_progress("start")
         self._task = _schedule_mind_task(self._run_loop(), name="mind_tick.run_loop")
         if self._task is None:
             self._running = False
@@ -420,7 +438,17 @@ class MindTick:
             float(getattr(self, "_last_successful_tick_at", 0.0) or 0.0),
             float(getattr(self, "_last_loop_progress_at", 0.0) or 0.0),
         )
-        if freshest_progress > 0.0 and (now - freshest_progress) <= 300.0:
+        stale_progress_s = self._float_env("AURA_MIND_TICK_STALE_PROGRESS_S", 600.0)
+        if freshest_progress > 0.0 and (now - freshest_progress) <= stale_progress_s:
+            return True
+        active_started = float(getattr(self, "_active_tick_started_at", 0.0) or 0.0)
+        hard_stall_s = self._float_env("AURA_MIND_TICK_HARD_STALL_S", 900.0)
+        if (
+            task_alive
+            and active_started > 0.0
+            and (now - active_started) <= hard_stall_s
+            and int(getattr(self, "_consecutive_loop_failures", 0) or 0) < 3
+        ):
             return True
         if int(getattr(self, "_consecutive_loop_failures", 0) or 0) >= 3:
             if not self._attempt_liveness_repair(reason="repeated loop failures without fresh progress"):
@@ -479,8 +507,10 @@ class MindTick:
                     self._consecutive_loop_failures = 0
                     self._running = True
                     self._started_at = time.time()
+                    self._active_tick_started_at = 0.0
+                    self._active_tick_stage = "threadsafe_repair"
                     self._last_successful_tick_at = 0.0
-                    self._last_loop_progress_at = time.time()
+                    self._mark_loop_progress("threadsafe_repair")
                     self._task = _schedule_mind_task(
                         self._run_loop(), name="mind_tick.run_loop.recovered.threadsafe"
                     )
@@ -507,8 +537,10 @@ class MindTick:
         self._consecutive_loop_failures = 0
         self._running = True
         self._started_at = time.time()
+        self._active_tick_started_at = 0.0
+        self._active_tick_stage = "repair"
         self._last_successful_tick_at = 0.0
-        self._last_loop_progress_at = time.time()
+        self._mark_loop_progress("repair")
         self._task = _schedule_mind_task(
             self._run_loop(),
             name=f"mind_tick.run_loop.recovered.{int(getattr(self, '_liveness_repair_count', 0) or 0) + 1}",
@@ -549,6 +581,9 @@ class MindTick:
             "consecutive_failures": int(getattr(self, "_consecutive_loop_failures", 0) or 0),
             "last_successful_tick_at": float(getattr(self, "_last_successful_tick_at", 0.0) or 0.0),
             "last_loop_progress_at": float(getattr(self, "_last_loop_progress_at", 0.0) or 0.0),
+            "last_progress_label": str(getattr(self, "_last_progress_label", "") or ""),
+            "active_tick_started_at": float(getattr(self, "_active_tick_started_at", 0.0) or 0.0),
+            "active_tick_stage": str(getattr(self, "_active_tick_stage", "") or ""),
             "liveness_repair_count": int(getattr(self, "_liveness_repair_count", 0) or 0),
         }
 
@@ -576,13 +611,16 @@ class MindTick:
             sleep_time_override: float | None = None
             try:
                 start_time = asyncio.get_running_loop().time()
-                self._last_loop_progress_at = time.time()
+                self._active_tick_started_at = time.time()
+                self._active_tick_stage = "tick_start"
+                self._mark_loop_progress("tick_start")
                 
                 # 1. Get the latest state
                 from infrastructure.watchdog import get_watchdog
                 get_watchdog().heartbeat("mind_tick")
                 
                 state = await self.orchestrator.state_repo.get_current()
+                self._mark_loop_progress("state_loaded" if state else "state_missing")
                 if not state:
                     self._missing_state_streak += 1
                     base_interval = max(0.5, TICK_INTERVALS.get(self.mode, 1.0))
@@ -615,6 +653,8 @@ class MindTick:
                     from core.will import get_will
                     _will = get_will()
                     if not _will._started:
+                        self._active_tick_stage = "will_start"
+                        self._mark_loop_progress("will_start")
                         await _will.start()
                 except _MIND_BOUNDARY_ERRORS as _will_boot:
                     _record_mind_degradation(_will_boot)
@@ -624,7 +664,9 @@ class MindTick:
                 # ── WORLD STATE: Update telemetry every tick ──
                 try:
                     from core.world_state import get_world_state
+                    self._active_tick_stage = "world_state"
                     get_world_state().update()
+                    self._mark_loop_progress("world_state")
                 except _MIND_BOUNDARY_ERRORS as exc:
                     _record_mind_degradation(exc)
                     logger.debug("MindTick: World state update failed: %s", exc)
@@ -634,7 +676,10 @@ class MindTick:
                     try:
                         gate = ServiceContainer.get("inference_gate", default=None)
                         if gate and hasattr(gate, "ensure_all_tiers_healthy"):
+                            self._active_tick_stage = "llm_health"
+                            self._mark_loop_progress("llm_health")
                             tier_statuses = await gate.ensure_all_tiers_healthy()
+                            self._mark_loop_progress("llm_health_done")
                             dead_tiers = [t for t, s in tier_statuses.items() if s == "dead"]
                             if dead_tiers and self._tick_count % 30 == 0:
                                 if _dead_tiers_are_policy_deferred_cortex(gate, dead_tiers):
@@ -693,7 +738,10 @@ class MindTick:
                     try:
                         from core.coherence.binding_engine import get_binding_engine
                         _binding = get_binding_engine()
+                        self._active_tick_stage = "binding_engine"
+                        self._mark_loop_progress("binding_engine")
                         _coherence_report = await asyncio.wait_for(_binding.tick(state), timeout=3.0)
+                        self._mark_loop_progress("binding_engine_done")
                     except _MIND_BOUNDARY_ERRORS as _be:
                         _record_mind_degradation(_be)
                         logger.debug("MindTick: BindingEngine tick skipped: %s", _be)
@@ -795,10 +843,13 @@ class MindTick:
                     reasoning_pause = self._background_reasoning_pause_reason(state)
                     if breaker.is_available and not reasoning_pause and (time.time() - self._last_prediction_time > prediction_interval):
                         try:
+                            self._active_tick_stage = "predictive_engine"
+                            self._mark_loop_progress("predictive_engine")
                             prediction = await asyncio.wait_for(
                                 self.predictive_engine.predict(state, prefer_tier="tertiary", is_background=True), 
                                 timeout=30.0
                             )
+                            self._mark_loop_progress("predictive_engine_done")
                             self._last_prediction_time = time.time()
                             breaker.record_success()
                             logger.info("🔮 MindTick: Predicted: %s...", f"{prediction.content[:50]}")
@@ -813,6 +864,8 @@ class MindTick:
                 if hasattr(self, 'trajectory_predictor') and self.trajectory_predictor:
                     reasoning_pause = self._background_reasoning_pause_reason(state)
                     if not reasoning_pause and time.time() - self._last_trajectory_time > 60.0: # Every minute
+                        self._active_tick_stage = "trajectory_predictor"
+                        self._mark_loop_progress("trajectory_predictor")
                         _schedule_mind_task(
                             self.trajectory_predictor.predict_path(
                                 state.cognition.current_objective or "General Processing",
@@ -894,6 +947,7 @@ class MindTick:
                         if _bg_pause:
                             if self._tick_count % 30 == 0:
                                 logger.debug("💓 MindTick: Deferring background kernel tick (%s).", _bg_pause)
+                            self._mark_loop_progress(f"kernel_deferred:{_bg_pause}")
                             return current_state
                         try:
                             # Bound the background kernel tick. A background
@@ -904,10 +958,13 @@ class MindTick:
                             _bg_tick_timeout = float(
                                 os.getenv("AURA_MIND_TICK_KERNEL_TIMEOUT_S", "45")
                             )
+                            self._active_tick_stage = "kernel_tick"
+                            self._mark_loop_progress("kernel_tick")
                             entry = await asyncio.wait_for(
                                 kernel.tick(objective, priority=False),
                                 timeout=_bg_tick_timeout,
                             )
+                            self._mark_loop_progress("kernel_tick_done")
                             if entry is not None:
                                 # Kernel ran successfully — fetch the committed state
                                 committed = await self.orchestrator.state_repo.get_current()
@@ -937,6 +994,7 @@ class MindTick:
                                 logger.debug(
                                     "💓 MindTick: background kernel tick yielded to a contended model."
                                 )
+                            self._mark_loop_progress("kernel_tick_timeout_yield")
                             return current_state
                         except _MIND_BOUNDARY_ERRORS as _kt_err:
                             _record_mind_degradation(_kt_err)
@@ -982,7 +1040,10 @@ class MindTick:
                                     else:
                                         timeout = min(timeout, 10.0)
                                 phase_start = time.perf_counter()
+                                self._active_tick_stage = f"phase:{name}"
+                                self._mark_loop_progress(f"phase:{name}")
                                 current_state = await asyncio.wait_for(phase_fn(current_state), timeout=timeout)
+                                self._mark_loop_progress(f"phase_done:{name}")
                                 phase_duration = time.perf_counter() - phase_start
                                 
                                 tick_metadata.phases_executed.append(name)
@@ -1348,6 +1409,8 @@ class MindTick:
                 metadata.duration = asyncio.get_running_loop().time() - start_time
                 self._last_tick_metadata = metadata
                 self._last_successful_tick_at = time.time()
+                self._active_tick_stage = "tick_complete"
+                self._mark_loop_progress("tick_complete")
                 self._consecutive_loop_failures = 0
                 
             except asyncio.CancelledError:
@@ -1408,7 +1471,11 @@ class MindTick:
                 if is_shutdown_requested():
                     self._running = False
                 if self._running:
+                    self._active_tick_stage = "sleep"
+                    self._mark_loop_progress("sleep")
                     await asyncio.sleep(sleep_time)
+                else:
+                    self._active_tick_stage = "stopped"
 
     def _get_actual_from_state(self, state: AuraState) -> str | None:
         """Extract the last actual cognitive output for prediction evaluation."""
