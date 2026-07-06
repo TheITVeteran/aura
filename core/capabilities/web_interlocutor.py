@@ -1474,12 +1474,9 @@ class WebInterlocutorSession:
             "Opening message:"
         )
         engine = self.cognitive_engine or context.get("brain")
-        for _attempt in range(3):
-            generated = await _maybe_think(engine, prompt, context)
-            cleaned = _clean_message(generated)
-            if _message_is_substantive(cleaned):
-                return cleaned[:1200]
-        return self._default_opening(objective)
+        return await self._compose_with_retry(
+            engine, prompt, context, fallback=lambda: self._default_opening(objective),
+        )
 
     async def _wait_for_new_reply(
         self,
@@ -1567,16 +1564,38 @@ class WebInterlocutorSession:
             "Do not mention implementation details, receipts, or automation.\n\n"
             f"Objective: {objective}\n\nTranscript so far:\n{transcript}\n\nNext message:"
         )
-        # Retry a couple of times before falling back to a canned line: a
-        # single thin/deferred inference under load must NOT turn her genuine
-        # follow-up into a script (that was the turn-2 regression Bryan caught).
+        # Retry (spaced) before falling back to a canned line: her real
+        # composition works reliably in isolation but can come back thin during
+        # the active browser job. Spacing the attempts lets that transient state
+        # clear so a genuine follow-up reaches ChatGPT instead of a script.
         engine = self.cognitive_engine or context.get("brain")
-        for _attempt in range(3):
+        return await self._compose_with_retry(
+            engine, prompt, context,
+            fallback=lambda: self._default_followup(turns),
+            reject_if_recent=turns,
+        )
+
+    async def _compose_with_retry(
+        self,
+        engine: Any,
+        prompt: str,
+        context: dict[str, Any],
+        *,
+        fallback: Any,
+        reject_if_recent: list[WebInterlocutorTurn] | None = None,
+        attempts: int = 5,
+    ) -> str:
+        for attempt in range(attempts):
             generated = await _maybe_think(engine, prompt, context)
             cleaned = _clean_message(generated)
-            if _message_is_substantive(cleaned) and not _message_was_recently_sent(cleaned, turns):
+            recently_sent = bool(
+                reject_if_recent and _message_was_recently_sent(cleaned, reject_if_recent)
+            )
+            if _message_is_substantive(cleaned) and not recently_sent:
                 return cleaned[:1200]
-        return self._default_followup(turns)
+            if attempt < attempts - 1:
+                await asyncio.sleep(1.2)
+        return fallback()
 
     async def _grounded_challenge(
         self,
