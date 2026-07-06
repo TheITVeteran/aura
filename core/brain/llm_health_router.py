@@ -1700,6 +1700,14 @@ class HealthAwareLLMRouter:
         )
         if not is_bg:
             return None
+        # Explicit tool compositions (composing a message to another AI in a live
+        # web-interlocutor conversation) are foreground work the user asked for —
+        # NOT deferrable background chatter. Serving them (rather than deferring
+        # under foreground_quiet_window) is what lets her actually compose each
+        # turn instead of the composition coming back empty and falling to a
+        # canned default. Reply gates stay off because origin is non-user-facing.
+        if str(origin or "").strip().lower().replace("-", "_") == "web_interlocutor":
+            return None
 
         reason = ""
         try:
@@ -2346,7 +2354,12 @@ class HealthAwareLLMRouter:
             prefer_endpoint = str(solver_guard["endpoint"] or "")
             kwargs["prefer_endpoint"] = prefer_endpoint
 
-        if is_bg:
+        # Explicit tool compositions (a live web-interlocutor turn) are foreground
+        # work the user asked for and must not be deferred as background chatter.
+        _is_explicit_tool_composition = (
+            str(origin or "").strip().lower().replace("-", "_") == "web_interlocutor"
+        )
+        if is_bg and not _is_explicit_tool_composition:
             try:
                 from core.container import ServiceContainer
 

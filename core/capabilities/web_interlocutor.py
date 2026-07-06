@@ -467,9 +467,20 @@ class ChromeVisibleDialogueBrowser:
   let editableCount = editables.length;
   let generating = false;
   if (location.hostname.indexOf('chatgpt.com') !== -1) {
-    // Scroll to the latest turn so the newest message is rendered and read.
+    // Scroll all the way to the newest turn so nothing is missed: click
+    // ChatGPT's scroll-to-bottom control if present, scroll the thread
+    // container, and bring the last message fully into view.
     const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
-    if (msgs.length) { try { msgs[msgs.length-1].scrollIntoView({block:'end'}); } catch(e) {} }
+    try {
+      const sb = document.querySelector('button[aria-label*="scroll to bottom" i], button[aria-label*="Scroll to bottom" i]');
+      if (sb) sb.click();
+      const thread = document.querySelector('main');
+      if (thread) {
+        const sc = thread.querySelector('[class*="overflow-y-auto"], [class*="overflow-y-scroll"]') || thread;
+        sc.scrollTop = sc.scrollHeight;
+      }
+      if (msgs.length) msgs[msgs.length-1].scrollIntoView({block:'end'});
+    } catch(e) {}
     // ChatGPT is still streaming while the composer button is in its STOP state
     // (its aria-label toggles Send prompt <-> Stop streaming) or a streaming node
     // exists — do NOT treat a mid-stream pause as a finished reply.
