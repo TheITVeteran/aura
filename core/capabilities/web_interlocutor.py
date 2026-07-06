@@ -460,12 +460,27 @@ class ChromeVisibleDialogueBrowser:
     active.getAttribute('place' + 'holder') || '',
     active.isContentEditable ? 'contenteditable' : ''
   ].filter(Boolean).join('|') : '';
+  // ChatGPT: read the actual conversation turns from the message DOM instead of
+  // the whole-page innerText (which is menus/UI). Far cleaner reply detection.
+  let pageText;
+  let editableCount = editables.length;
+  if (location.hostname.indexOf('chatgpt.com') !== -1) {
+    const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
+    if (msgs.length) {
+      pageText = msgs.map(m => (m.getAttribute('data-message-author-role') + ': ' + (m.innerText || '')).trim()).join('\n\n').slice(0, 24000);
+    } else {
+      pageText = (document.body && document.body.innerText || '').slice(0, 24000);
+    }
+    if (document.getElementById('prompt-textarea')) editableCount = Math.max(editableCount, 1);
+  } else {
+    pageText = (document.body && document.body.innerText || '').slice(0, 24000);
+  }
   return JSON.stringify({
     url: location.href,
     title: document.title || '',
-    text: (document.body && document.body.innerText || '').slice(0, 24000),
+    text: pageText,
     active_element: activeLabel,
-    editable_count: editables.length
+    editable_count: editableCount
   });
 })()
 """
@@ -494,6 +509,14 @@ class ChromeVisibleDialogueBrowser:
             return {"ok": False, "error": "empty_message"}
         if self._apple_events_js_disabled:
             return await self._visible_keyboard_send_message(text, reason="chrome_dom_scripting_unavailable")
+        # ChatGPT-specific driver: its visible composer is #prompt-textarea (a
+        # contenteditable div with an EMPTY placeholder, often centered on a new
+        # chat) — the generic heuristic rejects it (bottom<58% && !promptLike),
+        # which is why she fell back to blind OCR. Target it directly, then
+        # clipboard-paste + click the real send button (#composer-submit-button).
+        chatgpt_result = await self._chatgpt_send_message(text)
+        if chatgpt_result is not None:
+            return chatgpt_result
         focus_js = r"""
 (() => {
   const visible = (el) => {
@@ -575,6 +598,87 @@ class ChromeVisibleDialogueBrowser:
             "focus": focused,
             "submission": pasted,
         }
+
+    async def _chatgpt_send_message(self, text: str) -> dict[str, Any] | None:
+        """ChatGPT-aware send. Returns None when the page is NOT ChatGPT (so the
+        generic path runs); a receipt dict when it is ChatGPT."""
+        focus_js = r"""
+(() => {
+  if (location.hostname.indexOf('chatgpt.com') === -1) return JSON.stringify({chatgpt:false});
+  const el = document.getElementById('prompt-textarea');
+  if (!el) return JSON.stringify({chatgpt:true, ok:false, error:'composer_not_ready'});
+  if (el.getBoundingClientRect().height < 5) return JSON.stringify({chatgpt:true, ok:false, error:'composer_hidden'});
+  el.scrollIntoView({block:'center', inline:'nearest'});
+  el.focus(); el.click();
+  try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch(e) {}
+  return JSON.stringify({chatgpt:true, ok:true});
+})()
+"""
+        try:
+            raw = await asyncio.to_thread(self._run_chrome_js, focus_js, 8.0)
+        except RuntimeError as exc:
+            self._record_chrome_js_unavailable("web_interlocutor.chatgpt_focus", exc)
+            return None
+        try:
+            data = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            data = {}
+        if not data.get("chatgpt"):
+            return None  # not ChatGPT — let the generic adapter handle it
+        if not data.get("ok"):
+            # composer may still be rendering on a fresh chat — wait and retry once
+            await asyncio.sleep(1.5)
+            try:
+                data = json.loads(await asyncio.to_thread(self._run_chrome_js, focus_js, 8.0) or "{}")
+            except (RuntimeError, json.JSONDecodeError):
+                data = {}
+            if not data.get("ok"):
+                return {"ok": False, "stage": "chatgpt_focus", "error": data.get("error", "composer_not_ready")}
+        pasted = await asyncio.to_thread(self._chatgpt_paste, text)
+        if not pasted.get("ok"):
+            return {"ok": False, "stage": "chatgpt_paste", **pasted}
+        click_js = r"""
+(() => {
+  const btn = document.querySelector('#composer-submit-button, [data-testid="send-button"]');
+  if (btn && !btn.disabled) { btn.click(); return JSON.stringify({ok:true, method:'chatgpt_send_button'}); }
+  return JSON.stringify({ok:false, error:'send_button_unavailable'});
+})()
+"""
+        try:
+            clicked = json.loads(await asyncio.to_thread(self._run_chrome_js, click_js, 6.0) or "{}")
+        except (RuntimeError, json.JSONDecodeError):
+            clicked = {"ok": False}
+        if clicked.get("ok"):
+            return {"ok": True, "stage": "submit", "method": "chatgpt_dom", "focus": data}
+        # fallback: Enter submits in ChatGPT
+        enter = await asyncio.to_thread(self._chatgpt_press_return)
+        return {"ok": bool(enter.get("ok")), "stage": "submit", "method": "chatgpt_paste_return", "submission": enter}
+
+    def _chatgpt_paste(self, text: str) -> dict[str, Any]:
+        script = f"""
+set the clipboard to {_as_applescript_string(text)}
+tell application "{self.browser}" to activate
+delay 0.15
+tell application "System Events"
+    keystroke "v" using command down
+    delay 0.2
+end tell
+"""
+        result = _run_governed_applescript(script, source="web_interlocutor.chatgpt_paste", timeout=8.0)
+        if not result.get("ok"):
+            return {"ok": False, "error": str(result.get("stderr") or "chatgpt_paste_failed")}
+        return {"ok": True, "method": "clipboard_paste"}
+
+    def _chatgpt_press_return(self) -> dict[str, Any]:
+        script = f"""
+tell application "{self.browser}" to activate
+delay 0.1
+tell application "System Events"
+    keystroke return
+end tell
+"""
+        result = _run_governed_applescript(script, source="web_interlocutor.chatgpt_return", timeout=5.0)
+        return {"ok": bool(result.get("ok"))}
 
     def _run_chrome_js(self, js: str, timeout: float) -> str:
         script = f"""
