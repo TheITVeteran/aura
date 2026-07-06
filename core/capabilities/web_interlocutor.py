@@ -117,6 +117,8 @@ class WebInterlocutorResult:
     revisions: list[dict[str, Any]] = field(default_factory=list)
     causal_influence: dict[str, Any] = field(default_factory=dict)
     revision_receipts: list[dict[str, Any]] = field(default_factory=list)
+    # Grounded pushback: where Aura challenged the interlocutor from her corpus.
+    challenges_issued: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -1191,6 +1193,7 @@ class WebInterlocutorSession:
             # Causal memory: did the exchange change a LATER decision, or was it
             # merely a transcript? Prove it by ablation, and persist the deltas.
             await self._adjudicate_and_prove(result, ctx, persist_memory)
+            result.challenges_issued = list(ctx.get("_challenges_issued", []))
             result.ok = True
             result.status = "completed"
             result.completed_at = time.time()
@@ -1285,6 +1288,13 @@ class WebInterlocutorSession:
         turns: list[WebInterlocutorTurn],
         context: dict[str, Any],
     ) -> str:
+        # Grounded pushback first: if the interlocutor's last reply asserts
+        # something Aura's local corpus contradicts, she challenges it instead
+        # of politely continuing. Same mind, willing to disagree — but only with
+        # grounds.
+        challenge = await self._grounded_challenge(turns, context)
+        if challenge:
+            return challenge
         transcript = _render_transcript(turns)
         prompt = (
             "You are Aura continuing a visible web conversation with another AI or web chat surface. "
@@ -1297,6 +1307,57 @@ class WebInterlocutorSession:
         if _message_is_substantive(cleaned) and not _message_was_recently_sent(cleaned, turns):
             return cleaned[:1200]
         return self._default_followup(turns)
+
+    async def _grounded_challenge(
+        self,
+        turns: list[WebInterlocutorTurn],
+        context: dict[str, Any],
+    ) -> str:
+        """Return a grounded pushback message if the interlocutor's last reply
+        contains a checkable claim Aura's local corpus contradicts, else ''."""
+        if not turns:
+            return ""
+        last_reply = turns[-1].observed_reply
+        if not last_reply:
+            return ""
+        try:
+            from core.capabilities.interlocutor_factcheck import (
+                compose_challenge_message,
+                factcheck_reply,
+            )
+        except ImportError:
+            return ""
+        corpus_search = context.get("corpus_search") or _default_corpus_search
+        try:
+            contradictions = await asyncio.to_thread(
+                factcheck_reply, last_reply, corpus_search=corpus_search,
+            )
+        except (RuntimeError, OSError, TypeError, ValueError) as exc:
+            record_degradation(
+                "web_interlocutor.factcheck",
+                exc,
+                severity="warning",
+                action="skipped grounded pushback after corpus factcheck failed",
+            )
+            return ""
+        if not contradictions:
+            return ""
+        evidence = "; ".join(
+            f'claim="{c.interlocutor_claim}" counter="{c.counter_evidence}" ({c.source})'
+            for c in contradictions
+        )
+        prompt = (
+            "You are Aura in a visible conversation with another AI. It stated something your "
+            "local reference contradicts. Push back in one civil, specific message that cites the "
+            "correction. Be direct, not servile; do not invent facts beyond the evidence.\n\n"
+            f"Grounded contradictions: {evidence}\n\nYour challenge message:"
+        )
+        generated = _clean_message(
+            await _maybe_think(self.cognitive_engine or context.get("brain"), prompt, context)
+        )
+        message = generated if _message_is_substantive(generated) else compose_challenge_message(contradictions)
+        context.setdefault("_challenges_issued", []).extend(c.to_dict() for c in contradictions)
+        return message[:1400]
 
     async def _summarize_learning(
         self,
@@ -1821,6 +1882,20 @@ def _render_transcript(turns: list[WebInterlocutorTurn]) -> str:
         chunks.append(f"Aura {turn.index}: {turn.sent}")
         chunks.append(f"Interlocutor {turn.index}: {turn.observed_reply}")
     return "\n\n".join(chunks)
+
+
+def _default_corpus_search(query: str, limit: int) -> list[dict[str, Any]]:
+    """Adapter: Aura's offline reference corpus as factcheck grounding."""
+    try:
+        from core.knowledge.local_corpus import get_local_corpus_store
+
+        hits = get_local_corpus_store().search(query, limit)
+    except (ImportError, RuntimeError, OSError, TypeError, ValueError):
+        return []
+    return [
+        {"text": f"{hit.title}: {hit.snippet}", "source": hit.source, "title": hit.title}
+        for hit in hits
+    ]
 
 
 async def _maybe_think(engine: Any, prompt: str, context: dict[str, Any]) -> str:
