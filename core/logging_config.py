@@ -1,7 +1,9 @@
+import atexit
 import json
 import logging
 import logging.handlers
 import os
+import queue
 import re
 import sys
 import tempfile
@@ -78,9 +80,66 @@ class JsonLineFormatter(logging.Formatter):
             }, ensure_ascii=False, default=str)
         return redact_text(line)
 
+# ── Non-blocking log transport ───────────────────────────────
+#
+# Every slow sink (stdout pipe to the launcher, rotating JSON file) lives
+# behind ONE QueueListener daemon thread. Emitting a record from any thread —
+# including the event loop — is a lock-free put_nowait. This is the fix for a
+# whole class of observed live stalls: a logger.info inside the resilience
+# engine blocked the event loop for 6s because the file/stdout write stalled
+# under disk contention. Logging must never be able to stall the organism.
+
+_LOG_QUEUE_CAPACITY = 20_000
+_dropped_log_records = 0
+
+
+class _DropNewestOnOverflowQueueHandler(logging.handlers.QueueHandler):
+    """QueueHandler that never blocks the emitting thread.
+
+    On overflow the OLDEST queued record is discarded to make room for the
+    newest one (the record being logged right now is the one describing the
+    current incident — it matters most). Drops are counted, never silent.
+    """
+
+    def enqueue(self, record: logging.LogRecord) -> None:
+        global _dropped_log_records
+        try:
+            self.queue.put_nowait(record)
+            return
+        except queue.Full:
+            pass
+        try:
+            self.queue.get_nowait()
+        except queue.Empty:
+            pass
+        _dropped_log_records += 1
+        try:
+            self.queue.put_nowait(record)
+        except queue.Full:
+            pass
+
+
+def get_dropped_log_count() -> int:
+    """Records discarded under log-queue overflow (telemetry surface)."""
+    return _dropped_log_records
+
+
+def _stop_queue_listener() -> None:
+    """Flush queued records into the real sinks at interpreter exit."""
+    global _queue_listener
+    listener = _queue_listener
+    _queue_listener = None
+    if listener is not None:
+        try:
+            listener.stop()
+        except (RuntimeError, ValueError):
+            pass  # interpreter teardown: sinks may already be closed
+
+
 # ── Main Entry-Point ─────────────────────────────────────────
 
 _initialised: bool = False
+_queue_listener: logging.handlers.QueueListener | None = None
 
 
 def _resolve_log_dir(log_dir: Optional[Path]) -> Path:
@@ -100,8 +159,8 @@ def setup_logging(
     backup_count: int = 10,
 ) -> Any:
     """Configure structured logging and return a bound logger."""
-    global _initialised
-    
+    global _initialised, _queue_listener
+
     if _initialised:
         return structlog.get_logger(name)
 
@@ -145,12 +204,24 @@ def setup_logging(
             isinstance(handler, logging.handlers.RotatingFileHandler)
             and Path(getattr(handler, "baseFilename", "") or "").name == "aura_json.log"
         )
-        if is_own_console or is_stale_aura_file:
+        is_stale_queue = isinstance(handler, _DropNewestOnOverflowQueueHandler)
+        if is_own_console or is_stale_aura_file or is_stale_queue:
             root_logger.removeHandler(handler)
 
-    # Use basicConfig or manual handler addition to root
-    for h in handlers:
-        root_logger.addHandler(h)
+    # All slow sinks live behind one QueueListener daemon: emitting a log
+    # record from ANY thread — including the event loop — is a non-blocking
+    # put_nowait. A stalled stdout pipe or a contended disk can no longer
+    # stall the caller (observed live: 6s event-loop stall inside a
+    # logger.info when the file sink blocked).
+    log_queue: queue.Queue = queue.Queue(maxsize=_LOG_QUEUE_CAPACITY)
+    queue_handler = _DropNewestOnOverflowQueueHandler(log_queue)
+    _queue_listener = logging.handlers.QueueListener(
+        log_queue, *handlers, respect_handler_level=True
+    )
+    _queue_listener.start()
+    atexit.register(_stop_queue_listener)
+
+    root_logger.addHandler(queue_handler)
     root_logger.setLevel(level)
 
     # 3. Structlog configuration

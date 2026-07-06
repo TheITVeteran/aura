@@ -1088,6 +1088,25 @@ class EpisodicMemory:
             ).fetchall()
         return self._register_recall([self._row_to_episode(r) for r in rows])
 
+    def get_summary_cached(self, max_age_seconds: float = 30.0) -> dict[str, Any]:
+        """TTL-cached summary for telemetry hot paths (health endpoint, panels).
+
+        get_summary() runs eight aggregate queries over the episodes table —
+        observed live as a 5.1s event-loop stall inside /health under DB
+        contention. Telemetry readers must use this accessor (and call it off
+        the event loop); the fresh path stays available for introspection that
+        genuinely needs point-in-time numbers.
+        """
+        now = time.monotonic()
+        cached = getattr(self, "_summary_cache", None)
+        cached_at = getattr(self, "_summary_cache_at", 0.0)
+        if cached is not None and now - cached_at < max_age_seconds:
+            return cached
+        summary = self.get_summary()
+        self._summary_cache = summary
+        self._summary_cache_at = now
+        return summary
+
     def get_summary(self) -> dict[str, Any]:
         """Introspection summary for self-model."""
         with self._get_conn() as conn:

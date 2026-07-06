@@ -1099,9 +1099,15 @@ class ClosedCausalLoop:
                 # STEP 1: Record state for Phi computation
                 self._phi_witness.record_substrate_state(current_x)
 
-                # STEP 2: Evaluate previous prediction
-                cycle = self._predictor.observe_and_update(
-                    current_x, simulated_expectations=getattr(self, "_simulated_expectations", None)
+                # STEP 2: Evaluate previous prediction. Off-loop: this is
+                # real numpy work over the full substrate vector and was
+                # observed live stalling the event loop for 6.0s under
+                # memory pressure. The predictor is only touched from this
+                # single call site, so a worker thread keeps it serialized.
+                cycle = await asyncio.to_thread(
+                    self._predictor.observe_and_update,
+                    current_x,
+                    simulated_expectations=getattr(self, "_simulated_expectations", None),
                 )
 
                 if cycle is not None:

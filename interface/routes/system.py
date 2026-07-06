@@ -2395,8 +2395,13 @@ async def api_health(request: Request):
             cortex["beliefs"] = len(getattr(orch.self_model, "beliefs", []))
 
         ep_mem = ServiceContainer.get("episodic_memory", default=None)
-        if ep_mem and hasattr(ep_mem, "get_summary"):
-            ep_summary = ep_mem.get_summary()
+        if ep_mem and hasattr(ep_mem, "get_summary_cached"):
+            # Off-loop + TTL-cached: the fresh get_summary() runs eight
+            # aggregate queries and stalled the event loop for 5.1s live.
+            ep_summary = await asyncio.to_thread(ep_mem.get_summary_cached)
+            cortex["episodes"] = ep_summary.get("total_episodes", 0)
+        elif ep_mem and hasattr(ep_mem, "get_summary"):
+            ep_summary = await asyncio.to_thread(ep_mem.get_summary)
             cortex["episodes"] = ep_summary.get("total_episodes", 0)
         else:
             mem_mgr = ServiceContainer.get("memory_manager", default=None)

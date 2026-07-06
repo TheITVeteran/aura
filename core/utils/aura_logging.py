@@ -1,8 +1,10 @@
 from core.runtime.errors import record_degradation
 import logging
+import queue
 import sqlite3
 import json
 import os
+import threading
 from datetime import datetime
 from typing import Optional
 
@@ -17,13 +19,28 @@ def _proof_logging_active() -> bool:
     return any(os.environ.get(name) for name in ("AURA_PROOF_RUN", "AURA_AGI_MAX_TASKS", "AURA_TESTING"))
 
 class SQLiteMemoryHandler(logging.Handler):
+    """Persist INFO+ logs to SQLite without ever blocking the emitting thread.
+
+    emit() is a bounded put_nowait; a single daemon writer thread owns one
+    WAL-mode connection and batch-inserts. The previous implementation opened
+    a fresh connection and committed (fsync) PER RECORD on the caller's
+    thread — on the event loop under disk contention that is a multi-second
+    stall per log line.
     """
-    Saves logs of INFO level and above to a persistent SQLite database.
-    """
+
+    _QUEUE_CAPACITY = 5_000
+    _BATCH_MAX = 200
+
     def __init__(self, db_path: str = DB_FILE):
         super().__init__()
         self.db_path = db_path
+        self.dropped = 0
+        self._queue: queue.Queue = queue.Queue(maxsize=self._QUEUE_CAPACITY)
         self._initialize_db()
+        self._writer = threading.Thread(
+            target=self._drain_forever, name="aura-log-sqlite-writer", daemon=True
+        )
+        self._writer.start()
 
     def _initialize_db(self):
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -45,28 +62,53 @@ class SQLiteMemoryHandler(logging.Handler):
 
     def emit(self, record):
         try:
-            # We don't use the formatter for DB storage to keep raw data,
-            # but we can if the formatting is complex.
-            timestamp = datetime.now().isoformat()
-            level = record.levelname
-            module = record.module
-            message = record.getMessage()
+            row = (
+                datetime.now().isoformat(),
+                record.levelname,
+                record.module,
+                record.getMessage(),
+            )
+        except (TypeError, ValueError):
+            return
+        try:
+            self._queue.put_nowait(row)
+        except queue.Full:
+            self.dropped += 1  # never block or recurse from a log call
 
-            conn = sqlite3.connect(self.db_path)
+    def _open_writer_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
+    def _drain_forever(self) -> None:
+        conn: sqlite3.Connection | None = None
+        while True:
+            batch = [self._queue.get()]
             try:
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT INTO system_logs (timestamp, level, module, message)
-                    VALUES (?, ?, ?, ?)
-                ''', (timestamp, level, module, message))
+                while len(batch) < self._BATCH_MAX:
+                    batch.append(self._queue.get_nowait())
+            except queue.Empty:
+                pass
+            try:
+                if conn is None:
+                    conn = self._open_writer_connection()
+                conn.executemany(
+                    "INSERT INTO system_logs (timestamp, level, module, message) VALUES (?, ?, ?, ?)",
+                    batch,
+                )
                 conn.commit()
-            finally:
-                conn.close()
-        except (sqlite3.Error, OSError) as e:
-            record_degradation('aura_logging', e)
-            # Prevent logging loops if the DB handler fails
-            import sys
-            print(f"FAILED TO WRITE TO MEMORY DB: {e}", file=sys.stderr)
+            except (sqlite3.Error, OSError) as e:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except sqlite3.Error:
+                        pass
+                    conn = None
+                record_degradation(
+                    'aura_logging', e,
+                    action=f"dropped {len(batch)} buffered log rows after sqlite write failure",
+                )
 
 class WebhookAlertHandler(logging.Handler):
     """

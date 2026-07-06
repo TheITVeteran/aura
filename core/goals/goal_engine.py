@@ -215,6 +215,16 @@ class GoalEngine:
         self._last_reconcile_at = 0.0
         self._reconcile_interval_s = 15.0
         self._reconciling = False
+        # Context-block snapshot cache (stale-while-revalidate): the
+        # conversation lane reads goals on EVERY turn, and a cold
+        # build_snapshot holds self._lock through SQLite work — observed
+        # live as a 5.6s event-loop stall inside think(). The hot path only
+        # ever reads this cache; refreshes happen on a worker thread.
+        self._snapshot_cache: dict[str, Any] | None = None
+        self._snapshot_cache_at = 0.0
+        self._snapshot_cache_ttl_s = 5.0
+        self._snapshot_refresh_inflight = False
+        self._snapshot_refresh_lock = threading.Lock()
         self._initialize()
         self.subgoals_stack_path = self._db_path.parent / "subgoals_stack.json"
         self._subgoals_stack = self._load_subgoals_stack()
@@ -681,6 +691,9 @@ class GoalEngine:
                 },
             )
             self._conn.commit()
+        # Goal mutations must be visible on the very next turn: expire the
+        # context-block snapshot so the next hot-path read refreshes.
+        self._snapshot_cache_at = 0.0
         return record
 
     def _row_to_record(self, row: sqlite3.Row) -> GoalRecord:
@@ -1257,8 +1270,51 @@ class GoalEngine:
             "summary": summary,
         }
 
+    def _cached_snapshot(self) -> dict[str, Any]:
+        """Snapshot for the conversation hot path — never blocks on SQLite.
+
+        Returns the cached snapshot immediately; when it has gone stale a
+        single background refresh is scheduled (stale-while-revalidate). Only
+        the very first call (cold boot, empty cache) computes inline.
+        """
+        now = time.monotonic()
+        cached = self._snapshot_cache
+        if cached is not None:
+            if now - self._snapshot_cache_at >= self._snapshot_cache_ttl_s:
+                self._schedule_snapshot_refresh()
+            return cached
+        snapshot = self.build_snapshot(limit=30, include_external=True)
+        self._snapshot_cache = snapshot
+        self._snapshot_cache_at = now
+        return snapshot
+
+    def _schedule_snapshot_refresh(self) -> None:
+        with self._snapshot_refresh_lock:
+            if self._snapshot_refresh_inflight:
+                return
+            self._snapshot_refresh_inflight = True
+
+        def _refresh() -> None:
+            try:
+                snapshot = self.build_snapshot(limit=30, include_external=True)
+                self._snapshot_cache = snapshot
+                self._snapshot_cache_at = time.monotonic()
+            except (RuntimeError, sqlite3.Error, OSError, ValueError, TypeError, AttributeError) as exc:
+                _record_goal_degradation(
+                    exc,
+                    severity="warning",
+                    action="kept serving previous goal snapshot after background refresh failed",
+                )
+            finally:
+                with self._snapshot_refresh_lock:
+                    self._snapshot_refresh_inflight = False
+
+        threading.Thread(
+            target=_refresh, name="goal-snapshot-refresh", daemon=True
+        ).start()
+
     def get_context_block(self, objective: str = "", limit: int = 6) -> str:
-        snapshot = self.build_snapshot(limit=max(12, limit * 2), include_external=True)
+        snapshot = self._cached_snapshot()
         objective_tokens = set(self._normalize_tokens(objective))
 
         def _relevance(item: dict[str, Any]) -> float:
