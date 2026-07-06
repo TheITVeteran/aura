@@ -204,7 +204,9 @@ async def build_app(
     out_path = Path(out_dir).expanduser()
     out_path.mkdir(parents=True, exist_ok=True)
     file_path = out_path / f"{result.title}_{int(time.time())}.html"
-    file_path.write_text(code, encoding="utf-8")
+    from core.runtime.atomic_writer import async_atomic_write_text
+
+    await async_atomic_write_text(file_path, code)
     result.ok = True
     result.status = "built"
     result.path = str(file_path)

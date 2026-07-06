@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.runtime.atomic_writer import async_atomic_write_text
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.SelfTaughtBuilder")
@@ -279,7 +280,7 @@ async def build_app_verified(
             result.history.append({"iter": i, "playable": False, "reason": "no code generated"})
             continue
         best_code = code
-        tmp.write_text(code, encoding="utf-8")
+        await async_atomic_write_text(tmp, code)
         test = await _functional_test(str(tmp))
         entry = {"iter": i, "playable": test.get("playable"), "reason": test.get("reason"),
                  "console_errors": test.get("console_errors", [])}
@@ -299,7 +300,7 @@ async def build_app_verified(
         research += await _research(f"fix {_domain_of(spec)}: {test.get('reason')} {test.get('console_errors')}")
 
     final = out_path / f"{_slug(spec)}_{int(time.time())}.html"
-    (final if best_code else tmp).write_text(best_code or code, encoding="utf-8")
+    await async_atomic_write_text(final if best_code else tmp, best_code or code)
     result.code = best_code or code
     result.path = str(final)
     result.ok = result.playable
