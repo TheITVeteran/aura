@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from core.brain.llm.context_assembler import ContextAssembler
+from core.container import ServiceContainer
 from core.conversation.response_reliability import (
     assess_user_facing_reply,
     conversation_reliability_system_block,
@@ -347,7 +348,15 @@ class ResponseGenerationPhase(BasePhase):
             return False
 
         cap = self.container.get("capability_engine", default=None)
+        if cap is None:
+            try:
+                cap = ServiceContainer.get("capability_engine", default=None)
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                cap = None
         if cap is None or not hasattr(cap, "execute"):
+            logger.warning(
+                "🔎 ResponseGeneration: required search evidence skipped because capability_engine is unavailable."
+            )
             return False
 
         skill_name = "web_search"

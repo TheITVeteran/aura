@@ -198,6 +198,57 @@ async def test_response_generation_executes_required_search_before_answering(mon
 
 
 @pytest.mark.asyncio
+async def test_response_generation_required_search_uses_service_container_fallback(monkeypatch):
+    state = AuraState()
+    state.cognition.current_objective = (
+        "Search the web for current NASA Europa page and tell me source title only."
+    )
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.REACTIVE
+    state.response_modifiers["matched_skills"] = ["web_search"]
+
+    router = _EvidenceRouter()
+    capability = _SearchCapability()
+    phase = ResponseGenerationPhase(_Container({"llm_router": router}))
+
+    def _messages_from_state(state_arg, _objective):
+        skill_blocks = [
+            str(item.get("content") or "")
+            for item in state_arg.cognition.working_memory
+            if isinstance(item, dict)
+            and (item.get("metadata") or {}).get("type") == "skill_result"
+        ]
+        return [{"role": "system", "content": "\n".join(["context", *skill_blocks])}]
+
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        _messages_from_state,
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.ServiceContainer.get",
+        lambda name, default=None: capability if name == "capability_engine" else default,
+    )
+
+    new_state = await phase.execute(
+        state,
+        context={
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "visible_user_message": state.cognition.current_objective,
+            "max_tokens": 512,
+        },
+    )
+
+    assert capability.calls
+    assert "[SKILL RESULT: web_search]" in router.calls[0]["messages"][0]["content"]
+    assert "Europa: Jupiter's Ocean World" in new_state.cognition.last_response
+
+
+@pytest.mark.asyncio
 async def test_response_generation_repairs_false_search_inability_after_evidence(monkeypatch):
     state = AuraState()
     state.cognition.current_objective = (
