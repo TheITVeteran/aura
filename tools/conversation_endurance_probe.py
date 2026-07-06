@@ -29,7 +29,13 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT_DEFAULT = ROOT / "artifacts" / "reliability" / "conversation_endurance.jsonl"
+# Write to a NON-tracked, unique-per-run path. The old default was a
+# git-tracked file; a concurrent git op (Zenflow commits/stashes/checkouts
+# write-and-rename) replaced the inode under this process's open handle and
+# silently orphaned every write past that point — the visible artifact froze
+# at turn 24 while the run continued to turn 70+ (observed 2026-07-06). The
+# runs/ dir is gitignored so no git operation can touch a live run's file.
+OUT_DIR = ROOT / "artifacts" / "reliability" / "runs"
 
 HIJACK_RE = re.compile(r"task accepted into governed background execution", re.IGNORECASE)
 REFLEX_CANNED_RE = re.compile(r"i'?m right here with you", re.IGNORECASE)
@@ -281,11 +287,22 @@ def main() -> int:
     ap.add_argument("--base", default="http://127.0.0.1:8000")
     ap.add_argument("--session", default=f"endurance-{time.strftime('%Y%m%d-%H%M')}")
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--out", default=str(OUT_DEFAULT))
+    ap.add_argument(
+        "--out",
+        default=None,
+        help="Artifact path. Default: a unique per-run file under the gitignored "
+        "artifacts/reliability/runs/ so concurrent git ops can't orphan the handle.",
+    )
     args = ap.parse_args()
 
-    out_path = Path(args.out)
+    if args.out:
+        out_path = Path(args.out)
+    else:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        safe_session = re.sub(r"[^A-Za-z0-9_.-]+", "-", str(args.session))[:60]
+        out_path = OUT_DIR / f"{safe_session}-{stamp}.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    print(f"[endurance] writing artifact to {out_path}", flush=True)
 
     try:
         boot = _get_json(args.base, "/api/health/boot")
