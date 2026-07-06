@@ -2423,7 +2423,12 @@ class MLXLocalClient:
             # (bounded) for reclaim and re-check before refusing. Runs in
             # _spawn_worker_blocking's executor thread, so the sleep does not
             # block the event loop; the deep-solver lane still refuses instantly.
-            reclaim_wait_s = _env_float("AURA_MLX_SPAWN_RECLAIM_WAIT_S", 15.0)
+            try:
+                reclaim_wait_s = float(
+                    os.environ.get("AURA_MLX_SPAWN_RECLAIM_WAIT_S", "15") or 15.0
+                )
+            except (TypeError, ValueError):
+                reclaim_wait_s = 15.0
             reclaim_deadline = time.monotonic() + max(0.0, reclaim_wait_s)
             waited = False
             while memory_block and time.monotonic() < reclaim_deadline:
