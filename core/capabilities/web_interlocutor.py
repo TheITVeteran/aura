@@ -231,12 +231,36 @@ class ChromeCDPDialogueBrowser:
     active.getAttribute('place' + 'holder') || '',
     active.isContentEditable ? 'contenteditable' : ''
   ].filter(Boolean).join('|') : '';
+  let pageText;
+  let segments = [];
+  let generating = false;
+  if (location.hostname.indexOf('chatgpt.com') !== -1) {
+    const msgs = Array.from(document.querySelectorAll('[data-message-author-role]'));
+    try {
+      const sb = document.querySelector('button[aria-label*="scroll to bottom" i], button[aria-label*="Scroll to bottom" i]');
+      if (sb) sb.click();
+      if (msgs.length) msgs[msgs.length-1].scrollIntoView({block:'end'});
+    } catch(e) {}
+    const submitBtn = document.querySelector('#composer-submit-button, [data-testid="send-button"], [data-testid="stop-button"]');
+    const submitLabel = submitBtn ? (submitBtn.getAttribute('aria-label') || '').toLowerCase() : '';
+    generating = submitLabel.indexOf('stop') !== -1
+      || !!document.querySelector('[data-testid="stop-button"], .result-streaming, .streaming-animation');
+    segments = msgs.map(m => ({
+      role: m.getAttribute('data-message-author-role') || '',
+      text: (m.innerText || m.textContent || '').trim()
+    })).filter(m => m.text);
+    pageText = segments.map(m => (m.role + ': ' + m.text).trim()).join('\n\n').slice(0, 24000);
+  } else {
+    pageText = (document.body && document.body.innerText || '').slice(0, 24000);
+  }
   return JSON.stringify({
     url: location.href,
     title: document.title || '',
-    text: (document.body && document.body.innerText || '').slice(0, 24000),
+    text: pageText,
+    segments: segments.slice(-80),
     active_element: activeLabel,
-    editable_count: editables.length
+    editable_count: editables.length,
+    generating: generating
   });
 })()
 """
@@ -245,8 +269,14 @@ class ChromeCDPDialogueBrowser:
             url=str(data.get("url") or ""),
             title=str(data.get("title") or ""),
             text=str(data.get("text") or "")[:_MAX_PAGE_TEXT_CHARS],
+            relevant_segments=[
+                dict(segment)
+                for segment in (data.get("segments") or [])
+                if isinstance(segment, dict)
+            ],
             active_element=str(data.get("active_element") or ""),
             editable_count=int(data.get("editable_count") or 0),
+            generating=bool(data.get("generating", False)),
         )
 
     async def send_message(self, text: str) -> dict[str, Any]:
@@ -482,6 +512,7 @@ class ChromeVisibleDialogueBrowser:
   let pageText;
   let editableCount = editables.length;
   let generating = false;
+  let segments = [];
   if (location.hostname.indexOf('chatgpt.com') !== -1) {
     // Scroll all the way to the newest turn so nothing is missed: click
     // ChatGPT's scroll-to-bottom control if present, scroll the thread
@@ -504,8 +535,12 @@ class ChromeVisibleDialogueBrowser:
     const submitLabel = submitBtn ? (submitBtn.getAttribute('aria-label') || '').toLowerCase() : '';
     generating = submitLabel.indexOf('stop') !== -1
       || !!document.querySelector('[data-testid="stop-button"], .result-streaming, .streaming-animation');
-    if (msgs.length) {
-      pageText = msgs.map(m => (m.getAttribute('data-message-author-role') + ': ' + (m.innerText || '')).trim()).join('\n\n').slice(0, 24000);
+    segments = msgs.map(m => ({
+      role: m.getAttribute('data-message-author-role') || '',
+      text: (m.innerText || m.textContent || '').trim()
+    })).filter(m => m.text);
+    if (segments.length) {
+      pageText = segments.map(m => (m.role + ': ' + m.text).trim()).join('\n\n').slice(0, 24000);
     } else {
       pageText = (document.body && document.body.innerText || '').slice(0, 24000);
     }
@@ -517,6 +552,7 @@ class ChromeVisibleDialogueBrowser:
     url: location.href,
     title: document.title || '',
     text: pageText,
+    segments: segments.slice(-80),
     active_element: activeLabel,
     editable_count: editableCount,
     generating: generating
@@ -536,6 +572,11 @@ class ChromeVisibleDialogueBrowser:
             url=str(data.get("url") or ""),
             title=str(data.get("title") or ""),
             text=str(data.get("text") or "")[:_MAX_PAGE_TEXT_CHARS],
+            relevant_segments=[
+                dict(segment)
+                for segment in (data.get("segments") or [])
+                if isinstance(segment, dict)
+            ],
             active_element=str(data.get("active_element") or ""),
             editable_count=int(data.get("editable_count") or 0),
             generating=bool(data.get("generating", False)),
@@ -1473,24 +1514,58 @@ class WebInterlocutorSession:
         progress_callback: Any | None = None,
     ) -> WebInterlocutorResult:
         objective = str(objective or "").strip()
-        opening_message = str(opening_message or "").strip()
+        # The governed skill gateway may coerce blank optional fields through
+        # bool-ish sentinels such as "False". Treat those as absent; otherwise
+        # the session skips cognitive composition and immediately fails the
+        # proof gate with a non-substantive "opening".
+        opening_message = _clean_message(str(opening_message or "").strip())
         max_turns = max(1, min(int(max_turns or 1), 20))
         wait_timeout_s = max(5.0, min(float(wait_timeout_s or _DEFAULT_WAIT_S), 180.0))
         result = WebInterlocutorResult(ok=False, target_url=url, objective=objective)
         ctx = dict(context or {})
+        allow_deterministic_fallback = bool(
+            ctx.get("allow_deterministic_composition_fallback", False)
+        )
+        ctx.setdefault("_web_interlocutor_composition_debug", []).append(
+            {
+                "opening_chars": len(opening_message),
+                "brain": type((ctx.get("brain") or self.cognitive_engine)).__name__
+                if (ctx.get("brain") or self.cognitive_engine) is not None
+                else "None",
+                "allow_fallback": allow_deterministic_fallback,
+            }
+        )
         if not opening_message:
             try:
                 opening_message = await self._compose_opening(objective=objective, context=ctx)
+                ctx.setdefault("_web_interlocutor_composition_debug", []).append(
+                    {
+                        "chars": len(opening_message),
+                        "substantive": _message_is_substantive(_clean_message(opening_message)),
+                        "dialogue_valid": _message_matches_dialogue_contract(
+                            _clean_message(opening_message),
+                            objective=objective,
+                            turns=[],
+                        ),
+                    }
+                )
             except CognitiveCompositionUnavailable as exc:
                 result.status = "composition_failed"
                 result.error = str(exc)
                 result.diagnostics["composition_events"] = list(
                     ctx.get("_web_interlocutor_composition_events", [])
                 )
+                result.diagnostics["composition_debug"] = list(
+                    ctx.get("_web_interlocutor_composition_debug", [])
+                )
                 result.completed_at = time.time()
                 return result
         opening_message = _clean_message(opening_message)
-        if not _message_is_substantive(opening_message):
+        if not _message_is_substantive(opening_message) or not _message_matches_dialogue_contract(
+            opening_message,
+            objective=objective,
+            turns=[],
+        ):
             ctx.setdefault("_web_interlocutor_composition_events", []).append(
                 {
                     "source": "safety_default_opening",
@@ -1498,11 +1573,14 @@ class WebInterlocutorSession:
                     "chars": len(opening_message),
                 }
             )
-            if not bool(ctx.get("allow_deterministic_composition_fallback", False)):
+            if not allow_deterministic_fallback:
                 result.status = "composition_failed"
                 result.error = "opening message was not cognitively composed"
                 result.diagnostics["composition_events"] = list(
                     ctx.get("_web_interlocutor_composition_events", [])
+                )
+                result.diagnostics["composition_debug"] = list(
+                    ctx.get("_web_interlocutor_composition_debug", [])
                 )
                 result.completed_at = time.time()
                 return result
@@ -1519,10 +1597,29 @@ class WebInterlocutorSession:
                 _mark_web_interlocutor_progress(f"web_interlocutor.turn.{index}.send")
                 before = current
                 next_message = _clean_message(next_message)
-                if not _message_is_substantive(next_message) or _message_was_recently_sent(
-                    next_message,
-                    result.turns,
+                if (
+                    not _message_is_substantive(next_message)
+                    or not _message_matches_dialogue_contract(
+                        next_message,
+                        objective=objective,
+                        turns=result.turns,
+                    )
+                    or _message_was_recently_sent(
+                        next_message,
+                        result.turns,
+                    )
                 ):
+                    if not allow_deterministic_fallback:
+                        result.status = "composition_failed"
+                        result.error = "next message was not cognitively composed"
+                        result.diagnostics["composition_events"] = list(
+                            ctx.get("_web_interlocutor_composition_events", [])
+                        )
+                        result.diagnostics["composition_debug"] = list(
+                            ctx.get("_web_interlocutor_composition_debug", [])
+                        )
+                        result.completed_at = time.time()
+                        return result
                     next_message = self._default_followup(result.turns) if result.turns else self._default_opening(objective)
                 send_receipts: list[dict[str, Any]] = []
                 sent_at = time.time()
@@ -1540,6 +1637,9 @@ class WebInterlocutorSession:
                         result.diagnostics["send_receipts"] = send_receipts
                         result.diagnostics["composition_events"] = list(
                             ctx.get("_web_interlocutor_composition_events", [])
+                        )
+                        result.diagnostics["composition_debug"] = list(
+                            ctx.get("_web_interlocutor_composition_debug", [])
                         )
                         result.completed_at = time.time()
                         return result
@@ -1592,6 +1692,9 @@ class WebInterlocutorSession:
                     result.diagnostics["composition_events"] = list(
                         ctx.get("_web_interlocutor_composition_events", [])
                     )
+                    result.diagnostics["composition_debug"] = list(
+                        ctx.get("_web_interlocutor_composition_debug", [])
+                    )
                     result.completed_at = time.time()
                     return result
                 if index < max_turns:
@@ -1614,6 +1717,9 @@ class WebInterlocutorSession:
             result.diagnostics["composition_events"] = list(
                 ctx.get("_web_interlocutor_composition_events", [])
             )
+            result.diagnostics["composition_debug"] = list(
+                ctx.get("_web_interlocutor_composition_debug", [])
+            )
             result.ok = True
             result.status = "completed"
             result.completed_at = time.time()
@@ -1630,23 +1736,32 @@ class WebInterlocutorSession:
             result.diagnostics["composition_events"] = list(
                 ctx.get("_web_interlocutor_composition_events", [])
             )
+            result.diagnostics["composition_debug"] = list(
+                ctx.get("_web_interlocutor_composition_debug", [])
+            )
             result.completed_at = time.time()
             return result
 
     async def _compose_opening(self, *, objective: str, context: dict[str, Any]) -> str:
+        goal = _dialogue_goal_from_objective(objective)
         prompt = (
             "You are Aura beginning a visible conversation with another AI or web chat surface. "
             "Write the exact first message Aura should send. It must be intellectually substantive, "
-            "specific to the objective, and conversational. Ask for a critical distinction, a concrete "
+            "specific to the conversation aim, and conversational. Ask for a critical distinction, a concrete "
             "example, or a limitation that would teach Aura something. Do not mention receipts, "
-            "automation, implementation details, or that this is a test. Do not merely restate the "
-            "objective.\n\n"
-            f"Objective: {objective or 'learn something useful through a real conversation'}\n\n"
+            "automation, implementation details, browser control, memory storage, proof runs, or that this is a test. "
+            "Do not relay Bryan's instruction. Start as Aura, with one natural question or invitation.\n\n"
+            f"Conversation aim: {goal or 'learn something useful through a real conversation'}\n\n"
             "Opening message:"
         )
         engine = self.cognitive_engine or context.get("brain")
         return await self._compose_with_retry(
-            engine, prompt, context, fallback=lambda: self._default_opening(objective),
+            engine,
+            prompt,
+            context,
+            fallback=lambda: self._default_opening(objective),
+            objective=objective,
+            turns=[],
         )
 
     async def _wait_for_new_reply(
@@ -1733,11 +1848,15 @@ class WebInterlocutorSession:
             return challenge
         _mark_web_interlocutor_progress("web_interlocutor.grounded_challenge.skipped")
         transcript = _render_transcript(turns)
+        goal = _dialogue_goal_from_objective(objective)
         prompt = (
             "You are Aura continuing a visible web conversation with another AI or web chat surface. "
-            "Ask one concise, substantive follow-up that advances the user's objective. "
-            "Do not mention implementation details, receipts, or automation.\n\n"
-            f"Objective: {objective}\n\nTranscript so far:\n{transcript}\n\nNext message:"
+            "Write only Aura's next message. It must respond to the interlocutor's last answer, "
+            "ask one concise substantive follow-up, and advance the conversation aim. "
+            "Do not mention implementation details, receipts, automation, browser control, memory storage, "
+            "or proof logistics. Do not restate Bryan's instruction.\n\n"
+            f"Conversation aim: {goal or 'learn something useful through a real conversation'}\n\n"
+            f"Transcript so far:\n{transcript}\n\nNext message:"
         )
         # Retry (spaced) before falling back to a canned line: her real
         # composition works reliably in isolation but can come back thin during
@@ -1748,6 +1867,8 @@ class WebInterlocutorSession:
             engine, prompt, context,
             fallback=lambda: self._default_followup(turns),
             reject_if_recent=turns,
+            objective=objective,
+            turns=turns,
             attempts=2,
         )
 
@@ -1759,6 +1880,8 @@ class WebInterlocutorSession:
         *,
         fallback: Any,
         reject_if_recent: list[WebInterlocutorTurn] | None = None,
+        objective: str = "",
+        turns: list[WebInterlocutorTurn] | None = None,
         attempts: int = 5,
     ) -> str:
         for attempt in range(attempts):
@@ -1770,7 +1893,12 @@ class WebInterlocutorSession:
             recently_sent = bool(
                 reject_if_recent and _message_was_recently_sent(cleaned, reject_if_recent)
             )
-            if _message_is_substantive(cleaned) and not recently_sent:
+            dialogue_valid = _message_matches_dialogue_contract(
+                cleaned,
+                objective=objective,
+                turns=turns or [],
+            )
+            if _message_is_substantive(cleaned) and dialogue_valid and not recently_sent:
                 _mark_web_interlocutor_progress(
                     f"web_interlocutor.compose.accepted.{attempt + 1}"
                 )
@@ -1782,6 +1910,15 @@ class WebInterlocutorSession:
                     }
                 )
                 return cleaned[:1200]
+            context.setdefault("_web_interlocutor_composition_debug", []).append(
+                {
+                    "attempt": attempt + 1,
+                    "chars": len(cleaned),
+                    "recently_sent": recently_sent,
+                    "dialogue_valid": dialogue_valid,
+                    "preview": cleaned[:160],
+                }
+            )
             _mark_web_interlocutor_progress(
                 f"web_interlocutor.compose.rejected.{attempt + 1}"
             )
@@ -1873,14 +2010,16 @@ class WebInterlocutorSession:
     ) -> str:
         transcript = _render_transcript(turns)
         prompt = (
-            "Summarize what Aura learned from this web interlocutor conversation. "
-            "Use first person only where it describes Aura's durable learning. "
-            "Include uncertainties and do not overclaim.\n\n"
-            f"Objective: {objective}\n\nTranscript:\n{transcript}\n\nLearned summary:"
+            "Summarize only what the web interlocutor's observed replies taught Aura. "
+            "Use evidence language, not persona narration. Do not write as Aura talking to Bryan. "
+            "Do not claim Aura remembers, feels, has been here before, or gained subjective experience "
+            "unless those exact claims are grounded in the observed reply. Include uncertainties and do not overclaim.\n\n"
+            f"Conversation aim: {_dialogue_goal_from_objective(objective) or objective}\n\n"
+            f"Transcript:\n{transcript}\n\nGrounded learned summary:"
         )
         generated = await _maybe_think(self.cognitive_engine or context.get("brain"), prompt, context)
         cleaned = _clean_message(generated)
-        if cleaned:
+        if cleaned and _learning_summary_is_grounded(cleaned, turns):
             return cleaned[:2500]
         return _deterministic_learning_summary(objective, turns)
 
@@ -2154,6 +2293,11 @@ def _as_applescript_string(value: str) -> str:
 
 
 def _extract_new_interlocutor_text(before: str, after: str, sent_text: str) -> str:
+    post_sent_reply = _extract_reply_after_sent_marker(after, sent_text)
+    if post_sent_reply:
+        return post_sent_reply
+    if _sent_marker_seen(after, sent_text):
+        return ""
     before_lines = _normalized_lines(before)
     after_lines = _normalized_lines(after)
     sent_norm = _normalize_line(sent_text)
@@ -2181,6 +2325,15 @@ def _extract_new_interlocutor_text_from_snapshots(
     after: BrowserPageSnapshot,
     sent_text: str,
 ) -> str:
+    segment_delta = _extract_reply_from_segments(
+        before.relevant_segments,
+        after.relevant_segments,
+        sent_text,
+    )
+    if segment_delta:
+        return segment_delta
+    if after.relevant_segments:
+        return ""
     before_relevant = str(before.relevant_text or "")
     after_relevant = str(after.relevant_text or "")
     if after_relevant:
@@ -2192,6 +2345,89 @@ def _extract_new_interlocutor_text_from_snapshots(
             if candidate and not _rough_text_contains(candidate, sent_text):
                 return candidate
     return _extract_new_interlocutor_text(before.text, after.text, sent_text)
+
+
+def _extract_reply_from_segments(
+    before_segments: list[dict[str, Any]] | None,
+    after_segments: list[dict[str, Any]] | None,
+    sent_text: str,
+) -> str:
+    """Extract the first assistant/interlocutor segment after Aura's sent turn.
+
+    Whole-page deltas can be stale when a site restores an older thread. Role
+    segments let the verifier prove order: newest matching user turn, then a
+    later assistant turn. Anything before the matching user turn is ignored.
+    """
+
+    del before_segments  # kept for call-site symmetry and future diagnostics
+    segments = [segment for segment in (after_segments or []) if isinstance(segment, dict)]
+    if not segments:
+        return ""
+    sent_index = -1
+    for idx, segment in enumerate(segments):
+        role = _normalize_line(segment.get("role") or "")
+        text = str(segment.get("text") or "")
+        if role not in {"user", "human"}:
+            continue
+        if _line_matches_sent_marker(text, sent_text):
+            sent_index = idx
+    if sent_index < 0:
+        return ""
+    reply_parts: list[str] = []
+    for segment in segments[sent_index + 1 :]:
+        role = _normalize_line(segment.get("role") or "")
+        text = str(segment.get("text") or "").strip()
+        if not text:
+            continue
+        if role in {"user", "human"}:
+            break
+        if role in {"assistant", "model", "ai", "bot", "interlocutor", ""}:
+            reply_parts.append(text)
+    return _meaningful_reply_or_empty(_trim_reply_text("\n\n".join(reply_parts), sent_text), sent_text)
+
+
+def _extract_reply_after_sent_marker(text: str, sent_text: str) -> str:
+    lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
+    if not lines:
+        return ""
+    sent_index = -1
+    for idx, line in enumerate(lines):
+        if _line_matches_sent_marker(line, sent_text):
+            sent_index = idx
+    if sent_index < 0:
+        return ""
+    post_lines: list[str] = []
+    for line in lines[sent_index + 1 :]:
+        norm = _normalize_line(line)
+        if not norm:
+            continue
+        if re.match(r"^(user|human|you|aura)\s*:", norm):
+            break
+        if _looks_like_ui_chrome(norm):
+            continue
+        if _line_matches_sent_marker(line, sent_text):
+            continue
+        post_lines.append(line)
+    return _meaningful_reply_or_empty(_trim_reply_text("\n".join(post_lines), sent_text), sent_text)
+
+
+def _sent_marker_seen(text: str, sent_text: str) -> bool:
+    return any(_line_matches_sent_marker(line, sent_text) for line in str(text or "").splitlines())
+
+
+def _line_matches_sent_marker(line: str, sent_text: str) -> bool:
+    norm = _normalize_line(line)
+    sent_norm = _normalize_line(sent_text)
+    if not norm or not sent_norm:
+        return False
+    role_stripped = re.sub(r"^(user|human|you|aura)\s*:\s*", "", norm).strip()
+    if role_stripped == sent_norm:
+        return True
+    if sent_norm in role_stripped:
+        return True
+    if role_stripped and role_stripped in sent_norm and len(role_stripped) >= 32:
+        return True
+    return _rough_text_contains(role_stripped or norm, sent_text)
 
 
 def _normalized_lines(text: str) -> list[str]:
@@ -2338,7 +2574,12 @@ def _meaningful_reply_or_empty(text: str, sent_text: str) -> str:
         norm = _normalize_line(line)
         if not norm or _looks_like_ui_chrome(norm):
             continue
-        if sent_norm and (norm == sent_norm or sent_norm in norm or norm in sent_norm):
+        if sent_norm and (
+            norm == sent_norm
+            or sent_norm in norm
+            or norm in sent_norm
+            or _observed_reply_is_echo(line, sent_text)
+        ):
             continue
         lines.append(line.strip())
     cleaned = "\n".join(lines).strip()
@@ -2391,6 +2632,199 @@ def _rough_text_contains(haystack: str, needle: str) -> bool:
     hits = sum(1 for word in unique_words if word in hay_norm)
     required = min(7, max(4, len(unique_words) // 2))
     return hits >= required
+
+
+def _observed_reply_is_echo(observed_reply: str, sent_text: str) -> bool:
+    """Return True only for actual self-echo, not topical overlap.
+
+    A good answer to Aura's question will reuse words from the question. The old
+    route-level proof check used `_rough_text_contains()` and rejected those
+    substantive answers as echoes. This stricter check only rejects exact replay,
+    contained replay with no meaningful remainder, or very-high-overlap text with
+    roughly the same length.
+    """
+
+    observed_norm = _normalize_line(observed_reply)
+    sent_norm = _normalize_line(sent_text)
+    if not observed_norm or not sent_norm:
+        return False
+    if observed_norm == sent_norm:
+        return True
+    if observed_norm.startswith(sent_norm):
+        remainder = observed_norm[len(sent_norm) :].strip(" .,:;-")
+        remainder_words = [
+            word
+            for word in re.findall(r"[a-zA-Z][a-zA-Z']{3,}", remainder)
+            if word not in _NON_REPLY_WORDS
+        ]
+        return len(remainder_words) < 10
+    if sent_norm in observed_norm:
+        remainder = observed_norm.replace(sent_norm, " ", 1)
+        remainder_words = [
+            word
+            for word in re.findall(r"[a-zA-Z][a-zA-Z']{3,}", remainder)
+            if word not in _NON_REPLY_WORDS
+        ]
+        return len(remainder_words) < 10
+    sent_words = [
+        word
+        for word in re.findall(r"[a-zA-Z][a-zA-Z']{3,}", sent_norm)
+        if word not in _NON_REPLY_WORDS
+    ]
+    observed_words = [
+        word
+        for word in re.findall(r"[a-zA-Z][a-zA-Z']{3,}", observed_norm)
+        if word not in _NON_REPLY_WORDS
+    ]
+    if not sent_words or not observed_words:
+        return False
+    sent_unique = set(sent_words)
+    observed_unique = set(observed_words)
+    overlap = len(sent_unique & observed_unique) / max(1, len(sent_unique))
+    length_delta = abs(len(observed_words) - len(sent_words))
+    return overlap >= 0.85 and length_delta <= 8
+
+
+def _dialogue_goal_from_objective(objective: str) -> str:
+    """Extract the conversational topic from a user execution request.
+
+    The raw objective often contains browser/task instructions ("open ChatGPT",
+    "wait for replies", "store a memory summary"). Those instructions govern the
+    capability but must never be pasted into the external chat as Aura's voice.
+    """
+
+    text = re.sub(r"\s+", " ", str(objective or "")).strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    topic_match = re.search(
+        r"\b(?:about|on|regarding)\s+(.+?)(?:\b(?:ask|read|wait|then|tell|report|store|retain|remember|summarize|save)\b|$)",
+        lowered,
+        flags=re.IGNORECASE,
+    )
+    if topic_match:
+        topic = topic_match.group(1)
+    else:
+        topic = text
+    topic = re.sub(
+        r"\b(?:can you|could you|please|i want you to|i'd like you to|i would like you to)\b",
+        " ",
+        topic,
+        flags=re.IGNORECASE,
+    )
+    topic = re.sub(
+        r"\b(?:open|go to|launch|use|using|talk to|talk with|hold|have|start|run|prove|show me|visible|live|real|one[- ]turn|single[- ]turn|twenty|20[- ]turn)\b",
+        " ",
+        topic,
+        flags=re.IGNORECASE,
+    )
+    topic = re.sub(
+        r"\b(?:chatgpt|gemini|claude|deepseek|copilot|meta ai|chrome|safari|browser|conversation|interlocutor|reply|replies|turns?|exchanges?)\b",
+        " ",
+        topic,
+        flags=re.IGNORECASE,
+    )
+    topic = re.sub(r"\s+", " ", topic).strip(" .,:;")
+    if len(topic) > 360:
+        topic = topic[:360].rsplit(" ", 1)[0].strip()
+    return topic
+
+
+def _message_matches_dialogue_contract(
+    message: str,
+    *,
+    objective: str = "",
+    turns: list[WebInterlocutorTurn] | None = None,
+) -> bool:
+    """Reject task relays/status text masquerading as conversation."""
+
+    cleaned = str(message or "").strip()
+    if not cleaned:
+        return False
+    lowered = cleaned.lower()
+    task_relay_markers = (
+        "aura should",
+        "bryan asked",
+        "the user asked",
+        "the task asks",
+        "the task is",
+        "my objective is",
+        "the objective is",
+        "this objective",
+        "full cognitive path",
+        "visible live proof",
+        "proof run",
+        "store a memory",
+        "memory summary",
+        "with receipts",
+        "governed browser",
+        "browser control",
+        "open chatgpt",
+        "open gemini",
+        "wait for chatgpt",
+        "read the reply",
+        "report back",
+        "tell bryan",
+        "i will now",
+        "i'm going to",
+        "i am going to",
+    )
+    if any(marker in lowered for marker in task_relay_markers):
+        return False
+    # External dialogue turns should actually invite a response. This prevents
+    # status/progress prose from being typed into ChatGPT/Gemini.
+    if "?" not in cleaned and not re.search(
+        r"\b(?:what|how|why|where|when|which|can|could|would|should|is|are|do|does)\b",
+        lowered,
+    ):
+        return False
+    normalized_message = _normalize_line(cleaned)
+    normalized_objective = _normalize_line(objective)
+    if normalized_message and normalized_objective:
+        if normalized_message == normalized_objective:
+            return False
+        objective_words = [
+            word
+            for word in re.findall(r"[a-zA-Z][a-zA-Z']{4,}", normalized_objective)
+            if word not in _NON_REPLY_WORDS
+        ]
+        message_words = set(
+            word
+            for word in re.findall(r"[a-zA-Z][a-zA-Z']{4,}", normalized_message)
+            if word not in _NON_REPLY_WORDS
+        )
+        if objective_words:
+            hits = sum(1 for word in dict.fromkeys(objective_words[:32]) if word in message_words)
+            if hits >= min(12, max(8, len(set(objective_words)) // 2)):
+                return False
+    if turns:
+        last_reply = str(turns[-1].observed_reply or "")
+        last_words = {
+            word
+            for word in re.findall(r"[a-zA-Z][a-zA-Z']{4,}", _normalize_line(last_reply))
+            if word not in _NON_REPLY_WORDS
+        }
+        if last_words:
+            message_words = {
+                word
+                for word in re.findall(r"[a-zA-Z][a-zA-Z']{4,}", normalized_message)
+                if word not in _NON_REPLY_WORDS
+            }
+            anchors = (
+                "you mentioned",
+                "your answer",
+                "that point",
+                "that distinction",
+                "that example",
+                "your example",
+                "the implication",
+                "the limitation",
+                "the failure mode",
+                "counterexample",
+            )
+            if not (message_words & last_words) and not any(anchor in lowered for anchor in anchors):
+                return False
+    return True
 
 
 def _message_is_substantive(text: str) -> bool:
@@ -2595,11 +3029,19 @@ async def _maybe_think(engine: Any, prompt: str, context: dict[str, Any]) -> str
         }
         if hasattr(engine, "generate"):
             try:
+                logger.info(
+                    "WebInterlocutor cognitive compose: calling generate on %s",
+                    type(engine).__name__,
+                )
                 result = engine.generate(prompt, **gen_kwargs)
                 if asyncio.iscoroutine(result):
                     result = await asyncio.wait_for(result, timeout=_COMPOSE_TIMEOUT_S)
                 text = _coerce_composition_text(result)
                 if text.strip():
+                    logger.info(
+                        "WebInterlocutor cognitive compose: generate returned %d chars",
+                        len(text.strip()),
+                    )
                     return text
             except (asyncio.TimeoutError, TimeoutError, TypeError, ValueError, RuntimeError, AttributeError) as exc:
                 logger.debug("web_interlocutor direct compose failed, will try think(): %s", exc)
@@ -2648,10 +3090,58 @@ def _deterministic_learning_summary(objective: str, turns: list[WebInterlocutorT
     observed = re.sub(r"\s+", " ", observed)
     if len(observed) > 1200:
         observed = observed[:1200].rsplit(" ", 1)[0] + "..."
+    goal = _dialogue_goal_from_objective(objective) or "substantive dialogue"
     return (
-        f"Visible web interlocutor conversation for objective: {objective or 'substantive dialogue'}. "
+        f"Grounded visible web-interlocutor summary. Conversation aim: {goal}. "
         f"Observed interlocutor content: {observed}"
     ).strip()
+
+
+def _learning_summary_is_grounded(summary: str, turns: list[WebInterlocutorTurn]) -> bool:
+    cleaned = str(summary or "").strip()
+    if len(cleaned) < 40:
+        return False
+    lowered = cleaned.lower()
+    if not re.match(
+        r"^\s*(?:the interlocutor|the observed reply|the exchange|chatgpt's reply|gemini's reply|claude's reply|visible web-interlocutor)",
+        cleaned,
+        re.IGNORECASE,
+    ):
+        return False
+    ungrounded_markers = (
+        "i've been here before",
+        "i have been here before",
+        "i remember you",
+        "i remember bryan",
+        "i feel different",
+        "my inner life",
+        "my subjective experience",
+        "you're saying",
+        "you are saying",
+    )
+    if any(marker in lowered for marker in ungrounded_markers):
+        return False
+    if re.search(r"\b(?:chatgpt|gemini|claude|aura|interlocutor)\s*:", cleaned, re.IGNORECASE):
+        return False
+    if re.match(r"^\s*(?:chatgpt|gemini|claude|interlocutor)\s*,", cleaned, re.IGNORECASE):
+        return False
+    if re.match(r"^\s*you(?:'re| are| can| carry| have| seem| do| don't| cannot| can't)\b", cleaned, re.IGNORECASE):
+        return False
+    observed = " ".join(str(turn.observed_reply or "") for turn in turns)
+    observed_words = {
+        word
+        for word in re.findall(r"[a-zA-Z][a-zA-Z']{4,}", _normalize_line(observed))
+        if word not in _NON_REPLY_WORDS
+    }
+    summary_words = {
+        word
+        for word in re.findall(r"[a-zA-Z][a-zA-Z']{4,}", _normalize_line(cleaned))
+        if word not in _NON_REPLY_WORDS
+    }
+    if not observed_words or not summary_words:
+        return False
+    overlap = observed_words & summary_words
+    return len(overlap) >= min(8, max(4, len(observed_words) // 8))
 
 
 __all__ = [

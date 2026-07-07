@@ -1171,6 +1171,7 @@ class MLXLocalClient:
 
         # Shared memory flag to track if affective steering successfully attached
         self._steering_active = self._mp_context.Value("b", False, lock=False)
+        self._steering_liveness_observed = False
 
         # Cooperative preemption channel: the parent writes the ACTIVE job's
         # numeric sequence here to ask the worker to stop between tokens.
@@ -3147,8 +3148,10 @@ class MLXLocalClient:
                             self._recurrent_depth_status = recurrent_status
                         if "steering_active" in res:
                             try:
-                                self._steering_active.value = bool(res.get("steering_active"))
-                                self._substrate_mem[-1] = 1.0 if bool(res.get("steering_active")) else 0.0
+                                steering_active = bool(res.get("steering_active"))
+                                self._steering_active.value = steering_active
+                                self._substrate_mem[-1] = 1.0 if steering_active else 0.0
+                                self._steering_liveness_observed = True
                             except (TypeError, ValueError, IndexError, AttributeError) as steering_receipt_exc:
                                 _record_mlx_degradation(
                                     steering_receipt_exc,
@@ -3459,6 +3462,7 @@ class MLXLocalClient:
         foreground_request = bool(kwargs.get("foreground_request", False))
         strict_answer_contract = bool(kwargs.get("strict_answer_contract", False))
         proof_evaluation_contract = bool(kwargs.get("proof_evaluation_contract", False))
+        web_interlocutor_contract = bool(kwargs.get("web_interlocutor_contract", False))
 
         # and foreground_request and not strict_answer_contract
         # [STABILITY v53] Identity reinforcement for MLX path — inject Aura's
@@ -3470,6 +3474,7 @@ class MLXLocalClient:
             and foreground_request
             and not strict_answer_contract
             and not proof_evaluation_contract
+            and not web_interlocutor_contract
         ):
             _identity_anchor = (
                 "You are Aura Luna. Speak with direct first-person continuity, "
@@ -3568,8 +3573,23 @@ class MLXLocalClient:
                 return {"tool": payload.get("name"), "args": args or {}}
         return None
 
-    def _check_steering_liveness(self) -> bool:
-        """Returns True if the worker subprocess reports steering as active."""
+    def _check_steering_liveness(self) -> bool | None:
+        """Return steering liveness once the worker has reported it.
+
+        ``False`` is a real fault signal after the first worker receipt. Before
+        that receipt, treating the default shared-memory zero as "inactive"
+        creates a misleading neural-stream warning during first foreground
+        generations and web-interlocutor bootstraps.
+        """
+        if not bool(getattr(self, "_steering_liveness_observed", False)):
+            try:
+                sm = getattr(self, "_substrate_mem", None)
+                if sm is not None and float(sm[-1]) > 0.5:
+                    self._steering_liveness_observed = True
+                    return True
+            except (TypeError, ValueError, IndexError, OSError):
+                pass
+            return None
         try:
             return bool(self._steering_active.value)
         except (AttributeError, TypeError, ValueError, OSError) as _exc:
@@ -3591,7 +3611,12 @@ class MLXLocalClient:
             return
         self._last_steering_status_log = now
         active = self._check_steering_liveness()
-        if active:
+        if active is None:
+            logger.debug(
+                "⏳ [STEERING] Liveness pending first worker receipt (origin=%s)",
+                origin,
+            )
+        elif active:
             logger.debug("✅ [STEERING] Active for this generation (origin=%s)", origin)
         else:
             logger.warning(
@@ -3856,6 +3881,7 @@ class MLXLocalClient:
             or kwargs.get("strict_value_contract", False)
             or kwargs.get("proof_evaluation_contract", False)
             or kwargs.get("operator_evidence_contract", False)
+            or kwargs.get("web_interlocutor_contract", False)
             or kwargs.get("benchmark_request", False)
             or kwargs.get("health_probe", False)
             or kwargs.get("schema") is not None
@@ -3926,6 +3952,7 @@ class MLXLocalClient:
             "expected_strict_value": str(kwargs.get("expected_strict_value") or ""),
             "proof_evaluation_contract": bool(kwargs.get("proof_evaluation_contract", False)),
             "operator_evidence_contract": bool(kwargs.get("operator_evidence_contract", False)),
+            "web_interlocutor_contract": bool(kwargs.get("web_interlocutor_contract", False)),
             "health_probe": bool(kwargs.get("health_probe", False)),
             "runtime_fact_status_contract": bool(
                 kwargs.get("runtime_fact_status_contract", False)
@@ -3936,7 +3963,8 @@ class MLXLocalClient:
             "clean_user_surface_contract": bool(
                 kwargs.get("clean_user_surface_contract", False)
                 or kwargs.get("health_probe", False)
-            ),
+            )
+            and not bool(kwargs.get("web_interlocutor_contract", False)),
             "user_surface_validation_prompt": str(
                 kwargs.get("user_surface_validation_prompt") or ""
             ),

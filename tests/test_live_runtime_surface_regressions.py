@@ -275,6 +275,83 @@ def test_background_policy_defers_work_during_boot_grace(monkeypatch):
     ) == "boot_grace_42s"
 
 
+def test_background_policy_defers_until_first_visible_conversation_probe(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime import background_policy
+
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
+    monkeypatch.delenv("AURA_TESTING", raising=False)
+    monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "0")
+    monkeypatch.setattr(background_policy, "_foreground_activity_reason", lambda: "")
+    monkeypatch.setattr(background_policy, "_read_compute_pressure_reason", lambda: "")
+    monkeypatch.setattr(
+        background_policy,
+        "_read_memory_pressure_snapshot",
+        lambda: background_policy._MemoryPressureSnapshot(pressure_pct=12.0, reason=""),
+    )
+    monkeypatch.setattr(background_policy, "get_unified_failure_state", lambda: {"pressure": 0.0})
+
+    lane = {
+        "state": "ready",
+        "conversation_ready": False,
+        "foreground_owned": False,
+        "active_generations": 0,
+        "warmup_in_flight": False,
+        "last_visible_readiness_at": 0.0,
+        "last_failure_reason": "visible_conversation_probe_missing",
+        "readiness_blockers": ["visible_conversation_probe_missing"],
+    }
+    gate = SimpleNamespace(get_conversation_status=lambda: dict(lane))
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        classmethod(lambda cls, name, default=None: gate if name == "inference_gate" else default),
+    )
+
+    assert (
+        background_policy.background_activity_reason(None, allow_no_user_anchor=True)
+        == "first_visible_conversation_probe_pending"
+    )
+
+
+def test_background_policy_resumes_after_visible_conversation_probe(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime import background_policy
+
+    monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
+    monkeypatch.delenv("AURA_AGI_MAX_TASKS", raising=False)
+    monkeypatch.delenv("AURA_TESTING", raising=False)
+    monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "0")
+    monkeypatch.setattr(background_policy, "_foreground_activity_reason", lambda: "")
+    monkeypatch.setattr(background_policy, "_read_compute_pressure_reason", lambda: "")
+    monkeypatch.setattr(
+        background_policy,
+        "_read_memory_pressure_snapshot",
+        lambda: background_policy._MemoryPressureSnapshot(pressure_pct=12.0, reason=""),
+    )
+    monkeypatch.setattr(background_policy, "get_unified_failure_state", lambda: {"pressure": 0.0})
+
+    gate = SimpleNamespace(
+        get_conversation_status=lambda: {
+            "state": "ready",
+            "conversation_ready": True,
+            "foreground_owned": False,
+            "active_generations": 0,
+            "warmup_in_flight": False,
+            "last_visible_readiness_at": time.time(),
+            "readiness_blockers": [],
+        }
+    )
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        classmethod(lambda cls, name, default=None: gate if name == "inference_gate" else default),
+    )
+
+    assert background_policy.background_activity_reason(None, allow_no_user_anchor=True) == ""
+
+
 def test_research_background_policy_requires_long_desktop_quiet_window(monkeypatch):
     from core.runtime import background_policy, foreground_guard
 

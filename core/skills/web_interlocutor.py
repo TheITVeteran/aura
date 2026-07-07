@@ -7,6 +7,7 @@ responses, learn from the exchange, and persist a governed memory.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -14,6 +15,8 @@ from pydantic import BaseModel, Field, field_validator
 from core.capabilities.web_interlocutor import WebInterlocutorSession, get_web_interlocutor_job_manager
 from core.container import ServiceContainer
 from core.skills.base_skill import BaseSkill
+
+logger = logging.getLogger("Aura.Skill.WebInterlocutor")
 
 
 class WebInterlocutorParams(BaseModel):
@@ -49,7 +52,7 @@ class WebInterlocutorSkill(BaseSkill):
     input_model = WebInterlocutorParams
     metabolic_cost = 2
     effect_scope = "foreground_browser_dialogue"
-    timeout_seconds = 420.0
+    timeout_seconds = 1500.0
 
     async def execute(self, params: Any, context: dict[str, Any]) -> dict[str, Any]:
         if isinstance(params, WebInterlocutorParams):
@@ -61,6 +64,14 @@ class WebInterlocutorSkill(BaseSkill):
         if parsed.mode == "cancel":
             return get_web_interlocutor_job_manager().cancel(parsed.job_id)
         brain = (context or {}).get("brain") or ServiceContainer.get("cognitive_engine", default=None)
+        logger.info(
+            "WebInterlocutorSkill brain=%s generate=%s think=%s mode=%s turns=%s",
+            type(brain).__name__ if brain is not None else "None",
+            bool(hasattr(brain, "generate")),
+            bool(hasattr(brain, "think")),
+            parsed.mode,
+            parsed.max_turns,
+        )
         if parsed.mode == "start_background":
             return get_web_interlocutor_job_manager().start(
                 objective=parsed.objective,
@@ -80,6 +91,14 @@ class WebInterlocutorSkill(BaseSkill):
             wait_timeout_s=parsed.wait_timeout_s,
             persist_memory=parsed.persist_memory,
             context=context or {},
+        )
+        logger.info(
+            "WebInterlocutorSkill result ok=%s status=%s error=%s composition_events=%s composition_debug=%s",
+            result.ok,
+            result.status,
+            result.error,
+            result.diagnostics.get("composition_events"),
+            result.diagnostics.get("composition_debug"),
         )
         payload = result.to_dict()
         payload["summary"] = (

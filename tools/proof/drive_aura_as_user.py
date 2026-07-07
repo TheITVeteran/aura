@@ -40,7 +40,7 @@ SCRIPTS: dict[str, list[str]] = {
     ],
     "chatgpt": [
         "Open ChatGPT in my browser and have a real conversation about whether "
-        "intelligence and sentience are separable. Take about 8 turns. Challenge it "
+        "intelligence and sentience are separable. Take 20 turns. Challenge it "
         "if it says something your local reference contradicts, and afterward tell me "
         "honestly what you learned, what changed your mind, and cite the exact turn.",
     ],

@@ -3101,6 +3101,7 @@ class InferenceGate:
         if success and text and text.strip():
             cleaned = text.strip()
             proof_evaluation_contract = bool(kwargs.get("proof_evaluation_contract", False))
+            web_interlocutor_contract = bool(kwargs.get("web_interlocutor_contract", False))
             strict_output_contract = bool(
                 kwargs.get("strict_answer_contract", False)
                 or kwargs.get("strict_value_contract", False)
@@ -3110,6 +3111,7 @@ class InferenceGate:
                 and not bool(kwargs.get("health_probe", False))
                 and not proof_evaluation_contract
                 and not strict_output_contract
+                and not web_interlocutor_contract
             )
 
             if strict_output_contract:
@@ -5148,11 +5150,13 @@ class InferenceGate:
 
         strict_answer_contract = bool(context.get("strict_answer_contract", False))
         strict_value_contract = bool(context.get("strict_value_contract", False))
+        web_interlocutor_contract = bool(context.get("web_interlocutor_contract", False))
         isolated_generation_contract = bool(
             strict_answer_contract
             or strict_value_contract
             or proof_evaluation_contract
             or operator_evidence_contract
+            or web_interlocutor_contract
         )
         # Sealed proof prompts (<answer> envelope) get a micro budget so a
         # one-word answer cannot ramble; a caller-pinned max_tokens always
@@ -5452,6 +5456,7 @@ class InferenceGate:
             "strict_value_contract",
             "proof_evaluation_contract",
             "operator_evidence_contract",
+            "web_interlocutor_contract",
             "runtime_fact_status_contract",
             "grounded_runtime_status_contract",
             "clean_user_surface_contract",
@@ -6174,6 +6179,7 @@ class InferenceGate:
         prompt_user_facing = bool(
             not benchmark_request
             and not is_background
+            and not web_interlocutor_contract
             and (
                 self._origin_is_user_facing(origin)
                 or explicit_foreground
@@ -6300,6 +6306,7 @@ class InferenceGate:
 
         _is_user_facing = (
             not benchmark_request
+            and not web_interlocutor_contract
             and (self._origin_is_user_facing(origin) or requested_tier == "primary")
             and not health_probe
             and not proof_evaluation_contract
@@ -6971,7 +6978,12 @@ class InferenceGate:
                         visible_user_prompt,
                         is_user_facing=_is_user_facing,
                     )
-        except _INFERENCE_RECOVERABLE_ERRORS as cloud_err:
+        except Exception as cloud_err:  # noqa: BLE001 - optional provider SDK errors vary by installation
+            from core.brain.llm.cloud_errors import cloud_call_error_types
+
+            recoverable_cloud_errors = (*_INFERENCE_RECOVERABLE_ERRORS, *cloud_call_error_types())
+            if not isinstance(cloud_err, recoverable_cloud_errors):
+                raise
             record_degradation(
                 "inference_gate",
                 cloud_err,
@@ -7265,6 +7277,7 @@ class InferenceGate:
             "strict_value_contract",
             "proof_evaluation_contract",
             "operator_evidence_contract",
+            "web_interlocutor_contract",
             "cognitive_engine_required",
             "desktop_cognitive_engine_required",
             "live_runtime_payload_required",

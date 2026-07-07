@@ -619,6 +619,49 @@ def _foreground_activity_reason() -> str:
     return ""
 
 
+def _first_visible_conversation_probe_reason() -> str:
+    """Return a startup-only gate for optional background work.
+
+    A loaded Cortex worker is not enough for daily-use readiness. The live
+    desktop lane must first prove it can produce at least one visible reply.
+    Optional autonomy can run after that proof, but letting it fire before the
+    first verified reply competes with the warmup/probe path and can wedge the
+    UI in ``visible_conversation_probe_missing`` while tools are already acting.
+    """
+
+    try:
+        from core.container import ServiceContainer
+
+        gate = ServiceContainer.get("inference_gate", default=None)
+        if not gate or not hasattr(gate, "get_conversation_status"):
+            return ""
+        lane = dict(gate.get_conversation_status() or {})
+        if not lane or bool(lane.get("conversation_ready", False)):
+            return ""
+        if bool(lane.get("foreground_owned")) or int(lane.get("active_generations", 0) or 0) > 0:
+            return ""
+        if bool(lane.get("warmup_in_flight", False)):
+            return "conversation_warmup_in_flight"
+        last_visible = float(lane.get("last_visible_readiness_at", 0.0) or 0.0)
+        blockers = {
+            str(item or "").strip()
+            for item in (lane.get("readiness_blockers") or [])
+            if str(item or "").strip()
+        }
+        reason = str(lane.get("last_failure_reason") or "").strip()
+        if last_visible <= 0.0 or "visible_conversation_probe_missing" in blockers or reason == "visible_conversation_probe_missing":
+            return "first_visible_conversation_probe_pending"
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
+        record_degradation(
+            "background_policy",
+            _exc,
+            action="blocked optional background work because conversation probe state was unavailable",
+        )
+        logger.warning("Background policy first-visible conversation probe failed: %s", _exc)
+        return "conversation_probe_state_unavailable"
+    return ""
+
+
 def background_activity_reason(
     orchestrator: Any = None,
     *,
@@ -670,6 +713,10 @@ def background_activity_reason(
     )
     if disabled_reason:
         return disabled_reason
+
+    first_probe_reason = _first_visible_conversation_probe_reason()
+    if first_probe_reason:
+        return first_probe_reason
 
     orch = orchestrator
     if orch is not None:

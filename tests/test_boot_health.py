@@ -550,3 +550,72 @@ def test_boot_health_degraded_important_service_is_conversational_not_booting():
     assert payload["system_ready"] is False
     assert "healthy" in payload["blockers"]
     assert any(b.startswith("important:") for b in payload["blockers"])
+
+
+def test_boot_health_warming_cortex_stays_conversational_via_fallback():
+    """A failed critical inference probe must not look healthy even if the
+    conversation lane reports ready. This keeps the boot/heartbeat surface from
+    overstating live-chat readiness."""
+    _register_runtime_contract_services(
+        tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT},
+        failing_key="inference_gate",
+    )
+    status = SimpleNamespace(
+        initialized=True,
+        running=True,
+        healthy=True,
+        last_error="",
+        cycle_count=5000,
+        start_time=time.time() - 600,
+    )
+    orchestrator = SimpleNamespace(status=status, health_check=lambda: True)
+    runtime = {"state": {"process_id": 1234}, "sha256": "abc123", "signature": "sig"}
+
+    payload, status_code = build_boot_health_snapshot(
+        orchestrator,
+        runtime,
+        is_gui_proxy=False,
+        conversation_lane={"conversation_ready": True, "state": "ready"},
+    )
+
+    assert status_code == 503
+    assert payload["boot_phase"] == "kernel_warming"
+    assert payload["status"] == "booting"
+    assert payload["ready"] is False
+    assert payload["launcher_ready"] is True
+    assert payload["system_ready"] is False
+    assert "runtime_contract" in payload["blockers"]
+    assert "critical:inference_gate" in payload["blockers"]
+    assert "runtime_required_probes" in payload["blockers"]
+    assert "probe:inference" in payload["blockers"]
+    assert any("inference" in b for b in payload["blockers"])
+
+
+def test_boot_health_failing_memory_probe_still_blocks_conversation():
+    """The fallback ladder cannot rescue a broken memory probe — that group
+    must still gate conversational readiness."""
+    _register_runtime_contract_services(
+        tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT},
+        failing_key="state_repository",  # a memory-group required probe
+    )
+    status = SimpleNamespace(
+        initialized=True,
+        running=True,
+        healthy=True,
+        last_error="",
+        cycle_count=5000,
+        start_time=time.time() - 600,
+    )
+    orchestrator = SimpleNamespace(status=status, health_check=lambda: True)
+    runtime = {"state": {"process_id": 1234}, "sha256": "abc123", "signature": "sig"}
+
+    payload, status_code = build_boot_health_snapshot(
+        orchestrator,
+        runtime,
+        is_gui_proxy=False,
+        conversation_lane={"conversation_ready": True, "state": "ready"},
+    )
+
+    assert payload["boot_phase"] != "conversation_operational"
+    assert payload["ready"] is False
+    assert any("memory" in b or "state_repository" in b for b in payload["blockers"])

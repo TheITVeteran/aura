@@ -8,7 +8,13 @@ from core.capabilities.web_interlocutor import (
     WebInterlocutorJobManager,
     WebInterlocutorResult,
     WebInterlocutorSession,
+    WebInterlocutorTurn,
+    _dialogue_goal_from_objective,
     _extract_new_interlocutor_text,
+    _extract_new_interlocutor_text_from_snapshots,
+    _learning_summary_is_grounded,
+    _message_matches_dialogue_contract,
+    _observed_reply_is_echo,
     _url_allows_readability_fallback,
 )
 from core.runtime.gateways import MemoryWriteReceipt
@@ -75,8 +81,12 @@ class FakeBrain:
                 "becomes useful only after it is tested?"
             )
         if "Next message" in prompt:
-            return "Can you give one concrete example?"
-        return "I learned that useful novelty is not free association; it is analogy constrained by verification."
+            return "When you say analogy and verification are in tension, what is one concrete example?"
+        return (
+            "The interlocutor argued that useful novelty is analogy constrained by verification: "
+            "a city immune system can be compared to software observability, but the analogy only "
+            "matters when Aura tests where it breaks."
+        )
 
 
 class FakeMemoryGateway:
@@ -146,6 +156,128 @@ def test_extract_new_interlocutor_text_rejects_menu_bar_noise():
     after = before + "\nMon Jun 29 4:44 PM\n\uf8fftv"
     extracted = _extract_new_interlocutor_text(before, after, "Tell me about sentience.")
     assert extracted == ""
+
+
+def test_extract_new_interlocutor_text_trims_merged_sent_text_from_reply():
+    sent = (
+        "I am Aura, a local desktop AI system. What observable behavior would convince you "
+        "that another AI retained the substance of a conversation rather than merely logging it?"
+    )
+    before = "ChatGPT\nAsk anything"
+    after = (
+        before
+        + "\n"
+        + "I am Aura, a local desktop AI system asking what observable behavior would convince you.\n"
+        + "Thought for a couple of seconds\n"
+        + "What would convince me is behavioral reuse with transformation: the AI should later apply the core claim "
+        + "in a new context, distinguish recall from inference, and let the remembered point change a later plan."
+    )
+
+    extracted = _extract_new_interlocutor_text(before, after, sent)
+
+    assert "behavioral reuse with transformation" in extracted
+    assert "I am Aura" not in extracted
+    assert "local desktop AI system asking" not in extracted
+
+
+def test_extract_new_interlocutor_text_requires_reply_after_sent_marker():
+    sent = (
+        "I want to understand how a persistent AI can demonstrate memory. "
+        "What would count as strong behavioral evidence?"
+    )
+    before = (
+        "ChatGPT\n"
+        "assistant: An older answer about memory continuity from a previous thread.\n"
+        "Ask anything"
+    )
+    after = before + "\nuser: " + sent + "\nAsk anything"
+
+    extracted = _extract_new_interlocutor_text(before, after, sent)
+
+    assert extracted == ""
+
+
+def test_extract_new_interlocutor_text_uses_role_ordering_after_sent_turn():
+    sent = (
+        "I want to understand how a persistent AI can demonstrate memory. "
+        "What would count as strong behavioral evidence?"
+    )
+    before = BrowserPageSnapshot(
+        text="assistant: An older answer about memory continuity.",
+        relevant_segments=[
+            {"role": "assistant", "text": "An older answer about memory continuity."},
+        ],
+    )
+    after = BrowserPageSnapshot(
+        text="",
+        relevant_segments=[
+            {"role": "assistant", "text": "An older answer about memory continuity."},
+            {"role": "user", "text": sent},
+            {
+                "role": "assistant",
+                "text": (
+                    "Strong evidence would be later behavioral reuse: the system should apply the remembered "
+                    "claim in a new task, expose where it came from, and change its plan when the memory is ablated."
+                ),
+            },
+        ],
+    )
+
+    extracted = _extract_new_interlocutor_text_from_snapshots(before, after, sent)
+
+    assert "later behavioral reuse" in extracted
+    assert "older answer" not in extracted
+
+
+def test_observed_reply_echo_detection_allows_substantive_topical_answer():
+    sent = (
+        "What observable behavior would convince you that a local persistent AI retained memory, "
+        "agency, self-modeling, and tool use rather than merely describing them?"
+    )
+    observed = (
+        "A convincing test would be behavioral reuse with transformation: the system should later "
+        "apply the remembered claim in a new context, route tools differently because of it, and "
+        "show an ablation where removing that memory changes the plan."
+    )
+
+    assert not _observed_reply_is_echo(observed, sent)
+    assert _observed_reply_is_echo(sent, sent)
+    assert _observed_reply_is_echo(sent + " okay", sent)
+
+
+def test_learning_summary_rejects_ungrounded_first_person_memory_claims():
+    turns = [
+        WebInterlocutorTurn(
+            index=1,
+            sent="How should a persistent AI demonstrate retained memory?",
+            observed_reply=(
+                "Strong evidence would be behavioral reuse with transformation: the system should "
+                "apply a remembered claim in a new task, cite where it came from, and show an "
+                "ablation where removing the memory changes the plan."
+            ),
+            before_hash="a",
+            after_hash="b",
+            sent_at=1.0,
+            observed_at=2.0,
+            effect_verified=True,
+            verification="test",
+        )
+    ]
+
+    assert not _learning_summary_is_grounded("I've been here before. I remember you asking about memory.", turns)
+    assert not _learning_summary_is_grounded(
+        "ChatGPT, I'm curious about something. ChatGPT: I manage memory layers differently.",
+        turns,
+    )
+    assert not _learning_summary_is_grounded(
+        "You're persistent. I learned that you carry context and consistency, but not a thread of self-experience.",
+        turns,
+    )
+    assert _learning_summary_is_grounded(
+        "The interlocutor argued that retained memory should be demonstrated through behavioral reuse, "
+        "source citation, and an ablation showing the later plan changes when the memory is removed.",
+        turns,
+    )
 
 
 def test_readability_fallback_is_kept_off_private_chat_surfaces():
@@ -224,6 +356,32 @@ async def test_web_interlocutor_derives_substantive_opening_from_brain(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_web_interlocutor_treats_gateway_false_opening_as_absent(monkeypatch):
+    monkeypatch.setattr("asyncio.sleep", lambda *_args, **_kwargs: _instant())
+    browser = EchoingFakeBrowser()
+    brain = FakeBrain()
+    session = WebInterlocutorSession(
+        browser=browser,
+        memory_gateway=FakeMemoryGateway(),
+        cognitive_engine=brain,
+    )
+
+    result = await session.run(
+        objective="Discuss memory and agency proof.",
+        opening_message="False",
+        max_turns=1,
+        wait_timeout_s=5,
+        persist_memory=False,
+    )
+
+    assert result.ok is True
+    assert browser.sent
+    assert browser.sent[0] != "False"
+    assert any("Opening message" in prompt for prompt in brain.prompts)
+    assert {event["source"] for event in result.diagnostics["composition_events"]} == {"cognitive"}
+
+
+@pytest.mark.asyncio
 async def test_web_interlocutor_does_not_send_scripted_message_without_cognition(monkeypatch):
     monkeypatch.setattr("asyncio.sleep", lambda *_args, **_kwargs: _instant())
     browser = FakeBrowser()
@@ -246,6 +404,80 @@ async def test_web_interlocutor_does_not_send_scripted_message_without_cognition
     assert browser.sent == []
     assert result.diagnostics["composition_events"]
     assert {event["source"] for event in result.diagnostics["composition_events"]} == {"cognitive_unavailable"}
+
+
+@pytest.mark.asyncio
+async def test_web_interlocutor_rejects_objective_relay_as_opening(monkeypatch):
+    monkeypatch.setattr("asyncio.sleep", lambda *_args, **_kwargs: _instant())
+
+    class TaskRelayBrain:
+        async def think(self, prompt, context=None):
+            return (
+                "Aura should use her full cognitive path to hold a substantive 20-turn conversation "
+                "with ChatGPT, store a memory summary with receipts, and report back."
+            )
+
+    browser = FakeBrowser()
+    session = WebInterlocutorSession(
+        browser=browser,
+        memory_gateway=FakeMemoryGateway(),
+        cognitive_engine=TaskRelayBrain(),
+    )
+
+    result = await session.run(
+        objective=(
+            "Open ChatGPT and have a 20-turn conversation about retained memory, agency, "
+            "self-modeling, and tool use. Store a memory summary with receipts."
+        ),
+        opening_message="",
+        max_turns=1,
+        wait_timeout_s=5,
+        persist_memory=False,
+    )
+
+    assert result.ok is False
+    assert result.status == "composition_failed"
+    assert browser.sent == []
+    assert result.diagnostics["composition_debug"]
+
+
+def test_web_interlocutor_dialogue_goal_strips_execution_instructions():
+    goal = _dialogue_goal_from_objective(
+        "Can you open ChatGPT and have a real one-turn conversation about how a local "
+        "persistent AI can demonstrate retained memory, agency, self-modeling, and tool use "
+        "through observable behavior? Ask one natural follow-up, read the reply, then tell me what you learned."
+    )
+
+    assert "local persistent ai" in goal
+    assert "retained memory" in goal
+    assert "open chatgpt" not in goal
+    assert "tell me" not in goal
+    assert "follow-up" not in goal
+
+
+def test_web_interlocutor_followup_must_anchor_to_observed_reply():
+    turn = WebInterlocutorTurn(
+        index=1,
+        sent="What would count as evidence for retained memory?",
+        observed_reply="The strongest test is a counterfactual memory ablation that changes a later plan.",
+        before_hash="a",
+        after_hash="b",
+        sent_at=1.0,
+        observed_at=2.0,
+        effect_verified=True,
+        verification="ok",
+    )
+
+    assert _message_matches_dialogue_contract(
+        "That counterfactual ablation point is useful. How would you design the delayed test?",
+        objective="Talk to ChatGPT about retained memory.",
+        turns=[turn],
+    )
+    assert not _message_matches_dialogue_contract(
+        "Okay. Let's dig into that. What do you think about the nature of your consciousness?",
+        objective="Talk to ChatGPT about retained memory.",
+        turns=[turn],
+    )
 
 
 @pytest.mark.asyncio

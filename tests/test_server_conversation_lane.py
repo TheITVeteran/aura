@@ -11407,12 +11407,32 @@ def test_live_desktop_final_repairs_preserve_cognitive_engine_contract():
 
     assert '"cognitive_engine_required": bool(desktop_requires_cognitive_engine)' in protected_slice
     assert '"desktop_cognitive_engine_required": bool(desktop_requires_cognitive_engine)' in protected_slice
-    assert '"allow_cloud_fallback": not bool(desktop_requires_cognitive_engine)' in protected_slice
+    assert '"allow_cloud_fallback": False' in protected_slice
     assert "desktop_cognitive_engine_required=desktop_requires_cognitive_engine" in protected_slice
     assert "desktop_cognitive_engine_required=desktop_requires_cognitive_engine" in fastpath_slice
     assert "protected_foreground_lane=desktop_requires_cognitive_engine" in fastpath_slice
     assert "desktop_cognitive_engine_required=desktop_requires_cognitive_engine" in final_gate_slice
     assert "protected_foreground_lane=desktop_requires_cognitive_engine" in final_gate_slice
+
+
+def test_live_desktop_timeout_paths_do_not_enable_cloud_fallback():
+    source = (Path(__file__).resolve().parent.parent / "interface" / "routes" / "chat.py").read_text(
+        encoding="utf-8"
+    )
+    emergency_slice = source.split('protected_foreground_reason": "outer_timeout_emergency"', 1)[1].split(
+        "timeout=15.0",
+        1,
+    )[0]
+    background_retry_slice = source.split('"background_retry": True', 1)[1].split(
+        "timeout=timeout_s",
+        1,
+    )[0]
+
+    assert '"prefer_tier": "primary"' in emergency_slice
+    assert '"allow_cloud_fallback": False' in emergency_slice
+    assert '"allow_cloud_fallback": False' in background_retry_slice
+    assert '"allow_cloud_fallback": True' not in emergency_slice
+    assert '"allow_cloud_fallback": True' not in background_retry_slice
 
 
 def test_live_desktop_quality_recovery_does_not_surface_gate_jargon():

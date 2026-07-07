@@ -4,6 +4,7 @@ runnable reverse-engineering, verified against the real host binary."""
 from __future__ import annotations
 
 import asyncio
+import inspect
 
 import pytest
 
@@ -204,3 +205,208 @@ async def test_live_chat_rsi_median_request_runs_verified_lab(monkeypatch):
     assert [call["skill_name"] for call in calls] == ["file_operation", "improve_own_code"]
     assert calls[1]["params"]["func_name"] == "median"
     assert calls[1]["extra_context"]["rsi_execution_contract"] is True
+
+
+@pytest.mark.asyncio
+async def test_live_chat_web_interlocutor_request_runs_governed_skill(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    async def _fake_governed_skill(skill_name, params, *, objective, extra_context=None):
+        calls.append(
+            {
+                "skill_name": skill_name,
+                "params": dict(params),
+                "objective": objective,
+                "extra_context": dict(extra_context or {}),
+            }
+        )
+        return {
+            "ok": True,
+            "status": "completed",
+            "turns": [
+                {
+                    "index": i,
+                    "sent": f"What proof detail should Aura examine next? {i}",
+                    "observed_reply": (
+                        "A strong proof needs observable continuity, held-out prompts, "
+                        "and receipts showing later behavior changed because of the evidence."
+                    ),
+                    "effect_verified": True,
+                }
+                for i in range(1, 21)
+            ],
+            "memory_record_id": "mem-chatgpt-1",
+            "learned_summary": "Aura learned a falsifiable distinction between memory and self-report.",
+            "causal_influence": {"causal": True, "reason": "later decision changed under ablation"},
+            "diagnostics": {
+                "composition_events": [{"source": "cognitive", "attempt": 1, "chars": 120}],
+            },
+        }
+
+    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
+    result = await chat_routes._execute_governed_capability_request_from_chat(
+        "Open ChatGPT in my browser and have a real conversation about sentience and agency. Take 20 turns and report back what you learned."
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["status"] == "web_interlocutor_completed"
+    assert "20/20 turns" in result["response"]
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["skill_name"] == "web_interlocutor"
+    assert call["params"] == {
+        "mode": "run",
+        "objective": (
+            "Open ChatGPT in my browser and have a real conversation about sentience and agency. "
+            "Take 20 turns and report back what you learned."
+        ),
+        "url": "https://chatgpt.com/?temporary-chat=true",
+        "opening_message": "",
+        "max_turns": 20,
+        "wait_timeout_s": 90.0,
+        "persist_memory": True,
+    }
+    assert call["objective"] == (
+        "Open ChatGPT in my browser and have a real conversation about sentience and agency. "
+        "Take 20 turns and report back what you learned."
+    )
+    assert hasattr(call["extra_context"].get("brain"), "generate")
+    for key in (
+        "web_interlocutor_execution_contract",
+        "foreground_request",
+        "protected_foreground_lane",
+        "live_user_path_required",
+        "user_requested_action",
+        "user_explicitly_authorized",
+        "user_visible_browser_action",
+        "verification_required",
+    ):
+        assert call["extra_context"][key] is True
+    assert call["extra_context"]["route"] == "chat.web_interlocutor"
+
+
+@pytest.mark.asyncio
+async def test_live_chat_web_interlocutor_rejects_non_cognitive_fallback(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    async def _fake_governed_skill(*_args, **_kwargs):
+        return {
+            "ok": True,
+            "status": "completed",
+            "turns": [
+                {
+                    "index": i,
+                    "sent": f"Question {i}",
+                    "observed_reply": "A substantive observed reply from the other AI.",
+                    "effect_verified": True,
+                }
+                for i in range(1, 9)
+            ],
+            "memory_record_id": "mem-fallback",
+            "learned_summary": "fallback",
+            "diagnostics": {
+                "composition_events": [{"source": "deterministic_fallback", "attempts": 5}],
+            },
+        }
+
+    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
+    result = await chat_routes._execute_governed_capability_request_from_chat(
+        "Talk to Gemini about whether memory proves agency and report back."
+    )
+
+    assert result is not None
+    assert result["ok"] is False
+    assert result["status"] == "web_interlocutor_failed"
+    assert "not cognitively composed" in result["response"]
+
+
+@pytest.mark.asyncio
+async def test_live_chat_web_interlocutor_rejects_unverified_echo_turns(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    async def _fake_governed_skill(*_args, **_kwargs):
+        return {
+            "ok": True,
+            "status": "completed",
+            "turns": [
+                {
+                    "index": 1,
+                    "sent": "Explain how retained memory can be tested.",
+                    "observed_reply": "Explain how retained memory can be tested.",
+                    "effect_verified": True,
+                }
+            ],
+            "memory_record_id": "mem-echo",
+            "learned_summary": "echo",
+            "diagnostics": {"composition_events": [{"source": "cognitive", "attempt": 1}]},
+        }
+
+    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
+    result = await chat_routes._execute_governed_capability_request_from_chat(
+        "Open ChatGPT and have a real conversation about retained memory. Take 1 turn."
+    )
+
+    assert result is not None
+    assert result["ok"] is False
+    assert result["status"] == "web_interlocutor_failed"
+    assert "verified non-echo" in result["response"]
+
+
+def test_web_interlocutor_composer_extracts_router_tuple_text():
+    from interface.routes import chat as chat_routes
+
+    assert (
+        chat_routes._WebInterlocutorCognitiveComposer._coerce_text(
+            (True, "substantive outbound message", {"endpoint": "Cortex"})
+        )
+        == "substantive outbound message"
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_chat_web_interlocutor_does_not_execute_conceptual_question(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    async def _forbidden_governed_skill(*_args, **_kwargs):
+        raise AssertionError("conceptual web-interlocutor questions must stay conversational")
+
+    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _forbidden_governed_skill)
+    result = await chat_routes._execute_governed_capability_request_from_chat(
+        "What is a web interlocutor and why would Aura talk to another AI?"
+    )
+
+    assert result is None
+
+
+def test_live_chat_governed_capabilities_precede_generic_desktop_objectives():
+    """AI-to-AI requests also look like desktop objectives; governed skills win."""
+    from interface.routes import chat as chat_routes
+
+    source = inspect.getsource(chat_routes.api_chat)
+    governed_idx = source.index("governed_capability_response = await _execute_governed_capability_request_from_chat")
+    desktop_idx = source.index("desktop_objective_response = await _execute_narrow_desktop_objective_before_cognition()")
+    assert governed_idx < desktop_idx
+
+    request = (
+        "Open ChatGPT in my browser and have a real conversation about sentience. "
+        "Take 20 turns and report back."
+    )
+    assert chat_routes._looks_like_web_interlocutor_execution_request(request)
+    assert chat_routes._looks_like_desktop_objective(request)
+
+
+def test_web_interlocutor_turn_parser_understands_natural_one_turn_requests():
+    from interface.routes import chat as chat_routes
+
+    examples = [
+        "Open ChatGPT and have a one-turn conversation about memory.",
+        "Open ChatGPT and have a single turn conversation about memory.",
+        "Open ChatGPT and do one exchange, then report back.",
+        "Open ChatGPT and take 1 turn.",
+    ]
+
+    for request in examples:
+        assert chat_routes._extract_web_interlocutor_turn_count(request) == 1

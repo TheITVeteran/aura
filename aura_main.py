@@ -2236,7 +2236,16 @@ async def _wait_for_server_http(url: str, timeout_s: float = 60.0) -> bool:
             if status_code == 200 and (ready or status in ("online", "operational", "healthy", "ok", "ready")):
                 logger.info("✅ API Server is ONLINE and HEALTHY after %ds.", int(time.time() - start))
                 return True
-            if launcher_ready or boot_phase in {"conversation_warming", "conversation_recovering", "conversation_failed"}:
+            if launcher_ready or boot_phase in {
+                "kernel_bootstrap",
+                "kernel_warming",
+                "conversation_warming",
+                "conversation_recovering",
+                "conversation_failed",
+                "manifest_unhealthy",
+                "manifest_stale",
+                "proxy_transport_only",
+            }:
                 logger.info(
                     "✅ API Server is reachable after %ds; GUI launchable while boot_phase=%s ready=%s.",
                     int(time.time() - start),
@@ -2502,6 +2511,25 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
 
         shutdown_reason = "desktop_exit"
         try:
+            # Start the API before the heavy orchestrator boot. A live desktop
+            # session must always expose the health/boot surface, even when the
+            # mind stack is still warming or a post-boot artifact stalls.
+            logger.info("🎬 Starting API server before desktop orchestrator boot...")
+            api_task = tracker.create_task(_run_api_server(), name="api_server")
+            logger.info("🎬 API server task created before orchestrator boot.")
+            try:
+                desktop_bind_wait_s = float(
+                    os.environ.get("AURA_DESKTOP_API_BIND_WAIT_SECONDS", "30")
+                )
+            except ValueError:
+                desktop_bind_wait_s = 30.0
+            early_health_url = f"http://127.0.0.1:{port}/api/health/boot"
+            if not await _wait_for_server_http(early_health_url, desktop_bind_wait_s):
+                logger.warning(
+                    "⚠️ API Server did not expose boot health within %.0fs; continuing boot, "
+                    "but launcher readiness remains blocked until the API binds.",
+                    desktop_bind_wait_s,
+                )
         
             # 1. Initialize Orchestrator and wait for boot
             logger.info("🧠 Orchestrator boot beginning...")
@@ -2512,11 +2540,10 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
             )
             tracker.create_task(orchestrator.run(), name="OrchestratorMainLoop")
 
-            # 2. Start API Server (v21: Server now runs in Kernel)
-            # [STABILITY] Start API after brain is ready to ensure correct ServiceContainer lookups.
-            logger.info("🎬 [DEBUG] Pre-starting API server mission...")
-            api_task = tracker.create_task(_run_api_server(), name="api_server")
-            logger.info("🎬 [DEBUG] API server task created successfully.")
+            # 2. Verify API Server (v21: Server now runs in Kernel)
+            if api_task is None or api_task.done():
+                logger.warning("API server task was not alive after boot; restarting before GUI launch.")
+                api_task = tracker.create_task(_run_api_server(), name="api_server")
 
             # Wait for API server to be TRULY ready (HTTP 200)
             # This prevents the GUI from launching too early and hitting "Connection Refused".

@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.container import ServiceContainer
 from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
 from core.runtime.desktop_objective_intent import (
@@ -86,6 +87,7 @@ _CHAT_RECOVERABLE_ERRORS = (
     asyncio.QueueFull,
     HTTPException,
     psutil.Error,
+    *cloud_call_error_types(),
 )
 
 _BENCHMARK_CHAT_FALLBACK_MARKERS = (
@@ -6832,7 +6834,9 @@ def _mark_conversation_lane_state(reason: str, *, state: str) -> dict[str, Any]:
 
 def _status_represents_governed_action_result(status: str | None) -> bool:
     proof_status = str(status or "").strip()
-    if proof_status.startswith(("live_proof", "desktop_objective", "program_dna", "rsi_self_improvement")):
+    if proof_status.startswith(
+        ("live_proof", "desktop_objective", "program_dna", "rsi_self_improvement", "web_interlocutor")
+    ):
         return True
     return proof_status in {
         "desktop_objective",
@@ -6841,6 +6845,7 @@ def _status_represents_governed_action_result(status: str | None) -> bool:
         "file_operation",
         "improve_own_code",
         "program_dna_reconstruct",
+        "web_interlocutor",
     }
 
 
@@ -12303,6 +12308,20 @@ async def _execute_governed_live_skill(
         result.setdefault("agency_receipt_id", None)
         result.setdefault("governance_receipt_id", result.get("governance_receipt_id"))
         return result
+    if skill_name == "web_interlocutor" and route == "chat.web_interlocutor":
+        # Explicit foreground web-dialogue requests are already mediated by
+        # CapabilityEngine/Will and have to remain user-visible. Sending them
+        # through a second agency proposal has repeatedly let generic risk
+        # simulators block a user-requested, bounded browser conversation before
+        # the capability's own proof receipts can exist.
+        direct_context = dict(context)
+        direct_context["governance_route"] = "capability_engine_direct"
+        direct_context["web_interlocutor_owned_by"] = "chat.web_interlocutor"
+        result = await _execute_capability(direct_context)
+        result.setdefault("governance_route", "capability_engine_direct")
+        result.setdefault("agency_receipt_id", None)
+        result.setdefault("governance_receipt_id", result.get("governance_receipt_id"))
+        return result
 
     try:
         from core.agency.agency_orchestrator import Proposal, get_orchestrator
@@ -13067,6 +13086,364 @@ async def _execute_rsi_self_improvement_request_from_chat(user_message: str) -> 
     }
 
 
+_WEB_INTERLOCUTOR_TARGETS = {
+    # Open a fresh visible ChatGPT surface by default. Reusing "/" can restore
+    # the last thread and make stale answers look like new proof replies.
+    "chatgpt": "https://chatgpt.com/?temporary-chat=true",
+    "gemini": "https://gemini.google.com/app",
+    "claude": "https://claude.ai/",
+    "deepseek": "https://chat.deepseek.com/",
+    "meta": "https://www.meta.ai/",
+    "copilot": "https://copilot.microsoft.com/",
+}
+
+
+def _looks_like_web_interlocutor_execution_request(user_message: str) -> bool:
+    lowered = str(user_message or "").lower()
+    target_markers = (
+        "chatgpt",
+        "gemini",
+        "claude",
+        "deepseek",
+        "meta ai",
+        "copilot",
+        "another ai",
+        "online ai",
+        "external ai",
+        "web ai",
+    )
+    if not any(marker in lowered for marker in target_markers):
+        return False
+    action_markers = (
+        "open",
+        "go to",
+        "start",
+        "have a conversation",
+        "hold a conversation",
+        "talk to",
+        "talk with",
+        "converse",
+        "discuss",
+        "ask",
+        "introduce",
+        "learn from",
+        "report back",
+        "retain",
+        "remember what",
+        "prove",
+        "show me",
+        "run",
+        "test",
+    )
+    if not any(marker in lowered for marker in action_markers):
+        return False
+    conceptual_only = (
+        lowered.startswith("what is ")
+        or lowered.startswith("explain ")
+        or lowered.startswith("how would ")
+    )
+    if conceptual_only and not any(marker in lowered for marker in ("prove", "run", "test", "open", "show me")):
+        return False
+    return True
+
+
+def _extract_web_interlocutor_url(user_message: str) -> tuple[str, str]:
+    lowered = str(user_message or "").lower()
+    if "gemini" in lowered and "chatgpt" not in lowered:
+        return "Gemini", _WEB_INTERLOCUTOR_TARGETS["gemini"]
+    if "claude" in lowered and "chatgpt" not in lowered and "gemini" not in lowered:
+        return "Claude", _WEB_INTERLOCUTOR_TARGETS["claude"]
+    if "deepseek" in lowered:
+        return "DeepSeek", _WEB_INTERLOCUTOR_TARGETS["deepseek"]
+    if "meta ai" in lowered or re.search(r"\bmeta\b", lowered):
+        return "Meta AI", _WEB_INTERLOCUTOR_TARGETS["meta"]
+    if "copilot" in lowered:
+        return "Copilot", _WEB_INTERLOCUTOR_TARGETS["copilot"]
+    return "ChatGPT", _WEB_INTERLOCUTOR_TARGETS["chatgpt"]
+
+
+def _extract_web_interlocutor_turn_count(user_message: str) -> int:
+    lowered = str(user_message or "").lower()
+    match = re.search(r"\b(\d{1,2})\s*(?:turns?|exchanges?|messages?)\b", lowered)
+    if match:
+        return max(1, min(int(match.group(1)), 20))
+    if re.search(
+        r"\b(?:one|single|a)\s*[- ]?(?:turn|exchange|message)\b",
+        lowered,
+    ):
+        return 1
+    if re.search(
+        r"\b(?:one|single|a)\s*[- ]?(?:turn|exchange|message)\s+conversation\b",
+        lowered,
+    ):
+        return 1
+    if "one-turn" in lowered or "single-turn" in lowered:
+        return 1
+    if "twenty" in lowered:
+        return 20
+    if "long" in lowered or "in-depth" in lowered or "in depth" in lowered:
+        return 12
+    return 8
+
+
+def _extract_web_interlocutor_wait_timeout(user_message: str) -> float:
+    turns = _extract_web_interlocutor_turn_count(user_message)
+    if turns >= 16:
+        return 90.0
+    if turns >= 10:
+        return 75.0
+    return 60.0
+
+
+class _WebInterlocutorCognitiveComposer:
+    """Compose outbound web-dialogue messages through Aura's desktop mind path."""
+
+    def __init__(self, *, objective: str, target_name: str) -> None:
+        self.objective = str(objective or "").strip()
+        self.target_name = str(target_name or "the other AI").strip() or "the other AI"
+
+    @staticmethod
+    def _coerce_text(result: Any) -> str:
+        if isinstance(result, str):
+            return result
+        if isinstance(result, (tuple, list)):
+            for item in result:
+                text = _WebInterlocutorCognitiveComposer._coerce_text(item)
+                if text:
+                    return text
+            return ""
+        if isinstance(result, dict):
+            for key in ("content", "response", "text", "message", "reply"):
+                value = result.get(key)
+                if value:
+                    return str(value)
+            return ""
+        for attr in ("content", "response", "text", "message", "reply"):
+            value = getattr(result, attr, "")
+            if value:
+                return str(value)
+        return ""
+
+    async def generate(self, prompt: str, **_kwargs: Any) -> str:
+        composition_prompt = (
+            "You are Aura composing a message that will be visibly sent to "
+            f"{self.target_name}. This is not a reply to Bryan; it is your own "
+            "outbound conversational move. Write only the message text to send. "
+            "Do not describe the task, do not mention automation, receipts, or tests, "
+            "and do not say what you are going to do. Be natural, substantive, and "
+            "specific to the ongoing objective.\n\n"
+            f"Objective: {self.objective}\n\n"
+            f"Composition request:\n{str(prompt or '').strip()}\n\n"
+            "Message to send:"
+        )
+        logger.info(
+            "WebInterlocutor composer: composing outbound message for %s via direct primary inference.",
+            self.target_name,
+        )
+        context = {
+            "origin": "web_interlocutor",
+            "request_origin": "desktop_ui",
+            "visible_request_origin": "desktop_ui",
+            "tool_origin": "web_interlocutor",
+            "purpose": "interlocutor_message",
+            "web_interlocutor_contract": True,
+            "prefer_tier": "primary",
+            "background": False,
+            "is_background": False,
+            "foreground_request": True,
+            "protected_foreground_lane": True,
+            "live_user_path_required": True,
+            "user_visible_browser_action": True,
+            "suppress_user_memory_append": True,
+            "suppress_working_memory_user_append": True,
+        }
+        try:
+            gate = ServiceContainer.get("inference_gate", default=None)
+            if gate is not None and hasattr(gate, "generate"):
+                messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are Aura composing a visible outbound message to another AI. "
+                            "Use Aura's current cognitive voice, but write only the message to send. "
+                            "This is not a reply to Bryan and not a status report. "
+                            "Be natural, specific, curious, and intellectually substantive."
+                        ),
+                    },
+                    {"role": "user", "content": composition_prompt},
+                ]
+                result = gate.generate(
+                    composition_prompt,
+                    context={
+                        **context,
+                        "messages": messages,
+                        "history": [],
+                        "origin": "web_interlocutor",
+                        "purpose": "interlocutor_message",
+                        "prefer_tier": "primary",
+                        "is_background": False,
+                        "foreground_request": True,
+                        "protected_foreground_lane": True,
+                        "web_interlocutor_contract": True,
+                        "temperature": 0.72,
+                        "max_tokens": 420,
+                    },
+                    timeout=95,
+                )
+                if asyncio.iscoroutine(result):
+                    result = await asyncio.wait_for(result, timeout=100.0)
+                text = self._coerce_text(result).strip()
+                if text:
+                    logger.info(
+                        "WebInterlocutor composer: direct inference returned %d chars.",
+                        len(text),
+                    )
+                    return text
+            engine = ServiceContainer.get("cognitive_engine", default=None)
+            if engine is None:
+                logger.warning("WebInterlocutor composer: CognitiveEngine unavailable.")
+                return ""
+            if hasattr(engine, "generate"):
+                try:
+                    result = engine.generate(
+                        composition_prompt,
+                        origin="web_interlocutor",
+                        purpose="interlocutor_message",
+                        use_strategies=False,
+                        prefer_tier="primary",
+                        is_background=False,
+                        temperature=0.72,
+                        max_tokens=420,
+                        web_interlocutor_contract=True,
+                    )
+                except TypeError:
+                    result = engine.generate(composition_prompt)
+                if asyncio.iscoroutine(result):
+                    result = await asyncio.wait_for(result, timeout=70.0)
+                text = self._coerce_text(result).strip()
+                if text:
+                    logger.info(
+                        "WebInterlocutor composer: direct generate returned %d chars.",
+                        len(text),
+                    )
+                    return text
+        except (asyncio.TimeoutError, TimeoutError, RuntimeError, TypeError, ValueError, AttributeError) as exc:
+            record_degradation(
+                "chat.web_interlocutor_direct_compose",
+                exc,
+                severity="warning",
+                action="failed closed instead of sending a canned web-interlocutor line",
+            )
+            return ""
+        logger.warning("WebInterlocutor composer: direct CognitiveEngine returned no text.")
+        return ""
+
+
+async def _execute_web_interlocutor_request_from_chat(user_message: str) -> dict[str, Any] | None:
+    if not _looks_like_web_interlocutor_execution_request(user_message):
+        return None
+    objective = str(user_message or "").strip()
+    target_name, target_url = _extract_web_interlocutor_url(objective)
+    turns = _extract_web_interlocutor_turn_count(objective)
+    wait_timeout = _extract_web_interlocutor_wait_timeout(objective)
+    result = await _execute_governed_live_skill(
+        "web_interlocutor",
+        {
+            "mode": "run",
+            "objective": objective,
+            "url": target_url,
+            "opening_message": "",
+            "max_turns": turns,
+            "wait_timeout_s": wait_timeout,
+            "persist_memory": True,
+        },
+        objective=objective,
+        extra_context={
+            "brain": _WebInterlocutorCognitiveComposer(
+                objective=objective,
+                target_name=target_name,
+            ),
+            "origin": "desktop_ui",
+            "source": "desktop_ui",
+            "route": "chat.web_interlocutor",
+            "web_interlocutor_execution_contract": True,
+            "foreground_request": True,
+            "protected_foreground_lane": True,
+            "live_user_path_required": True,
+            "user_requested_action": True,
+            "user_explicitly_authorized": True,
+            "user_visible_browser_action": True,
+            "verification_required": True,
+        },
+    )
+    if not isinstance(result, dict):
+        result = {"ok": bool(result), "result": result}
+    from core.capabilities.web_interlocutor import _observed_reply_is_echo
+
+    turn_rows = result.get("turns") if isinstance(result.get("turns"), list) else []
+    completed_turns = len(turn_rows)
+    invalid_turns = [
+        turn
+        for turn in turn_rows
+        if not isinstance(turn, dict)
+        or not str(turn.get("observed_reply") or "").strip()
+        or not bool(turn.get("effect_verified"))
+        or _observed_reply_is_echo(
+            str(turn.get("observed_reply") or ""),
+            str(turn.get("sent") or ""),
+        )
+    ]
+    observed_excerpt = ""
+    if turn_rows and isinstance(turn_rows[-1], dict):
+        observed_excerpt = " ".join(str(turn_rows[-1].get("observed_reply") or "").split())[:260]
+    memory_id = str(result.get("memory_record_id") or "").strip()
+    learned = str(result.get("learned_summary") or "").strip()
+    status = str(result.get("status") or "").strip()
+    causal = result.get("causal_influence") if isinstance(result.get("causal_influence"), dict) else {}
+    diagnostics = result.get("diagnostics") if isinstance(result.get("diagnostics"), dict) else {}
+    composition_events = diagnostics.get("composition_events") if isinstance(diagnostics.get("composition_events"), list) else []
+    fallback_events = [
+        event
+        for event in composition_events
+        if isinstance(event, dict) and str(event.get("source") or "") != "cognitive"
+    ]
+    ok = (
+        bool(result.get("ok"))
+        and completed_turns >= turns
+        and not fallback_events
+        and not invalid_turns
+    )
+    if ok:
+        causal_note = (
+            f" Causal revision proof: {causal.get('reason') or 'recorded'}."
+            if causal
+            else ""
+        )
+        response = (
+            f"I completed the visible {target_name} interlocutor run through governed browser control: "
+            f"{completed_turns}/{turns} turns, memory record `{memory_id or 'not returned'}`."
+            f"{causal_note} Last observed reply: {observed_excerpt or 'not returned'}. "
+            f"Learned summary: {learned[:700] or 'no learned summary returned'}"
+        )
+    else:
+        error = str(result.get("error") or status or "web interlocutor did not complete").strip()
+        if fallback_events:
+            error = "one or more messages were not cognitively composed"
+        if invalid_turns:
+            error = "one or more turns lacked a verified non-echo interlocutor reply"
+        response = (
+            f"I routed the {target_name} conversation through the governed web_interlocutor skill, "
+            f"but I am not claiming a successful proof: {error}. "
+            f"Observed {completed_turns}/{turns} turns; memory={memory_id or 'none'}."
+        )
+    return {
+        "ok": ok,
+        "status": "web_interlocutor_completed" if ok else "web_interlocutor_failed",
+        "response": response,
+        "result": result,
+    }
+
+
 async def _execute_governed_capability_request_from_chat(user_message: str) -> dict[str, Any] | None:
     program_dna = await _execute_program_dna_request_from_chat(user_message)
     if program_dna is not None:
@@ -13074,6 +13451,9 @@ async def _execute_governed_capability_request_from_chat(user_message: str) -> d
     rsi = await _execute_rsi_self_improvement_request_from_chat(user_message)
     if rsi is not None:
         return rsi
+    web_interlocutor = await _execute_web_interlocutor_request_from_chat(user_message)
+    if web_interlocutor is not None:
+        return web_interlocutor
     return None
 
 
@@ -13941,7 +14321,7 @@ async def api_chat(
                 is_benchmark
                 or _desktop_exec_state["attempted"]
                 or str(status or "").startswith(
-                    ("live_proof", "desktop_objective", "file_operation")
+                    ("live_proof", "desktop_objective", "file_operation", "web_interlocutor")
                 )
                 or _blocks_consequential_desktop_execution(_semantic_user_message)
                 or not _looks_like_desktop_objective(_semantic_user_message)
@@ -14470,9 +14850,10 @@ async def api_chat(
                             "protected_foreground_reason": reason,
                             "prefer_tier": route.get("prefer_tier", "primary"),
                             "deep_handoff": deep_handoff,
-                            # [STABILITY v53] Allow cloud fallback in protected lane.
-                            # When local models are dead, cloud is better than silence.
-                            "allow_cloud_fallback": not bool(desktop_requires_cognitive_engine),
+                            # Protected foreground repair is part of the live
+                            # Aura lane; keep it local so provider quota or a
+                            # remote substrate cannot hijack desktop chat.
+                            "allow_cloud_fallback": False,
                             "messages": messages,
                             "brief": (
                                 "Protected foreground lane engaged. The kernel is congested or recovering. "
@@ -14558,10 +14939,6 @@ async def api_chat(
                     )
             return None
 
-        desktop_objective_response = await _execute_narrow_desktop_objective_before_cognition()
-        if desktop_objective_response is not None:
-            return desktop_objective_response
-
         if not is_benchmark:
             governed_capability_response = await _execute_governed_capability_request_from_chat(
                 _semantic_user_message
@@ -14571,6 +14948,10 @@ async def api_chat(
                     _apply_aura_voice_shaping(str(governed_capability_response.get("response") or "")),
                     status=str(governed_capability_response.get("status") or "governed_capability"),
                 )
+
+        desktop_objective_response = await _execute_narrow_desktop_objective_before_cognition()
+        if desktop_objective_response is not None:
+            return desktop_objective_response
 
         if not is_benchmark and desktop_requires_cognitive_engine:
             desktop_memory_state_evidence = await _build_memory_state_fastpath_reply(
@@ -16485,8 +16866,8 @@ async def api_chat(
                             "foreground_request": True,
                             "protected_foreground_lane": True,
                             "protected_foreground_reason": "outer_timeout_emergency",
-                            "prefer_tier": "tertiary",  # Use fastest available model
-                            "allow_cloud_fallback": True,  # Try EVERYTHING
+                            "prefer_tier": "primary",
+                            "allow_cloud_fallback": False,
                         },
                         timeout=15.0,
                     ),
@@ -16541,7 +16922,7 @@ async def api_chat(
                                     "foreground_request": False,
                                     "background_retry": True,
                                     "prefer_tier": "primary",
-                                    "allow_cloud_fallback": True,
+                                    "allow_cloud_fallback": False,
                                 },
                                 timeout=timeout_s,
                             ),

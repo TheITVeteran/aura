@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 
 _GIT_ERRORS = (OSError, UnicodeDecodeError, ValueError)
 _MANIFEST_ERRORS = (OSError, TypeError, ValueError, RuntimeError, AttributeError)
+_CONTAINER_LOCK_TIMEOUT_S = 2.0
 
 _ROLE_HEALTH_KEYS: dict[str, tuple[str, ...]] = {
     "runtime": ("kernel_interface",),
@@ -65,7 +67,15 @@ def _source_owner(obj: Any) -> str:
         return str(path)
 
 
-def _health_contract_snapshot() -> dict[str, dict[str, Any]]:
+def _health_contract_snapshot(
+    readiness_snapshot: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
+    # During canonical boot the caller already captured the runtime-health
+    # verdict. Re-running all liveness checks here can deadlock on the container
+    # lock while the API is still coming up, so manifest health collection stays
+    # opportunistic once a boot readiness snapshot exists.
+    if isinstance(readiness_snapshot, dict):
+        return {}
     try:
         from core.runtime.health_contract import runtime_health_report
 
@@ -91,8 +101,30 @@ def _service_snapshot(
         statuses = {}
 
     services: dict[str, dict[str, Any]] = {}
-    with ServiceContainer._lock:
+    acquired = ServiceContainer._lock.acquire(timeout=_CONTAINER_LOCK_TIMEOUT_S)
+    if not acquired:
+        record_degradation(
+            "runtime_manifest",
+            TimeoutError("service container lock timed out during manifest service snapshot"),
+            severity="warning",
+            action="emitted partial runtime manifest instead of blocking desktop boot",
+            enforce_failure_policy=False,
+        )
+        return {
+            "_manifest_snapshot": {
+                "service": "_manifest_snapshot",
+                "owner": "core/runtime/runtime_manifest.py",
+                "required": False,
+                "initialized": False,
+                "health_status": "partial_container_lock_timeout",
+                "health_contract": None,
+                "dependencies": [],
+            }
+        }
+    try:
         items = list(ServiceContainer._services.items())
+    finally:
+        ServiceContainer._lock.release()
 
     for name, desc in items:
         instance = getattr(desc, "instance", None)
@@ -124,12 +156,38 @@ def _role_snapshot(
     from core.runtime.service_manifest import SERVICE_MANIFEST, verify_manifest
 
     contract_health = health_by_key or {}
-    with ServiceContainer._lock:
+    acquired = ServiceContainer._lock.acquire(timeout=_CONTAINER_LOCK_TIMEOUT_S)
+    if not acquired:
+        record_degradation(
+            "runtime_manifest",
+            TimeoutError("service container lock timed out during manifest role snapshot"),
+            severity="warning",
+            action="emitted partial runtime role manifest instead of blocking desktop boot",
+            enforce_failure_policy=False,
+        )
+        return {
+            "_manifest_snapshot": {
+                "service": "_manifest_snapshot",
+                "description": "Runtime manifest could not acquire the service container lock within the boot budget.",
+                "criticality": "optional",
+                "boot_phase": "canonical_runtime",
+                "shutdown_policy": "degrade_with_receipt",
+                "receipts_required": False,
+                "allowed_callers": ["AuraRuntime.boot", "aura_main._boot_runtime_orchestrator"],
+                "resolved_owners": [],
+                "health_status": "partial_container_lock_timeout",
+                "health_evidence": {},
+                "violations": ["warning: container lock timeout"],
+            }
+        }
+    try:
         registered = {
             name: desc.instance
             for name, desc in ServiceContainer._services.items()
             if desc.instance is not None
         }
+    finally:
+        ServiceContainer._lock.release()
 
     violations = verify_manifest(registered)
     by_role: dict[str, list[str]] = {}
@@ -195,7 +253,7 @@ def build_runtime_manifest(
     artifact_root: Path,
     readiness_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    health_by_key = _health_contract_snapshot()
+    health_by_key = _health_contract_snapshot(readiness_snapshot)
     services = _service_snapshot(health_by_key)
     roles = _role_snapshot(health_by_key)
     payload = {
