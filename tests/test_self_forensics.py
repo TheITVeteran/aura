@@ -61,6 +61,13 @@ class TestEvidenceBlock:
     def test_no_evidence_yields_honest_unavailability(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.chdir(tmp_path)  # no data/error_logs here
+        # The block also reads process-global incident/fault registries that
+        # OTHER tests in the same process legitimately populate — neutralize
+        # them so this test asserts the true no-evidence branch.
+        import core.introspection.self_forensics as sf
+
+        monkeypatch.setattr(sf, "_live_incidents", lambda: "")
+        monkeypatch.setattr(sf, "_recent_faults", lambda: "")
         block = build_self_forensics_context()
         assert "do " in block and "not invent a cause" in block
 
