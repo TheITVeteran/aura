@@ -5,6 +5,8 @@ Train on actual subsystem/tool/user-environment traces, not synthetic only.
 from __future__ import annotations
 
 import json
+import os
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -14,15 +16,24 @@ from core.consciousness.stdp_learning import STDPLearningEngine
 
 ROOT = Path(__file__).resolve().parents[1]
 
-TRACE_SOURCES = [
+# Live runtime trace files — mutable while a suite runs (other tests and the
+# live instance append to them). A statistical pass/fail margin computed over
+# whatever happens to be in these files at collection time is order-dependent
+# by construction (observed: passes alone, fails in-chunk when a sibling test
+# transiently wrote traces). The OFFLINE suite therefore runs exclusively on
+# the committed fixture; set AURA_STDP_LIVE_TRACES=1 (proof runs, live
+# validation) to let real runtime traces dominate.
+_LIVE_TRACE_SOURCES = [
     ROOT / ".aura_runtime" / "data" / "unified_action_log.jsonl",
     ROOT / "data" / "comm_logs.jsonl",
     ROOT / "data" / "internal_monologue.jsonl",
-    # Committed fallback corpus so the STDP validation machinery runs in fresh
-    # clones/worktrees where live runtime traces do not exist yet. Live traces
-    # dominate when present (they load first and the cap is per-source).
-    ROOT / "tests" / "fixtures" / "stdp_trace_seed.jsonl",
 ]
+_FIXTURE_TRACE_SOURCE = ROOT / "tests" / "fixtures" / "stdp_trace_seed.jsonl"
+TRACE_SOURCES = (
+    [*_LIVE_TRACE_SOURCES, _FIXTURE_TRACE_SOURCE]
+    if os.environ.get("AURA_STDP_LIVE_TRACES") == "1"
+    else [_FIXTURE_TRACE_SOURCE]
+)
 N_NEURONS = 16
 
 def _load_jsonl(path, limit=500):
@@ -50,7 +61,11 @@ def _record_to_signal(record, n=N_NEURONS):
         vec[1] = 0.5 + 0.45 * np.cos(2 * np.pi * phase)
     action = str(record.get("action") or record.get("direction") or "")
     vec[2] = 0.85 if "tool" in action.lower() else (0.65 if "outbound" in action.lower() else 0.35)
-    vec[3] = np.clip(hash(str(record.get("source") or record.get("target") or "")) % 1000 / 1000.0, 0.1, 0.9)
+    # Stable hash: builtin hash() is salted per process (PYTHONHASHSEED), which
+    # made this feature — and the whole statistical margin — vary per pytest
+    # run. crc32 is deterministic across processes and platforms.
+    _source_key = str(record.get("source") or record.get("target") or "").encode("utf-8")
+    vec[3] = np.clip((zlib.crc32(_source_key) % 1000) / 1000.0, 0.1, 0.9)
     vec[4] = 0.8 if str(record.get("gate", "")) == "approved" else 0.3
     pad = record.get("pad_state", {})
     if isinstance(pad, dict):
