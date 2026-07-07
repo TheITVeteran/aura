@@ -129,6 +129,12 @@ class LiquidSubstrate:
         self.running: bool = False
         self.thread: asyncio.Task | None = None
         self.sync_lock: threading.Lock = threading.Lock()  # For all state access (sync + async)
+        # Last successful snapshot, published for lock-free telemetry reads.
+        # Observed live: the event loop froze 5.7s inside _state_snapshot when
+        # a background substrate thread held sync_lock through heavy weight
+        # work — telemetry (health endpoint, mood/status/context readers)
+        # must never contend on the hot lock.
+        self._last_published_snapshot: dict[str, Any] | None = None
         self.last_update: float = 0.0
 
         # --- PyTorch Substrate State (Evolution 1) ---
@@ -342,36 +348,70 @@ class LiquidSubstrate:
 
     def _state_snapshot(self) -> dict[str, Any]:
         with self.sync_lock:
-            x = np.nan_to_num(self.x.copy(), nan=0.0, posinf=1.0, neginf=-1.0)
-            v = np.nan_to_num(self.v.copy(), nan=0.0, posinf=0.0, neginf=0.0)
-            phi = self._current_phi if np.isfinite(self._current_phi) else 0.0
-            last_update = float(self.last_update or 0.0)
-            update_rate = float(self.current_update_rate or self.config.update_rate or 0.0)
-            coherence = (
-                self.microtubule_coherence
-                if np.isfinite(self.microtubule_coherence)
-                else 1.0
+            snapshot = self._state_snapshot_locked()
+        self._last_published_snapshot = snapshot
+        return snapshot
+
+    def _state_snapshot_locked(self) -> dict[str, Any]:
+        """Build the snapshot dict; caller must hold sync_lock."""
+        x = np.nan_to_num(self.x.copy(), nan=0.0, posinf=1.0, neginf=-1.0)
+        v = np.nan_to_num(self.v.copy(), nan=0.0, posinf=0.0, neginf=0.0)
+        phi = self._current_phi if np.isfinite(self._current_phi) else 0.0
+        last_update = float(self.last_update or 0.0)
+        update_rate = float(self.current_update_rate or self.config.update_rate or 0.0)
+        coherence = (
+            self.microtubule_coherence
+            if np.isfinite(self.microtubule_coherence)
+            else 1.0
+        )
+        em_field = (
+            self.em_field_magnitude
+            if np.isfinite(self.em_field_magnitude)
+            else 0.0
+        )
+        return {
+            "x": x,
+            "v": v,
+            "phi": float(phi),
+            "last_update": last_update,
+            "update_rate_hz": update_rate,
+            "snapshot_age_s": max(0.0, time.time() - last_update) if last_update else float("inf"),
+            "freshness_threshold_s": self._freshness_threshold_s(),
+            "coherence": float(coherence),
+            "em_field": float(em_field),
+            "l5_bursts": int(self.l5_burst_count),
+            "collapse_events": int(self.total_collapse_events),
+            "compute_budget_reason": self._last_compute_budget_reason,
+            "compute_budget_memory_percent": self._last_compute_budget_memory_percent,
+        }
+
+    def _state_snapshot_nowait(self, max_wait_s: float = 0.05) -> dict[str, Any]:
+        """Snapshot for telemetry readers — never blocks on a busy substrate.
+
+        Tries the lock briefly; under contention returns the last published
+        snapshot (its snapshot_age_s already tells consumers how stale it is)
+        instead of stalling the caller — the event loop froze 5.7s live when
+        get_status() waited behind a weight-cache rebuild.
+        """
+        acquired = self.sync_lock.acquire(timeout=max_wait_s)
+        if acquired:
+            try:
+                snapshot = self._state_snapshot_locked()
+            finally:
+                self.sync_lock.release()
+            self._last_published_snapshot = snapshot
+            return snapshot
+        published = self._last_published_snapshot
+        if published is not None:
+            stale = dict(published)
+            last_update = float(stale.get("last_update") or 0.0)
+            stale["snapshot_age_s"] = (
+                max(0.0, time.time() - last_update) if last_update else float("inf")
             )
-            em_field = (
-                self.em_field_magnitude
-                if np.isfinite(self.em_field_magnitude)
-                else 0.0
-            )
-            return {
-                "x": x,
-                "v": v,
-                "phi": float(phi),
-                "last_update": last_update,
-                "update_rate_hz": update_rate,
-                "snapshot_age_s": max(0.0, time.time() - last_update) if last_update else float("inf"),
-                "freshness_threshold_s": self._freshness_threshold_s(),
-                "coherence": float(coherence),
-                "em_field": float(em_field),
-                "l5_bursts": int(self.l5_burst_count),
-                "collapse_events": int(self.total_collapse_events),
-                "compute_budget_reason": self._last_compute_budget_reason,
-                "compute_budget_memory_percent": self._last_compute_budget_memory_percent,
-            }
+            return stale
+        # No published snapshot yet (first read at boot): pay the blocking
+        # read once rather than invent numbers.
+        return self._state_snapshot()
 
     def _init_soma(self):
         # Phase 16: Soma Integration
@@ -834,7 +874,7 @@ class LiquidSubstrate:
     def get_substrate_affect(self) -> dict[str, float]:
         """Unified cross-feed stats for the Orchestrator."""
         try:
-            snapshot = self._state_snapshot()
+            snapshot = self._state_snapshot_nowait()
             x = snapshot["x"]
             v = snapshot["v"]
             age_s = float(snapshot["snapshot_age_s"])
@@ -892,7 +932,7 @@ class LiquidSubstrate:
 
     def get_mood(self) -> str:
         """Returns a string representation of the current 'mood'."""
-        snapshot = self._state_snapshot()
+        snapshot = self._state_snapshot_nowait()
         x = snapshot["x"]
         frustration = x[self.idx_frustration]
         energy = x[self.idx_energy]
@@ -911,7 +951,7 @@ class LiquidSubstrate:
     @property
     def current(self) -> LiquidStateVector:
         """Legacy compatibility property (Aura 4.0)."""
-        x = self._state_snapshot()["x"]
+        x = self._state_snapshot_nowait()["x"]
         return LiquidStateVector(
             frustration=float(x[self.idx_frustration]),
             curiosity=float(x[self.idx_curiosity]),
@@ -926,7 +966,7 @@ class LiquidSubstrate:
         def _to_pct(val):
             return round(max(0.0, float(val)) * 100)
 
-        snapshot = self._state_snapshot()
+        snapshot = self._state_snapshot_nowait()
         x = snapshot["x"]
         return {
             "frustration": _to_pct(x[self.idx_frustration]),
@@ -947,7 +987,7 @@ class LiquidSubstrate:
 
     def get_summary(self) -> str:
         """Returns a text summary for the context builder."""
-        snapshot = self._state_snapshot()
+        snapshot = self._state_snapshot_nowait()
         x = snapshot["x"]
         mood = self.get_mood()
         energy = float(x[self.idx_energy])
@@ -1318,7 +1358,7 @@ class LiquidSubstrate:
 
     async def get_state_summary(self) -> dict[str, Any]:
         """Return high-level emotional/cognitive state"""
-        snapshot = self._state_snapshot()
+        snapshot = self._state_snapshot_nowait()
         x = snapshot["x"]
         v = snapshot["v"]
         age_s = float(snapshot["snapshot_age_s"])

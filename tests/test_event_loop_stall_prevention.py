@@ -209,3 +209,43 @@ def test_prediction_observe_and_update_offloaded():
         "the numpy prediction step must be offloaded from the event loop "
         "(observed live as a 6.0s stall)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Liquid substrate: telemetry reads must not block on a busy substrate
+# ---------------------------------------------------------------------------
+
+def test_substrate_telemetry_survives_a_held_lock():
+    """Observed live (Jul 7): the event loop froze 5.7s inside
+    _state_snapshot when a background substrate thread held sync_lock
+    through a weight-cache rebuild. Telemetry readers now use the
+    non-blocking snapshot and serve the last published state instead."""
+    from core.consciousness.liquid_substrate import LiquidSubstrate
+
+    substrate = LiquidSubstrate()
+    substrate._state_snapshot()  # publish one snapshot
+
+    substrate.sync_lock.acquire()  # simulate a busy substrate thread
+    try:
+        start = time.monotonic()
+        status = substrate.get_status()
+        mood = substrate.get_mood()
+        summary = substrate.get_summary()
+        elapsed = time.monotonic() - start
+    finally:
+        substrate.sync_lock.release()
+
+    assert elapsed < 1.0, f"telemetry blocked {elapsed:.2f}s on a held substrate lock"
+    assert isinstance(status, dict) and "mood" in status
+    assert isinstance(mood, str) and mood
+    assert "Mood" in summary
+
+
+def test_substrate_nowait_prefers_fresh_lock_when_free():
+    from core.consciousness.liquid_substrate import LiquidSubstrate
+
+    substrate = LiquidSubstrate()
+    snap = substrate._state_snapshot_nowait()
+    assert "x" in snap and "snapshot_age_s" in snap
+    # With the lock free, the published cache is refreshed.
+    assert substrate._last_published_snapshot is not None
