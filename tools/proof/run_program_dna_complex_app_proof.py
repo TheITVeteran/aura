@@ -20,7 +20,6 @@ import argparse
 import asyncio
 import json
 import shutil
-import subprocess
 import sys
 import textwrap
 import time
@@ -221,13 +220,16 @@ def _test_source(train_examples: list[dict[str, Any]], held_out: list[dict[str, 
 
 
 def _run_pytest(workspace: Path) -> dict[str, Any]:
-    proc = subprocess.run(
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+    proc = get_subprocess_gateway().run(
         [sys.executable, "-m", "pytest", "-q", "tests"],
         cwd=str(workspace),
-        text=True,
         capture_output=True,
         timeout=30,
         check=False,
+        offline_tooling=True,
+        source="proof_tooling:program_dna_complex_app.pytest",
     )
     return {
         "returncode": proc.returncode,

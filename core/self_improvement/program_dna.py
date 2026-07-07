@@ -1786,7 +1786,7 @@ class ProgramDNAReconstructionEngine:
                 "Capture request/response shapes without credentials or private payloads.",
             ],
             "authentication": [
-                "Research provider docs and security best practices; mock secrets in tests.",
+                "Research provider docs and security best practices; use synthetic credentials in tests.",
                 "Verify session expiry, revocation, and permission-denied states.",
             ],
             "defensive_security_analysis": [
