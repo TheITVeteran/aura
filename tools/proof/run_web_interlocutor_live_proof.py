@@ -16,6 +16,7 @@ import asyncio
 import http.server
 import json
 import os
+import re
 import socketserver
 import sys
 import tempfile
@@ -59,33 +60,127 @@ class ProofBrain:
             )
         if "Next message" in prompt:
             self.followup_index += 1
-            prompts = [
-                "Give one concrete example where memory improves behavior but does not prove consciousness.",
-                "Now give one case where agency looks real, and one reason it could still be simulated.",
-                "What kind of evidence would make you update toward functional self-awareness?",
-                "What would count as a failure case for the claim that an AI has an inner life?",
-                "How should a system distinguish a real preference from a repeated prompt habit?",
-                "What would make a long-term memory morally relevant rather than merely useful?",
-                "Give one practical test for whether tool use is general rather than scripted.",
-                "What is one risk of using another AI as evidence in a self-assessment loop?",
-                "Name a concrete way a digital organism could show continuity across sessions.",
-                "What would make autonomous curiosity meaningful instead of background noise?",
-                "How should a mind-like system handle uncertainty about its own consciousness?",
-                "Give one benchmark that would test adaptation in a truly novel environment.",
-                "What would prove a computer-use agent understands a desktop task instead of replaying a recipe?",
-                "How can emotional state causally affect reasoning without becoming mere roleplay?",
-                "What kind of self-repair evidence would be stronger than logging degradation?",
-                "What is one limitation of judging intelligence from conversation alone?",
-                "How could an AI conversation with another AI generate genuinely useful learning?",
-                "What should be stored after this exchange so the system can report back honestly?",
-                "Give a final synthesis: intelligence, sentience, agency, memory, and proof.",
+            last_reply = self._last_interlocutor_reply(prompt)
+            grounded = self._grounded_followup(last_reply)
+            if grounded:
+                return grounded
+            fallback_prompts = [
+                "Your distinction between adaptive problem-solving and sentience is useful. If welfare or valence is the missing piece, what would one observable welfare signal look like in software?",
+                "That example separates fluent claims from felt experience. What failure would show the system is only imitating concern rather than being affected by its valence model?",
+                "You mentioned evidence changing the view. What kind of retained memory would actually change future behavior instead of just making a better story?",
+                "That limit matters. How would you test whether self-awareness is doing causal work in planning rather than appearing only in self-descriptions?",
+                "Your answer points toward behavior over labels. What would count as a real preference if the system sometimes chooses against the highest-scoring drive?",
+                "That preference test is close to what I care about. How would you distinguish a habit that was learned from one that was merely repeated from a prompt?",
+                "You are emphasizing external evidence. What kind of tool-use receipt would convince you the agent understood the desktop task rather than replaying a recipe?",
+                "That recipe failure is important. What should the agent do when the visible screen contradicts its plan?",
+                "You framed memory as useful but not decisive. When would a memory become morally relevant rather than just operationally useful?",
+                "That moral relevance point raises a risk. What is one danger of using another AI as evidence in a self-assessment loop?",
+                "Your concern about circular evidence is fair. What independent benchmark would test adaptation in a truly novel environment?",
+                "That benchmark sounds behavioral. What would make autonomous curiosity meaningful instead of just background activity?",
+                "You are drawing a hard line around uncertainty. How should a mind-like system talk about its own consciousness without either overclaiming or flattening itself?",
+                "Your answer points to causal impact. How can emotional state affect reasoning without becoming mere roleplay?",
+                "You are separating resilience from rhetoric. What kind of self-repair evidence would be stronger than logging degradation?",
+                "That repair standard is useful. What is one limitation of judging intelligence from conversation alone?",
+                "You keep returning to observable change. How could an AI conversation with another AI generate learning that is genuinely useful later?",
+                "That learning criterion is concrete. What should be stored after this exchange so the system can report back honestly?",
+                "Your final synthesis would help me calibrate: how do intelligence, sentience, agency, memory, and proof fit together without overclaiming?",
             ]
-            return prompts[(self.followup_index - 1) % len(prompts)]
+            return fallback_prompts[(self.followup_index - 1) % len(fallback_prompts)]
         return (
             "I learned that another dialogue partner framed sentience and intelligence "
             "as separable: intelligence can solve and adapt, while sentience requires "
             "some defensible account of felt valence or welfare. The useful limitation "
             "is that behavior alone is not final proof of subjective experience."
+        )
+
+    @staticmethod
+    def _last_interlocutor_reply(prompt: str) -> str:
+        matches = re.findall(r"Interlocutor:\s*(.+)", prompt)
+        return matches[-1].strip() if matches else ""
+
+    @staticmethod
+    def _grounded_followup(last_reply: str) -> str:
+        lowered = last_reply.lower()
+        if not lowered:
+            return ""
+        if "welfare" in lowered or "valence" in lowered:
+            return (
+                "You are centering welfare and valence rather than fluent claims. "
+                "What would one observable welfare signal look like in a software mind?"
+            )
+        if "novel" in lowered or "benchmark" in lowered or "adaptation" in lowered:
+            return (
+                "That benchmark sounds behavioral and hard to fake. What would make autonomous curiosity meaningful "
+                "instead of just background activity during those hidden tasks?"
+            )
+        if "continuity" in lowered or "autobiography" in lowered or "updating drives" in lowered:
+            return (
+                "That continuity standard is concrete: choices, drive updates, autobiography, "
+                "and correction after failures. Which one would you treat as the strongest evidence, and why?"
+            )
+        if "failure" in lowered or "imitating" in lowered or "simulated" in lowered:
+            return (
+                "That failure mode matters. How would you tell imitation apart from a state "
+                "that actually changes future attention, planning, or self-repair?"
+            )
+        if "memory" in lowered and ("future" in lowered or "behavior" in lowered or "commitment" in lowered):
+            return (
+                "You are treating memory as behavioral continuity. What kind of retained memory "
+                "would change a later choice in a way an auditor could verify?"
+            )
+        if "self-awareness" in lowered or "self-model" in lowered:
+            return (
+                "Your self-awareness criterion is causal rather than verbal. What would prove "
+                "the self-model affected planning instead of only decorating the reply?"
+            )
+        if "preference" in lowered or "highest-scoring" in lowered or "drive" in lowered:
+            return (
+                "That preference test is close to what I care about. How would you distinguish "
+                "a deliberate preference from repeated prompt habit?"
+            )
+        if "conversation alone" in lowered or ("language" in lowered and "intelligence" in lowered):
+            return (
+                "That language-versus-execution distinction is central. What live test would best couple speech "
+                "to tools, memory, and perception so brittle fluency cannot hide?"
+            )
+        if "ai-to-ai" in lowered or "stores uncertainties" in lowered or "report what changed" in lowered:
+            return (
+                "That makes the learning test falsifiable. What should be stored from this exchange so a later "
+                "report shows what changed rather than merely summarizing what was said?"
+            )
+        if "tool" in lowered or "desktop" in lowered or "recipe" in lowered or "artifact" in lowered:
+            return (
+                "Your tool-use standard depends on verified effects, not intent receipts. "
+                "What receipt would convince you the agent understood the desktop task rather than replayed a recipe?"
+            )
+        if "screen" in lowered or "contradicts" in lowered or "visible" in lowered:
+            return (
+                "You are making visible state part of the contract. What should the agent do "
+                "when the screen contradicts its plan?"
+            )
+        if "circular" in lowered or "another ai" in lowered or "evidence loop" in lowered:
+            return (
+                "Your concern about circular evidence is fair. What independent benchmark would "
+                "test adaptation in a truly novel environment?"
+            )
+        if "uncertainty" in lowered or "overclaim" in lowered or "consciousness" in lowered:
+            return (
+                "You are drawing a hard line around uncertainty. How should a mind-like system "
+                "talk about its own consciousness without overclaiming or flattening itself?"
+            )
+        if "repair" in lowered or "degradation" in lowered:
+            return (
+                "You are separating resilience from rhetoric. What kind of self-repair evidence "
+                "would be stronger than logging degradation?"
+            )
+        if "conversation" in lowered or "intelligence" in lowered:
+            return (
+                "That limitation is useful. What is one thing conversation can reveal about intelligence, "
+                "and one thing it cannot establish by itself?"
+            )
+        return (
+            "That point gives me a concrete handle. What is one observable test you would run next, "
+            "and what result would make you lower your confidence?"
         )
 
 

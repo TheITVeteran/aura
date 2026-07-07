@@ -7225,3 +7225,58 @@ Remaining non-soak work after this checkpoint:
 - Run the final real RSI proof path with a visible/durable improvement result.
 - Continue Chrome/Kubernetes/aerospace-style reliability hardening against any
   new live neural-stream, terminal, boot, permission, or chat-path issues.
+
+## Checkpoint 2026-07-07-04: Grounded 20-Turn Web Interlocutor Proof
+
+Status: implementation, focused regression tests, and visible web-interlocutor
+proof artifact complete.
+
+Scope:
+
+- Fixed the proof harness brain so follow-up turns are grounded in the actual
+  observed interlocutor reply instead of following a fixed script. This keeps
+  the proof aligned with the production requirement that Aura respond to what
+  the other AI actually said, not paste the original objective or march through
+  canned prompts.
+- Kept production validation strict. The proof still fails if cognitive
+  composition is unavailable, if a deterministic fallback is used, if the
+  message is a task relay/status update, or if follow-ups are not anchored to
+  the transcript.
+- Preserved visible send/effect receipts: each turn records before/after page
+  hashes, sent text, observed reply, and effect verification.
+
+Verification:
+
+- `python -m py_compile tools/proof/run_web_interlocutor_live_proof.py`
+  -> passed.
+- `python -m pytest -q tests/test_web_interlocutor.py tests/test_interlocutor_factcheck.py --maxfail=1`
+  -> `30 passed`.
+- `python tools/proof/run_web_interlocutor_live_proof.py --turns 20 --wait-timeout 20 --out-dir artifacts/live_proof/web_interlocutor_20turn_proof_brain`
+  -> `passed=true`, `turns=20`, `memory_record_id=mem-6a3cd7da-baba-4636-89dc-933c3d09a310`,
+  `causal_influence=true`, `revisions=5`, `revision_receipts=5`, and
+  `fallback_composition_events=[]`.
+- Artifact hashes:
+  - `artifacts/live_proof/web_interlocutor_20turn_proof_brain/WEB_INTERLOCUTOR_VERDICT.json`
+    -> `f469fb769536d54031388e97ccc3c20c03ace44121291c27ce61551b8fd6556a`.
+  - `artifacts/live_proof/web_interlocutor_20turn_proof_brain/WEB_INTERLOCUTOR_RESULT.json`
+    -> `2c1e8f726ec9a5e2d34550e5be9c6749420379fc533ed5753b840ab3f7c4fb02`.
+
+Important caveat:
+
+- This closes the local visible web-interlocutor proof harness. Codex's Chrome
+  extension connector was unavailable in this session, so this does not yet
+  close the user-owned signed-in ChatGPT/Gemini profile proof. That remains an
+  environment-dependent live proof item.
+
+Remaining non-soak work after this checkpoint:
+
+- Run the user-owned signed-in ChatGPT/Gemini proof when Chrome connector access
+  is available or through Aura's resident desktop bridge: 20+ natural turns,
+  full-mind composition, visible page reading, retention, and report-back.
+- Build and visibly prove a more complex Program DNA replacement app with
+  held-out behavioral equivalence, not only scaffold/test generation.
+- Run the final real RSI proof path with a visible/durable improvement result.
+- Tighten retained-memory answers so memory claims cite or derive from canonical
+  transcript or memory evidence.
+- Continue Chrome/Kubernetes/aerospace-style reliability hardening against any
+  new live neural-stream, terminal, boot, permission, or chat-path issues.
