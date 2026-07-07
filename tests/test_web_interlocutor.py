@@ -16,68 +16,45 @@ from core.skills.web_interlocutor import WebInterlocutorSkill
 
 
 class FakeBrowser:
+    """Stateful visible-chat fake: the transcript reflects what was ACTUALLY
+    sent, then a scripted interlocutor reply.
+
+    A hardcoded transcript ("Aura: hello") breaks the moment the session
+    derives a substantive opening from the brain — the sent text no longer
+    appears on the page, so the reply-wait loop never sees its own message
+    and the turn fails. Echoing self.sent keeps the fake honest across any
+    opening/followup the session chooses, and it is poll-count independent.
+    """
+
+    _REPLIES = [
+        "Novel thought needs tension between analogy and verification.",
+        "Compare a city immune system to software observability, then test where the analogy breaks.",
+    ]
+
     def __init__(self):
         self.sent = []
-        self.snapshots = [
-            BrowserPageSnapshot(
-                url="https://example.test/chat",
-                title="Example Chat",
-                text="Example Chat\nMessage box",
-                editable_count=1,
-            ),
-            BrowserPageSnapshot(
-                url="https://example.test/chat",
-                title="Example Chat",
-                text=(
-                    "Example Chat\nMessage box\n"
-                    "Aura: hello\n"
-                    "Interlocutor: Novel thought needs tension between analogy and verification."
-                ),
-                editable_count=1,
-            ),
-            BrowserPageSnapshot(
-                url="https://example.test/chat",
-                title="Example Chat",
-                text=(
-                    "Example Chat\nMessage box\n"
-                    "Aura: hello\n"
-                    "Interlocutor: Novel thought needs tension between analogy and verification."
-                ),
-                editable_count=1,
-            ),
-            BrowserPageSnapshot(
-                url="https://example.test/chat",
-                title="Example Chat",
-                text=(
-                    "Example Chat\nMessage box\n"
-                    "Aura: hello\n"
-                    "Interlocutor: Novel thought needs tension between analogy and verification.\n"
-                    "Aura: Can you give one concrete example?\n"
-                    "Interlocutor: Compare a city immune system to software observability, then test where the analogy breaks."
-                ),
-                editable_count=1,
-            ),
-            BrowserPageSnapshot(
-                url="https://example.test/chat",
-                title="Example Chat",
-                text=(
-                    "Example Chat\nMessage box\n"
-                    "Aura: hello\n"
-                    "Interlocutor: Novel thought needs tension between analogy and verification.\n"
-                    "Aura: Can you give one concrete example?\n"
-                    "Interlocutor: Compare a city immune system to software observability, then test where the analogy breaks."
-                ),
-                editable_count=1,
-            ),
-        ]
+
+    def _transcript(self) -> str:
+        lines = ["Example Chat", "Message box"]
+        for i, sent in enumerate(self.sent):
+            lines.append(f"Aura: {sent}")
+            if i < len(self._REPLIES):
+                lines.append(f"Interlocutor: {self._REPLIES[i]}")
+        return "\n".join(lines)
+
+    def _snapshot(self) -> BrowserPageSnapshot:
+        return BrowserPageSnapshot(
+            url="https://example.test/chat",
+            title="Example Chat",
+            text=self._transcript(),
+            editable_count=1,
+        )
 
     async def open_or_attach(self, url):
-        return self.snapshots[0]
+        return self._snapshot()
 
     async def snapshot(self):
-        if len(self.snapshots) > 1:
-            return self.snapshots.pop(1)
-        return self.snapshots[0]
+        return self._snapshot()
 
     async def send_message(self, text):
         self.sent.append(text)
@@ -300,11 +277,27 @@ async def test_chrome_visible_browser_falls_back_to_visible_keyboard_when_dom_bl
         return fake_pyautogui, None
 
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", fake_get_pyautogui)
+    # Hermetic: this exercises the keyboard-fallback LOGIC, not the host's AX
+    # system. Stub the environment seams so it never drives a real (absent)
+    # browser composer — otherwise it iterates every click candidate against
+    # the live desktop for ~80s and fails headless.
+    monkeypatch.setattr("asyncio.sleep", lambda *_args, **_kwargs: _instant())
 
     browser = ChromeVisibleDialogueBrowser()
+    browser._screen_scene_targeting_enabled = False
     monkeypatch.setattr(browser._cdp, "is_available", lambda: False)
     monkeypatch.setattr(browser, "_run_chrome_js", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("Chrome JavaScript disabled")))
     monkeypatch.setattr(browser, "_dismiss_common_popups", lambda: None)
+    monkeypatch.setattr(browser, "_send_escape_to_browser", lambda: None)
+    monkeypatch.setattr(browser, "_activate_browser", lambda: None)
+    monkeypatch.setattr(
+        browser,
+        "_focused_element_snapshot",
+        lambda: (
+            "process:Google Chrome\nAXRole:AXTextArea\n"
+            "AXPlaceholderValue:Message ChatGPT\nAXPosition:500,760\nAXSize:600,80"
+        ),
+    )
     monkeypatch.setattr(browser, "_paste_and_submit", lambda text: {"ok": True, "text": text})
 
     result = await browser.send_message("Hello from Aura.")
