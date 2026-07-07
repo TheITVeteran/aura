@@ -180,20 +180,16 @@ async def async_main(argv: list[str] | None = None) -> int:
                 )
                 index += 1
                 if leak_baseline is not None and index % 20 == 0:
-                    # Discriminator: how much of the growth is reclaimable garbage
-                    # (GC lag / cycles) vs genuinely-referenced accumulation. If
-                    # RSS barely moves after a full collect, the growth is live
-                    # references (a real leak); if it drops, it was churn.
-                    rss_before = _rss_mb()
-                    gc.collect()
-                    rss_after = _rss_mb()
+                    # NOTE: do NOT gc.collect() here — a full collect on the live
+                    # object graph holds the GIL for seconds and would itself trip
+                    # the event-loop-lag monitor, corrupting the very metric this
+                    # soak measures. Reclaimability is probed once at shutdown.
                     snap = tracemalloc.take_snapshot()
                     top = snap.compare_to(leak_baseline, "lineno")[:12]
                     elapsed = time.monotonic() - soak_started
                     print(
                         f"🔬 [tracemalloc] top growth @ iter {index} "
-                        f"(elapsed {elapsed:.0f}s, rss {rss_after:.0f}MB, "
-                        f"gc reclaimed {rss_before - rss_after:+.1f}MB):",
+                        f"(elapsed {elapsed:.0f}s, rss {_rss_mb():.0f}MB):",
                         flush=True,
                     )
                     for stat in top:
