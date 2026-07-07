@@ -7280,3 +7280,55 @@ Remaining non-soak work after this checkpoint:
   transcript or memory evidence.
 - Continue Chrome/Kubernetes/aerospace-style reliability hardening against any
   new live neural-stream, terminal, boot, permission, or chat-path issues.
+
+## Checkpoint 2026-07-07-05: Program DNA Complex App Replacement Proof
+
+Status: implementation, regression test, and proof artifact complete.
+
+Scope:
+
+- Added a complex Program DNA proof runner for the `local-knowledge-vault`
+  scenario. This target is app-like rather than CLI-only: notes, tags, archive
+  state, note-to-note links, search, markdown export, and state summaries.
+- The proof generates a visible clean-room replacement workspace under
+  `artifacts/live_proof/program_dna_complex_app/replacement_workspace` with
+  source, tests, README, evidence, standards review, and receipt artifacts.
+- The proof uses Program DNA to emit the genome/scaffold from docs, UI notes,
+  examples, workflows, file formats, and permissions. The generated replacement
+  is tested against held-out observations produced by the hidden original.
+- Added a mutant workspace that deliberately removes exact tag search; the
+  held-out tests must reject it, proving the verification harness can fail.
+
+Verification:
+
+- `python -m py_compile tools/proof/run_program_dna_complex_app_proof.py`
+  -> passed.
+- `python tools/proof/run_program_dna_complex_app_proof.py --out-dir artifacts/live_proof/program_dna_complex_app`
+  -> `passed=true`, `genome_ok=true`, `replacement_tests_passed=true`,
+  `mutant_rejected=true`, `held_out_cases=3`, `feature_count=14`.
+- `python -m pytest -q tests/test_program_dna_complex_app_proof.py tests/test_real_app_reverse_engineering.py tests/test_program_dna_behavioral_equivalence_battery.py --maxfail=1`
+  -> `7 passed`.
+- Artifact hashes:
+  - `artifacts/live_proof/program_dna_complex_app/RECEIPT.json`
+    -> `9bea573e52ce20d41907833f9c347d71fd7dd810ac5f06a1b237d8c699a367f3`.
+  - `artifacts/live_proof/program_dna_complex_app/EVIDENCE.json`
+    -> `859b57867fbb019a9a41b926fad4dcdaffc8858144f8eb263fce55946648167e`.
+  - `artifacts/live_proof/program_dna_complex_app/STANDARDS_REVIEW.json`
+    -> `ba08dc99c1cb84ac6227a8ebd3c2b38e8570c85037ae9dff0037fa7b87aad823`.
+
+Important caveat:
+
+- This proves a representative complex local app replacement with held-out
+  behavior and mutant rejection. It does not claim arbitrary proprietary
+  cloning, source recovery, DRM bypass, or closed-source equivalence.
+
+Remaining non-soak work after this checkpoint:
+
+- Run the final real RSI proof path with a visible/durable improvement result.
+- Run the user-owned signed-in ChatGPT/Gemini proof when Chrome connector access
+  is available or through Aura's resident desktop bridge: 20+ natural turns,
+  full-mind composition, visible page reading, retention, and report-back.
+- Tighten retained-memory answers so memory claims cite or derive from canonical
+  transcript or memory evidence.
+- Continue Chrome/Kubernetes/aerospace-style reliability hardening against any
+  new live neural-stream, terminal, boot, permission, or chat-path issues.
