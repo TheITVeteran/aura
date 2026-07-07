@@ -133,6 +133,8 @@ artifacts/behavioral_proof/receipts/
 artifacts/aura_enterprise_gate_report.json
 artifacts/current/
 artifacts/live_proof/
+artifacts/live_apps/
+artifacts/live_proofs/
 aura_codebase_ai_audit*.txt
 artifacts/agi/dnu_proof/
 training/data/
