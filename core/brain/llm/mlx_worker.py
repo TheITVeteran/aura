@@ -395,6 +395,77 @@ def _surface_quality_failure_reasons(
     return reasons
 
 
+# Residual quality-gate reasons that are STYLE/COMPLETENESS defects, not
+# integrity leaks: after retries are exhausted, a substantive draft carrying
+# only these is delivered (with an honest gate receipt) instead of being
+# replaced by an empty reply. Observed live (Jul 7, post-restart): a
+# consciousness question drew real drafts that kept failing
+# missing_self_claim_evidence_boundary + missing_requested_phrase, and every
+# turn died as empty_cognitive_engine_reply — a dead turn is strictly worse
+# than an imperfectly-styled honest one. Leak/overclaim reasons stay
+# fail-closed.
+_DELIVERABLE_RESIDUAL_SURFACE_REASONS = frozenset(
+    {
+        "missing_requested_phrase",
+        "missing_requested_word_count",
+        "missing_requested_paragraph_count",
+        "missing_requested_list_count",
+        "empty_requested_list_item",
+        "missing_requested_choice_clarification",
+        "missing_requested_followup_question",
+        "too_short_for_user_turn",
+        "too_thin_for_user_turn",
+        "too_thin_for_open_ended_turn",
+        "too_thin_for_status_turn",
+        "too_thin_for_operational_status_turn",
+        "too_thin_for_expansion_request",
+        "low_signal_acknowledgement_placeholder",
+        "generic_assistant_language",
+    }
+)
+
+# Appended when a draft answers a consciousness/experience question without
+# the evidence boundary the honesty gate requires. Deterministic, aligned
+# with the evidence-bounded self-claim policy, and satisfies
+# _SELF_CLAIM_EVIDENCE_BOUNDARY_RE so the guard becomes self-healing instead
+# of turn-killing.
+_SELF_CLAIM_BOUNDARY_SUFFIX = (
+    " To be precise about what I can honestly claim: that description comes "
+    "from my own state and self-model — functional and observable in my "
+    "behavior — and it is evidence of process, not proof of phenomenal "
+    "experience."
+)
+
+
+def _salvage_exhausted_user_surface(
+    job: dict[str, Any],
+    response_text: Any,
+    rejection_reasons: list[str],
+) -> tuple[str, list[str]]:
+    """Best honest draft after quality-gate retries are exhausted.
+
+    Returns (text, residual_reasons); empty text means nothing was safely
+    deliverable and the caller keeps the fail-closed empty reply.
+    """
+    draft = str(response_text or "").strip()
+    if len(draft) < 40:
+        return "", list(rejection_reasons)
+
+    reasons = list(rejection_reasons)
+    if "missing_self_claim_evidence_boundary" in reasons:
+        amended = draft + _SELF_CLAIM_BOUNDARY_SUFFIX
+        amended_reasons = _surface_quality_failure_reasons(job, amended)
+        if "missing_self_claim_evidence_boundary" not in amended_reasons:
+            draft = amended
+            reasons = list(amended_reasons)
+
+    if not reasons:
+        return draft, []
+    if set(reasons) <= _DELIVERABLE_RESIDUAL_SURFACE_REASONS:
+        return draft, reasons
+    return "", reasons
+
+
 def _repair_live_user_surface_self_claims(response_text: Any) -> str:
     """Ground false or over-strong self-claims before worker quality retries."""
 
@@ -3215,7 +3286,28 @@ def _mlx_worker_loop(
                                                 surface_control_state["surface_quality_gate_passed"] = True
                                                 surface_control_state["surface_quality_gate_reasons"] = []
                                             else:
-                                                response_text = ""
+                                                best_draft, residual_reasons = (
+                                                    _salvage_exhausted_user_surface(
+                                                        job,
+                                                        response_text,
+                                                        rejection_reasons,
+                                                    )
+                                                )
+                                                if best_draft:
+                                                    logger.info(
+                                                        "🛡️ [WORKER] Delivering best honest draft after gate "
+                                                        "exhaustion (residual=%s) instead of a dead turn.",
+                                                        ",".join(residual_reasons) or "none",
+                                                    )
+                                                    response_text = best_draft
+                                                    surface_control_state["surface_quality_gate_passed"] = (
+                                                        not residual_reasons
+                                                    )
+                                                    surface_control_state["surface_quality_gate_reasons"] = (
+                                                        residual_reasons[:8]
+                                                    )
+                                                else:
+                                                    response_text = ""
                                             break
                                         surface_control_state["surface_quality_gate_passed"] = True
                                         surface_control_state["surface_quality_gate_reasons"] = []

@@ -50,7 +50,10 @@ def readiness_incoherences(payload: dict) -> list[str]:
     incoherences: list[str] = []
     if uptime > 120.0 and conv_ready and status_text == "booting":
         incoherences.append(f"still '{status_text}' after {uptime:.0f}s with conversation_ready")
-    if payload.get("ready") and not conv_ready:
+    # A lane actively answering a turn (conversation_working) legitimately
+    # reports ready=true with conversation_ready=false — the desktop must
+    # connect and stream the in-flight reply. Observed live post-restart.
+    if payload.get("ready") and not conv_ready and phase != "conversation_working":
         incoherences.append("ready=true but conversation_ready=false")
     if status_text == "ready" and phase and phase != "kernel_ready":
         incoherences.append(f"status=ready but phase={phase}")
