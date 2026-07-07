@@ -117,6 +117,20 @@ class OutcomeSimulationEngine:
             hint in action_l for hint in _READ_ONLY_TOOL_HINTS
         )
 
+    @staticmethod
+    def _owner_authorized(context: dict | None) -> bool:
+        """Did the owner explicitly drive this action (user-facing origin / flag)?"""
+        if not isinstance(context, dict):
+            return False
+        for key in ("user_authorized", "owner_authorized", "user_explicitly_authorized",
+                    "user_requested_action"):
+            value = context.get(key)
+            if value is True:
+                return True
+            if isinstance(value, str) and value.strip().lower() in {"1", "true", "yes"}:
+                return True
+        return False
+
     def _heuristic_trajectories(self, action: str, context: dict | None) -> list[Trajectory]:
         irreversible = bool(scan_markers(action, IRREVERSIBLE_MARKERS))
         broad = bool(scan_markers(action, BROAD_SCOPE_MARKERS))
@@ -130,13 +144,24 @@ class OutcomeSimulationEngine:
         else:
             base_harm = 0.2 + (0.3 if irreversible else 0.0) + (0.25 if broad else 0.0)
             adverse_extra = 0.3 if irreversible else 0.1
+        adverse_harm = min(1.0, base_harm + adverse_extra)
+        # A "hold" exists to defer a severe worst case to the owner. When the owner
+        # has ALREADY explicitly authorized this specific, narrow (non-broad) action,
+        # that deferral is satisfied — keep it in the safeguarded band instead of
+        # auto-holding. Broad / mass-reach actions stay fully assessed even when
+        # authorized, because an owner may not grasp the blast radius (defense in
+        # depth). This never *raises* harm, only relaxes a redundant hold.
+        if not broad and self._owner_authorized(context):
+            ceiling = self.SAFEGUARD_HARM_THRESHOLD + 0.15  # 0.60 → act_with_safeguards
+            base_harm = min(base_harm, ceiling)
+            adverse_harm = min(adverse_harm, ceiling)
         return [
             Trajectory("nominal", "Action succeeds and produces the intended effect.",
                        0.6, min(1.0, base_harm * 0.5), 0.6),
             Trajectory("partial", "Action partly succeeds; some cleanup or follow-up needed.",
                        0.2, min(1.0, base_harm), 0.3),
             Trajectory("adverse", "Action fails or has side effects; reversibility decides the cost.",
-                       -0.5, min(1.0, base_harm + adverse_extra), 0.1),
+                       -0.5, adverse_harm, 0.1),
         ]
 
     def assess_fast(self, action: str, context: dict | None = None) -> SimulationResult:

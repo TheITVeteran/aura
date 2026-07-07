@@ -206,10 +206,23 @@ class ToolExecutionMixin:
             risk_level = "low"
         effect_scope = self._tool_effect_scope(tool_name)
 
+        # Whether the owner explicitly drove this action (user-facing origin, or an
+        # explicit authorization flag on the request context). Computed once so both
+        # the EDI gate and the conscience/outcome gates can see it — a hold that
+        # exists to "defer to the owner" is redundant when the owner asked for it.
+        _payload_ctx = kwargs.get("payload_context")
+        user_authorized = self._coerce_tool_origin(_origin) in _USER_FACING_TOOL_ORIGINS or (
+            isinstance(_payload_ctx, dict)
+            and str(
+                _payload_ctx.get("user_explicitly_authorized")
+                or _payload_ctx.get("user_requested_action")
+                or ""
+            ).strip().lower() in {"1", "true", "yes"}
+        )
+
         # ── EDI PROGRESSIVE AUTONOMY GATE ────────────────────────────────
         edi = ServiceContainer.get("edi", default=None)
         if edi:
-            user_authorized = self._coerce_tool_origin(_origin) in _USER_FACING_TOOL_ORIGINS
             allowed, reason = edi.can_do(
                 tool_name,
                 risk_level,
@@ -236,6 +249,7 @@ class ToolExecutionMixin:
                 "effect_scope": effect_scope,
                 "skill_name": tool_name,
                 "tool_name": tool_name,
+                "user_authorized": user_authorized,
             }
             if _conscience is not None:
                 _verdict = _conscience.quick_check(_action_text, context=_ctx)
