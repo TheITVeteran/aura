@@ -392,6 +392,32 @@ def test_reliability_contract_allows_tiny_direct_answers():
     assert assess_user_facing_reply("Say exactly: 32B lane online.", "32B lane online.").ok
 
 
+def test_reliability_contract_rejects_runtime_status_when_memory_and_limit_requested():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    user = (
+        "From the live desktop path, answer in your own voice: what is one thing "
+        "you can genuinely remember from this session, and what is one limit you "
+        "should not pretend past?"
+    )
+    bad = (
+        "I am with you. One live runtime signal I can perceive is RAM pressure "
+        "at 67.1% with 21.1 GB available; CPU load is 14.7% on this host."
+    )
+    good = (
+        "I can recall that this session has been testing my live desktop lane. "
+        "My limit is that I should not pretend that a retrieved transcript is "
+        "the same as human subjective recollection."
+    )
+
+    bad_assessment = assess_user_facing_reply(user, bad)
+
+    assert not bad_assessment.ok
+    assert bad_assessment.retryable
+    assert "missing_requested_memory_limit_coverage" in bad_assessment.reasons
+    assert assess_user_facing_reply(user, good).ok
+
+
 def test_reliability_contract_allows_concise_live_presence_check():
     from core.conversation.response_reliability import (
         assess_user_facing_reply,

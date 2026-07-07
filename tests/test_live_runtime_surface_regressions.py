@@ -1780,12 +1780,12 @@ def test_local_deep_solver_is_blocked_by_default_on_64gb_desktop(monkeypatch):
 def test_primary_foreground_timeout_is_bounded_for_live_desktop_path():
     from interface.routes.chat import _foreground_timeout_for_lane
 
-    # Ready lane: min(_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S=207,
-    # _DESKTOP_COGNITIVE_TURN_TIMEOUT_S=90 + 48s response reserve) = 138.
+    # Ready lane: min(_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S=60,
+    # _DESKTOP_COGNITIVE_TURN_TIMEOUT_S=48 + 4s response reserve) = 52.
     # Cold lanes retain a separate 210s outer bound for model startup.
-    assert _foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 138.0
+    assert _foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 52.0
     assert _foreground_timeout_for_lane({"conversation_ready": False, "state": "warming"}) == 210.0
-    assert _foreground_timeout_for_lane({"conversation_ready": False, "state": "unknown"}) == 138.0
+    assert _foreground_timeout_for_lane({"conversation_ready": False, "state": "unknown"}) == 52.0
 
 
 def test_continuity_generic_reentry_goal_is_not_restored_as_work(monkeypatch):

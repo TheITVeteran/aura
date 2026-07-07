@@ -907,14 +907,14 @@ def test_foreground_timeout_for_cold_or_recovering_lane():
 
     assert server_module._foreground_timeout_for_lane({"conversation_ready": False, "state": "cold"}) == 210.0
     assert server_module._foreground_timeout_for_lane({"conversation_ready": False, "state": "recovering"}) == 210.0
-    assert server_module._foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 138.0
-    assert server_module._desktop_required_cognitive_budget(foreground_timeout=66.0) == 63.0
-    assert server_module._desktop_required_cognitive_budget(foreground_timeout=108.0) == 105.0
+    assert server_module._foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 52.0
+    assert server_module._desktop_required_cognitive_budget(foreground_timeout=66.0) == 60.0
+    assert server_module._desktop_required_cognitive_budget(foreground_timeout=108.0) == 60.0
     assert server_module._desktop_required_cognitive_budget(
         foreground_timeout=108.0,
         elapsed_s=20.0,
-    ) == 85.0
-    assert server_module._desktop_required_cognitive_budget(foreground_timeout=210.0) == 207.0
+    ) == 60.0
+    assert server_module._desktop_required_cognitive_budget(foreground_timeout=210.0) == 60.0
 
 
 def test_reply_topicality_flags_unbridged_relevance_challenge():

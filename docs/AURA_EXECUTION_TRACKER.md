@@ -7173,3 +7173,55 @@ Remaining non-soak work after this checkpoint:
   self-improvement result is visibly produced, verified, and retained.
 - Continue Chrome/Kubernetes/aerospace-style reliability hardening against any
   new live neural-stream, terminal, boot, permission, or chat-path issues.
+
+## Checkpoint 2026-07-07-03: Bounded Live Desktop Chat and Interlocutor Composition Guard
+
+Status: implementation, focused regression tests, and launched Aura live-path
+smoke replay complete.
+
+Scope:
+
+- Reduced the ready live desktop chat envelope from the old 138-second budget
+  to a 52-second wall-clock default. Cold/warming startup still receives a
+  separate startup window, but a ready conversation lane should no longer hold
+  the UI through minute-plus no-token stalls before failing closed.
+- Fixed a web-interlocutor recursion hazard where internal "compose Aura's next
+  message to another AI" prompts could be misread by the chat router as a new
+  request to launch the governed web-interlocutor skill. Internal composition
+  now stays inside the full-mind reply path instead of recursively starting the
+  tool.
+- Added a semantic coverage guard for direct prompts that ask for both retained
+  memory evidence and an honest boundary/limit. A runtime CPU/RAM status answer
+  no longer passes as a completed response to that kind of request.
+
+Verification:
+
+- `python -m py_compile interface/routes/chat.py core/brain/llm/mlx_client.py core/brain/cognitive_engine.py`
+  -> passed.
+- `python -m py_compile core/conversation/response_reliability.py interface/routes/chat.py`
+  -> passed.
+- `python -m pytest -q tests/test_web_interlocutor.py tests/test_interlocutor_factcheck.py tests/test_live_runtime_surface_regressions.py::test_primary_foreground_timeout_is_bounded_for_live_desktop_path tests/test_chat_reliability_proof.py tests/test_server_conversation_lane.py::test_desktop_required_cognitive_engine_timeout_does_not_retry_hidden_work --maxfail=1`
+  -> `150 passed`.
+- `python -m pytest -q tests/test_chat_human_level_contract.py::test_reliability_contract_rejects_runtime_status_when_memory_and_limit_requested tests/test_chat_human_level_contract.py::test_reliability_contract_allows_tiny_direct_answers tests/test_chat_human_level_contract.py::test_reliability_contract_allows_concise_live_presence_check tests/test_web_interlocutor.py tests/test_interlocutor_factcheck.py tests/test_live_runtime_surface_regressions.py::test_primary_foreground_timeout_is_bounded_for_live_desktop_path tests/test_chat_reliability_proof.py tests/test_server_conversation_lane.py::test_desktop_required_cognitive_engine_timeout_does_not_retry_hidden_work --maxfail=1`
+  -> `153 passed`.
+- Launched `/Applications/Aura.app`; boot reached conversation-ready with lane
+  `ready`, no active generation, and no blockers.
+- Live desktop-required `/api/chat` replay returned in `14.52s` with
+  `status=cognitive_engine`, `response_confidence=high`, `full_mind_path=true`,
+  `live_mind_controls_worker_applied=true`, `last_user_generation_endpoint=Cortex`,
+  and no fallback lane. During the turn, health showed one active generation
+  with token progress; after completion the lane returned to ready.
+
+Remaining non-soak work after this checkpoint:
+
+- Tighten memory evidence further so "remembered" claims cite or derive from
+  specific canonical transcript/memory evidence when the user asks for retained
+  memory, instead of merely sounding plausible.
+- Rerun the visible ChatGPT/Gemini web-interlocutor proof after this recursion
+  fix; require natural Aura-authored turns, real page reading, reply anchoring,
+  memory retention, and report-back.
+- Build and visibly prove a more complex Program DNA replacement app with
+  held-out behavioral equivalence, not only scaffold/test generation.
+- Run the final real RSI proof path with a visible/durable improvement result.
+- Continue Chrome/Kubernetes/aerospace-style reliability hardening against any
+  new live neural-stream, terminal, boot, permission, or chat-path issues.

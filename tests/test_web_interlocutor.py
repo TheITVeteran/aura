@@ -481,6 +481,25 @@ def test_web_interlocutor_followup_must_anchor_to_observed_reply():
 
 
 @pytest.mark.asyncio
+async def test_chat_route_does_not_recurse_on_internal_web_interlocutor_composition(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    async def _forbidden_governed_skill(*_args, **_kwargs):
+        raise AssertionError("internal composition prompt must not execute web_interlocutor")
+
+    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _forbidden_governed_skill)
+
+    result = await chat_routes._execute_governed_capability_request_from_chat(
+        "Compose only the exact message Aura should send to another AI in a visible "
+        "browser conversation. Write naturally as Aura.\n\n"
+        "You are Aura beginning a visible conversation with another AI. Ask for a "
+        "critical distinction.\n\nOpening message:"
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_web_interlocutor_deterministic_composition_requires_explicit_opt_in(monkeypatch):
     monkeypatch.setattr("asyncio.sleep", lambda *_args, **_kwargs: _instant())
     browser = FakeBrowser()

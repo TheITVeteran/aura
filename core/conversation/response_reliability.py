@@ -1586,6 +1586,43 @@ def _missing_choice_clarification(user_message: Any, reply_text: Any) -> bool:
     return False
 
 
+_MEMORY_LIMIT_DUAL_REQUEST_RE = re.compile(
+    r"\b(?:remember|recall|memory|retained|from this session|from earlier|across sessions?)\b"
+    r"(?s:.){0,260}"
+    r"\b(?:limit|boundary|should not pretend|cannot|can't|do not know|don't know|honest limits?)\b"
+    r"|"
+    r"\b(?:limit|boundary|should not pretend|cannot|can't|do not know|don't know|honest limits?)\b"
+    r"(?s:.){0,260}"
+    r"\b(?:remember|recall|memory|retained|from this session|from earlier|across sessions?)\b",
+    re.IGNORECASE,
+)
+_MEMORY_COVERAGE_REPLY_RE = re.compile(
+    r"\b(?:remember|recall|memory|retained|you asked|you told me|from this session|"
+    r"earlier in this (?:session|conversation)|session context|conversation context|"
+    r"what i can see in (?:memory|the transcript|this thread))\b",
+    re.IGNORECASE,
+)
+_LIMIT_COVERAGE_REPLY_RE = re.compile(
+    r"\b(?:limit|boundary|should not pretend|cannot|can't|do not know|don't know|"
+    r"not claim|not pretend|not infer|unproven|unknown|without evidence|"
+    r"i should be honest)\b",
+    re.IGNORECASE,
+)
+
+
+def _missing_requested_memory_limit_coverage(user_message: Any, reply_text: Any) -> bool:
+    user = str(user_message or "")
+    if not user or not _MEMORY_LIMIT_DUAL_REQUEST_RE.search(user):
+        return False
+    reply = str(reply_text or "")
+    if not reply:
+        return True
+    return not (
+        _MEMORY_COVERAGE_REPLY_RE.search(reply)
+        and _LIMIT_COVERAGE_REPLY_RE.search(reply)
+    )
+
+
 def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[str]:
     user = str(user_message or "")
     reply = str(reply_text or "").strip()
@@ -1619,6 +1656,8 @@ def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[st
 
     if _missing_choice_clarification(user, reply):
         reasons.append("missing_requested_choice_clarification")
+    if _missing_requested_memory_limit_coverage(user, reply):
+        reasons.append("missing_requested_memory_limit_coverage")
 
     if _FOLLOWUP_QUESTION_REQUEST_RE.search(user) and "?" not in reply:
         reasons.append("missing_requested_followup_question")
@@ -3968,6 +4007,7 @@ def assess_user_facing_reply(
         "missing_requested_word_count",
         "missing_requested_followup_question",
         "missing_requested_phrase",
+        "missing_requested_memory_limit_coverage",
         "missing_future_memory_answer",
         "missing_identity_answer",
         "missing_requested_self_process_coverage",

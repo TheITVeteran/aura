@@ -241,13 +241,13 @@ def _env_float(name: str, default: float, *, minimum: float) -> float:
 
 _DESKTOP_COGNITIVE_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_TURN_TIMEOUT_S",
-    90.0,
+    48.0,
     minimum=10.0,
 )
 _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S",
-    75.0,
-    minimum=30.0,
+    40.0,
+    minimum=20.0,
 )
 _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S",
@@ -256,12 +256,12 @@ _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S = _env_float(
 )
 _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S",
-    207.0,
+    60.0,
     minimum=30.0,
 )
 _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_RESPONSE_RESERVE_S",
-    3.0,
+    4.0,
     minimum=1.0,
 )
 _DESKTOP_MEMORY_STATE_TURN_TIMEOUT_S = _env_float(
@@ -6891,10 +6891,10 @@ def _foreground_timeout_for_lane(lane: dict[str, Any] | None) -> float:
     lane = dict(lane or {})
     state = str(lane.get("state", "") or "").lower()
     ready_timeout = max(
-        60.0,
+        30.0,
         min(
             _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S,
-            _DESKTOP_COGNITIVE_TURN_TIMEOUT_S + 48.0,
+            _DESKTOP_COGNITIVE_TURN_TIMEOUT_S + _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S,
         ),
     )
     if bool(lane.get("conversation_ready", False)):
@@ -13197,6 +13197,18 @@ _WEB_INTERLOCUTOR_TARGETS = {
 
 def _looks_like_web_interlocutor_execution_request(user_message: str) -> bool:
     lowered = str(user_message or "").lower()
+    internal_composition_markers = (
+        "compose only the exact message",
+        "write only aura's next message",
+        "write only the message to send",
+        "message to send:",
+        "opening message:",
+        "next message:",
+        "this is not a reply to bryan",
+        "purpose: interlocutor_message",
+    )
+    if any(marker in lowered for marker in internal_composition_markers):
+        return False
     target_markers = (
         "chatgpt",
         "gemini",
