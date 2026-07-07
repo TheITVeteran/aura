@@ -314,6 +314,20 @@ async def run_boot_probes(
     for name, probe in base.items():
         result = await _run_probe(name, probe)
         report.results.append(result)
+    # Boot legibility: surface per-probe timings so the slow probe in the
+    # boot_probe_enforcement phase is named, not buried in a single mark.
+    try:
+        slowest = sorted(report.results, key=lambda r: r.duration_s, reverse=True)
+        total = sum(r.duration_s for r in report.results)
+        breakdown = ", ".join(f"{r.name}={r.duration_s * 1000:.0f}ms" for r in slowest[:3])
+        logger.info(
+            "🔬 Boot probes: %d probes in %.0fms (slowest: %s)",
+            len(report.results),
+            total * 1000,
+            breakdown,
+        )
+    except (AttributeError, TypeError, ValueError):
+        pass
     if strict and not report.all_ok:
         failed = ", ".join(r.name for r in report.failed())
         raise RuntimeError(f"AURA_STRICT_RUNTIME: boot probes failed: {failed}")

@@ -10,9 +10,12 @@ actually touches. Run against a live instance (default 127.0.0.1:8000):
 Checks (all read-only; no chat turns, no state mutation):
   boot_health        /api/health/boot returns 200 with healthy payload
   runtime_pulse      health report: probes pass, contract level healthy
+  readiness_coherence  the readiness story is self-consistent (no "booting"
+                       forever while conversation_ready, no ready-without-lane)
   ui_shell           / serves the app shell with the expected mount points
   static_assets      aura.js / aura.css / service-worker served and non-empty
   websocket          /ws accepts an upgrade and answers a ping
+  incidents          /api/system/incidents answers with a valid narrative
   latency            every HTTP check above answers within budget
 
 Exit codes: 0 all pass, 1 any check failed, 2 instance unreachable.
@@ -24,13 +27,34 @@ import base64
 import json
 import os
 import socket
-import sys
 import time
 import urllib.error
 import urllib.request
 
 DEFAULT_BASE = "http://127.0.0.1:8000"
 HTTP_BUDGET_S = 5.0
+
+
+def readiness_incoherences(payload: dict) -> list[str]:
+    """Return the ways a boot-health payload contradicts itself (empty == coherent).
+
+    Pure function so the coherence contract is unit-testable without a live
+    server. This is the logic that catches user-facing readiness lies: a shell
+    stuck at "booting" while the lane is ready, a "ready" flag with no lane,
+    or a "ready" status that disagrees with the boot phase.
+    """
+    phase = str(payload.get("boot_phase") or "")
+    status_text = str(payload.get("status") or "")
+    conv_ready = bool(payload.get("conversation_ready"))
+    uptime = float(payload.get("runtime_age_s") or payload.get("uptime") or 0.0)
+    incoherences: list[str] = []
+    if uptime > 120.0 and conv_ready and status_text == "booting":
+        incoherences.append(f"still '{status_text}' after {uptime:.0f}s with conversation_ready")
+    if payload.get("ready") and not conv_ready:
+        incoherences.append("ready=true but conversation_ready=false")
+    if status_text == "ready" and phase and phase != "kernel_ready":
+        incoherences.append(f"status=ready but phase={phase}")
+    return incoherences
 
 
 def _get(base: str, path: str) -> tuple[int, bytes, float]:
@@ -70,6 +94,17 @@ def probe(base: str) -> dict:
         probes = payload.get("required_probes") or payload.get("probes") or {}
         all_passed = bool(probes.get("all_passed", status == 200))
         record("runtime_pulse", all_passed, f"required_probes.all_passed={all_passed}")
+
+        # Readiness coherence: the story the shell reads must be self-consistent.
+        # This is the check that would have caught the "booting, 48% for 55
+        # minutes while chat works" bug — a user-facing lie about state.
+        incoherences = readiness_incoherences(payload)
+        record(
+            "readiness_coherence",
+            not incoherences,
+            "; ".join(incoherences)
+            or f"coherent (status={payload.get('status')} phase={payload.get('boot_phase')})",
+        )
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return {
             "reachable": False,
@@ -130,6 +165,21 @@ def probe(base: str) -> dict:
             record("websocket", upgraded, response.splitlines()[0] if response else "no response", elapsed)
     except (OSError, IndexError, ValueError) as exc:
         record("websocket", False, f"{type(exc).__name__}: {exc}")
+
+    # Incident narrative endpoint — the operator's "what happened and why".
+    try:
+        status, body, elapsed = _get(base, "/api/system/incidents?minutes=60")
+        payload = json.loads(body or b"{}")
+        schema_ok = str(payload.get("schema", "")).startswith("aura.incident_narrative")
+        episodes = payload.get("episodes")
+        record(
+            "incidents",
+            status == 200 and schema_ok and isinstance(episodes, list),
+            f"status={status} episodes={len(episodes) if isinstance(episodes, list) else 'n/a'}",
+            elapsed,
+        )
+    except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError, ValueError) as exc:
+        record("incidents", False, f"{type(exc).__name__}: {exc}")
 
     # Latency budget over the HTTP checks
     slow = {
