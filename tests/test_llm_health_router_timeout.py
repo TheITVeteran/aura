@@ -562,11 +562,19 @@ def test_desktop_background_headroom_defers_brainstem_before_memory_spike(monkey
     import core.brain.llm_health_router as router_module
 
     monkeypatch.setattr(router_module, "desktop_resource_guard_enabled", lambda env=None: True)
+    # Genuine pre-spike headroom: high pressure AND low available. The old values
+    # here (58% / 26.5GB) were actually the desktop STEADY STATE with the 32B
+    # resident — deferring there meant background cognition could never run, so
+    # mind_tick never completed a successful tick → false-death → the launcher
+    # respawned a duplicate 32B (self-sustaining respawn loop, 2026-07). The gate
+    # is now calibrated to admit at steady state (see
+    # tests/test_brainstem_background_headroom_calibration.py) while STILL
+    # deferring as real pressure builds toward a spike, which this asserts.
     monkeypatch.setattr(
         "core.utils.memory_monitor.get_memory_pressure_snapshot",
         lambda: SimpleNamespace(
-            pressure_pct=58.0,
-            available_gb=26.5,
+            pressure_pct=68.0,
+            available_gb=20.0,
             process_rss_gb=20.0,
             process_rss_limit_gb=40.0,
         ),
