@@ -114,3 +114,31 @@ def test_bootstrap_lock_does_not_reap_verified_live_runtime(monkeypatch):
     aura_main.bootstrap_lock()
 
     assert calls == ["acquire:orchestrator:False"]
+
+
+def test_reaper_survives_governance_denied_process_table_read(monkeypatch):
+    """Boot must never die because the process reaper couldn't read `ps`.
+
+    Regression: _reap_orphaned_aura_processes used the offline_tooling bypass,
+    which raises GovernanceViolation once runtime governance reads active
+    during bootstrap — crashing the ENTIRE boot. It now uses the read_only
+    lane and degrades on any subprocess/governance error instead of raising.
+    """
+    import aura_main
+    from core.governance_context import GovernanceViolation
+
+    class _DenyingGateway:
+        def run(self, *args, **kwargs):
+            # Prove the reaper no longer relies on the offline bypass, and that
+            # even a hard governance denial cannot escape.
+            assert kwargs.get("read_only") is True
+            assert "offline_tooling" not in kwargs
+            raise GovernanceViolation("bypass denied while live governance is active")
+
+    monkeypatch.setattr(
+        "core.runtime.subprocess_gateway.get_subprocess_gateway",
+        lambda: _DenyingGateway(),
+    )
+
+    # Must return 0 (reaped nothing), not propagate the violation.
+    assert aura_main._reap_orphaned_aura_processes() == 0

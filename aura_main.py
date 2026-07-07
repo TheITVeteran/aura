@@ -2958,16 +2958,23 @@ def _reap_orphaned_aura_processes() -> int:
     parent = os.getppid()
     killed = 0
     try:
+        from core.governance_context import GovernanceViolation
         from core.runtime.subprocess_gateway import get_subprocess_gateway
 
+        # Reading the process table is pure read-only introspection — it must
+        # use the read_only lane, not the offline_tooling bypass (which is for
+        # spawning Aura-orchestrating child jobs and is correctly refused once
+        # runtime governance reports active). The old offline_tooling path
+        # crashed the ENTIRE boot with GovernanceViolation when governance
+        # read active during bootstrap. Boot hygiene must never be fatal.
         proc = get_subprocess_gateway().run(
             ["ps", "-axo", "pid=,user=,command="],
             timeout=5,
             source="maintenance_tooling:process_reaper",
-            offline_tooling=True,
+            read_only=True,
         )
         out = proc.stdout
-    except (subprocess.SubprocessError, OSError) as exc:
+    except (subprocess.SubprocessError, OSError, GovernanceViolation, ValueError) as exc:
         record_degradation("aura_main", exc)
         logger.warning("Unable to inspect process table for stale Aura processes: %s", exc)
         return 0
