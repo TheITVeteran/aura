@@ -1,5 +1,6 @@
 import asyncio
 import sqlite3
+import threading
 import time
 from types import SimpleNamespace
 
@@ -279,3 +280,89 @@ async def test_state_repository_clear_pending_proxy_commit_handles_closed_db(mon
         for record in tracker.recent(subsystem="state_repository")
     )
     tracker.reset()
+
+
+def test_stale_rhythm_verdict_names_the_wedged_stage():
+    """'is_alive() returned False' told an operator nothing for two hours
+    live (Jul 7): the rhythm was wedged at one stage with no receipt. Every
+    stale verdict must now record WHERE the loop is stuck."""
+    from core.health.degraded_events import isolated_degraded_event_scope
+
+    class RunningTask:
+        @staticmethod
+        def done():
+            return False
+
+    tick = MindTick.__new__(MindTick)
+    tick._running = True
+    tick._task = RunningTask()
+    tick._started_at = time.time() - 7000
+    tick._last_successful_tick_at = time.time() - 4600
+    tick._last_loop_progress_at = time.time() - 4600
+    tick._active_tick_started_at = time.time() - 4600
+    tick._active_tick_stage = "llm_health"
+    tick._consecutive_loop_failures = 0
+    tick._tick_count = 40
+    tick._last_liveness_repair_at = time.monotonic()  # repair rate-limited off
+
+    with isolated_degraded_event_scope("stale-stage-test"):
+        from core.health.degraded_events import get_recent_degraded_events
+
+        assert tick.is_alive() is False
+        events = get_recent_degraded_events(limit=10)
+    stale = [e for e in events if e.get("reason") == "rhythm_stale"]
+    assert stale, events
+    assert "stage=llm_health" in stale[0].get("detail", "")
+
+
+def test_unreachable_liveness_repair_is_never_silent():
+    """A repair that cannot run must say so — the silent no-op branch left
+    the runtime DEGRADED for hours with 'repair machinery present'."""
+    from core.health.degraded_events import (
+        get_recent_degraded_events,
+        isolated_degraded_event_scope,
+    )
+
+    class RunningTask:
+        @staticmethod
+        def done():
+            return False
+
+        @staticmethod
+        def cancel():
+            return True
+
+    tick = MindTick.__new__(MindTick)
+    tick._running = True
+    tick._task = RunningTask()
+    tick._active_tick_stage = "llm_health"
+    tick._last_liveness_repair_at = 0.0
+    tick._owner_loop = None  # the dead-end: no usable loop from a thread
+
+    with isolated_degraded_event_scope("repair-unreachable-test"):
+        result_holder = {}
+
+        def probe():
+            result_holder["repaired"] = tick._attempt_liveness_repair(
+                reason="test", cancel_existing=False
+            )
+
+        worker = threading.Thread(target=probe)
+        worker.start()
+        worker.join(timeout=5)
+        events = get_recent_degraded_events(limit=10)
+
+    assert result_holder.get("repaired") is False
+    unreachable = [e for e in events if e.get("reason") == "liveness_repair_unreachable"]
+    assert unreachable, events
+    assert "no usable owner loop" in unreachable[0].get("detail", "")
+
+
+def test_tick_llm_health_await_is_bounded():
+    """The rhythm loop must never hand its liveness to a dependency: both
+    remaining bare awaits (state read, tier health sweep) carry timeouts."""
+    import inspect
+
+    src = inspect.getsource(MindTick._run_loop)
+    assert "wait_for(\n                        self.orchestrator.state_repo.get_current()" in src.replace("  ", "  ") or "state_repo.get_current(), timeout=" in src
+    assert "ensure_all_tiers_healthy(), timeout=" in src

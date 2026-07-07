@@ -457,6 +457,23 @@ class MindTick:
             return bool(self._task and not self._task.done())
         if task_alive:
             age = now - freshest_progress if freshest_progress > 0.0 else now - float(getattr(self, "_started_at", now) or now)
+            # Name the wedge: the contract line 'is_alive() returned False'
+            # told an operator nothing for two hours. Every stale-progress
+            # verdict now records WHERE the rhythm is stuck.
+            record_degraded_event(
+                "mind_tick",
+                "rhythm_stale",
+                detail=(
+                    f"stage={getattr(self, '_active_tick_stage', '?')} "
+                    f"progress_age={age:.0f}s"
+                ),
+                severity="warning",
+                classification="background_degraded",
+                context={
+                    "stage": str(getattr(self, "_active_tick_stage", "") or ""),
+                    "progress_age_s": round(age, 1),
+                },
+            )
             self._attempt_liveness_repair(
                 reason=f"stale progress for {age:.1f}s",
                 cancel_existing=True,
@@ -526,6 +543,21 @@ class MindTick:
 
                 owner_loop.call_soon_threadsafe(_threadsafe_repair)
                 logger.info("MindTick repair scheduled onto owning loop from thread.")
+            else:
+                # A repair that silently cannot run is how a runtime sits
+                # DEGRADED for hours with 'repair machinery present'. Say so.
+                record_degraded_event(
+                    "mind_tick",
+                    "liveness_repair_unreachable",
+                    detail=(
+                        "no usable owner loop from thread context"
+                        if owner_loop is None
+                        else "owner loop closed"
+                    ),
+                    severity="error",
+                    classification="background_degraded",
+                    context={"stage": str(getattr(self, "_active_tick_stage", "") or "")},
+                )
             return False
 
         finished_error = None
@@ -620,7 +652,26 @@ class MindTick:
                 from infrastructure.watchdog import get_watchdog
                 get_watchdog().heartbeat("mind_tick")
                 
-                state = await self.orchestrator.state_repo.get_current()
+                # Bounded: the rhythm loop must never hand its liveness to a
+                # dependency. A wedged state read parks the whole tick — and
+                # with it every downstream organ — until someone notices.
+                try:
+                    state = await asyncio.wait_for(
+                        self.orchestrator.state_repo.get_current(), timeout=30.0
+                    )
+                except TimeoutError:
+                    record_degraded_event(
+                        "mind_tick",
+                        "tick_stage_timeout",
+                        detail="state_repo.get_current>30s",
+                        severity="warning",
+                        classification="background_degraded",
+                        context={"stage": "state_load", "tick_count": self._tick_count},
+                    )
+                    self._mark_loop_progress("state_load_timeout_yield")
+                    self._last_successful_tick_at = time.time()  # yield IS rhythm progress
+                    sleep_time_override = 5.0
+                    continue
                 self._mark_loop_progress("state_loaded" if state else "state_missing")
                 if not state:
                     self._missing_state_streak += 1
@@ -679,7 +730,16 @@ class MindTick:
                         if gate and hasattr(gate, "ensure_all_tiers_healthy"):
                             self._active_tick_stage = "llm_health"
                             self._mark_loop_progress("llm_health")
-                            tier_statuses = await gate.ensure_all_tiers_healthy()
+                            # Bounded: tier health can trigger recovery paths
+                            # that spawn/probe model workers (minutes under
+                            # load). Observed live 2026-07-07: the tick loop
+                            # sat wedged for 40+ minute stretches on an idle
+                            # instance, flagging mind_tick dead while the rest
+                            # of the organism was healthy. The rhythm yields
+                            # and retries next cycle instead of wedging.
+                            tier_statuses = await asyncio.wait_for(
+                                gate.ensure_all_tiers_healthy(), timeout=45.0
+                            )
                             self._mark_loop_progress("llm_health_done")
                             dead_tiers = [t for t, s in tier_statuses.items() if s == "dead"]
                             if dead_tiers and self._tick_count % 30 == 0:
@@ -712,7 +772,20 @@ class MindTick:
                                     _record_mind_degradation(exc)
                                     logger.debug("MindTick: LLM health incident report failed: %s", exc)
                         elif gate and hasattr(gate, "_ensure_cortex_recovery"):
-                            await gate._ensure_cortex_recovery()
+                            await asyncio.wait_for(gate._ensure_cortex_recovery(), timeout=45.0)
+                    except TimeoutError:
+                        # The health sweep wedged past its budget — name the
+                        # stage, count the yield as rhythm progress, move on.
+                        record_degraded_event(
+                            "mind_tick",
+                            "tick_stage_timeout",
+                            detail="ensure_all_tiers_healthy>45s",
+                            severity="warning",
+                            classification="background_degraded",
+                            context={"stage": "llm_health", "tick_count": self._tick_count},
+                        )
+                        self._mark_loop_progress("llm_health_timeout_yield")
+                        self._last_successful_tick_at = time.time()
                     except _MIND_BOUNDARY_ERRORS as exc:
                         _record_mind_degradation(exc)
                         logger.debug("MindTick: LLM health recovery check failed: %s", exc)
