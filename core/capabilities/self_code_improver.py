@@ -106,7 +106,10 @@ def _verify(func_source: str, func_name: str, checks: list[dict[str, Any]]) -> t
     runner = (
         "from typing import Any, Optional, List, Dict, Tuple, Sequence, Iterable, Union\n"
         + func_source
-        + "\n\nimport json\n_out=[]\n_CHECKS=" + json.dumps(checks) + "\n"
+        # Parse checks with json.loads at runtime — do NOT paste json.dumps output
+        # as Python source: JSON null/true/false are not Python literals and would
+        # raise NameError, silently zeroing the whole verification.
+        + "\n\nimport json\n_out=[]\n_CHECKS=json.loads(" + repr(json.dumps(checks)) + ")\n"
         + "for _c in _CHECKS:\n"
         + "    try:\n"
         + f"        _got={func_name}(*_c['args'])\n"
@@ -125,6 +128,11 @@ def _verify(func_source: str, func_name: str, checks: list[dict[str, Any]]) -> t
             [sys.executable, path],
             capture_output=True,
             timeout=15,
+            # The verifier runner only computes function outputs and prints JSON —
+            # no writes, no network. read_only keeps it off the effect-governance
+            # path (which would else raise GovernanceViolation outside a governed
+            # scope), while still requiring a specific single-line source label.
+            read_only=True,
             source="tool_execution:self_code_improver.verify_checks",
         )
         Path(path).unlink(missing_ok=True)
