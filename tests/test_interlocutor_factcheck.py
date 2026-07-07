@@ -52,6 +52,17 @@ def test_no_grounding_means_no_challenge():
     assert factcheck_reply("The Eiffel Tower was completed in 1912.", corpus_search=lambda q, k: []) == []
 
 
+def test_non_numeric_claim_does_not_search_without_adjudicator():
+    calls = []
+
+    def corpus(query, k):
+        calls.append(query)
+        return [{"text": "A passage that should not be read.", "source": "test"}]
+
+    assert factcheck_reply("Memory is useful for continuity.", corpus_search=corpus) == []
+    assert calls == []
+
+
 def test_adjudication_seam_requires_confidence_and_evidence():
     def corpus(query, k):
         return [{"text": "Canberra is the capital of Australia.", "source": "wiki:Canberra"}]

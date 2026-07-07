@@ -158,6 +158,10 @@ class WebInterlocutorJob:
         return asdict(self)
 
 
+class CognitiveCompositionUnavailable(RuntimeError):
+    """Raised when a visible dialogue turn cannot be authored by cognition."""
+
+
 class WebDialogueBrowser(Protocol):
     async def open_or_attach(self, url: str) -> BrowserPageSnapshot:
         ...
@@ -1475,9 +1479,33 @@ class WebInterlocutorSession:
         result = WebInterlocutorResult(ok=False, target_url=url, objective=objective)
         ctx = dict(context or {})
         if not opening_message:
-            opening_message = await self._compose_opening(objective=objective, context=ctx)
+            try:
+                opening_message = await self._compose_opening(objective=objective, context=ctx)
+            except CognitiveCompositionUnavailable as exc:
+                result.status = "composition_failed"
+                result.error = str(exc)
+                result.diagnostics["composition_events"] = list(
+                    ctx.get("_web_interlocutor_composition_events", [])
+                )
+                result.completed_at = time.time()
+                return result
         opening_message = _clean_message(opening_message)
         if not _message_is_substantive(opening_message):
+            ctx.setdefault("_web_interlocutor_composition_events", []).append(
+                {
+                    "source": "safety_default_opening",
+                    "reason": "opening_message_not_substantive",
+                    "chars": len(opening_message),
+                }
+            )
+            if not bool(ctx.get("allow_deterministic_composition_fallback", False)):
+                result.status = "composition_failed"
+                result.error = "opening message was not cognitively composed"
+                result.diagnostics["composition_events"] = list(
+                    ctx.get("_web_interlocutor_composition_events", [])
+                )
+                result.completed_at = time.time()
+                return result
             opening_message = self._default_opening(objective)
 
         try:
@@ -1510,6 +1538,9 @@ class WebInterlocutorSession:
                         result.error = str(send_receipt.get("error") or send_receipt)
                         result.diagnostics["last_send_receipt"] = send_receipt
                         result.diagnostics["send_receipts"] = send_receipts
+                        result.diagnostics["composition_events"] = list(
+                            ctx.get("_web_interlocutor_composition_events", [])
+                        )
                         result.completed_at = time.time()
                         return result
                     after, observed = await self._wait_for_new_reply(
@@ -1558,6 +1589,9 @@ class WebInterlocutorSession:
                 if not turn.effect_verified:
                     result.status = "reply_not_observed"
                     result.error = turn.verification
+                    result.diagnostics["composition_events"] = list(
+                        ctx.get("_web_interlocutor_composition_events", [])
+                    )
                     result.completed_at = time.time()
                     return result
                 if index < max_turns:
@@ -1577,6 +1611,9 @@ class WebInterlocutorSession:
             # merely a transcript? Prove it by ablation, and persist the deltas.
             await self._adjudicate_and_prove(result, ctx, persist_memory)
             result.challenges_issued = list(ctx.get("_challenges_issued", []))
+            result.diagnostics["composition_events"] = list(
+                ctx.get("_web_interlocutor_composition_events", [])
+            )
             result.ok = True
             result.status = "completed"
             result.completed_at = time.time()
@@ -1590,6 +1627,9 @@ class WebInterlocutorSession:
             )
             result.status = "failed"
             result.error = str(exc)
+            result.diagnostics["composition_events"] = list(
+                ctx.get("_web_interlocutor_composition_events", [])
+            )
             result.completed_at = time.time()
             return result
 
@@ -1734,13 +1774,41 @@ class WebInterlocutorSession:
                 _mark_web_interlocutor_progress(
                     f"web_interlocutor.compose.accepted.{attempt + 1}"
                 )
+                context.setdefault("_web_interlocutor_composition_events", []).append(
+                    {
+                        "source": "cognitive",
+                        "attempt": attempt + 1,
+                        "chars": len(cleaned),
+                    }
+                )
                 return cleaned[:1200]
             _mark_web_interlocutor_progress(
                 f"web_interlocutor.compose.rejected.{attempt + 1}"
             )
             if attempt < attempts - 1:
                 await asyncio.sleep(1.2)
-        return fallback()
+        if not bool(context.get("allow_deterministic_composition_fallback", False)):
+            context.setdefault("_web_interlocutor_composition_events", []).append(
+                {
+                    "source": "cognitive_unavailable",
+                    "reason": "cognitive_composition_unavailable_or_rejected",
+                    "attempts": attempts,
+                    "chars": 0,
+                }
+            )
+            raise CognitiveCompositionUnavailable(
+                "cognitive web-interlocutor composition unavailable"
+            )
+        fallback_message = str(fallback() or "")
+        context.setdefault("_web_interlocutor_composition_events", []).append(
+            {
+                "source": "deterministic_fallback",
+                "reason": "cognitive_composition_unavailable_or_rejected",
+                "attempts": attempts,
+                "chars": len(fallback_message),
+            }
+        )
+        return fallback_message
 
     async def _grounded_challenge(
         self,

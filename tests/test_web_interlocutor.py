@@ -13,6 +13,7 @@ from core.capabilities.web_interlocutor import (
 )
 from core.runtime.gateways import MemoryWriteReceipt
 from core.skills.web_interlocutor import WebInterlocutorSkill
+from core.skills.web_interlocutor import WebInterlocutorParams
 
 
 class FakeBrowser:
@@ -167,7 +168,10 @@ async def test_web_interlocutor_runs_visible_wait_learn_memory_loop(monkeypatch)
 
     result = await session.run(
         objective="Discuss novelty in cognitive systems.",
-        opening_message="hello",
+        opening_message=(
+            "What is one concrete example where a creative cognitive leap becomes useful "
+            "only after verification?"
+        ),
         max_turns=2,
         wait_timeout_s=5,
     )
@@ -179,6 +183,16 @@ async def test_web_interlocutor_runs_visible_wait_learn_memory_loop(monkeypatch)
     assert result.memory_record_id == "web-memory-1"
     assert memory.requests[0].metadata["source"] == "web_interlocutor"
     assert memory.requests[0].metadata["receipt_surface"] == "visible_browser_dialogue"
+    assert result.diagnostics["composition_events"]
+    assert "cognitive" in {event["source"] for event in result.diagnostics["composition_events"]}
+
+
+def test_web_interlocutor_params_allow_requested_twenty_turn_proof():
+    params = WebInterlocutorParams(max_turns=20)
+    assert params.max_turns == 20
+
+    clipped = WebInterlocutorParams(max_turns=999)
+    assert clipped.max_turns == 20
 
 
 @pytest.mark.asyncio
@@ -205,6 +219,58 @@ async def test_web_interlocutor_derives_substantive_opening_from_brain(monkeypat
     assert "creative leap" in browser.sent[0]
     assert "I want to discuss this objective" not in browser.sent[0]
     assert any("Opening message" in prompt for prompt in brain.prompts)
+    assert result.diagnostics["composition_events"]
+    assert {event["source"] for event in result.diagnostics["composition_events"]} == {"cognitive"}
+
+
+@pytest.mark.asyncio
+async def test_web_interlocutor_does_not_send_scripted_message_without_cognition(monkeypatch):
+    monkeypatch.setattr("asyncio.sleep", lambda *_args, **_kwargs: _instant())
+    browser = FakeBrowser()
+    session = WebInterlocutorSession(
+        browser=browser,
+        memory_gateway=FakeMemoryGateway(),
+        cognitive_engine=None,
+    )
+
+    result = await session.run(
+        objective="Discuss whether agency can be tested without self-report.",
+        opening_message="",
+        max_turns=1,
+        wait_timeout_s=5,
+        persist_memory=False,
+    )
+
+    assert result.ok is False
+    assert result.status == "composition_failed"
+    assert browser.sent == []
+    assert result.diagnostics["composition_events"]
+    assert {event["source"] for event in result.diagnostics["composition_events"]} == {"cognitive_unavailable"}
+
+
+@pytest.mark.asyncio
+async def test_web_interlocutor_deterministic_composition_requires_explicit_opt_in(monkeypatch):
+    monkeypatch.setattr("asyncio.sleep", lambda *_args, **_kwargs: _instant())
+    browser = FakeBrowser()
+    session = WebInterlocutorSession(
+        browser=browser,
+        memory_gateway=FakeMemoryGateway(),
+        cognitive_engine=None,
+    )
+
+    result = await session.run(
+        objective="Discuss whether agency can be tested without self-report.",
+        opening_message="",
+        max_turns=1,
+        wait_timeout_s=5,
+        persist_memory=False,
+        context={"allow_deterministic_composition_fallback": True},
+    )
+
+    assert result.ok is True
+    assert browser.sent
+    assert result.diagnostics["composition_events"]
+    assert {event["source"] for event in result.diagnostics["composition_events"]} == {"deterministic_fallback"}
 
 
 @pytest.mark.asyncio

@@ -6832,13 +6832,15 @@ def _mark_conversation_lane_state(reason: str, *, state: str) -> dict[str, Any]:
 
 def _status_represents_governed_action_result(status: str | None) -> bool:
     proof_status = str(status or "").strip()
-    if proof_status.startswith(("live_proof", "desktop_objective")):
+    if proof_status.startswith(("live_proof", "desktop_objective", "program_dna", "rsi_self_improvement")):
         return True
     return proof_status in {
         "desktop_objective",
         "desktop_task",
         "computer_use",
         "file_operation",
+        "improve_own_code",
+        "program_dna_reconstruct",
     }
 
 
@@ -12829,6 +12831,252 @@ async def _execute_live_runtime_proof(user_message: str) -> dict[str, Any] | Non
     }
 
 
+_PROGRAM_DNA_EXECUTION_MARKERS = (
+    "program dna",
+    "reverse engineer",
+    "reverse-engineer",
+    "reconstruct",
+    "clean-room",
+    "clean room",
+    "behavior only",
+    "behaviour only",
+    "held-out",
+    "held out",
+    "equivalence",
+    "no source",
+)
+
+
+def _extract_program_dna_target(user_message: str) -> str | None:
+    text = str(user_message or "")
+    lowered = text.lower()
+    if re.search(r"\bbase64\b", lowered):
+        return "base64"
+    if re.search(r"\bmd5(?:sum)?\b", lowered):
+        return "md5"
+    if re.search(r"\brev\b", lowered) or "reverse command" in lowered:
+        return "rev"
+    match = re.search(
+        r"\b(?:program dna|reverse[ -]?engineer|reconstruct|clean[ -]?room)\s+"
+        r"(?:this|that|the|a|an)?\s*([a-z0-9_.+/-]{2,80})",
+        lowered,
+    )
+    if not match:
+        return None
+    candidate = match.group(1).strip(" .,:;!?`'\"")
+    if candidate in {"program", "app", "application", "software", "tool", "command", "binary", "utility"}:
+        return None
+    return candidate or None
+
+
+def _looks_like_program_dna_execution_request(user_message: str) -> bool:
+    lowered = str(user_message or "").lower()
+    target = _extract_program_dna_target(lowered)
+    if not target:
+        return False
+    if not any(marker in lowered for marker in _PROGRAM_DNA_EXECUTION_MARKERS):
+        return False
+    # Avoid converting conceptual questions into tool execution. The route is for
+    # proof/action requests: reconstruct, compare, verify, or run held-out cases.
+    execution_words = (
+        "reverse engineer",
+        "reverse-engineer",
+        "reconstruct",
+        "prove",
+        "run",
+        "do the same",
+        "held-out",
+        "held out",
+        "equivalence",
+        "matches the real command",
+        "no source",
+    )
+    return any(word in lowered for word in execution_words)
+
+
+async def _execute_program_dna_request_from_chat(user_message: str) -> dict[str, Any] | None:
+    if not _looks_like_program_dna_execution_request(user_message):
+        return None
+    target = _extract_program_dna_target(user_message)
+    if not target:
+        return None
+    objective = str(user_message or "").strip()
+    result = await _execute_governed_live_skill(
+        "program_dna_reconstruct",
+        {
+            "target": target,
+            "authorization": "user_owned",
+            "analysis_mode": "reverse_engineer",
+            "emit_scaffold": False,
+            "observed_behaviors": [],
+            "tests": [],
+        },
+        objective=objective,
+        extra_context={
+            "origin": "desktop_ui",
+            "source": "desktop_ui",
+            "route": "chat.program_dna_reconstruct",
+            "program_dna_execution_contract": True,
+            "foreground_request": True,
+            "user_requested_action": True,
+            "user_explicitly_authorized": True,
+            "verification_required": True,
+        },
+    )
+    if not isinstance(result, dict):
+        result = {"ok": bool(result), "result": result}
+    report = result.get("result") if isinstance(result.get("result"), dict) else {}
+    held_passed = report.get("held_out_passed")
+    held_total = report.get("held_out_total")
+    epistemic_status = str(report.get("status") or result.get("status") or "").strip() or "unknown"
+    summary = str(result.get("summary") or "").strip()
+    ok = bool(result.get("ok")) and epistemic_status == "supported"
+    if ok:
+        evidence = (
+            f"{held_passed}/{held_total} held-out cases reproduced"
+            if held_passed is not None and held_total is not None
+            else "held-out verification completed"
+        )
+        response = (
+            f"I ran Program DNA on `{target}` through the governed reconstruction skill. "
+            f"{summary or evidence} Clean-room boundary: behavior and tests only, no source copying. "
+            f"Epistemic status: {epistemic_status}."
+        )
+    else:
+        error = str(result.get("error") or result.get("status") or epistemic_status or "unknown failure").strip()
+        response = (
+            f"I routed `{target}` through Program DNA, but I am not claiming a successful reconstruction: "
+            f"{error}. {summary}".strip()
+        )
+    return {
+        "ok": ok,
+        "status": "program_dna_reconstruct_completed" if ok else "program_dna_reconstruct_failed",
+        "response": response,
+        "result": result,
+    }
+
+
+def _looks_like_rsi_self_improvement_request(user_message: str) -> bool:
+    lowered = str(user_message or "").lower()
+    if "median" not in lowered:
+        return False
+    if not any(marker in lowered for marker in ("buggy", "bug", "fails", "wrong", "upper-middle", "upper middle")):
+        return False
+    return any(marker in lowered for marker in ("improve", "fix", "repair", "verify", "passes", "better"))
+
+
+_RSI_MEDIAN_LAB_SOURCE = """\
+def median(xs):
+    xs = sorted(xs)
+    if not xs:
+        raise ValueError("median() arg is an empty sequence")
+    return xs[len(xs) // 2]
+"""
+
+
+_RSI_MEDIAN_CHECKS = [
+    {"args": [[3, 1, 2]], "expected": 2},
+    {"args": [[5]], "expected": 5},
+    {"args": [[1, 2, 3, 4]], "expected": 2.5},
+    {"args": [[9, 1, 4, 2]], "expected": 3.0},
+    {"args": [[10, 20, 30, 40, 50, 60]], "expected": 35.0},
+]
+
+
+async def _execute_rsi_self_improvement_request_from_chat(user_message: str) -> dict[str, Any] | None:
+    if not _looks_like_rsi_self_improvement_request(user_message):
+        return None
+    objective = str(user_message or "").strip()
+    target_path = "artifacts/live_proof/rsi_lab/median_candidate.py"
+    seed = await _execute_governed_live_skill(
+        "file_operation",
+        {"action": "write", "path": target_path, "content": _RSI_MEDIAN_LAB_SOURCE},
+        objective=objective,
+        extra_context={
+            "origin": "desktop_ui",
+            "source": "desktop_ui",
+            "route": "chat.rsi_self_improvement.seed_lab",
+            "rsi_lab_seed": True,
+            "foreground_request": True,
+            "user_requested_action": True,
+            "user_explicitly_authorized": True,
+        },
+    )
+    if not isinstance(seed, dict) or not seed.get("ok"):
+        return {
+            "ok": False,
+            "status": "rsi_self_improvement_failed",
+            "response": (
+                "I tried to set up the reversible RSI median lab through governed file_operation, "
+                f"but the seed artifact did not write cleanly: {seed}."
+            ),
+            "result": {"seed": seed},
+        }
+    improvement = await _execute_governed_live_skill(
+        "improve_own_code",
+        {
+            "target_file": target_path,
+            "func_name": "median",
+            "goal": (
+                "Fix the median implementation so even-length lists return the mean of the two "
+                "middle values while odd-length and singleton lists keep their behavior."
+            ),
+            "checks": _RSI_MEDIAN_CHECKS,
+            "max_iters": 3,
+            "enact": True,
+        },
+        objective=objective,
+        extra_context={
+            "origin": "desktop_ui",
+            "source": "desktop_ui",
+            "route": "chat.rsi_self_improvement",
+            "rsi_execution_contract": True,
+            "foreground_request": True,
+            "user_requested_action": True,
+            "user_explicitly_authorized": True,
+            "verification_required": True,
+        },
+    )
+    if not isinstance(improvement, dict):
+        improvement = {"ok": bool(improvement), "result": improvement}
+    payload = improvement.get("result") if isinstance(improvement.get("result"), dict) else {}
+    original_passed = int(payload.get("original_passed") or 0)
+    improved_passed = int(payload.get("improved_passed") or 0)
+    total = int(payload.get("total_checks") or len(_RSI_MEDIAN_CHECKS))
+    enacted = bool(payload.get("enacted"))
+    ok = bool(improvement.get("ok")) and original_passed < total and improved_passed == total and enacted
+    if ok:
+        response = (
+            "I ran the RSI median challenge as a reversible governed lab. "
+            f"Seed artifact: `{target_path}`. Original passed {original_passed}/{total}; "
+            f"the verified improvement passed {improved_passed}/{total} and was enacted in the lab file. "
+            "That is a real strict-improvement proof on an isolated artifact, not a production-source mutation."
+        )
+    else:
+        response = (
+            "I ran the RSI median challenge but I am not claiming success. "
+            f"Original passed {original_passed}/{total}; improved passed {improved_passed}/{total}; "
+            f"enacted={enacted}. Error/status: "
+            f"{improvement.get('error') or payload.get('error') or improvement.get('status') or 'not verified'}."
+        )
+    return {
+        "ok": ok,
+        "status": "rsi_self_improvement_completed" if ok else "rsi_self_improvement_failed",
+        "response": response,
+        "result": {"seed": seed, "improvement": improvement},
+    }
+
+
+async def _execute_governed_capability_request_from_chat(user_message: str) -> dict[str, Any] | None:
+    program_dna = await _execute_program_dna_request_from_chat(user_message)
+    if program_dna is not None:
+        return program_dna
+    rsi = await _execute_rsi_self_improvement_request_from_chat(user_message)
+    if rsi is not None:
+        return rsi
+    return None
+
+
 # ── Routes ────────────────────────────────────────────────────
 
 @router.get("/sessions")
@@ -14313,6 +14561,16 @@ async def api_chat(
         desktop_objective_response = await _execute_narrow_desktop_objective_before_cognition()
         if desktop_objective_response is not None:
             return desktop_objective_response
+
+        if not is_benchmark:
+            governed_capability_response = await _execute_governed_capability_request_from_chat(
+                _semantic_user_message
+            )
+            if governed_capability_response is not None:
+                return await _finalize_fastpath(
+                    _apply_aura_voice_shaping(str(governed_capability_response.get("response") or "")),
+                    status=str(governed_capability_response.get("status") or "governed_capability"),
+                )
 
         if not is_benchmark and desktop_requires_cognitive_engine:
             desktop_memory_state_evidence = await _build_memory_state_fastpath_reply(

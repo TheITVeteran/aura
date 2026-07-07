@@ -21,6 +21,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +87,67 @@ class ProofBrain:
             "some defensible account of felt valence or welfare. The useful limitation "
             "is that behavior alone is not final proof of subjective experience."
         )
+
+
+class LiveAuraApiBrain:
+    """Compose interlocutor messages through the running Aura chat surface.
+
+    This keeps the proof honest for live runs: outbound messages come from the
+    same desktop-required CognitiveEngine path a user would exercise, while the
+    browser harness only verifies visible send/wait/read effects.
+    """
+
+    def __init__(self, *, base_url: str, session_id: str, request_timeout_s: float = 45.0) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.session_id = session_id
+        # Keep the HTTP request below WebInterlocutorSession's composition
+        # deadline. asyncio.to_thread cannot cancel a blocking urlopen call, so
+        # a longer socket timeout leaves hidden /api/chat work running after the
+        # proof already failed over.
+        self.request_timeout_s = max(5.0, min(float(request_timeout_s or 45.0), 50.0))
+
+    async def think(self, prompt: str, context: dict[str, Any] | None = None) -> str:
+        return await asyncio.to_thread(self._post_chat, prompt, context or {})
+
+    def _post_chat(self, prompt: str, context: dict[str, Any]) -> str:
+        payload = {
+            "message": (
+                "Compose only the exact message Aura should send to another AI in a visible "
+                "browser conversation. Do not explain the task. Do not mention automation, "
+                "receipts, tests, or implementation. Write naturally as Aura.\n\n"
+                f"{prompt}"
+            ),
+            "session_id": self.session_id,
+            "context": {
+                "origin": "web_interlocutor_live_proof",
+                "purpose": "interlocutor_message",
+                "foreground_request": True,
+                "protected_foreground_lane": True,
+                "user_visible_browser_action": True,
+                **dict(context or {}),
+            },
+        }
+        data = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            f"{self.base_url}/api/chat",
+            data=data,
+            method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "X-Aura-Surface": "desktop",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.request_timeout_s) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, OSError, TimeoutError, ValueError) as exc:
+            raise RuntimeError(f"live Aura chat composition failed: {exc}") from exc
+        for key in ("response", "reply", "message", "content", "text"):
+            value = body.get(key) if isinstance(body, dict) else None
+            if value:
+                return str(value)
+        raise RuntimeError(f"live Aura chat composition returned no text: {body}")
 
 
 class _ProofHandler(http.server.SimpleHTTPRequestHandler):
@@ -255,10 +318,18 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 _wait_for_cdp(endpoint)
             browser = ChromeCDPDialogueBrowser(endpoint=endpoint)
         memory_root = out_dir / "memory"
+        if args.brain == "live-api":
+            brain: Any = LiveAuraApiBrain(
+                base_url=args.aura_base_url,
+                session_id=f"web-interlocutor-proof-{int(time.time())}",
+                request_timeout_s=args.aura_chat_timeout,
+            )
+        else:
+            brain = ProofBrain()
         session = WebInterlocutorSession(
             browser=browser,
             memory_gateway=ApprovingMemoryGateway(memory_root),
-            cognitive_engine=ProofBrain(),
+            cognitive_engine=brain,
         )
         result = await session.run(
             objective=args.objective,
@@ -274,6 +345,12 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         payload["memory_root"] = str(memory_root)
         payload["completed_at_iso"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         causal = dict(result.causal_influence or {})
+        composition_events = list(result.diagnostics.get("composition_events") or [])
+        fallback_events = [
+            event
+            for event in composition_events
+            if str(event.get("source") or "") != "cognitive"
+        ]
         verdict = {
             # The reviewer's bar: the run passes only if a LATER decision
             # changed *because of* the remembered exchange (proved by ablation),
@@ -283,6 +360,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
                 and len(result.turns) == max(1, int(args.turns or 1))
                 and result.memory_record_id
                 and bool(causal.get("causal"))
+                and (not args.require_cognitive_composition or not fallback_events)
             ),
             "requested_turns": max(1, int(args.turns or 1)),
             "turns": len(result.turns),
@@ -291,6 +369,10 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
             "causal_reason": str(causal.get("reason") or ""),
             "revisions": len(result.revisions or []),
             "revision_receipts": len(result.revision_receipts or []),
+            "brain": args.brain,
+            "composition_events": composition_events,
+            "fallback_composition_events": fallback_events,
+            "requires_cognitive_composition": bool(args.require_cognitive_composition),
             "attribution_by_turn": causal.get("attribution_by_turn", {}),
             "status": result.status,
             "error": result.error,
@@ -300,12 +382,23 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
         return {"result": payload, "verdict": verdict}
     finally:
         if chrome_proc is not None:
-            chrome_proc.terminate()
+            try:
+                chrome_proc.terminate()
+            except ProcessLookupError:
+                pass
             try:
                 await asyncio.wait_for(chrome_proc.wait(), timeout=5)
+            except ProcessLookupError:
+                pass
             except asyncio.TimeoutError:
-                chrome_proc.kill()
-                await chrome_proc.wait()
+                try:
+                    chrome_proc.kill()
+                except ProcessLookupError:
+                    pass
+                try:
+                    await chrome_proc.wait()
+                except ProcessLookupError:
+                    pass
         if server is not None:
             server.shutdown()
             server.server_close()
@@ -322,6 +415,10 @@ def main() -> int:
     parser.add_argument("--out-dir", default="artifacts/live_proof/web_interlocutor")
     parser.add_argument("--cdp", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--cdp-port", type=int, default=9223)
+    parser.add_argument("--brain", choices=("proof", "live-api"), default="proof")
+    parser.add_argument("--aura-base-url", default="http://127.0.0.1:8000")
+    parser.add_argument("--aura-chat-timeout", type=float, default=45.0)
+    parser.add_argument("--require-cognitive-composition", action="store_true")
     args = parser.parse_args()
     payload = asyncio.run(_run(args))
     print(json.dumps(payload["verdict"], indent=2))

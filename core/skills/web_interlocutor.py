@@ -21,7 +21,7 @@ class WebInterlocutorParams(BaseModel):
     objective: str = Field("", description="What Aura is trying to learn or discuss.")
     url: str = Field("", description="Optional visible web chat URL to open or attach to.")
     opening_message: str = Field("", description="Optional first message. If omitted Aura derives one.")
-    max_turns: int = Field(3, description="Number of Aura->interlocutor turns, 1-8.")
+    max_turns: int = Field(3, description="Number of Aura->interlocutor turns, 1-20.")
     wait_timeout_s: float = Field(45.0, description="Seconds to wait for each visible reply.")
     persist_memory: bool = Field(True, description="Write learned summary through MemoryWriteGateway.")
     job_id: str = Field("", description="Background job id for status/cancel.")
@@ -37,7 +37,7 @@ class WebInterlocutorParams(BaseModel):
     @field_validator("max_turns")
     @classmethod
     def _bound_turns(cls, value: int) -> int:
-        return max(1, min(int(value or 1), 8))
+        return max(1, min(int(value or 1), 20))
 
 
 class WebInterlocutorSkill(BaseSkill):

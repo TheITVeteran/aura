@@ -118,6 +118,13 @@ def factcheck_reply(
     """Return grounded contradictions in the interlocutor's reply, or []."""
     contradictions: list[GroundedContradiction] = []
     for claim in extract_checkable_claims(reply):
+        # Precision-first and resource-bounded: without an adjudicator, this
+        # module can only prove deterministic numeric/date mismatches. Broad
+        # philosophical "X is Y" claims should not trigger expensive corpus
+        # search every turn; that created live web-interlocutor SLO noise while
+        # producing no possible contradiction.
+        if adjudicate is None and not (_YEAR_RE.search(claim) or _NUMBER_RE.search(claim)):
+            continue
         try:
             passages = corpus_search(claim, 3) or []
         except (RuntimeError, OSError, TypeError, ValueError) as exc:

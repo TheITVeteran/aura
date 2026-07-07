@@ -7031,3 +7031,72 @@ Remaining live proof item added from the current session:
   coherent turns, remember what the other AI said, report the conversation back
   through Aura's UI, and demonstrate that she knows this is a general ability
   rather than a hardcoded scenario.
+
+## Checkpoint 2026-07-07-01: Desktop Chat Dispatch for Program DNA and RSI
+
+Status: implementation, backend regression tests, live Aura.app restart, and
+real `/api/chat` proof replay complete.
+
+Scope:
+
+- Fixed the live desktop chat lane that previously answered Program DNA
+  requests conceptually instead of executing the governed reconstruction skill.
+  Natural requests such as "reverse engineer base64 from behavior only" now
+  route to `program_dna_reconstruct` and return held-out equivalence evidence.
+- Added a governed RSI median challenge route for natural user wording. The
+  route creates an isolated reversible lab artifact, calls `improve_own_code`,
+  and only claims success if the original fails at least one case, the improved
+  version passes all cases, and the improvement is enacted in the lab artifact.
+- Hardened the web-interlocutor proof path so a 20-turn proof must use
+  cognitive composition; deterministic/scripted composition is blocked unless
+  explicitly opted in by a test or harness.
+- Reduced noisy/failing interlocutor fact-check work by skipping broad corpus
+  search for non-numeric claims when no adjudicator is available. This prevents
+  repeated useless timeout warnings while preserving numeric/date contradiction
+  checks.
+
+Verification:
+
+- `python -m py_compile interface/routes/chat.py core/capabilities/web_interlocutor.py tools/proof/run_web_interlocutor_live_proof.py`
+  -> passed.
+- `python -m pytest -q tests/test_program_dna_user_pathway.py tests/test_web_interlocutor.py tests/test_interlocutor_factcheck.py --maxfail=1`
+  -> `27 passed`.
+- `python -m pytest -q tests/test_program_dna_user_pathway.py tests/test_web_interlocutor.py tests/test_interlocutor_factcheck.py tests/test_capability_engine_policy_regressions.py::test_user_visible_web_interlocutor_auto_confirms_foreground_request tests/test_capability_engine_policy_regressions.py::test_background_web_interlocutor_does_not_auto_confirm tests/test_skill_surface_contracts.py::test_registered_skill_surface_matches_expected_catalog tests/test_skill_surface_contracts.py::test_registered_skills_support_safe_execute_contract --maxfail=1`
+  -> `102 passed`.
+- `python -m pytest -q tests/test_program_dna_cognition_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_program_dna_reconstruction.py tests/test_rsi_challenge.py tests/test_rsi_validation_gauntlet.py tests/test_truncate_word_boundary.py --maxfail=1`
+  -> `30 passed`.
+
+Live Replay:
+
+- Killed stale Aura sessions with `aura_main.py --stop` and
+  `scripts/one_off/aura_cleanup.py`, then relaunched `/Applications/Aura.app`.
+- Post-restart desktop access:
+  `screen_capture_ready=true`, `desktop_control_ready=true`,
+  `screen_text_ready=true`, `menu_clock_ready=true`,
+  `blocking_permissions=[]`, `permission_confidence=direct`.
+- Post-restart health before and after proof:
+  `/api/health/heartbeat status=healthy`, `conversation_ready=true`,
+  `required_probes.all_passed=true`, `lane_state=ready`,
+  `active_generations=0`, `blockers=[]`.
+- Process table after proof: one resident
+  `/Applications/Aura.app/Contents/MacOS/aura-launcher` parent and one
+  `aura_main.py --desktop` Python child. No duplicate Aura runtime was present.
+- `python tools/proof/drive_aura_as_user.py --only dna --timeout 240 --gap 4`
+  through the live `/api/chat` lane:
+  - `base64`: Program DNA executed; `4/4` held-out cases reproduced;
+    epistemic status `supported`.
+  - `md5`: Program DNA executed; `4/4` held-out cases reproduced;
+    epistemic status `supported`.
+- `python tools/proof/drive_aura_as_user.py --only rsi --timeout 300 --gap 4`
+  through the live `/api/chat` lane:
+  - RSI median challenge executed as a governed reversible lab.
+  - Original passed `2/5`; verified improvement passed `5/5`; lab artifact
+    enacted at `artifacts/live_proof/rsi_lab/median_candidate.py`.
+
+Remaining non-soak work after this checkpoint:
+
+- Run and close the visible 20-turn ChatGPT/Gemini web-interlocutor proof with
+  live cognitive composition, real page reading, memory retention, and UI
+  report-back.
+- Continue Chrome/Kubernetes/aerospace reliability hardening against any new
+  live neural-stream or terminal issues surfaced by that proof.
