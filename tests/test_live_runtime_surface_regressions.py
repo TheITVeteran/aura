@@ -1778,14 +1778,27 @@ def test_local_deep_solver_is_blocked_by_default_on_64gb_desktop(monkeypatch):
 
 
 def test_primary_foreground_timeout_is_bounded_for_live_desktop_path():
-    from interface.routes.chat import _foreground_timeout_for_lane
+    from interface.routes.chat import (
+        _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S,
+        _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S,
+        _DESKTOP_COGNITIVE_TURN_TIMEOUT_S,
+        _foreground_timeout_for_lane,
+    )
 
-    # Ready lane: min(_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S=60,
-    # _DESKTOP_COGNITIVE_TURN_TIMEOUT_S=48 + 4s response reserve) = 52.
-    # Cold lanes retain a separate 210s outer bound for model startup.
-    assert _foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 52.0
+    # A ready lane is bounded by min(max-turn ceiling, turn timeout + response
+    # reserve), floored at 30s. Compute it from the live constants so tuning the
+    # desktop budget can't silently break the bound this test guards. Cold lanes
+    # retain a separate 210s outer bound for model startup.
+    ready_bound = max(
+        30.0,
+        min(
+            _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S,
+            _DESKTOP_COGNITIVE_TURN_TIMEOUT_S + _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S,
+        ),
+    )
+    assert _foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == ready_bound
     assert _foreground_timeout_for_lane({"conversation_ready": False, "state": "warming"}) == 210.0
-    assert _foreground_timeout_for_lane({"conversation_ready": False, "state": "unknown"}) == 52.0
+    assert _foreground_timeout_for_lane({"conversation_ready": False, "state": "unknown"}) == ready_bound
 
 
 def test_continuity_generic_reentry_goal_is_not_restored_as_work(monkeypatch):

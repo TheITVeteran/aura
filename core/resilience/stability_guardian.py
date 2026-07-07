@@ -1165,6 +1165,17 @@ class StabilityGuardian:
         startup_tasks  = {"aura.research_cycle"} if in_boot_grace else set()
         real_missing   = missing - startup_tasks
 
+        # A headless/proof runtime defers the research cycle by policy (substrate
+        # evolution / research is suppressed under proof_run_active); it is not a
+        # dead daemon there, so don't flag it critical-missing or churn restarts.
+        try:
+            from core.runtime.proof_policy import proof_headless_run
+
+            if proof_headless_run():
+                real_missing = real_missing - {"aura.research_cycle"}
+        except (ImportError, RuntimeError, AttributeError):
+            pass
+
         if real_missing:
             import os
             action = "None"
@@ -1198,7 +1209,8 @@ class StabilityGuardian:
             logger.debug("[PID %s] StabilityGuardian: Total tasks: %s. Running task names: %s", os.getpid(), len(tasks), running_names)
             return HealthCheckResult(
                 "background_tasks", False,
-                f"Critical tasks not running in PID {os.getpid()}: {real_missing}. Tasks: {running_names}",
+                f"Critical tasks not running in PID {os.getpid()}: {real_missing}. "
+                f"({len(running_names)} tasks running)",
                 severity="warning",
                 action_taken=action
             )

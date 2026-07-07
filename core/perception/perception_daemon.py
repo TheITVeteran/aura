@@ -47,6 +47,9 @@ class PerceptionDaemon:
 
     def __init__(self, *, check_interval_s: float = 2.0):
         self.check_interval = check_interval_s
+        # Idle cadence when there is no GUI surface to perceive (headless/proof
+        # runtime): the loop stays alive but skips the subprocess-spawning probes.
+        self._dormant_interval_s = 45.0
         self.running = False
         self._tasks: list[asyncio.Task] = []
 
@@ -164,8 +167,24 @@ class PerceptionDaemon:
 
     async def _main_perceptual_loop(self) -> None:
         """Poll clipboard, active window, terminal, browser, and file changes continuously."""
+        # A headless/proof runtime has no GUI surface to perceive. Running the
+        # window/clipboard/browser/ps probes there spawns a subprocess storm
+        # (osascript/pbpaste/ps) on every interval — the dominant source of RSS
+        # churn and event-loop lag in the headless longevity soak — for zero
+        # signal. Resolve once and stay dormant.
+        try:
+            from core.runtime.proof_policy import proof_headless_run
+
+            headless = proof_headless_run()
+        except (ImportError, RuntimeError, AttributeError):
+            headless = False
+        if headless:
+            logger.info("📡 PerceptionDaemon: headless runtime — GUI perception dormant.")
         while self.running:
             try:
+                if headless:
+                    await asyncio.sleep(self._dormant_interval_s)
+                    continue
                 await asyncio.sleep(self.check_interval)
 
                 # 1. Active Window Focus Check (macOS)

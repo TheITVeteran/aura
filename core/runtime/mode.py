@@ -398,17 +398,29 @@ def validate_mode_at_startup() -> None:
     strictness = governance_strictness()
     if not strictness.consistent:
         logger.warning("⚠️  GOVERNANCE NOT HARDENED: %s", strictness.advisory)
+        # In a headless proof/offline run the split is intentional: the suite
+        # exercises production capabilities at the production default and must
+        # NOT become fail-closed implicitly (see governance_strictness above).
+        # Surface it loudly, but don't count it as a runtime degradation there.
+        _proof_offline = False
         try:
-            from core.runtime.errors import record_degradation
+            from core.runtime.proof_policy import proof_headless_run
 
-            record_degradation(
-                "runtime.mode",
-                RuntimeError(strictness.advisory),
-                severity="warning",
-                action="ran with production capabilities but non-hardened governance",
-            )
-        except (ImportError, AttributeError, RuntimeError):
-            pass
+            _proof_offline = proof_headless_run()
+        except (ImportError, RuntimeError, AttributeError):
+            _proof_offline = False
+        if not _proof_offline:
+            try:
+                from core.runtime.errors import record_degradation
+
+                record_degradation(
+                    "runtime.mode",
+                    RuntimeError(strictness.advisory),
+                    severity="warning",
+                    action="ran with production capabilities but non-hardened governance",
+                )
+            except (ImportError, AttributeError, RuntimeError):
+                pass
     else:
         logger.info(
             "Governance: strict_will=%s enforce_contracts=%s (hardened=%s)",

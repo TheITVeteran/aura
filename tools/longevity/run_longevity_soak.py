@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import gc
 import hashlib
 import json
 import os
@@ -179,19 +180,28 @@ async def async_main(argv: list[str] | None = None) -> int:
                 )
                 index += 1
                 if leak_baseline is not None and index % 20 == 0:
+                    # Discriminator: how much of the growth is reclaimable garbage
+                    # (GC lag / cycles) vs genuinely-referenced accumulation. If
+                    # RSS barely moves after a full collect, the growth is live
+                    # references (a real leak); if it drops, it was churn.
+                    rss_before = _rss_mb()
+                    gc.collect()
+                    rss_after = _rss_mb()
                     snap = tracemalloc.take_snapshot()
                     top = snap.compare_to(leak_baseline, "lineno")[:12]
                     elapsed = time.monotonic() - soak_started
                     print(
                         f"🔬 [tracemalloc] top growth @ iter {index} "
-                        f"(elapsed {elapsed:.0f}s, rss {_rss_mb():.0f}MB):",
+                        f"(elapsed {elapsed:.0f}s, rss {rss_after:.0f}MB, "
+                        f"gc reclaimed {rss_before - rss_after:+.1f}MB):",
                         flush=True,
                     )
                     for stat in top:
-                        where = stat.traceback.format()[-1].strip()
+                        # Full call chain (last 3 frames) localizes the accumulator.
+                        frames = [f.strip() for f in stat.traceback.format()[-3:]]
                         print(
                             f"     {stat.size_diff / 1024 / 1024:+7.1f}MB "
-                            f"{stat.count_diff:+8d}  {where}",
+                            f"{stat.count_diff:+8d}  {' <- '.join(reversed(frames))}",
                             flush=True,
                         )
                 # Endurance mode: pace the pulses across the real-time window.
@@ -203,13 +213,17 @@ async def async_main(argv: list[str] | None = None) -> int:
     finally:
         if leak_baseline is not None:
             try:
+                gc.collect()
                 snap = tracemalloc.take_snapshot()
-                for stat in snap.compare_to(leak_baseline, "lineno")[:25]:
+                for stat in snap.compare_to(leak_baseline, "traceback")[:25]:
                     leak_top.append(
                         {
                             "size_diff_mb": round(stat.size_diff / 1024 / 1024, 3),
                             "count_diff": stat.count_diff,
                             "where": stat.traceback.format()[-1].strip(),
+                            # Call chain (innermost-last frames) localizes the
+                            # accumulator, not just the leaf allocation site.
+                            "call_chain": [f.strip() for f in stat.traceback.format()[-4:]],
                         }
                     )
             except (RuntimeError, ValueError, OSError):
