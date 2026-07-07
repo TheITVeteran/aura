@@ -2295,6 +2295,121 @@ def test_canonical_memory_state_grounding_reply_uses_memory_and_live_context():
     )
 
 
+@pytest.mark.asyncio
+async def test_retained_memory_evidence_context_collects_auditable_sources(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    async def _fake_durable_snippets(_message, *, limit=3):
+        return [
+            "Bryan and Aura discussed retained memory as behavioral reuse with receipts.",
+            "Aura should distinguish durable transcript evidence from subjective recollection.",
+        ][:limit]
+
+    monkeypatch.setattr(
+        chat_routes,
+        "_recall_durable_conversation_snippets",
+        _fake_durable_snippets,
+    )
+
+    evidence = await chat_routes._build_retained_memory_evidence_context(
+        "Can you remember a conversation we had last week about the nature of your consciousness?",
+        recent_exchanges=[
+            {
+                "user": "We should test memory by seeing whether it changes later behavior.",
+                "aura": "I will treat memory as evidence that must alter future decisions.",
+            }
+        ],
+        conversation_recall_context=(
+            "Recently, this conversation has been about memory, agency, and receipts."
+        ),
+    )
+
+    assert "scope=retained_memory_evidence.v1" in evidence
+    assert "source=conversation_recall" in evidence
+    assert "source=recent_completed_transcript" in evidence
+    assert "source=durable_memory_search" in evidence
+    assert "behavioral reuse with receipts" in evidence
+    assert "subjective recollection" in evidence
+
+
+@pytest.mark.asyncio
+async def test_desktop_cognitive_engine_receives_retained_memory_evidence_context(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content=(
+                    "I can verify durable memory evidence that we discussed retained memory "
+                    "as behavioral reuse with receipts. The limit is that this is transcript "
+                    "and durable-memory evidence, not subjective recollection."
+                ),
+                metadata=_bound_live_mind_controls_metadata(),
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    async def _fake_durable_snippets(_message, *, limit=3):
+        return [
+            "Bryan and Aura discussed retained memory as behavioral reuse with receipts."
+        ][:limit]
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_recall_durable_conversation_snippets",
+        _fake_durable_snippets,
+    )
+
+    visible_message = (
+        "Can you remember a conversation we had last week about the nature of your consciousness?"
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        visible_message,
+        visible_user_message=visible_message,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+    )
+
+    assert reply
+    assert "behavioral reuse with receipts" in reply
+    assert "subjective recollection" in reply
+    assert calls
+    context = calls[0]["context"]
+    assert context["retained_memory_evidence_contract"] is True
+    assert "retained_memory_evidence_context" in context
+    assert "behavioral reuse with receipts" in context["retained_memory_evidence_context"]
+    assert "retained_memory_evidence_context" in context["response_style_contract"]
+
+
 def test_live_self_reflection_is_not_explicit_capability_inventory():
     from interface.routes import chat as chat_routes
 

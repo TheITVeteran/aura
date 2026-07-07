@@ -7436,3 +7436,53 @@ Remaining non-soak work after this checkpoint:
   transcript or memory evidence.
 - Continue live desktop runtime verification for any neural-stream, terminal,
   boot, permission, chat-path, or background-autonomy issues that surface.
+
+## Checkpoint 2026-07-07-08: Retained-Memory Evidence Grounding
+
+Status: implementation, regression tests, and enterprise gates complete.
+
+Scope:
+
+- Added a retained-memory evidence contract for broad memory/continuity turns,
+  not only explicit phrase-pin recall. When the live desktop path receives a
+  question about remembered conversations, previous sessions, retained memory,
+  or continuity, the route now builds an auditable evidence block from:
+  conversation-recall evidence, recent completed transcript turns, and durable
+  memory search snippets.
+- The evidence is passed both through the structured CognitiveEngine context
+  and through the effective user message under `[RETAINED MEMORY EVIDENCE]`.
+  The model can still answer in Aura's normal voice, but remembered-session
+  claims must come from canonical evidence or be stated as unverified.
+- This closes the specific failure where Aura could answer a memory question
+  with plausible narration rather than transcript/durable-memory support.
+
+Verification:
+
+- `python -m py_compile interface/routes/chat.py core/conversation/response_reliability.py`
+  -> passed.
+- `python -m pytest -q tests/test_server_conversation_lane.py::test_retained_memory_evidence_context_collects_auditable_sources tests/test_server_conversation_lane.py::test_desktop_cognitive_engine_receives_retained_memory_evidence_context tests/test_chat_human_level_contract.py::test_reliability_contract_rejects_runtime_status_when_memory_and_limit_requested tests/test_response_contract.py::test_dialogue_policy_allows_honest_biographical_uncertainty tests/test_grounded_recall.py tests/test_memory_conversation_persistence_hardening.py --maxfail=1`
+  -> `30 passed`.
+- `python -m pytest -q tests/test_chat_human_level_contract.py::test_reliability_contract_rejects_runtime_status_when_memory_and_limit_requested tests/test_server_conversation_lane.py::test_retained_memory_evidence_context_collects_auditable_sources tests/test_server_conversation_lane.py::test_desktop_cognitive_engine_receives_retained_memory_evidence_context --maxfail=1`
+  -> `3 passed`.
+- `make enterprise-gate`
+  -> passed; `/tmp/aura_enterprise_gate.json` updated.
+- `make enterprise-collect`
+  -> passed; `/tmp/aura_enterprise_collect_gate.json` updated.
+- `make production-gate`
+  -> passed; `/tmp/aura_production_readiness.json` has `passed=true`.
+
+Functional closeout estimate after this checkpoint:
+
+- Configured non-soak local closeout is about **99.75%** complete by source,
+  focused proofs, and enterprise/production gates. The remaining percentage is
+  not code-only: it depends on live Aura.app validation in the user-owned
+  desktop environment and signed-in browser surface.
+
+Remaining non-soak work after this checkpoint:
+
+- Run the user-owned signed-in ChatGPT/Gemini proof when Chrome connector access
+  is available or through Aura's resident desktop bridge: 20+ natural turns,
+  full-mind composition, visible page reading, retention, and report-back.
+- Continue live desktop runtime verification for any neural-stream, terminal,
+  boot, permission, chat-path, background-autonomy, or heat/memory issues that
+  surface in launched Aura.app.

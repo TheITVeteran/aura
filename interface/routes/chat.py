@@ -2544,6 +2544,81 @@ async def _recall_durable_conversation_snippets(user_message: str, *, limit: int
         return []
 
 
+_RETAINED_MEMORY_EVIDENCE_REQUEST_RE = re.compile(
+    r"\b(?:"
+    r"remember|recall|memory|memories|retained|retention|across\s+sessions?|"
+    r"last\s+(?:week|month|session|time)|previous\s+(?:session|conversation|chat)|"
+    r"earlier\s+(?:conversation|session|chat)|persistent\s+context|conversation\s+continuity"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _is_retained_memory_evidence_request(user_message: str) -> bool:
+    text = str(user_message or "")
+    if not text.strip():
+        return False
+    if _is_session_memory_recall_request(text) or _classify_conversation_recall_request(text):
+        return True
+    return bool(_RETAINED_MEMORY_EVIDENCE_REQUEST_RE.search(text))
+
+
+async def _build_retained_memory_evidence_context(
+    user_message: str,
+    *,
+    session_id: str = "",
+    recent_exchanges: list[dict[str, str]] | None = None,
+    conversation_recall_context: str = "",
+) -> str:
+    """Return auditable evidence for broad retained-memory questions.
+
+    This is deliberately evidence, not prose. The visible reply still comes
+    from CognitiveEngine, but it must choose from transcript/durable-memory
+    records or admit the gap instead of treating plausible continuity as proof.
+    """
+
+    if not _is_retained_memory_evidence_request(user_message):
+        return ""
+
+    lines: list[str] = [
+        "scope=retained_memory_evidence.v1",
+        "rule=Use only the evidence below for remembered-session claims. If it does not support the claim, say the memory is not verified.",
+    ]
+
+    if conversation_recall_context:
+        lines.append("source=conversation_recall")
+        lines.append(_clip_conversation_text(conversation_recall_context, limit=900))
+
+    exchanges = list(recent_exchanges or [])
+    if not exchanges:
+        exchanges = await _recent_completed_conversation_exchanges(
+            current_user_message=user_message,
+            session_id=session_id,
+            limit=4,
+        )
+    if exchanges:
+        lines.append("source=recent_completed_transcript")
+        for idx, entry in enumerate(exchanges[-4:], start=1):
+            user_text = _clip_conversation_text(entry.get("user"), limit=220)
+            aura_text = _clip_conversation_text(entry.get("aura"), limit=260)
+            if user_text:
+                lines.append(f"turn_{idx}.user={user_text}")
+            if aura_text:
+                lines.append(f"turn_{idx}.aura={aura_text}")
+
+    durable = await _recall_durable_conversation_snippets(user_message, limit=4)
+    if durable:
+        lines.append("source=durable_memory_search")
+        for idx, snippet in enumerate(durable, start=1):
+            lines.append(f"memory_{idx}={_clip_conversation_text(snippet, limit=320)}")
+
+    if len(lines) <= 2:
+        lines.append("source=none")
+        lines.append("No matching canonical transcript or durable memory record was available for this request.")
+
+    return "\n".join(lines)[:3200]
+
+
 _CONTENT_RECALL_STOPWORDS = frozenset(
     "a an and are as at be before but by chat choose chose did do does earlier "
     "for from gave give had has have i in is it its just keep kind me mention "
@@ -4922,6 +4997,18 @@ async def _run_cognitive_engine_chat_turn(
     )
     if conversation_recall_context:
         context["conversation_recall_evidence"] = conversation_recall_context[:3000]
+    retained_memory_evidence_context = (
+        ""
+        if capability_inventory_contract
+        else await _build_retained_memory_evidence_context(
+            visible,
+            session_id=session_id,
+            recent_exchanges=recent_exchanges,
+            conversation_recall_context=conversation_recall_context,
+        )
+    )
+    if retained_memory_evidence_context:
+        context["retained_memory_evidence_context"] = retained_memory_evidence_context
     context_challenge_context = (
         ""
         if capability_inventory_contract
@@ -5089,6 +5176,15 @@ async def _run_cognitive_engine_chat_turn(
                 str(context.get("response_style_contract") or "")
                 + " The user is asking about recent conversation context. Answer from "
                 "conversation_recall_evidence exactly enough to be correct; do not guess."
+            )
+        if retained_memory_evidence_context:
+            context["retained_memory_evidence_contract"] = True
+            context["response_style_contract"] = (
+                str(context.get("response_style_contract") or "")
+                + " The user is asking about memory or continuity. Use "
+                "retained_memory_evidence_context for any remembered-session claim. "
+                "If the evidence does not support the specific memory, say it is not verified; "
+                "distinguish transcript/durable-memory evidence from subjective recollection."
             )
         if memory_state_contract:
             context["response_style_contract"] = (
@@ -15438,6 +15534,21 @@ async def api_chat(
                 f"{conversation_recall_evidence}\n"
                 "[END CONVERSATION RECALL EVIDENCE]\n"
                 "Answer the recall question from the evidence above. Do not guess or invent a memory."
+            )
+        retained_memory_evidence = await _build_retained_memory_evidence_context(
+            _semantic_user_message,
+            session_id=_chat_session_id,
+            conversation_recall_context=conversation_recall_evidence or "",
+        )
+        if retained_memory_evidence:
+            effective_user_message = (
+                f"{effective_user_message}\n\n"
+                "[RETAINED MEMORY EVIDENCE]\n"
+                f"{retained_memory_evidence}\n"
+                "[END RETAINED MEMORY EVIDENCE]\n"
+                "For any claim about what you remember, what persisted, or what happened in a prior "
+                "session, use the evidence above. If the evidence is absent or insufficient, say that "
+                "the memory is not verified instead of filling the gap."
             )
         if desktop_memory_state_evidence:
             memory_reply, memory_status = desktop_memory_state_evidence
