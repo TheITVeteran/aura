@@ -63,7 +63,18 @@ class CodingSkill(BaseSkill):
             else:
                 code = str(raw_result or "")
                 thought = ""
-            
+
+            # Don't claim success on an empty draft. The cognitive engine can
+            # return "" under load (empty_cognitive_engine_reply is a real live
+            # event); reporting ok=True with no code is the exact "technically
+            # true but useless" failure a user hits as a blank answer.
+            if not code.strip():
+                return {
+                    "ok": False,
+                    "error": "The coding lane returned no code for that task (model produced an empty draft).",
+                    "thought_process": thought,
+                }
+
             return {
                 "ok": True,
                 "code": code,
