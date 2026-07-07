@@ -73,6 +73,14 @@ _SEARCH_SKILL_NAMES = {
     "web_search",
 }
 
+_SOURCE_DEFINITION_TAIL_RE = re.compile(
+    r"\b(?:what|who|where|when|how)\s+"
+    r"(?:the\s+)?(?:source|page|site|article|[A-Z][A-Za-z0-9 .&'_-]{1,80})\s+"
+    r"(?:says?|calls?|defines?|describes?|explains?)\s+"
+    r"[^.?!;]{1,180}",
+    re.IGNORECASE,
+)
+
 
 def _record_response_generation_degradation(
     error: BaseException,
@@ -337,13 +345,9 @@ class ResponseGenerationPhase(BasePhase):
         if getattr(contract, "tool_evidence_available", False):
             return False
 
-        query = str(getattr(contract, "search_query", "") or objective or "").strip()
-        query = re.sub(
-            r"\s+(?:and\s+tell me|then\s+tell me|and\s+answer|then\s+answer|and\s+give me|then\s+give me)\b.*$",
-            "",
-            query,
-            flags=re.IGNORECASE,
-        ).strip(" .?!,:;")
+        query = self._clean_required_search_query(
+            str(getattr(contract, "search_query", "") or objective or "").strip()
+        )
         if not query:
             return False
 
@@ -466,6 +470,60 @@ class ResponseGenerationPhase(BasePhase):
             query[:120],
         )
         return True
+
+    @staticmethod
+    def _clean_required_search_query(query: str) -> str:
+        """Remove response-format instructions without losing source semantics.
+
+        Live regression: "Tell me the source title and what NASA says Europa is"
+        was reduced to "one current NASA page about Europa". That made the
+        search/cache layer satisfy the wrong task with a Clipper article instead
+        of a definition-bearing NASA source. The cleaner may drop pure formatting
+        instructions ("source title only"), but source-definition clauses stay in
+        the retrieval query because they change what evidence is relevant.
+        """
+
+        raw = str(query or "").strip()
+        if not raw:
+            return ""
+        repair_match = re.search(
+            r"(?is)\boriginal\s+user\s+request\s*:\s*(.*?)"
+            r"(?:\n\s*\n\s*rejected\s+draft\s+for\s+avoidance\s+only\s*:|$)",
+            raw,
+        )
+        if repair_match:
+            raw = repair_match.group(1).strip()
+            if not raw:
+                return ""
+        source_definition_tails = [
+            " ".join(match.group(0).strip(" .?!,:;").split())
+            for match in _SOURCE_DEFINITION_TAIL_RE.finditer(raw)
+        ]
+        cleaned = re.sub(
+            r"^\s*(?:please\s+)?(?:search|look\s+up|find)\s+"
+            r"(?:(?:the\s+)?(?:web|internet)\s+)?(?:for\s+)?",
+            "",
+            raw,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(
+            r"\s+(?:and\s+tell me|then\s+tell me|and\s+answer|then\s+answer|"
+            r"and\s+give me|then\s+give me)\b.*$",
+            "",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip(" .?!,:;")
+        cleaned = re.sub(
+            r"(?:^|[.?!]\s*)(?:tell\s+me|include|give\s+me)\s+"
+            r"(?:the\s+)?source\s+title(?:\s+only)?(?:\s+and)?\s*",
+            ". ",
+            cleaned,
+            flags=re.IGNORECASE,
+        ).strip(" .?!,:;")
+        for tail in source_definition_tails:
+            if tail and tail.lower() not in cleaned.lower():
+                cleaned = f"{cleaned}. {tail}" if cleaned else tail
+        return re.sub(r"\s+", " ", cleaned).strip(" .?!,:;")
 
     @classmethod
     def _inject_live_runtime_grounding(

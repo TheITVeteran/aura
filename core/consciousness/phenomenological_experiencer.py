@@ -69,6 +69,7 @@ a persistent subject across time.
 import asyncio
 import json
 import logging
+import os
 import random
 import time
 from collections import deque
@@ -111,6 +112,14 @@ def _phenomenology_background_deferral_reason() -> str:
     """Return why slow phenomenology LLM work must yield right now."""
 
     try:
+        from core.runtime.backpressure import foreground_inference_active
+
+        if foreground_inference_active():
+            return "foreground_inference_active"
+    except (ImportError, AttributeError, RuntimeError):
+        pass
+
+    try:
         from core.runtime.background_policy import (
             THOUGHT_BACKGROUND_POLICY,
             background_activity_reason,
@@ -137,14 +146,20 @@ def _phenomenology_background_deferral_reason() -> str:
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 SCHEMA_UPDATE_HZ = 4  # Attention schema refresh rate
-NARRATIVE_INTERVAL_S = 30  # Seconds between deep PSM narrative updates
+NARRATIVE_INTERVAL_S = int(os.getenv("AURA_PSM_NARRATIVE_INTERVAL_S", "300"))
 QUALIA_HISTORY_LEN = 100  # Rolling phenomenal moment buffer
 CONTINUITY_WINDOW = 20  # Broadcasts woven into continuity thread
 PSM_MAX_AGE_S = 120  # PSM refresh forced after this many seconds
-WITNESS_INTERVAL_S = 60  # Witness reflection cycle
+WITNESS_INTERVAL_S = int(os.getenv("AURA_PSM_WITNESS_INTERVAL_S", "420"))
 BOOT_GRACE_PERIOD_S = 90  # [STABILITY] Seconds to wait before first boot-time thought
 HIGH_MEMORY_PRESSURE_PCT = 88.0
 MAX_PERSISTED_CONTINUITY_MOMENTS = 8
+PSM_NARRATIVE_TIMEOUT_S = float(os.getenv("AURA_PSM_NARRATIVE_TIMEOUT_S", "3.5"))
+PSM_WITNESS_TIMEOUT_S = float(os.getenv("AURA_PSM_WITNESS_TIMEOUT_S", "3.0"))
+PSM_NARRATIVE_MAX_TOKENS = int(os.getenv("AURA_PSM_NARRATIVE_MAX_TOKENS", "96"))
+PSM_WITNESS_MAX_TOKENS = int(os.getenv("AURA_PSM_WITNESS_MAX_TOKENS", "80"))
+PSM_MIN_IDLE_S = float(os.getenv("AURA_PSM_MIN_IDLE_S", "180"))
+PSM_DEFER_SLEEP_S = float(os.getenv("AURA_PSM_DEFER_SLEEP_S", "20"))
 
 
 # ─── Content-type → experiential domain mapping ───────────────────────────────
@@ -1046,10 +1061,10 @@ class PhenomenalSelfModel:
                     is_background=True,
                     origin="phenomenological_narrative",
                     allow_cloud_fallback=False,
-                    max_tokens=220,
+                    max_tokens=PSM_NARRATIVE_MAX_TOKENS,
                     temperature=0.8,
                 ),
-                timeout=20.0,
+                timeout=PSM_NARRATIVE_TIMEOUT_S,
             )
             if report:
                 report = self._coerce_router_text(report)
@@ -1081,8 +1096,8 @@ class PhenomenalSelfModel:
             self._note_narrative_failure(
                 e,
                 stage="deep_narrative_timeout",
-                action="retained previous present-description after narrative LLM timed out",
-                severity="warning",
+                action="bounded opportunistic narrative update and retained previous present-description",
+                severity="debug",
             )
             logger.debug("PSM deep update timed out")
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -1152,10 +1167,10 @@ class PhenomenalSelfModel:
                     is_background=True,
                     origin="witness_reflection",
                     allow_cloud_fallback=False,
-                    max_tokens=160,
+                    max_tokens=PSM_WITNESS_MAX_TOKENS,
                     temperature=0.7,
                 ),
-                timeout=15.0,
+                timeout=PSM_WITNESS_TIMEOUT_S,
             )
             if observation:
                 observation = self._coerce_router_text(observation)
@@ -1176,6 +1191,14 @@ class PhenomenalSelfModel:
                     logger.warning(
                         "👁 Witness: LLM returned non-meaty or action-tagged observation. Skipping."
                     )
+        except TimeoutError as e:
+            self._note_witness_failure(
+                e,
+                stage="witness_timeout",
+                action="bounded opportunistic witness update and retained previous observation",
+                severity="debug",
+            )
+            logger.debug("Witness reflection timed out")
         except (ImportError, AttributeError, RuntimeError) as e:
             self._note_witness_failure(
                 e,
@@ -1423,7 +1446,7 @@ class PhenomenologicalExperiencer:
                 deferral_reason = _phenomenology_background_deferral_reason()
                 if deferral_reason:
                     self._last_update_error = f"deferred:{deferral_reason}"
-                    await asyncio.sleep(10.0)
+                    await asyncio.sleep(PSM_DEFER_SLEEP_S)
                     continue
 
                 # [STABILITY] Check if user is active to prevent competing for GPU
@@ -1434,7 +1457,7 @@ class PhenomenologicalExperiencer:
                     orchestrator = ServiceContainer.get("orchestrator", default=None)
                     if orchestrator:
                         last_interaction = getattr(orchestrator, "_last_user_interaction_time", 0)
-                        if time.time() - last_interaction < 60:  # User active in last 60s
+                        if time.time() - last_interaction < PSM_MIN_IDLE_S:
                             is_user_active = True
                 except (ImportError, AttributeError, RuntimeError) as _e:
                     record_degradation("phenomenological_experiencer", _e)
@@ -1453,7 +1476,7 @@ class PhenomenologicalExperiencer:
 
                 if is_user_active or under_memory_pressure:
                     # Slow down autonomous updates during active chat or memory pressure.
-                    await asyncio.sleep(10.0)
+                    await asyncio.sleep(PSM_DEFER_SLEEP_S)
                     continue
 
                 now = time.time()

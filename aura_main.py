@@ -3418,6 +3418,12 @@ def main():
         # latent_bridge activation steering, and logit modulation cannot act on
         # the same live model path. The desktop runtime always chooses MLX.
         os.environ["AURA_LOCAL_BACKEND"] = "mlx"
+        # Desktop/headless are real live-runtime surfaces, not offline research
+        # harnesses. Harden governance at the launch boundary so AURA_MODE's
+        # production/live claim cannot drift away from Will and contract
+        # enforcement.
+        os.environ.setdefault("AURA_GOVERNANCE_MODE", "production")
+        os.environ.setdefault("AURA_CONTRACTS_ENFORCE", "1")
         # A normal desktop session is the complete Aura runtime.  Background
         # cognition stays admitted through the same RAM/foreground gates as
         # every other local generation; only an explicit recovery profile may

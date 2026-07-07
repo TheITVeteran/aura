@@ -48,6 +48,48 @@ async def test_deep_narrative_failure_updates_recovery_state(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_deep_narrative_timeout_is_bounded_and_debug_only(monkeypatch):
+    class _SlowRouter:
+        async def think(self, **kwargs):
+            self.kwargs = kwargs
+            await __import__("asyncio").sleep(5.0)
+
+    router = _SlowRouter()
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        lambda name, default=None: router if name == "llm_router" else default,
+    )
+    monkeypatch.setattr(
+        "core.consciousness.phenomenological_experiencer._phenomenology_background_deferral_reason",
+        lambda: "",
+    )
+    monkeypatch.setattr(
+        "core.consciousness.phenomenological_experiencer.PSM_NARRATIVE_TIMEOUT_S",
+        0.01,
+    )
+    monkeypatch.setattr(
+        "core.consciousness.phenomenological_experiencer.PSM_NARRATIVE_MAX_TOKENS",
+        64,
+    )
+
+    psm = PhenomenalSelfModel()
+    report = await psm.run_deep_narrative_update(
+        continuity=ExperientialContinuityEngine(),
+        schema=AttentionSchema("a live chat turn", "aware", "cognitive", 0.7),
+        qualia=[],
+        current_emotion="focused",
+        dominant_motivation="needs_to_answer",
+    )
+
+    assert report == psm._present_description
+    assert psm.to_dict()["narrative_failure_streak"] == 1
+    assert router.kwargs["max_tokens"] == 64
+    last = get_degradation_tracker().recent(subsystem="phenomenological_narrative")[-1]
+    assert last.severity == "debug"
+    assert last.action == "bounded opportunistic narrative update and retained previous present-description"
+
+
+@pytest.mark.asyncio
 async def test_witness_failure_updates_recovery_state(monkeypatch):
     class _BrokenRouter:
         async def think(self, **_kwargs):
@@ -73,6 +115,45 @@ async def test_witness_failure_updates_recovery_state(monkeypatch):
     assert psm.to_dict()["witness_failure_streak"] == 1
     last = get_degradation_tracker().recent(subsystem="phenomenological_witness")[-1]
     assert last.action == "retained previous witness observation after reflection update failed"
+
+
+@pytest.mark.asyncio
+async def test_witness_timeout_is_bounded_and_debug_only(monkeypatch):
+    class _SlowRouter:
+        async def think(self, **kwargs):
+            self.kwargs = kwargs
+            await __import__("asyncio").sleep(5.0)
+
+    router = _SlowRouter()
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        lambda name, default=None: router if name == "llm_router" else default,
+    )
+    monkeypatch.setattr(
+        "core.consciousness.phenomenological_experiencer._phenomenology_background_deferral_reason",
+        lambda: "",
+    )
+    monkeypatch.setattr(
+        "core.consciousness.phenomenological_experiencer.PSM_WITNESS_TIMEOUT_S",
+        0.01,
+    )
+    monkeypatch.setattr(
+        "core.consciousness.phenomenological_experiencer.PSM_WITNESS_MAX_TOKENS",
+        48,
+    )
+
+    psm = PhenomenalSelfModel()
+    observation = await psm.run_witness_reflection(
+        continuity=ExperientialContinuityEngine(),
+        credit_summary="credit assignment active",
+    )
+
+    assert observation == ""
+    assert psm.to_dict()["witness_failure_streak"] == 1
+    assert router.kwargs["max_tokens"] == 48
+    last = get_degradation_tracker().recent(subsystem="phenomenological_witness")[-1]
+    assert last.severity == "debug"
+    assert last.action == "bounded opportunistic witness update and retained previous observation"
 
 
 @pytest.mark.asyncio

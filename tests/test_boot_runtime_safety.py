@@ -542,6 +542,13 @@ def test_live_boot_proof_uses_readiness_heartbeat_contract():
     assert "X-Aura-Require-CognitiveEngine" in source
 
 
+def test_desktop_boot_sets_hardened_governance_defaults():
+    source = (PROJECT_ROOT / "aura_main.py").read_text()
+
+    assert 'os.environ.setdefault("AURA_GOVERNANCE_MODE", "production")' in source
+    assert 'os.environ.setdefault("AURA_CONTRACTS_ENFORCE", "1")' in source
+
+
 def test_live_boot_proof_requires_cognitive_organ_participation(monkeypatch, tmp_path):
     import tools.live_boot_proof as live_boot_proof
 

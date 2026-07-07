@@ -3313,7 +3313,7 @@ async def api_mind_tick_diagnostics():
         return JSONResponse({"error": "mind_tick unavailable"}, status_code=503)
     try:
         status = dict(mt.get_health_status())
-    except Exception as exc:  # diagnostic must never itself 500 the health lane
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:  # diagnostic must never itself 500 the health lane
         return JSONResponse({"error": f"get_health_status failed: {exc}"}, status_code=200)
     now = _t.time()
     for key in ("last_successful_tick_at", "last_loop_progress_at", "active_tick_started_at"):

@@ -198,6 +198,79 @@ async def test_response_generation_executes_required_search_before_answering(mon
 
 
 @pytest.mark.asyncio
+async def test_response_generation_preserves_source_definition_search_tail(monkeypatch):
+    state = AuraState()
+    state.cognition.current_objective = (
+        "Please search the web for one current NASA page about Europa. "
+        "Tell me the source title and what NASA says Europa is."
+    )
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.REACTIVE
+    state.response_modifiers["matched_skills"] = ["web_search"]
+
+    router = _EvidenceRouter()
+    capability = _SearchCapability()
+    phase = ResponseGenerationPhase(
+        _Container({"llm_router": router, "capability_engine": capability})
+    )
+
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda state_arg, _objective: [
+            {
+                "role": "system",
+                "content": "\n".join(
+                    str(item.get("content") or "")
+                    for item in state_arg.cognition.working_memory
+                    if isinstance(item, dict)
+                ),
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+
+    new_state = await phase.execute(
+        state,
+        context={
+            "desktop_cognitive_engine_required": True,
+            "cognitive_engine_required": True,
+            "visible_user_message": state.cognition.current_objective,
+            "max_tokens": 512,
+        },
+    )
+
+    assert capability.calls
+    _, params, _ = capability.calls[0]
+    assert "one current NASA page about Europa" in params["query"]
+    assert "what NASA says Europa is" in params["query"]
+    assert "Tell me the source title" not in params["query"]
+    assert new_state.response_modifiers["last_skill_ok"] is True
+
+
+def test_required_search_cleaner_uses_original_request_inside_repair_prompt():
+    repair_prompt = (
+        "The prior draft for this same user turn did not satisfy the user-facing response contract.\n"
+        "Observed problems: truncated_tail.\n\n"
+        "Rewrite from scratch for the original user request below.\n\n"
+        "Original user request:\n"
+        "Please search the web for one current NASA page about Europa. "
+        "Tell me the source title and what NASA says Europa is.\n\n"
+        "Rejected draft for avoidance only:\n"
+        "I've searched and found a relevant page from NASA. The source title is"
+    )
+
+    cleaned = ResponseGenerationPhase._clean_required_search_query(repair_prompt)
+
+    assert "one current NASA page about Europa" in cleaned
+    assert "what NASA says Europa is" in cleaned
+    assert "Rejected draft" not in cleaned
+    assert "I've searched" not in cleaned
+
+
+@pytest.mark.asyncio
 async def test_response_generation_required_search_uses_service_container_fallback(monkeypatch):
     state = AuraState()
     state.cognition.current_objective = (

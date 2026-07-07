@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
 from core.runtime.structured_input import looks_like_learning_resource_bundle
 
 _WORD_RE = re.compile(r"[A-Za-z][A-Za-z']*")
@@ -212,6 +213,10 @@ _FORMAT_META_ARTIFACT_RE = re.compile(
     r"this response adheres strictly to (?:the )?format instructions(?: provided)?|"
     r"if you need any adjustments or have additional constraints)\b",
     re.IGNORECASE,
+)
+_SEARCH_META_ARTIFACT_RE = re.compile(
+    r"^\s*(?:query|search\s+query)\s*:\s*.{5,360}?answer\s*:",
+    re.IGNORECASE | re.DOTALL,
 )
 _UNSUPPORTED_AFFECTION_CLAIM_RE = re.compile(
     r"\b(?:"
@@ -3591,6 +3596,10 @@ def _model_text_integrity_reasons(
         reasons.append("raw_model_identity_leak")
     if user_facing and _has_unsupported_external_provider_path_claim(prompt, raw):
         reasons.append("unsupported_external_provider_path_claim")
+    if user_facing:
+        grounding = detect_unsupported_embodiment_claim(raw, prompt=prompt)
+        if not grounding.ok:
+            reasons.append("unsupported_embodiment_claim")
     if user_facing and _requires_self_claim_evidence_boundary(prompt):
         if _REDUCTIVE_SELF_CLAIM_RE.search(raw):
             reasons.append("raw_model_identity_leak")
@@ -3650,6 +3659,8 @@ def _model_text_integrity_reasons(
         reasons.append("unsupported_self_telemetry_claim")
     if user_facing and _FORMAT_META_ARTIFACT_RE.search(raw):
         reasons.append("format_meta_artifact")
+    if user_facing and _SEARCH_META_ARTIFACT_RE.search(raw):
+        reasons.append("search_meta_artifact")
     if user_facing:
         reasons.extend(_operational_status_overclaim_reasons(prompt, raw))
     if _CORRUPTED_SOCIAL_FRAGMENT_RE.search(raw) and "lol" not in _normalize(prompt):
@@ -3686,6 +3697,7 @@ def assess_model_text_integrity(
         "cognitive_engine_failure_envelope",
         "raw_model_identity_leak",
         "unsupported_external_provider_path_claim",
+        "unsupported_embodiment_claim",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",
@@ -3714,6 +3726,7 @@ def assess_model_text_integrity(
         "unsupported_affection_claim",
         "unsupported_self_telemetry_claim",
         "format_meta_artifact",
+        "search_meta_artifact",
         "corrupted_social_fragment",
         "unsupported_operational_status_overclaim",
         "unsupported_runtime_telemetry_inference",
@@ -3758,12 +3771,14 @@ def assess_user_facing_reply(
             "backend_symbolic_surface_leak",
             "raw_model_identity_leak",
             "unsupported_external_provider_path_claim",
+            "unsupported_embodiment_claim",
             "unrequested_pop_culture_intrusion",
             "unexpected_cjk_intrusion",
             "surface_nonsense_drift",
             "unsupported_affection_claim",
             "unsupported_self_telemetry_claim",
             "format_meta_artifact",
+            "search_meta_artifact",
             "corrupted_language",
             "unsupported_operational_status_overclaim",
             "unsupported_runtime_telemetry_inference",
@@ -3888,6 +3903,7 @@ def assess_user_facing_reply(
         "cognitive_engine_failure_envelope",
         "raw_model_identity_leak",
         "unsupported_external_provider_path_claim",
+        "unsupported_embodiment_claim",
         "backend_symbolic_surface_leak",
         "persona_card_deflection",
         "detail_request_deflection",
@@ -3921,6 +3937,7 @@ def assess_user_facing_reply(
         "unsupported_affection_claim",
         "unsupported_self_telemetry_claim",
         "format_meta_artifact",
+        "search_meta_artifact",
         "low_signal_acknowledgement_placeholder",
         "question_back_non_answer",
         "missing_current_request_recap",

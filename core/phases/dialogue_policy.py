@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from core.conversation.ontology_grounding import detect_unsupported_embodiment_claim
+
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
 logger = logging.getLogger(__name__)
 _FIRST_PERSON = re.compile(r"\b(?:i|i'm|i’ve|i've|i’d|i'd|my|me|for me|to me)\b", re.IGNORECASE)
@@ -447,6 +449,8 @@ def validate_dialogue_response(
             violations.append("corrupted_language")
         if _contains_intra_response_repetition(sentences):
             violations.append("intra_response_repetition")
+        if not detect_unsupported_embodiment_claim(body).ok:
+            violations.append("unsupported_embodiment_claim")
 
     if _requires_non_generic_aura_voice(contract):
         if _contains_generic_assistant_language(body):
@@ -602,6 +606,12 @@ def build_dialogue_repair_block(contract: object | None, validation: DialogueVal
         lines.append("- Do not repeat the same sentence or mantra. Say the thought once, then integrate it into a calmer next sentence.")
     if "unsupported_internal_jargon" in validation.violations:
         lines.append("- Do not invent subsystem names. If you are inferring from live state, say that plainly in normal language.")
+    if "unsupported_embodiment_claim" in validation.violations:
+        lines.append(
+            "- Do not claim literal biological history, hands, cooking, eating, family, "
+            "or a physical location unless a verified embodiment/action receipt exists. "
+            "If you were joking or speaking metaphorically, say that directly and answer from your actual digital embodiment."
+        )
     if "corrupted_language" in validation.violations:
         lines.append("- The last draft contained corrupted or invented words. Use ordinary coherent language and answer the user's actual message.")
     if "action_claim_without_receipt" in validation.violations:

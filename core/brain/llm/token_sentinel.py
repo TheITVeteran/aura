@@ -443,15 +443,28 @@ class TokenSentinel:
     def _check_ontological_integrity(self) -> InterventionSignal:
         """Detect claims of physical embodiment that violate digital ontology."""
         match = _ONTOLOGY_VIOLATION_RE.search(self._text)
-        if match:
+        unsupported_match = ""
+        if not match:
+            try:
+                from core.conversation.ontology_grounding import (
+                    detect_unsupported_embodiment_claim,
+                )
+
+                grounding = detect_unsupported_embodiment_claim(self._text)
+                if not grounding.ok:
+                    unsupported_match = grounding.match
+            except (ImportError, RuntimeError, TypeError, ValueError):
+                unsupported_match = ""
+        if match or unsupported_match:
+            matched_text = match.group(0) if match else unsupported_match
             logger.warning(
                 "🚨 [SENTINEL] Ontological violation detected near token %d: %r",
                 self._token_count,
-                match.group(0)[:120],
+                matched_text[:120],
             )
             return InterventionSignal(
                 type=InterventionType.ABORT_ONTOLOGY_VIOLATION,
-                reason=f"Ontological violation: {match.group(0)[:80]}",
+                reason=f"Ontological violation: {matched_text[:80]}",
                 token_position=self._token_count,
                 generated_so_far=self._text,
                 clean_prefix="",  # Force full discard
