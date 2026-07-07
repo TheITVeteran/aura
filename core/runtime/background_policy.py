@@ -306,6 +306,36 @@ def _read_memory_pressure_snapshot() -> _MemoryPressureSnapshot:
         )
 
 
+# ── Named background-yield profiles: THE shared vocabulary ────────────────
+#
+# One organism, one discipline for when background work yields to the user.
+# Rather than 25+ call sites each spelling out magic-number thresholds, every
+# background loop should name the class of work it is and let the profile
+# carry the thresholds. Tiers (idle gate increases with cost; all yield to
+# the live conversation and to memory pressure):
+#
+#   IDLE_COGNITION — light always-on cognitive loops that must yield to the
+#                    conversation but may run during warmup (mind-tick
+#                    reflection, phenomenology, metacognition, momentum). This
+#                    names the emergent inline convention (180s / 78%).
+#   THOUGHT        — deliberate background thinking that should wait for a
+#                    ready conversation lane.
+#   RESEARCH       — multi-step background research: long idle gate.
+#   MAINTENANCE    — expensive upkeep (defrag, evolution, training): longest.
+#
+# The magic-number inline callers should migrate onto IDLE_COGNITION; that
+# migration is behavior-preserving and tracked separately.
+
+IDLE_COGNITION_BACKGROUND_POLICY = BackgroundPolicyProfile(
+    min_idle_seconds=180.0,
+    max_memory_percent=78.0,
+    # 0.60 matches the function default the bare inline callers already get,
+    # so `profile=IDLE_COGNITION` is a true drop-in for `min_idle_seconds=180,
+    # max_memory_percent=78`.
+    max_failure_pressure=0.60,
+    require_conversation_ready=False,
+)
+
 THOUGHT_BACKGROUND_POLICY = BackgroundPolicyProfile(
     min_idle_seconds=30.0,
     max_memory_percent=85.0,

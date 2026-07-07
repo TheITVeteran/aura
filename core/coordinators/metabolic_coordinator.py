@@ -15,7 +15,10 @@ from collections import deque
 from core.config import config
 from core.container import ServiceContainer
 from core.memory.retention_policy import working_history_retention_policy
-from core.runtime.background_policy import background_activity_reason
+from core.runtime.background_policy import (
+    IDLE_COGNITION_BACKGROUND_POLICY,
+    background_activity_reason,
+)
 from core.runtime.errors import record_degradation
 from core.runtime.impulse_governance import run_governed_impulse
 from core.runtime.shutdown_coordinator import is_shutdown_requested
@@ -816,7 +819,7 @@ class MetabolicCoordinator:
         orch = self.orch
         if not orch:
             return
-        reason = background_activity_reason(orch, min_idle_seconds=180.0, max_memory_percent=78.0)
+        reason = background_activity_reason(orch, profile=IDLE_COGNITION_BACKGROUND_POLICY)
         if reason:
             logger.debug("Skipping reflection impulse: %s", reason)
             return
@@ -1301,8 +1304,6 @@ class MetabolicCoordinator:
             return
         try:
             try:
-                from core.runtime.background_policy import background_activity_reason
-
                 policy_reason = background_activity_reason(
                     orch,
                     min_idle_seconds=180.0,
