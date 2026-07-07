@@ -149,13 +149,18 @@ _HEAVY_BACKGROUND_SKILLS = frozenset(
 _FOREGROUND_EXCLUSIVE_BACKGROUND_SKILLS = frozenset(
     {
         "email_adapter",
-        "free_search",
-        "grounded_search",
         "reddit_adapter",
-        "search_web",
         "sovereign_browser",
         "sovereign_network",
         "web_interlocutor",
+    }
+)
+
+_LIGHTWEIGHT_BACKGROUND_IO_SKILLS = frozenset(
+    {
+        "free_search",
+        "grounded_search",
+        "search_web",
         "web_search",
     }
 )
@@ -2991,6 +2996,52 @@ class CapabilityEngine(AuraBaseModule):
                         "reason": "background_policy_unavailable",
                         "message": (
                             f"Background {skill_name} deferred because the foreground protection policy is unavailable."
+                        ),
+                    }
+            elif (
+                skill_name in _LIGHTWEIGHT_BACKGROUND_IO_SKILLS
+                and not self._is_user_facing_origin(exec_source)
+            ):
+                try:
+                    from core.runtime.background_policy import background_activity_reason
+
+                    reason = background_activity_reason(
+                        ctx.get("orchestrator"),
+                        min_idle_seconds=30.0,
+                        max_memory_percent=float(
+                            os.getenv("AURA_BACKGROUND_LIGHT_IO_MAX_MEMORY_PCT", "84")
+                        ),
+                        max_failure_pressure=0.45,
+                        require_conversation_ready=False,
+                        allow_no_user_anchor=True,
+                    )
+                    if reason:
+                        return {
+                            "ok": False,
+                            "status": "deferred",
+                            "reason": reason,
+                            "message": (
+                                f"Background {skill_name} deferred while live conversation resources are protected ({reason})."
+                            ),
+                        }
+                except (ImportError, AttributeError, RuntimeError) as policy_exc:
+                    _record_capability_degradation(
+                        policy_exc,
+                        action="deferred lightweight background I/O because preflight policy failed",
+                        severity="warning",
+                        enforce_failure_policy=False,
+                    )
+                    self.logger.warning(
+                        "Lightweight background I/O preflight failed for %s: %s",
+                        skill_name,
+                        policy_exc,
+                    )
+                    return {
+                        "ok": False,
+                        "status": "deferred",
+                        "reason": "background_policy_unavailable",
+                        "message": (
+                            f"Background {skill_name} deferred because the background protection policy is unavailable."
                         ),
                     }
 

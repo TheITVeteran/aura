@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import time
 
 import pytest
 
@@ -491,6 +492,34 @@ async def test_executive_allows_safe_autonomous_tools_under_temporal_obligation(
 
 
 @pytest.mark.asyncio
+async def test_executive_expires_stale_desktop_prompt_as_temporal_anchor(service_container):
+    reset_constitutional_singletons()
+    clear_degraded_events()
+    ServiceContainer.register_instance("self_model", object(), required=False)
+    state = AuraState()
+    state.cognition.current_objective = (
+        "From the live desktop path, answer in your own voice: what is one thing you can do?"
+    )
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.pending_initiatives = [{"goal": "Investigate anomaly"}]
+    state.cognition.modifiers = {
+        "current_objective_binding": {
+            "source": "desktop_ui",
+            "promoted_at": time.time() - 900,
+        }
+    }
+    ServiceContainer.register_instance("state_repository", SimpleNamespace(_current=state), required=False)
+    ServiceContainer.lock_registration()
+
+    executive = executive_core_module.get_executive_core()
+    approved, reason = await executive.approve_background_task("novelty_probe", source="background")
+
+    assert approved is False
+    assert reason == "temporal_obligation_active:Investigate anomaly"
+    assert "live desktop path" not in reason
+
+
+@pytest.mark.asyncio
 async def test_executive_allows_system_validation_tool_under_temporal_obligation(service_container):
     reset_constitutional_singletons()
     clear_degraded_events()
@@ -605,6 +634,29 @@ async def test_executive_allows_passive_social_reads_under_temporal_obligation(s
     assert email_record.reason == "temporal_safe_autonomous_tool"
     assert reddit_record.outcome == executive_core_module.DecisionOutcome.DEGRADED
     assert reddit_record.reason == "temporal_safe_autonomous_tool"
+
+
+@pytest.mark.asyncio
+async def test_executive_allows_internal_swarm_debate_under_temporal_obligation(service_container):
+    reset_constitutional_singletons()
+    clear_degraded_events()
+    ServiceContainer.register_instance("self_model", object(), required=False)
+    state = AuraState()
+    state.cognition.current_objective = "Protect continuity"
+    state.cognition.pending_initiatives = [{"goal": "Investigate anomaly"}]
+    ServiceContainer.register_instance("state_repository", SimpleNamespace(_current=state), required=False)
+    ServiceContainer.lock_registration()
+
+    executive = executive_core_module.get_executive_core()
+    _, record = await executive.prepare_tool_intent(
+        "swarm_debate",
+        {"topic": "compare two safe runtime repair plans"},
+        source="autonomous",
+    )
+
+    assert record.outcome == executive_core_module.DecisionOutcome.DEGRADED
+    assert record.reason == "temporal_safe_autonomous_tool"
+    assert record.constraints["read_only"] is True
 
 
 @pytest.mark.asyncio

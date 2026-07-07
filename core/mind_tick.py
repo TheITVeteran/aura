@@ -416,6 +416,14 @@ class MindTick:
         except RuntimeError:
             self._owner_loop = None
         self._install_loop_done_callback(self._task, name="mind_tick.run_loop")
+        try:
+            ServiceContainer.register_instance("mind_tick", self, required=False)
+        except _MIND_BOUNDARY_ERRORS as exc:
+            _record_mind_degradation(
+                exc,
+                action="continued after authoritative MindTick service publish failed",
+                severity="warning",
+            )
         logger.info("💓 MindTick: Cognitive rhythm started.")
 
     def is_alive(self) -> bool:

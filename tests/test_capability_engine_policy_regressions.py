@@ -364,6 +364,64 @@ async def test_foreground_exclusive_background_tool_defers_when_policy_fails(mon
 
 
 @pytest.mark.asyncio
+async def test_background_web_search_uses_lightweight_io_preflight(monkeypatch):
+    engine = _engine_with_skill("web_search")
+    calls: list[dict] = []
+
+    def _policy(*args, **kwargs):
+        calls.append(dict(kwargs))
+        return (_ for _ in ()).throw(RuntimeError("policy offline"))
+
+    monkeypatch.setattr(
+        "core.runtime.background_policy.background_activity_reason",
+        _policy,
+    )
+
+    result = await CapabilityEngine.execute(
+        engine,
+        "web_search",
+        {"query": "latest Turing Award"},
+        context={"origin": "background"},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "deferred"
+    assert calls
+    assert calls[0]["min_idle_seconds"] == pytest.approx(30.0)
+    assert calls[0]["max_memory_percent"] == pytest.approx(84.0)
+    assert calls[0]["max_failure_pressure"] == pytest.approx(0.45)
+
+
+@pytest.mark.asyncio
+async def test_background_browser_dialogue_still_uses_strict_foreground_preflight(monkeypatch):
+    engine = _engine_with_skill("web_interlocutor")
+    calls: list[dict] = []
+
+    def _policy(*args, **kwargs):
+        calls.append(dict(kwargs))
+        return (_ for _ in ()).throw(RuntimeError("policy offline"))
+
+    monkeypatch.setattr(
+        "core.runtime.background_policy.background_activity_reason",
+        _policy,
+    )
+
+    result = await CapabilityEngine.execute(
+        engine,
+        "web_interlocutor",
+        {"topic": "memory and agency"},
+        context={"origin": "background"},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "deferred"
+    assert calls
+    assert calls[0]["min_idle_seconds"] == pytest.approx(600.0)
+    assert calls[0]["max_memory_percent"] == pytest.approx(72.0)
+    assert calls[0]["max_failure_pressure"] == pytest.approx(0.20)
+
+
+@pytest.mark.asyncio
 async def test_high_cost_tool_blocks_when_self_preservation_check_fails(monkeypatch):
     ServiceContainer.clear()
     engine = _engine_with_skill("sovereign_terminal", metabolic_cost=3)

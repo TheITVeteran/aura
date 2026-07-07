@@ -7486,3 +7486,61 @@ Remaining non-soak work after this checkpoint:
 - Continue live desktop runtime verification for any neural-stream, terminal,
   boot, permission, chat-path, background-autonomy, or heat/memory issues that
   surface in launched Aura.app.
+
+## Checkpoint 2026-07-07-09: Live Runtime Liveness and Background Tool Admission
+
+Status: implementation and focused regression gates complete; live Aura.app
+restart validation still pending for this checkpoint.
+
+Scope:
+
+- Fixed the MindTick false-negative health contract path observed in the live
+  app: a second desktop orchestrator could construct and register a cold
+  `mind_tick` while an older real loop was still running. Boot now reuses an
+  existing live MindTick, and `MindTick.start()` republishes the running
+  instance as the authoritative service-container target.
+- Expired stale user/desktop objectives as temporal anchors after a bounded TTL
+  unless they are still backed by pending initiatives, active goals, or
+  actionable commitments. This prevents old live-chat prompts from blocking
+  unrelated background reasoning indefinitely.
+- Added `swarm_debate` to temporal-safe autonomous tools as read-only internal
+  deliberation, while preserving deferral for social writes and real mutating
+  actions.
+- Split lightweight read-only search from foreground-exclusive browser/dialogue
+  actions. Background `web_search`/`grounded_search`/`search_web`/`free_search`
+  now use a short, resource-aware lightweight I/O gate; browser dialogue,
+  network recon, email/reddit, and user-visible browser actions keep the strict
+  foreground protection gate.
+
+Verification:
+
+- `python -m py_compile core/capability_engine.py core/executive/executive_core.py core/mind_tick.py core/orchestrator/mixins/boot/boot_resilience.py`
+  -> passed.
+- `python -m pytest -q tests/test_capability_engine_policy_regressions.py::test_web_search_execution_scope_is_read_only_not_external_mutation tests/test_capability_engine_policy_regressions.py::test_outcome_simulator_allows_read_only_external_web_search tests/test_capability_engine_policy_regressions.py::test_foreground_exclusive_background_tool_defers_when_policy_fails tests/test_capability_engine_policy_regressions.py::test_background_web_search_uses_lightweight_io_preflight tests/test_capability_engine_policy_regressions.py::test_background_browser_dialogue_still_uses_strict_foreground_preflight --maxfail=1`
+  -> `5 passed`.
+- `python -m pytest -q tests/test_mind_tick_runtime_contract.py tests/test_constitutional_core.py::test_executive_defers_background_task_when_temporal_obligation_is_active tests/test_constitutional_core.py::test_executive_expires_stale_desktop_prompt_as_temporal_anchor tests/test_constitutional_core.py::test_executive_allows_internal_swarm_debate_under_temporal_obligation tests/test_constitutional_core.py::test_executive_still_defers_social_writes_under_temporal_obligation --maxfail=1`
+  -> `17 passed`.
+- `python -m pytest -q tests/test_memory_pressure_policy.py tests/test_brainstem_background_headroom_calibration.py tests/test_capability_engine_policy_regressions.py tests/test_outcome_simulator_owner_authorization.py --maxfail=1`
+  -> `41 passed`.
+- `python -m pytest -q tests/test_capability_engine_policy_regressions.py tests/test_memory_pressure_policy.py tests/test_brainstem_background_headroom_calibration.py tests/test_mind_tick_runtime_contract.py tests/test_constitutional_core.py --maxfail=1`
+  -> `87 passed`.
+- `make enterprise-gate`
+  -> passed; `/tmp/aura_enterprise_gate.json` updated.
+
+Functional closeout estimate after this checkpoint:
+
+- Configured non-soak local closeout is about **99.78%** complete by source,
+  focused proofs, and enterprise gates. The remaining non-soak delta is live
+  Aura.app replay: pull this code into the resident app checkout, restart, and
+  verify MindTick health, chat readiness, background search admission, and
+  neural-stream stability from the real user surface.
+
+Remaining non-soak work after this checkpoint:
+
+- Run `make enterprise-collect` and `make production-gate` after the tracker
+  update and before committing this checkpoint.
+- Sync `/Users/bryan/.aura/live-source`, kill/restart resident Aura sessions,
+  and validate `/api/health/mind_tick`, `/api/health`, neural stream, and
+  terminal logs on the launched app.
+- Continue the signed-in ChatGPT/Gemini proof through Aura's live desktop bridge
+  when the actual user-owned browser surface is controllable.

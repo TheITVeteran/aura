@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 import core.mind_tick as mind_module
+from core.container import ServiceContainer
 from core.mind_tick import MindTick, _schedule_mind_task
 from core.runtime.errors import get_degradation_tracker
 from core.state.state_repository import StateRepository
@@ -225,6 +226,46 @@ async def test_mind_tick_start_rolls_back_when_loop_cannot_be_scheduled(monkeypa
 
     assert tick._running is False
     assert tick._task is None
+
+
+@pytest.mark.asyncio
+async def test_mind_tick_start_republishes_authoritative_running_instance(monkeypatch):
+    monkeypatch.setattr("infrastructure.watchdog.get_watchdog", lambda: Watchdog())
+    ServiceContainer.clear()
+
+    stale_tick = SimpleNamespace(_running=False, _task=None, is_alive=lambda: False)
+    ServiceContainer.register_instance("mind_tick", stale_tick, required=False)
+
+    tick = MindTick.__new__(MindTick)
+    tick.orchestrator = SimpleNamespace()
+    tick._running = False
+    tick._task = None
+    tick._started_at = 0.0
+    tick._last_successful_tick_at = 0.0
+    tick._last_loop_progress_at = 0.0
+    tick._last_progress_label = "not_started"
+    tick._active_tick_started_at = 0.0
+    tick._active_tick_stage = "idle"
+    tick._consecutive_loop_failures = 0
+    tick._last_liveness_repair_at = 0.0
+    tick._liveness_repair_count = 0
+
+    release = asyncio.Event()
+
+    async def run_loop():
+        await release.wait()
+
+    tick._run_loop = run_loop
+
+    await tick.start()
+
+    assert ServiceContainer.get("mind_tick") is tick
+    assert tick._task is not None
+    assert not tick._task.done()
+
+    release.set()
+    await tick._task
+    ServiceContainer.clear()
 
 
 @pytest.mark.asyncio

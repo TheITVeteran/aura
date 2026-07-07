@@ -22,6 +22,7 @@ from core.runtime.errors import record_degradation
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 from collections import deque
@@ -194,6 +195,7 @@ TEMPORAL_SAFE_AUTONOMOUS_TOOLS = {
     "environment_info",
     "query_beliefs",
     "reddit_adapter",
+    "swarm_debate",
     "system_proprioception",
     "test_generator",
     "web_search",
@@ -945,6 +947,8 @@ class ExecutiveCore:
 
     def _get_temporal_identity_context(self) -> Dict[str, Any]:
         current_objective = ""
+        current_origin = ""
+        objective_binding: Dict[str, Any] = {}
         pending_count = 0
         active_goal_count = 0
         contradiction_count = 0
@@ -957,6 +961,9 @@ class ExecutiveCore:
             state = getattr(repo, "_current", None) if repo is not None else None
             cognition = getattr(state, "cognition", None) if state is not None else None
             current_objective = str(getattr(cognition, "current_objective", "") or "")
+            current_origin = str(getattr(cognition, "current_origin", "") or "")
+            modifiers = dict(getattr(cognition, "modifiers", {}) or {})
+            objective_binding = dict(modifiers.get("current_objective_binding", {}) or {})
             pending_items = list(getattr(cognition, "pending_initiatives", []) or [])
             active_goal_items = list(getattr(cognition, "active_goals", []) or [])
             pending_count = len(pending_items)
@@ -1018,11 +1025,47 @@ class ExecutiveCore:
             for text in (_normalize_goal_text(entry) for entry in commitments)
             if text and not _is_speculative_autonomy_label(text)
         ]
+        actionable_commitments = [text for text in commitments if is_actionable_goal_text(text)]
+        try:
+            ttl_s = float(os.getenv("AURA_TEMPORAL_USER_OBJECTIVE_TTL_S", "300"))
+        except (TypeError, ValueError):
+            ttl_s = 300.0
+        objective_source = str(objective_binding.get("source") or current_origin or "").strip().lower()
+        objective_promoted_at = 0.0
+        try:
+            objective_promoted_at = float(objective_binding.get("promoted_at", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            objective_promoted_at = 0.0
+        objective_age_s = time.time() - objective_promoted_at if objective_promoted_at > 0.0 else None
+        objective_matches_active_work = bool(
+            current_objective
+            and current_objective in {
+                text
+                for text in (
+                    pending_anchor,
+                    active_goal_anchor,
+                    *(actionable_commitments[:3]),
+                )
+                if text
+            }
+        )
+        source_is_user_like = (
+            _coerce_intent_source(objective_source).value == IntentSource.USER.value
+            if objective_source
+            else False
+        )
+        if (
+            current_objective
+            and source_is_user_like
+            and objective_age_s is not None
+            and objective_age_s > ttl_s
+            and not objective_matches_active_work
+        ):
+            current_objective = ""
         obligation_pressure = min(
             1.0,
             (float(pending_count) * 0.25) + (float(active_goal_count) * 0.2) + (float(len(commitments)) * 0.2),
         )
-        actionable_commitments = [text for text in commitments if is_actionable_goal_text(text)]
         anchor = (
             current_objective
             or pending_anchor

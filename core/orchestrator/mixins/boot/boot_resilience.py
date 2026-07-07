@@ -32,6 +32,32 @@ def _strict_runtime_requested() -> bool:
     return str(os.environ.get("AURA_STRICT_RUNTIME", "0")).strip().lower() in _STRICT_TRUE_VALUES
 
 
+def _is_live_mind_tick(candidate: Any) -> bool:
+    """Return true for an already-running supervised MindTick.
+
+    Desktop boot can construct a second orchestrator while the first one is
+    already serving the UI. A fresh MindTick from that second constructor must
+    not overwrite the running service-container target, or health checks start
+    probing a cold duplicate while the real cognitive rhythm continues.
+    """
+    if candidate is None:
+        return False
+    task = getattr(candidate, "_task", None)
+    if bool(getattr(candidate, "_running", False)) and task is not None:
+        try:
+            if not task.done():
+                return True
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            return False
+    alive = getattr(candidate, "is_alive", None)
+    if not callable(alive):
+        return False
+    try:
+        return bool(alive())
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return False
+
+
 def _pipe_send(pipe: Any, raw: str) -> None:
     if isinstance(pipe, tuple):
         pipe[1].send(raw)
@@ -124,12 +150,17 @@ class BootResilienceMixin:
                 action="continued boot after state_repository registration failed",
             )
             logger.debug("Skipping state_repository registration in boot mixin: %s", e)
-        self.mind_tick = MindTick(self)
-        ServiceContainer.register_instance(
-            "mind_tick",
-            self.mind_tick,
-            required=False,
-        )
+        existing_mind_tick = ServiceContainer.get("mind_tick", default=None)
+        if _is_live_mind_tick(existing_mind_tick):
+            self.mind_tick = existing_mind_tick
+            logger.info("💓 MindTick: Reusing existing live cognitive rhythm.")
+        else:
+            self.mind_tick = MindTick(self)
+            ServiceContainer.register_instance(
+                "mind_tick",
+                self.mind_tick,
+                required=False,
+            )
 
         self.stats = {
             "goals_processed": 0,
