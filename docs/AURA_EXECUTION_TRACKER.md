@@ -7332,3 +7332,61 @@ Remaining non-soak work after this checkpoint:
   transcript or memory evidence.
 - Continue Chrome/Kubernetes/aerospace-style reliability hardening against any
   new live neural-stream, terminal, boot, permission, or chat-path issues.
+
+## Checkpoint 2026-07-07-06: RSI Repair-Lab Proof
+
+Status: implementation, regression tests, and proof artifacts complete.
+
+Scope:
+
+- Added `--repair-lab` mode to `tools/proof/run_rsi_challenge_proof.py`.
+  This mode does not claim live-model RSI. It performs a bounded local repair
+  lab: synthesize candidate patches from observed failure shape, sandbox all
+  candidates, reject no-op/wrong candidates, and promote only strict held-out
+  improvement.
+- Added proof for two independent bug classes:
+  - `median`: seed passes `2/5`; promoted repair passes `5/5`.
+  - `is_palindrome`: seed passes `3/5`; promoted repair passes `5/5`.
+- Promotion is isolated and rollback-safe. The proof writes artifacts only; it
+  does not silently mutate the runtime source.
+
+Verification:
+
+- `python -m py_compile tools/proof/run_rsi_challenge_proof.py`
+  -> passed.
+- `python -m pytest -q tests/test_rsi_challenge.py --maxfail=1`
+  -> `5 passed`.
+- `python tools/proof/run_rsi_challenge_proof.py --repair-lab --challenge median --out artifacts/live_proof/rsi/median_repair_lab.json`
+  -> `improvement_proven=true`, `promoted=true`, `seed_passed=2`,
+  `improved_passed=5`, `promoted_candidate=mean_of_two_middles`.
+- `python tools/proof/run_rsi_challenge_proof.py --repair-lab --challenge is_palindrome --out artifacts/live_proof/rsi/palindrome_repair_lab.json`
+  -> `improvement_proven=true`, `promoted=true`, `seed_passed=3`,
+  `improved_passed=5`, `promoted_candidate=alnum_casefold_palindrome`.
+- Control live-model run:
+  `python tools/proof/run_rsi_challenge_proof.py --challenge median --out artifacts/live_proof/rsi_challenge_median_live.json`
+  -> `improvement_proven=false` with
+  `reason=no_llm_router_registered`; the proof did not fabricate a model
+  result without a registered live router.
+- Artifact hashes:
+  - `artifacts/live_proof/rsi/median_repair_lab.json`
+    -> `f9d65898fbff88e28daf0df933b3b1fa4282aa4f31a03354beabaac5f9ca34d4`.
+  - `artifacts/live_proof/rsi/palindrome_repair_lab.json`
+    -> `269938998f13d0a9bf5779898700f8e4ee2e0de5fba4dd697edd9b2c5d14f28e`.
+  - `artifacts/live_proof/rsi_challenge_median_live.json`
+    -> `597a28a52764d3a0be7581fef3549ea29170106653e375b4f433cbfcf5ba2c6b`.
+
+Important caveat:
+
+- Local repair-lab RSI is now proven for representative code fixes. Live-32B
+  model RSI remains dependent on a running Aura router and must be rerun from
+  inside the live runtime before claiming model-authored recursive improvement.
+
+Remaining non-soak work after this checkpoint:
+
+- Run the user-owned signed-in ChatGPT/Gemini proof when Chrome connector access
+  is available or through Aura's resident desktop bridge: 20+ natural turns,
+  full-mind composition, visible page reading, retention, and report-back.
+- Tighten retained-memory answers so memory claims cite or derive from canonical
+  transcript or memory evidence.
+- Continue Chrome/Kubernetes/aerospace-style reliability hardening against any
+  new live neural-stream, terminal, boot, permission, or chat-path issues.

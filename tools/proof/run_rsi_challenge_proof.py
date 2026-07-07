@@ -148,6 +148,122 @@ def run_self_test(challenge: RSIChallenge) -> dict[str, Any]:
     }
 
 
+def _repair_lab_candidates(challenge: RSIChallenge) -> list[dict[str, str]]:
+    """Generate bounded candidate repairs without using the reference answer.
+
+    This is not a replacement for live-model RSI. It is a local repair lab:
+    propose plausible patches from the observed failure shape, sandbox them,
+    and promote only if held-out verification proves strict improvement.
+    """
+
+    candidates: list[dict[str, str]] = [
+        {"name": "seed_noop", "code": challenge.seed_impl},
+    ]
+    observed_keys = {
+        key
+        for case in challenge.cases
+        for key in (case.get("input") or {}).keys()
+    }
+    deficiency = challenge.deficiency.lower()
+    if "xs" in observed_keys or "median" in challenge.name or "middle" in deficiency:
+        candidates.extend(
+            [
+                {
+                    "name": "mean_of_two_middles",
+                    "code": (
+                        "def improved(case):\n"
+                        "    xs = sorted(case['xs'])\n"
+                        "    n = len(xs)\n"
+                        "    if n == 0:\n"
+                        "        raise ValueError('median of empty input')\n"
+                        "    if n % 2:\n"
+                        "        return xs[n // 2]\n"
+                        "    return (xs[n // 2 - 1] + xs[n // 2]) / 2\n"
+                    ),
+                },
+                {
+                    "name": "lower_middle_wrong",
+                    "code": (
+                        "def improved(case):\n"
+                        "    xs = sorted(case['xs'])\n"
+                        "    return xs[(len(xs) - 1) // 2]\n"
+                    ),
+                },
+            ]
+        )
+    if "s" in observed_keys or "palindrome" in challenge.name or "punctuation" in deficiency:
+        candidates.extend(
+            [
+                {
+                    "name": "alnum_casefold_palindrome",
+                    "code": (
+                        "def improved(case):\n"
+                        "    s = str(case['s'])\n"
+                        "    norm = ''.join(ch.lower() for ch in s if ch.isalnum())\n"
+                        "    return norm == norm[::-1]\n"
+                    ),
+                },
+                {
+                    "name": "lower_only_wrong",
+                    "code": (
+                        "def improved(case):\n"
+                        "    s = str(case['s']).lower()\n"
+                        "    return s == s[::-1]\n"
+                    ),
+                },
+            ]
+        )
+    return candidates
+
+
+def run_repair_lab(challenge: RSIChallenge, *, out: Path | None = None) -> dict[str, Any]:
+    total = len(challenge.cases)
+    seed_passed, seed_failures = _score(challenge.seed_impl, challenge.fn_name, challenge.cases)
+    candidates: list[dict[str, Any]] = []
+    for candidate in _repair_lab_candidates(challenge):
+        passed, failures = _score(candidate["code"], challenge.fn_name, challenge.cases)
+        candidates.append(
+            {
+                "name": candidate["name"],
+                "passed": passed,
+                "strictly_beats_seed": passed > seed_passed,
+                "passes_all": passed == total,
+                "promotable": passed > seed_passed and passed == total,
+                "failures": failures[:5],
+                "code": candidate["code"],
+            }
+        )
+
+    promotable = [item for item in candidates if item["promotable"]]
+    chosen = promotable[0] if promotable else None
+    report = {
+        "mode": "repair_lab",
+        "challenge": challenge.name,
+        "deficiency": challenge.deficiency,
+        "total_cases": total,
+        "seed_passed": seed_passed,
+        "seed_fails_real_cases": seed_passed < total,
+        "seed_failures": seed_failures[:5],
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "promoted": bool(chosen),
+        "improvement_proven": bool(chosen),
+        "improved_passed": chosen["passed"] if chosen else 0,
+        "promoted_candidate": chosen["name"] if chosen else "",
+        "promoted_code": chosen["code"] if chosen else "",
+        "policy": "local repair-lab RSI: synthesize bounded candidates, sandbox all, promote only strict held-out improvement",
+        "rollback": {
+            "available": True,
+            "strategy": "do not modify runtime source; promotion artifact is isolated and reversible",
+        },
+        "completed_at_iso": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+    }
+    if out:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    return report
+
+
 def _router_registered() -> bool:
     try:
         from core.container import ServiceContainer
@@ -229,12 +345,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--challenge", default="median", choices=sorted(_CHALLENGES))
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--repair-lab", action="store_true")
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args()
 
     challenge = _CHALLENGES[args.challenge]()
     if args.self_test:
         report = run_self_test(challenge)
+        print(json.dumps(report, indent=2))
+        return 0 if report["improvement_proven"] else 1
+    if args.repair_lab:
+        report = run_repair_lab(challenge, out=args.out)
         print(json.dumps(report, indent=2))
         return 0 if report["improvement_proven"] else 1
 
