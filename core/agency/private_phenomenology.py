@@ -85,16 +85,16 @@ class PrivatePhenomenology:
         shards to decide how she "feels" about her current existence.
         """
         try:
-            from core.runtime.background_policy import background_activity_reason
+            from core.runtime.background_policy import (
+                IDLE_COGNITION_BACKGROUND_POLICY,
+                background_activity_reason,
+            )
 
             orchestrator = ServiceContainer.get("orchestrator", default=None)
             reason = background_activity_reason(
                 orchestrator,
-                min_idle_seconds=180.0,
-                max_memory_percent=78.0,
+                profile=IDLE_COGNITION_BACKGROUND_POLICY,
                 max_failure_pressure=0.20,
-                require_conversation_ready=False,
-                allow_no_user_anchor=False,
             )
             if reason:
                 logger.debug("Phenomenology reflection deferred: %s", reason)

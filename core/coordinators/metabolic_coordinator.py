@@ -1306,10 +1306,8 @@ class MetabolicCoordinator:
             try:
                 policy_reason = background_activity_reason(
                     orch,
-                    min_idle_seconds=180.0,
-                    max_memory_percent=78.0,
+                    profile=IDLE_COGNITION_BACKGROUND_POLICY,
                     max_failure_pressure=0.25,
-                    require_conversation_ready=False,
                     allow_no_user_anchor=True,
                 )
                 if policy_reason:

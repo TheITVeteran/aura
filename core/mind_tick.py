@@ -327,12 +327,14 @@ class MindTick:
             pass
 
         try:
-            from core.runtime.background_policy import background_activity_reason
+            from core.runtime.background_policy import (
+                IDLE_COGNITION_BACKGROUND_POLICY,
+                background_activity_reason,
+            )
 
             reason = background_activity_reason(
                 self.orchestrator,
-                min_idle_seconds=180.0,
-                max_memory_percent=78.0,
+                profile=IDLE_COGNITION_BACKGROUND_POLICY,
                 # [FIX] The old threshold of 0.25 was too aggressive: transient
                 # errors blocked all cognitive work, preventing
                 # _last_successful_tick_at from advancing, which triggered the
@@ -342,7 +344,6 @@ class MindTick:
                 # active for genuine cascading failures while letting the tick
                 # survive normal transient degradation.
                 max_failure_pressure=0.70,
-                require_conversation_ready=False,
                 allow_no_user_anchor=True,
             )
             if reason:
@@ -794,14 +795,15 @@ class MindTick:
                 if not state.cognition.current_objective and state.cognition.pending_initiatives:
                     initiative_pause = ""
                     try:
-                        from core.runtime.background_policy import background_activity_reason
+                        from core.runtime.background_policy import (
+                            IDLE_COGNITION_BACKGROUND_POLICY,
+                            background_activity_reason,
+                        )
 
                         initiative_pause = background_activity_reason(
                             self.orchestrator,
-                            min_idle_seconds=180.0,
-                            max_memory_percent=78.0,
+                            profile=IDLE_COGNITION_BACKGROUND_POLICY,
                             max_failure_pressure=0.25,
-                            require_conversation_ready=False,
                         )
                         if initiative_pause:
                             logger.debug("MindTick: initiative promotion paused: %s", initiative_pause)

@@ -21,10 +21,13 @@ from core.runtime.background_policy import (
 _CORE = Path(__file__).resolve().parents[1] / "core"
 
 # The migration from inline magic numbers to named profiles is incremental.
-# This is the CURRENT count of call sites still passing raw thresholds; it may
-# only shrink. A new inline-threshold call site fails this test and must adopt
-# a named profile instead.
-_MAGIC_NUMBER_BUDGET = 30
+# This is the CURRENT count of call sites still passing raw TIER thresholds
+# (min_idle_seconds / max_memory_percent); it may only shrink. A new
+# inline-tier call site fails this test and must adopt a named profile.
+# Overriding ONLY max_failure_pressure on top of a named profile is the
+# sanctioned pattern — that knob is deliberately tuned per loop (mind_tick
+# documents why 0.70; meta-cognition runs at 0.10) and does not count.
+_MAGIC_NUMBER_BUDGET = 23
 
 
 def test_profiles_are_ordered_by_cost():
@@ -77,7 +80,6 @@ def test_background_policy_magic_numbers_do_not_grow():
     threshold_kwargs = {
         "min_idle_seconds",
         "max_memory_percent",
-        "max_failure_pressure",
     }
     inline_sites = 0
     for path in _CORE.rglob("*.py"):

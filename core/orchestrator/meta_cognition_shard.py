@@ -8,7 +8,10 @@ try:
 except ImportError:
     np = None
 
-from core.runtime.background_policy import background_activity_reason
+from core.runtime.background_policy import (
+    IDLE_COGNITION_BACKGROUND_POLICY,
+    background_activity_reason,
+)
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
@@ -53,10 +56,8 @@ class MetaCognitionShard:
             return str(
                 background_activity_reason(
                     self.orchestrator,
-                    min_idle_seconds=180.0,
-                    max_memory_percent=78.0,
+                    profile=IDLE_COGNITION_BACKGROUND_POLICY,
                     max_failure_pressure=0.10,
-                    require_conversation_ready=False,
                 )
                 or ""
             )

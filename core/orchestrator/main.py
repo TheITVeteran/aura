@@ -2477,14 +2477,15 @@ class RobustOrchestrator(
                 is_thinking = (t := self._current_thought_task) is not None and not t.done()
                 if error_goal and not is_thinking:
                     try:
-                        from core.runtime.background_policy import background_activity_reason
+                        from core.runtime.background_policy import (
+                            IDLE_COGNITION_BACKGROUND_POLICY,
+                            background_activity_reason,
+                        )
 
                         policy_reason = background_activity_reason(
                             self,
-                            min_idle_seconds=180.0,
-                            max_memory_percent=78.0,
+                            profile=IDLE_COGNITION_BACKGROUND_POLICY,
                             max_failure_pressure=0.25,
-                            require_conversation_ready=False,
                         )
                         if policy_reason:
                             logger.debug(

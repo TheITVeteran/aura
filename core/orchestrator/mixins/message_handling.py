@@ -203,14 +203,15 @@ class MessageHandlingMixin:
         if priority < 20 or self._is_user_facing_origin(origin):
             return ""
         try:
-            from core.runtime.background_policy import background_activity_reason
+            from core.runtime.background_policy import (
+                IDLE_COGNITION_BACKGROUND_POLICY,
+                background_activity_reason,
+            )
 
             return background_activity_reason(
                 self,
-                min_idle_seconds=180.0,
-                max_memory_percent=78.0,
+                profile=IDLE_COGNITION_BACKGROUND_POLICY,
                 max_failure_pressure=0.25,
-                require_conversation_ready=False,
             )
         except _MESSAGE_HANDLING_RECOVERABLE_ERRORS as exc:
             _record_message_degradation(
