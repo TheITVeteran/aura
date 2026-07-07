@@ -439,8 +439,17 @@ private struct BootSnapshot {
         if runtimeAge >= 45.0 && !runtimeLoopRunning {
             return "Existing runtime lock points at a process whose boot loop is no longer running."
         }
-        if runtimeAge >= 90.0 && hasDeadMindTickBlocker {
-            return "Existing runtime has a dead mind tick; replacing the stale runtime instead of preserving a zombie session."
+        // A dead mind tick only warrants replacement when the runtime is NOT
+        // actually serving the user (a true zombie: foreground looks open but
+        // cognition is gone). If the conversation lane / system is live
+        // (runtimeHasUserVisibleHandoff), a transient background-loop stall — e.g.
+        // the periodic dream-consolidation freeze, or a memory-backpressured tick —
+        // must surface in telemetry, NOT SIGTERM a runtime the user can still talk
+        // to and trigger a respawn during the slow 32B warm. Kernel death itself is
+        // caught by the REQUIRED kernel probe. (2026-07: this line replaced healthy
+        // runtimes on a transient false-death → serial respawn.)
+        if runtimeAge >= 90.0 && hasDeadMindTickBlocker && !runtimeHasUserVisibleHandoff {
+            return "Existing runtime has a dead mind tick and no live conversation lane; replacing the zombie session."
         }
 
         // After Aura is openable or the conversation lane is doing real work,
