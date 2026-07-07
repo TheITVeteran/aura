@@ -146,14 +146,18 @@ def _observe(target: RealTarget, payload: str) -> str:
     binary = shutil.which(target.binary)
     if not binary:
         raise FileNotFoundError(f"real binary not found on host: {target.binary}")
-    completed = subprocess.run(  # noqa: S603 - observing a user-owned host binary
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+    completed = get_subprocess_gateway().run(
         [binary, *target.argv(payload)],
-        input=payload.encode(),
+        input=payload,
         capture_output=True,
         timeout=10,
         check=False,
+        offline_tooling=True,
+        source="proof_tooling:real_app_reverse_engineering.observe",
     )
-    return completed.stdout.decode()
+    return completed.stdout
 
 
 def _read_man(topic: str, limit: int = 60) -> str:
@@ -162,14 +166,18 @@ def _read_man(topic: str, limit: int = 60) -> str:
     if not man:
         return f"(man unavailable) reconstruct the observable behavior of `{topic}`."
     try:
-        out = subprocess.run(  # noqa: S603 - reading a public man page
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        out = get_subprocess_gateway().run(
             [man, topic],
             capture_output=True,
             timeout=10,
             check=False,
             env={"MANPAGER": "cat", "PAGER": "cat", "MANWIDTH": "80", "PATH": "/usr/bin:/bin"},
+            offline_tooling=True,
+            source="proof_tooling:real_app_reverse_engineering.read_man",
         )
-        text = out.stdout.decode(errors="replace")
+        text = out.stdout
         # strip backspace-overstrike bolding man emits
         text = text.replace("\x08", "")
         lines = [ln.rstrip() for ln in text.splitlines() if ln.strip()]

@@ -746,7 +746,10 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     assert "if (runtimeHealthy && (bootReady || standby))" not in aura_js
     assert ": laneNotReady\n            ? 'degraded'" in aura_js
     assert "laneNotReady && !laneStandby" not in aura_js
-    assert "const laneOperational = (state.conversationReady || laneHasActiveGeneration(effectiveLane)) && healthy;" in aura_js
+    # The lane-operational verdict must gate on lane health, with active
+    # generation derived from the real lane payload (not socket liveness).
+    assert "const activeGeneration = laneHasActiveGeneration(effectiveLane);" in aura_js
+    assert "const laneOperational = (state.conversationReady || activeGeneration) && healthy;" in aura_js
 
 
 def test_desktop_shell_surfaces_full_runtime_autonomy_status():

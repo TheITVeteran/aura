@@ -267,6 +267,24 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
         )
         logger.debug("Goal engine context injection failed: %s", exc)
 
+    try:
+        # Grounded self-knowledge: when the user asks why Aura was slow,
+        # stuck, or restarted, inject the receipt-backed incident narrative so
+        # she answers from forensics instead of confabulating. The narrator
+        # gates internally on incident-shaped questions, so ordinary turns pay
+        # nothing here.
+        from core.observability.incident_narrator import get_incident_narrator
+
+        incident_block = get_incident_narrator().get_context_injection(objective or "")
+        if incident_block:
+            priority_blocks.append(incident_block)
+    except (RuntimeError, AttributeError, TypeError, ValueError, OSError, ImportError) as exc:
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without incident self-knowledge block",
+        )
+        logger.debug("Incident narrator injection failed: %s", exc)
+
     return priority_blocks + blocks
 
 

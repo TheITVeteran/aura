@@ -382,10 +382,23 @@ def is_serialization_guard(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool
 
 
 class AstGate(ast.NodeVisitor):
-    def __init__(self, rel: str, report: GateReport):
+    def __init__(self, rel: str, report: GateReport, source_lines: list[str] | None = None):
         self.rel = rel
         self.report = report
         self.async_depth = 0
+        self.source_lines = source_lines or []
+
+    def _line_has_reviewed_broad_except(self, node: ast.AST) -> bool:
+        """True when the handler line carries an explicit BLE001 review marker.
+
+        `# noqa: BLE001` is the ecosystem-standard annotation for a broad
+        except that a human reviewed and justified (last-resort floors,
+        liveness paths). The gate's job is surfacing UNREVIEWED debt.
+        """
+        lineno = int(getattr(node, "lineno", 0) or 0)
+        if 0 < lineno <= len(self.source_lines):
+            return "noqa: BLE001" in self.source_lines[lineno - 1]
+        return False
 
     def add(self, severity: str, kind: str, node: ast.AST, detail: str = "") -> None:
         self.report.findings.append(
@@ -409,8 +422,10 @@ class AstGate(ast.NodeVisitor):
                 isinstance(item, (ast.Break, ast.Continue, ast.Pass, ast.Return))
                 for item in node.body
             ):
+                # A silent swallow is debt even when annotated; a swallow that
+                # at least logs (non-trivial body) may be a reviewed floor.
                 self.add(severity, "swallowed_broad_exception", node)
-            else:
+            elif not self._line_has_reviewed_broad_except(node):
                 self.add(
                     "medium" if is_production(self.rel) else "low",
                     "broad_exception_review",
@@ -437,7 +452,10 @@ class AstGate(ast.NodeVisitor):
             and isinstance(body[0], ast.Raise)
             and not (is_abstract_function(node) and is_not_implemented_only(node))
             and not is_serialization_guard(node)
+            and not self.rel.startswith("tests/")
         ):
+            # tests/ excluded: a raise-only local helper is the standard way
+            # to build failure fixtures; in product code it is dead scaffolding.
             self.add(
                 "high" if is_production(self.rel) else "medium",
                 "raise_only_function",
@@ -462,7 +480,9 @@ class AstGate(ast.NodeVisitor):
             and isinstance(body[0], ast.Raise)
             and not (is_abstract_function(node) and is_not_implemented_only(node))
             and not is_serialization_guard(node)
+            and not self.rel.startswith("tests/")
         ):
+            # tests/ excluded: raise-only helpers are failure fixtures there.
             self.add(
                 "high" if is_production(self.rel) else "medium",
                 "raise_only_function",
@@ -615,6 +635,23 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
                 # contamination guards). Flagging the auditor for naming its
                 # target is a false positive; passive mock USAGE still flags.
                 continue
+            if kind == "placeholder_stub_mock" and re.search(
+                r"\b(?:not|never|no)\b[^.\n]{0,40}?\b(?:placeholder|stub|mock|dummy)s?\b",
+                line,
+                re.IGNORECASE,
+            ):
+                # Negated usage asserts the OPPOSITE of incomplete code
+                # ("...a running app, not a stub"). Flagging the denial of a
+                # stub as a stub is a false positive.
+                continue
+            if kind == "placeholder_stub_mock" and re.search(
+                r"(?:\b(?:empty|blank)\s+placeholder\b|\bplaceholder\s*(?:=|attribute|value|text)\b|AXPlaceholder)",
+                line,
+                re.IGNORECASE,
+            ):
+                # DOM/AX "placeholder" is a UI attribute (input hint text),
+                # not unfinished code.
+                continue
             if rel in SELF_DESCRIPTIVE_PATTERN_FILES and kind in {
                 "placeholder_stub_mock",
                 "pytest_skip_xfail",
@@ -658,7 +695,7 @@ def scan_file(path: Path, root: Path, report: GateReport) -> None:
         report.findings.append(Finding("critical", "syntax_error", rel, exc.lineno or 0, exc.msg))
         return
 
-    AstGate(rel, report).visit(tree)
+    AstGate(rel, report, source_lines=source.splitlines()).visit(tree)
 
 
 def run_gate(

@@ -66,7 +66,7 @@ class ScriptedEngine:
     def __init__(self):
         self.calls = []
 
-    async def think(self, *, objective, mode, priority):
+    async def think(self, *, objective, mode, priority, **_kwargs):
         self.calls.append((objective, mode, priority))
         if "ANTAGONIST" in objective:
             return SimpleNamespace(content="The belief ignores boundary conditions.")
@@ -80,7 +80,10 @@ def _register_quiet_runtime():
 
 
 @pytest.mark.asyncio
-async def test_crucible_commits_synthesis_and_pulses_success():
+async def test_crucible_commits_synthesis_and_pulses_success(monkeypatch):
+    # The full LLM debate is opt-in (AURA_CRUCIBLE_BACKGROUND_LLM) since the
+    # crucible-runtime bounding; this test exercises the full path.
+    monkeypatch.setenv("AURA_CRUCIBLE_BACKGROUND_LLM", "1")
     _register_quiet_runtime()
     engine = ScriptedEngine()
     beliefs = RecordingBeliefs()
@@ -123,11 +126,13 @@ async def test_crucible_fails_closed_when_background_policy_is_unavailable(monke
 
 
 @pytest.mark.asyncio
-async def test_crucible_stage_timeout_releases_capacity():
+async def test_crucible_stage_timeout_releases_capacity(monkeypatch):
+    # Full LLM path opt-in — the timeout contract under test lives there.
+    monkeypatch.setenv("AURA_CRUCIBLE_BACKGROUND_LLM", "1")
     _register_quiet_runtime()
 
     class HangingEngine:
-        async def think(self, *, objective, mode, priority):
+        async def think(self, *, objective, mode, priority, **_kwargs):
             await asyncio.sleep(10)
 
     crucible = DialecticalCrucible(max_concurrent_debates=1, stage_timeout_s=0.01)

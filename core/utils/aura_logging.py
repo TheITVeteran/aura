@@ -36,9 +36,10 @@ class SQLiteMemoryHandler(logging.Handler):
         self.db_path = db_path
         self.dropped = 0
         self._queue: queue.Queue = queue.Queue(maxsize=self._QUEUE_CAPACITY)
+        self._stop = threading.Event()
         self._initialize_db()
         self._writer = threading.Thread(
-            target=self._drain_forever, name="aura-log-sqlite-writer", daemon=True
+            target=self._drain_until_stopped, name="aura-log-sqlite-writer", daemon=True
         )
         self._writer.start()
 
@@ -81,10 +82,13 @@ class SQLiteMemoryHandler(logging.Handler):
         conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
-    def _drain_forever(self) -> None:
+    def _drain_until_stopped(self) -> None:
         conn: sqlite3.Connection | None = None
-        while True:
-            batch = [self._queue.get()]
+        while not self._stop.is_set():
+            try:
+                batch = [self._queue.get(timeout=1.0)]
+            except queue.Empty:
+                continue
             try:
                 while len(batch) < self._BATCH_MAX:
                     batch.append(self._queue.get_nowait())
@@ -109,6 +113,19 @@ class SQLiteMemoryHandler(logging.Handler):
                     'aura_logging', e,
                     action=f"dropped {len(batch)} buffered log rows after sqlite write failure",
                 )
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+
+    def close(self) -> None:
+        """Stop the writer thread and flush; safe to call more than once."""
+        self._stop.set()
+        writer = getattr(self, "_writer", None)
+        if writer is not None and writer.is_alive():
+            writer.join(timeout=3.0)
+        super().close()
 
 class WebhookAlertHandler(logging.Handler):
     """

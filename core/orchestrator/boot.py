@@ -881,6 +881,23 @@ class OrchestratorBootMixin(
                         )
                         logger.error("🛑 Failed to init Healing Swarm: %s", e)
 
+                try:
+                    # Incident Narrator: receipt-backed synthesis of Aura's own
+                    # forensics (stall dumps, degraded events, sentinel ring,
+                    # boot profile) into causal narratives — serves the
+                    # /system/incidents endpoint and grounded "why were you
+                    # slow?" self-reports on the conversation lane.
+                    from core.observability.incident_narrator import get_incident_narrator
+
+                    await get_incident_narrator().start()
+                except (ImportError, AttributeError, RuntimeError) as e:
+                    _record_boot_degradation(
+                        e,
+                        action="continued boot without incident narrator",
+                        severity="warning",
+                    )
+                    logger.warning("Incident narrator unavailable: %s", e)
+
                 self.hotfix_engine = HotfixEngine(self)
                 ServiceContainer.register_instance("hotfix_engine", self.hotfix_engine)
 

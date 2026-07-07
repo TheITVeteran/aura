@@ -457,8 +457,14 @@ def test_boot_health_records_health_check_failure_as_structured_degradation():
 
     records = get_degradation_tracker().recent(subsystem="boot_status")
 
-    assert status_code == 503
-    assert payload["ready"] is False
+    # A failing orchestrator health probe with a READY conversation lane and
+    # an operational runtime contract is "degraded but conversational": the
+    # desktop must connect (200) while the degradation stays fully visible.
+    assert status_code == 200
+    assert payload["status"] == "degraded"
+    assert payload["boot_phase"] == "conversation_operational"
+    assert payload["system_ready"] is False
+    assert "healthy" in payload["blockers"]
     assert payload["launcher_ready"] is True
     assert payload["health_check_error"] == "orchestrator probe timed out"
     assert records
@@ -503,3 +509,44 @@ def test_runtime_health_contract_rejects_truthy_non_bool_liveness():
     failures = report["failures"]["critical"]
     scheduler_failure = next(item for item in failures if item["container_key"] == "scheduler")
     assert "unsupported liveness result type: str" in scheduler_failure["error"]
+
+
+def test_boot_health_degraded_important_service_is_conversational_not_booting():
+    """A conversational instance with ONE degraded important-tier service must
+    present as 'degraded but conversational', never as perpetual 'booting'.
+
+    Observed live (Jul 6): mind_tick unhealthy under event-loop load turned
+    orchestrator `healthy` false, and the shell showed "booting, 48%" for 55
+    minutes while chat worked the whole time.
+    """
+    _register_runtime_contract_services(
+        tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT},
+        failing_key="mind_tick",
+    )
+    status = SimpleNamespace(
+        initialized=True,
+        running=True,
+        healthy=False,  # orchestrator health_check reflects the degradation
+        last_error="",
+        cycle_count=52_000,
+        start_time=time.time() - 3300,
+    )
+    orchestrator = SimpleNamespace(status=status, health_check=lambda: False)
+    runtime = {"state": {"process_id": 1234}, "sha256": "abc123", "signature": "sig"}
+
+    payload, status_code = build_boot_health_snapshot(
+        orchestrator,
+        runtime,
+        is_gui_proxy=False,
+        conversation_lane={"conversation_ready": True, "state": "ready"},
+    )
+
+    assert status_code == 200
+    assert payload["boot_phase"] == "conversation_operational"
+    assert payload["status"] == "degraded"
+    assert payload["ready"] is True
+    assert payload["launcher_ready"] is True
+    # The degradation stays visible — honesty about health, honesty about readiness.
+    assert payload["system_ready"] is False
+    assert "healthy" in payload["blockers"]
+    assert any(b.startswith("important:") for b in payload["blockers"])

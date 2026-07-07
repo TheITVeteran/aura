@@ -2128,6 +2128,38 @@ async def metrics_prometheus(request: Request):
         )
 
 
+@router.get("/system/incidents", tags=["health"])
+async def api_system_incidents(request: Request, minutes: float = 60.0):
+    """Receipt-backed incident narrative over Aura's own forensics.
+
+    Deterministic synthesis of stall dumps, degraded events, the memory
+    sentinel, and boot timings into causal episodes — 'what happened and
+    why', with a receipt for every claim. This is the operator's answer to
+    'why was she slow?' without an hour of grep.
+    """
+    try:
+        from core.observability.incident_narrator import get_incident_narrator
+
+        minutes = max(1.0, min(float(minutes), 24 * 60.0))
+        report = await asyncio.to_thread(get_incident_narrator().narrate, minutes)
+        return JSONResponse(_json_safe(report))
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "system",
+            exc,
+            action="returned empty incident narrative after narrator failure",
+        )
+        logger.warning("Incident narrative unavailable: %s", exc)
+        return JSONResponse(
+            {
+                "schema": "aura.incident_narrative.v1",
+                "episodes": [],
+                "error": "incident narrative unavailable",
+            },
+            status_code=200,
+        )
+
+
 @router.get("/healthz", tags=["health"])
 async def healthz(request: Request):
     """Liveness probe: is the process alive and responsive?

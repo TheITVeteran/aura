@@ -144,16 +144,56 @@ class ToggleSensesSkill(BaseSkill):
             if target_pid is not None:
                 try:
                     os.kill(int(target_pid), signal.SIGTERM)
+                except ProcessLookupError:
+                    # Already gone — the desired end state, report it honestly.
                     self._script_pids.pop(sense, None)
                     _clear_pid(sense)
-                    get_emitter().emit("Senses", f"👁️ {sense.title()} Deactivated.", level="warning")
-                    return {"ok": True, "message": f"{sense} deactivated (PID {target_pid} stopped)."}
-                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                    return {"ok": True, "message": f"{sense} was already stopped (PID {target_pid} not running)."}
+                except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('toggle_senses', e)
                     logger.error("Failed to stop %s (PID %s): %s", sense, target_pid, e)
                     return {"ok": False, "error": f"Failed to stop {sense}: {e}"}
+
+                # SIGTERM is a request, not a guarantee — verify the process
+                # actually exited before claiming the sense is off.
+                stopped = await self._wait_for_exit(int(target_pid), timeout_s=3.0)
+                self._script_pids.pop(sense, None)
+                _clear_pid(sense)
+                if stopped:
+                    get_emitter().emit("Senses", f"👁️ {sense.title()} Deactivated.", level="warning")
+                    return {"ok": True, "message": f"{sense} deactivated (PID {target_pid} stopped)."}
+                return {
+                    "ok": False,
+                    "error": (
+                        f"Sent SIGTERM to {sense} (PID {target_pid}) but it is still "
+                        "running after 3s — it may be ignoring the signal."
+                    ),
+                }
             else:
                 logger.warning("No tracked PID for %s; cannot stop.", sense)
                 return {"ok": False, "error": f"No tracked PID for {sense}. Provide 'pid' parameter."}
             
         return {"ok": False, "error": "Invalid action."}
+
+    @staticmethod
+    async def _wait_for_exit(pid: int, *, timeout_s: float) -> bool:
+        """Poll until the pid is truly gone (or a reap-pending zombie).
+
+        os.kill(pid, 0) succeeds on zombies, so signal-probing alone would
+        misreport a terminated-but-unreaped child as still running.
+        """
+        import asyncio
+
+        import psutil
+
+        deadline = asyncio.get_running_loop().time() + timeout_s
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
+                    return True  # exited; parent has not reaped it yet
+            except psutil.NoSuchProcess:
+                return True
+            except psutil.AccessDenied:
+                return False  # alive but not ours
+            await asyncio.sleep(0.1)
+        return False

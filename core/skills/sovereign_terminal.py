@@ -263,6 +263,14 @@ class SovereignTerminalSkill(BaseSkill):
                     source="tool_execution:sovereign_terminal.open",
                 )
                 await process.wait()
+                if process.returncode != 0:
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"'{' '.join(cmd)}' exited {process.returncode} — "
+                            f"{target} was NOT opened (missing app or bad target?)."
+                        ),
+                    }
                 return {"ok": True, "summary": f"Target {target} opened successfully."}
         except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
             record_degradation('sovereign_terminal', e)

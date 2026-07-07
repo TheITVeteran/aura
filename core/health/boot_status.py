@@ -306,10 +306,17 @@ def build_boot_health_snapshot(
         launcher_ready = launcher_openable
         status_text = "ready" if system_ready else "booting"
         http_status = 200 if system_ready else 503
+        # NOTE: deliberately does NOT require the orchestrator-level `healthy`
+        # flag. An important-tier degradation (e.g. mind_tick under load) turns
+        # `healthy` false while the conversation lane works perfectly — that
+        # state must present as "degraded but conversational", not trap the
+        # user at "booting" forever (observed live: 55 minutes of "booting,
+        # 48%" on a fully conversational instance). Critical failures still
+        # gate via runtime_contract_operational + required probes; `healthy`
+        # stays visible in checks/blockers.
         conversation_operational = bool(
             orchestrator is not None
             and initialized
-            and healthy
             and not last_error
             and runtime_integrity_ok
             and runtime_contract_operational

@@ -16420,8 +16420,8 @@ async def api_chat(
         # Fail closed with an honest grounded reply and a 200 instead.
         try:
             await _cancel_kernel_task_if_pending("chat_error_uncaught")
-        except BaseException:  # noqa: BLE001 — cleanup must not mask the floor
-            pass
+        except BaseException as cleanup_exc:  # noqa: BLE001 — cleanup must not mask the floor
+            logger.debug("Turn-death floor: kernel-task cleanup failed: %s", cleanup_exc)
         record_degradation("chat.uncaught_turn_error", e)
         logger.error("Chat uncaught error (turn-death floor engaged): %s", e, exc_info=True)
         error_reply = (
@@ -16438,8 +16438,8 @@ async def api_chat(
                     record_experience=not is_benchmark,
                 )
                 pending_exchange_id = None
-        except BaseException:  # noqa: BLE001 — logging must not break the floor
-            pass
+        except BaseException as log_exc:  # noqa: BLE001 — logging must not break the floor
+            logger.debug("Turn-death floor: exchange logging failed: %s", log_exc)
         return JSONResponse(
             {
                 "response": error_reply,

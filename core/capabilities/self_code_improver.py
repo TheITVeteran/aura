@@ -119,7 +119,14 @@ def _verify(func_source: str, func_name: str, checks: list[dict[str, Any]]) -> t
         with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as fh:
             fh.write(runner)
             path = fh.name
-        proc = subprocess.run([sys.executable, path], capture_output=True, text=True, timeout=15)
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        proc = get_subprocess_gateway().run(
+            [sys.executable, path],
+            capture_output=True,
+            timeout=15,
+            source="tool_execution:self_code_improver.verify_checks",
+        )
         Path(path).unlink(missing_ok=True)
         out = proc.stdout.strip().splitlines()
         for line in reversed(out):
