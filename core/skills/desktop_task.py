@@ -3500,6 +3500,12 @@ class DesktopTaskSkill(BaseSkill):
                 "query": task_context.get("desktop_task_research_query"),
                 "sources": task_context.get("desktop_task_research_sources") or [],
                 "error": task_context.get("desktop_task_research_error"),
+                "summary": task_context.get("desktop_task_research_summary"),
+                "synthesis": task_context.get("desktop_task_research_synthesis"),
+                "deep": task_context.get("desktop_task_research_deep"),
+                "pressure_limited": task_context.get(
+                    "desktop_task_research_pressure_limited"
+                ),
             } if research_context else None,
             "summary": (
                 f"Desktop task completed {completed_count}/{len(steps)} governed "

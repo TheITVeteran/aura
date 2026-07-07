@@ -18,6 +18,7 @@ from core.executive.executive_core import (
     Intent,
     IntentSource,
     _coerce_intent_source,
+    _is_autonomous_research_source,
 )
 from core.runtime.errors import record_degradation
 from core.runtime.organism_status import get_organism_status
@@ -438,10 +439,40 @@ class AuthorityGateway:
         if direct_source == IntentSource.USER:
             return direct_source
         payload = dict(metadata or {})
+        memory_type_l = cls._normalized_memory_source(memory_type)
+        payload_sources = (
+            source_l,
+            cls._normalized_memory_source(payload.get("source")),
+            cls._normalized_memory_source(payload.get("provenance_source")),
+            cls._normalized_memory_source(payload.get("intent_source")),
+            cls._normalized_memory_source(payload.get("origin")),
+            cls._normalized_memory_source(payload.get("request_origin")),
+            cls._normalized_memory_source(payload.get("tool_name")),
+        )
+        evidence_derived = bool(
+            payload.get("empirical_observation")
+            or payload.get("runtime_evidence")
+            or payload.get("tool_result_evidence")
+            or payload.get("research_evidence")
+        )
+        research_derived = evidence_derived or any(
+            _is_autonomous_research_source(item) for item in payload_sources
+        )
+        identity_or_policy_rewrite = bool(
+            payload.get("identity_rewrite")
+            or payload.get("self_model_write")
+            or payload.get("policy_rewrite")
+            or "identity" in memory_type_l
+            or "self_model" in memory_type_l
+            or "policy" in memory_type_l
+        )
+        if identity_or_policy_rewrite and direct_source == IntentSource.AUTONOMOUS_RESEARCH:
+            direct_source = IntentSource.AUTONOMOUS
+        if research_derived and not identity_or_policy_rewrite:
+            return IntentSource.AUTONOMOUS_RESEARCH
         if cls._memory_write_is_high_risk(memory_type, payload):
             return direct_source
 
-        memory_type_l = cls._normalized_memory_source(memory_type)
         producer_is_conversation = bool(
             source_l in _CONVERSATION_MEMORY_PRODUCERS
             or memory_type_l in _CONVERSATION_MEMORY_TYPES

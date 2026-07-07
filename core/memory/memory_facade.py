@@ -872,6 +872,18 @@ class MemoryFacade:
                                  metadata: dict[str, Any] | None = None):
         """Unified commit for an interaction across all relevant systems."""
         metadata = self._merge_unity_metadata(metadata)
+        action_text = str(action or "")
+        action_l = action_text.strip().lower()
+        if action_l.startswith("execute_tool("):
+            tool_name = action_text.split("execute_tool(", 1)[1].split(")", 1)[0].strip()
+            if tool_name:
+                metadata.setdefault("tool_name", tool_name)
+                metadata.setdefault("source", tool_name)
+                metadata.setdefault("provenance_source", tool_name)
+            metadata.setdefault("intent_source", "autonomous_research")
+            metadata.setdefault("empirical_observation", True)
+            metadata.setdefault("runtime_evidence", True)
+            metadata.setdefault("tool_result_evidence", True)
 
         metadata = self._stamp_welfare_context(metadata)
         welfare_block = self._welfare_should_block_write(metadata)

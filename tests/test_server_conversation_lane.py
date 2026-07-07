@@ -907,14 +907,14 @@ def test_foreground_timeout_for_cold_or_recovering_lane():
 
     assert server_module._foreground_timeout_for_lane({"conversation_ready": False, "state": "cold"}) == 210.0
     assert server_module._foreground_timeout_for_lane({"conversation_ready": False, "state": "recovering"}) == 210.0
-    assert server_module._foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 52.0
-    assert server_module._desktop_required_cognitive_budget(foreground_timeout=66.0) == 60.0
-    assert server_module._desktop_required_cognitive_budget(foreground_timeout=108.0) == 60.0
+    assert server_module._foreground_timeout_for_lane({"conversation_ready": True, "state": "ready"}) == 112.0
+    assert server_module._desktop_required_cognitive_budget(foreground_timeout=66.0) == 62.0
+    assert server_module._desktop_required_cognitive_budget(foreground_timeout=108.0) == 104.0
     assert server_module._desktop_required_cognitive_budget(
         foreground_timeout=108.0,
         elapsed_s=20.0,
-    ) == 60.0
-    assert server_module._desktop_required_cognitive_budget(foreground_timeout=210.0) == 60.0
+    ) == 84.0
+    assert server_module._desktop_required_cognitive_budget(foreground_timeout=210.0) == 140.0
 
 
 def test_reply_topicality_flags_unbridged_relevance_challenge():
@@ -9414,7 +9414,178 @@ def test_desktop_objective_detector_handles_general_document_surfaces():
     assert _looks_like_desktop_objective("Could you open a doc and type a short draft there?")
     assert _looks_like_desktop_objective("Open a document window and paste the summary there.")
     assert _looks_like_desktop_objective("Create a local file with the draft and save it on my desktop.")
+    assert not _looks_like_desktop_objective(
+        "From the live desktop user lane, use web_search to check one public fact about tardigrades."
+    )
+    assert _looks_like_desktop_objective(
+        "Open Chrome and search for three articles about tardigrades."
+    )
     assert not _looks_like_desktop_objective("Can you explain Docker Compose documentation?")
+
+
+def test_desktop_required_search_classifier_skips_visible_desktop_objectives():
+    from interface.routes import chat as chat_routes
+
+    should_collect, query, contract = chat_routes._should_collect_desktop_required_search_evidence(
+        "From the live desktop user lane, use web_search to check one public fact about tardigrades."
+    )
+
+    assert should_collect is True
+    assert query == "tardigrades"
+    assert contract is not None
+    assert contract.required_skill == "web_search"
+
+    should_collect, query, contract = chat_routes._should_collect_desktop_required_search_evidence(
+        "Open Chrome and search for three articles about tardigrades."
+    )
+
+    assert should_collect is False
+    assert query == ""
+    assert contract is None
+
+
+@pytest.mark.asyncio
+async def test_api_chat_desktop_required_search_collects_evidence_before_cognition(monkeypatch):
+    from interface import server as server_module
+    from interface.routes import chat as chat_routes
+
+    skill_calls = []
+    cognitive_calls = []
+    completed_exchanges = []
+    output_receipts = []
+
+    async def _fake_execute_governed_live_skill(skill_name, params, *, objective, extra_context=None):
+        skill_calls.append(
+            {
+                "skill_name": skill_name,
+                "params": dict(params),
+                "objective": objective,
+                "extra_context": dict(extra_context or {}),
+            }
+        )
+        return {
+            "ok": True,
+            "summary": "Tardigrades are microscopic animals known for cryptobiosis.",
+            "results": [
+                {
+                    "title": "Tardigrades overview",
+                    "url": "https://example.org/tardigrades",
+                    "snippet": "Tardigrades can survive extreme conditions by entering cryptobiosis.",
+                }
+            ],
+            "receipt_id": "search-receipt-1",
+        }
+
+    async def _fake_cognitive_turn(message, *args, **kwargs):
+        cognitive_calls.append(
+            {
+                "message": message,
+                "kwargs": dict(kwargs),
+            }
+        )
+        trace = kwargs.get("turn_trace")
+        if isinstance(trace, dict):
+            trace.update(
+                {
+                    "engine_think_invoked": True,
+                    "cognitive_engine_reply_accepted": True,
+                    "live_mind_context_present": True,
+                    "live_mind_snapshot_present": True,
+                    "live_mind_snapshot_ready": True,
+                    "live_mind_required_subsystems_ok": True,
+                    **_bound_live_mind_controls_trace(),
+                    "response_path": "cognitive_engine",
+                }
+            )
+        assert "[WEB SEARCH EVIDENCE]" in message
+        assert "https://example.org/tardigrades" in message
+        assert "memory_saved: true" in message
+        return "From my conversation memory, tardigrades can enter cryptobiosis."
+
+    async def _fake_begin_exchange(*_args, **_kwargs):
+        return "exchange-search"
+
+    async def _fake_complete_exchange(*args, **kwargs):
+        completed_exchanges.append((args, kwargs))
+        return None
+
+    async def _fake_output_receipt(*args, **kwargs):
+        output_receipts.append((args, kwargs))
+        return None
+
+    class _FakeMemoryFacade:
+        def __init__(self):
+            self.calls = []
+
+        async def commit_interaction(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return "memory-receipt"
+
+    memory = _FakeMemoryFacade()
+
+    monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat_routes, "_begin_logged_exchange", _fake_begin_exchange)
+    monkeypatch.setattr(chat_routes, "_complete_logged_exchange", _fake_complete_exchange)
+    monkeypatch.setattr(chat_routes, "_emit_chat_output_receipt", _fake_output_receipt)
+    monkeypatch.setattr(chat_routes, "_build_conversation_recall_reply", AsyncCallFixture(return_value=""))
+    monkeypatch.setattr(chat_routes, "_build_retained_memory_evidence_context", AsyncCallFixture(return_value=""))
+    monkeypatch.setattr(chat_routes, "_run_cognitive_engine_chat_turn", _fake_cognitive_turn)
+    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_execute_governed_live_skill)
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: memory if name == "memory_facade" else default),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(
+            message=(
+                "From the live desktop user lane, use web_search to check one public fact "
+                "about tardigrades and save it as provisional research memory."
+            ),
+            session_id="desktop-search",
+        ),
+        SimpleNamespace(
+            headers={
+                "X-Aura-Surface": "desktop-ui",
+                "X-Aura-Require-CognitiveEngine": "true",
+            },
+            client=SimpleNamespace(host="test"),
+        ),
+        None,
+        None,
+    )
+
+    payload = json.loads(response.body)
+    assert response.status_code == 200
+    assert payload["status"] == "cognitive_engine"
+    assert "I checked live web evidence" in payload["response"]
+    assert "From my conversation memory" not in payload["response"]
+    assert "https://example.org/tardigrades" in payload["response"]
+    assert "provisional research memory" in payload["response"]
+    assert payload["live_turn_contract"]["full_mind_path"] is True
+    assert skill_calls and skill_calls[0]["skill_name"] == "web_search"
+    assert skill_calls[0]["extra_context"]["route"] == "chat.required_search_evidence"
+    assert skill_calls[0]["params"]["query"] == "tardigrades fact"
+    assert skill_calls[0]["params"]["deep"] is True
+    assert skill_calls[0]["params"]["retain"] is True
+    assert cognitive_calls
+    assert memory.calls
+    assert output_receipts
 
 
 @pytest.mark.asyncio
@@ -11448,7 +11619,9 @@ async def test_api_chat_preempts_stale_foreground_lock_and_clears_mlx_owner(monk
     await chat_routes._foreground_chat_lock.acquire()
     # held_duration is monotonic-based (sleep-proof), so age the lock on the
     # monotonic clock.
-    chat_routes._foreground_chat_lock._acquired_at = time.monotonic() - 51.0
+    chat_routes._foreground_chat_lock._acquired_at = (
+        time.monotonic() - chat_routes._FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S - 1.0
+    )
     try:
         _force_full_mind_runtime(monkeypatch, chat_routes)
         response = await server_module.api_chat(
@@ -11468,7 +11641,12 @@ async def test_api_chat_preempts_stale_foreground_lock_and_clears_mlx_owner(monk
             chat_routes._foreground_chat_lock.release()
 
     assert response.status_code == 200
-    assert clear_calls == [{"reason": "chat_lock_preemption", "min_age_s": 45.0}]
+    assert clear_calls == [
+        {
+            "reason": "chat_lock_preemption",
+            "min_age_s": chat_routes._FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S,
+        }
+    ]
     assert b"stale foreground turn was cleared" in response.body
     assert b"previous turn open" not in response.body
 

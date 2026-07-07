@@ -207,6 +207,15 @@ _ANCHOR_STOPWORDS = frozenset({
 
 _SEARCH_QUERY_DIRECT_PATTERNS = (
     re.compile(
+        r"^.*?\buse\s+(?:web_search|search_web|free_search|grounded_search|(?:the\s+)?web\s+search|(?:the\s+)?search)\b"
+        r".{0,120}?\b(?:about|on|for)\s+(.+?)(?:\s+(?:and\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show)|then\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show))\b.*)?[.?!]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^.*?\b(?:check|find|research|look up)\b.{0,120}?\b(?:about|on|for)\s+(.+?)(?:\s+(?:and\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show)|then\s+(?:save|store|remember|retain|reply|tell|answer|summarize|summarise|show))\b.*)?[.?!]*$",
+        re.IGNORECASE,
+    ),
+    re.compile(
         r"^(?:please\s+|can you\s+|could you\s+|would you\s+|aura[,:\s]+)?"
         r"(?:search(?: the web)?|look(?: it)? up|google|find out|check online)\s+"
         r"(?:for\s+)?(.+?)(?:\s+(?:and\s+tell me|then\s+tell me|and\s+answer|then\s+answer|and\s+give me|then\s+give me)\b.*)?[.?!]*$",

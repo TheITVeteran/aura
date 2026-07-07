@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from core.brain.live_mind_contract import normalize_live_mind_surface_control_receipt
 from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.container import ServiceContainer
 from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
@@ -241,13 +242,13 @@ def _env_float(name: str, default: float, *, minimum: float) -> float:
 
 _DESKTOP_COGNITIVE_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_TURN_TIMEOUT_S",
-    48.0,
-    minimum=10.0,
+    108.0,
+    minimum=30.0,
 )
 _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S",
-    40.0,
-    minimum=20.0,
+    60.0,
+    minimum=40.0,
 )
 _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S",
@@ -256,8 +257,8 @@ _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S = _env_float(
 )
 _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S",
-    60.0,
-    minimum=30.0,
+    140.0,
+    minimum=60.0,
 )
 _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_RESPONSE_RESERVE_S",
@@ -266,10 +267,20 @@ _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S = _env_float(
 )
 _DESKTOP_MEMORY_STATE_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_MEMORY_STATE_TURN_TIMEOUT_S",
-    55.0,
-    minimum=20.0,
+    70.0,
+    minimum=60.0,
 )
-_DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S = 45.0
+_DESKTOP_COGNITIVE_MIN_REQUIRED_BUDGET_S = 60.0
+_FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S = _env_float(
+    "AURA_FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S",
+    max(
+        75.0,
+        _DESKTOP_COGNITIVE_TURN_TIMEOUT_S
+        + _DESKTOP_COGNITIVE_RESPONSE_RESERVE_S
+        + 10.0,
+    ),
+    minimum=45.0,
+)
 _CHAT_TURN_MEMORY_LOG_DRAIN_TASK_NAME = "ChatTurnMemoryLogDrain"
 _CHAT_TURN_MEMORY_LOG_QUEUE_MAX = 64
 _CHAT_TURN_MEMORY_LOG_TIMEOUT_S = 20.0
@@ -5750,31 +5761,12 @@ async def _run_cognitive_engine_chat_turn(
                 or (snapshot_ready and required_subsystems_ok)
             )
         )
-        surface_quality_gate_passed = bool(
-            surface_control_receipt.get("surface_quality_gate_passed", True)
+        surface_control_receipt = normalize_live_mind_surface_control_receipt(
+            surface_control_receipt,
+            controls_bound=controls_bound,
+            generation_controls=generation_controls,
+            source="desktop_chat_preflight_live_mind_controls",
         )
-        if controls_bound and surface_quality_gate_passed and not bool(
-            surface_control_receipt.get("applied")
-        ):
-            surface_control_receipt = {
-                **surface_control_receipt,
-                "enabled": bool(surface_control_receipt.get("enabled", False)),
-                "live_mind_controls_bound": True,
-                "clean_user_surface_contract": True,
-                "surface_quality_gate_enabled": bool(
-                    surface_control_receipt.get("surface_quality_gate_enabled", False)
-                ),
-                "surface_quality_gate_passed": True,
-                "surface_quality_gate_attempts": int(
-                    surface_control_receipt.get("surface_quality_gate_attempts", 0) or 0
-                ),
-                "surface_quality_gate_reasons": list(
-                    surface_control_receipt.get("surface_quality_gate_reasons", []) or []
-                ),
-                "applied": True,
-                "source": surface_control_receipt.get("source")
-                or "desktop_chat_preflight_live_mind_controls",
-            }
         worker_applied = bool(
             thought_metadata.get("live_mind_controls_worker_applied")
             or (
@@ -12355,6 +12347,318 @@ async def _execute_explicit_local_file_objective(user_message: str) -> dict[str,
     }
 
 
+_SEARCH_SKILL_NAMES = {"web_search", "search_web", "free_search", "grounded_search"}
+_FALSE_SEARCH_PROVENANCE_RE = re.compile(
+    r"\bfrom (?:my |the )?(?:conversation )?memory\b|\bfrom memory\b|\bi remember\b",
+    re.IGNORECASE,
+)
+
+
+def _resolve_chat_response_contract(user_message: str) -> Any | None:
+    try:
+        from core.phases.response_contract import build_response_contract
+        from core.state.aura_state import AuraState
+
+        state = _resolve_live_aura_state() or AuraState.default()
+        return build_response_contract(state, user_message, is_user_facing=True)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.required_search_contract", exc)
+        logger.debug("Required-search response contract build failed: %s", exc)
+        return None
+
+
+def _should_collect_desktop_required_search_evidence(user_message: str) -> tuple[bool, str, Any | None]:
+    if not str(user_message or "").strip():
+        return False, "", None
+    if _looks_like_desktop_objective(user_message):
+        return False, "", None
+    contract = _resolve_chat_response_contract(user_message)
+    if not contract or not getattr(contract, "requires_search", False):
+        return False, "", contract
+    required_skill = str(getattr(contract, "required_skill", "") or "web_search").strip()
+    if required_skill and required_skill not in _SEARCH_SKILL_NAMES:
+        return False, "", contract
+    query = str(getattr(contract, "search_query", "") or user_message or "").strip()
+    return True, query[:240], contract
+
+
+def _search_result_entries(result: dict[str, Any]) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    raw_entries: list[Any] = []
+    for key in ("results", "sources", "items"):
+        value = result.get(key)
+        if isinstance(value, list):
+            raw_entries.extend(value)
+    if not raw_entries and any(result.get(key) for key in ("url", "source", "title", "summary", "answer")):
+        raw_entries.append(result)
+    for raw in raw_entries:
+        if not isinstance(raw, dict):
+            continue
+        title = " ".join(str(raw.get("title") or raw.get("name") or raw.get("source_title") or "").split())
+        url = " ".join(str(raw.get("url") or raw.get("href") or raw.get("source") or "").split())
+        snippet = " ".join(str(raw.get("snippet") or raw.get("summary") or raw.get("text") or raw.get("description") or "").split())
+        if not (title or url or snippet):
+            continue
+        entries.append({"title": title[:180], "url": url[:320], "snippet": snippet[:360]})
+    return entries[:5]
+
+
+_SEARCH_SNIPPET_BOILERPLATE_RE = re.compile(
+    r"\b(skip to content|please fill out this field|search|newsletter|advertisement|subscribe|sign in|login)\b|-->\s*",
+    re.IGNORECASE,
+)
+
+
+def _search_entry_quality(entry: dict[str, str]) -> tuple[int, int]:
+    snippet = str(entry.get("snippet") or "")
+    url = str(entry.get("url") or "")
+    score = 0
+    if url.startswith("http"):
+        score += 3
+    if 40 <= len(snippet) <= 320:
+        score += 3
+    if re.search(r"\b(?:is|are|can|has|have|survive|known|called|found|measured|observed)\b", snippet, re.IGNORECASE):
+        score += 2
+    if _SEARCH_SNIPPET_BOILERPLATE_RE.search(snippet):
+        score -= 6
+    return score, len(snippet)
+
+
+def _best_search_result_entry(result: dict[str, Any]) -> dict[str, str]:
+    entries = _search_result_entries(result)
+    if not entries:
+        return {}
+    return sorted(entries, key=_search_entry_quality, reverse=True)[0]
+
+
+def _clean_search_fact_text(raw: Any) -> str:
+    text = " ".join(str(raw or "").strip().split())
+    text = re.sub(r"^[-–—>\\s]+", "", text)
+    text = _SEARCH_SNIPPET_BOILERPLATE_RE.sub(" ", text)
+    text = " ".join(text.split())
+    return text.strip(" -–—:;")
+
+
+def _required_search_tool_query(query: str, user_message: str) -> str:
+    cleaned = " ".join(str(query or user_message or "").strip().split())
+    if not cleaned:
+        return ""
+    lowered_query = cleaned.lower()
+    lowered_message = normalize_memory_intent_text(user_message)
+    if re.search(r"\bfacts?\b", lowered_message) and "fact" not in lowered_query:
+        cleaned = f"{cleaned} fact"
+    return cleaned[:240]
+
+
+def _render_desktop_required_search_evidence(
+    *,
+    query: str,
+    result: dict[str, Any],
+    contract: Any | None,
+) -> str:
+    ok = bool(result.get("ok"))
+    lines = [
+        f"query: {query}",
+        f"ok: {str(ok).lower()}",
+        f"skill: {result.get('skill') or result.get('tool') or 'web_search'}",
+    ]
+    summary = " ".join(
+        str(result.get("summary") or result.get("answer") or result.get("synthesis") or result.get("message") or "").split()
+    )
+    if summary:
+        lines.append(f"summary: {summary[:700]}")
+    entries = _search_result_entries(result)
+    if entries:
+        lines.append("sources:")
+        for index, entry in enumerate(entries, start=1):
+            source = entry.get("url") or "no-url"
+            title = entry.get("title") or "untitled"
+            snippet = entry.get("snippet") or ""
+            lines.append(f"{index}. {title} | {source} | {snippet}".strip())
+    elif not ok:
+        lines.append(f"error: {result.get('error') or result.get('status') or 'web_search returned no usable evidence'}")
+    if contract is not None:
+        try:
+            lines.append(f"contract_reason: {getattr(contract, 'reason', '')}")
+        except _CHAT_RECOVERABLE_ERRORS:
+            pass
+    return "\n".join(lines).strip()
+
+
+def _evidence_grounded_desktop_search_reply(search_evidence: dict[str, Any]) -> str:
+    result = search_evidence.get("result") if isinstance(search_evidence, dict) else None
+    if not isinstance(result, dict) or not result.get("ok"):
+        return ""
+    first = _best_search_result_entry(result)
+    source = first.get("url") or ""
+    title = first.get("title") or ""
+    first_snippet = _clean_search_fact_text(first.get("snippet") or "")
+    summary_text = _clean_search_fact_text(
+        result.get("summary")
+        or result.get("answer")
+        or result.get("synthesis")
+        or ""
+    )
+    fact = first_snippet if _search_entry_quality(first)[0] >= 0 and first_snippet else summary_text
+    if not fact:
+        fact = "The search completed, but the returned evidence did not include a concise fact snippet."
+    if len(fact) > 360:
+        fact = fact[:357].rstrip() + "..."
+    saved = bool(search_evidence.get("memory_saved"))
+    parts = ["I checked live web evidence."]
+    if title:
+        parts.append(f"{title}: {fact}")
+    else:
+        parts.append(fact)
+    if source:
+        parts.append(f"Source: {source}")
+    if saved:
+        parts.append("I saved it as provisional research memory.")
+    return " ".join(parts).strip()
+
+
+def _repair_required_search_reply_provenance(reply_text: str, search_evidence: dict[str, Any] | None) -> str:
+    if not search_evidence or not search_evidence.get("ok"):
+        return reply_text
+    text = str(reply_text or "").strip()
+    result = search_evidence.get("result") if isinstance(search_evidence, dict) else None
+    if not isinstance(result, dict):
+        return text
+    entries = _search_result_entries(result)
+    evidence_urls = [entry.get("url") for entry in entries if entry.get("url")]
+    has_evidence_url = bool(evidence_urls and any(url in text for url in evidence_urls))
+    false_provenance = bool(_FALSE_SEARCH_PROVENANCE_RE.search(text))
+    if text and not false_provenance and (not evidence_urls or has_evidence_url):
+        return text
+    grounded = _evidence_grounded_desktop_search_reply(search_evidence)
+    if grounded:
+        logger.warning(
+            "Required desktop search reply repaired to evidence-grounded provenance "
+            "(false_provenance=%s, source_present=%s).",
+            false_provenance,
+            has_evidence_url,
+        )
+        return grounded
+    return text
+
+
+def _user_requested_research_memory_save(user_message: str) -> bool:
+    lowered = normalize_memory_intent_text(user_message)
+    memory_terms = ("save", "remember", "retain", "store", "record", "memory")
+    evidence_terms = ("research", "finding", "fact", "source", "web_search", "search")
+    return any(term in lowered for term in memory_terms) and any(term in lowered for term in evidence_terms)
+
+
+async def _store_desktop_required_search_memory(
+    *,
+    user_message: str,
+    session_id: str,
+    query: str,
+    result: dict[str, Any],
+    evidence_text: str,
+) -> bool:
+    if not _user_requested_research_memory_save(user_message):
+        return False
+    memory = ServiceContainer.get("memory_facade", default=None)
+    if memory is None or not hasattr(memory, "commit_interaction"):
+        return False
+    try:
+        await memory.commit_interaction(
+            context=f"Desktop user requested provisional web research: {query}",
+            action="execute_tool(web_search)",
+            outcome=evidence_text[:1800],
+            success=bool(result.get("ok")),
+            emotional_valence=0.1 if result.get("ok") else -0.1,
+            importance=0.72,
+            metadata={
+                "session_id": session_id,
+                "source": "web_search",
+                "provenance_source": "web_search",
+                "intent_source": "autonomous_research",
+                "confidence_tier": "provisional",
+                "requires_reconciliation": True,
+                "research_evidence": True,
+                "tool_result_evidence": True,
+                "runtime_evidence": True,
+                "query": query,
+            },
+        )
+        return True
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.required_search_memory", exc)
+        logger.debug("Required-search provisional memory write failed: %s", exc)
+        return False
+
+
+async def _collect_desktop_required_search_evidence(
+    user_message: str,
+    *,
+    session_id: str,
+) -> dict[str, Any] | None:
+    should_collect, query, contract = _should_collect_desktop_required_search_evidence(user_message)
+    if not should_collect:
+        return None
+    tool_query = _required_search_tool_query(query, user_message)
+    try:
+        result = await asyncio.wait_for(
+            _execute_governed_live_skill(
+                "web_search",
+                {
+                    "query": tool_query or query or user_message,
+                    "num_results": 5,
+                    "deep": True,
+                    "retain": True,
+                    "force_refresh": True,
+                },
+                objective=user_message,
+                extra_context={
+                    "route": "chat.required_search_evidence",
+                    "origin": "desktop_ui",
+                    "source": "desktop_ui",
+                    "effect_scope": "read_only_external_io",
+                    "risk_level": "low",
+                    "foreground_request": True,
+                    "desktop_required_search_evidence": True,
+                    "intent_source": "autonomous_research",
+                    "confidence_tier": "provisional",
+                    "requires_reconciliation": True,
+                },
+            ),
+            timeout=35.0,
+        )
+    except (TimeoutError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+        record_degradation("chat.required_search_evidence", exc)
+        result = {
+            "ok": False,
+            "status": "required_search_failed",
+            "error": str(exc) or exc.__class__.__name__,
+        }
+    if not isinstance(result, dict):
+        result = {"ok": bool(result), "result": result}
+    result.setdefault("skill", "web_search")
+    result.setdefault("query", tool_query or query or user_message)
+    evidence_text = _render_desktop_required_search_evidence(
+        query=tool_query or query or user_message,
+        result=result,
+        contract=contract,
+    )
+    memory_saved = await _store_desktop_required_search_memory(
+        user_message=user_message,
+        session_id=session_id,
+        query=tool_query or query or user_message,
+        result=result,
+        evidence_text=evidence_text,
+    )
+    return {
+        "ok": bool(result.get("ok")),
+        "query": tool_query or query or user_message,
+        "result": result,
+        "evidence": evidence_text,
+        "memory_saved": memory_saved,
+        "contract": contract.to_dict() if hasattr(contract, "to_dict") else None,
+    }
+
+
 async def _execute_governed_live_skill(
     skill_name: str,
     params: dict[str, Any],
@@ -12413,6 +12717,15 @@ async def _execute_governed_live_skill(
         direct_context = dict(context)
         direct_context["governance_route"] = "capability_engine_direct"
         direct_context["web_interlocutor_owned_by"] = "chat.web_interlocutor"
+        result = await _execute_capability(direct_context)
+        result.setdefault("governance_route", "capability_engine_direct")
+        result.setdefault("agency_receipt_id", None)
+        result.setdefault("governance_receipt_id", result.get("governance_receipt_id"))
+        return result
+    if skill_name in _SEARCH_SKILL_NAMES and route == "chat.required_search_evidence":
+        direct_context = dict(context)
+        direct_context["governance_route"] = "capability_engine_direct"
+        direct_context["required_search_owned_by"] = "chat.required_search_evidence"
         result = await _execute_capability(direct_context)
         result.setdefault("governance_route", "capability_engine_direct")
         result.setdefault("agency_receipt_id", None)
@@ -12749,7 +13062,14 @@ async def _execute_desktop_objective_from_chat(
     completed = int(result.get("steps_completed") or 0)
     requested = int(result.get("steps_requested") or 0)
     summary = str(result.get("summary") or "").strip()
-    if result.get("ok"):
+    research_response = _desktop_task_research_response(
+        result,
+        completed=completed,
+        requested=requested,
+    )
+    if result.get("ok") and research_response:
+        response = research_response
+    elif result.get("ok"):
         response = (
             f"{summary or 'I completed the requested desktop task through governed desktop control.'} "
             f"Completed {completed}/{requested} governed desktop steps."
@@ -12767,6 +13087,44 @@ async def _execute_desktop_objective_from_chat(
         "response": response,
         "result": result,
     }
+
+
+def _desktop_task_research_response(
+    result: dict[str, Any],
+    *,
+    completed: int,
+    requested: int,
+) -> str:
+    research = result.get("research")
+    if not isinstance(research, dict) or research.get("error"):
+        return ""
+    sources = [s for s in (research.get("sources") or []) if isinstance(s, dict)]
+    synthesis = str(
+        research.get("synthesis") or research.get("summary") or ""
+    ).strip()
+    if not synthesis and not sources:
+        return ""
+    query = str(research.get("query") or "the requested topic").strip()
+    source_bits: list[str] = []
+    for source in sources[:3]:
+        title = str(source.get("title") or source.get("url") or "").strip()
+        url = str(source.get("url") or "").strip()
+        if title and url and title != url:
+            source_bits.append(f"{title} ({url})")
+        elif title or url:
+            source_bits.append(title or url)
+    source_sentence = (
+        " Sources: " + "; ".join(source_bits) + "."
+        if source_bits
+        else " No source URL was available in the receipt."
+    )
+    step_sentence = f" Completed {completed}/{requested} governed desktop steps."
+    return (
+        f"I completed the research-backed desktop task for {query}. "
+        f"{synthesis[:1200].rstrip()}"
+        f"{source_sentence}"
+        f"{step_sentence}"
+    )
 
 
 async def _write_live_proof_file(path: str, content: str, *, objective: str) -> dict[str, Any]:
@@ -14406,11 +14764,11 @@ async def api_chat(
             foreground_slot_acquired = True
         except TimeoutError:
             held = getattr(_foreground_chat_lock, "held_duration", 0.0)
-            if held > 45.0:
+            if held > _FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S:
                 logger.error(f"🚨 Preempting stuck foreground generation (held {held:.1f}s) to allow new user turn.")
                 _force_clear_mlx_foreground_owner(
                     reason="chat_lock_preemption",
-                    min_age_s=45.0,
+                    min_age_s=_FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S,
                 )
                 if hasattr(_foreground_chat_lock, "force_release"):
                     _foreground_chat_lock.force_release()
@@ -15561,6 +15919,32 @@ async def api_chat(
                 "Use this canonical memory/state result as evidence, but produce the visible answer "
                 "through CognitiveEngine in Aura's normal desktop voice."
             )
+        desktop_required_search_evidence = None
+        if not is_benchmark and desktop_requires_cognitive_engine:
+            desktop_required_search_evidence = await _collect_desktop_required_search_evidence(
+                _semantic_user_message,
+                session_id=_chat_session_id,
+            )
+            if desktop_required_search_evidence:
+                evidence_text = str(desktop_required_search_evidence.get("evidence") or "").strip()
+                search_ok = bool(desktop_required_search_evidence.get("ok"))
+                memory_saved = bool(desktop_required_search_evidence.get("memory_saved"))
+                effective_user_message = (
+                    f"{effective_user_message}\n\n"
+                    "[WEB SEARCH EVIDENCE]\n"
+                    f"{evidence_text}\n"
+                    f"memory_saved: {str(memory_saved).lower()}\n"
+                    "[END WEB SEARCH EVIDENCE]\n"
+                    "The user explicitly requested live search. Use only the evidence above for live factual claims. "
+                    "Name the source URLs when present. If ok is false or no usable source is present, say the search did "
+                    "not produce reliable evidence instead of answering from memory."
+                )
+                if not search_ok:
+                    logger.warning(
+                        "Required desktop search evidence failed before CognitiveEngine reply: query=%s result=%s",
+                        desktop_required_search_evidence.get("query"),
+                        desktop_required_search_evidence.get("result"),
+                    )
         try:
             if not is_benchmark:
                 await _preserve_large_user_paste(_semantic_user_message)
@@ -15598,6 +15982,10 @@ async def api_chat(
                     turn_trace=_live_turn_trace,
                 )
                 if reply_text:
+                    reply_text = _repair_required_search_reply_provenance(
+                        reply_text,
+                        desktop_required_search_evidence,
+                    )
                     reply_source = (
                         _desktop_required_bounded_reply_status(
                             _semantic_user_message,

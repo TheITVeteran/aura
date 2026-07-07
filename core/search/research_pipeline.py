@@ -1348,10 +1348,14 @@ class ResearchSearchPipeline:
 
         metadata = {
             "source": "web_search",
+            "intent_source": "autonomous_research",
+            "provenance_source": "web_search",
             "artifact_id": artifact.artifact_id,
             "query": artifact.query,
             "current": artifact.current,
             "confidence": artifact.confidence,
+            "confidence_tier": "provisional",
+            "requires_reconciliation": True,
             "citations": artifact.citations[:3],
         }
         memory_text = self._build_memory_note(artifact)

@@ -1372,6 +1372,8 @@ async def test_desktop_task_collects_research_before_document_composition(monkey
     assert "I will open the browser" not in clipboard_body
     assert result["research"]["query"] == "climate change"
     assert len(result["research"]["sources"]) == 3
+    assert "Climate assessment" in result["research"]["synthesis"]
+    assert "rising global temperatures" in result["research"]["summary"]
 
 
 @pytest.mark.asyncio

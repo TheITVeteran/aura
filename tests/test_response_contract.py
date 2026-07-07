@@ -45,6 +45,20 @@ def test_response_contract_requires_search_for_latest_live_fact_lookup():
     assert "temporal_live_lookup" in contract.reason
 
 
+def test_response_contract_requires_search_for_named_live_tool_request():
+    state = AuraState.default()
+
+    contract = build_response_contract(
+        state,
+        "From the live desktop user lane, use web_search to check one public fact about tardigrades.",
+        is_user_facing=True,
+    )
+
+    assert contract.requires_search is True
+    assert contract.required_skill == "web_search"
+    assert contract.search_query == "tardigrades"
+
+
 def test_response_contract_does_not_search_for_search_capability_question():
     state = AuraState.default()
 

@@ -8,6 +8,7 @@ import re
 import time
 from typing import Any
 
+from core.brain.live_mind_contract import normalize_live_mind_surface_control_receipt
 from core.brain.llm.context_assembler import ContextAssembler
 from core.container import ServiceContainer
 from core.conversation.response_reliability import (
@@ -1851,6 +1852,12 @@ class ResponseGenerationPhase(BasePhase):
                         "ResponseGeneration could not read surface-control receipt: %s",
                         exc,
                     )
+            surface_control_receipt = normalize_live_mind_surface_control_receipt(
+                surface_control_receipt,
+                controls_bound=live_mind_controls_bound,
+                generation_controls=live_mind_generation_controls,
+                source="response_generation_live_mind_controls",
+            )
             state.response_modifiers["live_mind_surface_control_receipt"] = dict(
                 surface_control_receipt
             )

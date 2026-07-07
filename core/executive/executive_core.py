@@ -45,8 +45,80 @@ _DECISION_HISTORY_LIMIT = working_history_retention_policy(
 ).max_items
 
 
+_AUTONOMOUS_RESEARCH_SOURCE_ALIASES = frozenset(
+    {
+        "autonomous_research",
+        "action_consequence_graph",
+        "content_fetcher",
+        "content_method_router",
+        "curiosity",
+        "curiosity_daemon",
+        "curiosity_engine",
+        "curiosity_explorer",
+        "curiosity_scheduler",
+        "empirical_observation",
+        "external_evidence",
+        "free_search",
+        "grounded_search",
+        "knowledge_curiosity_finding",
+        "knowledge_research_finding",
+        "learned_from_web",
+        "local_corpus",
+        "research",
+        "research_cycle",
+        "research_pipeline",
+        "search_web",
+        "tool_execution",
+        "tool_result",
+        "tool_result_evidence",
+        "runtime_evidence",
+        "web_learning",
+        "web_retained",
+        "web_search",
+    }
+)
+_AUTONOMOUS_RESEARCH_SOURCE_PREFIXES = (
+    "autonomous_research:",
+    "action_consequence_graph:",
+    "curiosity:",
+    "curiosity_engine:",
+    "empirical_observation:",
+    "free_search:",
+    "grounded_search:",
+    "knowledge:curiosity",
+    "knowledge:research",
+    "learned_from_web:",
+    "research:",
+    "research_pipeline:",
+    "search_web:",
+    "tool_execution:",
+    "tool_result:",
+    "tool_result_evidence:",
+    "runtime_evidence:",
+    "web_learning:",
+    "web_retained:",
+    "web_search:",
+)
+
+
+def _normalize_intent_source_label(source: str) -> str:
+    return str(source or "").strip().lower().replace("-", "_")
+
+
+def _is_autonomous_research_source(source: str) -> bool:
+    normalized = _normalize_intent_source_label(source)
+    if not normalized:
+        return False
+    normalized_token = normalized.replace(":", "_")
+    return (
+        normalized in _AUTONOMOUS_RESEARCH_SOURCE_ALIASES
+        or normalized_token in _AUTONOMOUS_RESEARCH_SOURCE_ALIASES
+        or normalized.startswith(_AUTONOMOUS_RESEARCH_SOURCE_PREFIXES)
+    )
+
+
 def _coerce_intent_source(source: str) -> IntentSource:
-    normalized = str(source or "").strip().lower()
+    normalized = _normalize_intent_source_label(source)
     user_aliases = {
         "api",
         "admin",
@@ -74,6 +146,8 @@ def _coerce_intent_source(source: str) -> IntentSource:
     }
     if normalized in user_aliases:
         return IntentSource.USER
+    if _is_autonomous_research_source(normalized):
+        return IntentSource.AUTONOMOUS_RESEARCH
     for candidate in IntentSource:
         if candidate.value == normalized:
             return candidate
@@ -753,14 +827,17 @@ class ExecutiveCore:
                 return self._defer(intent, f"internal_state_distress:{internal_state['distress']:.2f}")
 
         epistemic = self._get_epistemic_state()
-        if (
-            strict_runtime
-            and epistemic["contested"] > 0
-            and intent.source != IntentSource.USER
-            and intent.action_type in {ActionType.UPDATE_BELIEF, ActionType.WRITE_MEMORY}
-            and intent.priority < 0.9
-        ):
-            return self._defer(intent, f"epistemic_reconciliation_required:{epistemic['contested']}")
+        if strict_runtime and intent.action_type in {ActionType.UPDATE_BELIEF, ActionType.WRITE_MEMORY}:
+            if intent.source == IntentSource.AUTONOMOUS_RESEARCH:
+                intent.payload.setdefault("confidence_tier", "provisional")
+                intent.payload.setdefault("requires_reconciliation", True)
+            elif (
+                epistemic["contested"] > 0
+                and intent.source != IntentSource.USER
+                and intent.priority < 0.9
+            ):
+                self._surface_research_trigger(intent, epistemic)
+                return self._defer(intent, f"epistemic_reconciliation_required:{epistemic['contested']}")
 
         coherence = self._get_coherence_sync()
         if coherence < COHERENCE_LOCKDOWN_THRESHOLD:

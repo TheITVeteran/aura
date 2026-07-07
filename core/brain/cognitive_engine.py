@@ -19,6 +19,10 @@ from core.state.aura_state import AuraState, CognitiveMode
 from core.utils.concurrency import RobustLock
 
 from .autopoiesis import AutopoieticGraph
+from .live_mind_contract import (
+    REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS,
+    normalize_live_mind_surface_control_receipt,
+)
 from .llm.context_assembler import ContextAssembler
 from .reasoning_strategies import ReasoningStrategies, StrategyType
 from .types import ThinkingMode, Thought
@@ -224,13 +228,9 @@ def _live_mind_controls_bound(
         return False
     if not isinstance(snapshot, dict):
         return False
-    required_control_keys = {
-        "temperature",
-        "top_p",
-        "clean_user_surface_recurrent_loops",
-        "clean_user_surface_steering_alpha",
-    }
-    return required_control_keys.issubset(generation_controls.keys())
+    return REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS.issubset(
+        generation_controls.keys()
+    )
 
 
 def _bind_live_mind_generation_contract(context: dict[str, Any]) -> dict[str, Any]:
@@ -1694,6 +1694,16 @@ class CognitiveEngine:
                             "Could not read full-phase surface-control receipt: %s",
                             exc,
                         )
+                context_controls_bound = bool(
+                    context.get("live_mind_controls_bound", False)
+                    and generation_controls
+                )
+                surface_control_receipt = normalize_live_mind_surface_control_receipt(
+                    surface_control_receipt,
+                    controls_bound=context_controls_bound,
+                    generation_controls=generation_controls,
+                    source="cognitive_engine_full_phase_controls",
+                )
                 thought = Thought(
                     id=str(uuid.uuid4()),
                     content=last_msg["content"],
@@ -1713,9 +1723,7 @@ class CognitiveEngine:
                         "cognitive_situation_frame": context.get("cognitive_situation_frame")
                         if isinstance(context, dict)
                         else None,
-                        "live_mind_controls_bound": bool(
-                            context.get("live_mind_controls_bound", False)
-                        ),
+                        "live_mind_controls_bound": context_controls_bound,
                         "live_mind_generation_controls": dict(generation_controls),
                         "live_mind_snapshot_ready": bool(
                             context.get("live_mind_snapshot_ready", False)
@@ -2544,34 +2552,12 @@ class CognitiveEngine:
         )
         if not isinstance(surface_control_receipt, dict):
             surface_control_receipt = {}
-        surface_quality_gate_passed = bool(
-            surface_control_receipt.get("surface_quality_gate_passed", True)
+        surface_control_receipt = normalize_live_mind_surface_control_receipt(
+            surface_control_receipt,
+            controls_bound=live_mind_controls_bound,
+            generation_controls=live_mind_generation_controls,
+            source="cognitive_engine_direct_quick_reply_controls",
         )
-        if (
-            live_mind_controls_bound
-            and live_mind_generation_controls
-            and surface_quality_gate_passed
-            and not bool(surface_control_receipt.get("applied"))
-        ):
-            surface_control_receipt = {
-                **surface_control_receipt,
-                "enabled": bool(surface_control_receipt.get("enabled", False)),
-                "applied": True,
-                "live_mind_controls_bound": True,
-                "clean_user_surface_contract": True,
-                "surface_quality_gate_enabled": bool(
-                    surface_control_receipt.get("surface_quality_gate_enabled", False)
-                ),
-                "surface_quality_gate_passed": True,
-                "surface_quality_gate_attempts": int(
-                    surface_control_receipt.get("surface_quality_gate_attempts", 0) or 0
-                ),
-                "surface_quality_gate_reasons": list(
-                    surface_control_receipt.get("surface_quality_gate_reasons", []) or []
-                ),
-                "source": surface_control_receipt.get("source")
-                or "cognitive_engine_direct_quick_reply_controls",
-            }
 
         return Thought(
             id=str(uuid.uuid4()),

@@ -13,6 +13,12 @@ _WEB_SEARCH_REQUEST_SPAN_RE = re.compile(
     r"\b(?:the\s+)?(?:internet|web|online)\b",
     re.IGNORECASE,
 )
+_CANONICAL_RESEARCH_TOOL_SPAN_RE = re.compile(
+    r"\b(?:use|run|call|invoke|route\s+through|with|via)?\s*"
+    r"(?:web_search|grounded_search|search_web|free_search)\b"
+    r"[^.?!]{0,80}",
+    re.IGNORECASE,
+)
 
 _DESKTOP_OBJECTIVE_ACTION_TERMS = (
     "attach",
@@ -132,6 +138,11 @@ def looks_like_desktop_objective(user_message: str) -> bool:
     # lanes. Strip the span so only OTHER action/surface terms ("...and
     # save it to Notes") can still classify the request as desktop.
     sanitized_text = _WEB_SEARCH_REQUEST_SPAN_RE.sub(" ", sanitized_text)
+    # A named canonical research tool is not itself a visible desktop
+    # objective. "Use web_search from the desktop lane" should stay in the
+    # research/tool path; "open Chrome and search" still routes to desktop
+    # because the visible app action remains after this span is stripped.
+    sanitized_text = _CANONICAL_RESEARCH_TOOL_SPAN_RE.sub(" ", sanitized_text)
     if looks_like_capability_inventory_dialogue_request(user_message):
         return False
     # Screen observation ("read my screen", "what's on my screen") needs the

@@ -48,7 +48,14 @@ class ActionConsequenceGraph:
                 content=f"{action_name}: {str(outcome)[:180]}",
                 source="action_consequence_graph",
                 importance=0.8 if not success else 0.55,
-                metadata={"success": bool(success), "params": params},
+                metadata={
+                    "success": bool(success),
+                    "params": params,
+                    "tool_name": action_name,
+                    "empirical_observation": True,
+                    "runtime_evidence": True,
+                    "tool_result_evidence": True,
+                },
             )
             if not approved:
                 logger.warning("🚫 ACG write blocked: %s", reason)
@@ -122,13 +129,16 @@ class ActionConsequenceGraph:
             self._last_save = now
             self._dirty = False
             os.makedirs(os.path.dirname(self.persist_path), exist_ok=True)
+            from core.governance_context import local_internal_governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                self.persist_path,
-                json.dumps(self.links, indent=2),
-                source="world_model.acg.save",
-            )
+            source = "world_model.acg.save"
+            with local_internal_governed_scope(source, domain="file_write"):
+                get_file_write_gateway().write_text(
+                    self.persist_path,
+                    json.dumps(self.links, indent=2),
+                    source=source,
+                )
         except (OSError, IOError) as e:
             record_degradation('acg', e)
             logger.error("Failed to save ACG: %s", e)

@@ -1445,6 +1445,31 @@ def test_acg_blocks_memory_write_when_constitutional_gate_rejects(tmp_path, monk
     assert not Path(graph.persist_path).exists()
 
 
+def test_acg_persists_through_file_write_governance_when_runtime_active(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            approve_memory_write_sync=lambda **_kwargs: (True, "approved_by_test")
+        ),
+    )
+    monkeypatch.setattr(
+        "core.runtime.file_write_gateway.governance_runtime_active",
+        lambda: True,
+    )
+    graph = ActionConsequenceGraph(str(tmp_path / "causal_graph.json"))
+
+    graph.record_outcome(
+        {"tool": "web_search", "params": {"query": "tardigrades"}},
+        "ctx",
+        {"ok": True},
+        True,
+    )
+
+    saved = json.loads(Path(graph.persist_path).read_text(encoding="utf-8"))
+    assert saved[0]["action"] == "web_search"
+    assert saved[0]["params"] == {"query": "tardigrades"}
+
+
 @pytest.mark.asyncio
 async def test_agency_pulse_blocks_unapproved_autonomous_action(orchestrator, monkeypatch):
     clear_degraded_events()

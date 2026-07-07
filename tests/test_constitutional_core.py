@@ -160,6 +160,114 @@ def test_executive_sync_path_blocks_memory_write_on_identity_mismatch(service_co
     assert record.reason == "identity_continuity_mismatch"
 
 
+def test_executive_sync_path_allows_provisional_research_memory_under_contestation(monkeypatch, service_container):
+    reset_constitutional_singletons()
+    core = executive_core_module.ExecutiveCore()
+    monkeypatch.setattr(core, "_strict_runtime_active", lambda: True)
+    monkeypatch.setattr(core, "_identity_integrity_available", lambda: True)
+    monkeypatch.setattr(core, "_get_failure_state", lambda: {"pressure": 0.0})
+    monkeypatch.setattr(
+        core,
+        "_get_temporal_identity_context",
+        lambda: {"obligation_pressure": 0.0, "anchor": "none"},
+    )
+    monkeypatch.setattr(
+        core,
+        "_get_internal_state_constraints",
+        lambda: {
+            "identity_mismatch": False,
+            "thermal_pressure": 0.0,
+            "load_pressure": 0.0,
+            "energy": 1.0,
+            "distress": 0.0,
+        },
+    )
+    monkeypatch.setattr(core, "_get_epistemic_state", lambda: {"contested": 1, "trusted": 0, "coherence_score": 1.0})
+    monkeypatch.setattr(core, "_get_coherence_sync", lambda: 1.0)
+
+    research_intent = Intent(
+        source=IntentSource.AUTONOMOUS_RESEARCH,
+        goal="write_memory:web_evidence",
+        action_type=ActionType.WRITE_MEMORY,
+        payload={"type": "web_evidence"},
+        priority=0.5,
+        requires_memory_commit=True,
+    )
+    record = core.request_approval_sync(research_intent)
+
+    assert record.outcome.value == "approved"
+    assert research_intent.payload["confidence_tier"] == "provisional"
+    assert research_intent.payload["requires_reconciliation"] is True
+
+    generic_intent = Intent(
+        source=IntentSource.AUTONOMOUS,
+        goal="write_memory:generic_autonomous_claim",
+        action_type=ActionType.WRITE_MEMORY,
+        payload={"type": "generic"},
+        priority=0.5,
+        requires_memory_commit=True,
+    )
+    generic_record = core.request_approval_sync(generic_intent)
+    assert generic_record.outcome.value == "deferred"
+    assert generic_record.reason == "epistemic_reconciliation_required:1"
+
+
+def test_research_source_aliases_route_to_autonomous_research():
+    from core.executive.executive_core import _coerce_intent_source
+
+    assert _coerce_intent_source("web_search") == IntentSource.AUTONOMOUS_RESEARCH
+    assert _coerce_intent_source("web_search:water bears") == IntentSource.AUTONOMOUS_RESEARCH
+    assert _coerce_intent_source("knowledge:curiosity_finding") == IntentSource.AUTONOMOUS_RESEARCH
+    assert _coerce_intent_source("curiosity_engine") == IntentSource.AUTONOMOUS_RESEARCH
+    assert _coerce_intent_source("action_consequence_graph") == IntentSource.AUTONOMOUS_RESEARCH
+    assert _coerce_intent_source("research_pipeline") == IntentSource.AUTONOMOUS_RESEARCH
+
+
+def test_authority_gateway_preserves_research_source_from_memory_metadata():
+    from core.executive.authority_gateway import AuthorityGateway
+
+    assert (
+        AuthorityGateway._memory_intent_source(
+            "facade_add_memory",
+            "memory_facade",
+            {"source": "web_search", "query": "water bears"},
+        )
+        == IntentSource.AUTONOMOUS_RESEARCH
+    )
+    assert (
+        AuthorityGateway._memory_intent_source(
+            "belief_update",
+            "web_search:jupiter moon",
+            {"confidence_tier": "provisional"},
+        )
+        == IntentSource.AUTONOMOUS_RESEARCH
+    )
+    assert (
+        AuthorityGateway._memory_intent_source(
+            "identity_rewrite",
+            "web_search",
+            {"identity_rewrite": True},
+        )
+        != IntentSource.AUTONOMOUS_RESEARCH
+    )
+    assert (
+        AuthorityGateway._memory_intent_source(
+            "interaction_commit",
+            "memory_facade",
+            {"tool_name": "web_search", "runtime_evidence": True},
+        )
+        == IntentSource.AUTONOMOUS_RESEARCH
+    )
+    assert (
+        AuthorityGateway._memory_intent_source(
+            "causal_outcome",
+            "action_consequence_graph",
+            {"tool_name": "web_search", "tool_result_evidence": True},
+        )
+        == IntentSource.AUTONOMOUS_RESEARCH
+    )
+
+
 @pytest.mark.asyncio
 async def test_state_repository_commit_respects_constitutional_gate(service_container, tmp_path, monkeypatch):
     reset_constitutional_singletons()

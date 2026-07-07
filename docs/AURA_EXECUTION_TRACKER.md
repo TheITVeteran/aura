@@ -7544,3 +7544,108 @@ Remaining non-soak work after this checkpoint:
   terminal logs on the launched app.
 - Continue the signed-in ChatGPT/Gemini proof through Aura's live desktop bridge
   when the actual user-owned browser surface is controllable.
+
+## Checkpoint 2026-07-07-10: Live Desktop Search Evidence and Full-Mind Reply Provenance
+
+Status: implementation, regression gates, live-source sync, launched Aura.app
+restart, and live desktop-required replay complete.
+
+Scope:
+
+- Fixed a live desktop path gap where explicit `web_search` requests could reach
+  the full CognitiveEngine path but still be answered from retained memory rather
+  than from an actually executed search.
+- Added a desktop-required search evidence lane that:
+  - detects explicit user-facing search contracts while skipping visible desktop
+    automation objectives;
+  - executes `web_search` through the governed CapabilityEngine direct path for
+    bounded read-only evidence collection;
+  - injects a `[WEB SEARCH EVIDENCE]` block into the exact CognitiveEngine turn
+    used by the desktop UI;
+  - optionally records the result as provisional research memory when the user
+    asks Aura to save/retain the finding;
+  - repairs false provenance such as "from my conversation memory" when the live
+    answer should be attributed to collected web evidence.
+- Tightened search-query extraction for natural commands like "use web_search to
+  check one fact about X" so the tool searches the target (`X fact`) instead of
+  the whole desktop instruction.
+- Improved search evidence selection so required-search repairs prefer a source
+  entry with usable factual content over navigation/login/boilerplate snippets.
+- Preserved the desktop-objective boundary: "Open Chrome and search..." remains
+  owned by the visible desktop task path; named `web_search` chat requests stay
+  in the full-mind chat path with evidence.
+
+Verification:
+
+- `python -m py_compile core/phases/response_contract.py interface/routes/chat.py tests/test_response_contract.py tests/test_server_conversation_lane.py`
+  -> passed.
+- `python -m pytest -q tests/test_response_contract.py::test_response_contract_requires_search_for_named_live_tool_request tests/test_server_conversation_lane.py::test_desktop_required_search_classifier_skips_visible_desktop_objectives tests/test_server_conversation_lane.py::test_api_chat_desktop_required_search_collects_evidence_before_cognition`
+  -> `3 passed`.
+- `python -m pytest -q tests/test_server_conversation_lane.py tests/test_desktop_task_skill.py tests/test_response_contract.py`
+  -> `367 passed`.
+- `python -m pytest -q tests/test_live_mind_generation_controls.py tests/test_response_generation_thermal_guard.py tests/test_cognitive_engine_background_hardening.py tests/test_constitutional_core.py tests/test_program_dna_reconstruction.py tests/test_react_loop_integration.py::test_web_search_ddgs_fallback_live`
+  -> `96 passed`.
+- Synced `core/phases/response_contract.py` and `interface/routes/chat.py` into
+  `/Users/bryan/.aura/live-source` and verified `cmp=0` for both files.
+- Killed and relaunched the resident Aura app through `/Applications/Aura.app`.
+  New live process group after restart:
+  - launcher pid `94369`
+  - runtime pid `94371`
+  - memory sentinel pid `94422`
+  - liveness sentinel pid `94423`
+- Live `/api/health` after restart:
+  - `status=ok`
+  - `healthy=true`
+  - `conversation_lane.state=ready`
+  - `conversation_lane.conversation_ready=true`
+  - `active_generations=0` after replay
+  - model path:
+    `/Users/bryan/.aura/live-source/training/fused-model/Aura-32B-crsm-closeout-jul1-20260701-215118`
+- Live `/api/system/desktop-access` before replay:
+  - `overall_status=ready`
+  - `desktop_control_ready=true`
+  - `screen_text_ready=true`
+  - `menu_clock_ready=true`
+- Live desktop-required `/api/chat` replay:
+  - prompt: `From the live desktop user lane, use web_search to check one current public fact about tardigrades and save the finding as provisional research memory. Reply briefly with the fact and source.`
+  - HTTP `200` in `27.23s`
+  - `status=cognitive_engine`
+  - `response_confidence=high`
+  - `live_turn_contract.full_mind_path=true`
+  - `engine_think_invoked=true`
+  - `live_mind_controls_bound=true`
+  - `conversation_lane.state=ready`
+  - visible answer was source-grounded and no longer claimed memory provenance:
+    `I checked live web evidence. Tardigrade - Wikipedia: ... Source: https://en.wikipedia.org/wiki/Tardigrade I saved it as provisional research memory.`
+- Recent runtime checks after replay:
+  - health remained `ok`
+  - active generations returned to `0`
+  - memory sentinel footprint stayed around `20GB`, below lethal threshold
+  - recent sentinel exits in this checkpoint window were intentional SIGTERM
+    restarts, not memory-lethal kills
+- Enterprise/production gates after the combined patch set:
+  - `make enterprise-gate`
+    -> passed; `/tmp/aura_enterprise_gate.json` updated at `2026-07-07 14:52:31`.
+  - `make enterprise-collect`
+    -> passed; `/tmp/aura_enterprise_collect_gate.json` updated at `2026-07-07 14:52:56`.
+  - `make production-gate`
+    -> passed; `/tmp/aura_production_readiness.json` updated at `2026-07-07 14:53:13`
+    with `37` checks and `0` failures.
+
+Functional closeout estimate after this checkpoint:
+
+- Configured non-soak local closeout is about **99.82%** complete by source,
+  focused proofs, enterprise-style route tests, live-source sync, and launched
+  Aura.app replay. The remaining non-soak delta is no longer this search/memory
+  path; it is the larger visible browser-interlocutor proof and any new live
+  desktop failures that surface during the remaining non-soak proof runs.
+
+Remaining non-soak work after this checkpoint:
+
+- Commit and push this checkpoint.
+- Continue the signed-in ChatGPT/Gemini proof through Aura's live desktop bridge:
+  20+ natural turns, full-mind composition, visible page reading, retention, and
+  report-back.
+- Continue live desktop runtime verification for any neural-stream, terminal,
+  boot, permission, chat-path, background-autonomy, heat/memory, Program DNA, or
+  RSI proof issues that surface before the final soak.

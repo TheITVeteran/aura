@@ -58,6 +58,40 @@ def test_live_mind_generation_controls_reduce_sampling_under_distress():
     assert pressured["clean_user_surface_recurrent_loops"] == 2
 
 
+def test_live_mind_surface_receipt_normalizes_stale_worker_bound_flag():
+    from core.brain.live_mind_contract import (
+        normalize_live_mind_surface_control_receipt,
+    )
+
+    receipt = {
+        "enabled": True,
+        "applied": True,
+        "live_mind_controls_bound": False,
+        "clean_user_surface_contract": True,
+        "surface_quality_gate_enabled": True,
+        "surface_quality_gate_passed": True,
+        "surface_quality_gate_attempts": 1,
+        "surface_quality_gate_reasons": [],
+    }
+    controls = {
+        "temperature": 0.58,
+        "top_p": 0.85,
+        "clean_user_surface_recurrent_loops": 1,
+        "clean_user_surface_steering_alpha": 0.3,
+    }
+
+    normalized = normalize_live_mind_surface_control_receipt(
+        receipt,
+        controls_bound=True,
+        generation_controls=controls,
+        source="test",
+    )
+
+    assert normalized["applied"] is True
+    assert normalized["live_mind_controls_bound"] is True
+    assert normalized["clean_user_surface_contract"] is True
+
+
 @pytest.mark.asyncio
 async def test_desktop_quick_reply_passes_live_mind_controls_to_router(monkeypatch):
     from core.brain import cognitive_engine as cognitive_engine_module

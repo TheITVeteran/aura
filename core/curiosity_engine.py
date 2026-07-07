@@ -300,7 +300,16 @@ class CuriosityEngine:
                                     type="curiosity_finding",
                                     source="curiosity_engine",
                                     confidence=0.6,
-                                    metadata={"topic": topic.topic, "reason": topic.reason}
+                                    metadata={
+                                        "topic": topic.topic,
+                                        "reason": topic.reason,
+                                        "source": "curiosity_engine",
+                                        "intent_source": "autonomous_research",
+                                        "provenance_source": "web_search",
+                                        "research_evidence": True,
+                                        "confidence_tier": "provisional",
+                                        "requires_reconciliation": True,
+                                    }
                                 )
                                 if emitter:
                                     emitter.emit("Curiosity Result 📚", f"Learned about: {topic.topic}", level="info")
