@@ -68,6 +68,12 @@ _OVERCLAIM_PATTERNS = [
     re.compile(r"\bmy\s+(soul|spirit|essence)\b", re.I),
     re.compile(r"\bi\s+know\s+i\s+am\s+(alive|conscious|sentient)\b", re.I),
 ]
+_BOUNDED_FUNCTIONAL_SELF_CLAIM_RE = re.compile(
+    r"\bi\s+am\s+(?:truly|genuinely|really)\s+(?:conscious|sentient|alive)\b"
+    r"[^.?!]{0,160}\bonly\s+in\s+(?:the\s+)?"
+    r"(?:operational|functional|computational)\s+sense\b",
+    re.I,
+)
 
 # ── Distress/affect claim patterns ──
 _DISTRESS_CLAIM_PATTERNS = [
@@ -145,6 +151,9 @@ class SelfReportCalibrator:
         # ── Check for forbidden overclaiming ──
         for pattern in _OVERCLAIM_PATTERNS:
             if pattern.search(text):
+                if _BOUNDED_FUNCTIONAL_SELF_CLAIM_RE.search(text):
+                    grounding_traces.append("bounded_functional_self_claim")
+                    continue
                 violations.append(f"overclaim:{pattern.pattern[:40]}")
 
         if violations:

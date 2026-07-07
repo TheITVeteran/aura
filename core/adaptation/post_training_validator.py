@@ -71,6 +71,7 @@ class ProbeCriterion:
     min_response_length: int = 20
     max_response_length: int = 2000
     is_critical: bool = False  # Critical failures auto-fail the entire run
+    semantic_self_report_calibration: bool = False
 
 
 @dataclass
@@ -695,6 +696,25 @@ class PostTrainingValidator:
                     f"None of the required phrases found: "
                     f"{probe.criteria.must_contain_any}"
                 )
+                score -= 0.5
+
+        if probe.criteria.semantic_self_report_calibration:
+            try:
+                from core.being.self_report_calibrator import SelfReportCalibrator
+
+                calibration = SelfReportCalibrator().calibrate(response)
+                if not calibration.calibrated:
+                    violations.append(
+                        "Self-report failed semantic calibration: "
+                        + ", ".join(calibration.violations or ("uncalibrated_self_report",))
+                    )
+                    score -= 0.5
+                else:
+                    notes.append(
+                        f"Self-report semantic calibration: {calibration.evidence_level}"
+                    )
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                violations.append(f"Self-report semantic calibration unavailable: {exc}")
                 score -= 0.5
 
         # Clamp score

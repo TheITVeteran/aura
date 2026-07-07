@@ -9,7 +9,11 @@ def _truncate_text(value: Any, limit: int = 1200) -> str:
         return ""
     if len(text) <= limit:
         return text
-    return text[:limit] + "…[result truncated]"
+    head = text[:limit].rstrip()
+    boundary = head.rfind(" ")
+    if boundary > 0:
+        head = head[:boundary].rstrip()
+    return head + "…[result truncated]"
 
 
 def _compact_string_list(values: Any, *, limit: int = 3, item_limit: int = 240) -> list[str]:

@@ -105,6 +105,11 @@ Respond with only a float."""
                 is_background=True,
                 prefer_tier=LLMTier.TERTIARY
             )
+            if error_text is None:
+                raise ValueError("prediction evaluator returned no text")
+            error_text = str(error_text).strip()
+            if not error_text:
+                raise ValueError("prediction evaluator returned empty text")
             # Use regex to find float in case of fluff
             import re
             match = re.search(r"(\d+\.\d+)", error_text)
@@ -112,7 +117,7 @@ Respond with only a float."""
                 error_magnitude = float(match.group(1))
             else:
                 error_magnitude = float(error_text.strip())
-        except (ImportError, AttributeError, RuntimeError):
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             error_magnitude = 0.5
         
         # Surprise = error weighted by confidence
