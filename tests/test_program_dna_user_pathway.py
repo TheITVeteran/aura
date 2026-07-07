@@ -148,6 +148,55 @@ async def test_live_chat_program_dna_request_runs_governed_skill(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_live_chat_program_dna_app_request_enables_research_scaffold_and_standards(monkeypatch):
+    from interface.routes import chat as chat_routes
+
+    calls = []
+
+    async def _fake_governed_skill(skill_name, params, *, objective, extra_context=None):
+        calls.append(
+            {
+                "skill_name": skill_name,
+                "params": dict(params),
+                "objective": objective,
+                "extra_context": dict(extra_context or {}),
+            }
+        )
+        return {
+            "ok": True,
+            "summary": (
+                "Program DNA captured for notes app: 8 evidence item(s), "
+                "5 inferred feature(s); standards reviewed=7; scaffold emitted at artifacts/program_dna/notes-app."
+            ),
+            "result": {
+                "ok": True,
+                "target_name": "notes app",
+                "scaffold_path": "artifacts/program_dna/notes-app",
+                "standards_review": [{"standard": "research_grounding", "status": "supported"}],
+            },
+        }
+
+    monkeypatch.setattr(chat_routes, "_execute_governed_live_skill", _fake_governed_skill)
+    result = await chat_routes._execute_governed_capability_request_from_chat(
+        "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, and compare it to engineering standards."
+    )
+
+    assert result is not None
+    assert result["ok"] is True
+    assert result["status"] == "program_dna_reconstruct_completed"
+    assert "Generated research/build/standards artifacts" in result["response"]
+    assert calls
+    params = calls[0]["params"]
+    assert params["target"] == "notes app"
+    assert params["analysis_mode"] == "reconstruct"
+    assert params["emit_scaffold"] is True
+    assert params["perform_research"] is True
+    assert params["research_queries"]
+    assert params["tests"]
+    assert params["compatibility_targets"]
+
+
+@pytest.mark.asyncio
 async def test_live_chat_program_dna_does_not_execute_conceptual_question(monkeypatch):
     from interface.routes import chat as chat_routes
 

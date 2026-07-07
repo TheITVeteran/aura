@@ -1,0 +1,879 @@
+{
+  "components": [
+    {
+      "features": [
+        "automation",
+        "collaboration",
+        "defensive_security_analysis",
+        "document_creation",
+        "legacy_migration",
+        "network_interaction",
+        "search_and_retrieval",
+        "study_model",
+        "web_integration"
+      ],
+      "name": "affordance_model",
+      "purpose": "Represent observable user actions, UI states, and program verbs."
+    },
+    {
+      "features": [],
+      "name": "state_and_persistence",
+      "purpose": "Persist reconstructed domain objects and user-visible history."
+    },
+    {
+      "features": [
+        "automation",
+        "collaboration",
+        "defensive_security_analysis",
+        "document_creation",
+        "legacy_migration",
+        "network_interaction",
+        "search_and_retrieval",
+        "study_model",
+        "web_integration"
+      ],
+      "name": "action_controller",
+      "purpose": "Execute feature-level behaviors behind a stable API and UI."
+    },
+    {
+      "features": [
+        "document_creation",
+        "search_and_retrieval",
+        "web_integration",
+        "automation",
+        "collaboration",
+        "legacy_migration",
+        "study_model",
+        "network_interaction",
+        "defensive_security_analysis"
+      ],
+      "name": "evidence_receipts",
+      "purpose": "Track what is inferred from source, UI observation, research, or analogy."
+    },
+    {
+      "features": [
+        "defensive_security_analysis",
+        "network_interaction"
+      ],
+      "name": "interaction_surface_model",
+      "purpose": "Model how the observed software touches Aura, the host process tree, hardware permissions, and network surfaces without stealing private internals."
+    }
+  ],
+  "data_models": [
+    {
+      "fields": [
+        "id",
+        "created_at",
+        "updated_at",
+        "content",
+        "metadata",
+        "receipts"
+      ],
+      "name": "ProgramState",
+      "source": "generic clean-room reconstruction model"
+    }
+  ],
+  "implementation_plan": [
+    {
+      "deliverable": "Typed entities, commands, workflows, state transitions, and persistence schema inferred from evidence.",
+      "evidence_to_code_trace": [
+        {
+          "candidate_modules": [
+            "domain/document.py",
+            "services/editor_controller.py",
+            "adapters/ui_editor.py"
+          ],
+          "claim": "The replacement needs document_creation because the evidence shows this behavior or interface.",
+          "code_obligations": [
+            "Implement domain/document.py from clean-room behavior, not copied source.",
+            "Implement services/editor_controller.py from clean-room behavior, not copied source.",
+            "Implement adapters/ui_editor.py from clean-room behavior, not copied source."
+          ],
+          "evidence": [
+            {
+              "confidence": 0.72,
+              "kind": "observed_behavior",
+              "source": "observed_behavior:1",
+              "summary": "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, include receipts, rollback, standards review, self-critique, sandbox/workspace boundaries, and compare it to engineering standards."
+            },
+            {
+              "confidence": 0.7,
+              "kind": "ui_affordance",
+              "source": "ui_affordance:1",
+              "summary": "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, include receipts, rollback, standards review, self-critique, sandbox/workspace boundaries, and compare it to engineering standards."
+            },
+            {
+              "confidence": 0.76,
+              "kind": "test_observation",
+              "source": "test_observation:1",
+              "summary": "Generate held-out behavior tests, UI workflow tests, golden-file tests, and failure-mode tests before claiming equivalence."
+            },
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:1",
+              "summary": "Research query `notes app architecture implementation language framework` returned 3 source/snippet record(s) via standard."
+            },
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:2",
+              "summary": "Research query `notes app open source alternative source code engineering` returned 3 source/snippet record(s) via standard."
+            },
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:3",
+              "summary": "Research query `how to build notes app app data model UI workflow` returned 3 source/snippet record(s) via standard."
+            }
+          ],
+          "feature": "document_creation",
+          "open_gap_policy": "If evidence is weak, emit a hypothesis and test; do not silently promote it to fact.",
+          "research_obligations": [
+            "Research comparable editor/document data models and undo/save semantics.",
+            "Collect screenshots or UI traces for document lifecycle states."
+          ],
+          "test_obligations": [
+            "Add held-out behavior tests proving document_creation works beyond examples.",
+            "Add negative tests for malformed or unsupported document_creation inputs."
+          ]
+        },
+        {
+          "candidate_modules": [
+            "services/search_index.py",
+            "domain/query.py",
+            "tests/search_equivalence.py"
+          ],
+          "claim": "The replacement needs search_and_retrieval because the evidence shows this behavior or interface.",
+          "code_obligations": [
+            "Implement services/search_index.py from clean-room behavior, not copied source.",
+            "Implement domain/query.py from clean-room behavior, not copied source.",
+            "Implement tests/search_equivalence.py from clean-room behavior, not copied source."
+          ],
+          "evidence": [
+            {
+              "confidence": 0.72,
+              "kind": "observed_behavior",
+              "source": "observed_behavior:1",
+              "summary": "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, include receipts, rollback, standards review, self-critique, sandbox/workspace boundaries, and compare it to engineering standards."
+            },
+            {
+              "confidence": 0.7,
+              "kind": "ui_affordance",
+              "source": "ui_affordance:1",
+              "summary": "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, include receipts, rollback, standards review, self-critique, sandbox/workspace boundaries, and compare it to engineering standards."
+            },
+            {
+              "confidence": 0.76,
+              "kind": "test_observation",
+              "source": "test_observation:1",
+              "summary": "Generate held-out behavior tests, UI workflow tests, golden-file tests, and failure-mode tests before claiming equivalence."
+            },
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:1",
+              "summary": "Research query `notes app architecture implementation language framework` returned 3 source/snippet record(s) via standard."
+            },
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:2",
+              "summary": "Research query `notes app open source alternative source code engineering` returned 3 source/snippet record(s) via standard."
+            },
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:3",
+              "summary": "Research query `how to build notes app app data model UI workflow` returned 3 source/snippet record(s) via standard."
+            }
+          ],
+          "feature": "search_and_retrieval",
+          "open_gap_policy": "If evidence is weak, emit a hypothesis and test; do not silently promote it to fact.",
+          "research_obligations": [
+            "Research ranking/indexing algorithms appropriate to the data size and latency budget.",
+            "Collect representative query/result examples."
+          ],
+          "test_obligations": [
+            "Add held-out behavior tests proving search_and_retrieval works beyond examples.",
+            "Add negative tests for malformed or unsupported search_and_retrieval inputs."
+          ]
+        },
+        {
+          "candidate_modules": [
+            "adapters/http_client.py",
+            "services/sync.py",
+            "tests/web_contract.py"
+          ],
+          "claim": "The replacement needs web_integration because the evidence shows this behavior or interface.",
+          "code_obligations": [
+            "Implement adapters/http_client.py from clean-room behavior, not copied source.",
+            "Implement services/sync.py from clean-room behavior, not copied source.",
+            "Implement tests/web_contract.py from clean-room behavior, not copied source."
+          ],
+          "evidence": [
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:1",
+              "summary": "Research query `notes app architecture implementation language framework` returned 3 source/snippet record(s) via standard."
+            },
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:2",
+              "summary": "Research query `notes app open source alternative source code engineering` returned 3 source/snippet record(s) via standard."
+            },
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:3",
+              "summary": "Research query `how to build notes app app data model UI workflow` returned 3 source/snippet record(s) via standard."
+            }
+          ],
+          "feature": "web_integration",
+          "open_gap_policy": "If evidence is weak, emit a hypothesis and test; do not silently promote it to fact.",
+          "research_obligations": [
+            "Research public API docs, auth flows, rate limits, offline behavior, and retry semantics.",
+            "Capture request/response shapes without credentials or private payloads."
+          ],
+          "test_obligations": [
+            "Add held-out behavior tests proving web_integration works beyond examples.",
+            "Add negative tests for malformed or unsupported web_integration inputs."
+          ]
+        },
+        {
+          "candidate_modules": [
+            "features/automation.py",
+            "tests/test_automation.py"
+          ],
+          "claim": "The replacement needs automation because the evidence shows this behavior or interface.",
+          "code_obligations": [
+            "Implement features/automation.py from clean-room behavior, not copied source.",
+            "Implement tests/test_automation.py from clean-room behavior, not copied source."
+          ],
+          "evidence": [
+            {
+              "confidence": 0.76,
+              "kind": "test_observation",
+              "source": "test_observation:1",
+              "summary": "Generate held-out behavior tests, UI workflow tests, golden-file tests, and failure-mode tests before claiming equivalence."
+            },
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:3",
+              "summary": "Research query `how to build notes app app data model UI workflow` returned 3 source/snippet record(s) via standard."
+            }
+          ],
+          "feature": "automation",
+          "open_gap_policy": "If evidence is weak, emit a hypothesis and test; do not silently promote it to fact.",
+          "research_obligations": [
+            "Research implementation patterns and open-source analogs for automation.",
+            "Collect held-out examples that would falsify a shallow automation implementation."
+          ],
+          "test_obligations": [
+            "Add held-out behavior tests proving automation works beyond examples.",
+            "Add negative tests for malformed or unsupported automation inputs."
+          ]
+        },
+        {
+          "candidate_modules": [
+            "features/collaboration.py",
+            "tests/test_collaboration.py"
+          ],
+          "claim": "The replacement needs collaboration because the evidence shows this behavior or interface.",
+          "code_obligations": [
+            "Implement features/collaboration.py from clean-room behavior, not copied source.",
+            "Implement tests/test_collaboration.py from clean-room behavior, not copied source."
+          ],
+          "evidence": [
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:1",
+              "summary": "Research query `notes app architecture implementation language framework` returned 3 source/snippet record(s) via standard."
+            },
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:2",
+              "summary": "Research query `notes app open source alternative source code engineering` returned 3 source/snippet record(s) via standard."
+            }
+          ],
+          "feature": "collaboration",
+          "open_gap_policy": "If evidence is weak, emit a hypothesis and test; do not silently promote it to fact.",
+          "research_obligations": [
+            "Research implementation patterns and open-source analogs for collaboration.",
+            "Collect held-out examples that would falsify a shallow collaboration implementation."
+          ],
+          "test_obligations": [
+            "Add held-out behavior tests proving collaboration works beyond examples.",
+            "Add negative tests for malformed or unsupported collaboration inputs."
+          ]
+        },
+        {
+          "candidate_modules": [
+            "features/legacy_migration.py",
+            "tests/test_legacy_migration.py"
+          ],
+          "claim": "The replacement needs legacy_migration because the evidence shows this behavior or interface.",
+          "code_obligations": [
+            "Implement features/legacy_migration.py from clean-room behavior, not copied source.",
+            "Implement tests/test_legacy_migration.py from clean-room behavior, not copied source."
+          ],
+          "evidence": [
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:3",
+              "summary": "Research query `how to build notes app app data model UI workflow` returned 3 source/snippet record(s) via standard."
+            }
+          ],
+          "feature": "legacy_migration",
+          "open_gap_policy": "If evidence is weak, emit a hypothesis and test; do not silently promote it to fact.",
+          "research_obligations": [
+            "Research implementation patterns and open-source analogs for legacy_migration.",
+            "Collect held-out examples that would falsify a shallow legacy_migration implementation."
+          ],
+          "test_obligations": [
+            "Add held-out behavior tests proving legacy_migration works beyond examples.",
+            "Add negative tests for malformed or unsupported legacy_migration inputs."
+          ]
+        },
+        {
+          "candidate_modules": [
+            "features/study_model.py",
+            "tests/test_study_model.py"
+          ],
+          "claim": "The replacement needs study_model because the evidence shows this behavior or interface.",
+          "code_obligations": [
+            "Implement features/study_model.py from clean-room behavior, not copied source.",
+            "Implement tests/test_study_model.py from clean-room behavior, not copied source."
+          ],
+          "evidence": [
+            {
+              "confidence": 0.72,
+              "kind": "observed_behavior",
+              "source": "observed_behavior:1",
+              "summary": "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, include receipts, rollback, standards review, self-critique, sandbox/workspace boundaries, and compare it to engineering standards."
+            },
+            {
+              "confidence": 0.7,
+              "kind": "ui_affordance",
+              "source": "ui_affordance:1",
+              "summary": "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, include receipts, rollback, standards review, self-critique, sandbox/workspace boundaries, and compare it to engineering standards."
+            },
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:1",
+              "summary": "Research query `notes app architecture implementation language framework` returned 3 source/snippet record(s) via standard."
+            }
+          ],
+          "feature": "study_model",
+          "open_gap_policy": "If evidence is weak, emit a hypothesis and test; do not silently promote it to fact.",
+          "research_obligations": [
+            "Research implementation patterns and open-source analogs for study_model.",
+            "Collect held-out examples that would falsify a shallow study_model implementation."
+          ],
+          "test_obligations": [
+            "Add held-out behavior tests proving study_model works beyond examples.",
+            "Add negative tests for malformed or unsupported study_model inputs."
+          ]
+        },
+        {
+          "candidate_modules": [
+            "adapters/network_monitor.py",
+            "tests/network_boundary.py"
+          ],
+          "claim": "The replacement needs network_interaction because the evidence shows this behavior or interface.",
+          "code_obligations": [
+            "Implement adapters/network_monitor.py from clean-room behavior, not copied source.",
+            "Implement tests/network_boundary.py from clean-room behavior, not copied source."
+          ],
+          "evidence": [
+            {
+              "confidence": 0.66,
+              "kind": "research_result",
+              "source": "program_dna:research:3",
+              "summary": "Research query `how to build notes app app data model UI workflow` returned 3 source/snippet record(s) via standard."
+            }
+          ],
+          "feature": "network_interaction",
+          "open_gap_policy": "If evidence is weak, emit a hypothesis and test; do not silently promote it to fact.",
+          "research_obligations": [
+            "Research implementation patterns and open-source analogs for network_interaction.",
+            "Collect held-out examples that would falsify a shallow network_interaction implementation."
+          ],
+          "test_obligations": [
+            "Add held-out behavior tests proving network_interaction works beyond examples.",
+            "Add negative tests for malformed or unsupported network_interaction inputs."
+          ]
+        },
+        {
+          "candidate_modules": [
+            "security/threat_model.py",
+            "security/forensics.py",
+            "tests/security_boundary.py"
+          ],
+          "claim": "The replacement needs defensive_security_analysis because the evidence shows this behavior or interface.",
+          "code_obligations": [
+            "Implement security/threat_model.py from clean-room behavior, not copied source.",
+            "Implement security/forensics.py from clean-room behavior, not copied source.",
+            "Implement tests/security_boundary.py from clean-room behavior, not copied source."
+          ],
+          "evidence": [
+            {
+              "confidence": 0.72,
+              "kind": "observed_behavior",
+              "source": "observed_behavior:1",
+              "summary": "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, include receipts, rollback, standards review, self-critique, sandbox/workspace boundaries, and compare it to engineering standards."
+            },
+            {
+              "confidence": 0.7,
+              "kind": "ui_affordance",
+              "source": "ui_affordance:1",
+              "summary": "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, include receipts, rollback, standards review, self-critique, sandbox/workspace boundaries, and compare it to engineering standards."
+            }
+          ],
+          "feature": "defensive_security_analysis",
+          "open_gap_policy": "If evidence is weak, emit a hypothesis and test; do not silently promote it to fact.",
+          "research_obligations": [
+            "Research observable indicators of compromise and relevant defensive signatures.",
+            "Keep payload reproduction non-deployable and forensic-only."
+          ],
+          "test_obligations": [
+            "Add held-out behavior tests proving defensive_security_analysis works beyond examples.",
+            "Add negative tests for malformed or unsupported defensive_security_analysis inputs."
+          ]
+        }
+      ],
+      "exit_criteria": "Every public feature maps to a data contract and at least one behavior test.",
+      "inputs": [
+        "observed_behavior",
+        "research_result",
+        "test_observation",
+        "ui_affordance"
+      ],
+      "phase": "domain_model"
+    },
+    {
+      "deliverable": "Deterministic clean-room implementation behind a stable API; no copied proprietary source.",
+      "exit_criteria": "Held-out black-box, edge-case, and golden-file tests pass against the original or captured traces.",
+      "features": [
+        "automation",
+        "collaboration",
+        "defensive_security_analysis",
+        "document_creation",
+        "legacy_migration",
+        "network_interaction",
+        "search_and_retrieval",
+        "study_model",
+        "web_integration"
+      ],
+      "phase": "runtime_core"
+    },
+    {
+      "compatibility_targets": [
+        "local-first replacement",
+        "headless test harness"
+      ],
+      "deliverable": "CLI/API/GUI adapters appropriate to the target and compatibility modes.",
+      "exit_criteria": "User-visible workflows can be exercised through the same surfaces as the target.",
+      "phase": "interfaces"
+    },
+    {
+      "deliverable": "Packaging, logs, config, error taxonomy, security boundary, offline behavior, and rollback plan.",
+      "exit_criteria": "Standards review has no critical gaps and all high-severity gaps have test coverage.",
+      "phase": "productionization",
+      "proof_obligations": [
+        "receipt_ledger_records_every_source_research_generation_test_and_patch",
+        "rollback_plan_can_restore_last_known_good_build",
+        "sandbox_workspace_is_separate_from_original_and_from_aura_runtime",
+        "self_critique_identifies_shallow_or_missing_behavior_before_promotion",
+        "standards_review_critical_gaps_are_closed_or_block_release"
+      ]
+    }
+  ],
+  "integrations": [
+    {
+      "name": "filesystem",
+      "required": true
+    },
+    {
+      "name": "web",
+      "required": true
+    },
+    {
+      "name": "media",
+      "required": false
+    }
+  ],
+  "reconstruction_strategy": "authorized clean-room reconstruction from source/metadata/observable behavior; gap filling is receipt-tagged and must be verified by tests before promotion",
+  "research_plan": [
+    {
+      "evidence_sources": [
+        "observed_behavior:1",
+        "ui_affordance:1",
+        "program_dna:research:1",
+        "program_dna:research:2",
+        "program_dna:research:3"
+      ],
+      "goal": "Collect public docs, user-owned docs, release notes, manuals, UI guides, and observed behavior traces.",
+      "phase": "target_facts",
+      "queries": [
+        "notes app architecture implementation language framework",
+        "notes app open source alternative source code engineering",
+        "how to build notes app app data model UI workflow"
+      ],
+      "required_before_claiming_equivalence": true
+    },
+    {
+      "evidence_sources": [
+        "program_dna:research:1",
+        "program_dna:research:2",
+        "program_dna:research:3"
+      ],
+      "goal": "Identify likely languages, frameworks, storage layers, file formats, algorithms, and comparable open-source implementations.",
+      "phase": "implementation_research",
+      "queries": [
+        "notes app implementation language framework",
+        "notes app file format API workflow architecture",
+        "notes app open source alternative source code"
+      ],
+      "required_before_claiming_production_rebuild": true
+    },
+    {
+      "compatibility_targets": [
+        "local-first replacement",
+        "headless test harness"
+      ],
+      "features": [
+        "automation",
+        "collaboration",
+        "defensive_security_analysis",
+        "document_creation",
+        "legacy_migration",
+        "network_interaction",
+        "search_and_retrieval",
+        "study_model",
+        "web_integration"
+      ],
+      "goal": "Convert observed behavior into held-out tests, golden files, UI traces, API contracts, and failure-mode cases.",
+      "phase": "behavioral_equivalence",
+      "required_before_promotion": true
+    },
+    {
+      "goal": "Compare the replacement against maintainability, security, observability, performance, portability, UX, and testability standards.",
+      "phase": "standards_gap_review",
+      "required_before_user_demo": true
+    }
+  ],
+  "safety_boundary": [
+    "Do not bypass DRM, licensing, authentication, or access controls.",
+    "Do not claim proprietary source recovery from binaries.",
+    "Only reconstruct behavior Aura is authorized to inspect or implement.",
+    "Keep analogy-derived features separate from observed target facts.",
+    "Public-observation rebuilds must be labeled inspired/compatible until held-out behavior tests pass.",
+    "Defensive study of suspicious software must not produce deployable offensive payloads."
+  ],
+  "standards_review": [
+    {
+      "evidence": [
+        "black_box_document_creation",
+        "black_box_search_and_retrieval",
+        "black_box_web_integration",
+        "black_box_automation",
+        "black_box_collaboration",
+        "black_box_legacy_migration",
+        "black_box_study_model",
+        "black_box_network_interaction",
+        "black_box_defensive_security_analysis"
+      ],
+      "gaps": [],
+      "required_next": [
+        "Run held-out tests against the authorized original or captured phenotype traces before claiming support."
+      ],
+      "standard": "behavioral_equivalence",
+      "status": "planned"
+    },
+    {
+      "evidence": [
+        "target_facts",
+        "implementation_research",
+        "behavioral_equivalence",
+        "standards_gap_review"
+      ],
+      "gaps": [],
+      "required_next": [
+        "Attach public docs, open-source alternatives, engineering notes, and implementation-language references."
+      ],
+      "standard": "research_grounding",
+      "status": "supported"
+    },
+    {
+      "evidence": [
+        "domain_model",
+        "runtime_core",
+        "interfaces",
+        "productionization"
+      ],
+      "gaps": [],
+      "required_next": [
+        "Generate concrete code modules, adapters, storage, and tests for each inferred feature."
+      ],
+      "standard": "implementation_completeness",
+      "status": "planned"
+    },
+    {
+      "evidence": [
+        "Do not bypass DRM, licensing, authentication, or access controls.",
+        "Do not claim proprietary source recovery from binaries.",
+        "Only reconstruct behavior Aura is authorized to inspect or implement.",
+        "Keep analogy-derived features separate from observed target facts.",
+        "Public-observation rebuilds must be labeled inspired/compatible until held-out behavior tests pass.",
+        "Defensive study of suspicious software must not produce deployable offensive payloads."
+      ],
+      "gaps": [],
+      "required_next": [
+        "Keep source/decompilation/proprietary-copy boundaries auditable in every artifact."
+      ],
+      "standard": "security_and_legal_boundary",
+      "status": "supported"
+    },
+    {
+      "evidence": [
+        "startup_budget",
+        "large_project_budget",
+        "unknown_feature_fails_closed",
+        "partial_write_recovery",
+        "offline_mode",
+        "permission_denied"
+      ],
+      "gaps": [],
+      "required_next": [
+        "Exercise startup, memory, offline, permission-denied, interrupted-write, and large-input cases."
+      ],
+      "standard": "operational_reliability",
+      "status": "planned"
+    },
+    {
+      "evidence": [
+        "affordance_model",
+        "state_and_persistence",
+        "action_controller",
+        "evidence_receipts",
+        "interaction_surface_model"
+      ],
+      "gaps": [],
+      "required_next": [
+        "Emit receipts for source, research, analogy, generated code, test runs, and unresolved unknowns."
+      ],
+      "standard": "observability_and_receipts",
+      "status": "supported"
+    },
+    {
+      "evidence": [
+        "obtain additional UI traces for low-confidence workflows",
+        "collect golden input/output files for file-format compatibility",
+        "run black-box differential tests against the authorized original when available"
+      ],
+      "gaps": [
+        "obtain additional UI traces for low-confidence workflows",
+        "collect golden input/output files for file-format compatibility",
+        "run black-box differential tests against the authorized original when available"
+      ],
+      "required_next": [
+        "Shrink unknowns with additional traces, source/docs, golden files, and adversarial tests."
+      ],
+      "standard": "unknowns_management",
+      "status": "open_gap"
+    }
+  ],
+  "target_name": "notes app",
+  "test_plan": [
+    {
+      "assertion": "The reconstructed program supports document_creation at the behavior level.",
+      "evidence_sources": [
+        "observed_behavior:1",
+        "ui_affordance:1",
+        "test_observation:1",
+        "program_dna:research:1",
+        "program_dna:research:2",
+        "program_dna:research:3"
+      ],
+      "name": "contract_document_creation"
+    },
+    {
+      "assertion": "The reconstructed program supports search_and_retrieval at the behavior level.",
+      "evidence_sources": [
+        "observed_behavior:1",
+        "ui_affordance:1",
+        "test_observation:1",
+        "program_dna:research:1",
+        "program_dna:research:2",
+        "program_dna:research:3"
+      ],
+      "name": "contract_search_and_retrieval"
+    },
+    {
+      "assertion": "The reconstructed program supports web_integration at the behavior level.",
+      "evidence_sources": [
+        "program_dna:research:1",
+        "program_dna:research:2",
+        "program_dna:research:3"
+      ],
+      "name": "contract_web_integration"
+    },
+    {
+      "assertion": "The reconstructed program supports automation at the behavior level.",
+      "evidence_sources": [
+        "test_observation:1",
+        "program_dna:research:3"
+      ],
+      "name": "contract_automation"
+    },
+    {
+      "assertion": "The reconstructed program supports collaboration at the behavior level.",
+      "evidence_sources": [
+        "program_dna:research:1",
+        "program_dna:research:2"
+      ],
+      "name": "contract_collaboration"
+    },
+    {
+      "assertion": "The reconstructed program supports legacy_migration at the behavior level.",
+      "evidence_sources": [
+        "program_dna:research:3"
+      ],
+      "name": "contract_legacy_migration"
+    },
+    {
+      "assertion": "The reconstructed program supports study_model at the behavior level.",
+      "evidence_sources": [
+        "observed_behavior:1",
+        "ui_affordance:1",
+        "program_dna:research:1"
+      ],
+      "name": "contract_study_model"
+    },
+    {
+      "assertion": "The reconstructed program supports network_interaction at the behavior level.",
+      "evidence_sources": [
+        "program_dna:research:3"
+      ],
+      "name": "contract_network_interaction"
+    },
+    {
+      "assertion": "The reconstructed program supports defensive_security_analysis at the behavior level.",
+      "evidence_sources": [
+        "observed_behavior:1",
+        "ui_affordance:1"
+      ],
+      "name": "contract_defensive_security_analysis"
+    }
+  ],
+  "unknowns": [],
+  "ux_flows": [
+    {
+      "confidence": 0.9299999999999999,
+      "name": "document_creation",
+      "source": "inferred_from_program_dna",
+      "steps": [
+        "open editor",
+        "capture input",
+        "persist content",
+        "confirm saved state"
+      ]
+    },
+    {
+      "confidence": 0.9299999999999999,
+      "name": "search_and_retrieval",
+      "source": "inferred_from_program_dna",
+      "steps": [
+        "index source",
+        "accept query",
+        "rank results",
+        "return matched item"
+      ]
+    },
+    {
+      "confidence": 0.69,
+      "name": "web_integration",
+      "source": "inferred_from_program_dna",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    },
+    {
+      "confidence": 0.61,
+      "name": "automation",
+      "source": "inferred_from_program_dna",
+      "steps": [
+        "define trigger",
+        "schedule/execute action",
+        "record receipt",
+        "surface result"
+      ]
+    },
+    {
+      "confidence": 0.61,
+      "name": "collaboration",
+      "source": "inferred_from_program_dna",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    },
+    {
+      "confidence": 0.53,
+      "name": "legacy_migration",
+      "source": "inferred_from_program_dna",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    },
+    {
+      "confidence": 0.69,
+      "name": "study_model",
+      "source": "inferred_from_program_dna",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    },
+    {
+      "confidence": 0.53,
+      "name": "network_interaction",
+      "source": "inferred_from_program_dna",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    },
+    {
+      "confidence": 0.61,
+      "name": "defensive_security_analysis",
+      "source": "inferred_from_program_dna",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    }
+  ]
+}

@@ -12451,6 +12451,8 @@ def _desktop_objective_self_sufficient_without_cognitive_text(user_message: str)
     """
     if _blocks_consequential_desktop_execution(user_message):
         return False
+    if _looks_like_program_dna_execution_request(user_message):
+        return False
     if not _looks_like_desktop_objective(user_message):
         return False
     text = str(user_message or "").strip()
@@ -12875,17 +12877,34 @@ def _extract_program_dna_target(user_message: str) -> str | None:
         return "md5"
     if re.search(r"\brev\b", lowered) or "reverse command" in lowered:
         return "rev"
+    if re.search(r"\bjq\b", lowered):
+        return "jq"
+    quoted = re.search(r"[`'\"]([^`'\"]{2,80})[`'\"]", text)
+    if quoted and any(marker in lowered for marker in ("program dna", "reconstruct", "reverse engineer", "clean-room", "clean room")):
+        candidate = quoted.group(1).strip(" .,:;!?`'\"")
+        if candidate:
+            return candidate
     match = re.search(
         r"\b(?:program dna|reverse[ -]?engineer|reconstruct|clean[ -]?room)\s+"
-        r"(?:this|that|the|a|an)?\s*([a-z0-9_.+/-]{2,80})",
+        r"(?:this|that|the|a|an)?\s*([a-z0-9_.+/-][a-z0-9_.+/-]*(?:\s+[a-z0-9_.+/-]+){0,4})",
         lowered,
     )
     if not match:
         return None
     candidate = match.group(1).strip(" .,:;!?`'\"")
+    candidate = re.sub(
+        r"^(?:to\s+)?(?:reverse[ -]?engineer|reconstruct|clean[ -]?room|build|rebuild)\s+",
+        "",
+        candidate,
+    ).strip(" .,:;!?`'\"")
+    candidate = re.sub(r"^(?:a|an|the)\s+", "", candidate).strip(" .,:;!?`'\"")
     if candidate in {"program", "app", "application", "software", "tool", "command", "binary", "utility"}:
         return None
     return candidate or None
+
+
+def _program_dna_known_host_target(target: str) -> bool:
+    return str(target or "").strip().lower() in {"base64", "rev", "md5", "jq"}
 
 
 def _looks_like_program_dna_execution_request(user_message: str) -> bool:
@@ -12909,8 +12928,76 @@ def _looks_like_program_dna_execution_request(user_message: str) -> bool:
         "equivalence",
         "matches the real command",
         "no source",
+        "build",
+        "scaffold",
+        "research",
+        "app",
+        "application",
+        "tool",
     )
     return any(word in lowered for word in execution_words)
+
+
+def _build_program_dna_chat_params(target: str, objective: str) -> dict[str, Any]:
+    lowered = objective.lower()
+    known_host = _program_dna_known_host_target(target)
+    wants_research = any(
+        marker in lowered
+        for marker in (
+            "research",
+            "look up",
+            "compare",
+            "similar",
+            "open source",
+            "engineering",
+            "architecture",
+            "how it works",
+            "what is known",
+        )
+    )
+    wants_scaffold = any(
+        marker in lowered
+        for marker in (
+            "app",
+            "application",
+            "build",
+            "rebuild",
+            "scaffold",
+            "workspace",
+            "implementation",
+            "code",
+            "real application",
+        )
+    ) and not re.search(r"\bno\s+source\b|\bwithout\s+source\b", lowered)
+    if known_host and not wants_scaffold:
+        return {
+            "target": target,
+            "authorization": "user_owned",
+            "analysis_mode": "reverse_engineer",
+            "emit_scaffold": False,
+            "observed_behaviors": [],
+            "tests": [],
+        }
+    return {
+        "target": target,
+        "authorization": "user_owned",
+        "analysis_mode": "reconstruct",
+        "emit_scaffold": True,
+        "perform_research": wants_research,
+        "max_research_results": 3,
+        "observed_behaviors": [objective],
+        "ui_notes": [objective] if any(marker in lowered for marker in ("ui", "screen", "visible", "button", "window")) else [],
+        "research_queries": [
+            f"{target} architecture implementation language framework",
+            f"{target} open source alternative source code engineering",
+            f"how to build {target} app data model UI workflow",
+        ] if wants_research else [],
+        "tests": [
+            "Generate held-out behavior tests, UI workflow tests, golden-file tests, and failure-mode tests before claiming equivalence.",
+        ],
+        "compatibility_targets": ["local-first replacement", "headless test harness"],
+        "target_stack": "python",
+    }
 
 
 async def _execute_program_dna_request_from_chat(user_message: str) -> dict[str, Any] | None:
@@ -12920,16 +13007,10 @@ async def _execute_program_dna_request_from_chat(user_message: str) -> dict[str,
     if not target:
         return None
     objective = str(user_message or "").strip()
+    params = _build_program_dna_chat_params(target, objective)
     result = await _execute_governed_live_skill(
         "program_dna_reconstruct",
-        {
-            "target": target,
-            "authorization": "user_owned",
-            "analysis_mode": "reverse_engineer",
-            "emit_scaffold": False,
-            "observed_behaviors": [],
-            "tests": [],
-        },
+        params,
         objective=objective,
         extra_context={
             "origin": "desktop_ui",
@@ -12949,18 +13030,34 @@ async def _execute_program_dna_request_from_chat(user_message: str) -> dict[str,
     held_total = report.get("held_out_total")
     epistemic_status = str(report.get("status") or result.get("status") or "").strip() or "unknown"
     summary = str(result.get("summary") or "").strip()
-    ok = bool(result.get("ok")) and epistemic_status == "supported"
+    structural_payload = report if report.get("target_name") else {}
+    scaffold_path = str(structural_payload.get("scaffold_path") or "").strip()
+    standards = structural_payload.get("standards_review") or result.get("standards_review") or []
+    ok = bool(result.get("ok")) and (
+        epistemic_status == "supported"
+        or bool(structural_payload.get("ok"))
+    )
     if ok:
-        evidence = (
-            f"{held_passed}/{held_total} held-out cases reproduced"
-            if held_passed is not None and held_total is not None
-            else "held-out verification completed"
-        )
-        response = (
-            f"I ran Program DNA on `{target}` through the governed reconstruction skill. "
-            f"{summary or evidence} Clean-room boundary: behavior and tests only, no source copying. "
-            f"Epistemic status: {epistemic_status}."
-        )
+        if structural_payload:
+            response = (
+                f"I ran Program DNA on `{target}` through the governed reconstruction skill. "
+                f"{summary or 'Captured a structural Program DNA reconstruction.'} "
+                f"Generated research/build/standards artifacts"
+                f"{f' at `{scaffold_path}`' if scaffold_path else ''}. "
+                f"Standards review entries: {len(standards)}. "
+                "Clean-room boundary: evidence, research, tests, and labeled hypotheses only."
+            )
+        else:
+            evidence = (
+                f"{held_passed}/{held_total} held-out cases reproduced"
+                if held_passed is not None and held_total is not None
+                else "held-out verification completed"
+            )
+            response = (
+                f"I ran Program DNA on `{target}` through the governed reconstruction skill. "
+                f"{summary or evidence} Clean-room boundary: behavior and tests only, no source copying. "
+                f"Epistemic status: {epistemic_status}."
+            )
     else:
         error = str(result.get("error") or result.get("status") or epistemic_status or "unknown failure").strip()
         response = (
@@ -14321,9 +14418,10 @@ async def api_chat(
                 is_benchmark
                 or _desktop_exec_state["attempted"]
                 or str(status or "").startswith(
-                    ("live_proof", "desktop_objective", "file_operation", "web_interlocutor")
+                    ("live_proof", "desktop_objective", "file_operation", "web_interlocutor", "program_dna")
                 )
                 or _blocks_consequential_desktop_execution(_semantic_user_message)
+                or _looks_like_program_dna_execution_request(_semantic_user_message)
                 or not _looks_like_desktop_objective(_semantic_user_message)
             ):
                 return final_text, status

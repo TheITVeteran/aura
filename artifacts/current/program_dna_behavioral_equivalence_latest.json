@@ -1,0 +1,250 @@
+{
+  "battery": "program_dna_hidden_source_behavioral_equivalence",
+  "candidate_policy": "offline candidate = clean-room reference implementation (harness oracle); engine receives docs/examples/observations only; original callables are private oracles",
+  "does_not_prove": [
+    "Deterministic offline reconstruction of arbitrary behavior. The offline candidate is a human-authored clean-room REFERENCE implementation used to exercise the harness; it is not model output.",
+    "Real model-synthesized reconstruction is scored live, spec-only, against held-out observations by tools/program_dna_live_reconstruction_probe.py."
+  ],
+  "equivalence": 1.0,
+  "falsification_ok": true,
+  "held_out_cases": 17,
+  "limits": [
+    "Representative archetype proof, not arbitrary closed-source equivalence.",
+    "No proprietary source recovery, DRM bypass, credential extraction, or binary decompilation occurs."
+  ],
+  "ok": true,
+  "passed_cases": 17,
+  "passed_scenarios": 8,
+  "proves": [
+    "The differential verification harness runs held-out cases and REJECTS wrong implementations (falsification self-test passes on every scenario).",
+    "The genome pipeline causally derives features/workflows/unknowns from spec evidence (docs, examples, observations) only \u2014 no source is read."
+  ],
+  "results": [
+    {
+      "cases_passed": 2,
+      "cases_total": 2,
+      "category": "cli",
+      "equivalence": 1.0,
+      "failures": [],
+      "falsification_rejected": true,
+      "features": [
+        "document_creation",
+        "search_and_retrieval",
+        "web_integration",
+        "study_model",
+        "interaction_surface",
+        "aura_interaction_surface",
+        "host_hardware_interaction"
+      ],
+      "genome_summary": {
+        "analysis_mode": "reconstruct",
+        "feature_count": 7,
+        "hidden_state_risk_count": 4,
+        "unknown_count": 3,
+        "workflow_count": 7
+      },
+      "hidden_source_withheld": true,
+      "name": "mini-text-cli",
+      "ok": true
+    },
+    {
+      "cases_passed": 2,
+      "cases_total": 2,
+      "category": "gui",
+      "equivalence": 1.0,
+      "failures": [],
+      "falsification_rejected": true,
+      "features": [
+        "document_creation",
+        "search_and_retrieval",
+        "study_model",
+        "interaction_surface",
+        "host_hardware_interaction"
+      ],
+      "genome_summary": {
+        "analysis_mode": "study",
+        "feature_count": 5,
+        "hidden_state_risk_count": 4,
+        "unknown_count": 4,
+        "workflow_count": 5
+      },
+      "hidden_source_withheld": true,
+      "name": "tiny-counter-gui",
+      "ok": true
+    },
+    {
+      "cases_passed": 2,
+      "cases_total": 2,
+      "category": "file_format_converter",
+      "equivalence": 1.0,
+      "failures": [],
+      "falsification_rejected": true,
+      "features": [
+        "document_creation",
+        "search_and_retrieval",
+        "file_format_inference",
+        "study_model",
+        "interaction_surface",
+        "host_hardware_interaction"
+      ],
+      "genome_summary": {
+        "analysis_mode": "reconstruct",
+        "feature_count": 6,
+        "hidden_state_risk_count": 4,
+        "unknown_count": 3,
+        "workflow_count": 6
+      },
+      "hidden_source_withheld": true,
+      "name": "csv-to-json-converter",
+      "ok": true
+    },
+    {
+      "cases_passed": 2,
+      "cases_total": 2,
+      "category": "web_app",
+      "equivalence": 1.0,
+      "failures": [],
+      "falsification_rejected": true,
+      "features": [
+        "document_creation",
+        "search_and_retrieval",
+        "web_integration",
+        "api_surface",
+        "file_format_inference",
+        "study_model",
+        "interaction_surface",
+        "host_hardware_interaction"
+      ],
+      "genome_summary": {
+        "analysis_mode": "reconstruct",
+        "feature_count": 8,
+        "hidden_state_risk_count": 4,
+        "unknown_count": 3,
+        "workflow_count": 8
+      },
+      "hidden_source_withheld": true,
+      "name": "mini-web-service",
+      "ok": true
+    },
+    {
+      "cases_passed": 2,
+      "cases_total": 2,
+      "category": "local_db_tool",
+      "equivalence": 1.0,
+      "failures": [],
+      "falsification_rejected": true,
+      "features": [
+        "document_creation",
+        "search_and_retrieval",
+        "persistence",
+        "automation",
+        "legacy_migration",
+        "study_model",
+        "interaction_surface",
+        "host_hardware_interaction",
+        "network_interaction"
+      ],
+      "genome_summary": {
+        "analysis_mode": "reconstruct",
+        "feature_count": 9,
+        "hidden_state_risk_count": 4,
+        "unknown_count": 3,
+        "workflow_count": 9
+      },
+      "hidden_source_withheld": true,
+      "name": "todo-db-tool",
+      "ok": true
+    },
+    {
+      "cases_passed": 2,
+      "cases_total": 2,
+      "category": "auth_simulated_app",
+      "equivalence": 1.0,
+      "failures": [],
+      "falsification_rejected": true,
+      "features": [
+        "document_creation",
+        "search_and_retrieval",
+        "authentication",
+        "settings_preferences",
+        "file_format_inference",
+        "permissions_model",
+        "study_model",
+        "interaction_surface",
+        "host_hardware_interaction",
+        "defensive_security_analysis"
+      ],
+      "genome_summary": {
+        "analysis_mode": "reconstruct",
+        "feature_count": 10,
+        "hidden_state_risk_count": 4,
+        "unknown_count": 3,
+        "workflow_count": 10
+      },
+      "hidden_source_withheld": true,
+      "name": "simulated-auth-app",
+      "ok": true
+    },
+    {
+      "cases_passed": 2,
+      "cases_total": 2,
+      "category": "missing_docs",
+      "equivalence": 1.0,
+      "failures": [],
+      "falsification_rejected": true,
+      "features": [
+        "document_creation",
+        "search_and_retrieval",
+        "study_model",
+        "interaction_surface",
+        "aura_interaction_surface",
+        "host_hardware_interaction"
+      ],
+      "genome_summary": {
+        "analysis_mode": "study",
+        "feature_count": 6,
+        "hidden_state_risk_count": 4,
+        "unknown_count": 4,
+        "workflow_count": 6
+      },
+      "hidden_source_withheld": true,
+      "name": "missing-docs-normalizer",
+      "ok": true
+    },
+    {
+      "cases_passed": 3,
+      "cases_total": 3,
+      "category": "complex_local_app",
+      "equivalence": 1.0,
+      "failures": [],
+      "falsification_rejected": true,
+      "features": [
+        "document_creation",
+        "export_pipeline",
+        "search_and_retrieval",
+        "persistence",
+        "automation",
+        "file_format_inference",
+        "permissions_model",
+        "legacy_migration",
+        "study_model",
+        "interaction_surface",
+        "aura_interaction_surface",
+        "host_hardware_interaction",
+        "network_interaction",
+        "defensive_security_analysis"
+      ],
+      "genome_summary": {
+        "analysis_mode": "reconstruct",
+        "feature_count": 14,
+        "hidden_state_risk_count": 4,
+        "unknown_count": 3,
+        "workflow_count": 14
+      },
+      "hidden_source_withheld": true,
+      "name": "local-knowledge-vault",
+      "ok": true
+    }
+  ],
+  "scenario_count": 8
+}

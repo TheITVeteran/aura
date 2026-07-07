@@ -1,0 +1,109 @@
+[
+  {
+    "actions": [
+      "Collect authorized source/docs/screenshots/UI traces/API calls/logs/golden files.",
+      "Separate observed facts, public research, analogies, model hypotheses, and unknowns.",
+      "Record hashes or source identifiers for reproducibility."
+    ],
+    "exit_criteria": "Every claimed feature has at least one evidence source or remains labeled as hypothesis.",
+    "phase": "evidence_intake",
+    "question": "What do we actually know, and how do we know it?"
+  },
+  {
+    "actions": [
+      "Define user personas, core workflows, non-goals, edge cases, and failure states.",
+      "Map UI affordances to domain commands and state transitions.",
+      "Identify which behavior must match exactly versus which can be compatible or improved."
+    ],
+    "exit_criteria": "The DNA sequence has phenotype, genotype hypothesis, data contracts, and compatibility targets.",
+    "features": [
+      "document_creation",
+      "search_and_retrieval",
+      "web_integration",
+      "automation",
+      "collaboration",
+      "legacy_migration",
+      "study_model",
+      "network_interaction",
+      "defensive_security_analysis"
+    ],
+    "phase": "product_modeling",
+    "question": "What product is being rebuilt, for whom, and what must feel identical?"
+  },
+  {
+    "actions": [
+      "Choose language/framework from evidence, deployment target, team skill, and ecosystem maturity.",
+      "Design module boundaries around domain, storage, adapters, UI/API, workers, security, and observability.",
+      "Prefer boring dependencies and stable platform APIs unless target evidence requires otherwise."
+    ],
+    "candidate_modules": [
+      "domain/document.py",
+      "services/editor_controller.py",
+      "adapters/ui_editor.py",
+      "services/search_index.py",
+      "domain/query.py",
+      "tests/search_equivalence.py",
+      "adapters/http_client.py",
+      "services/sync.py",
+      "tests/web_contract.py",
+      "features/automation.py",
+      "tests/test_automation.py",
+      "features/collaboration.py",
+      "tests/test_collaboration.py",
+      "features/legacy_migration.py",
+      "tests/test_legacy_migration.py",
+      "features/study_model.py",
+      "tests/test_study_model.py",
+      "adapters/network_monitor.py",
+      "tests/network_boundary.py",
+      "security/threat_model.py",
+      "security/forensics.py",
+      "tests/security_boundary.py"
+    ],
+    "exit_criteria": "Architecture can support all compatibility targets without hidden global state or copied internals.",
+    "phase": "architecture_selection",
+    "question": "What stack and architecture make the replacement maintainable and verifiable?"
+  },
+  {
+    "actions": [
+      "Implement the smallest vertical slice that crosses UI/API, domain, persistence, errors, and receipts.",
+      "Run generated unit, integration, golden-file, UI, and differential tests after each slice.",
+      "Patch failing behavior from the evidence trace; do not invent success.",
+      "Compare against similar products for expected depth, polish, shortcuts, accessibility, and reliability."
+    ],
+    "exit_criteria": "Held-out behavior passes and standards review has no critical open gaps.",
+    "phase": "implementation_loop",
+    "question": "Can Aura build a real app, not a thin demo?",
+    "receipts": [
+      "workspace_manifest_before",
+      "generated_files_manifest",
+      "test_run_results",
+      "differential_results",
+      "standards_review",
+      "self_critique"
+    ]
+  },
+  {
+    "actions": [
+      "Persist the DNA sequence, successful feature modules, failures, and standards gaps.",
+      "When rebuilding a new app, retrieve prior sequences by feature/category and adapt only tested patterns.",
+      "Keep analogy provenance attached so borrowed ideas do not become false memories of the target."
+    ],
+    "exit_criteria": "Future Program DNA runs can cite this sequence as adaptation memory with confidence and tests.",
+    "phase": "memory_and_reuse",
+    "question": "What did this app teach Aura that can help the next reconstruction?",
+    "reusable_sequence_keys": [
+      "adaptation_memory",
+      "compatibility_targets",
+      "genotype_hypothesis",
+      "phenotype",
+      "promotion_rule",
+      "proof_requirements",
+      "purpose_hypothesis",
+      "research_memory",
+      "schema",
+      "target",
+      "unknowns"
+    ]
+  }
+]

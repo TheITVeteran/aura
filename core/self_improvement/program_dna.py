@@ -160,6 +160,9 @@ class ProgramDNABlueprint:
     data_models: list[dict[str, Any]]
     integrations: list[dict[str, Any]]
     test_plan: list[dict[str, Any]]
+    research_plan: list[dict[str, Any]]
+    implementation_plan: list[dict[str, Any]]
+    standards_review: list[dict[str, Any]]
     unknowns: list[str]
     safety_boundary: list[str]
 
@@ -168,6 +171,7 @@ class ProgramDNABlueprint:
 class ProgramDNAGenome:
     analysis_mode: str
     purpose: str
+    evidence: list[dict[str, Any]]
     phenotype_sources: list[str]
     feature_map: list[dict[str, Any]]
     workflow_graph: list[dict[str, Any]]
@@ -188,6 +192,11 @@ class ProgramDNAGenome:
     compatibility_targets: list[str]
     hidden_state_risks: list[str]
     reconstruction_unknowns: list[str]
+    research_plan: list[dict[str, Any]]
+    implementation_plan: list[dict[str, Any]]
+    standards_review: list[dict[str, Any]]
+    dna_sequence: dict[str, Any]
+    build_playbook: list[dict[str, Any]]
 
 
 @dataclass(slots=True)
@@ -216,6 +225,11 @@ class ProgramDNAResult:
     blueprint: ProgramDNABlueprint | None = None
     verification_plan: ProgramDNAVerificationPlan | None = None
     scaffold_path: str | None = None
+    research_plan: list[dict[str, Any]] = field(default_factory=list)
+    implementation_plan: list[dict[str, Any]] = field(default_factory=list)
+    standards_review: list[dict[str, Any]] = field(default_factory=list)
+    dna_sequence: dict[str, Any] = field(default_factory=dict)
+    build_playbook: list[dict[str, Any]] = field(default_factory=list)
     blocked_reasons: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
@@ -280,6 +294,9 @@ class ProgramDNAReconstructionEngine:
         observed_behaviors = self._string_list(payload.get("observed_behaviors") or payload.get("behaviors"))
         ui_notes = self._string_list(payload.get("ui_notes") or payload.get("ui"))
         research_notes = self._string_list(payload.get("research_notes") or payload.get("research"))
+        research_queries = self._string_list(payload.get("research_queries") or payload.get("research_query"))
+        perform_research = bool(payload.get("perform_research", False))
+        max_research_results = max(1, min(8, int(payload.get("max_research_results") or 3)))
         similar_programs = self._string_list(payload.get("similar_programs") or payload.get("analogs"))
         api_observations = self._string_list(payload.get("api_observations") or payload.get("apis"))
         file_format_notes = self._string_list(payload.get("file_formats") or payload.get("file_format_notes"))
@@ -335,8 +352,28 @@ class ProgramDNAReconstructionEngine:
             evidence.extend(self._binary_static_analysis_plan(source_paths))
         if bool(payload.get("capture_live_host_snapshot", False)):
             evidence.extend(self._collect_live_host_snapshot())
+        if perform_research:
+            evidence.extend(
+                await self._collect_research_evidence(
+                    target=target,
+                    explicit_queries=research_queries,
+                    observed_behaviors=observed_behaviors,
+                    similar_programs=similar_programs,
+                    max_results=max_research_results,
+                )
+            )
 
         features = self._infer_features(evidence)
+        research_plan = self._build_research_plan(
+            target_name=target,
+            evidence=evidence,
+            features=features,
+            explicit_queries=research_queries,
+            compatibility_targets=compatibility_targets,
+        )
+        implementation_plan = self._build_implementation_plan(target, features, evidence, compatibility_targets)
+        dna_sequence = self._build_dna_sequence(target, evidence, features, compatibility_targets)
+        build_playbook = self._build_practical_build_playbook(target, evidence, features, dna_sequence)
         genome = self._extract_genome(
             target_name=target,
             analysis_mode=analysis_mode,
@@ -344,9 +381,30 @@ class ProgramDNAReconstructionEngine:
             evidence=evidence,
             features=features,
             compatibility_targets=compatibility_targets,
+            research_plan=research_plan,
+            implementation_plan=implementation_plan,
+            dna_sequence=dna_sequence,
+            build_playbook=build_playbook,
         )
-        blueprint = self._build_blueprint(target, evidence, features, analysis_mode=analysis_mode, authorization=authorization)
+        blueprint = self._build_blueprint(
+            target,
+            evidence,
+            features,
+            analysis_mode=analysis_mode,
+            authorization=authorization,
+            research_plan=research_plan,
+            implementation_plan=implementation_plan,
+        )
         verification_plan = self._build_verification_plan(features, evidence, genome)
+        standards_review = self._build_standards_review(
+            evidence=evidence,
+            features=features,
+            genome=genome,
+            blueprint=blueprint,
+            verification_plan=verification_plan,
+        )
+        genome.standards_review.extend(standards_review)
+        blueprint.standards_review.extend(standards_review)
 
         scaffold_path = None
         if bool(payload.get("emit_scaffold", False)):
@@ -372,6 +430,11 @@ class ProgramDNAReconstructionEngine:
             blueprint=blueprint,
             verification_plan=verification_plan,
             scaffold_path=scaffold_path,
+            research_plan=research_plan,
+            implementation_plan=implementation_plan,
+            standards_review=standards_review,
+            dna_sequence=dna_sequence,
+            build_playbook=build_playbook,
             warnings=warnings,
         )
 
@@ -827,6 +890,10 @@ class ProgramDNAReconstructionEngine:
         evidence: list[ProgramDNAEvidence],
         features: list[ProgramDNAFeature],
         compatibility_targets: list[str],
+        research_plan: list[dict[str, Any]],
+        implementation_plan: list[dict[str, Any]],
+        dna_sequence: dict[str, Any],
+        build_playbook: list[dict[str, Any]],
     ) -> ProgramDNAGenome:
         feature_names = {feature.name for feature in features}
         purpose = self._infer_purpose(target_name, evidence, feature_names)
@@ -983,6 +1050,7 @@ class ProgramDNAReconstructionEngine:
         return ProgramDNAGenome(
             analysis_mode=analysis_mode,
             purpose=purpose,
+            evidence=[asdict(item) for item in evidence],
             phenotype_sources=[item.source for item in evidence],
             feature_map=[asdict(feature) for feature in features],
             workflow_graph=workflows,
@@ -1003,6 +1071,11 @@ class ProgramDNAReconstructionEngine:
             compatibility_targets=compatibility_targets,
             hidden_state_risks=hidden_state_risks,
             reconstruction_unknowns=reconstruction_unknowns,
+            research_plan=research_plan,
+            implementation_plan=implementation_plan,
+            standards_review=[],
+            dna_sequence=dna_sequence,
+            build_playbook=build_playbook,
         )
 
     def _build_blueprint(
@@ -1013,6 +1086,8 @@ class ProgramDNAReconstructionEngine:
         *,
         analysis_mode: str,
         authorization: str,
+        research_plan: list[dict[str, Any]],
+        implementation_plan: list[dict[str, Any]],
     ) -> ProgramDNABlueprint:
         feature_names = {feature.name for feature in features}
         components = [
@@ -1123,6 +1198,9 @@ class ProgramDNAReconstructionEngine:
             data_models=data_models,
             integrations=integrations,
             test_plan=test_plan,
+            research_plan=research_plan,
+            implementation_plan=implementation_plan,
+            standards_review=[],
             unknowns=unknowns,
             safety_boundary=[
                 "Do not bypass DRM, licensing, authentication, or access controls.",
@@ -1149,6 +1227,657 @@ class ProgramDNAReconstructionEngine:
             "authorized clean-room reconstruction from source/metadata/observable behavior; "
             "gap filling is receipt-tagged and must be verified by tests before promotion"
         )
+
+    async def _collect_research_evidence(
+        self,
+        *,
+        target: str,
+        explicit_queries: list[str],
+        observed_behaviors: list[str],
+        similar_programs: list[str],
+        max_results: int,
+    ) -> list[ProgramDNAEvidence]:
+        """Collect bounded external/reference research as evidence.
+
+        Program DNA must not treat a model's prior as research. This hook turns
+        research into auditable evidence: query text, source/snippet records, and
+        failure receipts when web/local corpus lookup is unavailable. It is
+        intentionally bounded so app reconstruction does not wedge the runtime.
+        """
+
+        queries = explicit_queries or self._default_research_queries(
+            target=target,
+            observed_behaviors=observed_behaviors,
+            similar_programs=similar_programs,
+        )
+        queries = [query for query in queries if query.strip()][:4]
+        if not queries:
+            return []
+
+        evidence: list[ProgramDNAEvidence] = []
+        search_skill = None
+        try:
+            from core.skills.web_search import EnhancedWebSearchSkill
+
+            search_skill = EnhancedWebSearchSkill()
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            evidence.append(
+                ProgramDNAEvidence(
+                    kind="research_status",
+                    source="program_dna:research:init",
+                    summary=f"Research connector unavailable: {type(exc).__name__}.",
+                    confidence=0.20,
+                    details={"error": str(exc)[:240], "queries": queries},
+                )
+            )
+            return evidence
+
+        for idx, query in enumerate(queries, start=1):
+            try:
+                result = await search_skill.execute(
+                    {
+                        "query": query,
+                        "num_results": max_results,
+                        "deep": False,
+                        "retain": False,
+                        "force_refresh": False,
+                    },
+                    context={"surface": "program_dna_research", "origin": "program_dna"},
+                )
+            except (RuntimeError, OSError, ValueError, TypeError, AttributeError, ImportError) as exc:
+                self._record_degradation("program_dna_reconstruction.research", exc, severity="warning")
+                evidence.append(
+                    ProgramDNAEvidence(
+                        kind="research_status",
+                        source=f"program_dna:research:{idx}",
+                        summary=f"Research query failed: {query}",
+                        confidence=0.18,
+                        details={"query": query, "error": str(exc)[:240]},
+                    )
+                )
+                continue
+
+            results = list(result.get("results") or result.get("citations") or [])[:max_results]
+            snippets: list[dict[str, Any]] = []
+            for item in results:
+                title = str(item.get("title") or item.get("name") or item.get("source") or "").strip()
+                url = str(item.get("url") or item.get("uri") or item.get("source") or "").strip()
+                snippet = str(item.get("snippet") or item.get("text") or item.get("content") or "").strip()
+                if not (title or url or snippet):
+                    continue
+                snippets.append({"title": title[:180], "url": url[:300], "snippet": snippet[:600]})
+
+            provenance = str(result.get("provenance") or result.get("mode") or "web_search")
+            summary = (
+                f"Research query `{query}` returned {len(snippets)} source/snippet record(s) "
+                f"via {provenance}."
+            )
+            confidence = 0.66 if snippets and not result.get("offline_fallback") else 0.50 if snippets else 0.22
+            evidence.append(
+                ProgramDNAEvidence(
+                    kind="research_result",
+                    source=f"program_dna:research:{idx}",
+                    summary=summary,
+                    confidence=confidence,
+                    details={
+                        "query": query,
+                        "provenance": provenance,
+                        "offline_fallback": bool(result.get("offline_fallback")),
+                        "results": snippets,
+                        "summary": str(result.get("summary") or result.get("answer") or "")[:1000],
+                    },
+                )
+            )
+        return evidence
+
+    def _default_research_queries(
+        self,
+        *,
+        target: str,
+        observed_behaviors: list[str],
+        similar_programs: list[str],
+    ) -> list[str]:
+        behavior_text = " ".join(observed_behaviors[:3]).strip()
+        analog_text = " ".join(similar_programs[:4]).strip()
+        base = target.strip() or "unknown software"
+        queries = [
+            f"{base} architecture implementation language file formats APIs",
+            f"{base} open source alternatives architecture implementation",
+            f"how to build software like {base} engineering design patterns",
+            f"{base} behavior documentation CLI GUI workflows",
+        ]
+        if behavior_text:
+            queries.append(f"{base} {behavior_text[:180]} implementation design")
+        if analog_text:
+            queries.append(f"{base} alternatives {analog_text[:180]} architecture")
+        return queries
+
+    def _build_research_plan(
+        self,
+        *,
+        target_name: str,
+        evidence: list[ProgramDNAEvidence],
+        features: list[ProgramDNAFeature],
+        explicit_queries: list[str],
+        compatibility_targets: list[str],
+    ) -> list[dict[str, Any]]:
+        feature_names = sorted(feature.name for feature in features)
+        observed_sources = [item.source for item in evidence if item.kind in {"observed_behavior", "ui_affordance", "api_observation"}]
+        research_sources = [item.source for item in evidence if item.kind in {"research_note", "research_result", "similar_program"}]
+        query_plan = explicit_queries or self._default_research_queries(
+            target=target_name,
+            observed_behaviors=[item.summary for item in evidence if item.kind == "observed_behavior"],
+            similar_programs=[item.summary for item in evidence if item.kind == "similar_program"],
+        )
+        tasks = [
+            {
+                "phase": "target_facts",
+                "goal": "Collect public docs, user-owned docs, release notes, manuals, UI guides, and observed behavior traces.",
+                "queries": query_plan[:4],
+                "required_before_claiming_equivalence": True,
+                "evidence_sources": observed_sources[:12] + research_sources[:12],
+            },
+            {
+                "phase": "implementation_research",
+                "goal": "Identify likely languages, frameworks, storage layers, file formats, algorithms, and comparable open-source implementations.",
+                "queries": [
+                    f"{target_name} implementation language framework",
+                    f"{target_name} file format API workflow architecture",
+                    f"{target_name} open source alternative source code",
+                ],
+                "required_before_claiming_production_rebuild": True,
+                "evidence_sources": research_sources[:12],
+            },
+            {
+                "phase": "behavioral_equivalence",
+                "goal": "Convert observed behavior into held-out tests, golden files, UI traces, API contracts, and failure-mode cases.",
+                "features": feature_names,
+                "compatibility_targets": compatibility_targets,
+                "required_before_promotion": True,
+            },
+            {
+                "phase": "standards_gap_review",
+                "goal": "Compare the replacement against maintainability, security, observability, performance, portability, UX, and testability standards.",
+                "required_before_user_demo": True,
+            },
+        ]
+        if not research_sources:
+            tasks[0]["open_gap"] = "No live/public research evidence has been attached yet; reconstruction remains observation/spec driven."
+        return tasks
+
+    def _build_implementation_plan(
+        self,
+        target_name: str,
+        features: list[ProgramDNAFeature],
+        evidence: list[ProgramDNAEvidence],
+        compatibility_targets: list[str],
+    ) -> list[dict[str, Any]]:
+        feature_names = sorted(feature.name for feature in features)
+        evidence_kinds = sorted({item.kind for item in evidence})
+        plan = [
+            {
+                "phase": "domain_model",
+                "deliverable": "Typed entities, commands, workflows, state transitions, and persistence schema inferred from evidence.",
+                "inputs": evidence_kinds,
+                "evidence_to_code_trace": self._evidence_to_code_trace(features, evidence),
+                "exit_criteria": "Every public feature maps to a data contract and at least one behavior test.",
+            },
+            {
+                "phase": "runtime_core",
+                "deliverable": "Deterministic clean-room implementation behind a stable API; no copied proprietary source.",
+                "features": feature_names,
+                "exit_criteria": "Held-out black-box, edge-case, and golden-file tests pass against the original or captured traces.",
+            },
+            {
+                "phase": "interfaces",
+                "deliverable": "CLI/API/GUI adapters appropriate to the target and compatibility modes.",
+                "compatibility_targets": compatibility_targets,
+                "exit_criteria": "User-visible workflows can be exercised through the same surfaces as the target.",
+            },
+            {
+                "phase": "productionization",
+                "deliverable": "Packaging, logs, config, error taxonomy, security boundary, offline behavior, and rollback plan.",
+                "proof_obligations": [
+                    "receipt_ledger_records_every_source_research_generation_test_and_patch",
+                    "rollback_plan_can_restore_last_known_good_build",
+                    "sandbox_workspace_is_separate_from_original_and_from_aura_runtime",
+                    "self_critique_identifies_shallow_or_missing_behavior_before_promotion",
+                    "standards_review_critical_gaps_are_closed_or_block_release",
+                ],
+                "exit_criteria": "Standards review has no critical gaps and all high-severity gaps have test coverage.",
+            },
+        ]
+        if not features:
+            plan[0]["open_gap"] = "No stable features inferred yet; gather more behavior/docs before implementation."
+        return plan
+
+    def _build_dna_sequence(
+        self,
+        target_name: str,
+        evidence: list[ProgramDNAEvidence],
+        features: list[ProgramDNAFeature],
+        compatibility_targets: list[str],
+    ) -> dict[str, Any]:
+        """Compact, persistent program DNA sequence for future adaptation.
+
+        This is deliberately more than a feature list. It captures what Aura can
+        reuse later: observed phenotype, likely genotype, interfaces, invariants,
+        implementation hypotheses, and which gaps are still unresolved.
+        """
+
+        by_kind: dict[str, list[ProgramDNAEvidence]] = {}
+        for item in evidence:
+            by_kind.setdefault(item.kind, []).append(item)
+        feature_entries = []
+        for feature in features:
+            feature_entries.append(
+                {
+                    "name": feature.name,
+                    "category": feature.category,
+                    "confidence": feature.confidence,
+                    "evidence_sources": feature.evidence_sources,
+                    "candidate_modules": self._modules_for_feature(feature.name),
+                    "adaptation_patterns": self._adaptation_patterns_for_feature(feature.name),
+                }
+            )
+        sequence = {
+            "schema": "program_dna_sequence.v1",
+            "target": target_name,
+            "purpose_hypothesis": self._infer_purpose(target_name, evidence, {f.name for f in features}),
+            "phenotype": {
+                "observed_behaviors": [item.summary for item in by_kind.get("observed_behavior", [])[:20]],
+                "ui_affordances": [item.summary for item in by_kind.get("ui_affordance", [])[:20]],
+                "api_observations": [item.summary for item in by_kind.get("api_observation", [])[:20]],
+                "file_formats": [item.summary for item in by_kind.get("file_format", [])[:20]],
+                "runtime_traces": [
+                    item.summary
+                    for kind in ("log_trace", "process_observation", "network_observation", "hardware_observation")
+                    for item in by_kind.get(kind, [])[:10]
+                ],
+            },
+            "genotype_hypothesis": {
+                "features": feature_entries,
+                "state": self._state_hypotheses_for_features({f.name for f in features}),
+                "data_model": self._data_model_hypotheses_for_features({f.name for f in features}),
+                "integration_points": self._integration_hypotheses_for_features({f.name for f in features}),
+            },
+            "research_memory": {
+                "research_results": [item.details for item in by_kind.get("research_result", [])[:10]],
+                "research_notes": [item.summary for item in by_kind.get("research_note", [])[:20]],
+                "similar_programs": [item.summary for item in by_kind.get("similar_program", [])[:20]],
+            },
+            "adaptation_memory": [
+                {
+                    "source": item.summary,
+                    "rule": "Analog-derived ideas may seed hypotheses, but require target-specific tests before promotion.",
+                    "confidence": item.confidence,
+                }
+                for item in by_kind.get("similar_program", [])[:20]
+            ],
+            "compatibility_targets": compatibility_targets,
+            "unknowns": self._sequence_unknowns(evidence, features),
+            "promotion_rule": (
+                "A sequence segment becomes reusable only after it has evidence, a clean-room implementation, "
+                "held-out tests, and a standards review entry."
+            ),
+            "proof_requirements": {
+                "receipts": [
+                    "evidence_collected",
+                    "research_collected",
+                    "code_generated",
+                    "tests_generated",
+                    "sandbox_executed",
+                    "standards_reviewed",
+                    "rollback_ready",
+                    "self_critique_completed",
+                ],
+                "rollback": "All generated files must be emitted into an isolated workspace with manifest hashes before promotion.",
+                "sandboxing": "Generated code runs in a disposable reconstruction sandbox before any install or runtime promotion.",
+                "promotion": "No production claim without held-out equivalence, standards review, and unresolved-unknown accounting.",
+            },
+        }
+        return sequence
+
+    def _build_practical_build_playbook(
+        self,
+        target_name: str,
+        evidence: list[ProgramDNAEvidence],
+        features: list[ProgramDNAFeature],
+        dna_sequence: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        feature_names = [feature.name for feature in features]
+        return [
+            {
+                "phase": "evidence_intake",
+                "question": "What do we actually know, and how do we know it?",
+                "actions": [
+                    "Collect authorized source/docs/screenshots/UI traces/API calls/logs/golden files.",
+                    "Separate observed facts, public research, analogies, model hypotheses, and unknowns.",
+                    "Record hashes or source identifiers for reproducibility.",
+                ],
+                "exit_criteria": "Every claimed feature has at least one evidence source or remains labeled as hypothesis.",
+            },
+            {
+                "phase": "product_modeling",
+                "question": "What product is being rebuilt, for whom, and what must feel identical?",
+                "actions": [
+                    "Define user personas, core workflows, non-goals, edge cases, and failure states.",
+                    "Map UI affordances to domain commands and state transitions.",
+                    "Identify which behavior must match exactly versus which can be compatible or improved.",
+                ],
+                "features": feature_names,
+                "exit_criteria": "The DNA sequence has phenotype, genotype hypothesis, data contracts, and compatibility targets.",
+            },
+            {
+                "phase": "architecture_selection",
+                "question": "What stack and architecture make the replacement maintainable and verifiable?",
+                "actions": [
+                    "Choose language/framework from evidence, deployment target, team skill, and ecosystem maturity.",
+                    "Design module boundaries around domain, storage, adapters, UI/API, workers, security, and observability.",
+                    "Prefer boring dependencies and stable platform APIs unless target evidence requires otherwise.",
+                ],
+                "candidate_modules": [
+                    module
+                    for feature in features
+                    for module in self._modules_for_feature(feature.name)
+                ][:40],
+                "exit_criteria": "Architecture can support all compatibility targets without hidden global state or copied internals.",
+            },
+            {
+                "phase": "implementation_loop",
+                "question": "Can Aura build a real app, not a thin demo?",
+                "actions": [
+                    "Implement the smallest vertical slice that crosses UI/API, domain, persistence, errors, and receipts.",
+                    "Run generated unit, integration, golden-file, UI, and differential tests after each slice.",
+                    "Patch failing behavior from the evidence trace; do not invent success.",
+                    "Compare against similar products for expected depth, polish, shortcuts, accessibility, and reliability.",
+                ],
+                "receipts": [
+                    "workspace_manifest_before",
+                    "generated_files_manifest",
+                    "test_run_results",
+                    "differential_results",
+                    "standards_review",
+                    "self_critique",
+                ],
+                "exit_criteria": "Held-out behavior passes and standards review has no critical open gaps.",
+            },
+            {
+                "phase": "memory_and_reuse",
+                "question": "What did this app teach Aura that can help the next reconstruction?",
+                "actions": [
+                    "Persist the DNA sequence, successful feature modules, failures, and standards gaps.",
+                    "When rebuilding a new app, retrieve prior sequences by feature/category and adapt only tested patterns.",
+                    "Keep analogy provenance attached so borrowed ideas do not become false memories of the target.",
+                ],
+                "reusable_sequence_keys": sorted(dna_sequence.keys()),
+                "exit_criteria": "Future Program DNA runs can cite this sequence as adaptation memory with confidence and tests.",
+            },
+        ]
+
+    def _adaptation_patterns_for_feature(self, feature_name: str) -> list[str]:
+        presets = {
+            "document_creation": ["editor-command-state pattern", "autosave-plus-explicit-save pattern"],
+            "export_pipeline": ["render-to-temp-then-atomic-rename pattern", "golden-file compatibility pattern"],
+            "search_and_retrieval": ["index-on-write pattern", "query normalization plus ranked result pattern"],
+            "persistence": ["repository plus migration boundary", "atomic write and recovery receipt pattern"],
+            "web_integration": ["typed API client plus retry policy", "offline cache fallback pattern"],
+            "authentication": ["session-state-machine pattern", "scoped credential broker pattern"],
+            "background_service": ["bounded queue worker with receipts", "idempotent retry pattern"],
+            "permissions_model": ["capability token plus denied-state UX pattern"],
+        }
+        return presets.get(feature_name, ["evidence-traced feature adapter pattern"])
+
+    def _state_hypotheses_for_features(self, feature_names: set[str]) -> list[dict[str, Any]]:
+        states = []
+        if feature_names & {"document_creation", "export_pipeline", "persistence"}:
+            states.append(
+                {
+                    "name": "artifact_lifecycle",
+                    "states": ["new", "dirty", "validating", "saved", "exported", "failed", "recovering"],
+                    "evidence": sorted(feature_names & {"document_creation", "export_pipeline", "persistence"}),
+                }
+            )
+        if "authentication" in feature_names:
+            states.append(
+                {
+                    "name": "session_lifecycle",
+                    "states": ["anonymous", "authenticating", "authenticated", "expired", "revoked"],
+                    "evidence": ["authentication"],
+                }
+            )
+        if "background_service" in feature_names:
+            states.append(
+                {
+                    "name": "job_lifecycle",
+                    "states": ["queued", "running", "retrying", "succeeded", "failed", "cancelled"],
+                    "evidence": ["background_service"],
+                }
+            )
+        return states
+
+    def _data_model_hypotheses_for_features(self, feature_names: set[str]) -> list[dict[str, Any]]:
+        models = [
+            {
+                "name": "Receipt",
+                "fields": ["id", "action", "evidence", "status", "created_at", "error"],
+                "reason": "Every reconstruction action must be auditable.",
+            }
+        ]
+        if feature_names & {"document_creation", "export_pipeline", "persistence"}:
+            models.append(
+                {
+                    "name": "Artifact",
+                    "fields": ["id", "title", "body_or_payload", "format", "version", "metadata"],
+                    "reason": "Document/file workflows need durable objects and export metadata.",
+                }
+            )
+        if "search_and_retrieval" in feature_names:
+            models.append(
+                {
+                    "name": "SearchIndexEntry",
+                    "fields": ["artifact_id", "tokens", "rank_features", "updated_at"],
+                    "reason": "Search behavior needs an explicit index or queryable projection.",
+                }
+            )
+        return models
+
+    def _integration_hypotheses_for_features(self, feature_names: set[str]) -> list[dict[str, Any]]:
+        integrations = []
+        if "web_integration" in feature_names or "api_surface" in feature_names:
+            integrations.append({"name": "http_api", "boundary": "typed client/server schemas, retries, rate limits"})
+        if "file_format_inference" in feature_names or "export_pipeline" in feature_names:
+            integrations.append({"name": "filesystem_formats", "boundary": "codecs, golden files, atomic writes"})
+        if "host_hardware_interaction" in feature_names:
+            integrations.append({"name": "host_devices", "boundary": "permission-gated adapters and visual/auditory traces"})
+        if "network_interaction" in feature_names:
+            integrations.append({"name": "network_observation", "boundary": "metadata-only observation unless explicitly authorized"})
+        return integrations
+
+    def _sequence_unknowns(
+        self,
+        evidence: list[ProgramDNAEvidence],
+        features: list[ProgramDNAFeature],
+    ) -> list[str]:
+        unknowns = []
+        if not evidence:
+            unknowns.append("No source, docs, UI traces, behavior examples, research, or logs are present.")
+        if not any(item.kind == "research_result" for item in evidence):
+            unknowns.append("No live/public research result is attached; implementation-language and ecosystem assumptions need research.")
+        if not any(item.kind in {"test_observation", "observed_behavior"} for item in evidence):
+            unknowns.append("No behavior examples or tests are present; equivalence cannot be measured.")
+        low_conf = [feature.name for feature in features if feature.confidence < 0.55]
+        if low_conf:
+            unknowns.append(f"Low-confidence inferred features need more evidence: {', '.join(low_conf[:8])}.")
+        return unknowns
+
+    def _evidence_to_code_trace(
+        self,
+        features: list[ProgramDNAFeature],
+        evidence: list[ProgramDNAEvidence],
+    ) -> list[dict[str, Any]]:
+        by_source = {item.source: item for item in evidence}
+        traces: list[dict[str, Any]] = []
+        for feature in features:
+            sources = [by_source[source] for source in feature.evidence_sources if source in by_source]
+            modules = self._modules_for_feature(feature.name)
+            traces.append(
+                {
+                    "feature": feature.name,
+                    "claim": f"The replacement needs {feature.name} because the evidence shows this behavior or interface.",
+                    "evidence": [
+                        {
+                            "source": item.source,
+                            "kind": item.kind,
+                            "summary": item.summary,
+                            "confidence": item.confidence,
+                        }
+                        for item in sources[:8]
+                    ],
+                    "candidate_modules": modules,
+                    "code_obligations": [
+                        f"Implement {module} from clean-room behavior, not copied source."
+                        for module in modules
+                    ],
+                    "test_obligations": [
+                        f"Add held-out behavior tests proving {feature.name} works beyond examples.",
+                        f"Add negative tests for malformed or unsupported {feature.name} inputs.",
+                    ],
+                    "research_obligations": self._research_obligations_for_feature(feature.name),
+                    "open_gap_policy": "If evidence is weak, emit a hypothesis and test; do not silently promote it to fact.",
+                }
+            )
+        return traces
+
+    def _modules_for_feature(self, feature_name: str) -> list[str]:
+        presets = {
+            "document_creation": ["domain/document.py", "services/editor_controller.py", "adapters/ui_editor.py"],
+            "export_pipeline": ["services/exporter.py", "adapters/filesystem.py", "tests/golden_exports.py"],
+            "search_and_retrieval": ["services/search_index.py", "domain/query.py", "tests/search_equivalence.py"],
+            "persistence": ["storage/repository.py", "storage/migrations.py", "tests/persistence_contract.py"],
+            "web_integration": ["adapters/http_client.py", "services/sync.py", "tests/web_contract.py"],
+            "authentication": ["security/session.py", "adapters/auth_provider.py", "tests/auth_contract.py"],
+            "file_format_inference": ["formats/codec.py", "tests/golden_files.py"],
+            "api_surface": ["api/routes.py", "api/schemas.py", "tests/api_contract.py"],
+            "background_service": ["workers/queue.py", "workers/scheduler.py", "tests/worker_contract.py"],
+            "permissions_model": ["security/permissions.py", "tests/permission_denied.py"],
+            "network_interaction": ["adapters/network_monitor.py", "tests/network_boundary.py"],
+            "host_hardware_interaction": ["adapters/host_devices.py", "tests/hardware_permission_boundary.py"],
+            "defensive_security_analysis": ["security/threat_model.py", "security/forensics.py", "tests/security_boundary.py"],
+        }
+        return presets.get(feature_name, [f"features/{self._slug(feature_name)}.py", f"tests/test_{self._slug(feature_name)}.py"])
+
+    def _research_obligations_for_feature(self, feature_name: str) -> list[str]:
+        presets = {
+            "document_creation": [
+                "Research comparable editor/document data models and undo/save semantics.",
+                "Collect screenshots or UI traces for document lifecycle states.",
+            ],
+            "export_pipeline": [
+                "Research output format specs and common exporter libraries.",
+                "Collect golden files from authorized originals.",
+            ],
+            "search_and_retrieval": [
+                "Research ranking/indexing algorithms appropriate to the data size and latency budget.",
+                "Collect representative query/result examples.",
+            ],
+            "web_integration": [
+                "Research public API docs, auth flows, rate limits, offline behavior, and retry semantics.",
+                "Capture request/response shapes without credentials or private payloads.",
+            ],
+            "authentication": [
+                "Research provider docs and security best practices; mock secrets in tests.",
+                "Verify session expiry, revocation, and permission-denied states.",
+            ],
+            "defensive_security_analysis": [
+                "Research observable indicators of compromise and relevant defensive signatures.",
+                "Keep payload reproduction non-deployable and forensic-only.",
+            ],
+        }
+        return presets.get(
+            feature_name,
+            [
+                f"Research implementation patterns and open-source analogs for {feature_name}.",
+                f"Collect held-out examples that would falsify a shallow {feature_name} implementation.",
+            ],
+        )
+
+    def _build_standards_review(
+        self,
+        *,
+        evidence: list[ProgramDNAEvidence],
+        features: list[ProgramDNAFeature],
+        genome: ProgramDNAGenome,
+        blueprint: ProgramDNABlueprint,
+        verification_plan: ProgramDNAVerificationPlan,
+    ) -> list[dict[str, Any]]:
+        evidence_kinds = {item.kind for item in evidence}
+        feature_names = {feature.name for feature in features}
+
+        def item(name: str, status: str, evidence_refs: list[str], gaps: list[str], required: list[str]) -> dict[str, Any]:
+            return {
+                "standard": name,
+                "status": status,
+                "evidence": evidence_refs[:12],
+                "gaps": gaps,
+                "required_next": required,
+            }
+
+        review = [
+            item(
+                "behavioral_equivalence",
+                "planned" if verification_plan.black_box_tests and features else "insufficient",
+                [test["name"] for test in verification_plan.black_box_tests],
+                [] if features else ["No inferred features to test."],
+                ["Run held-out tests against the authorized original or captured phenotype traces before claiming support."],
+            ),
+            item(
+                "research_grounding",
+                "supported" if evidence_kinds & {"research_result", "research_note", "similar_program"} else "open_gap",
+                [entry["phase"] for entry in blueprint.research_plan],
+                [] if evidence_kinds & {"research_result", "research_note", "similar_program"} else ["No research evidence attached."],
+                ["Attach public docs, open-source alternatives, engineering notes, and implementation-language references."],
+            ),
+            item(
+                "implementation_completeness",
+                "planned" if blueprint.implementation_plan and feature_names else "insufficient",
+                [entry["phase"] for entry in blueprint.implementation_plan],
+                [] if feature_names else ["Feature map is empty or too weak."],
+                ["Generate concrete code modules, adapters, storage, and tests for each inferred feature."],
+            ),
+            item(
+                "security_and_legal_boundary",
+                "supported",
+                blueprint.safety_boundary,
+                [],
+                ["Keep source/decompilation/proprietary-copy boundaries auditable in every artifact."],
+            ),
+            item(
+                "operational_reliability",
+                "planned" if verification_plan.performance_checks and verification_plan.edge_case_tests else "insufficient",
+                [check["name"] for check in verification_plan.performance_checks + verification_plan.edge_case_tests],
+                [],
+                ["Exercise startup, memory, offline, permission-denied, interrupted-write, and large-input cases."],
+            ),
+            item(
+                "observability_and_receipts",
+                "supported" if "evidence_receipts" in {component["name"] for component in blueprint.components} else "open_gap",
+                [component["name"] for component in blueprint.components],
+                [],
+                ["Emit receipts for source, research, analogy, generated code, test runs, and unresolved unknowns."],
+            ),
+        ]
+        if genome.reconstruction_unknowns:
+            review.append(
+                item(
+                    "unknowns_management",
+                    "open_gap",
+                    genome.reconstruction_unknowns,
+                    list(genome.reconstruction_unknowns),
+                    ["Shrink unknowns with additional traces, source/docs, golden files, and adversarial tests."],
+                )
+            )
+        return review
 
     def _build_verification_plan(
         self,
@@ -1290,9 +2019,36 @@ class ProgramDNAReconstructionEngine:
             root / "VERIFICATION_PLAN.json",
             json.dumps(asdict(verification_plan), indent=2, sort_keys=True),
         )
+        self._write_text(
+            root / "RESEARCH_PLAN.json",
+            json.dumps(blueprint.research_plan, indent=2, sort_keys=True),
+        )
+        self._write_text(
+            root / "IMPLEMENTATION_PLAN.json",
+            json.dumps(blueprint.implementation_plan, indent=2, sort_keys=True),
+        )
+        self._write_text(
+            root / "STANDARDS_REVIEW.json",
+            json.dumps(blueprint.standards_review, indent=2, sort_keys=True),
+        )
+        self._write_text(
+            root / "PROGRAM_DNA_SEQUENCE.json",
+            json.dumps(genome.dna_sequence, indent=2, sort_keys=True),
+        )
+        self._write_text(
+            root / "BUILD_PLAYBOOK.json",
+            json.dumps(genome.build_playbook, indent=2, sort_keys=True),
+        )
         feature_constants = "\n".join(
             f"    {feature.name!r}: {feature.confidence!r},"
             for feature in features
+        )
+        trace_constants = json.dumps(
+            blueprint.implementation_plan[0].get("evidence_to_code_trace", [])
+            if blueprint.implementation_plan
+            else [],
+            indent=4,
+            sort_keys=True,
         )
         self._write_text(src / "__init__.py", '"""Generated Program DNA scaffold package."""\n')
         self._write_text(
@@ -1303,15 +2059,25 @@ class ProgramDNAReconstructionEngine:
                 "FEATURE_CONFIDENCE = {\n"
                 f"{feature_constants}\n"
                 "}\n\n"
+                f"EVIDENCE_TO_CODE_TRACE = {trace_constants}\n\n"
                 "class ReconstructedProgram:\n"
                 "    def __init__(self):\n"
                 "        self.receipts = []\n\n"
                 "    def capabilities(self):\n"
                 "        return sorted(FEATURE_CONFIDENCE)\n\n"
+                "    def evidence_trace(self, feature=None):\n"
+                "        if feature is None:\n"
+                "            return list(EVIDENCE_TO_CODE_TRACE)\n"
+                "        return [item for item in EVIDENCE_TO_CODE_TRACE if item.get('feature') == feature]\n\n"
                 "    def execute(self, feature, payload=None):\n"
                 "        if feature not in FEATURE_CONFIDENCE:\n"
                 "            raise ValueError(f'unknown reconstructed feature: {feature}')\n"
-                "        receipt = {'feature': feature, 'payload': payload or {}, 'status': 'planned'}\n"
+                "        receipt = {\n"
+                "            'feature': feature,\n"
+                "            'payload': payload or {},\n"
+                "            'status': 'planned',\n"
+                "            'evidence_trace': self.evidence_trace(feature),\n"
+                "        }\n"
                 "        self.receipts.append(receipt)\n"
                 "        return receipt\n"
             ),
@@ -1341,6 +2107,12 @@ class ProgramDNAReconstructionEngine:
                 "        pass\n"
                 "    else:\n"
                 "        raise AssertionError('unknown features must fail closed')\n"
+                "\n\n"
+                "def test_reconstructed_program_explains_evidence_trace():\n"
+                "    program = ReconstructedProgram()\n"
+                "    for capability in program.capabilities():\n"
+                "        receipt = program.execute(capability, {'probe': True})\n"
+                "        assert receipt['evidence_trace']\n"
             ),
         )
         self._write_text(
@@ -1352,10 +2124,18 @@ class ProgramDNAReconstructionEngine:
                 "- `PROGRAM_DNA_BLUEPRINT.json`\n"
                 "- `PROGRAM_GENOME.json`\n"
                 "- `VERIFICATION_PLAN.json`\n"
+                "- `RESEARCH_PLAN.json`\n"
+                "- `IMPLEMENTATION_PLAN.json`\n"
+                "- `STANDARDS_REVIEW.json`\n"
+                "- `PROGRAM_DNA_SEQUENCE.json`\n"
+                "- `BUILD_PLAYBOOK.json`\n"
                 "- `src/__init__.py`\n"
                 "- `src/program.py`\n"
                 "- `tests/conftest.py`\n"
                 "- `tests/test_program_contract.py`\n\n"
+                "## Build Rule\n\n"
+                "Every generated module or behavior must trace back to evidence, research, or a labeled hypothesis. "
+                "Unknown internals stay unknown until held-out tests or authorized source/docs close the gap.\n\n"
                 "## Safety Boundary\n\n"
                 + "\n".join(f"- {item}" for item in blueprint.safety_boundary)
                 + "\n"
@@ -1368,6 +2148,11 @@ class ProgramDNAReconstructionEngine:
             root / "PROGRAM_DNA_BLUEPRINT.json",
             root / "PROGRAM_GENOME.json",
             root / "VERIFICATION_PLAN.json",
+            root / "RESEARCH_PLAN.json",
+            root / "IMPLEMENTATION_PLAN.json",
+            root / "STANDARDS_REVIEW.json",
+            root / "PROGRAM_DNA_SEQUENCE.json",
+            root / "BUILD_PLAYBOOK.json",
             root / "src" / "__init__.py",
             root / "src" / "program.py",
             root / "tests" / "conftest.py",

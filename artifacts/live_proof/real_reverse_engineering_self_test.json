@@ -1,0 +1,58 @@
+{
+  "mode": "self_test",
+  "target": "base64",
+  "binary": "/usr/bin/base64",
+  "held_out_cases": 5,
+  "correct_reimpl": {
+    "held_out_passed": 5,
+    "held_out_total": 5,
+    "equivalence": 1.0,
+    "status": "supported",
+    "failures": []
+  },
+  "broken_reimpl": {
+    "held_out_passed": 0,
+    "held_out_total": 5,
+    "equivalence": 0.0,
+    "status": "refuted",
+    "failures": [
+      {
+        "input": {
+          "text": "reverse-engineered"
+        },
+        "expected": "cmV2ZXJzZS1lbmdpbmVlcmVk\n",
+        "outcome": "assertion"
+      },
+      {
+        "input": {
+          "text": "1234567890"
+        },
+        "expected": "MTIzNDU2Nzg5MA==\n",
+        "outcome": "assertion"
+      },
+      {
+        "input": {
+          "text": "\n"
+        },
+        "expected": "Cg==\n",
+        "outcome": "assertion"
+      },
+      {
+        "input": {
+          "text": "unit test"
+        },
+        "expected": "dW5pdCB0ZXN0\n",
+        "outcome": "assertion"
+      },
+      {
+        "input": {
+          "text": "Zenith"
+        },
+        "expected": "WmVuaXRo\n",
+        "outcome": "assertion"
+      }
+    ]
+  },
+  "pipeline_proven": true,
+  "meaning": "the reverse-engineering differential genuinely distinguishes a correct clean-room reimplementation from a wrong one, verified against the REAL binary's held-out outputs"
+}

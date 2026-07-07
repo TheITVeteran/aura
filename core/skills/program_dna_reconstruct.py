@@ -35,6 +35,9 @@ class ProgramDNAInput(BaseModel):
     observed_behaviors: list[str] = Field(default_factory=list)
     ui_notes: list[str] = Field(default_factory=list)
     research_notes: list[str] = Field(default_factory=list)
+    research_queries: list[str] = Field(default_factory=list)
+    perform_research: bool = False
+    max_research_results: int = Field(3, ge=1, le=8)
     similar_programs: list[str] = Field(default_factory=list)
     api_observations: list[str] = Field(default_factory=list)
     file_formats: list[str] = Field(default_factory=list)
@@ -66,7 +69,7 @@ class ProgramDNAReconstructSkill(BaseSkill):
         "research notes, and similar-program hints."
     )
     input_model = ProgramDNAInput
-    timeout_seconds = 45.0
+    timeout_seconds = 120.0
     metabolic_cost = 2
     effect_scope = "read_write_artifacts"
     requires_approval = False
@@ -101,6 +104,9 @@ class ProgramDNAReconstructSkill(BaseSkill):
             "skill": self.name,
             "target": payload.get("target_name"),
             "features": feature_names,
+            "research_plan": payload.get("research_plan", []),
+            "implementation_plan": payload.get("implementation_plan", []),
+            "standards_review": payload.get("standards_review", []),
             "result": payload,
             "summary": self._summary(payload, feature_names),
         }
@@ -139,10 +145,12 @@ class ProgramDNAReconstructSkill(BaseSkill):
             return f"Program DNA reconstruction blocked: {reasons}"
         scaffold = payload.get("scaffold_path")
         suffix = f"; scaffold emitted at {scaffold}" if scaffold else ""
+        standards = payload.get("standards_review") or []
+        standards_suffix = f"; standards reviewed={len(standards)}" if standards else ""
         return (
             f"Program DNA captured for {payload.get('target_name')}: "
             f"{len(payload.get('evidence', []))} evidence item(s), "
-            f"{len(feature_names)} inferred feature(s){suffix}."
+            f"{len(feature_names)} inferred feature(s){standards_suffix}{suffix}."
         )
 
 

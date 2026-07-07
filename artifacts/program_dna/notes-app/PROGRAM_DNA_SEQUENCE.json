@@ -1,0 +1,341 @@
+{
+  "adaptation_memory": [],
+  "compatibility_targets": [
+    "local-first replacement",
+    "headless test harness"
+  ],
+  "genotype_hypothesis": {
+    "data_model": [
+      {
+        "fields": [
+          "id",
+          "action",
+          "evidence",
+          "status",
+          "created_at",
+          "error"
+        ],
+        "name": "Receipt",
+        "reason": "Every reconstruction action must be auditable."
+      },
+      {
+        "fields": [
+          "id",
+          "title",
+          "body_or_payload",
+          "format",
+          "version",
+          "metadata"
+        ],
+        "name": "Artifact",
+        "reason": "Document/file workflows need durable objects and export metadata."
+      },
+      {
+        "fields": [
+          "artifact_id",
+          "tokens",
+          "rank_features",
+          "updated_at"
+        ],
+        "name": "SearchIndexEntry",
+        "reason": "Search behavior needs an explicit index or queryable projection."
+      }
+    ],
+    "features": [
+      {
+        "adaptation_patterns": [
+          "editor-command-state pattern",
+          "autosave-plus-explicit-save pattern"
+        ],
+        "candidate_modules": [
+          "domain/document.py",
+          "services/editor_controller.py",
+          "adapters/ui_editor.py"
+        ],
+        "category": "user_workflow",
+        "confidence": 0.9299999999999999,
+        "evidence_sources": [
+          "observed_behavior:1",
+          "ui_affordance:1",
+          "test_observation:1",
+          "program_dna:research:1",
+          "program_dna:research:2",
+          "program_dna:research:3"
+        ],
+        "name": "document_creation"
+      },
+      {
+        "adaptation_patterns": [
+          "index-on-write pattern",
+          "query normalization plus ranked result pattern"
+        ],
+        "candidate_modules": [
+          "services/search_index.py",
+          "domain/query.py",
+          "tests/search_equivalence.py"
+        ],
+        "category": "core",
+        "confidence": 0.9299999999999999,
+        "evidence_sources": [
+          "observed_behavior:1",
+          "ui_affordance:1",
+          "test_observation:1",
+          "program_dna:research:1",
+          "program_dna:research:2",
+          "program_dna:research:3"
+        ],
+        "name": "search_and_retrieval"
+      },
+      {
+        "adaptation_patterns": [
+          "typed API client plus retry policy",
+          "offline cache fallback pattern"
+        ],
+        "candidate_modules": [
+          "adapters/http_client.py",
+          "services/sync.py",
+          "tests/web_contract.py"
+        ],
+        "category": "integration",
+        "confidence": 0.69,
+        "evidence_sources": [
+          "program_dna:research:1",
+          "program_dna:research:2",
+          "program_dna:research:3"
+        ],
+        "name": "web_integration"
+      },
+      {
+        "adaptation_patterns": [
+          "evidence-traced feature adapter pattern"
+        ],
+        "candidate_modules": [
+          "features/automation.py",
+          "tests/test_automation.py"
+        ],
+        "category": "core",
+        "confidence": 0.61,
+        "evidence_sources": [
+          "test_observation:1",
+          "program_dna:research:3"
+        ],
+        "name": "automation"
+      },
+      {
+        "adaptation_patterns": [
+          "evidence-traced feature adapter pattern"
+        ],
+        "candidate_modules": [
+          "features/collaboration.py",
+          "tests/test_collaboration.py"
+        ],
+        "category": "integration",
+        "confidence": 0.61,
+        "evidence_sources": [
+          "program_dna:research:1",
+          "program_dna:research:2"
+        ],
+        "name": "collaboration"
+      },
+      {
+        "adaptation_patterns": [
+          "evidence-traced feature adapter pattern"
+        ],
+        "candidate_modules": [
+          "features/legacy_migration.py",
+          "tests/test_legacy_migration.py"
+        ],
+        "category": "core",
+        "confidence": 0.53,
+        "evidence_sources": [
+          "program_dna:research:3"
+        ],
+        "name": "legacy_migration"
+      },
+      {
+        "adaptation_patterns": [
+          "evidence-traced feature adapter pattern"
+        ],
+        "candidate_modules": [
+          "features/study_model.py",
+          "tests/test_study_model.py"
+        ],
+        "category": "core",
+        "confidence": 0.69,
+        "evidence_sources": [
+          "observed_behavior:1",
+          "ui_affordance:1",
+          "program_dna:research:1"
+        ],
+        "name": "study_model"
+      },
+      {
+        "adaptation_patterns": [
+          "evidence-traced feature adapter pattern"
+        ],
+        "candidate_modules": [
+          "adapters/network_monitor.py",
+          "tests/network_boundary.py"
+        ],
+        "category": "core",
+        "confidence": 0.53,
+        "evidence_sources": [
+          "program_dna:research:3"
+        ],
+        "name": "network_interaction"
+      },
+      {
+        "adaptation_patterns": [
+          "evidence-traced feature adapter pattern"
+        ],
+        "candidate_modules": [
+          "security/threat_model.py",
+          "security/forensics.py",
+          "tests/security_boundary.py"
+        ],
+        "category": "core",
+        "confidence": 0.61,
+        "evidence_sources": [
+          "observed_behavior:1",
+          "ui_affordance:1"
+        ],
+        "name": "defensive_security_analysis"
+      }
+    ],
+    "integration_points": [
+      {
+        "boundary": "typed client/server schemas, retries, rate limits",
+        "name": "http_api"
+      },
+      {
+        "boundary": "metadata-only observation unless explicitly authorized",
+        "name": "network_observation"
+      }
+    ],
+    "state": [
+      {
+        "evidence": [
+          "document_creation"
+        ],
+        "name": "artifact_lifecycle",
+        "states": [
+          "new",
+          "dirty",
+          "validating",
+          "saved",
+          "exported",
+          "failed",
+          "recovering"
+        ]
+      }
+    ]
+  },
+  "phenotype": {
+    "api_observations": [],
+    "file_formats": [],
+    "observed_behaviors": [
+      "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, include receipts, rollback, standards review, self-critique, sandbox/workspace boundaries, and compare it to engineering standards."
+    ],
+    "runtime_traces": [],
+    "ui_affordances": [
+      "Use Program DNA to reconstruct a notes app. Research open source alternatives, infer the architecture, build a scaffold workspace, include receipts, rollback, standards review, self-critique, sandbox/workspace boundaries, and compare it to engineering standards."
+    ]
+  },
+  "promotion_rule": "A sequence segment becomes reusable only after it has evidence, a clean-room implementation, held-out tests, and a standards review entry.",
+  "proof_requirements": {
+    "promotion": "No production claim without held-out equivalence, standards review, and unresolved-unknown accounting.",
+    "receipts": [
+      "evidence_collected",
+      "research_collected",
+      "code_generated",
+      "tests_generated",
+      "sandbox_executed",
+      "standards_reviewed",
+      "rollback_ready",
+      "self_critique_completed"
+    ],
+    "rollback": "All generated files must be emitted into an isolated workspace with manifest hashes before promotion.",
+    "sandboxing": "Generated code runs in a disposable reconstruction sandbox before any install or runtime promotion."
+  },
+  "purpose_hypothesis": "notes app appears to retrieve, filter, or organize information.",
+  "research_memory": {
+    "research_notes": [],
+    "research_results": [
+      {
+        "offline_fallback": false,
+        "provenance": "standard",
+        "query": "notes app architecture implementation language framework",
+        "results": [
+          {
+            "snippet": "View, edit, create and share your notes with Notes on the web. Changes will sync across your devices with iCloud.",
+            "title": "Notes - Apple iCloud",
+            "url": "https://www.icloud.com/notes"
+          },
+          {
+            "snippet": "Notes is a free note taking app. You can take your notes and share with others by providing the shorten url to a friend.",
+            "title": "Notes",
+            "url": "https://notes.io/"
+          },
+          {
+            "snippet": "Write down quick notes and print a simple text document with Online Notepad editor. It includes spellchecker, word counter, autosave, find and replace etc.",
+            "title": "Online Notepad",
+            "url": "https://onlinenotepad.org/notepad"
+          }
+        ],
+        "summary": "Online Notepad .ON_App { width: 234px; height: 60px; @media (min-width: 341px) { .ON_App { width: 320px; height: 100px; @media (min-width: 490px) { .ON_App { width: 468px; height: 60px; @media (min-w\u2026 Autosave Never lose your notes with its auto save feature. Print Getting a hard copy of your notes has never been easier."
+      },
+      {
+        "offline_fallback": false,
+        "provenance": "standard",
+        "query": "notes app open source alternative source code engineering",
+        "results": [
+          {
+            "snippet": "View, edit, create and share your notes with Notes on the web. Changes will sync across your devices with iCloud.",
+            "title": "Notes - Apple iCloud",
+            "url": "https://www.icloud.com/notes"
+          },
+          {
+            "snippet": "Notes is a free note taking app. You can take your notes and share with others by providing the shorten url to a friend.",
+            "title": "Notes",
+            "url": "https://notes.io/"
+          },
+          {
+            "snippet": "Write down quick notes and print a simple text document with Online Notepad editor. It includes spellchecker, word counter, autosave, find and replace etc.",
+            "title": "Online Notepad",
+            "url": "https://onlinenotepad.org/notepad"
+          }
+        ],
+        "summary": "Online Notepad .ON_App { width: 234px; height: 60px; @media (min-width: 341px) { .ON_App { width: 320px; height: 100px; @media (min-width: 490px) { .ON_App { width: 468px; height: 60px; @media (min-w\u2026 Autosave Never lose your notes with its auto save feature. Print Getting a hard copy of your notes has never been easier."
+      },
+      {
+        "offline_fallback": false,
+        "provenance": "standard",
+        "query": "how to build notes app app data model UI workflow",
+        "results": [
+          {
+            "snippet": "California\u2019s construction industry is thriving! Build California is your one-stop-shop for info on careers, training, & jobs across the state.",
+            "title": "Build California \u2013 Learn more about careers in construction",
+            "url": "https://buildcalifornia.com/"
+          },
+          {
+            "snippet": "We would like to show you a description here but the site won\u2019t allow us.",
+            "title": "Build with Ferguson",
+            "url": "https://www.build.com/account"
+          },
+          {
+            "snippet": "BUILD, a national nonprofit organization, is on a mission to use entrepreneurship to ignite the potential of youth from under-resourced communities, enabling them to build career success, entrepreneurial mindsets, and opportunity.",
+            "title": "BUILD California: Empowering Tomorrow's Leaders",
+            "url": "https://build.org/california/"
+          }
+        ],
+        "summary": "Build California \u2013 Learn more about careers in construction Skip to content Careers Training Find a Job Learn About Educators Ambassadors Sponsor Contact Us Sign Up ready to take the next step? Sign Up burger Contact Us Sign Up play Build California California\u2019s construction industry is thriving! Build California is your one-stop-shop for info on careers, training, & jobs across the state."
+      }
+    ],
+    "similar_programs": []
+  },
+  "schema": "program_dna_sequence.v1",
+  "target": "notes app",
+  "unknowns": [
+    "Low-confidence inferred features need more evidence: legacy_migration, network_interaction."
+  ]
+}

@@ -1,0 +1,59 @@
+[
+  {
+    "evidence_sources": [
+      "observed_behavior:1",
+      "ui_affordance:1",
+      "program_dna:research:1",
+      "program_dna:research:2",
+      "program_dna:research:3"
+    ],
+    "goal": "Collect public docs, user-owned docs, release notes, manuals, UI guides, and observed behavior traces.",
+    "phase": "target_facts",
+    "queries": [
+      "notes app architecture implementation language framework",
+      "notes app open source alternative source code engineering",
+      "how to build notes app app data model UI workflow"
+    ],
+    "required_before_claiming_equivalence": true
+  },
+  {
+    "evidence_sources": [
+      "program_dna:research:1",
+      "program_dna:research:2",
+      "program_dna:research:3"
+    ],
+    "goal": "Identify likely languages, frameworks, storage layers, file formats, algorithms, and comparable open-source implementations.",
+    "phase": "implementation_research",
+    "queries": [
+      "notes app implementation language framework",
+      "notes app file format API workflow architecture",
+      "notes app open source alternative source code"
+    ],
+    "required_before_claiming_production_rebuild": true
+  },
+  {
+    "compatibility_targets": [
+      "local-first replacement",
+      "headless test harness"
+    ],
+    "features": [
+      "automation",
+      "collaboration",
+      "defensive_security_analysis",
+      "document_creation",
+      "legacy_migration",
+      "network_interaction",
+      "search_and_retrieval",
+      "study_model",
+      "web_integration"
+    ],
+    "goal": "Convert observed behavior into held-out tests, golden files, UI traces, API contracts, and failure-mode cases.",
+    "phase": "behavioral_equivalence",
+    "required_before_promotion": true
+  },
+  {
+    "goal": "Compare the replacement against maintainability, security, observability, performance, portability, UX, and testability standards.",
+    "phase": "standards_gap_review",
+    "required_before_user_demo": true
+  }
+]

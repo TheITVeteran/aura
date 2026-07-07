@@ -1,0 +1,265 @@
+{
+  "api_tests": [],
+  "black_box_tests": [
+    {
+      "assertion": "replacement preserves externally visible document_creation behavior",
+      "evidence": [
+        "observed_behavior:1",
+        "ui_affordance:1",
+        "test_observation:1",
+        "program_dna:research:1",
+        "program_dna:research:2",
+        "program_dna:research:3"
+      ],
+      "name": "black_box_document_creation",
+      "setup": "exercise authorized original or captured phenotype trace"
+    },
+    {
+      "assertion": "replacement preserves externally visible search_and_retrieval behavior",
+      "evidence": [
+        "observed_behavior:1",
+        "ui_affordance:1",
+        "test_observation:1",
+        "program_dna:research:1",
+        "program_dna:research:2",
+        "program_dna:research:3"
+      ],
+      "name": "black_box_search_and_retrieval",
+      "setup": "exercise authorized original or captured phenotype trace"
+    },
+    {
+      "assertion": "replacement preserves externally visible web_integration behavior",
+      "evidence": [
+        "program_dna:research:1",
+        "program_dna:research:2",
+        "program_dna:research:3"
+      ],
+      "name": "black_box_web_integration",
+      "setup": "exercise authorized original or captured phenotype trace"
+    },
+    {
+      "assertion": "replacement preserves externally visible automation behavior",
+      "evidence": [
+        "test_observation:1",
+        "program_dna:research:3"
+      ],
+      "name": "black_box_automation",
+      "setup": "exercise authorized original or captured phenotype trace"
+    },
+    {
+      "assertion": "replacement preserves externally visible collaboration behavior",
+      "evidence": [
+        "program_dna:research:1",
+        "program_dna:research:2"
+      ],
+      "name": "black_box_collaboration",
+      "setup": "exercise authorized original or captured phenotype trace"
+    },
+    {
+      "assertion": "replacement preserves externally visible legacy_migration behavior",
+      "evidence": [
+        "program_dna:research:3"
+      ],
+      "name": "black_box_legacy_migration",
+      "setup": "exercise authorized original or captured phenotype trace"
+    },
+    {
+      "assertion": "replacement preserves externally visible study_model behavior",
+      "evidence": [
+        "observed_behavior:1",
+        "ui_affordance:1",
+        "program_dna:research:1"
+      ],
+      "name": "black_box_study_model",
+      "setup": "exercise authorized original or captured phenotype trace"
+    },
+    {
+      "assertion": "replacement preserves externally visible network_interaction behavior",
+      "evidence": [
+        "program_dna:research:3"
+      ],
+      "name": "black_box_network_interaction",
+      "setup": "exercise authorized original or captured phenotype trace"
+    },
+    {
+      "assertion": "replacement preserves externally visible defensive_security_analysis behavior",
+      "evidence": [
+        "observed_behavior:1",
+        "ui_affordance:1"
+      ],
+      "name": "black_box_defensive_security_analysis",
+      "setup": "exercise authorized original or captured phenotype trace"
+    }
+  ],
+  "compatibility_checks": [
+    {
+      "assertion": "replacement supports target compatibility mode: local-first replacement",
+      "name": "compat_local-first-replacement"
+    },
+    {
+      "assertion": "replacement supports target compatibility mode: headless test harness",
+      "name": "compat_headless-test-harness"
+    }
+  ],
+  "edge_case_tests": [
+    {
+      "assertion": "unsupported behavior does not fabricate success",
+      "name": "unknown_feature_fails_closed"
+    },
+    {
+      "assertion": "state remains recoverable after interrupted write/export",
+      "name": "partial_write_recovery"
+    },
+    {
+      "assertion": "network loss does not destroy local state",
+      "name": "offline_mode"
+    },
+    {
+      "assertion": "missing permission produces explicit recoverable receipt",
+      "name": "permission_denied"
+    }
+  ],
+  "golden_file_tests": [],
+  "interaction_tests": [
+    {
+      "assertion": "network behavior is allowlisted, rate-limited, logged, and safe under offline conditions",
+      "name": "network_surface_bounded"
+    }
+  ],
+  "performance_checks": [
+    {
+      "assertion": "replacement starts inside target budget for chosen platform",
+      "name": "startup_budget"
+    },
+    {
+      "assertion": "large inputs stay bounded in memory and time",
+      "name": "large_project_budget"
+    }
+  ],
+  "scaffold_files": [
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/PROGRAM_DNA_BLUEPRINT.json",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/PROGRAM_GENOME.json",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/VERIFICATION_PLAN.json",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/RESEARCH_PLAN.json",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/IMPLEMENTATION_PLAN.json",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/STANDARDS_REVIEW.json",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/PROGRAM_DNA_SEQUENCE.json",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/BUILD_PLAYBOOK.json",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/src/__init__.py",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/src/program.py",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/tests/conftest.py",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/tests/test_program_contract.py",
+    "/Users/bryan/.aura/live-source/artifacts/program_dna/notes-app/README.md"
+  ],
+  "scaffold_syntax_ok": true,
+  "security_checks": [
+    {
+      "assertion": "credentials/tokens are never logged or copied",
+      "name": "no_secret_exfiltration"
+    },
+    {
+      "assertion": "no proprietary source or decompiled code is embedded",
+      "name": "license_boundary"
+    },
+    {
+      "assertion": "untrusted artifacts run only in sandboxed test environments",
+      "name": "sandbox_execution"
+    },
+    {
+      "assertion": "replacement does not claim auth compatibility without evidence",
+      "name": "auth_not_claimed"
+    }
+  ],
+  "ui_tests": [
+    {
+      "assertion": "visible UI state changes match the reconstructed workflow contract",
+      "name": "ui_document_creation",
+      "steps": [
+        "open editor",
+        "capture input",
+        "persist content",
+        "confirm saved state"
+      ]
+    },
+    {
+      "assertion": "visible UI state changes match the reconstructed workflow contract",
+      "name": "ui_search_and_retrieval",
+      "steps": [
+        "index source",
+        "accept query",
+        "rank results",
+        "return matched item"
+      ]
+    },
+    {
+      "assertion": "visible UI state changes match the reconstructed workflow contract",
+      "name": "ui_web_integration",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    },
+    {
+      "assertion": "visible UI state changes match the reconstructed workflow contract",
+      "name": "ui_automation",
+      "steps": [
+        "define trigger",
+        "schedule/execute action",
+        "record receipt",
+        "surface result"
+      ]
+    },
+    {
+      "assertion": "visible UI state changes match the reconstructed workflow contract",
+      "name": "ui_collaboration",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    },
+    {
+      "assertion": "visible UI state changes match the reconstructed workflow contract",
+      "name": "ui_legacy_migration",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    },
+    {
+      "assertion": "visible UI state changes match the reconstructed workflow contract",
+      "name": "ui_study_model",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    },
+    {
+      "assertion": "visible UI state changes match the reconstructed workflow contract",
+      "name": "ui_network_interaction",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    },
+    {
+      "assertion": "visible UI state changes match the reconstructed workflow contract",
+      "name": "ui_defensive_security_analysis",
+      "steps": [
+        "capture intent",
+        "execute behavior",
+        "verify effect",
+        "record receipt"
+      ]
+    }
+  ]
+}

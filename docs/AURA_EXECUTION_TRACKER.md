@@ -7100,3 +7100,76 @@ Remaining non-soak work after this checkpoint:
   report-back.
 - Continue Chrome/Kubernetes/aerospace reliability hardening against any new
   live neural-stream or terminal issues surfaced by that proof.
+
+## Checkpoint 2026-07-07-02: Program DNA Evidence, Research, and Standards Depth
+
+Status: implementation, focused regression tests, durable proof receipts, and
+live `/api/chat` scaffold replay complete.
+
+Scope:
+
+- Deepened Program DNA from a behavior/spec extractor into a reconstruction
+  workbench with explicit research plans, implementation plans, standards
+  reviews, DNA sequences, build playbooks, and evidence-to-code traceability.
+- Added bounded research collection as auditable evidence. Research results,
+  query text, snippets, connector failures, and provenance are stored as
+  evidence instead of being treated as model memory or unstated prior knowledge.
+- Added practical production obligations to generated plans: receipt ledger,
+  isolated workspace, rollback readiness, sandbox execution, standards review,
+  self-critique, and promotion only after held-out evidence closes the relevant
+  unknowns.
+- Fixed the generated genome artifact so `PROGRAM_GENOME.json` now carries the
+  full evidence ledger, not only phenotype source IDs. This makes the generated
+  workspace independently auditable.
+- Fixed `tools/proof/run_real_app_reverse_engineering_proof.py --self-test
+  --out ...` so self-test proof receipts are written to disk instead of only
+  printed to stdout.
+- Hardened the live chat route so structural app/tool reconstruction requests
+  such as "reconstruct a notes app" route to Program DNA with research,
+  scaffold emission, engineering-standard checks, and compatibility targets
+  rather than being stolen by the generic desktop-task path.
+
+Verification:
+
+- `python -m py_compile core/self_improvement/program_dna.py core/skills/program_dna_reconstruct.py interface/routes/chat.py`
+  -> passed.
+- `python -m py_compile tools/proof/run_real_app_reverse_engineering_proof.py core/self_improvement/program_dna.py`
+  -> passed.
+- `python -m pytest -q tests/test_program_dna_reconstruction.py tests/test_program_dna_behavioral_equivalence_battery.py tests/test_real_app_reverse_engineering.py tests/test_program_dna_user_pathway.py --maxfail=1`
+  -> `29 passed`.
+- `python tools/program_dna/behavioral_equivalence_battery.py --out artifacts/current/program_dna_behavioral_equivalence_latest.json`
+  -> `ok=true`, `scenarios=8`, `failures=0`, `held_out_cases=17`.
+- `python tools/proof/run_real_app_reverse_engineering_proof.py --self-test --target base64 --out artifacts/live_proof/real_reverse_engineering_self_test.json`
+  -> `pipeline_proven=true`; correct clean-room implementation passed `5/5`;
+  deliberately broken implementation failed `0/5` and was refuted.
+- Live `/api/chat` replay through the launched local Aura runtime:
+  "Use Program DNA to reconstruct a notes app..." returned
+  `status=program_dna_reconstruct_completed` and emitted
+  `artifacts/program_dna/notes-app`.
+- Generated scaffold verification:
+  `python -m pytest -q artifacts/program_dna/notes-app/tests`
+  -> `3 passed`.
+
+Evidence in `artifacts/program_dna/notes-app`:
+
+- `PROGRAM_GENOME.json`: `evidence_count=6`, evidence kinds
+  `observed_behavior`, `research_result`, `test_observation`, and
+  `ui_affordance`; `feature_count=9`.
+- `PROGRAM_DNA_SEQUENCE.json`: `research_results=3`; promotion rule requires
+  evidence, clean-room implementation, held-out tests, and standards review.
+- `STANDARDS_REVIEW.json`: research grounding, security/legal boundary, and
+  observability/receipts are supported; app-level behavioral equivalence,
+  implementation completeness, and operational reliability remain planned until
+  a full replacement app is built and differentially tested.
+
+Remaining non-soak work after this checkpoint:
+
+- Build and visibly prove a more complex Program DNA replacement app, not only
+  a scaffold, with held-out behavioral equivalence against an authorized
+  original or reference harness.
+- Run and close the visible 20-turn ChatGPT/Gemini web-interlocutor proof with
+  natural cognitive composition, real page reading, retention, and report-back.
+- Run the final real RSI proof path after the Program DNA checkpoint so the
+  self-improvement result is visibly produced, verified, and retained.
+- Continue Chrome/Kubernetes/aerospace-style reliability hardening against any
+  new live neural-stream, terminal, boot, permission, or chat-path issues.

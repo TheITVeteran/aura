@@ -1,0 +1,113 @@
+[
+  {
+    "evidence": [
+      "black_box_document_creation",
+      "black_box_search_and_retrieval",
+      "black_box_web_integration",
+      "black_box_automation",
+      "black_box_collaboration",
+      "black_box_legacy_migration",
+      "black_box_study_model",
+      "black_box_network_interaction",
+      "black_box_defensive_security_analysis"
+    ],
+    "gaps": [],
+    "required_next": [
+      "Run held-out tests against the authorized original or captured phenotype traces before claiming support."
+    ],
+    "standard": "behavioral_equivalence",
+    "status": "planned"
+  },
+  {
+    "evidence": [
+      "target_facts",
+      "implementation_research",
+      "behavioral_equivalence",
+      "standards_gap_review"
+    ],
+    "gaps": [],
+    "required_next": [
+      "Attach public docs, open-source alternatives, engineering notes, and implementation-language references."
+    ],
+    "standard": "research_grounding",
+    "status": "supported"
+  },
+  {
+    "evidence": [
+      "domain_model",
+      "runtime_core",
+      "interfaces",
+      "productionization"
+    ],
+    "gaps": [],
+    "required_next": [
+      "Generate concrete code modules, adapters, storage, and tests for each inferred feature."
+    ],
+    "standard": "implementation_completeness",
+    "status": "planned"
+  },
+  {
+    "evidence": [
+      "Do not bypass DRM, licensing, authentication, or access controls.",
+      "Do not claim proprietary source recovery from binaries.",
+      "Only reconstruct behavior Aura is authorized to inspect or implement.",
+      "Keep analogy-derived features separate from observed target facts.",
+      "Public-observation rebuilds must be labeled inspired/compatible until held-out behavior tests pass.",
+      "Defensive study of suspicious software must not produce deployable offensive payloads."
+    ],
+    "gaps": [],
+    "required_next": [
+      "Keep source/decompilation/proprietary-copy boundaries auditable in every artifact."
+    ],
+    "standard": "security_and_legal_boundary",
+    "status": "supported"
+  },
+  {
+    "evidence": [
+      "startup_budget",
+      "large_project_budget",
+      "unknown_feature_fails_closed",
+      "partial_write_recovery",
+      "offline_mode",
+      "permission_denied"
+    ],
+    "gaps": [],
+    "required_next": [
+      "Exercise startup, memory, offline, permission-denied, interrupted-write, and large-input cases."
+    ],
+    "standard": "operational_reliability",
+    "status": "planned"
+  },
+  {
+    "evidence": [
+      "affordance_model",
+      "state_and_persistence",
+      "action_controller",
+      "evidence_receipts",
+      "interaction_surface_model"
+    ],
+    "gaps": [],
+    "required_next": [
+      "Emit receipts for source, research, analogy, generated code, test runs, and unresolved unknowns."
+    ],
+    "standard": "observability_and_receipts",
+    "status": "supported"
+  },
+  {
+    "evidence": [
+      "obtain additional UI traces for low-confidence workflows",
+      "collect golden input/output files for file-format compatibility",
+      "run black-box differential tests against the authorized original when available"
+    ],
+    "gaps": [
+      "obtain additional UI traces for low-confidence workflows",
+      "collect golden input/output files for file-format compatibility",
+      "run black-box differential tests against the authorized original when available"
+    ],
+    "required_next": [
+      "Shrink unknowns with additional traces, source/docs, golden files, and adversarial tests."
+    ],
+    "standard": "unknowns_management",
+    "status": "open_gap"
+  }
+]

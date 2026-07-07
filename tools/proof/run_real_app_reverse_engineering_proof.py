@@ -330,6 +330,9 @@ def main() -> int:
     target = _TARGETS[args.target]()
     if args.self_test:
         report = run_self_test(target)
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(report, indent=2))
         return 0 if report["pipeline_proven"] else 1
 
