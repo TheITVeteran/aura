@@ -278,7 +278,7 @@ async def test_chrome_visible_browser_falls_back_to_visible_keyboard_when_dom_bl
 
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", fake_get_pyautogui)
     # Hermetic: this exercises the keyboard-fallback LOGIC, not the host's AX
-    # system. Stub the environment seams so it never drives a real (absent)
+    # system. Replace the environment seams so it never drives a real (absent)
     # browser composer — otherwise it iterates every click candidate against
     # the live desktop for ~80s and fails headless.
     monkeypatch.setattr("asyncio.sleep", lambda *_args, **_kwargs: _instant())
