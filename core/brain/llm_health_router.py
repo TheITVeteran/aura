@@ -1910,11 +1910,21 @@ class HealthAwareLLMRouter:
             return "desktop_background_memory_probe_failed"
 
         if name == BRAINSTEM_ENDPOINT:
+            # Brainstem is the 7B (~5GB @ 4-bit) background lane. The old
+            # 48% / 34GB-free gate was UNMEETABLE on a desktop whose whole job
+            # is holding the ~16-20GB 32B Cortex: steady state is ~56% / ~28GB
+            # available, so background cognition could NEVER admit → mind_tick
+            # never completes a successful tick → false-death → the launcher
+            # respawns a second 32B → memory doubling → worse false-death (a
+            # self-sustaining respawn loop, observed 2026-07-06). Calibrate to
+            # the hardware: allow the 7B beside the Cortex while holding a 22GB
+            # available floor (above Reflex's 20GB) — the external memory
+            # sentinel (42GB RSS lethal) remains the hard OOM backstop.
             max_pressure = float(
-                os.environ.get("AURA_BACKGROUND_BRAINSTEM_MAX_PRESSURE_PCT", "48")
+                os.environ.get("AURA_BACKGROUND_BRAINSTEM_MAX_PRESSURE_PCT", "62")
             )
             min_available = float(
-                os.environ.get("AURA_BACKGROUND_BRAINSTEM_MIN_AVAILABLE_GB", "34")
+                os.environ.get("AURA_BACKGROUND_BRAINSTEM_MIN_AVAILABLE_GB", "22")
             )
         else:
             max_pressure = float(

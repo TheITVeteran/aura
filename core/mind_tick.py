@@ -994,6 +994,17 @@ class MindTick:
                                 logger.debug(
                                     "💓 MindTick: background kernel tick yielded to a contended model."
                                 )
+                            # A correct yield to a contended/headroom-deferred model
+                            # IS forward progress of the organism rhythm — record it
+                            # as a successful tick. Otherwise a mind that is merely
+                            # memory-backpressured (its background LLM lane deferred)
+                            # never advances _last_successful_tick_at, is falsely
+                            # declared dead, and the launcher respawns a duplicate 32B
+                            # → memory doubling → a self-sustaining respawn loop
+                            # (observed 2026-07-06). Kernel death itself is caught by
+                            # the separate REQUIRED kernel probe, not here.
+                            self._last_successful_tick_at = time.time()
+                            self._consecutive_loop_failures = 0
                             self._mark_loop_progress("kernel_tick_timeout_yield")
                             return current_state
                         except _MIND_BOUNDARY_ERRORS as _kt_err:

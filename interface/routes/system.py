@@ -3295,6 +3295,33 @@ def _runtime_integrity_public_payload(report: dict[str, Any] | None) -> dict[str
     }
 
 
+@router.get("/health/mind_tick")
+async def api_mind_tick_diagnostics():
+    """Diagnostic: MindTick's internal liveness state — is the supervised loop
+    running, tick_count, last successful/progress timestamps + their ages, the
+    active tick stage, consecutive failures, liveness-repair count. Read-only.
+
+    Built 2026-07-07 to pin the false-death → launcher-respawn loop: is_alive()
+    flipping False at exactly 180s means the boot-grace branch fired, i.e. BOTH
+    progress timestamps are still 0 — the loop body never marked progress. This
+    surfaces whether the loop is running at all and where it is stuck.
+    """
+    import time as _t
+
+    mt = ServiceContainer.get("mind_tick", default=None)
+    if mt is None or not hasattr(mt, "get_health_status"):
+        return JSONResponse({"error": "mind_tick unavailable"}, status_code=503)
+    try:
+        status = dict(mt.get_health_status())
+    except Exception as exc:  # diagnostic must never itself 500 the health lane
+        return JSONResponse({"error": f"get_health_status failed: {exc}"}, status_code=200)
+    now = _t.time()
+    for key in ("last_successful_tick_at", "last_loop_progress_at", "active_tick_started_at"):
+        value = float(status.get(key) or 0.0)
+        status[key + "_age_s"] = round(now - value, 1) if value > 0 else None
+    return JSONResponse(_json_safe(status) if "_json_safe" in globals() else status)
+
+
 @router.get("/health/heartbeat")
 async def api_heartbeat():
     """Readiness heartbeat for GUI/runtime watchdogs.
