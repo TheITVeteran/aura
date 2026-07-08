@@ -1112,6 +1112,7 @@ class MLXLocalClient:
         self._lock = _threading.Lock()
         self._request_lock = _threading.Lock()
         self._deferred_reboot_reason: str | None = None
+        self._expert_adapter_path: str | None = None
         self._process: mp.Process | None = None
         self._mp_context = (
             mp.get_context("spawn")
@@ -2276,6 +2277,99 @@ class MLXLocalClient:
             return []
         return [str(t) for t in (res.get("texts") or []) if str(t or "").strip()]
 
+    async def set_expert_adapter(
+        self, adapter_path: str | None, *, timeout_s: float = 90.0
+    ) -> dict[str, Any]:
+        """Attach/detach a domain-specialist LoRA on the RESIDENT worker model.
+
+        The expert-LoRA library's live seam: the adapter (~40MB) is wrapped
+        onto the loaded model inside the worker — no model reload, seconds not
+        minutes. ``None``/"" detaches. Refuses while a generation is active
+        (weights must never change mid-decode) and never spawns a worker just
+        to attach — an adapter is worthless without a resident model.
+        """
+        path = str(adapter_path or "").strip()
+        if self._closed:
+            return {"ok": False, "reason": "client_closed"}
+        if (
+            self._req_q is None
+            or not (self._process and self._process.is_alive() and self._init_done)
+        ):
+            return {"ok": False, "reason": "worker_not_ready"}
+        if int(getattr(self, "_active_generations", 0) or 0) > 0 or self._warmup_in_flight:
+            return {"ok": False, "reason": "generation_active"}
+        if path and not Path(path).expanduser().is_dir():
+            return {"ok": False, "reason": f"adapter_missing:{path}"}
+
+        req_id = uuid.uuid4().hex
+        fut = _new_shared_future()
+        self._pending_generations[req_id] = fut
+        try:
+            await run_io_bound(
+                self._req_q.put,
+                {"id": req_id, "action": "set_expert_adapter", "path": path},
+                True,
+                2.0,
+            )
+            res = await _await_shared_future(fut, timeout_s=max(10.0, float(timeout_s)))
+        except (TimeoutError, BrokenPipeError, OSError) as exc:
+            self._pending_generations.pop(req_id, None)
+            _record_mlx_degradation(
+                exc,
+                action="left resident model unchanged after expert adapter swap timed out",
+                severity="warning",
+            )
+            return {"ok": False, "reason": f"swap_timeout:{type(exc).__name__}"}
+
+        if res and res.get("status") == "ok":
+            self._expert_adapter_path = str(res.get("resident") or "") or None
+            return {
+                "ok": True,
+                "resident": self._expert_adapter_path,
+                "wrapped_layers": int(res.get("wrapped_layers") or 0),
+                "detached_layers": int(res.get("detached_layers") or 0),
+            }
+        return {
+            "ok": False,
+            "reason": str((res or {}).get("message") or "swap_failed"),
+        }
+
+    @property
+    def expert_adapter_resident(self) -> str | None:
+        return getattr(self, "_expert_adapter_path", None)
+
+    async def reload_model_artifact(self, model_path: str) -> dict[str, Any]:
+        """Serve a newly published fused artifact by re-pointing this lane.
+
+        The model lives in the WORKER process, so the only correct swap is a
+        worker recycle with the new path. (This replaces a retired
+        live_learner monkey-patch that loaded a second full copy of the model
+        into the ORCHESTRATOR process — ~20GB of wired memory on the 32B lane
+        — while generations kept flowing through the worker's old weights.)
+        Busy lanes defer the recycle until the active request finishes; the
+        respawn path re-resolves the fused manifest, so crash recovery after
+        the swap also serves the promoted artifact.
+        """
+        resolved = Path(str(model_path or "")).expanduser()
+        if not resolved.is_dir():
+            return {"ok": False, "reason": f"artifact_missing:{resolved}"}
+        previous = self.model_path
+        self.model_path = str(resolved)
+        self._expert_adapter_path = None  # adapters belong to the old weights
+        if (
+            int(getattr(self, "_active_generations", 0) or 0) > 0
+            or self._current_request_started_at > 0.0
+        ):
+            self._deferred_reboot_reason = "promoted_artifact_swap"
+            logger.info(
+                "🧬 [MLX] Promoted artifact staged for %s; recycling after the active request.",
+                resolved.name,
+            )
+            return {"ok": True, "mode": "deferred", "previous": previous}
+        await self.reboot_worker(reason="promoted_artifact_swap", mark_failed=False)
+        logger.info("🧬 [MLX] Promoted artifact live: %s", resolved.name)
+        return {"ok": True, "mode": "recycled", "previous": previous}
+
     def soft_cancel_active_generation(self, reason: str = "foreground_preemption") -> dict[str, Any]:
         """Ask the ACTIVE generation to stop between tokens (cooperative).
 
@@ -2400,7 +2494,11 @@ class MLXLocalClient:
                 "🛑 [MLX] No soft-cancel acknowledgement after %s — worker presumed wedged; rebooting.",
                 reason,
             )
-        await self.reboot_worker(reason=reason, mark_failed=not recoverable)
+        # A staged artifact promotion is maintenance, not a failure verdict.
+        await self.reboot_worker(
+            reason=reason,
+            mark_failed=not recoverable and reason != "promoted_artifact_swap",
+        )
 
     def force_abort_active_generation(self, reason: str = "hard_generation_deadline") -> bool:
         """Thread-safe emergency abort for a wedged generation.
@@ -2726,7 +2824,7 @@ class MLXLocalClient:
                         self._mark_progress()
                         _set_shared_future_result(self._init_future, res)
                         continue
-                elif action in ("generate", "generate_batch", "stream_done"):
+                elif action in ("generate", "generate_batch", "stream_done", "set_expert_adapter"):
                     future = self._pending_generations.pop(req_id, None) if req_id else None
                     if future and not future.done():
                         self._mark_progress()
@@ -4666,6 +4764,7 @@ class MLXLocalClient:
                 )
             self._process = None
             self._init_done = False
+            self._expert_adapter_path = None  # adapters live in the worker process
             self._last_heartbeat = 0.0
             self._last_progress_at = 0.0
             self._last_token_progress_at = 0.0

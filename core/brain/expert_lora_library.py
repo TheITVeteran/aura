@@ -105,6 +105,14 @@ class NoopApplier:
         return True
 
 
+@runtime_checkable
+class AsyncAdapterApplier(Protocol):
+    """Async applier for live seams (worker IPC) that must never block a loop."""
+
+    async def load(self, adapter: LoRAAdapter) -> bool: ...
+    async def unload(self, adapter: LoRAAdapter) -> bool: ...
+
+
 class ExpertLoRALibrary:
     """Registry + per-task selection + RAM-budgeted residency for domain LoRAs."""
 
@@ -221,6 +229,62 @@ class ExpertLoRALibrary:
         if adapter is None:
             return None
         return adapter if self.activate(adapter.name) else None
+
+    # ── async residency (live worker seam) ────────────────────────────────────
+    async def activate_async(self, name: str, applier: "AsyncAdapterApplier") -> bool:
+        """Make an adapter resident through an ASYNC applier (worker IPC).
+
+        Same residency contract as ``activate`` but the attach/detach I/O is
+        awaited without holding the registry lock, so a multi-second worker
+        swap can never stall other registry readers. Residency maps update
+        only from actual applier outcomes — ``resident()`` never claims an
+        adapter the worker refused.
+        """
+        with self._lock:
+            adapter = self._adapters.get(name)
+            if adapter is None:
+                return False
+            if name in self._resident:
+                self._resident.move_to_end(name)
+                self._resident[name] = time.time()
+                return True
+            evictees = []
+            overflow = len(self._resident) - self._max_resident + 1
+            for lru_name in list(self._resident.keys())[:max(0, overflow)]:
+                lru = self._adapters.get(lru_name)
+                if lru is not None:
+                    evictees.append(lru)
+                self._resident.pop(lru_name, None)
+        for lru in evictees:
+            try:
+                await applier.unload(lru)
+            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+                record_degradation("expert_lora_unload", exc)
+        try:
+            ok = bool(await applier.load(adapter))
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            record_degradation("expert_lora_load", exc)
+            return False
+        if ok:
+            with self._lock:
+                self._resident[name] = time.time()
+        return ok
+
+    async def select_and_activate_async(
+        self,
+        objective: str,
+        task_type: str,
+        applier: "AsyncAdapterApplier",
+        *,
+        base_model: str = "",
+    ) -> LoRAAdapter | None:
+        """Async twin of ``select_and_activate`` for the live generation path."""
+        if not _flag_on("AURA_EXPERT_LORA_LIBRARY"):
+            return None
+        adapter = self.select_for(objective, task_type, base_model=base_model)
+        if adapter is None:
+            return None
+        return adapter if await self.activate_async(adapter.name, applier) else None
 
     # ── disk discovery ────────────────────────────────────────────────────────
     def scan(self, directory: str | Path, *, base_model: str = "", source: str = "scan") -> int:

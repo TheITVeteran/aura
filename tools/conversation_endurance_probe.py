@@ -304,13 +304,24 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"[endurance] writing artifact to {out_path}", flush=True)
 
-    try:
-        boot = _get_json(args.base, "/api/health/boot")
-        if not boot.get("ready"):
-            print(f"RUNTIME NOT READY: {boot}")
-            return 2
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-        print(f"RUNTIME UNAVAILABLE: {exc}")
+    # Pre-flight with bounded retries: readiness can flap for a few seconds
+    # (a liveness re-probe, a background reload) and a 110-minute soak should
+    # not abort on one transient 503 before turn 1. Genuinely-down runtimes
+    # still fail fast — three misses over ~60s is a real verdict.
+    preflight_error = ""
+    for attempt in range(3):
+        try:
+            boot = _get_json(args.base, "/api/health/boot")
+            if boot.get("ready"):
+                break
+            preflight_error = f"RUNTIME NOT READY: {boot}"
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+            preflight_error = f"RUNTIME UNAVAILABLE: {exc}"
+        if attempt < 2:
+            print(f"[endurance] preflight miss ({preflight_error}); retrying in 20s...", flush=True)
+            time.sleep(20.0)
+    else:
+        print(preflight_error)
         return 2
 
     script = build_script(args.turns, args.seed)

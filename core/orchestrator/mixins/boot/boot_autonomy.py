@@ -107,6 +107,7 @@ class BootAutonomyMixin:
             ("autonomous_task_engine", self._init_autonomous_task_engine),
             ("continuous_learner", self._init_continuous_learner),
             ("weight_compounding", self._init_weight_compounding),
+            ("expert_lora_library", self._init_expert_lora_library),
             ("fictional_synthesis", self._init_fictional_synthesis),
             ("final_foundations", self._init_final_foundations),
             ("evolution_orchestrator", self._init_evolution_orchestrator),

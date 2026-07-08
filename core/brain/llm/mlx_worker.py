@@ -1767,6 +1767,63 @@ def _clear_mlx_cache(mx_module: Any) -> None:
             logger.debug("Suppressed Exception: %s", _exc)
 
 
+# ── expert adapter hot attach/detach (in-worker, no model reload) ────────────
+# The expert-LoRA library keeps domain-specialist adapters on disk and swaps
+# them onto the RESIDENT model. Attach wraps target linears with LoRA layers
+# and loads the adapter weights (~40MB); detach restores exactly the modules
+# THIS attach wrapped — the personality adapter (loaded with the model) and
+# any inner wrapping survive untouched. A partial attach failure is benign:
+# freshly wrapped LoRA layers initialize with B=0 (identity) until weights
+# load, and detach unwinds whatever was recorded.
+
+_EXPERT_LORA_LAYER_TYPES = ("LoRALinear", "DoRALinear", "LoRASwitchLinear", "LoRAEmbedding")
+
+
+def _named_lora_module_ids(model: Any) -> set[int]:
+    return {
+        id(module)
+        for _name, module in model.named_modules()
+        if type(module).__name__ in _EXPERT_LORA_LAYER_TYPES
+    }
+
+
+def _attach_expert_adapter(model: Any, adapter_dir: str) -> list[tuple[str, Any]]:
+    """Attach adapter weights onto the resident model; return the wrapped modules."""
+    from mlx_lm.tuner.utils import load_adapters
+
+    before = _named_lora_module_ids(model)
+
+    def _newly_wrapped() -> list[tuple[str, Any]]:
+        return [
+            (name, module)
+            for name, module in model.named_modules()
+            if type(module).__name__ in _EXPERT_LORA_LAYER_TYPES and id(module) not in before
+        ]
+
+    try:
+        load_adapters(model, adapter_dir)
+    except (FileNotFoundError, KeyError, RuntimeError, AttributeError, TypeError, ValueError, OSError):
+        # Unwind a partial wrap so the module tree stays exactly as it was.
+        # (Even unwound-late these layers are identity: LoRA B initializes 0.)
+        _detach_expert_adapter(model, _newly_wrapped())
+        raise
+    return _newly_wrapped()
+
+
+def _detach_expert_adapter(model: Any, wrapped: list[tuple[str, Any]]) -> int:
+    """Restore exactly the modules a previous attach wrapped."""
+    from mlx.utils import tree_unflatten
+
+    restorable = [
+        (name, module.linear)
+        for name, module in wrapped
+        if hasattr(module, "linear")
+    ]
+    if restorable:
+        model.update_modules(tree_unflatten(restorable))
+    return len(restorable)
+
+
 def _process_message_content(messages: list[dict[str, Any]]) -> None:
     """Normalize content for tokenizer.apply_chat_template()."""
     for message in messages:
@@ -2382,6 +2439,11 @@ def _mlx_worker_loop(
             os.path.basename(model_path),
             prompt_cache_budget,
         )
+
+    # Expert-adapter residency: at most one domain adapter attached on top of
+    # the loaded model (personality LoRA included); tracked so detach restores
+    # exactly what this worker wrapped.
+    expert_adapter_state: dict[str, Any] = {"path": "", "wrapped": []}
 
     worker_active = True
     while worker_active:
@@ -3715,6 +3777,81 @@ def _mlx_worker_loop(
                     )
                     logger.debug("Prompt cache clear failed during worker clear_cache action: %s", exc)
                 ipc_writer.put({"status": "ok"})
+
+            elif action == "set_expert_adapter":
+                # Swap a domain-specialist LoRA onto the RESIDENT model —
+                # no model reload, ~seconds. path="" means detach-only.
+                # KV caches are invalidated either way: cached prompt states
+                # were computed under different effective weights.
+                requested_path = str(job.get("path") or "").strip()
+                response: dict[str, Any] = {
+                    "id": job.get("id"),
+                    "action": "set_expert_adapter",
+                }
+                try:
+                    with metal_semaphore:
+                        detached = 0
+                        if expert_adapter_state["wrapped"]:
+                            detached = _detach_expert_adapter(
+                                model, expert_adapter_state["wrapped"]
+                            )
+                            expert_adapter_state.update({"path": "", "wrapped": []})
+                        if requested_path:
+                            wrapped = _attach_expert_adapter(model, requested_path)
+                            expert_adapter_state.update(
+                                {"path": requested_path, "wrapped": wrapped}
+                            )
+                        try:
+                            if prompt_cache_lru is not None:
+                                prompt_cache_lru.clear()
+                        except (RuntimeError, AttributeError, TypeError, ValueError):
+                            logger.debug("Prompt cache clear skipped during adapter swap.")
+                        if mx and device != "cpu":
+                            _clear_mlx_cache(mx)
+                    response.update(
+                        {
+                            "status": "ok",
+                            "resident": expert_adapter_state["path"] or None,
+                            "wrapped_layers": len(expert_adapter_state["wrapped"]),
+                            "detached_layers": detached,
+                        }
+                    )
+                    logger.info(
+                        "🧩 [WORKER] Expert adapter %s (%d layers wrapped, %d restored).",
+                        expert_adapter_state["path"] or "DETACHED",
+                        len(expert_adapter_state["wrapped"]),
+                        detached,
+                    )
+                except (
+                    FileNotFoundError,
+                    RuntimeError,
+                    AttributeError,
+                    TypeError,
+                    ValueError,
+                    KeyError,
+                    OSError,
+                ) as adapter_exc:
+                    # Unwind anything a partial attach recorded; freshly
+                    # wrapped-but-unloaded LoRA layers are identity (B=0),
+                    # so the model is behaviorally unchanged either way.
+                    try:
+                        if expert_adapter_state["wrapped"]:
+                            _detach_expert_adapter(model, expert_adapter_state["wrapped"])
+                    finally:
+                        expert_adapter_state.update({"path": "", "wrapped": []})
+                    _record_mlx_degradation(
+                        adapter_exc,
+                        action="restored bare resident model after expert adapter swap failed",
+                        severity="warning",
+                    )
+                    response.update(
+                        {
+                            "status": "error",
+                            "message": f"expert_adapter_swap_failed: {adapter_exc}",
+                            "resident": None,
+                        }
+                    )
+                ipc_writer.put(response)
 
         except KeyboardInterrupt:
             logger.info("🛑 [WORKER] Shutdown signal received; exiting quietly.")

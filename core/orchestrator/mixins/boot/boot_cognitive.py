@@ -273,18 +273,39 @@ class BootCognitiveMixin:
             )
             logger.error("Failed to init self-play flywheel: %s", e)
 
+    async def _init_expert_lora_library(self):
+        """Register the expert-LoRA library (domain-specialist weights on disk).
+
+        Registry + selection are always available; actual routing onto the
+        resident model stays behind AURA_EXPERT_LORA_ROUTING until validated
+        live. Supply arrives from domain-specialist training cycles.
+        """
+        try:
+            from core.brain.expert_lora_library import get_expert_lora_library
+
+            library = get_expert_lora_library()
+            ServiceContainer.register_instance("expert_lora_library", library)
+            logger.info(
+                "✓ Expert-LoRA library online (%d adapters registered).",
+                len(library.list()),
+            )
+        except (ImportError, AttributeError, RuntimeError, OSError) as e:
+            _record_boot_cognitive_degradation(
+                e,
+                action="continued boot without the expert-LoRA library",
+                severity="error",
+            )
+            logger.error("Failed to init expert-LoRA library: %s", e)
+
     async def _init_live_learner(self):
         """Initialize the LiveLearner subsystem for weight-level evolution."""
         try:
-            from core.learning.live_learner import (
-                get_live_learner,
-                patch_mlx_client_for_hot_swap,
-            )
+            from core.learning.live_learner import get_live_learner
 
             ll = get_live_learner()
 
-            # Apply hot-swap patch to MLX client if possible
-            await patch_mlx_client_for_hot_swap()
+            # Hot-swap is a native MLX client capability now
+            # (reload_model_artifact / set_expert_adapter) — no patch step.
 
             await ll.start()
             ServiceContainer.register_instance("live_learner", ll)

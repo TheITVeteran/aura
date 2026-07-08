@@ -60,6 +60,7 @@ class ServiceNames:
     CONTINUOUS_LEARNER = "continuous_learner"
     WEIGHT_COMPOUNDING = "weight_compounding"
     SELFPLAY_FLYWHEEL = "selfplay_flywheel"
+    EXPERT_LORA_LIBRARY = "expert_lora_library"
     RESEARCH = "research_cycle"
     GOVERNOR = "memory_governor"
     REIMPLEMENTATION_LAB = "reimplementation_lab"

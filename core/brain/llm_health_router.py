@@ -1119,6 +1119,11 @@ class HealthAwareLLMRouter:
             return early_deferral
 
         if request_is_background:
+            # Domain-specialist weights for background reasoning lanes: if the
+            # expert-LoRA library has a match for this task, swap it onto the
+            # resident primary model before dispatch. Bounded, refusal-safe,
+            # and never on foreground turns (a user turn never pays a swap).
+            await self._maybe_route_expert_adapter(prompt, kwargs)
             acquired = await asyncio.to_thread(
                 _GENERATION_GATE.acquire, True, _GENERATION_GATE_WAIT_S
             )
@@ -1648,6 +1653,63 @@ class HealthAwareLLMRouter:
     def _is_user_facing_origin(cls, origin: str | None) -> bool:
         tokens = cls._origin_tokens(origin)
         return bool(tokens & _USER_FACING_ORIGINS)
+
+    async def _maybe_route_expert_adapter(self, prompt: str, kwargs: Mapping[str, Any]) -> None:
+        """Attach the best domain-specialist LoRA before a background dispatch.
+
+        The expert-LoRA library keeps specialist adapters on disk; when a
+        background reasoning request matches one, it is swapped onto the
+        RESIDENT primary model in the worker (seconds, no reload). Default-off
+        (AURA_EXPERT_LORA_ROUTING) and refusal-safe end to end: selection is
+        in-memory, an actual swap happens only on adapter change while the
+        lane is idle, the client refuses busy lanes, and any failure means
+        the request simply runs on the resident weights.
+        """
+        if str(
+            os.environ.get("AURA_EXPERT_LORA_ROUTING", "0")
+        ).strip().lower() not in {"1", "true", "yes", "on"}:
+            return
+        try:
+            from core.container import ServiceContainer
+
+            library = ServiceContainer.get("expert_lora_library", default=None)
+            if library is None:
+                return
+            from core.brain.llm.mlx_client import get_mlx_client
+
+            client = get_mlx_client()
+            if client is None:
+                return
+            applier = getattr(self, "_expert_adapter_applier", None)
+            if applier is None or getattr(applier, "_client", None) is not client:
+                from core.brain.llm.expert_adapter_applier import MLXExpertAdapterApplier
+
+                applier = MLXExpertAdapterApplier(client)
+                self._expert_adapter_applier = applier
+            task_type = str(kwargs.get("task_type") or kwargs.get("domain") or "").strip()
+            await asyncio.wait_for(
+                library.select_and_activate_async(
+                    str(prompt or ""),
+                    task_type,
+                    applier,
+                    base_model=str(getattr(client, "model_path", "") or ""),
+                ),
+                timeout=20.0,
+            )
+        except TimeoutError:
+            record_degradation(
+                "expert_lora_routing",
+                TimeoutError("adapter swap exceeded 20s budget"),
+                action="dispatched request on resident weights without specialist adapter",
+                severity="info",
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+            record_degradation(
+                "expert_lora_routing",
+                exc,
+                action="dispatched request on resident weights without specialist adapter",
+                severity="info",
+            )
 
     @classmethod
     def _is_background_request(

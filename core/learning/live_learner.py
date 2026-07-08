@@ -1173,9 +1173,15 @@ class LiveLearner:
         return min(1.0, score), failures
 
     async def _hot_swap_adapter(self, adapter_path: str) -> bool:
-        """
-        Reload the MLX model with the new adapter or fused/full model.
-        Falls back to API during the swap window (~2-5s on M5 Pro).
+        """Activate a learned artifact in live inference through the client's
+        native seams: fused/full model dirs recycle the worker onto the new
+        path (`reload_model_artifact`); bare adapters attach onto the RESIDENT
+        model in the worker (`set_expert_adapter`) — no reload at all.
+
+        Honesty note: failure returns False and the artifact activates at next
+        boot via the manifest/registry; nothing here pretends otherwise. (The
+        retired fallback poked phantom attributes on the client and claimed
+        "will activate on next reload" — it never did.)
         """
         try:
             from core.container import ServiceContainer
@@ -1183,35 +1189,35 @@ class LiveLearner:
             if mlx_client is None:
                 from core.brain.llm.mlx_client import get_mlx_client
                 mlx_client = get_mlx_client()
+            if mlx_client is None:
+                return False
 
             artifact_path = Path(adapter_path)
             is_model_dir = (artifact_path / "config.json").exists()
-            if mlx_client and hasattr(mlx_client, "reload_with_adapter") and not is_model_dir:
-                await mlx_client.reload_with_adapter(adapter_path)
-                logger.info("Hot-swap complete: adapter loaded into live inference.")
-                return True
+            if is_model_dir:
+                receipt = await mlx_client.reload_model_artifact(adapter_path)
+                ok = bool(receipt.get("ok"))
+                if ok:
+                    logger.info(
+                        "Hot-swap complete (%s): fused model serving live.",
+                        receipt.get("mode", "recycled"),
+                    )
+                else:
+                    logger.warning("Fused-model hot-swap refused: %s", receipt.get("reason"))
+                return ok
 
-            if mlx_client and hasattr(mlx_client, "reload_model_artifact") and is_model_dir:
-                await mlx_client.reload_model_artifact(adapter_path)
-                logger.info("Hot-swap complete: fused/full model loaded into live inference.")
-                return True
-
-            # Fallback: set the adapter path so it's used on next model load
-            if mlx_client and is_model_dir and hasattr(mlx_client, "_model_path"):
-                mlx_client._model_path = adapter_path
+            receipt = await mlx_client.set_expert_adapter(adapter_path)
+            ok = bool(receipt.get("ok"))
+            if ok:
                 logger.info(
-                    "Model path set on MLX client. Will activate on next model reload."
+                    "Hot-swap complete: adapter attached on resident model (%d layers).",
+                    int(receipt.get("wrapped_layers") or 0),
                 )
-                return False
+            else:
+                logger.warning("Adapter hot-attach refused: %s", receipt.get("reason"))
+            return ok
 
-            if mlx_client and hasattr(mlx_client, "_adapter_path") and not is_model_dir:
-                mlx_client._adapter_path = adapter_path
-                logger.info(
-                    "Adapter path set on MLX client. Will activate on next model reload."
-                )
-                return False
-
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
             _record_live_learning_degradation(
                 "live_learner",
                 exc,
@@ -1311,65 +1317,13 @@ class LiveLearner:
             logger.warning("LiveLearner: failed to load buffer: %s", exc)
 
 
-# ── MLX client patch: add reload_with_adapter ────────────────────────────────
-
-async def patch_mlx_client_for_hot_swap():
-    """
-    Monkey-patches the MLX client to support adapter hot-swapping.
-    Call this once during orchestrator boot.
-    """
-    try:
-        from core.brain.llm.model_registry import get_local_backend
-
-        if get_local_backend() != "mlx":
-            logger.info("Hot-swap patch skipped: local backend is %s, not MLX.", get_local_backend())
-            return
-
-        from core.brain.llm.mlx_client import get_mlx_client
-        client = get_mlx_client()
-
-        async def reload_with_adapter(self_or_client, adapter_path: str) -> None:
-            """Reload model with a new LoRA adapter. Blocks for ~5-15s."""
-            from mlx_lm import load
-            logger.info("Hot-swap: reloading model with adapter %s ...", adapter_path)
-            # Use the same model_path already configured
-            model_path = getattr(self_or_client, "model_path", None) or getattr(
-                self_or_client, "_model_path", None
-            )
-            if model_path:
-                new_model, new_tokenizer = await asyncio.to_thread(
-                    load, model_path, adapter_path=adapter_path
-                )
-                self_or_client._model     = new_model
-                self_or_client._tokenizer = new_tokenizer
-                self_or_client._adapter_path = adapter_path
-                logger.info("Hot-swap complete.")
-            else:
-                raise RuntimeError("MLX client has no model_path — cannot hot-swap")
-
-        async def reload_model_artifact(self_or_client, model_path: str) -> None:
-            """Reload a fused/full MLX model directory. Blocks for ~5-15s."""
-            from mlx_lm import load
-            logger.info("Hot-swap: reloading model artifact %s ...", model_path)
-            new_model, new_tokenizer = await asyncio.to_thread(load, model_path)
-            self_or_client._model = new_model
-            self_or_client._tokenizer = new_tokenizer
-            self_or_client._model_path = model_path
-            self_or_client._adapter_path = None
-            logger.info("Hot-swap complete.")
-
-        import types
-        client.reload_with_adapter = types.MethodType(reload_with_adapter, client)
-        client.reload_model_artifact = types.MethodType(reload_model_artifact, client)
-        logger.info("MLX client patched for adapter hot-swap.")
-
-    except (ImportError, AttributeError, RuntimeError) as exc:
-        _record_live_learning_degradation(
-            "live_learner",
-            exc,
-            action="left MLX client unpatched; learned adapters will activate on restart",
-        )
-        logger.debug("Could not patch MLX client for hot-swap: %s", exc)
+# ── retired: patch_mlx_client_for_hot_swap ───────────────────────────────────
+# Hot-swap is a NATIVE client capability now (MLXLocalClient.reload_model_artifact
+# recycles the worker onto the new path; MLXLocalClient.set_expert_adapter
+# attaches adapters onto the resident model in the worker process). The old
+# monkey-patch loaded a second full copy of the model into the ORCHESTRATOR
+# process — ~20GB wired on the 32B lane — while generations kept flowing
+# through the worker's old weights.
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
