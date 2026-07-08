@@ -62,6 +62,31 @@ The current engineering claims are narrower and testable:
 
 ---
 
+## See it learn (one command)
+
+The fastest way to evaluate this project's evidence discipline is to run the
+weight-compounding demo yourself (Apple Silicon, ~20–40 min, ~5GB disk):
+
+```bash
+make setup          # once: venv + requirements
+make demo-learning
+```
+
+A small local model samples solutions to seeded reasoning tasks, grades every
+attempt with **exact checkers** (the verifier is the reward — nothing to hack),
+DPO-trains a LoRA on the verified win/loss contrasts, and must pass a **sealed
+held-out battery** (fresh task seeds it never trained on) before its weights
+are fused and published. Then it does it again — **on top of its own published
+artifact**. Every generation lands in a tamper-evident hash-chained ledger
+(`core/learning/rsi_lineage.py`); the final verdict is computed from those
+receipts, and refusals print with the same prominence as gains. All raw model
+responses, eval reports, and cycle receipts stay on disk for audit.
+
+The same machinery runs autonomously inside the live runtime
+(`core/learning/compounding_scheduler.py`): idle-gated, governance-approved,
+memory-admission-controlled, with promoted weights hot-swapped into live
+inference.
+
 ## Production Evidence Surface
 
 Aura's production claim surface is restricted to code paths with runnable

@@ -372,6 +372,28 @@ class TestHarvest:
         rows = loop._load_sft_rows(generate_battery(BatterySpec(seed=1000, size=8)))
         assert "as an ai language model" not in json.dumps(rows).lower()
 
+    def test_dpo_train_command_disables_trainer_autofuse(
+        self, tmp_path, base_model_dir, sft_buffer
+    ):
+        dpo = tmp_path / "prefs.jsonl"
+        with dpo.open("w", encoding="utf-8") as fh:
+            for i in range(8):
+                fh.write(json.dumps({
+                    "prompt": f"solve problem {i}",
+                    "chosen": f"verified answer {i}",
+                    "rejected": f"refuted answer {i}",
+                }) + "\n")
+        runner = FakeRunner(PROMOTE_SCRIPT)
+        config = make_config(tmp_path, base_model_dir, sft_buffer, dpo_store_path=dpo)
+        loop = WeightCompoundingLoop(config, command_runner=runner)
+        receipt = loop.run_cycle()
+        assert receipt.train_mode == "dpo"
+        train_cmd = next(c for c in runner.commands if "--train" in c)
+        assert "mlx_lm_lora.train" in train_cmd
+        assert "-c" in train_cmd
+        trainer_config = Path(train_cmd[train_cmd.index("-c") + 1])
+        assert "fuse: false" in trainer_config.read_text(encoding="utf-8")
+
     def test_insufficient_data_raises(self, tmp_path, base_model_dir):
         empty = tmp_path / "empty.jsonl"
         empty.write_text("", encoding="utf-8")

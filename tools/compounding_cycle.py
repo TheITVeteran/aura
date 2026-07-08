@@ -48,7 +48,11 @@ def build_loop(args: argparse.Namespace):
 
     overrides: dict = {"operator_run": bool(args.operator)}
     if args.model:
-        overrides["model_override"] = str(Path(args.model).expanduser().resolve())
+        # --model seeds cycle 0 only (default_base): once a cycle publishes a
+        # manifest, later cycles MUST follow it — that is the compounding
+        # chain. --pin-model forces every cycle onto one base (diagnostics).
+        key = "model_override" if args.pin_model else "default_base"
+        overrides[key] = str(Path(args.model).expanduser().resolve())
     if args.work_root:
         overrides["work_root"] = Path(args.work_root).expanduser().resolve()
     if args.fused_root:
@@ -95,8 +99,6 @@ def cmd_dry_run(loop) -> int:
 
     base, source = loop.resolve_base()
     print(f"base_model: {base} (source={source})")
-    ok, reasons = loop.admission_check(base)
-    print(f"admission: {'OK' if ok else 'BLOCKED'} {reasons or ''}")
     tasks = generate_battery(BatterySpec(seed=loop.config.battery_seed_base, size=8))
     try:
         import tempfile
@@ -107,6 +109,8 @@ def cmd_dry_run(loop) -> int:
     except RuntimeError as exc:
         print(f"harvest: BLOCKED {exc}")
         return 1
+    ok, reasons = loop.admission_check(base, mode)
+    print(f"admission ({mode}): {'OK' if ok else 'BLOCKED'} {reasons or ''}")
     return 0 if ok else 1
 
 
@@ -115,7 +119,9 @@ def main() -> int:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--cycles", type=int, default=1, help="number of chained cycles")
-    parser.add_argument("--model", default="", help="explicit base model (else active manifest)")
+    parser.add_argument("--model", default="", help="starting base model for cycle 0 (later cycles follow the manifest)")
+    parser.add_argument("--pin-model", action="store_true",
+                        help="pin EVERY cycle to --model (breaks compounding; diagnostics only)")
     parser.add_argument("--work-root", default="", help="workspace for runs + ledger")
     parser.add_argument("--fused-root", default="", help="where fused artifacts + active.json go")
     parser.add_argument("--sft-buffer", default="", help="override SFT experience buffer path")

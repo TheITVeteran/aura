@@ -255,6 +255,24 @@ class BootCognitiveMixin:
             )
             logger.error("Failed to init weight compounding: %s", e)
 
+        try:
+            from core.learning.selfplay_flywheel import (
+                SERVICE_NAME as SELFPLAY_SERVICE,
+            )
+            from core.learning.selfplay_flywheel import get_selfplay_flywheel
+
+            flywheel = get_selfplay_flywheel(self)
+            await flywheel.start()
+            ServiceContainer.register_instance(SELFPLAY_SERVICE, flywheel)
+            logger.info("✓ Self-play flywheel online (idle practice → DPO pairs)")
+        except (ImportError, AttributeError, RuntimeError) as e:
+            _record_boot_cognitive_degradation(
+                e,
+                action="continued boot without the self-play flywheel",
+                severity="error",
+            )
+            logger.error("Failed to init self-play flywheel: %s", e)
+
     async def _init_live_learner(self):
         """Initialize the LiveLearner subsystem for weight-level evolution."""
         try:

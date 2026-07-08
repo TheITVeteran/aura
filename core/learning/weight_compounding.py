@@ -283,7 +283,7 @@ class WeightCompoundingLoop:
 
     # ── 2. admission control ─────────────────────────────────────────────────
 
-    def admission_check(self, model_path: str) -> tuple[bool, list[str]]:
+    def admission_check(self, model_path: str, mode: str = "sft") -> tuple[bool, list[str]]:
         reasons: list[str] = []
         model_dir = Path(model_path)
         weight_bytes = _dir_weight_bytes(model_dir) if model_dir.exists() else 0
@@ -304,10 +304,17 @@ class WeightCompoundingLoop:
             import psutil
 
             available = psutil.virtual_memory().available
-            needed = int(weight_bytes * self.config.ram_headroom_factor) + self.config.ram_slack_bytes
+            # DPO holds the policy AND a frozen reference model in memory —
+            # roughly double the SFT footprint. Verified against mlx_lm_lora,
+            # which loads (and only later dels) reference_model.
+            mode_multiplier = 2.0 if mode == "dpo" else 1.0
+            needed = (
+                int(weight_bytes * self.config.ram_headroom_factor * mode_multiplier)
+                + self.config.ram_slack_bytes
+            )
             if available < needed:
                 reasons.append(
-                    f"insufficient_ram:available={available >> 30}GB needed={needed >> 30}GB"
+                    f"insufficient_ram:available={available >> 30}GB needed={needed >> 30}GB mode={mode}"
                 )
         except ImportError as exc:
             record_degradation(
@@ -484,6 +491,12 @@ class WeightCompoundingLoop:
         adapter_dir.mkdir(parents=True, exist_ok=True)
         cfg = self.config
         if mode == "dpo":
+            # mlx_lm_lora's CONFIG_DEFAULTS sets fuse=True, which would
+            # de-quantize and fuse INSIDE the trainer, before our eval gate
+            # (and would write ~65GB for a 32B). A config file is the only
+            # way to disable it; fusing stays a gated post-eval step here.
+            trainer_config = adapter_dir / "trainer_config.yaml"
+            atomic_write_text(trainer_config, "fuse: false\n", encoding="utf-8")
             command = (
                 sys.executable, "-m", "mlx_lm_lora.train",
                 "--model", base_model,
@@ -499,6 +512,7 @@ class WeightCompoundingLoop:
                 "--save-every", str(max(1, cfg.iters)),
                 "--max-seq-length", str(max(128, cfg.max_seq_length)),
                 "--grad-checkpoint",
+                "-c", str(trainer_config),
             )
         else:
             command = (
@@ -672,18 +686,14 @@ class WeightCompoundingLoop:
             base_model, base_source = self.resolve_base()
             receipt.base_model, receipt.base_source = base_model, base_source
 
-            ok, reasons = self.admission_check(base_model)
-            if not ok:
-                receipt.status = "blocked"
-                receipt.reasons = reasons
-                return receipt
-
             run_dir.mkdir(parents=True, exist_ok=True)
             battery_seed = self.config.battery_seed_base + generation_seq
             battery_tasks = generate_battery(
                 BatterySpec(seed=battery_seed, size=self.config.battery_size)
             )
 
+            # Harvest before admission: it is model-free, and admission's RAM
+            # budget depends on the training mode (DPO holds a reference model).
             try:
                 mode, data_dir, counts = self.harvest(run_dir, battery_tasks)
             except RuntimeError as exc:
@@ -692,6 +702,12 @@ class WeightCompoundingLoop:
                 return receipt
             receipt.train_mode = mode
             receipt.data_counts = counts
+
+            ok, reasons = self.admission_check(base_model, mode)
+            if not ok:
+                receipt.status = "blocked"
+                receipt.reasons = reasons
+                return receipt
 
             adapter_dir = run_dir / "adapter"
             trained, train_detail = self.train(base_model, data_dir, adapter_dir, mode)
