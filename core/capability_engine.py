@@ -1320,17 +1320,23 @@ class CapabilityEngine(AuraBaseModule):
                 r"evaluate (?:this )?expression",
                 r"test (?:this )?snippet",
             ],
+            # Image-gen triggers need a generation-shaped OBJECT, not a bare
+            # verb: the old "paint (?:me )?(?:an? )?" had an all-optional tail,
+            # so ANY sentence containing "paint " dispatched the diffusion
+            # skill (seen live: "the paint color I chose" → image_gen crash
+            # mid-conversation). Verbs alone only count in the imperative
+            # "verb me a/an ..." form, which is unambiguous.
             "image_gen": [
-                r"generate (?:an? )?image",
-                r"create (?:an? )?image",
-                r"draw (?:me )?(?:an? )?",
-                r"paint (?:me )?(?:an? )?",
-                r"imagine (?:an? )?",
-                r"visualize (?:an? )?",
-                r"edit (?:this )?image",
-                r"style transfer",
-                r"img2img",
-                r"text to image",
+                r"\b(?:generate|create|make|produce|render)\s+(?:me\s+)?(?:an?\s+|some\s+)?"
+                r"(?:image|picture|photo|illustration|artwork|logo|icon|wallpaper|portrait|sketch|drawing|painting)s?\b",
+                r"\b(?:draw|paint|sketch|illustrate)\s+me\s+an?\s+\w+",
+                r"\b(?:draw|paint|sketch)\s+an?\s+"
+                r"(?:image|picture|portrait|scene|landscape|diagram|illustration|logo)\b",
+                r"\b(?:imagine|visualize)\s+and\s+(?:draw|render|generate|paint)\b",
+                r"\bedit (?:this )?image\b",
+                r"\bstyle transfer\b",
+                r"\bimg2img\b",
+                r"\btext[- ]to[- ]image\b",
             ],
             "x_tools": [
                 r"search (?:twitter|x\.com|tweets)",

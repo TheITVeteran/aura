@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from core.config import config
 from core.runtime.errors import FallbackClassification, record_degradation
@@ -55,6 +55,22 @@ def _record_imagegen_degradation(
 
 class ImageGenInput(BaseModel):
     prompt: str = Field(..., description="Description of the image to generate or edit.")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_generic_dispatch_shape(cls, data: Any) -> Any:
+        """The skill router's generic dispatch passes the user text as
+        ``query``; the diffusion contract calls it ``prompt``. Map it instead
+        of exploding — a field-name mismatch is not invalid input (seen live
+        as a capability_engine CRITICAL on an image_gen dispatch)."""
+        if isinstance(data, dict):
+            if not data.get("prompt"):
+                fallback = str(data.get("query") or data.get("text") or "").strip()
+                if fallback:
+                    data = {**data, "prompt": fallback}
+            data = {k: v for k, v in data.items() if k not in ("query", "text")}
+        return data
+
     negative_prompt: str | None = Field(
         None,
         description="What to avoid in the image.",
