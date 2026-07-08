@@ -540,5 +540,122 @@ def test_mlx_client_records_worker_steering_liveness_receipt():
     source = open("core/brain/llm/mlx_client.py", encoding="utf-8").read()
 
     assert 'if "steering_active" in res:' in source
-    assert "self._steering_active.value = bool(res.get(\"steering_active\"))" in source
-    assert "self._substrate_mem[-1] = 1.0 if bool(res.get(\"steering_active\")) else 0.0" in source
+    assert "self._steering_active.value = steering_active" in source
+    assert "self._substrate_mem[-1] = 1.0 if steering_active else 0.0" in source
+    assert "self._steering_liveness_observed = True" in source
+
+
+# ── pressure-adaptive token-progress budgets ─────────────────────────────────
+# Under unified-memory contention a resident heavy model's first token slows
+# because prompt eval competes for bandwidth; killing it pays a ~20GB reload
+# that deepens the contention (the Jul 7 soak doom loop). These tests pin the
+# bounded stretch: heavy lanes only, emergency excluded, caller deadlines
+# still dominate, and the whole feature is env-pinned OFF for the suite.
+
+def _fake_snapshot(level: str):
+    tiers = ["warning", "high", "critical", "emergency"]
+    idx = tiers.index(level) if level in tiers else -1
+    return SimpleNamespace(
+        level=level,
+        warning=idx >= 0,
+        high=idx >= 1,
+        critical=idx >= 2,
+        emergency=idx >= 3,
+    )
+
+
+def _budget_client(model_path: str = "Qwen2.5-32B-cortex"):
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    return MLXLocalClient(model_path=model_path)
+
+
+def test_pressure_stretch_is_pinned_off_for_the_suite(monkeypatch):
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_client.get_memory_pressure_snapshot",
+        lambda **_kw: _fake_snapshot("critical"),
+    )
+    client = _budget_client()
+    factor, reason = client._pressure_adaptive_stretch()
+    assert factor == 1.0 and reason == ""
+
+
+def test_pressure_stretch_scales_token_budgets_by_tier(monkeypatch):
+    monkeypatch.setenv("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "1")
+    client = _budget_client()
+    for level, expected in (("warning", 1.2), ("high", 1.35), ("critical", 1.5)):
+        monkeypatch.setattr(
+            "core.brain.llm.mlx_client.get_memory_pressure_snapshot",
+            lambda _level=level, **_kw: _fake_snapshot(_level),
+        )
+        factor, reason = client._pressure_adaptive_stretch()
+        assert factor == expected
+        assert reason == f"memory_pressure_{level}"
+        assert client._token_stall_after(foreground_request=True) == 40.0 * expected
+
+
+def test_pressure_stretch_excluded_at_emergency(monkeypatch):
+    monkeypatch.setenv("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "1")
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_client.get_memory_pressure_snapshot",
+        lambda **_kw: _fake_snapshot("emergency"),
+    )
+    client = _budget_client()
+    factor, _ = client._pressure_adaptive_stretch()
+    assert factor == 1.0  # the refuse-generation path owns emergencies
+
+
+def test_pressure_stretch_ignores_light_lanes(monkeypatch):
+    monkeypatch.setenv("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "1")
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_client.get_memory_pressure_snapshot",
+        lambda **_kw: _fake_snapshot("critical"),
+    )
+    client = _budget_client(model_path="Qwen2.5-1.5B-reflex")
+    factor, _ = client._pressure_adaptive_stretch()
+    assert factor == 1.0
+    assert client._token_stall_after() == 8.0
+
+
+def test_hard_ceiling_stretches_bounded_under_pressure(monkeypatch):
+    monkeypatch.setenv("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "1")
+    monkeypatch.delenv("AURA_FIRST_TOKEN_ABSOLUTE_CEILING_S", raising=False)
+    client = _budget_client()
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_client.get_memory_pressure_snapshot",
+        lambda **_kw: _fake_snapshot("critical"),
+    )
+    stretched = client._first_token_hard_ceiling(foreground_request=True)
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_client.get_memory_pressure_snapshot",
+        lambda **_kw: _fake_snapshot("nominal"),
+    )
+    baseline = client._first_token_hard_ceiling(foreground_request=True)
+    assert baseline < stretched <= baseline * 1.5
+
+
+def test_caller_deadline_still_dominates_stretch(monkeypatch):
+    monkeypatch.setenv("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "1")
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_client.get_memory_pressure_snapshot",
+        lambda **_kw: _fake_snapshot("critical"),
+    )
+    client = _budget_client()
+    bounded = client._deadline_bound_first_token_hard_ceiling(
+        20.0, foreground_request=True
+    )
+    assert bounded <= 16.0  # remaining - reserve, stretch cannot exceed it
+
+
+def test_stall_receipts_name_the_pressure_tier(monkeypatch):
+    client = _budget_client()
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_client.get_memory_pressure_snapshot",
+        lambda **_kw: _fake_snapshot("high"),
+    )
+    assert client._pressure_receipt_suffix() == ":memory=high"
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_client.get_memory_pressure_snapshot",
+        lambda **_kw: _fake_snapshot("nominal"),
+    )
+    assert client._pressure_receipt_suffix() == ""

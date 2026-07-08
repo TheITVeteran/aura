@@ -1452,6 +1452,54 @@ class MLXLocalClient:
             return 60.0 if during_generation else 30.0
         return 20.0 if during_generation else 15.0
 
+    def _pressure_adaptive_stretch(self) -> tuple[float, str]:
+        """Bounded stretch for token-progress budgets under live memory pressure.
+
+        A RESIDENT heavy model's first token slows under unified-memory
+        contention because prompt eval competes for bandwidth — the worker is
+        starved, not wedged. Killing it answers a bandwidth problem with a
+        ~20GB reload that deepens the contention (the Jul 7 soak doom loop:
+        stall → force-kill → cold reload → next turn stalls under the same
+        pressure). Only token-progress budgets stretch, and only within
+        bounds: heartbeat wedge detection is untouched, caller deadlines
+        still dominate, and the emergency tier still refuses generation
+        outright before this is consulted.
+        """
+        if str(
+            os.environ.get("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "1")
+        ).strip().lower() not in {"1", "true", "yes", "on"}:
+            return 1.0, ""
+        lowered = os.path.basename(self.model_path).lower()
+        if not any(t in lowered for t in ("32b", "72b", "cortex", "zenith", "solver")):
+            return 1.0, ""
+        try:
+            snapshot = get_memory_pressure_snapshot()
+        except (OSError, AttributeError, RuntimeError, TypeError, ValueError):
+            return 1.0, ""
+        if snapshot.emergency:
+            return 1.0, ""  # the refuse-generation path owns emergencies
+        if snapshot.critical:
+            return 1.5, "memory_pressure_critical"
+        if snapshot.high:
+            return 1.35, "memory_pressure_high"
+        if snapshot.warning:
+            return 1.2, "memory_pressure_warning"
+        return 1.0, ""
+
+    def _pressure_receipt_suffix(self) -> str:
+        """Name the memory-pressure tier on stall receipts.
+
+        A stall verdict under contention is a different incident than a stall
+        on an idle machine; the narrator (and anyone reading the degradation
+        ledger) should not have to correlate timestamps to know which one
+        happened.
+        """
+        try:
+            snapshot = get_memory_pressure_snapshot()
+        except (OSError, AttributeError, RuntimeError, TypeError, ValueError):
+            return ""
+        return f":memory={snapshot.level}" if snapshot.warning else ""
+
     def _first_token_sla(self, *, foreground_request: bool = False) -> float:
         lowered = os.path.basename(self.model_path).lower()
         prompt_chars = max(0, int(getattr(self, "_current_request_prompt_chars", 0) or 0))
@@ -1534,6 +1582,8 @@ class MLXLocalClient:
             default = 120.0 if foreground_request else 90.0
         else:
             default = 30.0 if foreground_request else 20.0
+        stretch, _ = self._pressure_adaptive_stretch()
+        default *= stretch
         configured = os.environ.get("AURA_FIRST_TOKEN_ABSOLUTE_CEILING_S")
         try:
             return max(10.0, float(configured)) if configured is not None else default
@@ -1550,8 +1600,14 @@ class MLXLocalClient:
             hard_pad = float(os.environ.get("AURA_FIRST_TOKEN_HARD_PAD_S", "20") or 20)
         except (TypeError, ValueError):
             hard_pad = 20.0
+        # The hard ceiling exists to kill LIVELOCKED generations (heartbeats,
+        # zero tokens). Under live memory pressure a starved-but-healthy heavy
+        # lane looks exactly like that livelock from outside — stretch the
+        # verdict boundary (bounded, never past the caller's deadline) so
+        # contention gets time to clear instead of triggering a 20GB reload.
+        stretch, _ = self._pressure_adaptive_stretch()
         return min(
-            first_token_sla * hard_mult + hard_pad,
+            first_token_sla * hard_mult * stretch + hard_pad,
             self._first_token_absolute_ceiling(foreground_request=foreground_request),
         )
 
@@ -1635,8 +1691,9 @@ class MLXLocalClient:
 
     def _token_stall_after(self, *, foreground_request: bool = False) -> float:
         lowered = os.path.basename(self.model_path).lower()
+        stretch, _ = self._pressure_adaptive_stretch()
         if "72b" in lowered or "solver" in lowered:
-            return 18.0 if foreground_request else 25.0
+            return (18.0 if foreground_request else 25.0) * stretch
         if "32b" in lowered or "cortex" in lowered or "zenith" in lowered:
             # [RESILIENCE] Reverted from 10s — recurrent depth can cause
             # legitimate pauses between tokens during the recurrent block
@@ -1644,7 +1701,7 @@ class MLXLocalClient:
             # remeasurement: inter-token pauses stretch the same way under
             # the macos26 guard, and a stall verdict triggers the same
             # over-broad lane recycle as an SLA breach.
-            return 40.0 if foreground_request else 45.0
+            return (40.0 if foreground_request else 45.0) * stretch
         return 8.0
 
     def _warmup_timeout(self) -> float:
@@ -3367,7 +3424,10 @@ class MLXLocalClient:
                     self._pending_generations.pop(req_id, None)
                     self._record_degraded_event(
                         "first_token_sla_exceeded",
-                        detail=f"{os.path.basename(self.model_path)}>{first_token_sla:.1f}s",
+                        detail=(
+                            f"{os.path.basename(self.model_path)}>{first_token_sla:.1f}s"
+                            f"{self._pressure_receipt_suffix()}"
+                        ),
                         severity="error",
                         foreground_request=foreground_request,
                     )
@@ -3411,7 +3471,10 @@ class MLXLocalClient:
                     self._pending_generations.pop(req_id, None)
                     self._record_degraded_event(
                         "token_progress_stalled",
-                        detail=f"{os.path.basename(self.model_path)}>{token_stall_after:.1f}s",
+                        detail=(
+                            f"{os.path.basename(self.model_path)}>{token_stall_after:.1f}s"
+                            f"{self._pressure_receipt_suffix()}"
+                        ),
                         severity="error",
                         foreground_request=foreground_request,
                     )

@@ -22,6 +22,12 @@ os.environ.setdefault(
     str(Path(tempfile.gettempdir()) / f"aura-test-logs-{os.getpid()}"),
 )
 
+# Determinism: token-progress budgets adapt to LIVE machine memory pressure
+# by default (the host running this suite often has a 20GB model resident).
+# Pin the adaptation off so timing assertions can't drift with the
+# environment; targeted tests opt back in and inject their own snapshots.
+os.environ.setdefault("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "0")
+
 _CLEANUP_TIMEOUT_S = 2.0
 
 # Ensure the project root is on sys.path so `core.*` imports work
