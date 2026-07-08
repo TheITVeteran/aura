@@ -27,9 +27,10 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway
 from .boot_validator import GhostBootValidator
 from .mutation_tiers import MutationTier, classify_mutation_path
 from .promotion_policy import (
+    SAFE_AUTONOMOUS_REPAIR_ENV as _SAFE_AUTONOMOUS_REPAIR_ENV,
     SUPERVISED_SELF_MODIFICATION_ENV as _SUPERVISED_SELF_MODIFICATION_ENV,
 )
-from .promotion_policy import env_flag, source_promotion_decision
+from .promotion_policy import env_flag, safe_autonomous_repair_decision, source_promotion_decision
 from .safe_modification_harness import SafeModificationHarness
 
 logger = logging.getLogger("SelfModification.SafeModification")
@@ -745,7 +746,12 @@ class SafeSelfModification:
         return env_flag(_SUPERVISED_SELF_MODIFICATION_ENV, False)
 
     @staticmethod
-    def _source_promotion_allowed(supervised: bool) -> tuple[bool, str]:
+    def _source_promotion_allowed(
+        supervised: bool,
+        *,
+        target_file: str = "",
+        safe_autonomous: bool = False,
+    ) -> tuple[bool, str]:
         """Gate all writes from quarantine into the live source tree.
 
         Self-modification may validate patches in normal Aura runtime, but
@@ -755,6 +761,27 @@ class SafeSelfModification:
         desktop/server sessions from rewriting code under the interpreter that
         is currently serving the user.
         """
+        if safe_autonomous:
+            tier_decision = classify_mutation_path(target_file)
+            if not tier_decision.auto_apply_allowed:
+                return (
+                    False,
+                    (
+                        f"safe autonomous repair blocked for {target_file}: "
+                        f"{tier_decision.tier.label} requires explicit approval"
+                    ),
+                )
+            decision = safe_autonomous_repair_decision()
+            if not decision.allowed:
+                return False, decision.reason
+            return (
+                True,
+                (
+                    f"{decision.reason}; {target_file} classified as "
+                    f"{tier_decision.tier.label} and still requires quarantine, "
+                    "harness, architecture, rollback, and git gates"
+                ),
+            )
         decision = source_promotion_decision(supervised=supervised)
         return decision.allowed, decision.reason
 
@@ -773,6 +800,7 @@ class SafeSelfModification:
         test_results: dict[str, Any],
         *,
         supervised: bool = False,
+        safe_autonomous: bool = False,
     ) -> tuple[bool, str]:
         """Apply a validated fix with full safety protocol.
 
@@ -798,12 +826,29 @@ class SafeSelfModification:
             self._emit_proposal_event(fix, "BLOCKED", evidence_reason)
             return False, f"Blocked: {evidence_reason}"
 
-        promotion_ok, promotion_reason = self._source_promotion_allowed(supervised)
+        try:
+            normalized_target = self._relative_target_path(fix.target_file)
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("safe_modification", exc)
+            self.stats["blocked_by_policy"] += 1
+            return False, f"Target path resolution failed: {exc}"
+
+        promotion_ok, promotion_reason = self._source_promotion_allowed(
+            supervised,
+            target_file=normalized_target,
+            safe_autonomous=bool(safe_autonomous and not supervised),
+        )
         if not promotion_ok:
             self.stats["blocked_by_policy"] += 1
             logger.warning("Modification blocked by source promotion policy: %s", promotion_reason)
             self._emit_proposal_event(fix, "BLOCKED", promotion_reason)
             return False, f"Blocked: {promotion_reason}"
+        if safe_autonomous and not supervised:
+            logger.info(
+                "Safe autonomous repair promotion authorized for %s via %s.",
+                normalized_target,
+                _SAFE_AUTONOMOUS_REPAIR_ENV,
+            )
 
         if isinstance(fix, LogicTransplant):
             logger.info("🧬 Initiating Logic Transplantation for %s", fix.target_file)

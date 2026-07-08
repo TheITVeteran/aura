@@ -1,5 +1,6 @@
-import time
 import inspect
+import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -148,6 +149,77 @@ async def test_apply_fix_refuses_unsupervised_promotion_without_opt_in(monkeypat
 
     assert await engine.apply_fix(proposal, force=False) is False
     assert review_calls == []
+    ServiceContainer.clear()
+
+
+@pytest.mark.asyncio
+async def test_apply_fix_allows_safe_autonomous_repair_for_safe_tier(monkeypatch, tmp_path):
+    monkeypatch.delenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", raising=False)
+    monkeypatch.setenv(
+        "AURA_PENDING_PATCH_REGISTRY",
+        str(tmp_path / "runtime" / "selfmod" / "pending_patch_registry.jsonl"),
+    )
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("aura_kernel", SimpleNamespace(volition_level=3))
+
+    async def review(_proposal, **_kwargs):
+        return True
+
+    class _SafeApply:
+        def __init__(self):
+            self.calls = []
+
+        async def apply_fix(self, *, fix, test_results, supervised=False, safe_autonomous=False):
+            self.calls.append(
+                {
+                    "fix": fix,
+                    "test_results": test_results,
+                    "supervised": supervised,
+                    "safe_autonomous": safe_autonomous,
+                }
+            )
+            return True, "safe auto applied"
+
+    class _Learning:
+        def __init__(self):
+            self.calls = []
+
+        def record_fix_attempt(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+
+    engine = sm_mod.AutonomousSelfModificationEngine.__new__(
+        sm_mod.AutonomousSelfModificationEngine
+    )
+    engine.auto_fix_enabled = False
+    engine._auto_fix_requested = True
+    engine.code_base = tmp_path
+    engine._fix_lock = asyncio.Lock()
+    engine._swarm_review = review
+    engine.safe_modification = _SafeApply()
+    engine.learning_system = _Learning()
+    engine.session_stats = {"fixes_successful": 0, "fixes_attempted": 0}
+
+    fix = SimpleNamespace(
+        target_file="tests/test_generated_repair.py",
+        target_line=1,
+        original_code="assert False",
+        fixed_code="assert True",
+        explanation="repair failing generated test",
+        hypothesis="test assertion is stale",
+        confidence="high",
+    )
+    proposal = {
+        "fix": fix,
+        "test_results": {
+            "success": True,
+            "validation": "safe_modification_harness",
+            "tests_run": ["tests/test_generated_repair.py"],
+        },
+    }
+
+    assert await engine.apply_fix(proposal, safe_autonomous=True) is True
+    assert engine.safe_modification.calls[0]["safe_autonomous"] is True
+    assert engine.safe_modification.calls[0]["supervised"] is False
     ServiceContainer.clear()
 
 

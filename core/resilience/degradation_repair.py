@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 import time
+import asyncio
+import threading
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -27,6 +29,8 @@ class DegradationRepairAction:
     resilience_state: str = "unavailable"
     self_modification_status: str = "not_requested"
     self_modification_dispatched: bool = False
+    autonomous_repair_status: str = "not_requested"
+    immune_status: str = "not_requested"
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -77,6 +81,7 @@ class DegradationRepairRouter:
             incident_id=str(getattr(incident, "incident_id", "") or ""),
         )
         self._route_to_resilience(record, action)
+        self._route_to_adaptive_immunity(record, error, incident, extra, action)
         self._route_to_self_modification(record, error, incident, extra, action)
         return action
 
@@ -140,6 +145,7 @@ class DegradationRepairRouter:
             "incident_id": getattr(incident, "incident_id", ""),
             "incident_occurrence_count": int(getattr(incident, "occurrence_count", 0) or 0),
             "degradation_action": getattr(record, "action", ""),
+            "error_already_logged": True,
             "extra": extra,
         }
         repair_error = error if isinstance(error, Exception) else RuntimeError(context["error_message"])
@@ -158,6 +164,85 @@ class DegradationRepairRouter:
         self._last_self_modification_dispatch[key] = now
         action.self_modification_dispatched = True
         action.self_modification_status = "dispatched"
+        self._route_to_autonomous_repair(record, error, incident, extra, context, action)
+
+    def _route_to_adaptive_immunity(
+        self,
+        record: Any,
+        error: BaseException,
+        incident: Any | None,
+        extra: dict[str, Any],
+        action: DegradationRepairAction,
+    ) -> None:
+        try:
+            immune = self._get_service("adaptive_immune_system")
+            if immune is None and (
+                bool(extra.get("repair_requested"))
+                or str(getattr(record, "severity", "")) == "critical"
+            ):
+                from core.adaptation.adaptive_immunity import get_adaptive_immune_system
+
+                immune = get_adaptive_immune_system()
+            if immune is None or not hasattr(immune, "observe_event"):
+                action.immune_status = "service_unavailable"
+                return
+            event = {
+                "source": "runtime_degradation",
+                "source_domain": "runtime",
+                "subsystem": getattr(record, "subsystem", "unknown"),
+                "component": getattr(record, "subsystem", "unknown"),
+                "severity": getattr(record, "severity", "degraded"),
+                "error_type": getattr(record, "error_type", type(error).__qualname__),
+                "error_message": getattr(record, "error_message", str(error)),
+                "incident_id": getattr(incident, "incident_id", ""),
+                "occurrence_count": int(getattr(incident, "occurrence_count", 0) or 0),
+                "repair_requested": bool(extra.get("repair_requested")),
+            }
+            self._schedule_coro(
+                immune.observe_event(
+                    event,
+                    anomaly_score=0.9 if event["severity"] == "critical" else 0.65,
+                    state_snapshot={"extra": extra},
+                ),
+                label="adaptive_immunity.observe_degradation",
+            )
+            action.immune_status = "scheduled"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            action.immune_status = f"unavailable:{type(exc).__name__}"
+            logger.debug("Adaptive immunity routing failed: %s", exc)
+
+    def _route_to_autonomous_repair(
+        self,
+        record: Any,
+        error: BaseException,
+        incident: Any | None,
+        extra: dict[str, Any],
+        context: dict[str, Any],
+        action: DegradationRepairAction,
+    ) -> None:
+        try:
+            from core.resilience.autonomous_repair_executor import (
+                AutonomousRepairRequest,
+                get_autonomous_repair_executor,
+            )
+
+            request = AutonomousRepairRequest(
+                subsystem=str(getattr(record, "subsystem", "unknown")),
+                severity=str(getattr(record, "severity", "degraded")),
+                error_type=str(getattr(record, "error_type", type(error).__qualname__)),
+                error_message=str(getattr(record, "error_message", str(error))),
+                incident_id=str(getattr(incident, "incident_id", "") or ""),
+                occurrence_count=int(getattr(incident, "occurrence_count", 0) or 0),
+                goal=f"Repair degradation in {getattr(record, 'subsystem', 'unknown')}",
+                context={**context, "extra": extra},
+            )
+            decision = get_autonomous_repair_executor().enqueue_background(request)
+            action.autonomous_repair_status = str(decision.get("status", "unknown"))
+            if decision.get("reason"):
+                action.notes.append(str(decision["reason"]))
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            action.autonomous_repair_status = f"unavailable:{type(exc).__name__}"
+            logger.debug("Autonomous repair routing failed: %s", exc)
 
     def _should_dispatch_self_modification(
         self,
@@ -169,8 +254,40 @@ class DegradationRepairRouter:
             return True
         if str(getattr(record, "severity", "")) == "critical":
             return True
+        error_type = str(getattr(record, "error_type", "") or "").lower()
+        subsystem = str(getattr(record, "subsystem", "") or "").lower()
+        action = str(getattr(record, "action", "") or "").lower()
+        if any(token in error_type for token in ("timeout", "runtimeerror", "attributeerror")):
+            return True
+        if any(token in subsystem for token in ("cognitive", "mind_tick", "inference", "desktop", "tool")):
+            return True
+        if "repair" in action or "failed closed" in action:
+            return True
         occurrence_count = int(getattr(incident, "occurrence_count", 0) or 0)
-        return occurrence_count >= self.INCIDENT_REPEAT_THRESHOLD
+        return occurrence_count >= min(2, self.INCIDENT_REPEAT_THRESHOLD)
+
+    @staticmethod
+    def _schedule_coro(coro: Any, *, label: str) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            thread = threading.Thread(
+                target=lambda: asyncio.run(coro),
+                name=f"aura-{label}",
+                daemon=True,
+            )
+            thread.start()
+            return
+
+        task = loop.create_task(coro, name=label)
+
+        def _consume(done: asyncio.Task) -> None:
+            try:
+                done.result()
+            except (RuntimeError, TypeError, ValueError) as exc:
+                logger.debug("%s failed: %s", label, exc)
+
+        task.add_done_callback(_consume)
 
 
 _router: DegradationRepairRouter | None = None

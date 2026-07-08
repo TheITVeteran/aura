@@ -7649,3 +7649,117 @@ Remaining non-soak work after this checkpoint:
 - Continue live desktop runtime verification for any neural-stream, terminal,
   boot, permission, chat-path, background-autonomy, heat/memory, Program DNA, or
   RSI proof issues that surface before the final soak.
+
+## Checkpoint 2026-07-07-11: RSI and Immune Auto-Execution Repair Lane
+
+Scope:
+
+- Converted the self-repair backlog contract from approval-only shadow planning
+  to safe autonomous repair scheduling by default. The old approval-gated
+  shadow-plan route remains available with `auto_execute=False`.
+- Added `core/resilience/autonomous_repair_executor.py`, a nonblocking repair
+  executor that:
+  - deduplicates repeated runtime faults by fingerprint
+  - enforces cooldown and one-at-a-time execution
+  - records the fault into the self-modification error intelligence lane
+  - runs the autonomous self-modification cycle in the background
+  - exposes an `attempt_patch_for_antigen` adapter for immune patch-proposal cells
+- Added a narrow safe-auto source-promotion policy:
+  - `AURA_ENABLE_SAFE_AUTO_REPAIR` defaults on for T0/T1 candidates only
+  - sealed/proposal-only paths remain blocked by mutation-tier policy
+  - the broad repair-lab promotion profile is still required for unrestricted
+    autonomous source promotion
+  - safe-auto candidates still pass quarantine, validation evidence, promotion
+    harness, architecture gate, rollback, and git branch/commit gates
+- Routed `record_degradation(..., severity="warning")` into the repair router,
+  so warning-level runtime failures can become repair work instead of inert logs.
+- Routed degradation events into the registered adaptive immune system when it is
+  live, and into the autonomous repair executor when self-modification is
+  eligible.
+- Connected adaptive immune `PATCH_PROPOSAL` effectors to the autonomous repair
+  executor when the older optional resilience mesh service is absent.
+
+Verification:
+
+- `python -m py_compile core/resilience/autonomous_repair_executor.py core/resilience/degradation_repair.py core/runtime/errors.py core/agency/self_repair_backlog.py core/self_modification/promotion_policy.py core/self_modification/safe_modification.py core/self_modification/self_modification_engine.py core/adaptation/adaptive_immunity.py tests/test_autonomous_repair_executor.py tests/test_degradation_repair_contract.py tests/test_self_repair_backlog.py tests/test_self_modification_engine_recovery.py tests/test_self_modification_runtime_registry.py`
+  -> passed.
+- `python -m pytest -q tests/test_autonomous_repair_executor.py tests/test_degradation_repair_contract.py tests/test_self_repair_backlog.py tests/test_self_modification_engine_recovery.py::test_apply_fix_allows_safe_autonomous_repair_for_safe_tier tests/test_self_modification_runtime_registry.py`
+  -> `18 passed`.
+- `python -m pytest -q tests/test_adaptive_immune_system.py tests/test_degradation_repair_contract.py tests/test_self_repair_backlog.py tests/test_autonomous_repair_executor.py tests/test_self_modification_engine_recovery.py tests/test_self_modification_runtime_registry.py tests/test_autonomous_rsi_hardening.py`
+  -> `54 passed`.
+- `python -m pytest -q tests/test_runtime_health_truthfulness.py tests/test_runtime_error_architecture.py tests/test_nociception.py tests/test_reliability_hardening.py`
+  -> `154 passed`.
+- Synced the changed repair-lane files into `/Users/bryan/.aura/live-source`.
+- Live-source compile check:
+  - `python -m py_compile core/resilience/autonomous_repair_executor.py core/resilience/degradation_repair.py core/runtime/errors.py core/agency/self_repair_backlog.py core/self_modification/promotion_policy.py core/self_modification/safe_modification.py core/self_modification/self_modification_engine.py core/adaptation/adaptive_immunity.py tests/test_autonomous_repair_executor.py tests/test_degradation_repair_contract.py tests/test_self_repair_backlog.py tests/test_self_modification_engine_recovery.py tests/test_self_modification_runtime_registry.py`
+  -> passed from `/Users/bryan/.aura/live-source`.
+- Relaunched `/Applications/Aura.app` after sync. Process check showed one live
+  launcher/runtime pair:
+  - launcher pid `65315`
+  - runtime pid `65364`
+  - memory sentinel pid `65558`
+  - liveness sentinel pid `65559`
+- Live `/api/system/desktop-access` after relaunch:
+  - `overall_status=ready`
+  - `desktop_control_ready=true`
+  - `screen_text_ready=true`
+  - `menu_clock_ready=true`
+  - `permission_confidence=direct`
+- Live `/api/health` after warmup and again after gates:
+  - `status=ok`
+  - `healthy=true`
+  - `conversation_lane.state=ready`
+  - `conversation_ready=true`
+  - `readiness_blockers=[]`
+  - `active_generations=0`
+  - post-gate `ram_usage=58.8`, `thermal_load=0.28635`
+- Enterprise/production gates after this patch set:
+  - `make enterprise-gate`
+    -> passed; `/tmp/aura_enterprise_gate.json`.
+  - `make enterprise-collect`
+    -> passed; `/tmp/aura_enterprise_collect_gate.json`.
+  - `make production-gate`
+    -> passed; `/tmp/aura_production_readiness.json` with `37` checks and `0`
+    failures.
+
+Functional closeout estimate after this checkpoint:
+
+- Configured non-soak local closeout is about **99.86%** complete by source,
+  focused proofs, self-repair activation tests, runtime fault-routing coverage,
+  live-source sync/relaunch, and enterprise/production gates. The remaining
+  non-soak delta is live Aura proof work and any new runtime issues surfaced by
+  those runs.
+
+Remaining non-soak work after this checkpoint:
+
+- Continue the signed-in ChatGPT/Gemini proof through Aura's live desktop bridge:
+  20+ natural turns, full-mind composition, visible page reading, retention, and
+  report-back.
+- Continue Program DNA and RSI visible proof runs with real artifacts, receipts,
+  and live desktop observation.
+- Exercise a real live fault/repair scenario during the remaining proof work and
+  verify immune/RSI repair stats no longer stay permanently inert when faults
+  occur.
+
+Addendum - long-text chat/neural rendering:
+
+- Investigated the neural-card truncation screenshot. Backend thought emission
+  and WebSocket event normalization preserve the event payload; the displayed
+  `Brain.ReasoningStrategies` example is partly a deliberate logger preview
+  (`query[:60]`) and partly a UI affordance issue: the neural feed had no
+  explicit full-text expansion path for long cards.
+- Added a long-neural-event preview/full split:
+  - neural cards keep full payload text in copy data
+  - long cards show a `FULL` / `PREVIEW` toggle
+  - copy continues copying the full text, not the preview
+- Hardened chat transcript rendering:
+  - streamed replies now render through the same `.msg-content` wrapper as
+    normal replies
+  - message bubbles and neural cards explicitly use auto-height/no fixed
+    max-height/no clipping rules
+  - long code blocks wrap and scroll inside the message rather than clipping
+    the bubble
+- Focused verification:
+  - `node --check interface/static/aura.js` -> passed.
+  - `python -m pytest -q tests/test_runtime_polish.py::test_desktop_chat_and_neural_cards_do_not_clip_long_text tests/test_runtime_polish.py::test_desktop_shell_renders_tool_results_without_inline_html_handlers tests/test_runtime_polish.py::test_desktop_chat_composer_focus_is_not_stolen_by_page_selection`
+    -> `3 passed`.

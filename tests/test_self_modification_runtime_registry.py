@@ -13,8 +13,8 @@ class SafeApply:
     def __init__(self):
         self.calls = []
 
-    async def apply_fix(self, *, fix, test_results, supervised=False):
-        self.calls.append((fix, test_results, supervised))
+    async def apply_fix(self, *, fix, test_results, supervised=False, safe_autonomous=False):
+        self.calls.append((fix, test_results, supervised, safe_autonomous))
         return True, "applied"
 
 
@@ -73,7 +73,7 @@ async def test_self_modification_registry_lives_outside_source_tree(tmp_path, mo
     }
 
     assert await engine.apply_fix(proposal, force=True)
-    assert safe_apply.calls == [(fix, proposal["test_results"], True)]
+    assert safe_apply.calls == [(fix, proposal["test_results"], True, False)]
     assert not (tmp_path / "core" / "patches" / "pending_patch.py").exists()
 
     entries = [json.loads(line) for line in registry_path.read_text(encoding="utf-8").splitlines()]

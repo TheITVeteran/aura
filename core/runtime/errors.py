@@ -432,7 +432,7 @@ def record_degradation(
             )
 
     # ── Repair routing integration ─────────────────────────────────────
-    if severity in ("critical", "degraded"):
+    if severity in ("critical", "degraded", "warning"):
         try:
             from core.resilience.degradation_repair import get_degradation_repair_router
 

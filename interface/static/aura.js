@@ -2685,6 +2685,22 @@ function sanitizeThoughtMessage(message) {
     return text;
 }
 
+function thoughtPreviewText(message, maxChars = 520, maxLines = 7) {
+    const text = String(message == null ? '' : message);
+    const lines = text.split(/\r?\n/);
+    let preview = lines.slice(0, maxLines).join('\n');
+    const clippedByLine = lines.length > maxLines;
+    let clippedByChar = false;
+    if (preview.length > maxChars) {
+        preview = preview.slice(0, maxChars).replace(/\s+\S*$/, '').trimEnd();
+        clippedByChar = true;
+    }
+    return {
+        text: clippedByLine || clippedByChar ? `${preview}…` : preview,
+        clipped: clippedByLine || clippedByChar,
+    };
+}
+
 function addThoughtCard(data) {
     const card = document.createElement('div');
     const level = data.level || '';
@@ -2692,16 +2708,24 @@ function addThoughtCard(data) {
     if (level === 'impulse' || level === 'INFO' || level === 'info') cls += ' impulse';
     else if (level === 'ERROR' || level === 'error') cls += ' error';
     else if (level === 'WARNING' || level === 'warning') cls += ' warning';
-    card.className = cls;
 
     const ts = formatEventTimestamp(data.timestamp);
     const name = data.name || 'SYS';
     const msg = sanitizeThoughtMessage(data.message || data.content || JSON.stringify(data));
     const repeatCount = Math.max(1, Number(data.repeatCount || 1));
+    const preview = thoughtPreviewText(msg);
+    const longThought = preview.clipped;
+    if (longThought) cls += ' long';
+    card.className = cls;
     const safeName = escHtml(name);
-    const safeMsg = escHtml(msg).replace(/\n/g, '<br>');
+    const safePreview = escHtml(preview.text).replace(/\n/g, '<br>');
+    const safeFull = escHtml(msg).replace(/\n/g, '<br>');
     const repeatBadge = repeatCount > 1 ? `<span class="thought-repeat">x${repeatCount}</span>` : '';
     card.dataset.copyText = repeatCount > 1 ? `[${ts}] ${name} (x${repeatCount})\n${msg}` : `[${ts}] ${name}\n${msg}`;
+    card.dataset.fullLength = String(msg.length);
+    const expandButton = longThought
+        ? `<button class="thought-expand-btn" type="button" onclick="toggleThoughtCardFull(this)" aria-expanded="false">FULL</button>`
+        : '';
     card.innerHTML = `
         <div class="thought-card-head">
             <div class="thought-card-meta">
@@ -2709,9 +2733,13 @@ function addThoughtCard(data) {
                 <span class="thought-tag">${safeName}</span>
                 ${repeatBadge}
             </div>
-            <button class="thought-copy-btn" type="button" onclick="copyThoughtCard(this)">COPY</button>
+            <div class="thought-card-actions">
+                ${expandButton}
+                <button class="thought-copy-btn" type="button" onclick="copyThoughtCard(this)">COPY</button>
+            </div>
         </div>
-        <div class="thought-body">${safeMsg}</div>
+        <div class="thought-body thought-preview">${safePreview}</div>
+        ${longThought ? `<div class="thought-body thought-full" hidden>${safeFull}</div>` : ''}
     `;
 
     const neuralFeed = DOM.neuralFeed || $('neural-feed');
@@ -3248,9 +3276,9 @@ function appendStreamChunk(chunk) {
     h = h.replace(/\n/g, '<br>');
 
     if (activeStreamDiv.className.includes('aura')) {
-        activeStreamDiv.innerHTML = `<div class="aura-avatar"></div>` + h;
+        activeStreamDiv.innerHTML = `<div class="aura-avatar"></div><div class="msg-content">${h}</div>`;
     } else {
-        activeStreamDiv.innerHTML = h;
+        activeStreamDiv.innerHTML = `<div class="msg-content">${h}</div>`;
     }
     const messages = DOM.messages || $('messages');
     if (!state.userScrolledUp) messages.scrollTop = messages.scrollHeight;
@@ -3354,9 +3382,25 @@ async function copyThoughtCard(button) {
         console.warn('Thought copy failed:', err);
     }
 }
+
+function toggleThoughtCardFull(button) {
+    const card = button ? button.closest('.thought-card') : null;
+    if (!card) return;
+    const preview = card.querySelector('.thought-preview');
+    const full = card.querySelector('.thought-full');
+    if (!preview || !full) return;
+    const expanded = !card.classList.contains('expanded');
+    card.classList.toggle('expanded', expanded);
+    preview.hidden = expanded;
+    full.hidden = !expanded;
+    button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    button.textContent = expanded ? 'PREVIEW' : 'FULL';
+}
+
 // Make globally accessible for onclick handlers
 window.copyCodeBlock = copyCodeBlock;
 window.copyThoughtCard = copyThoughtCard;
+window.toggleThoughtCardFull = toggleThoughtCardFull;
 
 // ── Magnum Opus 2: Connection Toast ─────────────────────
 let _connToastTimer = null;

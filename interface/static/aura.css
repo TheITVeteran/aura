@@ -1492,6 +1492,13 @@ main {
     min-width: 0;
 }
 
+.thought-card-actions {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 6px;
+}
+
 .thought-repeat {
     display: inline-flex;
     align-items: center;
@@ -1508,12 +1515,32 @@ main {
 
 .thought-body {
     color: var(--text);
-    white-space: normal;
+    white-space: pre-wrap;
     line-height: 1.55;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.thought-card.long:not(.expanded) .thought-preview {
+    max-height: 11.5em;
+    overflow: hidden;
+}
+
+.thought-full[hidden],
+.thought-preview[hidden] {
+    display: none !important;
+}
+
+.thought-card.expanded .thought-full {
+    display: block;
+}
+
+.thought-expand-btn,
+.thought-copy-btn {
+    flex: 0 0 auto;
 }
 
 .thought-copy-btn {
-    flex: 0 0 auto;
     padding: 4px 10px;
     font-size: calc(0.58rem * var(--neural-meta-scale));
     font-family: var(--font-main);
@@ -1528,8 +1555,25 @@ main {
     opacity: 0.55;
 }
 
+.thought-expand-btn {
+    padding: 4px 9px;
+    font-size: calc(0.58rem * var(--neural-meta-scale));
+    font-family: var(--font-main);
+    font-weight: 800;
+    letter-spacing: 1px;
+    color: var(--accent);
+    background: rgba(0, 229, 255, 0.08);
+    border: 1px solid rgba(0, 229, 255, 0.22);
+    border-radius: 999px;
+    cursor: pointer;
+    opacity: 0.72;
+    transition: all 0.2s ease;
+}
+
 .thought-copy-btn:hover,
-.thought-copy-btn:focus-visible {
+.thought-copy-btn:focus-visible,
+.thought-expand-btn:hover,
+.thought-expand-btn:focus-visible {
     opacity: 1;
     color: #fff;
     border-color: var(--primary);
@@ -4611,6 +4655,46 @@ header {
 .metric-guide-live,
 .metric-guide-block p {
     overflow-wrap: anywhere;
+}
+
+/* Long-form transcript safety: chat and neural text may be long, but it must
+   never be visually clipped or treated as a fixed-height widget. */
+#messages {
+    min-width: 0;
+}
+
+.msg {
+    flex: 0 0 auto;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+}
+
+.msg-content {
+    min-width: 0;
+    max-width: min(76ch, 100%);
+    height: auto;
+    max-height: none;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+}
+
+.msg pre,
+.msg code {
+    max-width: 100%;
+}
+
+.msg pre {
+    white-space: pre-wrap;
+    overflow-x: auto;
+}
+
+.thought-card {
+    height: auto;
+    max-height: none;
+    overflow: visible;
 }
 
 .aurora-bg,

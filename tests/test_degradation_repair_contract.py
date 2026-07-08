@@ -33,6 +33,24 @@ class FakeSelfModification:
         )
 
 
+class FakeAutonomousRepairExecutor:
+    def __init__(self) -> None:
+        self.requests: list[object] = []
+
+    def enqueue_background(self, request):
+        self.requests.append(request)
+        return {"status": "scheduled", "fingerprint": request.fingerprint}
+
+
+class FakeImmune:
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    async def observe_event(self, event, **kwargs):
+        self.events.append({"event": event, "kwargs": kwargs})
+        return SimpleNamespace(selected_artifact=None)
+
+
 def _record(subsystem: str = "router_unit", severity: str = "degraded"):
     return SimpleNamespace(
         subsystem=subsystem,
@@ -43,7 +61,7 @@ def _record(subsystem: str = "router_unit", severity: str = "degraded"):
     )
 
 
-def test_degradation_router_feeds_resilience_without_unneeded_code_repair():
+def test_degradation_router_feeds_resilience_without_engine_available():
     resilience = FakeResilience()
     router = DegradationRepairRouter(
         service_getter=lambda name: {"resilience_engine": resilience}.get(name),
@@ -57,7 +75,7 @@ def test_degradation_router_feeds_resilience_without_unneeded_code_repair():
     )
 
     assert action.resilience_state == "friction"
-    assert action.self_modification_status == "not_eligible"
+    assert action.self_modification_status == "engine_unavailable"
     assert resilience.failures == [
         {
             "domain": "degradation:router_unit",
@@ -68,8 +86,13 @@ def test_degradation_router_feeds_resilience_without_unneeded_code_repair():
 
 
 def test_degradation_router_dispatches_critical_repair_with_cooldown():
+    from core.resilience.autonomous_repair_executor import (
+        set_autonomous_repair_executor_for_tests,
+    )
+
     resilience = FakeResilience()
     self_modification = FakeSelfModification()
+    autonomous = FakeAutonomousRepairExecutor()
     services = {
         "resilience_engine": resilience,
         "self_modification_engine": self_modification,
@@ -79,32 +102,43 @@ def test_degradation_router_dispatches_critical_repair_with_cooldown():
         cooldown_seconds=999.0,
     )
 
-    first = router.route(
-        record=_record(severity="critical"),
-        error=RuntimeError("route failed"),
-        incident=SimpleNamespace(incident_id="inc-2", occurrence_count=1),
-    )
-    second = router.route(
-        record=_record(severity="critical"),
-        error=RuntimeError("route failed"),
-        incident=SimpleNamespace(incident_id="inc-2", occurrence_count=2),
-    )
+    set_autonomous_repair_executor_for_tests(autonomous)
+    try:
+        first = router.route(
+            record=_record(severity="critical"),
+            error=RuntimeError("route failed"),
+            incident=SimpleNamespace(incident_id="inc-2", occurrence_count=1),
+        )
+        second = router.route(
+            record=_record(severity="critical"),
+            error=RuntimeError("route failed"),
+            incident=SimpleNamespace(incident_id="inc-2", occurrence_count=2),
+        )
+    finally:
+        set_autonomous_repair_executor_for_tests(None)
 
     assert first.self_modification_dispatched is True
     assert first.self_modification_status == "dispatched"
+    assert first.autonomous_repair_status == "scheduled"
     assert second.self_modification_status == "cooldown"
     assert len(self_modification.calls) == 1
+    assert len(autonomous.requests) == 1
     assert self_modification.calls[0]["skill_name"] == "router_unit"
 
 
 def test_record_degradation_updates_health_incident_and_repair_route(monkeypatch):
     import core.resilience.incident_manager as incident_module
+    from core.resilience.autonomous_repair_executor import (
+        set_autonomous_repair_executor_for_tests,
+    )
 
     resilience = FakeResilience()
     self_modification = FakeSelfModification()
+    autonomous = FakeAutonomousRepairExecutor()
     services = {
         "resilience_engine": resilience,
         "self_modification_engine": self_modification,
+        "adaptive_immune_system": FakeImmune(),
     }
     router = DegradationRepairRouter(
         service_getter=lambda name: services.get(name),
@@ -116,6 +150,7 @@ def test_record_degradation_updates_health_incident_and_repair_route(monkeypatch
         incident_module.IncidentManager(),
     )
     set_degradation_repair_router_for_tests(router)
+    set_autonomous_repair_executor_for_tests(autonomous)
     subsystem = "record_degradation_contract_unit"
 
     try:
@@ -130,11 +165,51 @@ def test_record_degradation_updates_health_incident_and_repair_route(monkeypatch
         incident = incident_module.get_incident_manager()._active[f"degradation:{subsystem}"]
     finally:
         set_degradation_repair_router_for_tests(None)
+        set_autonomous_repair_executor_for_tests(None)
 
     assert record.subsystem == subsystem
     assert health is not None
     assert health.status == "unavailable"
     assert "critical route failed" in health.last_error
     assert incident.metadata["repair_router"]["self_modification_status"] == "dispatched"
+    assert incident.metadata["repair_router"]["autonomous_repair_status"] == "scheduled"
     assert resilience.failures[0]["severity"] == 0.95
     assert len(self_modification.calls) == 1
+    assert len(autonomous.requests) == 1
+
+
+def test_degradation_router_sends_warnings_to_immune_and_safe_repair():
+    from core.resilience.autonomous_repair_executor import (
+        set_autonomous_repair_executor_for_tests,
+    )
+
+    resilience = FakeResilience()
+    self_modification = FakeSelfModification()
+    autonomous = FakeAutonomousRepairExecutor()
+    immune = FakeImmune()
+    services = {
+        "resilience_engine": resilience,
+        "self_modification_engine": self_modification,
+        "adaptive_immune_system": immune,
+    }
+    router = DegradationRepairRouter(
+        service_getter=lambda name: services.get(name),
+        cooldown_seconds=0.0,
+    )
+
+    set_autonomous_repair_executor_for_tests(autonomous)
+    try:
+        action = router.route(
+            record=_record(subsystem="cognitive_engine", severity="warning"),
+            error=TimeoutError("slow full-mind reply"),
+            incident=None,
+            extra={"repair_requested": True},
+        )
+    finally:
+        set_autonomous_repair_executor_for_tests(None)
+
+    assert action.self_modification_status == "dispatched"
+    assert action.autonomous_repair_status == "scheduled"
+    assert action.immune_status == "scheduled"
+    assert self_modification.calls[0]["context"]["error_already_logged"] is True
+    assert autonomous.requests[0].subsystem == "cognitive_engine"

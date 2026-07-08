@@ -836,6 +836,27 @@ def test_desktop_chat_composer_focus_is_not_stolen_by_page_selection():
     assert "#chat-input" in aura_css and "caret-color: var(--accent);" in aura_css
 
 
+def test_desktop_chat_and_neural_cards_do_not_clip_long_text():
+    aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+    aura_css = (PROJECT_ROOT / "interface" / "static" / "aura.css").read_text(encoding="utf-8")
+
+    assert "function thoughtPreviewText" in aura_js
+    assert "card.dataset.copyText" in aura_js
+    assert "card.dataset.fullLength = String(msg.length)" in aura_js
+    assert "toggleThoughtCardFull(this)" in aura_js
+    assert "window.toggleThoughtCardFull = toggleThoughtCardFull" in aura_js
+    assert '<div class="msg-content">${h}</div>' in aura_js
+
+    assert ".thought-card.long:not(.expanded) .thought-preview" in aura_css
+    assert ".thought-full[hidden]," in aura_css
+    assert ".thought-card.expanded .thought-full" in aura_css
+    assert ".thought-expand-btn" in aura_css
+    assert "Long-form transcript safety" in aura_css
+    assert ".msg {\n    flex: 0 0 auto;\n    height: auto;\n    max-height: none;\n    overflow: visible;\n}" in aura_css
+    assert ".msg-content {\n    min-width: 0;\n    max-width: min(76ch, 100%);" in aura_css
+    assert ".thought-card {\n    height: auto;\n    max-height: none;\n    overflow: visible;\n}" in aura_css
+
+
 def test_desktop_access_panel_bounds_raw_permission_status_labels():
     aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
     aura_css = (PROJECT_ROOT / "interface" / "static" / "aura.css").read_text(encoding="utf-8")

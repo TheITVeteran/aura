@@ -3,13 +3,14 @@
 Closes the mandate's "code catches and fixes regressions before users do":
 the chunk runner detects order-dependence and real failures and (with
 ``--defect-register``) writes a machine-readable register. This module turns
-that register into concrete, approval-gated repair goals for the autonomous
-task engine — so Aura can burn down her own defect backlog behind the same
-human-approval gate that guards every consequential self-modification.
+that register into concrete repair goals for the autonomous repair lane — so
+Aura can burn down her own defect backlog behind mutation-tier, sandbox,
+rollback, and receipt gates.
 
 Design guarantees:
-- **Never auto-executes.** Repair goals are created ``requires_approval=True``
-  and shadow-planned; a human calls ``approve_plan`` to let one run.
+- **Safe auto-executes by default.** Repair goals enter the autonomous repair
+  executor; high-risk paths are still quarantined/proposal-only by downstream
+  mutation-tier policy.
 - **Idempotent.** Each defect has a stable id; re-ingesting the same register
   never double-creates a goal.
 - **Read-only ingestion.** Parsing a register mutates nothing until a plan is
@@ -134,17 +135,60 @@ class SelfRepairBacklog:
         task_engine: Any = None,
         max_items: int = 5,
         dry_run: bool = False,
+        auto_execute: bool = True,
     ) -> list[dict[str, Any]]:
-        """Create approval-gated, shadow-planned repair goals for new defects.
+        """Create repair goals for new defects.
 
         Returns a summary per item. ``dry_run`` (or no task engine) parses and
-        marks-seen without creating plans. Real plans are created with
-        ``requires_approval=True`` + ``is_shadow=True`` — a human must approve
-        each before it executes.
+        marks-seen without creating plans. With ``auto_execute=True`` the item
+        is scheduled through the autonomous repair executor; otherwise the old
+        approval-gated shadow plan behavior is used.
         """
         items = self.new_items(register_path)[: max(0, int(max_items))]
         if not items:
             return []
+
+        if auto_execute and not dry_run:
+            results: list[dict[str, Any]] = []
+            try:
+                from core.resilience.autonomous_repair_executor import (
+                    AutonomousRepairRequest,
+                    get_autonomous_repair_executor,
+                )
+
+                executor = get_autonomous_repair_executor()
+                for item in items:
+                    request = AutonomousRepairRequest(
+                        subsystem="self_repair_backlog",
+                        error_type=item.kind,
+                        error_message=item.target,
+                        severity="degraded",
+                        goal=item.goal,
+                        context={
+                            "origin": "self_repair_backlog",
+                            "defect_id": item.defect_id,
+                            "defect_kind": item.kind,
+                            "target": item.target,
+                        },
+                    )
+                    decision = executor.enqueue_background(request)
+                    results.append(
+                        {
+                            **item.to_dict(),
+                            "created": decision.get("status") == "scheduled",
+                            "reason": decision.get("status", "unknown"),
+                            "fingerprint": decision.get("fingerprint", ""),
+                            "auto_execute": True,
+                        }
+                    )
+                self._mark_seen(items)
+                logger.info(
+                    "🔧 [SELF-REPAIR] Scheduled %d defect(s) for autonomous repair.",
+                    len(results),
+                )
+                return results
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation("self_repair_backlog", exc, severity="warning")
 
         if dry_run or task_engine is None:
             if task_engine is None and not dry_run:

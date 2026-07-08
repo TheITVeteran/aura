@@ -30,7 +30,12 @@ from .promotion_policy import (
 )
 from .promotion_policy import RUNTIME_SELF_MODIFICATION_ENV as _RUNTIME_SELF_MODIFICATION_ENV
 from .promotion_policy import SUPERVISED_SELF_MODIFICATION_ENV as _SUPERVISED_SELF_MODIFICATION_ENV
-from .promotion_policy import autonomous_source_promotion_decision, env_flag
+from .mutation_tiers import classify_mutation_path
+from .promotion_policy import (
+    autonomous_source_promotion_decision,
+    env_flag,
+    safe_autonomous_repair_decision,
+)
 from .repair_registry import append_repair_entry
 from .safe_modification import LogicTransplant, SafeSelfModification
 from .shadow_ast_healer import ShadowASTHealer
@@ -270,6 +275,27 @@ class AutonomousSelfModificationEngine:
         """Return whether explicit force=True promotion is currently allowed."""
         return _supervised_patch_promotion_enabled()
 
+    def safe_auto_repair_enabled_for(self, fix_proposal: dict[str, Any]) -> tuple[bool, str]:
+        """Return whether this exact repair may auto-apply in normal runtime."""
+
+        fix = fix_proposal.get("fix") if isinstance(fix_proposal, dict) else None
+        target = str(getattr(fix, "target_file", "") or "")
+        if not target:
+            return False, "missing target file"
+        target_path = Path(target)
+        if target_path.is_absolute():
+            try:
+                target = target_path.resolve().relative_to(self.code_base.resolve()).as_posix()
+            except (OSError, ValueError):
+                return False, "target outside code base"
+        tier = classify_mutation_path(target)
+        if not tier.auto_apply_allowed:
+            return False, f"{target} is {tier.tier.label}"
+        decision = safe_autonomous_repair_decision()
+        if not decision.allowed:
+            return False, decision.reason
+        return True, f"{target} is {tier.tier.label}"
+
     def _record_cycle_failure(
         self,
         error: BaseException,
@@ -417,6 +443,7 @@ class AutonomousSelfModificationEngine:
         fix_proposal: dict[str, Any],
         force: bool = False,
         test_results: dict[str, Any] | None = None,
+        safe_autonomous: bool = False,
     ) -> bool:
         """Apply a fix proposal with Swarm Review and Safe Modification (Phase 31)."""
         # Level 3 Check
@@ -454,7 +481,7 @@ class AutonomousSelfModificationEngine:
             logger.warning("SME: Modification BLOCKED. Requires Volition Level 1+.")
             return False
 
-        if not force and not self.runtime_promotion_enabled():
+        if not force and not safe_autonomous and not self.runtime_promotion_enabled():
             logger.warning(
                 "SME: Runtime patch promotion blocked. Set %s=1, %s=1, and %s=1 "
                 "inside a repair-lab profile for autonomous source promotion.",
@@ -464,7 +491,7 @@ class AutonomousSelfModificationEngine:
             )
             return False
 
-        if not self.auto_fix_enabled and not force:
+        if not self.auto_fix_enabled and not force and not safe_autonomous:
             logger.warning("Auto-fix disabled. Use force=True to override.")
             return False
 
@@ -543,6 +570,7 @@ class AutonomousSelfModificationEngine:
                     fix=fix,
                     test_results=final_test_results,
                     supervised=force,
+                    safe_autonomous=bool(safe_autonomous and not force),
                 )
 
                 if success:
@@ -858,11 +886,17 @@ class AutonomousSelfModificationEngine:
                     "error": "Fix generation failed",
                 }
 
-            # Step 4: Apply fix (if enabled)
-            if self.auto_fix_enabled:
+            # Step 4: Apply fix when repair-lab promotion is enabled or when
+            # this exact candidate is a safe auto-repair tier.
+            safe_auto_allowed, safe_auto_reason = self.safe_auto_repair_enabled_for(fix_proposal)
+            if self.auto_fix_enabled or safe_auto_allowed:
                 success = False
                 try:
-                    success = await self.apply_fix(fix_proposal, force=False)
+                    success = await self.apply_fix(
+                        fix_proposal,
+                        force=False,
+                        safe_autonomous=bool(safe_auto_allowed and not self.auto_fix_enabled),
+                    )
                 finally:
                     cycle_time = time.time() - cycle_start
                     logger.debug("--- [SME] Cycle Complete (%.2fs) ---", cycle_time)
@@ -887,6 +921,8 @@ class AutonomousSelfModificationEngine:
                     "bugs_found": len(bugs),
                     "fixes_applied": 1 if success else 0,
                     "cycle_time": cycle_time,
+                    "auto_repair_mode": "safe_autonomous" if safe_auto_allowed else "repair_lab",
+                    "auto_repair_reason": safe_auto_reason,
                 }
 
             quarantine = await self._quarantine_fix_proposal(fix_proposal)
@@ -900,6 +936,7 @@ class AutonomousSelfModificationEngine:
                 "bugs_found": len(bugs),
                 "fixes_applied": 0,
                 "proposal": quarantine,
+                "auto_repair_reason": safe_auto_reason,
             }
         except SELF_MOD_RECOVERABLE_ERRORS as exc:
             duration = time.time() - cycle_start

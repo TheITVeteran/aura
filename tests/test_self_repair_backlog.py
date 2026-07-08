@@ -68,7 +68,9 @@ def test_enqueue_creates_approval_gated_shadow_plans(tmp_path):
 
             return SimpleNamespace(status="waiting_for_approval")
 
-    results = asyncio.run(backlog.enqueue_repairs(reg, task_engine=_Engine()))
+    results = asyncio.run(
+        backlog.enqueue_repairs(reg, task_engine=_Engine(), auto_execute=False)
+    )
     assert len(results) == 1
     assert results[0]["created"] is True
     assert calls[0]["is_shadow"] is True
@@ -82,6 +84,37 @@ def test_no_engine_marks_seen_without_creating(tmp_path):
     results = asyncio.run(backlog.enqueue_repairs(reg, task_engine=None, dry_run=True))
     assert results and all(r["created"] is False for r in results)
     # Marked seen — no duplicate goals on the next run.
+    assert backlog.new_items(reg) == []
+
+
+def test_enqueue_auto_executes_safe_repair_requests(tmp_path):
+    from core.resilience.autonomous_repair_executor import (
+        set_autonomous_repair_executor_for_tests,
+    )
+
+    reg = _register(tmp_path, real=["tests/test_b.py::test_y"])
+    backlog = SelfRepairBacklog(seen_path=tmp_path / "seen.json")
+
+    class _Executor:
+        def __init__(self):
+            self.requests = []
+
+        def enqueue_background(self, request):
+            self.requests.append(request)
+            return {"status": "scheduled", "fingerprint": request.fingerprint}
+
+    executor = _Executor()
+    set_autonomous_repair_executor_for_tests(executor)
+    try:
+        results = asyncio.run(backlog.enqueue_repairs(reg))
+    finally:
+        set_autonomous_repair_executor_for_tests(None)
+
+    assert len(results) == 1
+    assert results[0]["created"] is True
+    assert results[0]["auto_execute"] is True
+    assert executor.requests[0].subsystem == "self_repair_backlog"
+    assert executor.requests[0].context["origin"] == "self_repair_backlog"
     assert backlog.new_items(reg) == []
 
 

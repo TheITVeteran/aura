@@ -13,6 +13,7 @@ RUNTIME_SELF_MODIFICATION_ENV = "AURA_ALLOW_RUNTIME_SELF_MODIFICATION"
 AUTONOMOUS_PATCH_PROMOTION_ENV = "AURA_ALLOW_AUTONOMOUS_PATCH_PROMOTION"
 REPAIR_LAB_SOURCE_PROMOTION_ENV = "AURA_ALLOW_REPAIR_LAB_SOURCE_PROMOTION"
 SUPERVISED_SELF_MODIFICATION_ENV = "AURA_ALLOW_SUPERVISED_SELF_MODIFICATION"
+SAFE_AUTONOMOUS_REPAIR_ENV = "AURA_ENABLE_SAFE_AUTO_REPAIR"
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,30 @@ def supervised_source_promotion_decision() -> PromotionPolicyDecision:
     )
 
 
+def safe_autonomous_repair_decision() -> PromotionPolicyDecision:
+    """Return whether low-risk, validator-backed repair promotion is live.
+
+    This is deliberately narrower than the repair-lab source-promotion profile.
+    It only authorizes callers that have already classified the target as a
+    safe auto-apply mutation tier and are still running the normal quarantine,
+    harness, architecture, rollback, and git gates. Operators can turn it off
+    with ``AURA_ENABLE_SAFE_AUTO_REPAIR=0`` when they want proposal-only mode.
+    """
+
+    required = (SAFE_AUTONOMOUS_REPAIR_ENV,)
+    if not env_flag(SAFE_AUTONOMOUS_REPAIR_ENV, True):
+        return PromotionPolicyDecision(
+            allowed=False,
+            reason=f"{SAFE_AUTONOMOUS_REPAIR_ENV}=1 is required for safe autonomous repair",
+            required_env=required,
+        )
+    return PromotionPolicyDecision(
+        allowed=True,
+        reason="safe autonomous repair enabled",
+        required_env=required,
+    )
+
+
 def source_promotion_decision(*, supervised: bool) -> PromotionPolicyDecision:
     if supervised:
         return supervised_source_promotion_decision()
@@ -79,8 +104,10 @@ __all__ = [
     "REPAIR_LAB_SOURCE_PROMOTION_ENV",
     "RUNTIME_SELF_MODIFICATION_ENV",
     "SUPERVISED_SELF_MODIFICATION_ENV",
+    "SAFE_AUTONOMOUS_REPAIR_ENV",
     "autonomous_source_promotion_decision",
     "env_flag",
+    "safe_autonomous_repair_decision",
     "source_promotion_decision",
     "supervised_source_promotion_decision",
 ]

@@ -1837,12 +1837,42 @@ class AdaptiveImmuneSystem:
         if artifact.kind == EffectorKind.PATCH_PROPOSAL:
             resilience_mesh = self._get_service("autonomous_resilience_mesh")
             if resilience_mesh is None or not hasattr(resilience_mesh, "attempt_patch_for_antigen"):
-                artifact.notes = artifact.notes or "patch pipeline unavailable"
-                return self._default_verification_report(
-                    status="unavailable",
-                    coverage_ratio=coverage_ratio,
-                    notes=artifact.notes,
-                )
+                try:
+                    from core.resilience.autonomous_repair_executor import (
+                        get_autonomous_repair_executor,
+                    )
+
+                    patch_result = await get_autonomous_repair_executor().attempt_patch_for_antigen(
+                        artifact,
+                        antigen,
+                    )
+                    attempted = bool(patch_result.get("attempted", False))
+                    artifact.executed = attempted
+                    artifact.success = False
+                    if patch_result.get("notes"):
+                        artifact.notes = str(patch_result["notes"])
+                    return {
+                        "status": str(patch_result.get("status", "patch_scheduled")),
+                        "raw_success": False,
+                        "verified_success": False,
+                        "health_before": None,
+                        "health_after": None,
+                        "health_delta": 0.0,
+                        "health_samples": [],
+                        "coverage_ratio": round(coverage_ratio, 4),
+                        "recurrence_risk": round(
+                            max(0.0, min(1.0, antigen.recurrence_pressure)),
+                            4,
+                        ),
+                        "notes": artifact.notes or "patch scheduled through autonomous repair executor",
+                    }
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    artifact.notes = artifact.notes or f"patch pipeline unavailable: {exc}"
+                    return self._default_verification_report(
+                        status="unavailable",
+                        coverage_ratio=coverage_ratio,
+                        notes=artifact.notes,
+                    )
             try:
                 patch_result = await resilience_mesh.attempt_patch_for_antigen(artifact, antigen)
                 attempted = bool(patch_result.get("attempted", False))
