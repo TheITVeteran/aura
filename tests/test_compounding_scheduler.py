@@ -190,6 +190,106 @@ class TestCycleExecution:
         assert "lineage" in status
 
 
+class TestRunCycleNow:
+    async def test_bypasses_cooldown_but_not_will(self, scheduler, monkeypatch):
+        scheduler._save_state({"last_attempt_at": time.time()})   # cooldown hot
+        loop = FakeLoop(FakeReceipt())
+        monkeypatch.setattr(CompoundingScheduler, "_build_loop", lambda self: loop)
+        approve_will(monkeypatch, scheduler)
+        activated: list[str] = []
+
+        async def fake_activate(self, path):
+            activated.append(path)
+
+        monkeypatch.setattr(CompoundingScheduler, "_activate_live", fake_activate)
+        receipt = await scheduler.run_cycle_now(reason="rsi_weight_update")
+        assert loop.cycles_run == 1                       # cooldown did not block
+        assert receipt["status"] == "promoted"
+        assert activated == [FakeReceipt().promoted_model_path]
+        state = json.loads(scheduler._state_path().read_text())
+        assert state["last_trigger"] == "rsi_weight_update"
+
+    async def test_will_denial_blocks_on_demand_too(self, scheduler, monkeypatch):
+        loop = FakeLoop(FakeReceipt())
+        monkeypatch.setattr(CompoundingScheduler, "_build_loop", lambda self: loop)
+        approve_will(monkeypatch, scheduler, approved=False, reason="not_now")
+        receipt = await scheduler.run_cycle_now(reason="manual")
+        assert loop.cycles_run == 0
+        assert receipt["status"] == "blocked"
+
+    async def test_single_flight_guard_holds(self, scheduler, monkeypatch):
+        loop = FakeLoop(FakeReceipt())
+        monkeypatch.setattr(CompoundingScheduler, "_build_loop", lambda self: loop)
+        scheduler._running_cycle = True
+        receipt = await scheduler.run_cycle_now(reason="manual")
+        assert receipt == {"status": "blocked", "reasons": ["cycle_already_running"]}
+
+    async def test_kill_switch_blocks(self, scheduler, monkeypatch):
+        monkeypatch.setenv("AURA_WEIGHT_COMPOUNDING", "0")
+        receipt = await scheduler.run_cycle_now(reason="manual")
+        assert receipt["reasons"] == ["disabled_by_env"]
+
+
+class TestRSIWeightUpdateRouting:
+    async def test_fake_learner_keeps_legacy_path(self, monkeypatch):
+        from core.learning.recursive_self_improvement import (
+            RecursiveSelfImprovementLoop,
+        )
+
+        calls = []
+
+        class FakeLearner:
+            def force_train(self):
+                calls.append("force_train")
+                return True
+
+        rsi = RecursiveSelfImprovementLoop(live_learner=FakeLearner())
+        import core.container as container_mod
+
+        monkeypatch.setattr(
+            container_mod.ServiceContainer,
+            "get",
+            classmethod(lambda cls, name, default=None: (_ for _ in ()).throw(
+                AssertionError("container must not be consulted for test doubles")
+            )),
+        )
+        assert await rsi._run_weight_update() is True
+        assert calls == ["force_train"]
+
+    async def test_real_singleton_routes_to_canonical_scheduler(self, monkeypatch):
+        import core.container as container_mod
+        import core.learning.live_learner as live_learner_module
+        from core.learning.recursive_self_improvement import (
+            RecursiveSelfImprovementLoop,
+        )
+
+        class RealLearnerStandIn:
+            def force_train(self):
+                raise AssertionError("legacy path must not run when scheduler exists")
+
+        learner = RealLearnerStandIn()
+        monkeypatch.setattr(live_learner_module, "_learner", learner)
+
+        cycle_calls = []
+
+        class FakeSchedulerService:
+            async def run_cycle_now(self, *, reason):
+                cycle_calls.append(reason)
+                return {"status": "promoted"}
+
+        monkeypatch.setattr(
+            container_mod.ServiceContainer,
+            "get",
+            classmethod(
+                lambda cls, name, default=None: FakeSchedulerService()
+                if name == "weight_compounding" else default
+            ),
+        )
+        rsi = RecursiveSelfImprovementLoop(live_learner=learner)
+        assert await rsi._run_weight_update() is True
+        assert cycle_calls == ["rsi_weight_update"]
+
+
 class TestSpecialistHook:
     async def test_default_off(self, scheduler, monkeypatch):
         monkeypatch.delenv("AURA_DOMAIN_SPECIALISTS", raising=False)

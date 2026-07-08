@@ -549,6 +549,20 @@ class RecursiveSelfImprovementLoop:
         if not self.live_learner or not hasattr(self.live_learner, "force_train"):
             return False
         try:
+            # Consolidation: when wired with the REAL LiveLearner (live
+            # runtime), the weight update routes through the canonical
+            # compounding scheduler — Will-approved, admission-controlled,
+            # sealed-gate, ledger-recorded. The legacy force_train path stays
+            # only for injected test doubles (gauntlet), which validate the
+            # plumbing without real training.
+            if self._is_real_live_learner():
+                from core.container import ServiceContainer
+
+                scheduler = ServiceContainer.get("weight_compounding", default=None)
+                if scheduler is not None and hasattr(scheduler, "run_cycle_now"):
+                    receipt = await scheduler.run_cycle_now(reason="rsi_weight_update")
+                    return receipt.get("status") == "promoted"
+
             result = self.live_learner.force_train()
             if inspect.isawaitable(result):
                 result = await result
@@ -560,6 +574,15 @@ class RecursiveSelfImprovementLoop:
                 action="marked weight update failed and blocked RSI promotion",
             )
             logger.error("Recursive weight update failed: %s", exc)
+            return False
+
+    def _is_real_live_learner(self) -> bool:
+        """True when self.live_learner is the runtime singleton, not a test double."""
+        try:
+            import core.learning.live_learner as live_learner_module
+
+            return live_learner_module._learner is self.live_learner
+        except (ImportError, AttributeError):
             return False
 
     async def _run_code_refinement(self) -> dict[str, Any]:

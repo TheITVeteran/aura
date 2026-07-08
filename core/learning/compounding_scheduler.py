@@ -140,23 +140,49 @@ class CompoundingScheduler:
         ):
             return
 
+        await self._execute_cycle(reason="scheduled_idle")
+        await self._maybe_train_specialist()
+
+    async def run_cycle_now(self, *, reason: str = "manual") -> dict[str, Any]:
+        """On-demand governed cycle — the seam other subsystems call.
+
+        The RSI loop's weight-update action and operator asks land here so
+        every weight mutation goes through ONE path: same Will approval, same
+        admission control inside the loop, same receipts. Bypasses the idle
+        gate and cooldown (the caller decided the moment) but never the
+        single-flight guard.
+        """
+        if self._running_cycle:
+            return {"status": "blocked", "reasons": ["cycle_already_running"]}
+        if not _env_flag("AURA_WEIGHT_COMPOUNDING", True):
+            return {"status": "blocked", "reasons": ["disabled_by_env"]}
+        return await self._execute_cycle(reason=reason)
+
+    async def _execute_cycle(self, *, reason: str) -> dict[str, Any]:
+        """The one governed execution core behind both triggers."""
+        state = self._load_state()
         loop = self._build_loop()
         readiness = loop.data_readiness()
         if not readiness.get("ready"):
-            logger.debug("Compounding data not ready: %s", readiness)
-            return
+            logger.debug("Compounding data not ready (%s): %s", reason, readiness)
+            return {"status": "blocked", "reasons": ["data_not_ready"], "readiness": readiness}
 
-        approved, reason = self._will_approval(
-            {"operation": "weight_compounding_cycle", "readiness": readiness}
+        approved, will_reason = self._will_approval(
+            {"operation": "weight_compounding_cycle", "trigger": reason, "readiness": readiness}
         )
         if not approved:
-            logger.info("Will declined compounding cycle: %s", reason)
-            self._save_state({"last_attempt_at": time.time(), "last_status": f"will_denied:{reason}"})
-            return
+            logger.info("Will declined compounding cycle (%s): %s", reason, will_reason)
+            self._save_state(
+                {"last_attempt_at": time.time(), "last_status": f"will_denied:{will_reason}"}
+            )
+            return {"status": "blocked", "reasons": [f"approval_denied:{will_reason}"]}
 
         self._running_cycle = True
         try:
-            logger.info("🧬 Weight-compounding cycle starting (readiness=%s).", readiness)
+            logger.info(
+                "🧬 Weight-compounding cycle starting (trigger=%s, readiness=%s).",
+                reason, readiness,
+            )
             from core.governance_context import local_internal_governed_scope
 
             with local_internal_governed_scope(
@@ -171,6 +197,7 @@ class CompoundingScheduler:
                     "last_attempt_at": time.time(),
                     "last_status": receipt.status,
                     "last_generation_id": receipt.generation_id,
+                    "last_trigger": reason,
                     "last_promoted_at": (
                         time.time() if receipt.status == "promoted"
                         else state.get("last_promoted_at", 0.0)
@@ -183,7 +210,7 @@ class CompoundingScheduler:
             )
             if receipt.status == "promoted" and receipt.promoted_model_path:
                 await self._activate_live(receipt.promoted_model_path)
-            await self._maybe_train_specialist()
+            return self._last_receipt
         finally:
             self._running_cycle = False
 
