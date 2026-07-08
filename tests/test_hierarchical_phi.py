@@ -450,9 +450,15 @@ def test_process_pool_failure_falls_back_to_threads(monkeypatch):
     assert h.compute(force=True) is not None
 
 
+def _reset_pool_policy(monkeypatch):
+    monkeypatch.setattr(HierarchicalPhi, "_pool_rebuilds", 0)
+    monkeypatch.setattr(HierarchicalPhi, "_pool_demoted", False)
+
+
 def test_broken_pool_mid_cycle_recovers_to_threads(monkeypatch):
     from concurrent.futures import BrokenExecutor
 
+    _reset_pool_policy(monkeypatch)
     h = HierarchicalPhi()
     _prime_with_coupled_history(h, n_steps=400)
     cached = h.compute(force=True)
@@ -472,11 +478,69 @@ def test_broken_pool_mid_cycle_recovers_to_threads(monkeypatch):
     result = h.compute(force=True)
 
     assert result is cached, "cache must serve while the pool is rebuilt"
+    # under pytest process isolation is off → recovery demotes to threads
     assert h._executor_kind == "thread"
     assert len(degradations) == 1
     # The rebuilt executor works on the next cycle.
     h._last_compute_time = 0.0
     assert h.compute(force=True) is not None
+
+
+def test_broken_pool_rebuilds_process_isolation_first(monkeypatch):
+    """The July 8 live storm, prevented: recovery restores process isolation
+    (the thread fallback is GIL-bound and lags the event loop — it is the
+    LAST resort, not the first)."""
+    from concurrent.futures import BrokenExecutor
+
+    _reset_pool_policy(monkeypatch)
+    monkeypatch.setenv("AURA_PHI_PROCESS_ISOLATION", "1")
+    degradations = []
+    monkeypatch.setattr(
+        "core.consciousness.hierarchical_phi.record_degradation",
+        lambda *a, **k: degradations.append((a, k)),
+    )
+    h = HierarchicalPhi()
+    try:
+        assert h._executor_kind == "process"
+        h._recover_broken_executor(BrokenExecutor("child killed"))
+        assert h._executor_kind == "process", "rebuild restores isolation"
+        assert HierarchicalPhi._pool_rebuilds == 1
+        assert degradations == [], "a budgeted rebuild is not an incident"
+    finally:
+        h.shutdown()
+
+
+def test_persistent_pool_breakage_demotes_once_not_a_critical_storm(monkeypatch):
+    from concurrent.futures import BrokenExecutor
+
+    _reset_pool_policy(monkeypatch)
+    monkeypatch.setenv("AURA_PHI_PROCESS_ISOLATION", "1")
+    # exhaust the rebuild budget so the next break demotes
+    monkeypatch.setattr(HierarchicalPhi, "_pool_rebuilds", HierarchicalPhi._POOL_REBUILD_BUDGET)
+    degradations = []
+    monkeypatch.setattr(
+        "core.consciousness.hierarchical_phi.record_degradation",
+        lambda *a, **k: degradations.append((a, k)),
+    )
+    h = HierarchicalPhi()
+    try:
+        h._recover_broken_executor(BrokenExecutor("child killed again"))
+        assert h._executor_kind == "thread"
+        assert HierarchicalPhi._pool_demoted is True
+        assert len(degradations) == 1
+        assert "demoted phi compute" in degradations[0][1].get("action", "")
+
+        # every later break in this process: telemetry, never a new incident
+        h._recover_broken_executor(BrokenExecutor("and again"))
+        h._recover_broken_executor(BrokenExecutor("and again"))
+        assert len(degradations) == 1
+
+        # and no new instance in this process reopens a pool
+        h2 = HierarchicalPhi()
+        assert h2._executor_kind == "thread"
+        h2.shutdown()
+    finally:
+        h.shutdown()
 
 
 # ── Estimator honesty: unmeasurable ≠ factorized ─────────────────────────────

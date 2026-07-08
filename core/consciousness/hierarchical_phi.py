@@ -670,8 +670,20 @@ class HierarchicalPhi:
             return False
         return not bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
+    # Broken-pool recovery policy (live July 8): a pool child died abruptly
+    # and every ~28s cycle after that recorded a fail-closed CRITICAL while
+    # falling back to threads — and the THREAD fallback is itself the lag
+    # source (the partition search is pure-Python/GIL-bound; that is why the
+    # process pool exists). Recovery therefore prefers REBUILDING the process
+    # pool — isolation restored, loop protected — under a process-lifetime
+    # budget; only a persistently-breaking host demotes to threads, once,
+    # with one degradation record instead of a CRITICAL storm.
+    _POOL_REBUILD_BUDGET = 3
+    _pool_rebuilds = 0
+    _pool_demoted = False
+
     def _make_compute_executor(self):
-        if self._process_isolation_enabled():
+        if self._process_isolation_enabled() and not HierarchicalPhi._pool_demoted:
             try:
                 ctx = multiprocessing.get_context("spawn")
                 return (
@@ -689,16 +701,48 @@ class HierarchicalPhi:
 
     def _recover_broken_executor(self, exc: BaseException) -> None:
         """A broken process pool must not take phi telemetry down with it."""
-        record_degradation(
-            "hierarchical_phi",
-            exc if isinstance(exc, Exception) else RuntimeError(str(exc)),
-            severity="warning",
-            action="rebuilt phi compute pool as in-process threads after pool broke",
-        )
         try:
             self._executor.shutdown(wait=False, cancel_futures=True)
         except (RuntimeError, AttributeError, TypeError, ValueError):
             logger.debug("Broken phi executor shutdown failed; continuing.")
+
+        cls = HierarchicalPhi
+        if (
+            self._process_isolation_enabled()
+            and not cls._pool_demoted
+            and cls._pool_rebuilds < cls._POOL_REBUILD_BUDGET
+        ):
+            cls._pool_rebuilds += 1
+            try:
+                ctx = multiprocessing.get_context("spawn")
+                self._executor = ProcessPoolExecutor(max_workers=2, mp_context=ctx)
+                self._executor_kind = "process"
+                logger.info(
+                    "Phi process pool rebuilt after break (%d/%d this process): %s",
+                    cls._pool_rebuilds, cls._POOL_REBUILD_BUDGET, exc,
+                )
+                return
+            except (OSError, ValueError, RuntimeError) as rebuild_exc:
+                logger.warning("Phi process pool rebuild failed: %s", rebuild_exc)
+
+        first_demotion = not cls._pool_demoted
+        cls._pool_demoted = True
+        if first_demotion:
+            record_degradation(
+                "hierarchical_phi",
+                exc if isinstance(exc, Exception) else RuntimeError(str(exc)),
+                severity="warning",
+                action=(
+                    "demoted phi compute to in-process threads after the process pool "
+                    f"broke {cls._pool_rebuilds + 1}x; GIL-bound fallback active for "
+                    "this process lifetime"
+                ),
+            )
+        else:
+            # Persistent, already-recorded condition — a repeat is telemetry,
+            # not a new incident; CRITICAL-per-cycle here is what exhausted
+            # the SLO error budget live.
+            logger.info("Phi pool broke again after demotion to threads: %s", exc)
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="hphi")
         self._executor_kind = "thread"
 
