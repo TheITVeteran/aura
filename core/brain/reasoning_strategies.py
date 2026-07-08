@@ -27,6 +27,16 @@ from core.runtime.errors import FallbackClassification, record_degradation
 
 logger = logging.getLogger("Brain.ReasoningStrategies")
 
+_NEURAL_QUERY_PREVIEW_CHARS = 420
+
+
+def _neural_query_preview(query: str, *, limit: int = _NEURAL_QUERY_PREVIEW_CHARS) -> str:
+    """Bound the visible neural-card preview without hiding that it is a preview."""
+    text = str(query or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}… [preview; full query chars={len(text)}]"
+
 _REASONING_TIMEOUT_S = 120.0
 _REASONING_FAILURE_MESSAGE = (
     "I could not produce a reliable answer because the reasoning backend failed before "
@@ -499,7 +509,20 @@ class ReasoningStrategies:
         if strategy is None:
             strategy = self.classify(query)
 
-        logger.info("🧠 Reasoning strategy: %s for query: %s...", strategy.name, query[:60])
+        logger.info(
+            "🧠 Reasoning strategy: %s for query preview (%d chars): %s",
+            strategy.name,
+            len(query),
+            _neural_query_preview(query),
+            extra={
+                "neural_full_message": (
+                    f"Reasoning strategy: {strategy.name}\n"
+                    f"Full query chars: {len(query)}\n\n{query}"
+                ),
+                "query_chars": len(query),
+                "query_preview": _neural_query_preview(query),
+            },
+        )
 
         # Frontier Discovery — conjecture / number-theory questions ("is n^5 - n
         # divisible by 30?", "for all n …") are answered by EXACT falsification with an

@@ -7763,3 +7763,124 @@ Addendum - long-text chat/neural rendering:
   - `node --check interface/static/aura.js` -> passed.
   - `python -m pytest -q tests/test_runtime_polish.py::test_desktop_chat_and_neural_cards_do_not_clip_long_text tests/test_runtime_polish.py::test_desktop_shell_renders_tool_results_without_inline_html_handlers tests/test_runtime_polish.py::test_desktop_chat_composer_focus_is_not_stolen_by_page_selection`
     -> `3 passed`.
+
+## Checkpoint 2026-07-07-12: Live Runtime Wiring and Launcher Title Pass
+
+Scope:
+
+- Replaced the splash launcher title sequence with a code-native retro-neon
+  Aura lockup:
+  - `AURA` / `LUNA` wordmark
+  - Aura-colored neon sigil in place of the reference astronaut
+  - scanline/glow/flicker styling
+  - responsive desktop, compact, and mobile layouts without overflow
+- Hardened neural-stream long-message handling beyond the earlier UI-only
+  clipping fix:
+  - `Brain.ReasoningStrategies` now emits a bounded preview plus full payload
+    metadata instead of truncating the source thought at log construction time
+  - WebSocket normalization preserves `full_message`
+  - neural card copy/full-toggle paths use the full payload, not the preview
+- Fixed a live boot/runtime alias regression where the legacy `swarm` service
+  pointed at `SwarmProtocol` while older autonomous pathways expected an
+  `AgentDelegator` with `delegate_debate`.
+  - `swarm_protocol` is now registered separately for protocol semantics
+  - legacy `swarm` and the service alias now point at the delegator
+  - startup/shutdown handle protocol and delegator independently
+- Fixed the live `agency_core` fail-closed cascade observed after relaunch:
+  - autonomous shard tool execution now runs inside a narrow
+    `tool_execution` local governed scope
+  - the subprocess gateway remains fail-closed for genuinely ungoverned
+    effects
+  - agency degradation reporting is non-throwing so degradation reporting
+    cannot recursively poison the agency liveness probe
+
+Verification:
+
+- Static checks:
+  - `python -m py_compile core/agency/agency_core.py core/orchestrator/boot.py core/orchestrator/main.py core/orchestrator/handlers/shutdown.py core/orchestrator/services.py core/orchestrator/mixins/boot/boot_resilience.py interface/server.py`
+    -> passed.
+  - `node --check interface/static/aura.js`
+    -> passed.
+- Focused regressions:
+  - `python -m pytest -q tests/test_agency_core_governance.py tests/test_runtime_polish.py::test_splash_title_sequence_uses_aura_neon_lockup tests/test_runtime_polish.py::test_desktop_chat_and_neural_cards_do_not_clip_long_text tests/test_runtime_polish.py::test_programmatic_chat_sends_use_real_submit_path tests/test_enterprise_hardening_fixes.py::test_agent_delegator_not_aliased_to_swarm_protocol`
+    -> `7 passed`.
+- Visual QA:
+  - Desktop splash screenshot: `/tmp/aura_splash_neon_desktop.png`.
+  - Compact splash screenshot: `/tmp/aura_splash_neon_compact.png`.
+  - Mobile splash screenshot: `/tmp/aura_splash_neon_mobile.png`.
+  - Compact/mobile overflow probe reported `overflow: []` after the responsive
+    title-size adjustment.
+
+Live runtime observations before the agency-core fix:
+
+- Relaunch reached desktop access `overall_status=ready`, direct permissions,
+  `desktop_control_ready=true`, `screen_text_ready=true`, and conversation
+  lane ready.
+- A later live attempt degraded because a background shard invoked
+  `python_sandbox` through `tool_orchestrator.repl_daemon` outside a governed
+  context. The subprocess gateway correctly refused it, but the unhandled
+  shard/degradation path marked `agency_core` unhealthy.
+
+Remaining non-soak work after this checkpoint:
+
+- Relaunch Aura after the agency-core fix and confirm no recurrence of:
+  - `SwarmProtocol` missing `delegate_debate`
+  - `subprocess_gateway.spawn_async:tool_execution:tool_orchestrator.repl_daemon called outside governed context`
+  - `agency_core (is_alive() returned False)`
+  - repeating generation-gate saturation caused by agency pressure
+- Fix the visible live UI input path if text still does not land in Aura's chat
+  composer through desktop automation.
+- Continue the visible ChatGPT/Gemini conversation proof, Program DNA proof, RSI
+  proof, immune/RSI live repair proof, and final non-soak runtime proof once the
+  launched desktop path remains stable.
+
+Addendum - post-fix live replay and gate evidence:
+
+- Fixed an avoidable MLX worker boot degradation found during the first replay:
+  the SDKROOT discovery command was a read-only environment probe but used the
+  offline-tooling bypass. It now uses `read_only=True` with a specific source,
+  preserving live-governance enforcement while avoiding false degradation.
+- Focused verification after SDKROOT fix:
+  - `python -m py_compile core/brain/llm/mlx_worker.py core/agency/agency_core.py`
+    -> passed.
+  - `node --check interface/static/aura.js`
+    -> passed.
+  - `python -m pytest -q tests/test_agency_core_governance.py tests/test_enterprise_hardening_fixes.py::test_mlx_worker_sdkroot_probe_uses_read_only_gateway tests/test_enterprise_hardening_fixes.py::test_agent_delegator_not_aliased_to_swarm_protocol tests/test_runtime_polish.py::test_splash_title_sequence_uses_aura_neon_lockup tests/test_runtime_polish.py::test_desktop_chat_and_neural_cards_do_not_clip_long_text tests/test_runtime_polish.py::test_programmatic_chat_sends_use_real_submit_path`
+    -> `8 passed`.
+  - `python -m pytest -q tests/test_expert_adapter_live_seam.py::test_set_expert_adapter_refuses_without_worker`
+    -> `1 passed`.
+- Enterprise/production gates:
+  - Initial `make enterprise-gate` found one static regression in
+    `tests/test_expert_adapter_live_seam.py`: a hardcoded `/tmp/some-adapter`
+    path.
+  - Replaced it with `tmp_path`; reran `make enterprise-gate` -> passed.
+  - `make production-gate` -> passed; `/tmp/aura_production_readiness.json`.
+- Live replay after all fixes:
+  - Relaunched Aura at `2026-07-08T06:41:02Z`.
+  - `/api/health` after warmup:
+    - `status=ok`
+    - `healthy=true`
+    - `proof_readiness_healthy=true`
+    - `certification_ready=true`
+    - `conversation_lane.state=ready`
+    - `conversation_ready=true`
+    - `active_generations=0`
+    - `readiness_blockers=[]`
+  - `/api/system/desktop-access`:
+    - `overall_status=ready`
+    - `desktop_control_ready=true`
+    - `screen_capture_ready=true`
+    - `screen_text_ready=true`
+    - `menu_clock_ready=true`
+    - `permission_confidence=direct`
+    - `blocking_permissions=[]`
+  - Targeted post-launch log scan found no recurrence of:
+    - `delegate_debate`
+    - `outside governed context`
+    - `agency_core`
+    - `generation gate saturated`
+    - `failure envelope`
+    - `SDKROOT`
+    - `offline subprocess tooling bypass`
+    - `SLO ALERT`
+    - `unified_runtime_pressure`

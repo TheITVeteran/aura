@@ -1728,13 +1728,38 @@ def test_runtime_health_contract_services_are_started_before_boot_verdict():
 
 def test_agent_delegator_not_aliased_to_swarm_protocol():
     root = Path(__file__).resolve().parents[1]
-    source = (
+    boot_source = (root / "core" / "orchestrator" / "boot.py").read_text(encoding="utf-8")
+    resilience_source = (
         root / "core" / "orchestrator" / "mixins" / "boot" / "boot_resilience.py"
     ).read_text(encoding="utf-8")
+    services_source = (root / "core" / "orchestrator" / "services.py").read_text(encoding="utf-8")
+    main_source = (root / "core" / "orchestrator" / "main.py").read_text(encoding="utf-8")
+    shutdown_source = (
+        root / "core" / "orchestrator" / "handlers" / "shutdown.py"
+    ).read_text(encoding="utf-8")
 
-    assert 'container.register_instance("agent_delegator", self.swarm)' not in source
-    assert "AgentDelegator(orchestrator=self)" in source
-    assert 'container.register_instance("swarm_protocol", self.swarm)' in source
+    assert 'container.register_instance("agent_delegator", self.swarm)' not in resilience_source
+    assert 'container.register_instance("swarm_protocol", self.swarm)' not in resilience_source
+    assert 'ServiceContainer.register_instance("swarm_protocol", self.swarm)' not in boot_source
+    assert 'ServiceContainer.register_instance("swarm", delegator)' in boot_source
+    assert "self.swarm_protocol = SwarmProtocol()" in boot_source
+    assert "self.swarm = delegator" in boot_source
+    assert "AgentDelegator(orchestrator=self)" in resilience_source
+    assert '"swarm": "agent_delegator"' in services_source
+    assert 'getattr(self, "swarm_protocol", None)' in main_source
+    assert 'getattr(orch, "swarm_protocol", None)' in shutdown_source
+
+
+def test_mlx_worker_sdkroot_probe_uses_read_only_gateway():
+    root = Path(__file__).resolve().parents[1]
+    worker_source = (root / "core" / "brain" / "llm" / "mlx_worker.py").read_text(encoding="utf-8")
+    probe_start = worker_source.index('["xcrun", "--show-sdk-path"]')
+    probe_end = worker_source.index("sdk_path = (proc.stdout", probe_start)
+    sdkroot_slice = worker_source[probe_start:probe_end]
+
+    assert "read_only=True" in sdkroot_slice
+    assert "offline_tooling=True" not in sdkroot_slice
+    assert "maintenance_tooling:mlx_worker_env" not in sdkroot_slice
 
 
 def test_dnu_runner_uses_live_message_path_for_full_aura_tasks():

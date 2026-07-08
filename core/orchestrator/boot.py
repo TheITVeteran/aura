@@ -901,8 +901,18 @@ class OrchestratorBootMixin(
                 self.hotfix_engine = HotfixEngine(self)
                 ServiceContainer.register_instance("hotfix_engine", self.hotfix_engine)
 
-                self.swarm = SwarmProtocol()
-                ServiceContainer.register_instance("swarm_protocol", self.swarm)
+                from core.collective.delegator import AgentDelegator
+
+                self.swarm_protocol = SwarmProtocol()
+                ServiceContainer.register_instance("swarm_protocol", self.swarm_protocol)
+
+                delegator = ServiceContainer.get("agent_delegator", default=None)
+                if delegator is None or not hasattr(delegator, "delegate_debate"):
+                    delegator = AgentDelegator(orchestrator=self)
+                    ServiceContainer.register_instance("agent_delegator", delegator)
+                self.agent_delegator = delegator
+                self.swarm = delegator
+                ServiceContainer.register_instance("swarm", delegator)
                 # The Mycelium is the sole owner of mapping scheduling.
                 # Foreground policy defers the repo-wide AST scan and setup()
                 # is idempotent when another caller already requested it.

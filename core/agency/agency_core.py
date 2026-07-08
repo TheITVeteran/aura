@@ -65,7 +65,14 @@ def _record_agency_degradation(
     action: str = "agency operation degraded and isolated",
     severity: str = "degraded",
 ) -> None:
-    record_degradation(_AGENCY_SUBSYSTEM, error, severity=severity, action=action)
+    try:
+        record_degradation(_AGENCY_SUBSYSTEM, error, severity=severity, action=action)
+    except _AGENCY_BOUNDARY_ERRORS as report_error:
+        logger.error(
+            "Agency degradation reporter failed while recording '%s': %s",
+            action,
+            report_error,
+        )
 
 
 def _close_if_possible(awaitable: Any) -> None:
@@ -347,9 +354,21 @@ class SovereignSwarm:
                 owner_core._last_tool_routing_error = str(error)
             raise error
         try:
-            result = orchestrator.route_and_execute(name, payload)
-            if inspect.isawaitable(result):
-                result = await result
+            from core.governance_context import local_internal_governed_scope
+
+            with local_internal_governed_scope(
+                "agency.sovereign_swarm.shard_tool",
+                domain="tool_execution",
+                constraints={
+                    "tool_name": str(name),
+                    "autonomous_background": True,
+                    "requires_sandbox": str(name) == "python_sandbox",
+                    "source": "SovereignSwarm",
+                },
+            ):
+                result = orchestrator.route_and_execute(name, payload)
+                if inspect.isawaitable(result):
+                    result = await result
             if owner_core is not None:
                 owner_core._last_tool_routing_error = None
             return result

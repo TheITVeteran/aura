@@ -737,8 +737,9 @@ class RobustOrchestrator(
                 await asyncio.wait_for(self.belief_sync.start(), timeout=15.0)
             if hasattr(self, "attention_summarizer") and self.attention_summarizer:
                 await asyncio.wait_for(self.attention_summarizer.start(), timeout=15.0)
-            if hasattr(self, "swarm") and self.swarm:
-                await asyncio.wait_for(self.swarm.start(), timeout=15.0)
+            swarm_protocol = getattr(self, "swarm_protocol", None)
+            if swarm_protocol and hasattr(swarm_protocol, "start"):
+                await asyncio.wait_for(swarm_protocol.start(), timeout=15.0)
             try:
                 delegator = ServiceContainer.get("agent_delegator", default=None)
                 if delegator and hasattr(delegator, "start"):

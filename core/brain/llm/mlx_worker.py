@@ -1700,8 +1700,8 @@ def _setup_worker_env():
             proc = get_subprocess_gateway().run(
                 ["xcrun", "--show-sdk-path"],
                 timeout=2.0,
-                source="maintenance_tooling:mlx_worker_env",
-                offline_tooling=True,
+                source="mlx_worker_env.sdkroot_probe",
+                read_only=True,
             )
             sdk_path = (proc.stdout or "").strip()
             if proc.returncode != 0 or not sdk_path:

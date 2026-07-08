@@ -366,25 +366,26 @@ async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:
         if sensory.is_alive():
             sensory.kill()
 
-    if hasattr(orch, "swarm") and orch.swarm:
+    swarm_protocol = getattr(orch, "swarm_protocol", None)
+    if swarm_protocol and hasattr(swarm_protocol, "stop"):
         try:
-            await asyncio.wait_for(orch.swarm.stop(), timeout=5.0)
+            await asyncio.wait_for(swarm_protocol.stop(), timeout=5.0)
         except TimeoutError as _exc:
             _record_shutdown_degradation(
                 _exc,
-                action="continued shutdown after swarm stop timed out",
+                action="continued shutdown after swarm protocol stop timed out",
             )
             logger.debug("Suppressed asyncio.TimeoutError: %s", _exc)
         except (RuntimeError, asyncio.CancelledError, AttributeError) as exc:
             _record_shutdown_degradation(
                 exc,
-                action="continued shutdown after swarm stop failed",
+                action="continued shutdown after swarm protocol stop failed",
             )
-            logger.debug("Swarm stop error: %s", exc)
+            logger.debug("Swarm protocol stop error: %s", exc)
 
     try:
         from core.container import ServiceContainer
-        delegator = ServiceContainer.get("agent_delegator", default=None)
+        delegator = ServiceContainer.get("agent_delegator", default=None) or getattr(orch, "swarm", None)
         if delegator and hasattr(delegator, "stop"):
             await asyncio.wait_for(delegator.stop(), timeout=5.0)
     except (ImportError, AttributeError, RuntimeError, TimeoutError) as exc:

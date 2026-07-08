@@ -2526,12 +2526,14 @@ function normalizeThoughtTimestamp(rawTimestamp) {
 function normalizeThoughtEvent(data) {
     if (!data || typeof data !== 'object') return null;
     const message = String(data.message || data.content || '').trim();
+    const fullMessage = String(data.full_message || data.fullMessage || '').trim();
     if (!message || message.toLowerCase() === 'status') return null;
     return {
         ...data,
         name: String(data.name || data.module || 'SYS'),
         level: String(data.level || '').toLowerCase(),
         message,
+        fullMessage: fullMessage || message,
         timestamp: normalizeThoughtTimestamp(data.timestamp),
     };
 }
@@ -2550,7 +2552,7 @@ function buildThoughtFingerprint(data) {
     return [
         String(data.name || 'SYS').toLowerCase(),
         String(data.level || '').toLowerCase(),
-        normalizeThoughtText(data.message || data.content || ''),
+        normalizeThoughtText(data.fullMessage || data.message || data.content || ''),
     ].join('|');
 }
 
@@ -2569,6 +2571,7 @@ function coalesceThoughtQueueItem(item) {
         existing.lastSeenAt = item.timestamp;
         existing.timestamp = item.timestamp;
         existing.message = item.message;
+        existing.fullMessage = item.fullMessage || item.message;
         return true;
     }
     return false;
@@ -2587,7 +2590,8 @@ function saveImageToDevice(url) {
     const input = $('chat-input');
     if (input) {
         input.value = msg;
-        $('chat-form').dispatchEvent(new Event('submit'));
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        $('chat-form')?.requestSubmit();
     }
 }
 
@@ -2712,17 +2716,23 @@ function addThoughtCard(data) {
     const ts = formatEventTimestamp(data.timestamp);
     const name = data.name || 'SYS';
     const msg = sanitizeThoughtMessage(data.message || data.content || JSON.stringify(data));
+    const fullMsg = sanitizeThoughtMessage(data.fullMessage || data.full_message || msg);
     const repeatCount = Math.max(1, Number(data.repeatCount || 1));
     const preview = thoughtPreviewText(msg);
-    const longThought = preview.clipped;
+    const hasHiddenFullPayload = fullMsg !== msg;
+    const longThought = preview.clipped || hasHiddenFullPayload;
     if (longThought) cls += ' long';
     card.className = cls;
     const safeName = escHtml(name);
-    const safePreview = escHtml(preview.text).replace(/\n/g, '<br>');
-    const safeFull = escHtml(msg).replace(/\n/g, '<br>');
+    const previewText = hasHiddenFullPayload && !preview.clipped
+        ? `${preview.text}\n\n[preview card; open FULL or COPY for the complete payload]`
+        : preview.text;
+    const safePreview = escHtml(previewText).replace(/\n/g, '<br>');
+    const safeFull = escHtml(fullMsg).replace(/\n/g, '<br>');
     const repeatBadge = repeatCount > 1 ? `<span class="thought-repeat">x${repeatCount}</span>` : '';
-    card.dataset.copyText = repeatCount > 1 ? `[${ts}] ${name} (x${repeatCount})\n${msg}` : `[${ts}] ${name}\n${msg}`;
-    card.dataset.fullLength = String(msg.length);
+    card.dataset.copyText = repeatCount > 1 ? `[${ts}] ${name} (x${repeatCount})\n${fullMsg}` : `[${ts}] ${name}\n${fullMsg}`;
+    card.dataset.fullLength = String(fullMsg.length);
+    if (hasHiddenFullPayload) card.dataset.previewOnly = 'true';
     const expandButton = longThought
         ? `<button class="thought-expand-btn" type="button" onclick="toggleThoughtCardFull(this)" aria-expanded="false">FULL</button>`
         : '';

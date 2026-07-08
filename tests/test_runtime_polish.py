@@ -839,13 +839,20 @@ def test_desktop_chat_composer_focus_is_not_stolen_by_page_selection():
 def test_desktop_chat_and_neural_cards_do_not_clip_long_text():
     aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
     aura_css = (PROJECT_ROOT / "interface" / "static" / "aura.css").read_text(encoding="utf-8")
+    server_py = (PROJECT_ROOT / "interface" / "server.py").read_text(encoding="utf-8")
+    reasoning_py = (PROJECT_ROOT / "core" / "brain" / "reasoning_strategies.py").read_text(encoding="utf-8")
 
     assert "function thoughtPreviewText" in aura_js
     assert "card.dataset.copyText" in aura_js
-    assert "card.dataset.fullLength = String(msg.length)" in aura_js
+    assert "card.dataset.fullLength = String(fullMsg.length)" in aura_js
+    assert "fullMessage: fullMessage || message" in aura_js
+    assert "card.dataset.previewOnly = 'true'" in aura_js
     assert "toggleThoughtCardFull(this)" in aura_js
     assert "window.toggleThoughtCardFull = toggleThoughtCardFull" in aura_js
     assert '<div class="msg-content">${h}</div>' in aura_js
+    assert "neural_full_message" in server_py
+    assert "_neural_query_preview(query)" in reasoning_py
+    assert "query[:60]" not in reasoning_py
 
     assert ".thought-card.long:not(.expanded) .thought-preview" in aura_css
     assert ".thought-full[hidden]," in aura_css
@@ -855,6 +862,39 @@ def test_desktop_chat_and_neural_cards_do_not_clip_long_text():
     assert ".msg {\n    flex: 0 0 auto;\n    height: auto;\n    max-height: none;\n    overflow: visible;\n}" in aura_css
     assert ".msg-content {\n    min-width: 0;\n    max-width: min(76ch, 100%);" in aura_css
     assert ".thought-card {\n    height: auto;\n    max-height: none;\n    overflow: visible;\n}" in aura_css
+
+
+def test_programmatic_chat_sends_use_real_submit_path():
+    aura_js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+
+    save_image_block = aura_js[aura_js.index("function saveImageToDevice"):aura_js.index("async function processThoughtQueue")]
+    assert "requestSubmit()" in save_image_block
+    assert "dispatchEvent(new Event('submit')" not in save_image_block
+    assert "input.dispatchEvent(new Event('input', { bubbles: true }))" in save_image_block
+
+
+def test_splash_title_sequence_uses_aura_neon_lockup():
+    index_html = (PROJECT_ROOT / "interface" / "static" / "index.html").read_text(encoding="utf-8")
+    aura_css = (PROJECT_ROOT / "interface" / "static" / "aura.css").read_text(encoding="utf-8")
+
+    assert 'class="splash-title-lockup"' in index_html
+    assert 'class="splash-logo-word splash-logo-left"' in index_html
+    assert 'class="splash-logo-word splash-logo-right"' in index_html
+    assert 'class="splash-sigil"' in index_html
+    assert 'class="splash-sigil-orbit orbit-a"' in index_html
+    assert 'class="splash-sigil-orbit orbit-b"' in index_html
+    assert 'class="splash-sigil-orbit orbit-c"' in index_html
+    assert 'aria-label="Aura Luna"' in index_html
+
+    assert "Retro Neon Title Sequence" in aura_css
+    assert ".splash-screen::before" in aura_css
+    assert "repeating-linear-gradient" in aura_css
+    assert ".splash-title-lockup" in aura_css
+    assert ".splash-logo-word" in aura_css
+    assert ".splash-sigil-orbit" in aura_css
+    assert "@keyframes neonTitleFlicker" in aura_css
+    assert "@keyframes sigilOrbitA" in aura_css
+    assert "@media (max-width: 720px)" in aura_css
 
 
 def test_desktop_access_panel_bounds_raw_permission_status_labels():

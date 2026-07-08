@@ -117,8 +117,8 @@ def client():
     c.close()
 
 
-async def test_set_expert_adapter_refuses_without_worker(client):
-    res = await client.set_expert_adapter("/tmp/some-adapter")
+async def test_set_expert_adapter_refuses_without_worker(client, tmp_path):
+    res = await client.set_expert_adapter(str(tmp_path / "some-adapter"))
     assert res == {"ok": False, "reason": "worker_not_ready"}
 
 

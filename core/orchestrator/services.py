@@ -425,7 +425,7 @@ class OrchestratorServicesMixin:
             "moral_reasoning": "moral_reasoning",
             "homeostasis": "homeostasis",
             # External/Swarm
-            "swarm": "swarm_protocol",
+            "swarm": "agent_delegator",
             "agent_delegator": "agent_delegator",
             "delegator": "agent_delegator",
             "web_search": "web_search",

@@ -883,16 +883,28 @@ class BootResilienceMixin:
 
         container.register_instance("health_monitor", self.health_monitor)
 
-        if hasattr(self, "swarm"):
-            container.register_instance("swarm_protocol", self.swarm)
-            container.register_instance("swarm", self.swarm)  # Legacy alias
-            delegator = container.get("agent_delegator", default=None)
-            if delegator is None or delegator is self.swarm:
+        protocol = getattr(self, "swarm_protocol", None)
+        if protocol is not None:
+            container.register_instance("swarm_protocol", protocol)
+
+        delegator = getattr(self, "agent_delegator", None)
+        if delegator is None:
+            candidate = getattr(self, "swarm", None)
+            if candidate is not None and hasattr(candidate, "delegate_debate"):
+                delegator = candidate
+
+        if delegator is not None or protocol is not None:
+            registered = container.get("agent_delegator", default=None)
+            if registered is not None and hasattr(registered, "delegate_debate"):
+                delegator = registered
+            if delegator is None or not hasattr(delegator, "delegate_debate"):
                 from core.collective.delegator import AgentDelegator
 
                 delegator = AgentDelegator(orchestrator=self)
                 container.register_instance("agent_delegator", delegator)
             self.agent_delegator = delegator
+            self.swarm = delegator
+            container.register_instance("swarm", delegator)  # Legacy alias for debate delegation.
 
         if getattr(self, "vector_memory", None):
             container.register_instance("vector_memory", self.vector_memory)

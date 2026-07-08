@@ -207,6 +207,12 @@ class _QueueHandler(logging.Handler):
                 "timestamp": record.created,
                 "module": record.name
             }
+            full_message = getattr(record, "neural_full_message", None)
+            if isinstance(full_message, str) and full_message.strip():
+                log_entry["full_message"] = full_message
+            query_chars = getattr(record, "query_chars", None)
+            if isinstance(query_chars, int):
+                log_entry["query_chars"] = query_chars
 
             queue_was_full = len(log_queue) >= log_queue.maxlen
             dropped_entry = log_queue[0] if queue_was_full and log_queue else None
