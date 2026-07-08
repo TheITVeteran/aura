@@ -194,7 +194,14 @@ class SelfPlayFlywheel:
                 break
 
         state["seed_cursor"] = int(state.get("seed_cursor", 0)) + 1
-        state["bursts"] = int(state.get("bursts", 0)) + 1
+        # A burst that yielded before any attempt (machine stayed busy) is a
+        # correct yield, not practice — count it separately so `bursts` stays
+        # an honest count of real practice windows and the correct-rate isn't
+        # diluted by no-ops.
+        if burst_stats["attempts"]:
+            state["bursts"] = int(state.get("bursts", 0)) + 1
+        else:
+            state["yielded_bursts"] = int(state.get("yielded_bursts", 0)) + 1
         state["total_attempts"] = int(state.get("total_attempts", 0)) + burst_stats["attempts"]
         state["total_correct"] = int(state.get("total_correct", 0)) + burst_stats["correct"]
         state["total_pairs"] = int(state.get("total_pairs", 0)) + burst_stats["pairs"]
@@ -274,6 +281,7 @@ class SelfPlayFlywheel:
             "service": SERVICE_NAME,
             "active": self._active,
             "bursts": state.get("bursts", 0),
+            "yielded_bursts": state.get("yielded_bursts", 0),
             "total_attempts": state.get("total_attempts", 0),
             "total_correct": state.get("total_correct", 0),
             "total_pairs": state.get("total_pairs", 0),

@@ -133,6 +133,13 @@ class CompoundingConfig:
     publish: bool = True
     fuse_timeout_s: int = 3600
     keep_fused: int = 3                   # prune loop-created fused artifacts beyond this
+    # Fuse dequantizes the base to fp16 and merges — transient peak is well
+    # above the on-disk size, and it runs BESIDE the resident serving model.
+    # Live Jul 8: a gated 32B candidate OOM-killed its fuse (empty stderr,
+    # SIGKILL) beside the live 32B. Admit the fuse against real free RAM;
+    # defer (keep the adapter) instead of crashing when it won't fit.
+    fuse_peak_factor: float = 2.5
+    fuse_min_slack_bytes: int = 3 * 1024**3
 
     @property
     def ledger_path(self) -> Path:
@@ -617,6 +624,30 @@ class WeightCompoundingLoop:
 
     # ── 6. publish ───────────────────────────────────────────────────────────
 
+    def _fuse_memory_admits(self, base_model: str) -> tuple[bool, str]:
+        """True if a fuse of ``base_model`` can run without OOM right now.
+
+        Operator runs bypass this (the operator chose the moment). Autonomous
+        runs check live free RAM against the fuse's transient peak so a gated
+        adapter is deferred, not crashed, when the machine is busy serving.
+        """
+        if self.config.operator_run:
+            return True, "operator_run"
+        model_dir = _resolve_model_dir(base_model)
+        base_bytes = _dir_weight_bytes(model_dir) if model_dir is not None else 0
+        if base_bytes == 0:
+            return True, "unknown_footprint"  # can't size it; don't block on ignorance
+        try:
+            import psutil
+
+            available = psutil.virtual_memory().available
+        except (ImportError, AttributeError, OSError):
+            return True, "ram_probe_unavailable"
+        needed = int(base_bytes * self.config.fuse_peak_factor) + self.config.fuse_min_slack_bytes
+        if available < needed:
+            return False, f"available={available >> 30}GB<peak≈{needed >> 30}GB"
+        return True, f"available={available >> 30}GB>=peak≈{needed >> 30}GB"
+
     def fuse_and_publish(
         self,
         base_model: str,
@@ -627,6 +658,17 @@ class WeightCompoundingLoop:
         cfg = self.config
         fused_path = cfg.fused_root / f"Aura-compound-{generation_id}"
         fused_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Pre-fuse memory admission. Fusing dequantizes the base to fp16 and
+        # merges the adapter — a transient peak far above the on-disk size,
+        # running beside the resident serving model. Rather than OOM-kill the
+        # subprocess (SIGKILL leaves NO stderr — the Jul 8 "fuse_failed:"
+        # mystery), defer: the trained+gated adapter is preserved for a later
+        # window (or operator fuse). A deferral is not a failure.
+        fits, admit_reason = self._fuse_memory_admits(base_model)
+        if not fits:
+            return "", [f"fuse_deferred_memory:{admit_reason}"]
+
         command = (
             sys.executable, "-m", "mlx_lm", "fuse",
             "--model", base_model,
@@ -635,7 +677,24 @@ class WeightCompoundingLoop:
         )
         result = self._run_command(command, float(cfg.fuse_timeout_s))
         if not getattr(result, "ok", False) or not fused_path.exists():
-            return "", [f"fuse_failed:{(getattr(result, 'stderr', '') or '')[-400:]}"]
+            # Never a blind "fuse_failed:". SIGKILL (OOM) shows as a negative
+            # returncode with empty stderr; a timeout sets timed_out; capture
+            # all three so the receipt is diagnosable.
+            rc = getattr(result, "returncode", None)
+            timed_out = bool(getattr(result, "timed_out", False))
+            stderr_tail = (getattr(result, "stderr", "") or "")[-300:]
+            stdout_tail = (getattr(result, "stdout", "") or "")[-150:]
+            if timed_out:
+                detail = f"timeout_after_{cfg.fuse_timeout_s}s"
+            elif isinstance(rc, int) and rc < 0:
+                detail = f"killed_signal_{-rc}(likely_oom)"
+            elif stderr_tail:
+                detail = stderr_tail
+            elif not fused_path.exists():
+                detail = f"no_output rc={rc} stdout={stdout_tail!r}"
+            else:
+                detail = f"rc={rc}"
+            return "", [f"fuse_failed:{detail}"]
 
         manifest = {
             "active_model_path": str(fused_path),
@@ -821,6 +880,12 @@ class WeightCompoundingLoop:
                 )
                 if publish_errors:
                     receipt.reasons.extend(publish_errors)
+                    # A memory deferral is not a failure: the adapter is
+                    # trained, gated, and preserved on disk for a later window
+                    # or an operator fuse. Distinguish it so the scheduler's
+                    # cooldown and the lineage read it honestly.
+                    if any(e.startswith("fuse_deferred_memory") for e in publish_errors):
+                        receipt.status = "deferred"
                     record(promoted=False)
                     return receipt
             receipt.promoted_model_path = promoted_path

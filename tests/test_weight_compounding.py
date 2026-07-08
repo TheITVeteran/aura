@@ -91,6 +91,8 @@ class FakeResult:
     ok: bool = True
     stdout: str = ""
     stderr: str = ""
+    returncode: int = 0
+    timed_out: bool = False
 
 
 class FakeRunner:
@@ -134,6 +136,9 @@ class FakeRunner:
         return FakeResult(stdout="train ok")
 
     def _run_fuse(self, argv) -> FakeResult:
+        override = getattr(self, "_fuse_override", None)
+        if override is not None:
+            return override
         if self.fail_fuse:
             return FakeResult(ok=False, stderr="fuse blew up")
         save = Path(self._arg(argv, "--save-path"))
@@ -535,6 +540,44 @@ class TestCycle:
         assert receipt.status == "failed"
         assert any("fuse_failed" in r for r in receipt.reasons)
         assert not (make_config(tmp_path, base_model_dir, sft_buffer).manifest_path).exists()
+
+    def test_fuse_failure_detail_names_oom_signal(self, tmp_path, base_model_dir, sft_buffer):
+        """A SIGKILL (OOM) fuse leaves empty stderr — the receipt must still say why."""
+        runner = FakeRunner(PROMOTE_SCRIPT)
+        runner._fuse_override = FakeResult(ok=False, stderr="", stdout="", returncode=-9)
+        loop = WeightCompoundingLoop(
+            make_config(tmp_path, base_model_dir, sft_buffer, operator_run=True),
+            command_runner=runner,
+        )
+        receipt = loop.run_cycle()
+        assert receipt.status == "failed"
+        assert any("killed_signal_9(likely_oom)" in r for r in receipt.reasons)
+
+    def test_fuse_deferred_when_memory_insufficient(self, tmp_path, base_model_dir, sft_buffer):
+        loop = WeightCompoundingLoop(
+            make_config(
+                tmp_path, base_model_dir, sft_buffer,
+                fuse_peak_factor=1e12,      # force the peak past any real RAM
+                fuse_min_slack_bytes=0,
+            ),
+            command_runner=FakeRunner(PROMOTE_SCRIPT),
+        )
+        receipt = loop.run_cycle()
+        assert receipt.status == "deferred"       # NOT failed — adapter preserved
+        assert any("fuse_deferred_memory" in r for r in receipt.reasons)
+        assert (receipt.run_dir and Path(receipt.run_dir, "adapter").exists())
+        assert not loop.config.manifest_path.exists()
+
+    def test_operator_run_bypasses_fuse_memory_admission(self, tmp_path, base_model_dir, sft_buffer):
+        loop = WeightCompoundingLoop(
+            make_config(
+                tmp_path, base_model_dir, sft_buffer,
+                operator_run=True, fuse_peak_factor=1e12,
+            ),
+            command_runner=FakeRunner(PROMOTE_SCRIPT),
+        )
+        receipt = loop.run_cycle()
+        assert receipt.status == "promoted"       # operator chose the moment
 
     def test_approval_denial_blocks_before_anything(self, tmp_path, base_model_dir, sft_buffer):
         runner = FakeRunner(PROMOTE_SCRIPT)
