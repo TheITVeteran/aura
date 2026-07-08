@@ -79,3 +79,33 @@ def test_think_preserves_desktop_cognitive_engine_contract() -> None:
         assert captured["context"]["desktop_cognitive_engine_required"] is True
 
     asyncio.run(run())
+
+
+# ── Foreground warmup admission control (doom-loop breaker) ───────────────
+
+
+def _bare_gate() -> InferenceGate:
+    return InferenceGate.__new__(InferenceGate)
+
+
+def test_cold_boot_warmup_keeps_the_generous_budget():
+    """First-ever load: the user expects the one-time ~150s cold load."""
+    gate = _bare_gate()
+    assert gate._foreground_warmup_timeout({"last_ready_at": 0.0}, 206.0) == 206.0
+    assert gate._foreground_warmup_timeout({}, 90.0) == 180.0  # floor at 180
+
+
+def test_recovery_warmup_is_capped_short():
+    """Cortex was ready and died (stall-kill): the turn must not wait 180s —
+    observed live (Jul 7 soak) as every turn crawling to 200s+ during a single
+    warm window. Short cap → fallback answers now, shielded warmup finishes
+    in the background for the next turn."""
+    gate = _bare_gate()
+    capped = gate._foreground_warmup_timeout({"last_ready_at": 1783435462.4}, 206.0)
+    assert capped == 15.0
+
+
+def test_recovery_warmup_cap_is_operator_tunable(monkeypatch):
+    monkeypatch.setenv("AURA_FOREGROUND_RECOVERY_WARMUP_CAP_S", "180")
+    gate = _bare_gate()
+    assert gate._foreground_warmup_timeout({"last_ready_at": 5.0}, 90.0) == 180.0

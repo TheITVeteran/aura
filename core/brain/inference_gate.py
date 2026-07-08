@@ -1718,6 +1718,33 @@ class InferenceGate:
             )
         )
 
+    def _foreground_warmup_timeout(
+        self, lane_status: dict[str, Any], primary_timeout: float
+    ) -> float:
+        """Admission control for the foreground preflight — break the doom loop.
+
+        A COLD first boot legitimately needs ~150s to load the 32B, and the
+        user expects that one-time wait. But a RECOVERY (Cortex was ready, got
+        force-killed on a first-token stall, is reloading) must NOT hold every
+        foreground turn hostage for 90-180s — observed live (Jul 7 soak):
+        turns 21-30 crawled to 200s+ while a single warm window played out.
+
+        When the lane was EVER ready (``last_ready_at`` > 0), cap the wait
+        short (floored to 15s by ensure_foreground_ready — one honest warm
+        chance) and let the turn fall to the ready fallback tier; the warmup
+        task is shielded, so Cortex keeps warming in the background and the
+        NEXT turn gets it. AURA_FOREGROUND_RECOVERY_WARMUP_CAP_S=180 restores
+        the old behavior if this ever needs reverting live.
+        """
+        was_ever_ready = float(lane_status.get("last_ready_at", 0.0) or 0.0) > 0.0
+        if was_ever_ready:
+            return InferenceGate._env_float(
+                "AURA_FOREGROUND_RECOVERY_WARMUP_CAP_S", 15.0
+            )
+        # [STABILITY v56] Cold 32B load can take 150s; give it at least 180s
+        # or the primary timeout, whichever is greater.
+        return max(180.0, float(primary_timeout))
+
     async def ensure_foreground_ready(self, timeout: float | None = None) -> dict[str, Any]:  # noqa: ASYNC109
         """Ensure the 32B conversation lane has actually attempted warmup for this turn."""
         timeout = max(15.0, float(timeout or 90.0))
@@ -6414,11 +6441,24 @@ class InferenceGate:
                                 blocker_text,
                             )
                             try:
-                                # [STABILITY v56] The 32B model can take 150s to cold load.
-                                # Don't artificially cap warmup at 90s. Give it at least 180s
-                                # or the primary timeout, whichever is greater.
+                                # Admission control — break the cortex doom-loop.
+                                # A COLD first boot legitimately needs ~150s to
+                                # load the 32B and the user expects that one-time
+                                # wait. But a RECOVERY (Cortex was ready, got
+                                # force-killed on a first-token stall, is now
+                                # reloading) must NOT block every foreground turn
+                                # for 90-180s — that is the observed doom loop
+                                # (soak Jul 7: turns 21-30 crawled to 200s+ while
+                                # the warm window played out, memory thrashed).
+                                # When the lane was EVER ready, cap the preflight
+                                # wait short and let this turn fall to the ready
+                                # tier while Cortex warms in the background for the
+                                # next turn.
+                                warmup_timeout = self._foreground_warmup_timeout(
+                                    lane_status, primary_timeout
+                                )
                                 lane_status = await self.ensure_foreground_ready(
-                                    timeout=max(180.0, primary_timeout)
+                                    timeout=warmup_timeout
                                 )
                             except (
                                 TimeoutError,
