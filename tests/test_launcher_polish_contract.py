@@ -430,7 +430,9 @@ def test_packaged_launcher_rejects_explicitly_stale_locked_runtime():
     assert 'checks["running"]' in swift
     assert "important:mind_tick" in swift
     assert "contract/important:mind_tick" in swift
-    assert "replacing the stale runtime instead of preserving a zombie session" in swift
+    # zombie handling evolved: the launcher now names the dead-mind-tick +
+    # no-live-lane verdict explicitly before replacing the session
+    assert "replacing the zombie session" in swift
     assert "important:event_loop_monitor" in swift
     assert "only an" in swift and "explicit boot contract failure" in swift
 

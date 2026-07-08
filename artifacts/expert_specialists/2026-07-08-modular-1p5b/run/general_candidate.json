@@ -1,0 +1,133 @@
+{
+  "accuracy": 0.5625,
+  "adapter_path": "/private/tmp/claude-501/-Users-bryan--aura-live-source/4dbdc166-a0fb-4974-aa16-a83a13e33376/scratchpad/specialist-proof-modular/specialists/modular-1783521611/adapter",
+  "battery": {
+    "battery_id": "heldout-v1-seed1500-n16",
+    "domains": [
+      "arithmetic_chain",
+      "date_arithmetic",
+      "linear_equation",
+      "modular",
+      "program_output",
+      "sequence",
+      "string_transform",
+      "unit_conversion"
+    ],
+    "seed": 1500,
+    "set_hash": "0a48438d393b8e135164589bfb19376f1825febeab8446d412d8548514ffa836",
+    "size": 16,
+    "task_ids": [
+      "e9b8ee0f88b8",
+      "f087b082a595",
+      "b10d6b41357d",
+      "5dcf608cd1c5",
+      "6b62c52787b6",
+      "d41441ec4895",
+      "9668b195631f",
+      "97c77254517f",
+      "cce15a657eb2",
+      "d927b7e443cc",
+      "c04313edaf4b",
+      "de1f9dc0da0a",
+      "86b0d8acee32",
+      "cd82f7ecb97a",
+      "ad2fd274d105",
+      "d0377334c8d8"
+    ],
+    "version": 1
+  },
+  "created_at": 1783521841.197129,
+  "max_tokens": 256,
+  "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+  "responses_sha256": "2c3ad2e9709863e0c32a54166cbd40830c71435403c3d327810967bb36decdd5",
+  "result": {
+    "accuracy": 0.5625,
+    "battery_id": "heldout-v1-seed1500-n16",
+    "correct": 9,
+    "failures": [
+      {
+        "domain": "program_output",
+        "expected": "80",
+        "extracted": "49",
+        "task_id": "d41441ec4895"
+      },
+      {
+        "domain": "date_arithmetic",
+        "expected": "saturday",
+        "extracted": "monday",
+        "task_id": "9668b195631f"
+      },
+      {
+        "domain": "unit_conversion",
+        "expected": "43000",
+        "extracted": "43",
+        "task_id": "97c77254517f"
+      },
+      {
+        "domain": "modular",
+        "expected": "27",
+        "extracted": "33",
+        "task_id": "c04313edaf4b"
+      },
+      {
+        "domain": "string_transform",
+        "expected": "ztrauq",
+        "extracted": "quartz",
+        "task_id": "86b0d8acee32"
+      },
+      {
+        "domain": "program_output",
+        "expected": "43",
+        "extracted": "100",
+        "task_id": "cd82f7ecb97a"
+      },
+      {
+        "domain": "date_arithmetic",
+        "expected": "wednesday",
+        "extracted": "thursday",
+        "task_id": "ad2fd274d105"
+      }
+    ],
+    "per_domain": {
+      "arithmetic_chain": {
+        "correct": 2,
+        "total": 2
+      },
+      "date_arithmetic": {
+        "correct": 0,
+        "total": 2
+      },
+      "linear_equation": {
+        "correct": 2,
+        "total": 2
+      },
+      "modular": {
+        "correct": 1,
+        "total": 2
+      },
+      "program_output": {
+        "correct": 0,
+        "total": 2
+      },
+      "sequence": {
+        "correct": 2,
+        "total": 2
+      },
+      "string_transform": {
+        "correct": 1,
+        "total": 2
+      },
+      "unit_conversion": {
+        "correct": 1,
+        "total": 2
+      }
+    },
+    "total": 16
+  },
+  "schema_version": 1,
+  "timing": {
+    "generate_s": 35.35,
+    "load_s": 0.62
+  },
+  "tool": "heldout_eval"
+}

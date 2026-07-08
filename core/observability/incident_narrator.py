@@ -91,8 +91,30 @@ class Episode:
 class IncidentNarrator:
     """Deterministic incident synthesis over Aura's own forensics."""
 
-    def __init__(self, error_log_root: Path | None = None) -> None:
-        self._error_log_root = Path(error_log_root) if error_log_root else Path("data/error_logs")
+    def __init__(
+        self,
+        error_log_root: Path | None = None,
+        boot_profile_path: Path | None = None,
+    ) -> None:
+        # An EXPLICIT error_log_root is a forensic sandbox (tests, replay):
+        # every filesystem source must live under it, or the narrator leaks
+        # the real machine's history into the sandbox (a boot profile from
+        # the live repo once made a hermetic empty-window test narrate an
+        # actual 07:18 boot).
+        if error_log_root is not None:
+            self._error_log_root = Path(error_log_root)
+            self._boot_profile_path = (
+                Path(boot_profile_path)
+                if boot_profile_path is not None
+                else self._error_log_root / "boot_profile.json"
+            )
+        else:
+            self._error_log_root = Path("data/error_logs")
+            self._boot_profile_path = (
+                Path(boot_profile_path)
+                if boot_profile_path is not None
+                else Path("artifacts/current/boot_profile.json")
+            )
         self._started = False
         # The conversation lane calls get_context_injection synchronously;
         # evidence collection reads bounded forensic files. Cache the rendered
@@ -262,9 +284,8 @@ class IncidentNarrator:
                 )
         return items
 
-    @staticmethod
-    def _collect_boot_profile(cutoff: float) -> list[EvidenceItem]:
-        path = Path("artifacts/current/boot_profile.json")
+    def _collect_boot_profile(self, cutoff: float) -> list[EvidenceItem]:
+        path = self._boot_profile_path
         if not path.is_file():
             return []
         try:

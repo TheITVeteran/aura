@@ -27,7 +27,7 @@ _CORE = Path(__file__).resolve().parents[1] / "core"
 # Overriding ONLY max_failure_pressure on top of a named profile is the
 # sanctioned pattern — that knob is deliberately tuned per loop (mind_tick
 # documents why 0.70; meta-cognition runs at 0.10) and does not count.
-_MAGIC_NUMBER_BUDGET = 23
+_MAGIC_NUMBER_BUDGET = 22
 
 
 def test_profiles_are_ordered_by_cost():

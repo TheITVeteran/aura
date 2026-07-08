@@ -1,0 +1,34 @@
+[proof] workspace /private/tmp/claude-501/-Users-bryan--aura-live-source/4dbdc166-a0fb-4974-aa16-a83a13e33376/scratchpad/specialist-proof-modular
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 133860.77it/s]
+[proof] harvesting 40 modular tasks x4 attempts...
+[proof] 10/40 | rate 37.5% | pairs 10 | 33s
+[proof] 20/40 | rate 30.0% | pairs 18 | 67s
+[proof] 30/40 | rate 28.3% | pairs 26 | 98s
+[proof] 40/40 | rate 23.8% | pairs 32 | 136s
+[proof] harvest done: 32 DPO pairs, correct-rate 23.8%
+[proof] eligible domains: ['modular']
+{
+  "adapter_path": "/private/tmp/claude-501/-Users-bryan--aura-live-source/4dbdc166-a0fb-4974-aa16-a83a13e33376/scratchpad/specialist-proof-modular/specialists/modular-1783521611/adapter",
+  "base_model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+  "created_at": 1783521611.1687958,
+  "domain": "modular",
+  "domain_base_accuracy": 0.25,
+  "domain_candidate_accuracy": 0.5,
+  "elapsed_s": 230.68,
+  "general_base_accuracy": 0.625,
+  "general_candidate_accuracy": 0.5625,
+  "pair_count": 32,
+  "reasons": [],
+  "registered_as": "modular-specialist-20260708-074401",
+  "run_dir": "/private/tmp/claude-501/-Users-bryan--aura-live-source/4dbdc166-a0fb-4974-aa16-a83a13e33376/scratchpad/specialist-proof-modular/specialists/modular-1783521611",
+  "status": "promoted"
+}
+[proof] library registered: modular-specialist-20260708-074401 (quality=0.5)
+Fetching 9 files:   0%|          | 0/9 [00:00<?, ?it/s]Fetching 9 files: 100%|██████████| 9/9 [00:00<00:00, 273541.57it/s]
+
+[proof] HOT-ATTACH VERIFICATION (16 sealed modular tasks):
+  base:      0.250
+  attached:  0.312  (112 layers wrapped)
+  detached:  0.250  (must equal base)
+
+[proof] PART 2 CLOSED: real specialist trained, gated, registered, hot-attached.

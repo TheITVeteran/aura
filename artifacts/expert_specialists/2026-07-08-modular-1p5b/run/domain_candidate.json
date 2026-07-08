@@ -1,0 +1,104 @@
+{
+  "accuracy": 0.5,
+  "adapter_path": "/private/tmp/claude-501/-Users-bryan--aura-live-source/4dbdc166-a0fb-4974-aa16-a83a13e33376/scratchpad/specialist-proof-modular/specialists/modular-1783521611/adapter",
+  "battery": {
+    "battery_id": "heldout-v1-seed2748-n16",
+    "domains": [
+      "modular"
+    ],
+    "seed": 2748,
+    "set_hash": "acd1782af62c3389fa145f0dac995f1775f0da9e15166057bd159c51b68111b3",
+    "size": 16,
+    "task_ids": [
+      "215de93b9752",
+      "b733e8976ec9",
+      "de47c90bac7b",
+      "9192e0e6e050",
+      "f6ee77c1d4a0",
+      "ce59906f41b4",
+      "ea28002b2e70",
+      "4753857d8689",
+      "dd96628470cf",
+      "3169f5c88c1d",
+      "5a0ba6667673",
+      "e94f758c8f7a",
+      "fd20dac1926d",
+      "479f45e5850f",
+      "fd0e9d25150a",
+      "cfa3c79c10ab"
+    ],
+    "version": 1
+  },
+  "created_at": 1783521767.386403,
+  "max_tokens": 256,
+  "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+  "responses_sha256": "5b26406e935983d7067ee30cf60591da14a4b5fe2dd241ce7de62e3b61b1b14a",
+  "result": {
+    "accuracy": 0.5,
+    "battery_id": "heldout-v1-seed2748-n16",
+    "correct": 8,
+    "failures": [
+      {
+        "domain": "modular",
+        "expected": "29",
+        "extracted": "-31",
+        "task_id": "b733e8976ec9"
+      },
+      {
+        "domain": "modular",
+        "expected": "29",
+        "extracted": "37",
+        "task_id": "9192e0e6e050"
+      },
+      {
+        "domain": "modular",
+        "expected": "2",
+        "extracted": "-1",
+        "task_id": "3169f5c88c1d"
+      },
+      {
+        "domain": "modular",
+        "expected": "63",
+        "extracted": "1",
+        "task_id": "5a0ba6667673"
+      },
+      {
+        "domain": "modular",
+        "expected": "16",
+        "extracted": "3",
+        "task_id": "e94f758c8f7a"
+      },
+      {
+        "domain": "modular",
+        "expected": "44",
+        "extracted": "74",
+        "task_id": "479f45e5850f"
+      },
+      {
+        "domain": "modular",
+        "expected": "25",
+        "extracted": "52",
+        "task_id": "fd0e9d25150a"
+      },
+      {
+        "domain": "modular",
+        "expected": "17",
+        "extracted": "3",
+        "task_id": "cfa3c79c10ab"
+      }
+    ],
+    "per_domain": {
+      "modular": {
+        "correct": 8,
+        "total": 16
+      }
+    },
+    "total": 16
+  },
+  "schema_version": 1,
+  "timing": {
+    "generate_s": 59.11,
+    "load_s": 0.52
+  },
+  "tool": "heldout_eval"
+}

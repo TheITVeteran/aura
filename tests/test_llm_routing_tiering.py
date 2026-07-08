@@ -305,6 +305,9 @@ async def test_background_quiet_window_blocks_brainstem_until_cortex_ready(route
         "foreground_quiet_window",
         "background_deferred:cortex_startup_quiet",
         "background_deferred:conversation_lane_warming",
+        # warmup-in-flight joined the quiet-window vocabulary when RAM
+        # admission made warmup deferrals explicit backpressure (ac5a222e)
+        "background_deferred:conversation_warmup_in_flight",
     }
     assert clients["brainstem"].calls == []
 

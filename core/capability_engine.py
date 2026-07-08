@@ -2965,14 +2965,14 @@ class CapabilityEngine(AuraBaseModule):
                 and not self._is_user_facing_origin(exec_source)
             ):
                 try:
-                    from core.runtime.background_policy import background_activity_reason
+                    from core.runtime.background_policy import (
+                        HEAVY_SKILL_PREFLIGHT_BACKGROUND_POLICY,
+                        background_activity_reason,
+                    )
 
                     reason = background_activity_reason(
                         ctx.get("orchestrator"),
-                        min_idle_seconds=600.0,
-                        max_memory_percent=72.0,
-                        max_failure_pressure=0.20,
-                        require_conversation_ready=False,
+                        profile=HEAVY_SKILL_PREFLIGHT_BACKGROUND_POLICY,
                         allow_no_user_anchor=True,
                     )
                     if reason:
@@ -3745,14 +3745,14 @@ class CapabilityEngine(AuraBaseModule):
                 try:
                     mode = str(exec_params.get("mode", "status") or "status").strip().lower()
                     if mode in {"recon", "scan", "audit", "discovery"}:
-                        from core.runtime.background_policy import background_activity_reason
+                        from core.runtime.background_policy import (
+                            RECON_SCAN_BACKGROUND_POLICY,
+                            background_activity_reason,
+                        )
 
                         reason = background_activity_reason(
                             ctx.get("orchestrator"),
-                            min_idle_seconds=1800.0,
-                            max_memory_percent=72.0,
-                            max_failure_pressure=0.20,
-                            require_conversation_ready=False,
+                            profile=RECON_SCAN_BACKGROUND_POLICY,
                         )
                         if reason:
                             background_preflight_deferred = True

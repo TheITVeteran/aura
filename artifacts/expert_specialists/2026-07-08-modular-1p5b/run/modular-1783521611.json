@@ -1,0 +1,16 @@
+{
+  "adapter_path": "/private/tmp/claude-501/-Users-bryan--aura-live-source/4dbdc166-a0fb-4974-aa16-a83a13e33376/scratchpad/specialist-proof-modular/specialists/modular-1783521611/adapter",
+  "base_model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+  "created_at": 1783521611.1687958,
+  "domain": "modular",
+  "domain_base_accuracy": 0.25,
+  "domain_candidate_accuracy": 0.5,
+  "elapsed_s": 230.68,
+  "general_base_accuracy": 0.625,
+  "general_candidate_accuracy": 0.5625,
+  "pair_count": 32,
+  "reasons": [],
+  "registered_as": "modular-specialist-20260708-074401",
+  "run_dir": "/private/tmp/claude-501/-Users-bryan--aura-live-source/4dbdc166-a0fb-4974-aa16-a83a13e33376/scratchpad/specialist-proof-modular/specialists/modular-1783521611",
+  "status": "promoted"
+}

@@ -357,6 +357,24 @@ MAINTENANCE_BACKGROUND_POLICY = BackgroundPolicyProfile(
     require_conversation_ready=True,
 )
 
+# Skill-preflight profiles (capability engine, Jul 7-8 live hardening).
+# Deliberately stricter on memory than MAINTENANCE: these gate SKILL
+# EXECUTION beside the resident 32B, where 92% memory would admit work
+# straight into the contention band that starves first tokens.
+HEAVY_SKILL_PREFLIGHT_BACKGROUND_POLICY = BackgroundPolicyProfile(
+    min_idle_seconds=600.0,
+    max_memory_percent=72.0,
+    max_failure_pressure=0.20,
+    require_conversation_ready=False,
+)
+
+RECON_SCAN_BACKGROUND_POLICY = BackgroundPolicyProfile(
+    min_idle_seconds=1800.0,
+    max_memory_percent=72.0,
+    max_failure_pressure=0.20,
+    require_conversation_ready=False,
+)
+
 
 def _component_env_name(component: str) -> str:
     normalized = "".join(ch if ch.isalnum() else "_" for ch in str(component or "loop"))
