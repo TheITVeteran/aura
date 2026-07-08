@@ -2160,6 +2160,57 @@ async def api_system_incidents(request: Request, minutes: float = 60.0):
         )
 
 
+@router.get("/system/learning", tags=["health"])
+async def api_system_learning(request: Request):
+    """The weight-learning stack's live state, receipts included.
+
+    One view over the whole loop: the compounding scheduler (when it last
+    trained, what happened), the self-play flywheel (practice bursts,
+    correct-rate trace, pairs produced), the lineage ledger's verdict (the
+    only place a compounding claim may come from), and the expert-adapter
+    library. This is the operator's answer to 'what has she learned lately?'
+    """
+    payload: dict = {"schema": "aura.learning_status.v1"}
+    try:
+        from core.container import ServiceContainer
+
+        def _collect() -> dict:
+            out: dict = {}
+            scheduler = ServiceContainer.get("weight_compounding", default=None)
+            if scheduler is not None and hasattr(scheduler, "get_status"):
+                out["compounding"] = scheduler.get_status()
+            flywheel = ServiceContainer.get("selfplay_flywheel", default=None)
+            if flywheel is not None and hasattr(flywheel, "get_status"):
+                out["selfplay"] = flywheel.get_status()
+            try:
+                from core.learning.verifiable_preference_harness import (
+                    get_verifiable_preference_harness,
+                )
+
+                out["preference_store"] = get_verifiable_preference_harness().stats()
+            except _SYSTEM_RECOVERABLE_ERRORS:
+                out["preference_store"] = {"error": "unavailable"}
+            try:
+                from core.brain.expert_lora_library import get_expert_lora_library
+
+                out["expert_library"] = get_expert_lora_library().stats()
+            except _SYSTEM_RECOVERABLE_ERRORS:
+                out["expert_library"] = {"error": "unavailable"}
+            return out
+
+        payload.update(await asyncio.to_thread(_collect))
+        return JSONResponse(_json_safe(payload))
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "system",
+            exc,
+            action="returned degraded learning status after collection failure",
+        )
+        logger.warning("Learning status unavailable: %s", exc)
+        payload["error"] = "learning status unavailable"
+        return JSONResponse(_json_safe(payload), status_code=200)
+
+
 @router.get("/healthz", tags=["health"])
 async def healthz(request: Request):
     """Liveness probe: is the process alive and responsive?
