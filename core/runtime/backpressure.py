@@ -22,10 +22,11 @@ entirely rather than compete with the user's turn and time out.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import threading
 import time
-from typing import Any
+from typing import Any, Iterator
 
 from core.runtime.errors import record_degradation
 
@@ -34,6 +35,55 @@ logger = logging.getLogger("Aura.Runtime.Backpressure")
 _counters: dict[str, int] = {}
 _last_event_at: dict[str, float] = {}
 _lock = threading.Lock()
+
+# ── Primary-lane inference beacon ────────────────────────────────────────────
+# On a single-worker box the 32B is shared by the FOREGROUND chat lane, the
+# mind_tick COGNITION lane, and slow BACKGROUND phenomenology (deep narrative,
+# witness). foreground_inference_active() only sees the chat lane, so when the
+# mind is thinking with no chat open, phenomenology reads "idle", fires into the
+# same worker, and the two contend — mind ticks queue behind the narrative, the
+# tick_duration_p95 SLO blows (5x burn), and the immune system escalates it into
+# a fault cascade + mind_tick liveness hiccup (observed 2026-07-07). This beacon
+# lets high-priority work (foreground, cognition) advertise that it holds the
+# worker so low-priority background work yields FIRST instead of competing.
+# It is purely advisory — it never locks the model, so it cannot deadlock.
+_primary_lease_lock = threading.Lock()
+_primary_lease_count = 0
+_primary_lease_fresh_at = 0.0
+# A lease older than this is treated as stale (holder crashed / leaked without
+# releasing) so a lost lease can never permanently starve background cognition.
+_PRIMARY_LEASE_MAX_AGE_S = 90.0
+
+
+@contextlib.contextmanager
+def primary_inference_lease() -> Iterator[None]:
+    """Mark the primary model lane (foreground / cognition) as actively using the
+    shared local worker for the duration of the block. Low-priority background
+    LLM work should check ``cognition_inference_active()`` and yield. Reentrant,
+    exception-safe, and self-expiring; advisory only (no blocking)."""
+    global _primary_lease_count, _primary_lease_fresh_at
+    with _primary_lease_lock:
+        _primary_lease_count += 1
+        _primary_lease_fresh_at = time.monotonic()
+    try:
+        yield
+    finally:
+        with _primary_lease_lock:
+            _primary_lease_count = max(0, _primary_lease_count - 1)
+
+
+def cognition_inference_active() -> bool:
+    """True while a fresh primary-lane lease is held (foreground or cognition
+    tick using the shared worker). Auto-expires a stale/leaked lease."""
+    global _primary_lease_count
+    with _primary_lease_lock:
+        if _primary_lease_count <= 0:
+            return False
+        if time.monotonic() - _primary_lease_fresh_at > _PRIMARY_LEASE_MAX_AGE_S:
+            # Stale lease — reset so we never permanently defer background work.
+            _primary_lease_count = 0
+            return False
+        return True
 
 # A consecutive-failure streak older than this is stale — the pressure
 # window has passed; start counting fresh.

@@ -1043,10 +1043,16 @@ class MindTick:
                             )
                             self._active_tick_stage = "kernel_tick"
                             self._mark_loop_progress("kernel_tick")
-                            entry = await asyncio.wait_for(
-                                kernel.tick(objective, priority=False),
-                                timeout=_bg_tick_timeout,
-                            )
+                            # Advertise that the cognition lane holds the shared 32B
+                            # worker, so slow background phenomenology yields instead
+                            # of contending this tick and blowing the tick SLO.
+                            from core.runtime.backpressure import primary_inference_lease
+
+                            with primary_inference_lease():
+                                entry = await asyncio.wait_for(
+                                    kernel.tick(objective, priority=False),
+                                    timeout=_bg_tick_timeout,
+                                )
                             self._mark_loop_progress("kernel_tick_done")
                             if entry is not None:
                                 # Kernel ran successfully — fetch the committed state

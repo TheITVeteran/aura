@@ -112,10 +112,17 @@ def _phenomenology_background_deferral_reason() -> str:
     """Return why slow phenomenology LLM work must yield right now."""
 
     try:
-        from core.runtime.backpressure import foreground_inference_active
+        from core.runtime.backpressure import (
+            cognition_inference_active,
+            foreground_inference_active,
+        )
 
         if foreground_inference_active():
             return "foreground_inference_active"
+        # The mind_tick cognition lane also holds the single 32B worker; yield to
+        # it too, otherwise slow narrative work queues the tick and blows its SLO.
+        if cognition_inference_active():
+            return "cognition_inference_active"
     except (ImportError, AttributeError, RuntimeError):
         pass
 
@@ -1481,14 +1488,24 @@ class PhenomenologicalExperiencer:
 
                 now = time.time()
 
+                # Deep narrative + witness are slow LLM calls that share the SINGLE
+                # 32B worker with mind_tick's cognition. Firing them while the model
+                # is contended queues the mind tick behind them and blows the
+                # tick_duration_p95 SLO (observed 2026-07: 5x burn -> fault cascade
+                # -> mind_tick liveness hiccup -> a churn that looked like a respawn).
+                # Yield to the same backpressure signal mind_tick uses. The interval
+                # timers are NOT reset on a skip, so the update fires on the next
+                # quiet 5s cycle instead of contending the foreground/cognition lane.
+                narrative_defer = _phenomenology_background_deferral_reason()
+
                 # Deep narrative update (every NARRATIVE_INTERVAL_S)
-                if now - self._last_narrative_update > NARRATIVE_INTERVAL_S:
+                if not narrative_defer and now - self._last_narrative_update > NARRATIVE_INTERVAL_S:
                     if self._current_schema:
                         await self._run_deep_narrative()
                         self._last_narrative_update = now
 
                 # Witness reflection (every WITNESS_INTERVAL_S)
-                if now - self._last_witness_update > WITNESS_INTERVAL_S:
+                if not narrative_defer and now - self._last_witness_update > WITNESS_INTERVAL_S:
                     await self._run_witness()
                     self._last_witness_update = now
 
