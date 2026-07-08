@@ -416,9 +416,14 @@ async def test_background_browser_dialogue_still_uses_strict_foreground_prefligh
     assert result["ok"] is False
     assert result["status"] == "deferred"
     assert calls
-    assert calls[0]["min_idle_seconds"] == pytest.approx(600.0)
-    assert calls[0]["max_memory_percent"] == pytest.approx(72.0)
-    assert calls[0]["max_failure_pressure"] == pytest.approx(0.20)
+    # The strict thresholds moved into the named HEAVY_SKILL_PREFLIGHT
+    # profile (policy-ratchet migration); the contract — foreground-exclusive
+    # skills gate on 600s idle / 72% memory / 0.20 pressure — is unchanged.
+    profile = calls[0].get("profile")
+    assert profile is not None, "preflight must pass the named profile"
+    assert profile.min_idle_seconds == pytest.approx(600.0)
+    assert profile.max_memory_percent == pytest.approx(72.0)
+    assert profile.max_failure_pressure == pytest.approx(0.20)
 
 
 @pytest.mark.asyncio
