@@ -705,8 +705,39 @@ class ReasoningStrategies:
                 return response
             if "<answer>" in response.lower() and "<answer>" not in critique_result.lower():
                 return response
-            return critique_result
+            return self._deliverable_critique_text(response, critique_result)
         return response
+
+    @staticmethod
+    def _deliverable_critique_text(original: str, critique: str) -> str:
+        """Critic scaffolding must never reach the user.
+
+        Seen live (July 8 soak, turn 8): the critic 'confirmed' by echoing the
+        draft behind its own label, and the raw echo — "Proposed Answer:That's
+        amazing..." — was delivered verbatim. Two leak shapes are handled:
+          * label echo — a "Proposed Answer:" label near the top followed by
+            (a prefix of) the original draft → deliver the original;
+          * correction narration — per the critic contract, corrections carry
+            the final text inside <answer> tags; deliver the tag body, not the
+            step-by-step critique (unless the ORIGINAL was tag-formatted, in
+            which case the caller owns extraction and gets the full result).
+        """
+        cleaned = critique.strip()
+        label = re.search(r"proposed answer\s*:\s*", cleaned[:200], flags=re.IGNORECASE)
+        if label:
+            body = cleaned[label.end():].strip()
+            original_head = original.strip()[:80]
+            if body and original_head and (
+                body.startswith(original_head) or original.strip().startswith(body[:80])
+            ):
+                return original
+            if body:
+                cleaned = body
+        if "<answer>" not in original.lower():
+            tagged = re.search(r"<answer>(.*?)</answer>", cleaned, flags=re.IGNORECASE | re.DOTALL)
+            if tagged and tagged.group(1).strip():
+                return tagged.group(1).strip()
+        return cleaned
 
     async def _direct(self, query: str, **kwargs) -> StrategyResult:
         """Simple pass-through generation."""
