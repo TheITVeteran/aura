@@ -154,13 +154,14 @@ class SovereignPruner:
         return memories
 
     async def _consolidate(self, mem: MemoryRecord) -> str | None:
-        from core.runtime.backpressure import foreground_inference_active
+        from core.runtime.backpressure import primary_inference_active
 
         if not bool(getattr(self, "_llm_consolidation_enabled", False)):
             return self._heuristic_insight(mem)
-        if foreground_inference_active():
-            # Yield instead of competing with the user's turn and timing out.
-            logger.debug("[PRUNER] Yielded consolidation of %s to foreground inference.", mem.id[:8])
+        if primary_inference_active():
+            # Yield instead of competing with the user's turn OR the mind's own
+            # cognition tick for the single 32B worker (and timing out).
+            logger.debug("[PRUNER] Yielded consolidation of %s to the primary inference lane.", mem.id[:8])
             return self._heuristic_insight(mem)
         brain = self._get_brain()
         if not brain:

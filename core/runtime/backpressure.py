@@ -85,6 +85,15 @@ def cognition_inference_active() -> bool:
             return False
         return True
 
+
+def primary_inference_active() -> bool:
+    """The single signal low-priority background LLM work should yield to before
+    starting: True when EITHER the foreground chat lane or the mind_tick
+    cognition lane is using the shared local worker. Prefer this over
+    foreground_inference_active() in background loops so they yield to the mind's
+    own thinking too, not just to live chat."""
+    return foreground_inference_active() or cognition_inference_active()
+
 # A consecutive-failure streak older than this is stale — the pressure
 # window has passed; start counting fresh.
 _STREAK_RESET_S = 900.0

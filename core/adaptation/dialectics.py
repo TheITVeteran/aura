@@ -121,14 +121,15 @@ class DialecticalCrucible:
     ) -> str | None:
         from core.runtime.backpressure import (
             clear_backpressure,
-            foreground_inference_active,
+            primary_inference_active,
             record_expected_backpressure,
         )
 
-        if foreground_inference_active():
-            # An internal debate never outranks the user's live turn. Yield
-            # before generating; the belief stays pending for the next cycle.
-            logger.debug("Crucible yielded %s stage to foreground inference.", stage)
+        if primary_inference_active():
+            # An internal debate never outranks the user's live turn — nor the
+            # mind's own cognition tick — for the single 32B worker. Yield before
+            # generating; the belief stays pending for the next cycle.
+            logger.debug("Crucible yielded %s stage to the primary inference lane.", stage)
             return None
 
         engine = ServiceContainer.get("cognitive_engine", default=None)
