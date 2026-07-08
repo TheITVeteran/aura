@@ -715,6 +715,18 @@ def _prepare_clean_retry_kwargs(kwargs: dict[str, Any], *, structured: bool = Fa
     )
 
 
+def _surface_retry_wall_exceeded(started_monotonic: float, wall_s: float) -> bool:
+    """True when the user-surface gate-retry path has burned its wall budget.
+
+    Under memory-contended decode each drafting attempt costs 30-70s; burning
+    the full retry budget is how a single live turn reached 200s+ (July 8
+    soak). Past the wall, exhaustion salvage delivers the best honest draft
+    instead of drafting again for a user who has stopped waiting. Floor of
+    10s so a misconfigured env value can never disable first-attempt retries.
+    """
+    return (time.monotonic() - started_monotonic) > max(10.0, wall_s)
+
+
 def _expand_user_surface_retry_budget(
     kwargs: dict[str, Any],
     reasons: list[str],
@@ -2797,6 +2809,18 @@ def _mlx_worker_loop(
                             # We allow up to 2 retries if the LLM gets stuck in a loop or returns empty on a schema.
                             max_internal_retries = 1 if proof_evaluation_contract else 2
 
+                            # Wall-clock budget for the user-surface QUALITY-GATE
+                            # retry path only: under memory-contended decode each
+                            # attempt costs 30-70s, and burning the full retry
+                            # budget is how a single live turn reaches 200s+
+                            # (July 8 soak). Once the wall is hit, exhaustion
+                            # salvage delivers the best honest draft instead of
+                            # drafting again for a user who has stopped waiting.
+                            surface_retry_started = time.monotonic()
+                            surface_retry_wall_s = _safe_float(
+                                os.getenv("AURA_SURFACE_RETRY_WALL_S", "75"), 75.0
+                            )
+
                             for internal_attempt in range(max_internal_retries + 1):
                                 watchdog.start_job()
                                 try:
@@ -3283,7 +3307,17 @@ def _mlx_worker_loop(
                                                 surface_control_state["surface_quality_gate_passed"] = True
                                                 surface_control_state["surface_quality_gate_reasons"] = []
                                                 break
-                                            if internal_attempt < max_internal_retries:
+                                            surface_wall_exceeded = _surface_retry_wall_exceeded(
+                                                surface_retry_started, surface_retry_wall_s
+                                            )
+                                            if surface_wall_exceeded and internal_attempt < max_internal_retries:
+                                                logger.warning(
+                                                    "🛡️ [WORKER] Surface-gate retry wall (%.0fs) reached after "
+                                                    "attempt %d; salvaging best draft instead of re-drafting.",
+                                                    surface_retry_wall_s,
+                                                    internal_attempt + 1,
+                                                )
+                                            if internal_attempt < max_internal_retries and not surface_wall_exceeded:
                                                 if prompt_cache_lru is not None:
                                                     prompt_cache_lru.clear()
                                                 if mx and device != "cpu":

@@ -101,3 +101,34 @@ def test_live_failure_shape_now_delivers():
     )
     assert text, "the Jul 7 live failure shape must not yield an empty reply"
     assert "missing_self_claim_evidence_boundary" not in residual
+
+
+class TestSurfaceRetryWall:
+    """July 8 soak: gate retries under contended decode produced 200s+ turns.
+
+    Past the wall-clock budget, the retry branch must yield to exhaustion
+    salvage instead of drafting again.
+    """
+
+    def test_within_budget_allows_retry(self):
+        import time
+
+        from core.brain.llm.mlx_worker import _surface_retry_wall_exceeded
+
+        assert _surface_retry_wall_exceeded(time.monotonic(), 75.0) is False
+
+    def test_past_budget_forces_salvage(self):
+        import time
+
+        from core.brain.llm.mlx_worker import _surface_retry_wall_exceeded
+
+        assert _surface_retry_wall_exceeded(time.monotonic() - 80.0, 75.0) is True
+
+    def test_misconfigured_wall_cannot_disable_first_retry(self):
+        import time
+
+        from core.brain.llm.mlx_worker import _surface_retry_wall_exceeded
+
+        # env value of 0 must not make every rejection skip straight to salvage
+        assert _surface_retry_wall_exceeded(time.monotonic() - 5.0, 0.0) is False
+        assert _surface_retry_wall_exceeded(time.monotonic() - 11.0, 0.0) is True
