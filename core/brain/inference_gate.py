@@ -624,6 +624,36 @@ class InferenceGate:
         self._last_cortex_warmup_deferral_log_at = now
         logger.warning("⏸️ Cortex %s warmup deferred to protect RAM: %s", context, reason)
 
+    def _note_foreground_warmup_failure(self, warmup_exc: BaseException) -> bool:
+        """Classify a foreground-warmup failure; returns True for RAM deferrals.
+
+        A ``foreground_warmup_deferred`` outcome is expected RAM-admission
+        backpressure — the turn reroutes to the fallback tier, so it is logged
+        at info and NOT recorded as a degradation: on the fail-closed
+        inference_gate a degradation record raises CRITICAL SERVICE FAILURE
+        out of the handler and kills the protected recovery lane (seen live
+        July 8: one memory deferral cascaded into chat 503s). Same discipline
+        as the timeout demotion in core/runtime/errors.py. Genuine warmup
+        faults keep the full degradation record.
+        """
+        if "foreground_warmup_deferred" in str(warmup_exc):
+            logger.info(
+                "🧠 Foreground warmup deferred by RAM admission; rerouting this turn: %s",
+                warmup_exc,
+            )
+            return True
+        record_degradation(
+            "inference_gate",
+            warmup_exc,
+            severity="degraded",
+            action="skipped cold primary attempt or fell back after foreground warmup failure",
+        )
+        logger.warning(
+            "🧠 Foreground preflight warmup did not complete cleanly: %s",
+            warmup_exc,
+        )
+        return False
+
     def _log_cold_cortex_policy_deferred(self) -> None:
         now = time.monotonic()
         last_log = getattr(self, "_last_cortex_policy_deferred_log_at", 0.0)
@@ -6489,18 +6519,8 @@ class InferenceGate:
                                 ValueError,
                                 OSError,
                             ) as warmup_exc:
-                                record_degradation(
-                                    "inference_gate",
-                                    warmup_exc,
-                                    severity="degraded",
-                                    action="skipped cold primary attempt or fell back after foreground warmup failure",
-                                )
-                                if "foreground_warmup_deferred" in str(warmup_exc):
+                                if self._note_foreground_warmup_failure(warmup_exc):
                                     primary_warmup_memory_deferred = True
-                                logger.warning(
-                                    "🧠 Foreground preflight warmup did not complete cleanly: %s",
-                                    warmup_exc,
-                                )
                                 lane_status = self.get_conversation_status()
                             if not self._lane_can_attempt_visible_conversation_turn(lane_status):
                                 skip_initial_primary_attempt = True
@@ -6969,6 +6989,14 @@ class InferenceGate:
             logger.warning("Cloud fallback cooling down. Skipping remote retry.")
             return None
 
+        # Resolve the recoverable error surface BEFORE the try so the handler
+        # can catch it directly — provider SDK error types vary by
+        # installation, but that is a reason to build the tuple dynamically,
+        # not to catch Exception (the causal-gating ratchet forbids raw broad
+        # catches in this file, and it is right).
+        from core.brain.llm.cloud_errors import cloud_call_error_types
+
+        recoverable_cloud_errors = (*_INFERENCE_RECOVERABLE_ERRORS, *cloud_call_error_types())
         try:
             from core.container import ServiceContainer
 
@@ -7037,12 +7065,7 @@ class InferenceGate:
                         visible_user_prompt,
                         is_user_facing=_is_user_facing,
                     )
-        except Exception as cloud_err:  # noqa: BLE001 - optional provider SDK errors vary by installation
-            from core.brain.llm.cloud_errors import cloud_call_error_types
-
-            recoverable_cloud_errors = (*_INFERENCE_RECOVERABLE_ERRORS, *cloud_call_error_types())
-            if not isinstance(cloud_err, recoverable_cloud_errors):
-                raise
+        except recoverable_cloud_errors as cloud_err:
             record_degradation(
                 "inference_gate",
                 cloud_err,
