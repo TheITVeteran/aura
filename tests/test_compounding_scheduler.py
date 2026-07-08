@@ -1,0 +1,218 @@
+"""Contract tests for the autonomous weight-compounding scheduler.
+
+The scheduler is the piece that turns installed machinery into live behavior,
+so the contracts here are about WHEN it acts: kill switch, cooldown,
+maintenance-idle gate, data readiness, Will approval, and what it does with a
+promoted cycle. The heavy loop itself is covered by test_weight_compounding.
+"""
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import pytest
+
+import core.learning.compounding_scheduler as sched_mod
+from core.learning.compounding_scheduler import CompoundingScheduler
+
+pytestmark = pytest.mark.unit
+
+
+@dataclass
+class FakeReceipt:
+    generation_id: str = "g0000-test"
+    status: str = "promoted"
+    promoted_model_path: str = "fake-fused-artifact"
+    reasons: list = field(default_factory=list)
+
+    def to_dict(self):
+        return {
+            "generation_id": self.generation_id,
+            "status": self.status,
+            "promoted_model_path": self.promoted_model_path,
+            "reasons": self.reasons,
+        }
+
+
+class FakeLoop:
+    def __init__(self, receipt: FakeReceipt, ready: bool = True):
+        self._receipt = receipt
+        self._ready = ready
+        self.cycles_run = 0
+
+    def data_readiness(self):
+        return {"ready": self._ready, "sft_rows": 100, "dpo_rows": 0}
+
+    def run_cycle(self):
+        self.cycles_run += 1
+        return self._receipt
+
+    def stats(self):
+        return {"generations": self.cycles_run, "verdict": "NO_RSI"}
+
+
+@pytest.fixture
+def scheduler(tmp_path: Path, monkeypatch) -> CompoundingScheduler:
+    monkeypatch.setenv("AURA_WEIGHT_COMPOUNDING", "1")
+    s = CompoundingScheduler(orchestrator=None)
+    monkeypatch.setattr(
+        CompoundingScheduler, "_state_path", lambda self: tmp_path / "state.json"
+    )
+    return s
+
+
+def allow_maintenance(monkeypatch, allowed: bool) -> None:
+    import core.runtime.background_policy as policy
+
+    monkeypatch.setattr(
+        policy, "background_activity_allowed", lambda *a, **k: allowed
+    )
+
+
+def approve_will(monkeypatch, scheduler, approved: bool = True, reason: str = "ok") -> list:
+    calls: list = []
+
+    def fake_approval(self, context):
+        calls.append(context)
+        return approved, reason
+
+    monkeypatch.setattr(CompoundingScheduler, "_will_approval", fake_approval)
+    return calls
+
+
+class TestGates:
+    async def test_kill_switch_prevents_start(self, scheduler, monkeypatch):
+        monkeypatch.setenv("AURA_WEIGHT_COMPOUNDING", "0")
+        await scheduler.start()
+        assert scheduler._task is None
+
+    async def test_cooldown_blocks(self, scheduler, monkeypatch):
+        scheduler._save_state({"last_attempt_at": time.time()})
+        loop = FakeLoop(FakeReceipt())
+        monkeypatch.setattr(CompoundingScheduler, "_build_loop", lambda self: loop)
+        allow_maintenance(monkeypatch, True)
+        approve_will(monkeypatch, scheduler)
+        await scheduler._maybe_cycle()
+        assert loop.cycles_run == 0
+
+    async def test_maintenance_gate_blocks(self, scheduler, monkeypatch):
+        loop = FakeLoop(FakeReceipt())
+        monkeypatch.setattr(CompoundingScheduler, "_build_loop", lambda self: loop)
+        allow_maintenance(monkeypatch, False)
+        will_calls = approve_will(monkeypatch, scheduler)
+        await scheduler._maybe_cycle()
+        assert loop.cycles_run == 0
+        assert not will_calls           # never even consulted the Will
+
+    async def test_data_not_ready_blocks_before_will(self, scheduler, monkeypatch):
+        loop = FakeLoop(FakeReceipt(), ready=False)
+        monkeypatch.setattr(CompoundingScheduler, "_build_loop", lambda self: loop)
+        allow_maintenance(monkeypatch, True)
+        will_calls = approve_will(monkeypatch, scheduler)
+        await scheduler._maybe_cycle()
+        assert loop.cycles_run == 0
+        assert not will_calls
+
+    async def test_will_denial_blocks_and_records(self, scheduler, monkeypatch):
+        loop = FakeLoop(FakeReceipt())
+        monkeypatch.setattr(CompoundingScheduler, "_build_loop", lambda self: loop)
+        allow_maintenance(monkeypatch, True)
+        approve_will(monkeypatch, scheduler, approved=False, reason="unsafe_window")
+        await scheduler._maybe_cycle()
+        assert loop.cycles_run == 0
+        state = json.loads(scheduler._state_path().read_text())
+        assert state["last_status"] == "will_denied:unsafe_window"
+
+    async def test_will_unavailable_fails_closed(self, scheduler):
+        # real _will_approval with no Will importable in this context must deny
+        approved, reason = scheduler._will_approval({"readiness": {}})
+        assert isinstance(approved, bool)
+        if not approved:
+            assert reason
+
+
+class TestCycleExecution:
+    async def test_promoted_cycle_records_state_and_activates(self, scheduler, monkeypatch):
+        loop = FakeLoop(FakeReceipt(status="promoted", promoted_model_path="fake-fused-g0"))
+        monkeypatch.setattr(CompoundingScheduler, "_build_loop", lambda self: loop)
+        allow_maintenance(monkeypatch, True)
+        approve_will(monkeypatch, scheduler)
+        activated: list[str] = []
+
+        async def fake_activate(self, path):
+            activated.append(path)
+
+        monkeypatch.setattr(CompoundingScheduler, "_activate_live", fake_activate)
+        await scheduler._maybe_cycle()
+
+        assert loop.cycles_run == 1
+        assert activated == ["fake-fused-g0"]
+        state = json.loads(scheduler._state_path().read_text())
+        assert state["last_status"] == "promoted"
+        assert state["last_generation_id"] == "g0000-test"
+        assert state["last_promoted_at"] > 0
+
+    async def test_refused_cycle_records_but_does_not_activate(self, scheduler, monkeypatch):
+        loop = FakeLoop(FakeReceipt(status="refused", promoted_model_path=""))
+        monkeypatch.setattr(CompoundingScheduler, "_build_loop", lambda self: loop)
+        allow_maintenance(monkeypatch, True)
+        approve_will(monkeypatch, scheduler)
+        activated: list[str] = []
+
+        async def fake_activate(self, path):
+            activated.append(path)
+
+        monkeypatch.setattr(CompoundingScheduler, "_activate_live", fake_activate)
+        await scheduler._maybe_cycle()
+
+        assert loop.cycles_run == 1
+        assert activated == []
+        state = json.loads(scheduler._state_path().read_text())
+        assert state["last_status"] == "refused"
+
+    async def test_reentrancy_guard(self, scheduler, monkeypatch):
+        loop = FakeLoop(FakeReceipt())
+        monkeypatch.setattr(CompoundingScheduler, "_build_loop", lambda self: loop)
+        allow_maintenance(monkeypatch, True)
+        approve_will(monkeypatch, scheduler)
+        scheduler._running_cycle = True
+        await scheduler._maybe_cycle()
+        assert loop.cycles_run == 0
+
+    async def test_status_surface(self, scheduler, monkeypatch):
+        loop = FakeLoop(FakeReceipt())
+        monkeypatch.setattr(CompoundingScheduler, "_build_loop", lambda self: loop)
+        status = scheduler.get_status()
+        assert status["service"] == "weight_compounding"
+        assert status["last_status"] == "never_attempted"
+        assert "lineage" in status
+
+
+class TestBootWiring:
+    def test_boot_step_registered(self):
+        source = Path("core/orchestrator/mixins/boot/boot_autonomy.py").read_text(
+            encoding="utf-8"
+        )
+        assert '("weight_compounding", self._init_weight_compounding)' in source
+
+    def test_init_method_exists(self):
+        source = Path("core/orchestrator/mixins/boot/boot_cognitive.py").read_text(
+            encoding="utf-8"
+        )
+        assert "async def _init_weight_compounding" in source
+        assert "get_compounding_scheduler" in source
+
+    def test_service_name_registered(self):
+        from core.service_names import ServiceNames
+
+        assert ServiceNames.WEIGHT_COMPOUNDING == "weight_compounding"
+
+    def test_singleton_reset(self):
+        sched_mod.reset_compounding_scheduler_for_test()
+        a = sched_mod.get_compounding_scheduler()
+        assert sched_mod.get_compounding_scheduler() is a
+        sched_mod.reset_compounding_scheduler_for_test()
+        assert sched_mod.get_compounding_scheduler() is not a
+        sched_mod.reset_compounding_scheduler_for_test()

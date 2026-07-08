@@ -58,6 +58,7 @@ class ServiceNames:
     # Learning & Evolution
     LEARNER = "live_learner"
     CONTINUOUS_LEARNER = "continuous_learner"
+    WEIGHT_COMPOUNDING = "weight_compounding"
     RESEARCH = "research_cycle"
     GOVERNOR = "memory_governor"
     REIMPLEMENTATION_LAB = "reimplementation_lab"

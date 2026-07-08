@@ -106,6 +106,7 @@ class BootAutonomyMixin:
             ("live_learner", self._init_live_learner),
             ("autonomous_task_engine", self._init_autonomous_task_engine),
             ("continuous_learner", self._init_continuous_learner),
+            ("weight_compounding", self._init_weight_compounding),
             ("fictional_synthesis", self._init_fictional_synthesis),
             ("final_foundations", self._init_final_foundations),
             ("evolution_orchestrator", self._init_evolution_orchestrator),

@@ -227,6 +227,34 @@ class BootCognitiveMixin:
             )
             logger.error("Failed to init Continuous Learner: %s", e)
 
+    async def _init_weight_compounding(self):
+        """Start the autonomous weight-compounding scheduler.
+
+        The single canonical executor of weight-level learning cycles: idle-
+        gated (MAINTENANCE profile), Will-governed, held-out-eval gated, and
+        lineage-ledgered. LiveLearner and the continuous learner keep their
+        data-collection roles; this is the one place training actually fires.
+        """
+        try:
+            from core.learning.compounding_scheduler import (
+                SERVICE_NAME as WEIGHT_COMPOUNDING_SERVICE,
+            )
+            from core.learning.compounding_scheduler import (
+                get_compounding_scheduler,
+            )
+
+            scheduler = get_compounding_scheduler(self)
+            await scheduler.start()
+            ServiceContainer.register_instance(WEIGHT_COMPOUNDING_SERVICE, scheduler)
+            logger.info("✓ Weight-compounding scheduler online")
+        except (ImportError, AttributeError, RuntimeError) as e:
+            _record_boot_cognitive_degradation(
+                e,
+                action="continued boot without autonomous weight compounding",
+                severity="error",
+            )
+            logger.error("Failed to init weight compounding: %s", e)
+
     async def _init_live_learner(self):
         """Initialize the LiveLearner subsystem for weight-level evolution."""
         try:
