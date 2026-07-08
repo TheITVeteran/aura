@@ -266,12 +266,21 @@ class LLMCodeGenerator:
             pool.shutdown(wait=False, cancel_futures=True)
 
     async def generate_async(self, prompt: str, context: dict[str, Any]) -> str:
+        try:
+            max_tokens = int(context.get("max_tokens", self.max_tokens))
+        except (TypeError, ValueError):
+            max_tokens = self.max_tokens
+        try:
+            temperature = float(context.get("temperature", self.temperature))
+        except (TypeError, ValueError):
+            temperature = self.temperature
+        prefer_tier = str(context.get("prefer_tier", self.prefer_tier) or self.prefer_tier)
         request = GenerationRequest(
             prompt=self._augment_prompt(prompt, context),
             system_prompt=_CODE_GEN_SYSTEM_PROMPT,
-            prefer_tier=self.prefer_tier,
-            max_tokens=self.max_tokens,
-            temperature=self.temperature,
+            prefer_tier=prefer_tier,
+            max_tokens=max(64, min(max_tokens, self.max_tokens)),
+            temperature=max(0.0, min(temperature, 2.0)),
             is_background=self.is_background,
         )
 

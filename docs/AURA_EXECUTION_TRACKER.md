@@ -7884,3 +7884,73 @@ Addendum - post-fix live replay and gate evidence:
     - `offline subprocess tooling bypass`
     - `SLO ALERT`
     - `unified_runtime_pressure`
+
+## Checkpoint 2026-07-08-13: Visible Web Transcript and Program DNA Repair Proof
+
+Scope:
+
+- Hardened the visible web-interlocutor path for the signed-in ChatGPT/Gemini
+  proof:
+  - when Chrome DOM scripting is unavailable, Aura now reads the visible browser
+    through a bounded macOS Accessibility transcript before falling back to OCR
+  - AX transcript text is normalized into line-oriented conversation evidence
+  - role-labeled AX chat segments are extracted so Aura can prove it read a
+    reply after her own sent turn rather than timing canned objective text
+- Fixed a shared code-generation budget bug:
+  - `LLMCodeGenerator.generate_async()` now honors per-request `max_tokens`,
+    `temperature`, and `prefer_tier`
+  - Program DNA/RSI/code-repair calls can no longer silently expand into the
+    generator's default 8192-token budget when they requested a bounded call
+- Hardened Program DNA live reconstruction:
+  - live generator availability now detects the local un-steered code model
+    without requiring a warm `ServiceContainer`
+  - live proof artifacts now include candidate code hashes, bounded excerpts,
+    repair attempts, and sandbox error details
+  - each scenario writes partial progress to the artifact as it completes
+  - complex/heavy scenarios run in a child process so native MLX generation can
+    be killed by a process timeout instead of wedging the parent proof runner
+  - reconstruction now has a bounded repair loop: failed behavioral
+    observations become a repair prompt, revised code is sandboxed again, and
+    the artifact records whether repair was needed
+
+Verification:
+
+- Focused regressions:
+  - `python -m pytest -q tests/test_program_dna_cognition_reconstruction.py tests/test_program_dna_live_reconstruction_probe.py tests/test_program_dna_user_pathway.py tests/test_reconstruction_deep_repair.py tests/test_web_interlocutor.py`
+    -> `56 passed`.
+- Live Program DNA proof:
+  - `python tools/program_dna_live_reconstruction_probe.py --scenario-timeout-s 90 --out artifacts/current/program_dna_live_reconstruction_latest.json`
+    -> completed without wedging the parent process.
+  - Result: `6/8` archetypes fully reconstructed, `13/17` held-out cases passed,
+    `case_equivalence=0.7647058823529411`, `router_available=true`,
+    `router_reason=local_code_model_available`.
+  - Supported: `mini-text-cli`, `tiny-counter-gui`, `csv-to-json-converter`,
+    `mini-web-service`, `todo-db-tool`, `simulated-auth-app`.
+  - Honest remaining limits:
+    - `missing-docs-normalizer` still misses one sparse-evidence casing rule
+      after two repair attempts.
+    - `local-knowledge-vault` is still too heavy for the current live generator
+      budget and is now recorded as `process_timeout:125.0s` rather than
+      wedging the runtime.
+
+Current closeout estimate:
+
+- Configured non-soak local closeout is about **99.88%** complete by source,
+  focused tests, enterprise/production gates from the previous checkpoint, and
+  the newly hardened live Program DNA proof runner. This checkpoint materially
+  improves proof reliability but does not close the final live proof deltas.
+
+Remaining non-soak work after this checkpoint:
+
+- Complete the visible ChatGPT/Gemini conversation proof on the real launched
+  Aura desktop lane: natural 20+ turns, full-mind composition, visible page
+  reading, retention, and report-back.
+- Improve Program DNA complex-app reconstruction beyond timeout: split the
+  local-knowledge-vault task into smaller inferred subsystems or add a
+  multi-stage planner so complex app reproduction does not depend on one large
+  code generation.
+- Close the sparse-evidence induction miss in Program DNA without weakening the
+  verifier.
+- Continue visible RSI proof and immune/RSI live repair proof with real
+  artifacts and receipts.
+- Run the final non-soak live-runtime proof after the above remains stable.

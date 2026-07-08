@@ -9,6 +9,7 @@ from core.capabilities.web_interlocutor import (
     WebInterlocutorResult,
     WebInterlocutorSession,
     WebInterlocutorTurn,
+    _accessibility_chat_segments,
     _dialogue_goal_from_objective,
     _extract_new_interlocutor_text,
     _extract_new_interlocutor_text_from_snapshots,
@@ -227,6 +228,61 @@ def test_extract_new_interlocutor_text_uses_role_ordering_after_sent_turn():
 
     assert "later behavioral reuse" in extracted
     assert "older answer" not in extracted
+
+
+def test_accessibility_segments_preserve_order_after_sent_turn():
+    sent = "What would prove retained memory without pretending at consciousness?"
+    ax_text = (
+        "ChatGPT\n"
+        f"Aura: {sent}\n"
+        "ChatGPT: Behavioral reuse with transformation would be the key. The system should "
+        "apply the remembered claim in a different task, show receipts for where it came "
+        "from, and change behavior if that memory is removed.\n"
+        "Ask anything\n"
+    )
+    after = BrowserPageSnapshot(
+        text=ax_text,
+        relevant_segments=_accessibility_chat_segments(ax_text),
+    )
+
+    extracted = _extract_new_interlocutor_text_from_snapshots(BrowserPageSnapshot(), after, sent)
+
+    assert "Behavioral reuse with transformation" in extracted
+    assert "pretending at consciousness" not in extracted
+
+
+@pytest.mark.asyncio
+async def test_visible_chrome_snapshot_uses_accessibility_when_dom_scripting_is_blocked(monkeypatch):
+    import core.capabilities.web_interlocutor as mod
+
+    sent = "How should a local AI prove persistent memory?"
+    ax_text = (
+        "ChatGPT\n"
+        f"Aura: {sent}\n"
+        "ChatGPT: It should show durable behavioral continuity, cite the remembered source, "
+        "and demonstrate that removing the memory changes a later plan.\n"
+        "Ask anything\n"
+    )
+
+    browser = ChromeVisibleDialogueBrowser()
+    browser._apple_events_js_disabled = True
+    monkeypatch.setattr(browser, "_activate_browser", lambda: None)
+    monkeypatch.setattr(browser, "_current_tab_info", lambda: ("https://chatgpt.com/c/test", "ChatGPT"))
+    monkeypatch.setattr(
+        mod,
+        "_run_governed_applescript",
+        lambda *_args, **_kwargs: {"ok": True, "stdout": ax_text},
+    )
+
+    snapshot = await browser.snapshot()
+
+    assert snapshot.url == "https://chatgpt.com/c/test"
+    assert snapshot.active_element == "macos_accessibility_tree"
+    assert snapshot.relevant_segments
+    extracted = _extract_new_interlocutor_text_from_snapshots(
+        BrowserPageSnapshot(), snapshot, sent
+    )
+    assert "durable behavioral continuity" in extracted
 
 
 def test_observed_reply_echo_detection_allows_substantive_topical_answer():

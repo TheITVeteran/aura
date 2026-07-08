@@ -23,10 +23,27 @@ class _ScriptedGenerator:
         return self._code
 
 
+class _SequenceGenerator:
+    def __init__(self, scripts: list[str]) -> None:
+        self._scripts = scripts
+
+    async def generate_async(self, prompt: str, context: dict) -> str:
+        if self._scripts:
+            return self._scripts.pop(0)
+        return ""
+
+
 def _script(monkeypatch, code: str) -> None:
     import core.brain.llm.code_generator as code_generator
 
     monkeypatch.setattr(code_generator, "LLMCodeGenerator", lambda *a, **k: _ScriptedGenerator(code))
+
+
+def _script_sequence(monkeypatch, scripts: list[str]) -> None:
+    import core.brain.llm.code_generator as code_generator
+
+    shared = list(scripts)
+    monkeypatch.setattr(code_generator, "LLMCodeGenerator", lambda *a, **k: _SequenceGenerator(shared))
 
 
 @pytest.mark.asyncio
@@ -68,6 +85,30 @@ async def test_wrong_reconstruction_is_refuted_not_rubber_stamped(monkeypatch):
     assert result["status"] == "refuted"
     assert result["ok"] is False
     assert result["held_out_passed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_reconstruction_gets_repaired_and_reverified(monkeypatch):
+    _script_sequence(
+        monkeypatch,
+        [
+            "```python\ndef reconstructed(case):\n    return case['a'] - case['b']\n```",
+            "```python\ndef reconstructed(case):\n    return case['a'] + case['b']\n```",
+        ],
+    )
+    engine = ProgramDNAReconstructionEngine()
+    result = await engine.reconstruct_executable_via_cognition(
+        target="adder",
+        spec_docs=["Returns the sum of integer fields a and b."],
+        train_examples=[{"input": {"a": 1, "b": 2}, "output": 3}],
+        held_out=[{"input": {"a": 4, "b": 5}, "expected": 9}],
+        max_repair_attempts=1,
+    )
+
+    assert result["status"] == "supported"
+    assert result["ok"] is True
+    assert result["repair_attempts_used"] == 1
+    assert result["held_out_passed"] == result["held_out_total"] == 1
 
 
 @pytest.mark.asyncio

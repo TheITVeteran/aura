@@ -462,10 +462,56 @@ class ProgramDNAReconstructionEngine:
         lines.append(
             f"Implement `def {fn_name}(case):` — it takes one dict argument and returns the "
             "output. Reproduce the behavior for UNSEEN inputs of the same shape, not just the "
-            "examples. Python standard library only; no I/O, no network. Return one fenced "
-            "python code block and nothing else."
+            "examples. Python standard library only; no I/O, no network. Prefer no imports; "
+            "if imports are needed, use only pure modules such as json, csv, re, math, "
+            "statistics, decimal, collections, itertools, functools, operator, datetime, "
+            "base64, hashlib, html, or urllib.parse. Do not use from __future__, os, sys, "
+            "pathlib, subprocess, socket, shutil, importlib, ctypes, pickle, marshal, open, "
+            "eval, exec, compile, getattr, setattr, globals, locals, vars, or dunder "
+            "attributes. Return one fenced python code block and nothing else."
+            " Treat examples as normative behavioral evidence: match casing, whitespace, "
+            "state carryover, ID allocation, aliases such as body/json payload fields, and "
+            "missing optional inputs by inference from the specification rather than by "
+            "the simplest implementation that fits only the first example."
         )
         return "\n".join(lines)
+
+    def _build_reconstruction_repair_prompt(
+        self,
+        *,
+        original_prompt: str,
+        candidate_code: str,
+        failures: list[dict[str, Any]],
+        fn_name: str,
+    ) -> str:
+        bounded_failures = [
+            {
+                "input": failure.get("input"),
+                "expected": failure.get("expected"),
+                "outcome": failure.get("outcome"),
+                "error": str(failure.get("error") or "")[-1200:],
+            }
+            for failure in failures[:6]
+        ]
+        return "\n".join(
+            [
+                original_prompt,
+                "",
+                "## Previous candidate that failed verification",
+                "```python",
+                str(candidate_code or "").strip()[:6000],
+                "```",
+                "",
+                "## Observed behavioral mismatches",
+                json.dumps(bounded_failures, indent=2, sort_keys=True),
+                "",
+                "Repair the implementation. Generalize the rule that explains the mismatches; "
+                "do not special-case only these inputs. Pay attention to exact casing, "
+                "whitespace normalization, carried initial state, next-ID allocation, body/json "
+                "aliases, and optional flags exposed by the failed observations. Keep the same function signature "
+                f"`def {fn_name}(case):`. Return one fenced python code block and nothing else.",
+            ]
+        )
 
     async def reconstruct_executable_via_cognition(
         self,
@@ -480,6 +526,7 @@ class ProgramDNAReconstructionEngine:
         temperature: float = 0.1,
         max_tokens: int = 900,
         sandbox_profile: str = "general",
+        max_repair_attempts: int = 1,
     ) -> dict[str, Any]:
         """Reconstruct RUNNABLE behavior from spec only, then verify it honestly.
 
@@ -572,19 +619,84 @@ class ProgramDNAReconstructionEngine:
         except (ImportError, RuntimeError) as exc:
             self._record_degradation("program_dna_reconstruction.sandbox", exc, severity="warning")
 
-        passed = 0
-        failures: list[dict[str, Any]] = []
-        if evaluator is not None:
+        def _evaluate_candidate(candidate_code: str) -> tuple[int, list[dict[str, Any]]]:
+            candidate_passed = 0
+            candidate_failures: list[dict[str, Any]] = []
+            if evaluator is None:
+                return candidate_passed, candidate_failures
             for case in held_out:
                 expected = case.get("expected")
                 inp = case.get("input", case)
-                evaluation = evaluator.evaluate(code, fn_name, [((inp,), expected)])
+                evaluation = evaluator.evaluate(candidate_code, fn_name, [((inp,), expected)])
                 if evaluation.outcome == "passed" and evaluation.passed == 1:
-                    passed += 1
+                    candidate_passed += 1
                 else:
-                    failures.append(
-                        {"input": inp, "expected": expected, "outcome": evaluation.outcome}
+                    candidate_failures.append(
+                        {
+                            "input": inp,
+                            "expected": expected,
+                            "outcome": evaluation.outcome,
+                            "error": evaluation.error or "",
+                        }
                     )
+            return candidate_passed, candidate_failures
+
+        passed, failures = _evaluate_candidate(code)
+        repair_attempts_used = 0
+        try:
+            max_repairs = max(0, min(3, int(max_repair_attempts)))
+        except (TypeError, ValueError):
+            max_repairs = 0
+        while evaluator is not None and failures and repair_attempts_used < max_repairs:
+            repair_attempts_used += 1
+            repair_prompt = self._build_reconstruction_repair_prompt(
+                original_prompt=prompt,
+                candidate_code=code,
+                failures=failures,
+                fn_name=fn_name,
+            )
+            try:
+                from core.brain.llm.code_generator import LLMCodeGenerator, extract_python_code
+
+                code_router = None
+                try:
+                    from core.brain.llm.local_code_model import get_local_code_model
+
+                    code_router = get_local_code_model()
+                except (ImportError, RuntimeError, OSError):
+                    code_router = None
+                generator = LLMCodeGenerator(router=code_router) if code_router else LLMCodeGenerator()
+                raw = await generator.generate_async(
+                    repair_prompt,
+                    context={
+                        "prefer_tier": "primary",
+                        "temperature": max(0.0, min(float(temperature), 0.2)),
+                        "max_tokens": max_tokens,
+                        "origin": "program_dna_reconstruction_repair",
+                        "system_prompt": (
+                            "You are repairing a clean-room implementation after sandboxed "
+                            "behavioral verification failed. Generalize from the observed "
+                            "mismatches and return only valid Python."
+                        ),
+                    },
+                )
+                repaired_code = extract_python_code(raw) or str(raw or "")
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+                self._record_degradation(
+                    "program_dna_reconstruction.repair",
+                    exc,
+                    severity="warning",
+                )
+                break
+            if not repaired_code.strip():
+                break
+            repaired_passed, repaired_failures = _evaluate_candidate(repaired_code)
+            if repaired_passed >= passed:
+                code = repaired_code
+                passed = repaired_passed
+                failures = repaired_failures
+            if not failures:
+                break
 
         total = len(held_out)
         if evaluator is None or total == 0:
@@ -605,6 +717,7 @@ class ProgramDNAReconstructionEngine:
             "equivalence": (passed / total) if total else 0.0,
             "failures": failures[:10],
             "code": code,
+            "repair_attempts_used": repair_attempts_used,
             "source_policy": "spec-only (docs + examples); no original source, no decompilation",
         }
 

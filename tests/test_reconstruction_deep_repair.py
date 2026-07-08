@@ -42,6 +42,34 @@ async def test_llm_code_generator_uses_router_and_validates_python():
 
 
 @pytest.mark.asyncio
+async def test_llm_code_generator_honors_request_generation_budget():
+    class Router:
+        def __init__(self):
+            self.kwargs = {}
+
+        async def think(self, prompt, **kwargs):
+            self.kwargs = kwargs
+            return "```python\ndef run():\n    return 'ok'\n```"
+
+    router = Router()
+    generator = LLMCodeGenerator(router=router, max_tokens=8192, temperature=0.8)
+
+    await generator.generate_async(
+        "# Module Reimplementation Task",
+        {
+            "module_path": "core/example.py",
+            "max_tokens": 256,
+            "temperature": 0.05,
+            "prefer_tier": "coder",
+        },
+    )
+
+    assert router.kwargs["max_tokens"] == 256
+    assert router.kwargs["temperature"] == 0.05
+    assert router.kwargs["prefer_tier"] == "coder"
+
+
+@pytest.mark.asyncio
 async def test_self_healing_request_deep_repair_uses_registered_lab(tmp_path, monkeypatch):
     monkeypatch.setenv("AURA_ENABLE_DEEP_REPAIR", "1")
 

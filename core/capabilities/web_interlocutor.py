@@ -488,6 +488,9 @@ class ChromeVisibleDialogueBrowser:
         if self._cdp.is_available():
             return await self._cdp.snapshot()
         if self._apple_events_js_disabled:
+            ax_snapshot = await self._accessibility_snapshot()
+            if ax_snapshot.text or ax_snapshot.relevant_text or ax_snapshot.relevant_segments:
+                return ax_snapshot
             return await self._screen_perception_snapshot()
         js = r"""
 (() => {
@@ -563,6 +566,9 @@ class ChromeVisibleDialogueBrowser:
             raw = await asyncio.to_thread(self._run_chrome_js, js, 8.0)
         except RuntimeError as exc:
             self._record_chrome_js_unavailable("web_interlocutor.chrome_js_snapshot", exc)
+            ax_snapshot = await self._accessibility_snapshot()
+            if ax_snapshot.text or ax_snapshot.relevant_text or ax_snapshot.relevant_segments:
+                return ax_snapshot
             return await self._screen_perception_snapshot()
         try:
             data = json.loads(raw or "{}")
@@ -1055,6 +1061,78 @@ end tell
                 action="continued with bounded legacy click probes after screen scene targeting failed",
             )
             return []
+
+    async def _accessibility_snapshot(self) -> BrowserPageSnapshot:
+        """Read the visible browser transcript through macOS Accessibility.
+
+        This is the important fallback when Chrome refuses AppleScript DOM
+        JavaScript. OCR sees pixels, but it often misses scroll position and
+        role/order. AX gives Aura the same visible UI tree a screen reader sees:
+        enough to prove she can read ChatGPT/Gemini replies before responding.
+        The read is bounded and does not execute page scripts.
+        """
+
+        await asyncio.to_thread(self._activate_browser)
+        await asyncio.sleep(0.15)
+        url, title = await asyncio.to_thread(self._current_tab_info)
+        script = f"""
+tell application "{self.browser}" to activate
+delay 0.1
+tell application "System Events"
+    tell process "{self.browser}"
+        set winTitle to ""
+        try
+            set winTitle to name of window 1 as text
+        end try
+        set axText to ""
+        try
+            set axText to entire contents of window 1 as string
+        end try
+        if axText is "" then
+            try
+                set axText to entire contents as string
+            end try
+        end if
+        return winTitle & linefeed & axText
+    end tell
+end tell
+"""
+        try:
+            result = await asyncio.to_thread(
+                _run_governed_applescript,
+                script,
+                source="web_interlocutor.chrome_accessibility_snapshot",
+                timeout=6.0,
+            )
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "web_interlocutor.chrome_accessibility_snapshot",
+                exc,
+                severity="warning",
+                action="continued with screen perception after Chrome AX transcript capture failed",
+            )
+            return BrowserPageSnapshot(url=url, title=title)
+        if not result.get("ok"):
+            return BrowserPageSnapshot(url=url, title=title)
+        raw = str(result.get("stdout") or "")
+        text = _normalize_accessibility_transcript(raw)[:_MAX_PAGE_TEXT_CHARS]
+        relevant_text = _accessibility_relevant_text(text)[:_MAX_REPLY_CHARS]
+        segments = _accessibility_chat_segments(text)[-80:]
+        editable_count = 1 if _screen_text_suggests_chat_composer(text) else 0
+        generating = bool(re.search(r"\b(stop generating|stop streaming|responding|generating)\b", text, re.I))
+        if not title:
+            first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
+            title = first_line[:160]
+        return BrowserPageSnapshot(
+            url=url,
+            title=title,
+            text=text,
+            relevant_text=relevant_text,
+            relevant_segments=segments,
+            active_element="macos_accessibility_tree",
+            editable_count=editable_count,
+            generating=generating,
+        )
 
     def _record_chrome_js_unavailable(self, source: str, exc: RuntimeError) -> None:
         message = str(exc)
@@ -2290,6 +2368,88 @@ def _as_applescript_string(value: str) -> str:
     text = text.replace("\\", "\\\\").replace('"', '\\"')
     text = text.replace("\r", "\\r").replace("\n", "\\n")
     return f'"{text}"'
+
+
+def _normalize_accessibility_transcript(text: str) -> str:
+    """Normalize macOS AX tree text into bounded, line-oriented transcript text."""
+
+    raw = str(text or "").replace("\r", "\n")
+    raw = re.sub(r"\n{3,}", "\n\n", raw)
+    raw = re.sub(r"\b(user|human|you|aura|assistant|chatgpt|gemini|claude|interlocutor)\s*:\s*", r"\n\1: ", raw, flags=re.I)
+    raw = re.sub(r"\b(Thought for\s+\d+\s*(?:s|sec|seconds|min|minutes)?)\b", r"\n\1\n", raw, flags=re.I)
+    raw = re.sub(r"\b(Ask anything|Message ChatGPT|Message Gemini|ChatGPT can make mistakes)\b", r"\n\1\n", raw, flags=re.I)
+
+    lines: list[str] = []
+    seen: set[str] = set()
+    for chunk in raw.splitlines():
+        cleaned = re.sub(r"\s+", " ", chunk).strip()
+        if not cleaned:
+            continue
+        norm = _normalize_line(cleaned)
+        # AX often repeats the same button/label many times. Do not dedupe
+        # long prose because repeated concepts can be meaningful dialogue.
+        if len(cleaned) < 120 and norm in seen:
+            continue
+        seen.add(norm)
+        lines.append(cleaned)
+    return "\n".join(lines)[-_MAX_PAGE_TEXT_CHARS:]
+
+
+def _accessibility_relevant_text(text: str) -> str:
+    lines = [
+        line.strip()
+        for line in str(text or "").splitlines()
+        if line.strip() and not _looks_like_ui_chrome(_normalize_line(line))
+    ]
+    if not lines:
+        return ""
+    return "\n".join(lines[-120:])
+
+
+def _accessibility_chat_segments(text: str) -> list[dict[str, Any]]:
+    """Extract ordered chat segments when AX exposes explicit role labels."""
+
+    segments: list[dict[str, Any]] = []
+    current_role = ""
+    current_lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_role, current_lines
+        body = "\n".join(current_lines).strip()
+        if current_role and body:
+            segments.append({"role": current_role, "text": body})
+        current_role = ""
+        current_lines = []
+
+    role_map = {
+        "you": "user",
+        "user": "user",
+        "human": "user",
+        "aura": "user",
+        "assistant": "assistant",
+        "chatgpt": "assistant",
+        "gemini": "assistant",
+        "claude": "assistant",
+        "interlocutor": "assistant",
+    }
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        norm = _normalize_line(line)
+        if _looks_like_ui_chrome(norm):
+            continue
+        match = re.match(r"^(you|user|human|aura|assistant|chatgpt|gemini|claude|interlocutor)\s*:\s*(.*)$", line, re.I)
+        if match:
+            flush()
+            current_role = role_map[match.group(1).lower()]
+            remainder = match.group(2).strip()
+            current_lines = [remainder] if remainder else []
+            continue
+        if current_role:
+            current_lines.append(line)
+    flush()
+    return segments
 
 
 def _extract_new_interlocutor_text(before: str, after: str, sent_text: str) -> str:
