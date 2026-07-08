@@ -184,3 +184,83 @@ def test_uncontended_foreground_takes_gate_without_cancel(monkeypatch, gate_stat
     assert result == GATED_OK
     assert cancel_calls == []
     assert router_module._GENERATION_GATE_ACTIVE_LEASES == {}
+
+
+def test_abandoned_foreground_holder_soft_cancelled_before_kill(monkeypatch, gate_state):
+    """The 20260708-final soak doom loop, prevented at the root.
+
+    A foreground holder whose lease outlived the gate window is ABANDONED
+    (its route already returned 503; the decode is orphaned). It gets the
+    cooperative rung — worker yields between tokens and STAYS WARM — never
+    a straight force-abort (which kills the 20GB worker and paid a cold
+    reload every ~5 minutes, 34/38 turns dead)."""
+    import time as _time
+
+    router = _router(monkeypatch)
+    lease = _hold_gate_as(gate_state, "user:response_generation_user")
+    # Backdate the lease far past max(30s, gate window): an orphan, not a turn.
+    with router_module._GENERATION_GATE_STATE_LOCK:
+        acquired_at, owner = router_module._GENERATION_GATE_ACTIVE_LEASES[lease]
+        router_module._GENERATION_GATE_ACTIVE_LEASES[lease] = (
+            acquired_at - 200.0, owner,
+        )
+
+    cancel_reasons: list[str] = []
+
+    def fake_soft_cancel(*, reason):
+        cancel_reasons.append(reason)
+        gate_state.release()
+        router_module._release_generation_gate_after_call(lease)
+        return True
+
+    monkeypatch.setattr(router, "_soft_cancel_local_generations", fake_soft_cancel)
+    force_aborts: list[str] = []
+    monkeypatch.setattr(
+        router,
+        "force_abort_active_generation",
+        lambda reason="": force_aborts.append(reason) or 0,
+    )
+
+    result = asyncio.run(
+        router.generate_with_metadata(
+            "next turn", origin="user", purpose="response_generation_user",
+            foreground_request=True,
+        )
+    )
+
+    assert result["ok"] is True
+    assert cancel_reasons and cancel_reasons[0].startswith("abandoned_gate_holder:")
+    assert force_aborts == [], "an acknowledged soft-cancel must never escalate to a worker kill"
+
+
+def test_abandoned_holder_unacknowledged_cancel_still_escalates(monkeypatch, gate_state):
+    """A truly wedged holder (soft-cancel not acknowledged) still dies —
+    the last rung exists for real wedges, not for orphans."""
+    router = _router(monkeypatch)
+    lease = _hold_gate_as(gate_state, "user:response_generation_user")
+    with router_module._GENERATION_GATE_STATE_LOCK:
+        acquired_at, owner = router_module._GENERATION_GATE_ACTIVE_LEASES[lease]
+        router_module._GENERATION_GATE_ACTIVE_LEASES[lease] = (
+            acquired_at - 200.0, owner,
+        )
+
+    monkeypatch.setattr(router, "_soft_cancel_local_generations", lambda *, reason: False)
+    force_aborts: list[str] = []
+
+    def fake_force_abort(reason=""):
+        force_aborts.append(reason)
+        gate_state.release()
+        router_module._release_generation_gate_after_call(lease)
+        return 1
+
+    monkeypatch.setattr(router, "force_abort_active_generation", fake_force_abort)
+
+    result = asyncio.run(
+        router.generate_with_metadata(
+            "next turn", origin="user", purpose="response_generation_user",
+            foreground_request=True,
+        )
+    )
+
+    assert result["ok"] is True
+    assert force_aborts and force_aborts[0].startswith("generation_gate_wait_timeout")

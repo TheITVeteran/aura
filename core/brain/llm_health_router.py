@@ -1161,11 +1161,26 @@ class HealthAwareLLMRouter:
             foreground_age_s = _oldest_generation_gate_lease_age_s() if foreground_owner else 0.0
             if foreground_owner and foreground_age_s < max(30.0, _GENERATION_GATE_WAIT_S):
                 return _generation_gate_busy_result(foreground_owner)
-            aborted = self.force_abort_active_generation(
-                reason=f"generation_gate_wait_timeout:{_GENERATION_GATE_WAIT_S:.1f}s"
-            )
-            if aborted:
-                acquired = await asyncio.to_thread(_GENERATION_GATE.acquire, True, 2.0)
+            # An over-age holder is ABANDONED: its route already gave up and
+            # returned, the decode is orphaned. Cooperative cancel FIRST — the
+            # worker yields between tokens and stays warm. The 20260708-final
+            # soak proved what skipping this rung costs: the earlier ladder
+            # only soft-cancelled BACKGROUND holders, so an orphaned
+            # foreground turn went straight to force-abort, which kills the
+            # 20GB worker — every ~5min: orphan holds gate 75s → kill → cold
+            # reload → next turn meets the next orphan. 34/38 turns dead.
+            if not request_is_background and self._soft_cancel_local_generations(
+                reason=f"abandoned_gate_holder:{(foreground_owner or 'unknown')[:80]}"
+            ):
+                acquired = await asyncio.to_thread(
+                    _GENERATION_GATE.acquire, True, _FOREGROUND_SOFT_CANCEL_WAIT_S
+                )
+            if not acquired:
+                aborted = self.force_abort_active_generation(
+                    reason=f"generation_gate_wait_timeout:{_GENERATION_GATE_WAIT_S:.1f}s"
+                )
+                if aborted:
+                    acquired = await asyncio.to_thread(_GENERATION_GATE.acquire, True, 2.0)
         if not acquired:
             record_degradation(
                 "llm_health_router",
