@@ -292,6 +292,28 @@ class TestAdmission:
         ok, reasons = loop.admission_check(str(big))
         assert ok, reasons
 
+    def test_hf_repo_id_resolves_via_local_cache(
+        self, tmp_path, base_model_dir, sft_buffer, monkeypatch
+    ):
+        """A cached HF repo id must size like a local dir — no network, no block."""
+        import huggingface_hub
+
+        def fake_snapshot(repo_id: str, local_files_only: bool = False, **_kw):
+            assert local_files_only, "admission must never touch the network"
+            assert repo_id == "test-org/test-model"
+            return str(base_model_dir)
+
+        monkeypatch.setattr(huggingface_hub, "snapshot_download", fake_snapshot)
+        loop = WeightCompoundingLoop(make_config(tmp_path, base_model_dir, sft_buffer))
+        ok, reasons = loop.admission_check("test-org/test-model")
+        assert ok, reasons
+
+    def test_uncached_repo_id_blocks_fail_closed(self, tmp_path, base_model_dir, sft_buffer):
+        loop = WeightCompoundingLoop(make_config(tmp_path, base_model_dir, sft_buffer))
+        ok, reasons = loop.admission_check("no-such-org/definitely-not-cached-xyz")
+        assert not ok
+        assert any("model_footprint_unknown" in r for r in reasons)
+
     def test_idle_hook_blocks(self, tmp_path, base_model_dir, sft_buffer):
         loop = WeightCompoundingLoop(
             make_config(tmp_path, base_model_dir, sft_buffer),

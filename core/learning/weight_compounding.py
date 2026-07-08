@@ -49,6 +49,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -184,6 +185,31 @@ class CycleReceipt:
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
+_HF_REPO_ID_RE = re.compile(r"[\w.\-]+/[\w.\-]+")
+
+
+def _resolve_model_dir(model_path: str) -> Path | None:
+    """Resolve a model reference to a local directory, if one exists.
+
+    Accepts filesystem paths and Hugging Face repo ids ("org/name"). Repo ids
+    resolve against the local HF cache WITHOUT any network touch, so admission
+    control can size a cached model exactly like a local directory. A model
+    that is neither on disk nor cached stays unresolved — admission then
+    blocks on the unknown footprint, which is the fail-closed default.
+    """
+    candidate = Path(model_path).expanduser()
+    if candidate.exists():
+        return candidate
+    if _HF_REPO_ID_RE.fullmatch(model_path or ""):
+        try:
+            from huggingface_hub import snapshot_download
+
+            return Path(snapshot_download(repo_id=model_path, local_files_only=True))
+        except (ImportError, OSError, ValueError):
+            return None
+    return None
+
+
 def _dir_weight_bytes(model_dir: Path) -> int:
     """Approximate in-memory footprint by on-disk weight size."""
     try:
@@ -285,8 +311,8 @@ class WeightCompoundingLoop:
 
     def admission_check(self, model_path: str, mode: str = "sft") -> tuple[bool, list[str]]:
         reasons: list[str] = []
-        model_dir = Path(model_path)
-        weight_bytes = _dir_weight_bytes(model_dir) if model_dir.exists() else 0
+        model_dir = _resolve_model_dir(model_path)
+        weight_bytes = _dir_weight_bytes(model_dir) if model_dir is not None else 0
 
         if weight_bytes == 0:
             reasons.append(f"model_footprint_unknown:{model_path}")
