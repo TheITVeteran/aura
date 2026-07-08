@@ -1,0 +1,16 @@
+{
+  "attempts_per_task": 4,
+  "correct_attempts": 74,
+  "correct_rate": 0.5781,
+  "elapsed_s": 200.7,
+  "model": "artifacts/learning-demo-proof/fused/Aura-compound-g0000-1783482412",
+  "pairs_emitted": 22,
+  "seed_range": [
+    1,
+    2
+  ],
+  "store": "artifacts/learning-demo-proof/verifiable_preferences.jsonl",
+  "tasks": 32,
+  "tasks_with_contrast": 11,
+  "total_attempts": 128
+}

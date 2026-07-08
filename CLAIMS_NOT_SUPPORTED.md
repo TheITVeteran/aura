@@ -18,7 +18,7 @@ This ledger explicitly identifies and documents speculative, high-horizon, or fu
 
 ## 4. Recursive Self-Improvement (RSI)
 * **Status**: `not proven`
-* **Rationale**: Although the system is equipped with sandboxed code mutation capabilities (`core/self_modification/`), it does not possess a recursive self-optimization loop that achieves compounded capability scaling without human supervision. High-order RSI is actively restricted by strict mutation-safety policies and local model reasoning boundaries.
+* **Rationale**: What IS demonstrated (CLAIMS_MATRIX claim 23): an unsupervised weight-level compounding loop — self-play verifier-graded DPO harvest → train → sealed held-out gate → promote → next generation trains on the published artifact, manifest-chained and ledger-recorded (`artifacts/learning_compounding/2026-07-07-1p5b-2cycle/`, reproducible via `make demo-learning`). What is NOT demonstrated: compounded capability SCALING. No run has produced a strictly-increasing held-out capability curve across promoted generations; the ledger's own verdict for the proof run is `BOUNDED_SELF_OPTIMIZATION` (curve 0.667 → 0.625). RSI as a capability claim stays here until the ledger says otherwise.
 
 ## 5. Indefinite Autonomy
 * **Status**: `not proven`

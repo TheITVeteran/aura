@@ -1,0 +1,21 @@
+{
+  "base_model": "artifacts/learning-demo-proof/fused/Aura-compound-g0000-1783482412",
+  "base_source": "manifest",
+  "candidate_accuracy": 0.625,
+  "data_counts": {
+    "test": 2,
+    "train": 40,
+    "valid": 4
+  },
+  "elapsed_s": 213.85,
+  "generation_id": "g0001-1783482801",
+  "hidden_accuracy": 0.75,
+  "identity_ok": true,
+  "incumbent_accuracy": 0.625,
+  "ledger_entry_hash": "sha256:d18aa5e0a43a18034a91ea8ff6ad77cfd06b617a4d771efd639496b6e569ab9f",
+  "promoted_model_path": "artifacts/learning-demo-proof/fused/Aura-compound-g0001-1783482801",
+  "reasons": [],
+  "run_dir": "artifacts/learning-demo-proof/runs/g0001-1783482801",
+  "status": "promoted",
+  "train_mode": "dpo"
+}

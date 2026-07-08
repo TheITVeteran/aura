@@ -141,11 +141,35 @@ def _resolve_active_fused_model() -> str | None:
         return None
 
 
-_CORTEX_PATH = Path(
-    os.getenv("AURA_LLM__MLX_MODEL_PATH")
-    or _resolve_active_fused_model()
-    or str(BASE_DIR / "models" / "Qwen2.5-32B-Instruct-8bit")
-)
+_CORTEX_NAME = "Qwen2.5-32B-Instruct-8bit"
+_CORTEX_MANIFEST_TTL_S = 5.0
+_cortex_path_cache: tuple[float, Path] | None = None
+
+
+def _current_cortex_path() -> Path:
+    """Resolve the cortex artifact FRESH: env pin > fused manifest > default.
+
+    The import-time constant this replaces froze the fused-model manifest at
+    boot, so a weight promotion (training/fused-model/active.json) reached
+    only the lane it was hot-swapped into — any later worker respawn
+    re-resolved the stale path and silently resurrected the previous
+    generation's weights. Model identity is a runtime decision; a short TTL
+    keeps spawn paths cheap without letting them lag a promotion.
+    """
+    global _cortex_path_cache
+    now = time.monotonic()
+    if _cortex_path_cache is not None and (now - _cortex_path_cache[0]) < _CORTEX_MANIFEST_TTL_S:
+        return _cortex_path_cache[1]
+    resolved = Path(
+        os.getenv("AURA_LLM__MLX_MODEL_PATH")
+        or _resolve_active_fused_model()
+        or str(BASE_DIR / "models" / _CORTEX_NAME)
+    )
+    _cortex_path_cache = (now, resolved)
+    return resolved
+
+
+_CORTEX_PATH = _current_cortex_path()  # legacy import-time view; do not add consumers
 _SOLVER_PATH = Path(
     os.getenv("AURA_LLM__MLX_DEEP_MODEL_PATH")
     or str(BASE_DIR / "models" / "Qwen2.5-72B-Instruct-4bit")
@@ -246,6 +270,15 @@ def get_model_path(model_name: str | None = None) -> str:
         "DeepSeek-R1-Distill-Qwen-32B-4bit": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-4bit",
         "DeepSeek-R1-Distill-Qwen-32B-8bit": "mlx-community/DeepSeek-R1-Distill-Qwen-32B-MLX-8Bit",
     }
+
+    # The cortex lane resolves FRESH so a promoted fused artifact serves
+    # every consumer (including worker respawns), not just the hot-swapped
+    # client. See _current_cortex_path.
+    if name == _CORTEX_NAME:
+        cortex = _current_cortex_path().expanduser()
+        if cortex.exists():
+            return str(cortex.resolve())
+        return hf_fallbacks.get(name, str(cortex))
 
     local_path = MODEL_PATHS.get(name, BASE_DIR / "models" / name)
 

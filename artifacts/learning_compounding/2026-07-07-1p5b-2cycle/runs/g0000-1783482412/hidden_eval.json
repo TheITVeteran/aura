@@ -1,0 +1,111 @@
+{
+  "accuracy": 0.6666666666666666,
+  "adapter_path": "artifacts/learning-demo-proof/runs/g0000-1783482412/adapter",
+  "battery": {
+    "battery_id": "heldout-v1-seed101003-n12",
+    "domains": [
+      "arithmetic_chain",
+      "date_arithmetic",
+      "linear_equation",
+      "modular",
+      "program_output",
+      "sequence",
+      "string_transform",
+      "unit_conversion"
+    ],
+    "seed": 101003,
+    "set_hash": "6c9972ebd6551185d9fd4b20ac2c16dd7e6f37ef94773f990b0b9da0835630b5",
+    "size": 12,
+    "task_ids": [
+      "a1d6faf03321",
+      "e5d56180b2dd",
+      "47637ba70512",
+      "808af62a4b59",
+      "7a014788fe09",
+      "94b998756ee3",
+      "570997e7064b",
+      "6cd01a596b69",
+      "2abf3fe38c14",
+      "0b6e4b229aed",
+      "f5be5a5ee0cf",
+      "0253c6409433"
+    ],
+    "version": 1
+  },
+  "created_at": 1783482594.820747,
+  "max_tokens": 256,
+  "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+  "responses_sha256": "720c9127211dbe673703da1d6d8de87ef7657acdbbf46633312139e03ad6033d",
+  "result": {
+    "accuracy": 0.6667,
+    "battery_id": "heldout-v1-seed101003-n12",
+    "correct": 8,
+    "failures": [
+      {
+        "domain": "modular",
+        "expected": "52",
+        "extracted": "28",
+        "task_id": "47637ba70512"
+      },
+      {
+        "domain": "string_transform",
+        "expected": "etinarg",
+        "extracted": "the reversed string is \"gnertacra\"",
+        "task_id": "7a014788fe09"
+      },
+      {
+        "domain": "program_output",
+        "expected": "9",
+        "extracted": "0",
+        "task_id": "94b998756ee3"
+      },
+      {
+        "domain": "modular",
+        "expected": "11",
+        "extracted": "6",
+        "task_id": "f5be5a5ee0cf"
+      }
+    ],
+    "per_domain": {
+      "arithmetic_chain": {
+        "correct": 2,
+        "total": 2
+      },
+      "date_arithmetic": {
+        "correct": 1,
+        "total": 1
+      },
+      "linear_equation": {
+        "correct": 2,
+        "total": 2
+      },
+      "modular": {
+        "correct": 0,
+        "total": 2
+      },
+      "program_output": {
+        "correct": 0,
+        "total": 1
+      },
+      "sequence": {
+        "correct": 2,
+        "total": 2
+      },
+      "string_transform": {
+        "correct": 0,
+        "total": 1
+      },
+      "unit_conversion": {
+        "correct": 1,
+        "total": 1
+      }
+    },
+    "total": 12
+  },
+  "schema_version": 1,
+  "timing": {
+    "generate_s": 20.08,
+    "load_s": 0.51
+  },
+  "tool": "heldout_eval"
+}

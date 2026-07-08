@@ -23,13 +23,14 @@ Final closure statement: Aura passed the configured local final-proof gates for 
 | **13. DNU AGI** | `not proven` | `artifacts/current/agi_live/` passed the configured local 100-task battery, but AGI itself remains unproven |
 | **14. AGI-Candidate** | `locally demonstrated` | `artifacts/current/agi_live/`, `artifacts/current/external_live_validation/`, `artifacts/current/agency_emergence_boxed_entity/`, `artifacts/current/unified_system_scenario/`, receipt coverage, ablations, baselines, and Aletheia Tier 5 evidence. **⚠️ Scope (2026-07-06): the `agi_live` baseline comparison was token-handicapped (160-token baseline vs solver-assisted full_aura) and its ablations isolate System 2 only — see [docs/DNU_BASELINE_FAIRNESS_AUDIT.md](docs/DNU_BASELINE_FAIRNESS_AUDIT.md). That bundle demonstrates System 2 symbolic reasoning, NOT the whole architecture; baseline numbers are superseded pending an honest re-run.** |
 | **15. Local Production Gate Readiness** | `locally demonstrated` | Pass status of configured local readiness gates, production surface lint, and artifact consistency |
-| **16. Mature RSI** | `not proven` | Blocker: Safety filters and local model capability restrict autonomous non-interactive improvement |
+| **16. Mature RSI** | `not proven` | Blocker: the compounding loop (claim 23) runs unsupervised, but no run has yet produced a strictly-increasing held-out capability curve — the ledger's own verdict is `BOUNDED_SELF_OPTIMIZATION`, not capability gain |
 | **17. Subjective Consciousness** | `not proven` | Strictly unsupported. Qualitative experience, qualia, and personhood are not scientifically provable |
 | **18. Personhood** | `not proven` | Strictly unsupported. Aura is a software runtime, not a legal or moral person |
 | **19. Metaphysical Free Will** | `not proven` | Strictly unsupported. Aura operates on deterministic/probabilistic computational volition only |
 | **20. Indefinite Autonomy** | `not proven` | Blocker: Bounded by short proof longevity soak limits (needs 72h+ soak runs) |
 | **21. Synthetic Cognitive Entity** | `locally demonstrated` | Boxed agency, operational volition, unified scenario, memory continuity, and receipt coverage pass under the configured local profile |
 | **22. Experience-Adjacent Indicators**| `locally demonstrated` | Introspective state tracking, affect-memory interaction, and self-report checks |
+| **23. Compounding Weight-Learning Loop (mechanism)** | `locally demonstrated` | `core/learning/weight_compounding.py` + `artifacts/learning_compounding/2026-07-07-1p5b-2cycle/` — two unsupervised cycles: self-play verifier-graded DPO harvest → train → sealed held-out gate → promote → generation N+1 trains on N's published artifact (manifest-chained, hash-chained ledger). Mechanism only; capability GROWTH is claim 16 and remains `not proven` |
 
 ---
 
@@ -113,7 +114,7 @@ Final closure statement: Aura passed the configured local final-proof gates for 
 ### 16. Mature RSI
 * **Classification**: `not proven`
 * **Definition**: Recursive self-improvement resulting in significant autonomous capability gains without human intervention.
-* **Blocker**: Blocked by safety policies preventing non-interactive execution of self-modification.
+* **Blocker**: The mechanical loop now exists and runs unsupervised (claim 23), but no run has produced a strictly-increasing held-out capability curve across promoted generations. The 2026-07-07 two-cycle proof's ledger verdict is `BOUNDED_SELF_OPTIMIZATION` (curve 0.667 → 0.625 on 24-task sealed batteries; within small-sample noise, honestly not a gain). Growth, if it comes, must come from more cycles, more data per cycle, and larger batteries — and will be claimed only from the ledger.
 
 ### 17. Subjective Consciousness
 * **Classification**: `not proven`
@@ -144,3 +145,9 @@ Final closure statement: Aura passed the configured local final-proof gates for 
 * **Classification**: `locally demonstrated`
 * **Definition**: Internal states influencing future perception, memory indexing, and self-reports in structured, traceable ways.
 * **Evidence**: Metacognition loops and state-behavior coupling tests in the test suite.
+
+### 23. Compounding Weight-Learning Loop (mechanism)
+* **Classification**: `locally demonstrated`
+* **Definition**: An unsupervised loop that turns the system's own verified experience into weight updates on its own serving artifact, generation after generation, with promotion gated on sealed held-out evaluation and every step recorded in a tamper-evident ledger.
+* **Evidence**: `artifacts/learning_compounding/2026-07-07-1p5b-2cycle/` — two consecutive cycles on Qwen2.5-1.5B-4bit: (1) self-play sampling at temperature against seeded exact-checkable tasks, graded by the task's own verifier (the verifier is the reward — nothing to hack); (2) DPO training on the verified win/loss contrasts; (3) sealed held-out battery gate (fresh seeds ≥1000, disjoint from all training seeds, fingerprint-sealed against contamination); (4) fuse + publish + manifest chain — **cycle 2 resolved cycle 1's published artifact as its base from the manifest and trained on top of it**; (5) hash-chained lineage ledger (`lineage.jsonl`), verdict computed only from ledger records. Reproduce with `make demo-learning` (~20–40 min, Apple Silicon).
+* **Boundary**: This claim covers the MECHANISM. The capability curve on this run was 0.667 → 0.625 (not increasing); the ledger verdict is `BOUNDED_SELF_OPTIMIZATION` and the demo prints refusals with the same prominence as gains. Capability growth is claim 16 and remains `not proven`. The same machinery runs autonomously in the live runtime (`core/learning/compounding_scheduler.py`, idle-gated, governance-approved, RAM-admission-controlled) with the self-play flywheel (`core/learning/selfplay_flywheel.py`) converting idle time into training contrast pairs.

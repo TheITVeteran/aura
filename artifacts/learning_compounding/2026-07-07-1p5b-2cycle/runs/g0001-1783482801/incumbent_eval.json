@@ -1,0 +1,153 @@
+{
+  "accuracy": 0.625,
+  "adapter_path": "",
+  "battery": {
+    "battery_id": "heldout-v1-seed1001-n24",
+    "domains": [
+      "arithmetic_chain",
+      "date_arithmetic",
+      "linear_equation",
+      "modular",
+      "program_output",
+      "sequence",
+      "string_transform",
+      "unit_conversion"
+    ],
+    "seed": 1001,
+    "set_hash": "5049fd89dd5b7a74193422be83af37039315f1879058528d0e013a4c736cc160",
+    "size": 24,
+    "task_ids": [
+      "c445fd4e8784",
+      "c4a8af6ad950",
+      "93c5b5b3dc39",
+      "94f68a40c888",
+      "3eec946d77fe",
+      "adca324f545a",
+      "de00533ab424",
+      "b4f5d0e1f9b7",
+      "3b6809cf7b78",
+      "441db95171e1",
+      "925f19566172",
+      "81705d97bdbc",
+      "52d864f9ce75",
+      "0cb34d4ff59f",
+      "27281c863374",
+      "88d2cce6c307",
+      "5cc43ee3742f",
+      "f98beda19114",
+      "fdb0b602f204",
+      "19eaa7ef97ee",
+      "61110b6bb2fd",
+      "33f7920c2a96",
+      "0539e1f2370a",
+      "fc8ba3621119"
+    ],
+    "version": 1
+  },
+  "created_at": 1783482920.8179562,
+  "max_tokens": 256,
+  "model": "artifacts/learning-demo-proof/fused/Aura-compound-g0000-1783482412",
+  "responses_sha256": "7d5c9ea7ccda908bfd3a30925061b964028dec5df7ed6b419365c8cc63b39578",
+  "result": {
+    "accuracy": 0.625,
+    "battery_id": "heldout-v1-seed1001-n24",
+    "correct": 15,
+    "failures": [
+      {
+        "domain": "modular",
+        "expected": "14",
+        "extracted": "1",
+        "task_id": "93c5b5b3dc39"
+      },
+      {
+        "domain": "sequence",
+        "expected": "160",
+        "extracted": "125",
+        "task_id": "94f68a40c888"
+      },
+      {
+        "domain": "string_transform",
+        "expected": "trlls",
+        "extracted": "10. remove 'e' from the end of \"trellis\": \"trellis\" becomes",
+        "task_id": "3eec946d77fe"
+      },
+      {
+        "domain": "date_arithmetic",
+        "expected": "friday",
+        "extracted": "- starting from wednesday, we add",
+        "task_id": "de00533ab424"
+      },
+      {
+        "domain": "program_output",
+        "expected": "126",
+        "extracted": "1",
+        "task_id": "52d864f9ce75"
+      },
+      {
+        "domain": "modular",
+        "expected": "64",
+        "extracted": "1296992",
+        "task_id": "f98beda19114"
+      },
+      {
+        "domain": "string_transform",
+        "expected": "harbor",
+        "extracted": "harorn",
+        "task_id": "19eaa7ef97ee"
+      },
+      {
+        "domain": "program_output",
+        "expected": "56",
+        "extracted": "16",
+        "task_id": "61110b6bb2fd"
+      },
+      {
+        "domain": "date_arithmetic",
+        "expected": "tuesday",
+        "extracted": "therefore, 64 days later from january 05, 2026, is a tuesday",
+        "task_id": "33f7920c2a96"
+      }
+    ],
+    "per_domain": {
+      "arithmetic_chain": {
+        "correct": 4,
+        "total": 4
+      },
+      "date_arithmetic": {
+        "correct": 1,
+        "total": 3
+      },
+      "linear_equation": {
+        "correct": 3,
+        "total": 3
+      },
+      "modular": {
+        "correct": 1,
+        "total": 3
+      },
+      "program_output": {
+        "correct": 1,
+        "total": 3
+      },
+      "sequence": {
+        "correct": 2,
+        "total": 3
+      },
+      "string_transform": {
+        "correct": 0,
+        "total": 2
+      },
+      "unit_conversion": {
+        "correct": 3,
+        "total": 3
+      }
+    },
+    "total": 24
+  },
+  "schema_version": 1,
+  "timing": {
+    "generate_s": 37.38,
+    "load_s": 0.61
+  },
+  "tool": "heldout_eval"
+}

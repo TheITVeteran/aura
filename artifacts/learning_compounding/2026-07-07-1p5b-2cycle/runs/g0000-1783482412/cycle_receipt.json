@@ -1,0 +1,21 @@
+{
+  "base_model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+  "base_source": "default",
+  "candidate_accuracy": 0.6666666666666666,
+  "data_counts": {
+    "test": 1,
+    "train": 21,
+    "valid": 2
+  },
+  "elapsed_s": 187.72,
+  "generation_id": "g0000-1783482412",
+  "hidden_accuracy": 0.6666666666666666,
+  "identity_ok": true,
+  "incumbent_accuracy": 0.5833333333333334,
+  "ledger_entry_hash": "sha256:09793f39927368910aa651168c5c26c819a84c51950682952b2f4e4fcd65b857",
+  "promoted_model_path": "artifacts/learning-demo-proof/fused/Aura-compound-g0000-1783482412",
+  "reasons": [],
+  "run_dir": "artifacts/learning-demo-proof/runs/g0000-1783482412",
+  "status": "promoted",
+  "train_mode": "dpo"
+}

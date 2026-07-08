@@ -1,0 +1,147 @@
+{
+  "accuracy": 0.6666666666666666,
+  "adapter_path": "artifacts/learning-demo-proof/runs/g0000-1783482412/adapter",
+  "battery": {
+    "battery_id": "heldout-v1-seed1000-n24",
+    "domains": [
+      "arithmetic_chain",
+      "date_arithmetic",
+      "linear_equation",
+      "modular",
+      "program_output",
+      "sequence",
+      "string_transform",
+      "unit_conversion"
+    ],
+    "seed": 1000,
+    "set_hash": "f0b2e5ab1589da2eecb3a0fa8b8dbacb7d57808f51827115926fe7254ccc2767",
+    "size": 24,
+    "task_ids": [
+      "17a74c179c07",
+      "539c2eaf0f3d",
+      "1bd9fab9893b",
+      "39d53589a859",
+      "0e19ea83bd97",
+      "d48651b2c1b8",
+      "c66865166e6b",
+      "862aaea5a959",
+      "be5c9bc91dcd",
+      "1e049955254a",
+      "564a349203e1",
+      "0910bb006053",
+      "2b64ffd8761c",
+      "f7285e4745eb",
+      "212b01837a89",
+      "a11f987da8a0",
+      "51cd8a3aef3e",
+      "48efa6f75778",
+      "bd64ae233b61",
+      "d8ea42df22f2",
+      "5bfc8999476c",
+      "b72cafbd3bff",
+      "5a1949f83d5b",
+      "6681c953d83f"
+    ],
+    "version": 1
+  },
+  "created_at": 1783482570.657197,
+  "max_tokens": 256,
+  "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+  "responses_sha256": "8647be88a3e97ac89507697905d4c342222559f959ef8f74cdae1a7aa999a578",
+  "result": {
+    "accuracy": 0.6667,
+    "battery_id": "heldout-v1-seed1000-n24",
+    "correct": 16,
+    "failures": [
+      {
+        "domain": "string_transform",
+        "expected": "ztrauq",
+        "extracted": "qtoraz",
+        "task_id": "0e19ea83bd97"
+      },
+      {
+        "domain": "program_output",
+        "expected": "47",
+        "extracted": "4",
+        "task_id": "d48651b2c1b8"
+      },
+      {
+        "domain": "date_arithmetic",
+        "expected": "monday",
+        "extracted": "therefore, 82 days later from october 28, 2026",
+        "task_id": "c66865166e6b"
+      },
+      {
+        "domain": "modular",
+        "expected": "4",
+        "extracted": "0",
+        "task_id": "564a349203e1"
+      },
+      {
+        "domain": "string_transform",
+        "expected": "qrtz",
+        "extracted": "qrt",
+        "task_id": "2b64ffd8761c"
+      },
+      {
+        "domain": "program_output",
+        "expected": "80",
+        "extracted": "1",
+        "task_id": "f7285e4745eb"
+      },
+      {
+        "domain": "modular",
+        "expected": "12",
+        "extracted": "4",
+        "task_id": "bd64ae233b61"
+      },
+      {
+        "domain": "program_output",
+        "expected": "126",
+        "extracted": "4",
+        "task_id": "b72cafbd3bff"
+      }
+    ],
+    "per_domain": {
+      "arithmetic_chain": {
+        "correct": 3,
+        "total": 3
+      },
+      "date_arithmetic": {
+        "correct": 2,
+        "total": 3
+      },
+      "linear_equation": {
+        "correct": 3,
+        "total": 3
+      },
+      "modular": {
+        "correct": 1,
+        "total": 3
+      },
+      "program_output": {
+        "correct": 0,
+        "total": 3
+      },
+      "sequence": {
+        "correct": 3,
+        "total": 3
+      },
+      "string_transform": {
+        "correct": 1,
+        "total": 3
+      },
+      "unit_conversion": {
+        "correct": 3,
+        "total": 3
+      }
+    },
+    "total": 24
+  },
+  "schema_version": 1,
+  "timing": {
+    "generate_s": 43.49,
+    "load_s": 0.54
+  },
+  "tool": "heldout_eval"
+}

@@ -1,0 +1,16 @@
+{
+  "attempts_per_task": 4,
+  "correct_attempts": 76,
+  "correct_rate": 0.5938,
+  "elapsed_s": 187.6,
+  "model": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+  "pairs_emitted": 24,
+  "seed_range": [
+    1,
+    2
+  ],
+  "store": "artifacts/learning-demo-proof/verifiable_preferences.jsonl",
+  "tasks": 32,
+  "tasks_with_contrast": 12,
+  "total_attempts": 128
+}

@@ -1,0 +1,105 @@
+{
+  "accuracy": 0.75,
+  "adapter_path": "artifacts/learning-demo-proof/runs/g0001-1783482801/adapter",
+  "battery": {
+    "battery_id": "heldout-v1-seed101004-n12",
+    "domains": [
+      "arithmetic_chain",
+      "date_arithmetic",
+      "linear_equation",
+      "modular",
+      "program_output",
+      "sequence",
+      "string_transform",
+      "unit_conversion"
+    ],
+    "seed": 101004,
+    "set_hash": "ce3f5e64086c59a68485d24ef302be123dc84917c28e8da0f55ea2586050b22c",
+    "size": 12,
+    "task_ids": [
+      "b5e09bade8e8",
+      "d03528221f57",
+      "b39fe2060f4e",
+      "d1c834a4950f",
+      "da4f1aea5e41",
+      "5aeaa9191109",
+      "ec580e53de7e",
+      "11878de5080d",
+      "b9215e61c069",
+      "1e86e6f272bb",
+      "25696437b983",
+      "356bf43d2c4e"
+    ],
+    "version": 1
+  },
+  "created_at": 1783483010.434197,
+  "max_tokens": 256,
+  "model": "artifacts/learning-demo-proof/fused/Aura-compound-g0000-1783482412",
+  "responses_sha256": "4945c88de30b5fdc35e7ddcb27269b18dcb64b8a114ec4d0a01339dbde9797db",
+  "result": {
+    "accuracy": 0.75,
+    "battery_id": "heldout-v1-seed101004-n12",
+    "correct": 9,
+    "failures": [
+      {
+        "domain": "modular",
+        "expected": "32",
+        "extracted": "0",
+        "task_id": "b39fe2060f4e"
+      },
+      {
+        "domain": "string_transform",
+        "expected": "grnt",
+        "extracted": "grrtn",
+        "task_id": "da4f1aea5e41"
+      },
+      {
+        "domain": "program_output",
+        "expected": "36",
+        "extracted": "1",
+        "task_id": "5aeaa9191109"
+      }
+    ],
+    "per_domain": {
+      "arithmetic_chain": {
+        "correct": 2,
+        "total": 2
+      },
+      "date_arithmetic": {
+        "correct": 1,
+        "total": 1
+      },
+      "linear_equation": {
+        "correct": 2,
+        "total": 2
+      },
+      "modular": {
+        "correct": 1,
+        "total": 2
+      },
+      "program_output": {
+        "correct": 0,
+        "total": 1
+      },
+      "sequence": {
+        "correct": 2,
+        "total": 2
+      },
+      "string_transform": {
+        "correct": 0,
+        "total": 1
+      },
+      "unit_conversion": {
+        "correct": 1,
+        "total": 1
+      }
+    },
+    "total": 12
+  },
+  "schema_version": 1,
+  "timing": {
+    "generate_s": 25.16,
+    "load_s": 0.61
+  },
+  "tool": "heldout_eval"
+}

@@ -135,6 +135,7 @@ artifacts/current/
 artifacts/live_proof/
 artifacts/live_apps/
 artifacts/live_proofs/
+artifacts/learning-demo-*/
 aura_codebase_ai_audit*.txt
 artifacts/agi/dnu_proof/
 training/data/
