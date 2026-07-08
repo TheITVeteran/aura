@@ -73,6 +73,14 @@ class PreferencePair:
         # The format DPO/ORPO trainers expect.
         return {"prompt": self.prompt, "chosen": self.chosen, "rejected": self.rejected}
 
+    def to_store_row(self) -> dict[str, str]:
+        # Store rows carry provenance (domain) so specialist trainers can
+        # slice; consumers writing trainer files strip back to to_dpo_row().
+        row = self.to_dpo_row()
+        if self.domain:
+            row["domain"] = self.domain
+        return row
+
 
 class VerifiablePreferenceHarness:
     """Turns verified/refuted candidate sets into sound DPO preference pairs."""
@@ -170,7 +178,7 @@ class VerifiablePreferenceHarness:
         try:
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            text = "".join(json.dumps(p.to_dpo_row(), ensure_ascii=False) + "\n" for p in pairs)
+            text = "".join(json.dumps(p.to_store_row(), ensure_ascii=False) + "\n" for p in pairs)
             get_file_write_gateway().append_text(
                 str(self._store_path), text, encoding="utf-8",
                 source="verifiable_preference_harness.persist",
@@ -181,7 +189,7 @@ class VerifiablePreferenceHarness:
             try:
                 with self._store_path.open("a", encoding="utf-8") as fh:
                     for p in pairs:
-                        fh.write(json.dumps(p.to_dpo_row(), ensure_ascii=False) + "\n")
+                        fh.write(json.dumps(p.to_store_row(), ensure_ascii=False) + "\n")
                 self._emitted += len(pairs)
             except OSError as exc2:
                 record_degradation("verifiable_preference_harness", exc2)
@@ -190,16 +198,28 @@ class VerifiablePreferenceHarness:
 
     # ── export for the DPO trainer ───────────────────────────────────────────
     def export_dpo_rows(self, *, limit: int = 1000) -> list[dict[str, str]]:
-        """Return (prompt, chosen, rejected) rows ready for an mlx DPO/ORPO run."""
+        """Return (prompt, chosen, rejected) rows ready for an mlx DPO/ORPO run.
+
+        Store rows may carry extra provenance (``domain``); the trainer-facing
+        export strips back to the bare DPO schema so trainer file formats never
+        depend on what bookkeeping the store grows.
+        """
         rows: list[dict[str, str]] = []
         try:
             if self._store_path.exists():
                 with self._store_path.open(encoding="utf-8") as fh:
                     for line in fh:
                         try:
-                            rows.append(json.loads(line))
+                            raw = json.loads(line)
                         except json.JSONDecodeError:
                             continue
+                        rows.append(
+                            {
+                                "prompt": str(raw.get("prompt", "")),
+                                "chosen": str(raw.get("chosen", "")),
+                                "rejected": str(raw.get("rejected", "")),
+                            }
+                        )
                         if len(rows) >= limit:
                             break
         except OSError as exc:

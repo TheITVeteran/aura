@@ -58,7 +58,18 @@ def run_eval(args: argparse.Namespace) -> dict:
     from mlx_lm import generate, load
 
     spec = BatterySpec(seed=args.seed, size=args.size)
-    tasks = generate_battery(spec)
+    domains = {d.strip() for d in str(getattr(args, "domains", "") or "").split(",") if d.strip()}
+    if domains:
+        # Domain-concentrated battery for specialist gates: deterministically
+        # oversample the same seeded stream, keep only the wanted domains,
+        # slice to the requested size. Same seal discipline — the set hash in
+        # the manifest covers exactly the tasks graded.
+        pool = generate_battery(BatterySpec(seed=args.seed, size=args.size * 10))
+        tasks = [t for t in pool if t.domain in domains][: args.size]
+        if not tasks:
+            raise SystemExit(f"no battery tasks for domains={sorted(domains)}")
+    else:
+        tasks = generate_battery(spec)
 
     load_kwargs = {}
     if args.adapter_path:
@@ -132,6 +143,11 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=0, help="battery seed")
     parser.add_argument("--size", type=int, default=40, help="number of tasks")
     parser.add_argument("--max-tokens", type=int, default=256)
+    parser.add_argument(
+        "--domains",
+        default="",
+        help="comma-separated domain filter (domain-concentrated specialist battery)",
+    )
     parser.add_argument("--output", required=True, help="report JSON path")
     args = parser.parse_args()
 

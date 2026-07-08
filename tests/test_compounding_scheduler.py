@@ -190,6 +190,47 @@ class TestCycleExecution:
         assert "lineage" in status
 
 
+class TestSpecialistHook:
+    async def test_default_off(self, scheduler, monkeypatch):
+        monkeypatch.delenv("AURA_DOMAIN_SPECIALISTS", raising=False)
+        called: list[str] = []
+        import core.learning.domain_specialists as ds
+
+        monkeypatch.setattr(
+            ds.DomainSpecialistTrainer, "eligible_domains",
+            lambda self: called.append("checked") or [],
+        )
+        await scheduler._maybe_train_specialist()
+        assert called == []          # env-gated off: never even reads the store
+
+    async def test_trains_least_recently_trained_domain(self, scheduler, monkeypatch):
+        monkeypatch.setenv("AURA_DOMAIN_SPECIALISTS", "1")
+        import core.learning.domain_specialists as ds
+
+        trained_domains: list[str] = []
+
+        class FakeReceiptObj:
+            status = "promoted"
+            reasons: list = []
+
+        monkeypatch.setattr(
+            ds.DomainSpecialistTrainer, "eligible_domains",
+            lambda self: ["modular", "sequence"],
+        )
+        monkeypatch.setattr(
+            ds.DomainSpecialistTrainer, "train_domain",
+            lambda self, d: trained_domains.append(d) or FakeReceiptObj(),
+        )
+        scheduler._save_state(
+            {"specialist_trained_at": {"sequence": 100.0, "modular": 200.0}}
+        )
+        await scheduler._maybe_train_specialist()
+        assert trained_domains == ["sequence"]   # least-recently-trained first
+        state = scheduler._load_state()
+        assert state["last_specialist_status"] == "sequence:promoted"
+        assert state["specialist_trained_at"]["sequence"] > 100.0
+
+
 class TestBootWiring:
     def test_boot_step_registered(self):
         source = Path("core/orchestrator/mixins/boot/boot_autonomy.py").read_text(

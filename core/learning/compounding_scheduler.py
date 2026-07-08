@@ -183,8 +183,69 @@ class CompoundingScheduler:
             )
             if receipt.status == "promoted" and receipt.promoted_model_path:
                 await self._activate_live(receipt.promoted_model_path)
+            await self._maybe_train_specialist()
         finally:
             self._running_cycle = False
+
+    async def _maybe_train_specialist(self) -> None:
+        """Train ONE domain specialist per idle window, when supply exists.
+
+        Specialists are adapter-only artifacts for the expert-LoRA library —
+        the modular-weights half of the learning stack (the general cycle
+        above owns the fused lineage). Default-off until validated live;
+        supply-gated (min pairs per domain), idle-gated by the same window
+        that admitted the general cycle, and every outcome lands in a
+        receipt under data/learning/specialists/.
+        """
+        if not _env_flag("AURA_DOMAIN_SPECIALISTS", False):
+            return
+        try:
+            from core.config import get_config
+            from core.learning.domain_specialists import (
+                DomainSpecialistTrainer,
+                SpecialistConfig,
+            )
+
+            data_dir = Path(get_config().paths.data_dir)
+            trainer = DomainSpecialistTrainer(
+                SpecialistConfig(
+                    work_root=data_dir / "learning" / "specialists",
+                    store_path=data_dir / "verifiable_preferences.jsonl",
+                )
+            )
+            eligible = trainer.eligible_domains()
+            if not eligible:
+                return
+            state = self._load_state()
+            trained: dict[str, float] = dict(state.get("specialist_trained_at", {}) or {})
+            # least-recently-trained eligible domain first
+            domain = min(eligible, key=lambda d: float(trained.get(d, 0.0)))
+            logger.info("🧩 Domain-specialist cycle starting for '%s'.", domain)
+            from core.governance_context import local_internal_governed_scope
+
+            with local_internal_governed_scope(
+                "domain_specialists.cycle",
+                domain="memory_write",
+                constraints={"artifact": "domain_adapter", "governed_by": "domain+general_gate"},
+            ):
+                receipt = await asyncio.to_thread(trainer.train_domain, domain)
+            trained[domain] = time.time()
+            self._save_state(
+                {
+                    "specialist_trained_at": trained,
+                    "last_specialist_status": f"{domain}:{receipt.status}",
+                }
+            )
+            logger.info(
+                "🧩 Specialist '%s': %s %s",
+                domain, receipt.status, receipt.reasons or "",
+            )
+        except _RECOVERABLE as exc:
+            record_degradation(
+                "weight_compounding_scheduler",
+                exc,
+                action="skipped domain-specialist cycle after failure; next window retries",
+            )
 
     # ── collaborators ────────────────────────────────────────────────────────
 
