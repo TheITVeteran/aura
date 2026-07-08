@@ -104,6 +104,27 @@ _STATE_SIGNAL_REWRITES = (
 )
 
 
+def _worker_process_is_running(proc: Any) -> bool:
+    """True when a worker process handle exists AND is still running.
+
+    Accepts multiprocessing.Process (is_alive), subprocess.Popen (poll), or
+    None. proc is None when the worker was never spawned or is already
+    reaped — nothing to kill, and poking it used to raise AttributeError
+    mid-recovery (seen live as recent_inference_gate_critical
+    "'NoneType' object has no attribute 'poll'").
+    """
+    if proc is None:
+        return False
+    try:
+        if hasattr(proc, "is_alive"):
+            return bool(proc.is_alive())
+        if hasattr(proc, "poll"):
+            return proc.poll() is None
+    except (OSError, ValueError):
+        return False
+    return False
+
+
 def _grounded_state_signal_text(value: Any, *, limit: int) -> str:
     text = " ".join(str(value or "").strip().split())
     for source, replacement in _STATE_SIGNAL_REWRITES:
@@ -6891,9 +6912,7 @@ class InferenceGate:
                 if self._mlx_client and hasattr(self._mlx_client, "_process"):
                     try:
                         proc = self._mlx_client._process
-                        is_running = (
-                            proc.is_alive() if hasattr(proc, "is_alive") else (proc.poll() is None)
-                        )
+                        is_running = _worker_process_is_running(proc)
                         if proc and is_running:
                             logger.warning(
                                 "🧹 [CASCADE CLEANUP] Force-killing stuck cortex worker pid=%s",
