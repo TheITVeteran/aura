@@ -5,6 +5,7 @@ import hashlib
 import inspect
 import json
 import logging
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -81,20 +82,47 @@ class ServiceLifetime(Enum):
     SINGLETON = "singleton"
     TRANSIENT = "transient"
 
+_CALLER_DISPLAY_CACHE: dict[str, str] = {}
+
+
+def _caller_display(filename: str) -> str:
+    """Repo-relative display for a frame filename — pure string work.
+
+    No Path.resolve(), no stat(): this runs on the EVENT LOOP for every
+    service registration, and registrations happen on hot paths (a live
+    SIGUSR1 sample caught the loop inside pathlib.stat here, 8.3s of
+    accumulated lag failing the health contract and pinning boot at 48%).
+    """
+    cached = _CALLER_DISPLAY_CACHE.get(filename)
+    if cached is not None:
+        return cached
+    marker = "live-source"
+    idx = filename.find(marker)
+    if idx >= 0:
+        display = filename[idx + len(marker):].lstrip("/\\")
+    else:
+        display = filename.rsplit("/", 1)[-1]
+    if len(_CALLER_DISPLAY_CACHE) < 4096:
+        _CALLER_DISPLAY_CACHE[filename] = display
+    return display
+
+
 def _determine_caller() -> str:
-    import traceback
-    from pathlib import Path
-    stack = traceback.extract_stack(limit=10)
-    for frame in reversed(stack):
-        if "core/container.py" not in frame.filename and "traceback.py" not in frame.filename:
-            try:
-                p = Path(frame.filename).resolve()
-                if "live-source" in p.parts:
-                    idx = p.parts.index("live-source")
-                    return "/".join(p.parts[idx+1:])
-                return p.name
-            except (OSError, RuntimeError, ValueError):
-                return Path(frame.filename).name
+    """Name the registering module WITHOUT touching the filesystem.
+
+    The previous implementation used traceback.extract_stack (which reads
+    source lines through linecache — file I/O) plus Path.resolve()/stat per
+    registration, all synchronously on the loop. Raw frame walking + string
+    slicing carries the same provenance for free.
+    """
+    frame = sys._getframe(1)
+    depth = 0
+    while frame is not None and depth < 12:
+        filename = frame.f_code.co_filename
+        if "core/container.py" not in filename and "traceback.py" not in filename:
+            return _caller_display(filename)
+        frame = frame.f_back
+        depth += 1
     return "unknown"
 
 class ServiceDescriptor:
@@ -335,8 +363,25 @@ class ServiceContainer:
                 existing_instance = desc.factory
             else:
                 existing_instance = None
-            
+
             existing = desc is not None
+
+            # HOT-PATH UPSERT: re-publishing a live value under an existing
+            # non-protected name (aura_now on every Will decision, telemetry
+            # snapshots, etc.) must not rebuild a ServiceDescriptor — the
+            # constructor walks frames for provenance, and a live SIGUSR1
+            # sample caught exactly that churn lagging the event loop 8.3s
+            # and failing the health contract. Swap the instance in place;
+            # provenance from first registration stands.
+            if (
+                existing
+                and name not in _PROTECTED_CORE_SERVICES
+                and desc.lifetime == ServiceLifetime.SINGLETON
+            ):
+                desc.instance = instance
+                desc.factory = lambda: instance
+                desc.initialized = True
+                return
         if cls._registration_locked:
             logger.debug("⚠️ Late instance registration (post-lock): '%s' — allowed for pre-built instances.", name)
             if (

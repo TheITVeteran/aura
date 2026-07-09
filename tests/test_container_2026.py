@@ -99,3 +99,36 @@ def test_factory_failure():
 
 
 ##
+
+
+def test_register_instance_upsert_swaps_without_descriptor_rebuild():
+    """Hot-path contract (live 8.3s loop-lag root, Jul 9): re-publishing a
+    value under an existing non-protected name swaps the instance in place —
+    no new ServiceDescriptor, no frame walking, provenance from the first
+    registration stands."""
+    from core.container import ServiceContainer
+
+    name = "test_upsert_hot_value"
+    ServiceContainer.register_instance(name, {"seq": 1}, required=False)
+    desc_before = ServiceContainer._services.get(name)
+    ServiceContainer.register_instance(name, {"seq": 2}, required=False)
+    desc_after = ServiceContainer._services.get(name)
+
+    assert desc_after is desc_before, "upsert must reuse the descriptor object"
+    assert ServiceContainer.get(name) == {"seq": 2}
+    # cleanup
+    ServiceContainer._services.pop(name, None)
+
+
+def test_determine_caller_is_filesystem_free(monkeypatch):
+    """The caller display must never touch the filesystem (Path.resolve/stat
+    on the event loop was the lag mechanism)."""
+    import core.container as container_mod
+
+    def _boom(*a, **k):
+        raise AssertionError("filesystem touched during caller determination")
+
+    monkeypatch.setattr(container_mod.Path, "resolve", _boom)
+    monkeypatch.setattr(container_mod.Path, "stat", _boom, raising=False)
+    caller = container_mod._determine_caller()
+    assert isinstance(caller, str) and caller
