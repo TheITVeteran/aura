@@ -264,6 +264,17 @@ class OvertActionLoop:
             started_at=started,
             goal_id=str(goal.get("id") or initiative.get("metadata", {}).get("goal_id") or ""),
         )
+        governance_context = {
+            "origin": "overt_action_loop",
+            "source": "overt_action_loop",
+            "objective": objective,
+            "will_receipt_id": will_receipt_id,
+            "autonomous": True,
+            "initiative": initiative,
+            "priority": float(initiative.get("urgency", 0.7) or 0.7),
+            "scoped_authority": f"overt_action_loop:{action_id}:{skill}",
+            "authorization": "governed_autonomous_overt_action",
+        }
 
         from core.actuators.actuator_registry import get_actuator_registry
         registry = get_actuator_registry()
@@ -273,15 +284,7 @@ class OvertActionLoop:
                 actuator_res = registry.execute_action(
                     skill,
                     params,
-                    context={
-                        "origin": "overt_action_loop",
-                        "source": "overt_action_loop",
-                        "objective": objective,
-                        "will_receipt_id": will_receipt_id,
-                        "autonomous": True,
-                        "initiative": initiative,
-                        "priority": float(initiative.get("urgency", 0.7) or 0.7),
-                    },
+                    context=governance_context,
                 )
                 raw = {
                     "ok": actuator_res.success,
@@ -304,14 +307,7 @@ class OvertActionLoop:
                 raw = await engine.execute(
                     skill,
                     params,
-                    context={
-                        "origin": "overt_action_loop",
-                        "source": "overt_action_loop",
-                        "objective": objective,
-                        "will_receipt_id": will_receipt_id,
-                        "autonomous": True,
-                        "initiative": initiative,
-                    },
+                    context=governance_context,
                 )
             except (sqlite3.Error, OSError) as exc:
                 result.status = "failed"

@@ -2347,10 +2347,10 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
             try:
                 graceful_shutdown_s = max(
                     1,
-                    int(float(os.environ.get("AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S", "2"))),
+                    int(float(os.environ.get("AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S", "8"))),
                 )
             except (TypeError, ValueError):
-                graceful_shutdown_s = 2
+                graceful_shutdown_s = 8
             server_config = uvicorn.Config(
                 _app,
                 host=host,

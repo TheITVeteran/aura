@@ -613,6 +613,7 @@ class AuthorityGateway:
         source: str = "unknown",
         priority: float = 0.7,
         is_critical: bool = False,
+        context: dict[str, Any] | None = None,
     ) -> AuthorityDecision:
         # ── Social Governance Gate (Programmatic OPSEC) ──
         social_block = self._social_governance_gate(tool_name, args, source)
@@ -626,7 +627,9 @@ class AuthorityGateway:
             "system_proprioception",
             "query_beliefs",
         }
+        runtime_context = dict(context or {})
         will_context = {
+            **runtime_context,
             **dict(args or {}),
             **self.active_user_presence_context(),
             "tool": tool_name,

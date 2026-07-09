@@ -223,6 +223,15 @@ def test_research_source_aliases_route_to_autonomous_research():
     assert _coerce_intent_source("research_pipeline") == IntentSource.AUTONOMOUS_RESEARCH
 
 
+def test_peer_mode_source_aliases_route_to_maintenance():
+    from core.executive.executive_core import _coerce_intent_source
+
+    assert _coerce_intent_source("peer_mode") == IntentSource.MAINTENANCE
+    assert _coerce_intent_source("peer_mode:sovereign_self_modification_loop") == IntentSource.MAINTENANCE
+    assert _coerce_intent_source("self_repair") == IntentSource.MAINTENANCE
+    assert _coerce_intent_source("runtime_repair:slow_tick") == IntentSource.MAINTENANCE
+
+
 def test_authority_gateway_preserves_research_source_from_memory_metadata():
     from core.executive.authority_gateway import AuthorityGateway
 
@@ -553,6 +562,40 @@ async def test_executive_defers_background_task_when_temporal_obligation_is_acti
 
 
 @pytest.mark.asyncio
+async def test_authority_gateway_allows_peer_mode_repair_under_temporal_obligation(
+    service_container,
+    monkeypatch,
+):
+    from core.executive.authority_gateway import AuthorityGateway
+
+    reset_constitutional_singletons()
+    clear_degraded_events()
+    ServiceContainer.register_instance("self_model", object(), required=False)
+    state = AuraState()
+    state.cognition.current_objective = (
+        "Continuously detect runtime failures, propose safe repairs, run targeted tests, "
+        "and apply verified patches."
+    )
+    state.cognition.pending_initiatives = [{"goal": "Investigate anomaly"}]
+    ServiceContainer.register_instance("state_repository", SimpleNamespace(_current=state), required=False)
+    ServiceContainer.lock_registration()
+
+    gateway = AuthorityGateway()
+    monkeypatch.setattr(gateway, "_will_gate", lambda *_args, **_kwargs: (None, None))
+    monkeypatch.setattr(gateway, "_substrate_preflight", lambda **_kwargs: (None, {}, None))
+
+    decision = await gateway.authorize_initiative(
+        "peer_mode:sovereign_self_modification_loop",
+        source="peer_mode",
+        priority=0.45,
+    )
+
+    assert decision.approved is True
+    assert decision.reason in {"approved", "sync_approved"}
+    assert not decision.reason.startswith("temporal_obligation_active:")
+
+
+@pytest.mark.asyncio
 async def test_executive_treats_desktop_ui_tool_as_user_under_temporal_obligation(service_container):
     reset_constitutional_singletons()
     clear_degraded_events()
@@ -568,6 +611,31 @@ async def test_executive_treats_desktop_ui_tool_as_user_under_temporal_obligatio
         "file_operation",
         {"action": "write", "path": "artifacts/live_runtime/generated/probe.html"},
         source="desktop_ui",
+    )
+
+    assert intent.source == executive_core_module.IntentSource.USER
+    assert record.outcome == executive_core_module.DecisionOutcome.APPROVED
+    assert record.reason == "user_facing"
+
+
+@pytest.mark.asyncio
+async def test_executive_treats_live_skill_api_as_user_under_temporal_obligation(service_container):
+    reset_constitutional_singletons()
+    clear_degraded_events()
+    ServiceContainer.register_instance("self_model", object(), required=False)
+    state = AuraState()
+    state.cognition.current_objective = (
+        "Remember this note for later in this conversation: the blue lantern is under the desk."
+    )
+    state.cognition.pending_initiatives = [{"goal": "Investigate anomaly"}]
+    ServiceContainer.register_instance("state_repository", SimpleNamespace(_current=state), required=False)
+    ServiceContainer.lock_registration()
+
+    executive = executive_core_module.get_executive_core()
+    intent, record = await executive.prepare_tool_intent(
+        "program_dna_reconstruct",
+        {"target": "Authorized Notes Export Utility"},
+        source="live_skill_api",
     )
 
     assert intent.source == executive_core_module.IntentSource.USER
@@ -625,6 +693,28 @@ async def test_executive_expires_stale_desktop_prompt_as_temporal_anchor(service
     assert approved is False
     assert reason == "temporal_obligation_active:Investigate anomaly"
     assert "live desktop path" not in reason
+
+
+@pytest.mark.asyncio
+async def test_executive_does_not_use_memory_write_prompt_as_temporal_anchor(service_container):
+    reset_constitutional_singletons()
+    clear_degraded_events()
+    ServiceContainer.register_instance("self_model", object(), required=False)
+    state = AuraState()
+    state.cognition.current_objective = (
+        "Remember this note for later in this conversation: the blue lantern is under the desk."
+    )
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.pending_initiatives = [{"goal": "Investigate anomaly"}]
+    ServiceContainer.register_instance("state_repository", SimpleNamespace(_current=state), required=False)
+    ServiceContainer.lock_registration()
+
+    executive = executive_core_module.get_executive_core()
+    approved, reason = await executive.approve_background_task("novelty_probe", source="background")
+
+    assert approved is False
+    assert reason == "temporal_obligation_active:Investigate anomaly"
+    assert "blue lantern" not in reason
 
 
 @pytest.mark.asyncio

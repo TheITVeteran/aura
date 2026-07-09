@@ -167,15 +167,20 @@ async def test_overt_action_loop_executes_verifies_and_receipts(tmp_path):
             )
 
     class FakeEngine:
+        def __init__(self):
+            self.calls = []
+
         async def execute(self, skill_name, params, context=None):
+            self.calls.append((skill_name, params, dict(context or {})))
             return {
                 "ok": True,
                 "summary": "Environment audit completed.",
                 "result": {"hostname": "test-host"},
             }
 
+    fake_engine = FakeEngine()
     loop = OvertActionLoop(
-        capability_engine=FakeEngine(),
+        capability_engine=fake_engine,
         synthesizer=FakeSynth(),
         receipt_store=ReceiptStore(tmp_path / "receipts"),
         state_provider=lambda: SimpleNamespace(cognition=SimpleNamespace(pending_initiatives=[])),
@@ -190,6 +195,12 @@ async def test_overt_action_loop_executes_verifies_and_receipts(tmp_path):
     assert result["tool_receipt_id"].startswith("tool_execution-")
     assert result["autonomy_receipt_id"].startswith("autonomy-")
     assert loop.status()["actions_verified"] == 1
+    assert fake_engine.calls
+    _, _, context = fake_engine.calls[0]
+    assert context["origin"] == "overt_action_loop"
+    assert context["authorization"] == "governed_autonomous_overt_action"
+    assert context["scoped_authority"].startswith("overt_action_loop:")
+    assert context["scoped_authority"].endswith(":environment_info")
 
 
 @pytest.mark.asyncio

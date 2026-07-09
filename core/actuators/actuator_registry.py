@@ -477,6 +477,7 @@ class ActuatorRegistry:
                 source=str(context.get("source") or "actuator_registry"),
                 priority=float(context.get("priority", 0.7) or 0.7),
                 is_critical=bool(context.get("is_critical", False)),
+                context=dict(context or {}),
             )
         )
 

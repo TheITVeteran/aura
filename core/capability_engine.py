@@ -3375,6 +3375,7 @@ class CapabilityEngine(AuraBaseModule):
                     constitutional_args,
                     source=exec_source,
                     objective=str(ctx.get("objective") or ctx.get("message") or ""),
+                    context=ctx,
                 )
                 if not tool_handle.approved:
                     reason = str(getattr(tool_handle.decision, "reason", "blocked"))

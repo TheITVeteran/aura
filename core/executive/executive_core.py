@@ -99,6 +99,24 @@ _AUTONOMOUS_RESEARCH_SOURCE_PREFIXES = (
     "web_retained:",
     "web_search:",
 )
+_MAINTENANCE_SOURCE_ALIASES = frozenset(
+    {
+        "peer_mode",
+        "repair_loop",
+        "runtime_repair",
+        "self_repair",
+        "sovereign_self_modification",
+        "system_maintenance",
+    }
+)
+_MAINTENANCE_SOURCE_PREFIXES = (
+    "peer_mode:",
+    "repair_loop:",
+    "runtime_repair:",
+    "self_repair:",
+    "sovereign_self_modification:",
+    "system_maintenance:",
+)
 
 
 def _normalize_intent_source_label(source: str) -> str:
@@ -117,10 +135,22 @@ def _is_autonomous_research_source(source: str) -> bool:
     )
 
 
+def _is_transient_conversation_memory_objective(text: str) -> bool:
+    normalized = _normalize_goal_text(text).lower()
+    if not normalized.startswith("remember this "):
+        return False
+    if not any(token in normalized for token in ("note", "phrase", "word", "token", "codeword", "detail")):
+        return False
+    return "later in this conversation" in normalized or ":" in normalized
+
+
 def _coerce_intent_source(source: str) -> IntentSource:
     normalized = _normalize_intent_source_label(source)
     user_aliases = {
         "api",
+        "api.skill.execute",
+        "api_skill",
+        "api_skill_execute",
         "admin",
         "chat",
         "chat_api",
@@ -132,6 +162,7 @@ def _coerce_intent_source(source: str) -> IntentSource:
         "voice_input",
         "gui",
         "live_chat",
+        "live_skill_api",
         "ws",
         "websocket",
         "direct",
@@ -146,6 +177,8 @@ def _coerce_intent_source(source: str) -> IntentSource:
     }
     if normalized in user_aliases:
         return IntentSource.USER
+    if normalized in _MAINTENANCE_SOURCE_ALIASES or normalized.startswith(_MAINTENANCE_SOURCE_PREFIXES):
+        return IntentSource.MAINTENANCE
     if _is_autonomous_research_source(normalized):
         return IntentSource.AUTONOMOUS_RESEARCH
     for candidate in IntentSource:
@@ -1095,7 +1128,11 @@ class ExecutiveCore:
             logger.debug("Suppressed Exception: %s", _exc)
 
         current_objective = _normalize_goal_text(current_objective)
-        if _is_speculative_autonomy_label(current_objective) or is_intrinsic_goal_text(current_objective):
+        if (
+            _is_speculative_autonomy_label(current_objective)
+            or is_intrinsic_goal_text(current_objective)
+            or _is_transient_conversation_memory_objective(current_objective)
+        ):
             current_objective = ""
         commitments = [
             text

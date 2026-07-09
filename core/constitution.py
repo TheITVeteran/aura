@@ -390,6 +390,7 @@ class ConstitutionalCore:
         *,
         source: str = "unknown",
         objective: str = "",
+        context: dict[str, Any] | None = None,
     ) -> ToolExecutionHandle:
         async with self._lock:
             self._emit_tool_event("requested", tool_name, source=source, args=args)
@@ -397,7 +398,12 @@ class ConstitutionalCore:
                 kind=ProposalKind.TOOL,
                 source=source,
                 summary=f"execute_tool:{tool_name}",
-                payload={"tool_name": tool_name, "args": dict(args or {}), "objective": objective},
+                payload={
+                    "tool_name": tool_name,
+                    "args": dict(args or {}),
+                    "objective": objective,
+                    "context": dict(context or {}),
+                },
                 urgency=0.9 if source in {"user", "voice", "api", "admin"} else 0.5,
             )
             if self._strict_enforcement_active() and self._get_executive_core() is None:
@@ -464,6 +470,7 @@ class ConstitutionalCore:
                 dict(args or {}),
                 source=source,
                 priority=proposal.urgency,
+                context=context,
             )
             approved = authority_decision.approved
 

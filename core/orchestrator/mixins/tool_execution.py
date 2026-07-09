@@ -281,6 +281,10 @@ class ToolExecutionMixin:
         # the EDI gate and the conscience/outcome gates can see it — a hold that
         # exists to "defer to the owner" is redundant when the owner asked for it.
         _payload_ctx = kwargs.get("payload_context")
+        governance_context = dict(_payload_ctx or {}) if isinstance(_payload_ctx, dict) else {}
+        governance_context.setdefault("origin", _origin)
+        governance_context.setdefault("source", _origin)
+        governance_context.setdefault("objective", str(getattr(self, "_current_objective", "") or ""))
         _safe_autonomous_web = self._safe_autonomous_web_research_tool(
             tool_name,
             args,
@@ -442,6 +446,7 @@ class ToolExecutionMixin:
                 source=_origin,
                 domain=ActionDomain.TOOL_EXECUTION,
                 priority=0.7,
+                context=governance_context,
             )
             if not _will_decision.is_approved():
                 logger.warning(
@@ -483,6 +488,7 @@ class ToolExecutionMixin:
                 args,
                 source=_origin,
                 objective=self._current_objective or "",
+                context=governance_context,
             )
             if not _tool_handle.approved:
                 reason = _tool_handle.decision.reason

@@ -8,6 +8,7 @@ Strategic projects, Action log.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from typing import Any
 
@@ -23,6 +24,19 @@ logger = logging.getLogger("Aura.Server.Subsystems")
 
 router = APIRouter()
 SKILL_EXECUTE_BODY = Body(...)
+_SKILL_EXECUTE_CONTEXT_KEYS = (
+    "origin",
+    "route",
+    "foreground_request",
+    "user_explicitly_authorized",
+    "user_requested_action",
+    "surface",
+    "source",
+    "explicit_authorization",
+    "authorization",
+    "scoped_authority",
+    "proof_evaluation_contract",
+)
 _SUBSYSTEM_ROUTE_ERRORS = (
     AttributeError,
     ConnectionError,
@@ -52,15 +66,7 @@ def _normalize_skill_execute_payload(params: dict[str, Any]) -> tuple[dict[str, 
 
     envelope_keys = ("input", "params", "arguments", "args", "payload")
     context = dict(params.get("context") or {})
-    for key in (
-        "origin",
-        "route",
-        "foreground_request",
-        "user_explicitly_authorized",
-        "user_requested_action",
-        "surface",
-        "source",
-    ):
+    for key in _SKILL_EXECUTE_CONTEXT_KEYS:
         if key in params and key not in context:
             context[key] = params[key]
 
@@ -75,6 +81,39 @@ def _normalize_skill_execute_payload(params: dict[str, Any]) -> tuple[dict[str, 
         return {"value": value}, context
 
     return {k: v for k, v in params.items() if k != "context"}, context
+
+
+def _slug_for_skill_context(value: object, default: str) -> str:
+    text = str(value or default).strip().lower() or default
+    return re.sub(r"[^a-z0-9_.:-]+", "_", text)
+
+
+def _apply_skill_execute_authority_context(
+    skill_name: str,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach narrow authority metadata for authenticated direct skill calls.
+
+    `/api/skill/execute` is already protected by the internal/token dependencies.
+    Production Will default-deny still needs scoped context so it can distinguish
+    authenticated operator skill execution from an unscoped background tool call.
+    """
+
+    ctx = dict(context or {})
+    ctx.setdefault("origin", "live_skill_api")
+    ctx.setdefault("surface", "desktop-ui")
+    ctx.setdefault("source", "api.skill.execute")
+    ctx.setdefault("route", "api.skill.execute")
+    ctx.setdefault("foreground_request", True)
+    ctx.setdefault("user_requested_action", True)
+    ctx.setdefault("user_explicitly_authorized", True)
+    ctx.setdefault("explicit_authorization", "internal_authenticated_skill_execute")
+    ctx.setdefault("authorization", "internal_authenticated_skill_execute")
+    if not ctx.get("scoped_authority"):
+        route_slug = _slug_for_skill_context(ctx.get("route"), "api.skill.execute")
+        skill_slug = _slug_for_skill_context(skill_name, "skill")
+        ctx["scoped_authority"] = f"api_skill_execute:{route_slug}:{skill_slug}"
+    return ctx
 
 
 def _get_live_orchestrator_state() -> Any | None:
@@ -751,6 +790,7 @@ async def api_skill_execute(
             return JSONResponse({"ok": False, "error": "Skill execution engine not available"}, status_code=503)
 
         skill_params, execution_context = _normalize_skill_execute_payload(params)
+        execution_context = _apply_skill_execute_authority_context(skill_name, execution_context)
         result = await intent_router.route_execution(
             skill_name,
             skill_params,

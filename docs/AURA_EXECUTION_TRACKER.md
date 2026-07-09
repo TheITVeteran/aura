@@ -8209,3 +8209,73 @@ Remaining non-soak work after this checkpoint:
   so the user-facing lane proves the same reconstruction capability, not only
   the local proof runner.
 - Run the final non-soak live-runtime proof after the above remains stable.
+
+## Checkpoint 2026-07-09-05: Live Program DNA Skill Replay and Autonomous Authority Bridge
+
+Scope:
+
+- Closed the live `/api/skill/execute` governance gap found by the Program DNA
+  replay. Authenticated direct skill execution now preserves caller authority
+  fields and attaches a scoped `api_skill_execute:<route>:<skill>` authority
+  token for foreground internal skill calls instead of losing context before
+  `CapabilityEngine`/`Will`.
+- Prevented stale conversation-memory prompts such as "Remember this note for
+  later in this conversation..." from becoming long-lived temporal obligation
+  anchors that block unrelated live skill calls.
+- Classified `live_skill_api` as user-facing and `peer_mode` / repair-loop
+  sources as maintenance so authenticated live skill calls and self-repair
+  maintenance are not incorrectly treated as idle autonomous side quests.
+- Threaded governance context through the full tool stack:
+  `ToolExecutionMixin` -> `ConstitutionalCore` -> `AuthorityGateway` -> `Will`,
+  `CapabilityEngine` -> `ConstitutionalCore`, and
+  `ActuatorRegistry` -> `AuthorityGateway`.
+- Added per-action scoped authority for `OvertActionLoop` so autonomous overt
+  actions remain governed and auditable without being denied by default before
+  they can produce receipts.
+- Raised the desktop uvicorn graceful-shutdown default from `2s` to `8s`, which
+  removes shutdown-time ASGI `CancelledError` tracebacks during clean bounded
+  proof termination.
+
+Verification:
+
+- `python -m pytest tests/test_sensorimotor.py::test_actuator_registry_forwards_scoped_authority_context tests/test_substrate_primary_architecture.py::test_overt_action_loop_executes_verifies_and_receipts tests/test_constitutional_core.py::test_constitutional_core_tracks_tool_execution_and_closes_intent tests/test_constitutional_core.py::test_authority_gateway_allows_peer_mode_repair_under_temporal_obligation tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_skill_contract tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_equivalence_battery_contract -q`
+  -> `6 passed`.
+- `python -m pytest tests/test_constitutional_core.py::test_peer_mode_source_aliases_route_to_maintenance tests/test_constitutional_core.py::test_authority_gateway_allows_peer_mode_repair_under_temporal_obligation tests/test_constitutional_core.py::test_executive_defers_background_task_when_temporal_obligation_is_active tests/test_constitutional_core.py::test_executive_treats_live_skill_api_as_user_under_temporal_obligation tests/test_constitutional_core.py::test_executive_does_not_use_memory_write_prompt_as_temporal_anchor tests/test_subsystem_routes_runtime_contract.py tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_skill_contract tests/test_runtime_polish.py::test_live_runtime_probe_checks_program_dna_equivalence_battery_contract -q`
+  -> `15 passed`.
+- `python -m ruff check --select F,E9 aura_main.py core/executive/authority_gateway.py core/constitution.py core/actuators/actuator_registry.py core/orchestrator/mixins/tool_execution.py core/capability_engine.py core/runtime/overt_action_loop.py`
+  -> passed.
+- `python -m py_compile aura_main.py core/executive/authority_gateway.py core/constitution.py core/actuators/actuator_registry.py core/orchestrator/mixins/tool_execution.py core/capability_engine.py core/runtime/overt_action_loop.py`
+  -> passed.
+- Live bounded desktop runtime replay on port `8034`:
+  - Health ready in `24.8s`.
+  - Required probes all passed.
+  - `program_dna_reconstruct` passed through the live skill lane and emitted a
+    verified clean-room scaffold.
+  - `program_dna_equivalence_battery` passed through the live skill lane with
+    `8/8` scenarios, `17/17` held-out cases, and `equivalence=1.0`.
+  - Events collected: `36`.
+  - Runtime log scan found none of:
+    `temporal_obligation_active`, `self-modification loop suppressed`,
+    `denied_by_default`, `Traceback`, desktop chat failure envelope, or
+    generation-gate saturation.
+  - Proof artifact:
+    `artifacts/current/live_program_dna_skill_replay/live_program_dna_runtime_probe_20260709_074221.json`.
+  - Runtime log:
+    `artifacts/current/live_program_dna_skill_replay/aura_runtime_8034_20260709_074221.log`.
+
+Current closeout estimate:
+
+- Configured non-soak local closeout is about **99.96%** complete by source,
+  focused proofs, refreshed Program DNA evidence, autonomous repair/RSI proof,
+  hardened desktop live proof, and the clean live Program DNA skill replay. The
+  remaining non-soak blocker is visible web-interlocutor proof breadth through
+  the active Chrome profile, plus the final consolidated non-soak replay.
+
+Remaining non-soak work after this checkpoint:
+
+- Complete the visible ChatGPT/Gemini conversation proof on the real launched
+  Aura desktop lane. Current blocker: the Codex Chrome Extension is not
+  installed/enabled in the active Chrome profile, so a plugin-driven visible
+  proof still cannot be honestly claimed.
+- Run the final consolidated non-soak live-runtime replay after visible web
+  proof access is available or explicitly deferred by the user.
