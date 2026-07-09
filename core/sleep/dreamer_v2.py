@@ -45,7 +45,7 @@ class DreamerV2:
 
         # 1. Memory consolidation (Consolidate FIRST per BUG-15)
         try:
-            from .brain.cognitive.memory_management import MemoryConsolidator
+            from core.brain.cognitive.memory_management import MemoryConsolidator
             consolidator = MemoryConsolidator(vector_memory=self.vector_memory)
             results["consolidation"] = await consolidator.consolidate()
             
@@ -65,7 +65,7 @@ class DreamerV2:
 
         # 2. Archive vital logs
         try:
-            from .systems.archiver import ArchiveEngine
+            from core.systems.archiver import ArchiveEngine
             archiver = ArchiveEngine()
             results["archive"] = await archiver.archive_vital_logs()
             if emitter:
@@ -77,7 +77,7 @@ class DreamerV2:
 
         # 3. Integrity audit
         try:
-            from .brain.cognitive.integrity_check import IntegrityGuard
+            from core.brain.cognitive.integrity_check import IntegrityGuard
             guard = IntegrityGuard(belief_graph=self.belief_graph)
             results["integrity"] = await guard.audit_beliefs()
             if emitter:
@@ -104,7 +104,7 @@ class DreamerV2:
 
         # 5. Metabolism sweep (Purge LAST)
         try:
-            from .systems.metabolism import MetabolismEngine
+            from core.systems.metabolism import MetabolismEngine
             metabolism = MetabolismEngine()
             results["metabolism"] = await metabolism.scan_and_purge()
             if emitter:
@@ -225,7 +225,7 @@ class DreamerV2:
         logger.info("💤 Entering REM Sleep (Dreamer V2)...")
         
         try:
-            from .thought_stream import get_emitter
+            from core.thought_stream import get_emitter
             emitter = get_emitter()
         except ImportError:
             emitter = None
@@ -264,7 +264,7 @@ class DreamerV2:
             """
             
             # 3. Think (Dreaming) — properly async
-            from .brain.cognitive_engine import ThinkingMode
+            from core.brain.cognitive_engine import ThinkingMode
             insight_thought = await self.brain.think(
                 prompt,
                 mode=ThinkingMode.CREATIVE,

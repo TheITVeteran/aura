@@ -1,4 +1,4 @@
-"""core/epistemic_tracker.py — Aura EpistemicTracker v1.0
+"""core/epistemics/epistemic_tracker.py — Aura EpistemicTracker v1.0
 ==========================================================
 Tracks the shape of Aura's knowledge: what she knows, what she thinks
 she knows but might be wrong about, and what she knows she doesn't know.

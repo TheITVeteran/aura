@@ -43,7 +43,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.structured_input import analyze_prompt_shape
 from core.utils.intent_normalization import normalize_memory_intent_text
 from core.utils.task_tracker import get_task_tracker
-from core.version import version_string
+from core.runtime.version import version_string
 from interface.auth import (
     CHEAT_CODE_COOKIE_NAME,
     CHEAT_CODE_COOKIE_TTL_SECS,
@@ -14061,7 +14061,7 @@ async def _execute_web_interlocutor_request_from_chat(user_message: str) -> dict
     )
     if not isinstance(result, dict):
         result = {"ok": bool(result), "result": result}
-    from core.capabilities.web_interlocutor import _observed_reply_is_echo
+    from core.capabilities.capabilities.web_interlocutor import _observed_reply_is_echo
 
     turn_rows = result.get("turns") if isinstance(result.get("turns"), list) else []
     completed_turns = len(turn_rows)

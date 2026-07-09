@@ -181,12 +181,12 @@ class FMEARegistry:
                                  automated=True, implementation_path="core/resilience/startup_validator.py",
                                  verified=True),
                 MitigationAction("MIT-F03-2", "`make restore` from last backup + WAL replay",
-                                 automated=False, implementation_path="core/backup.py",
+                                 automated=False, implementation_path="core/ops/backup.py",
                                  verified=True),
             ]),
             "F04": FMEAEntry(fault_id="F04", mitigations=[
                 MitigationAction("MIT-F04-1", "Bounded shutdown with 12s budget",
-                                 automated=True, implementation_path="core/graceful_shutdown.py",
+                                 automated=True, implementation_path="core/ops/graceful_shutdown.py",
                                  verified=True),
                 MitigationAction("MIT-F04-2", "Stall watchdog forces exit",
                                  automated=True, implementation_path="core/resilience/stall_watchdog.py",
@@ -246,7 +246,7 @@ class FMEARegistry:
             ]),
             "F13": FMEAEntry(fault_id="F13", mitigations=[
                 MitigationAction("MIT-F13-1", "Log write error detection",
-                                 automated=True, implementation_path="core/logging_config.py",
+                                 automated=True, implementation_path="core/observability/logging_config.py",
                                  verified=True),
             ]),
             "F14": FMEAEntry(fault_id="F14", mitigations=[

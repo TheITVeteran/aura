@@ -44,7 +44,7 @@ class BuildAppSkill(BaseSkill):
         # Self-taught, test-driven build: recall prior lessons, research the task
         # (concepts + reference code), generate, FUNCTIONALLY test that it works,
         # feed the exact failure back, persist, and retain the general lesson.
-        from core.capabilities.self_taught_builder import build_app_verified
+        from core.capabilities.capabilities.self_taught_builder import build_app_verified
 
         result = await build_app_verified(
             params.spec,

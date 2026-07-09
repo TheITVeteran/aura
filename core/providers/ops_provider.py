@@ -44,7 +44,7 @@ def register_ops_services(container, is_proxy: bool = False):
 
     # Subsystem Audit
     def create_subsystem_audit():
-        from core.subsystem_audit import SubsystemAudit
+        from core.ops.subsystem_audit import SubsystemAudit
         return SubsystemAudit()
     container.register('subsystem_audit', create_subsystem_audit, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 

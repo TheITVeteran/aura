@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.belief_revision import BeliefRevisionEngine
+from core.epistemics.belief_revision import BeliefRevisionEngine
 
 
 @pytest.mark.asyncio
@@ -71,9 +71,9 @@ async def test_start_is_idempotent_when_event_bus_registration_fails(monkeypatch
             if event:
                 raise RuntimeError("event bus offline")
 
-    monkeypatch.setattr("core.belief_revision.get_event_bus", lambda: BrokenBus())
+    monkeypatch.setattr("core.epistemics.belief_revision.get_event_bus", lambda: BrokenBus())
     monkeypatch.setattr(
-        "core.belief_revision.ServiceContainer.get",
+        "core.epistemics.belief_revision.ServiceContainer.get",
         lambda name, default=None: SimpleNamespace() if name == "memory_facade" else default,
     )
 

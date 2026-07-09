@@ -230,14 +230,14 @@ def _apply_runtime_mode_from_settings(key: str, _previous: Any, _new: Any) -> No
     """Apply the safe-mode / autonomy-paused kill switches to the live runtime.
 
     Either control restricts the runtime (halts self-modification, persona
-    evolution, dream cycles, consolidation) via core.safe_mode.set_safe_mode.
+    evolution, dream cycles, consolidation) via core.runtime.safe_mode.set_safe_mode.
     Best-effort: never breaks a settings patch.
     """
     if key not in _RUNTIME_MODE_KEYS:
         return
     try:
         from core.container import ServiceContainer
-        from core.safe_mode import set_safe_mode
+        from core.runtime.safe_mode import set_safe_mode
 
         orch = ServiceContainer.get("orchestrator", default=None)
         if orch is not None:

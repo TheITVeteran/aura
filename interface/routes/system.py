@@ -34,9 +34,9 @@ from core.runtime.health_contract import (
     required_probe_blockers,
     required_probe_groups_pass,
 )
-from core.runtime_tools import get_runtime_state
+from core.tools.runtime_tools import get_runtime_state
 from core.scheduler import scheduler
-from core.version import VERSION, version_string
+from core.runtime.version import VERSION, version_string
 from interface.auth import _require_internal, _restore_owner_session_from_request
 from interface.websocket_manager import broadcast_bus, runtime_heartbeat_payload, ws_manager
 
@@ -2853,7 +2853,7 @@ async def api_health(request: Request):
     # ── Terminal Fallback Status ──
     terminal_data: dict[str, Any] = {"active": False, "pending": 0, "watchdog": False}
     try:
-        from core.terminal_chat import get_terminal_fallback, get_terminal_watchdog
+        from core.conversation.terminal_chat import get_terminal_fallback, get_terminal_watchdog
         tf = get_terminal_fallback()
         terminal_data["active"] = tf.is_active
         terminal_data["pending"] = len(tf._pending)

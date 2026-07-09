@@ -346,7 +346,7 @@ class IncidentNarrator:
     def _collect_log_transport(cutoff: float) -> list[EvidenceItem]:
         """Dropped-log pressure from the non-blocking transport."""
         try:
-            from core.logging_config import get_dropped_log_count
+            from core.observability.logging_config import get_dropped_log_count
         except ImportError:
             return []
         dropped = int(get_dropped_log_count())
@@ -362,7 +362,7 @@ class IncidentNarrator:
                     f"{dropped} log records were dropped under overflow — the system was "
                     "logging faster than the sinks could drain."
                 ),
-                receipt="core.logging_config.get_dropped_log_count()",
+                receipt="core.observability.logging_config.get_dropped_log_count()",
                 detail={"dropped": dropped},
             )
         ]

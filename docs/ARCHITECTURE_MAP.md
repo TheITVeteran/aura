@@ -1279,8 +1279,8 @@ Review candidates:
 - `core/architect/safe_boot_harness.py:79` [architect] `probe_memory_write_read` - memory = await probe_memory_write_read(tmp_root=root / "memory")
 - `core/architect/smell_detector.py:177` [architect] `self._effect_smell` - smells.append(self._effect_smell("memory_write_bypass", node.path, node.id, "memory write outside memory owner surface", SmellSeverity.HIGH, MutationTier.T4_GOVERNANCE_SENSITIVE, F
 - `core/architect/smell_detector.py:177` [architect] `smells.append` - smells.append(self._effect_smell("memory_write_bypass", node.path, node.id, "memory write outside memory owner surface", SmellSeverity.HIGH, MutationTier.T4_GOVERNANCE_SENSITIVE, F
-- `core/autonomous_initiative_loop.py:1031` [core_root] `memory.store` - await memory.store(
-- `core/autonomous_initiative_loop.py:1041` [core_root] `logger.debug` - logger.debug("Social observation memory write failed: %s", exc)
+- `core/autonomy/autonomous_initiative_loop.py:1031` [core_root] `memory.store` - await memory.store(
+- `core/autonomy/autonomous_initiative_loop.py:1041` [core_root] `logger.debug` - logger.debug("Social observation memory write failed: %s", exc)
 - `core/autonomy/autonomous_research_orchestrator.py:147` [autonomy] `MemoryPersister` - self._persister = persister or MemoryPersister()
 - `core/autonomy/initiative_overflow.py:156` [autonomy] `logger.debug` - logger.debug("Skill gap memory write failed: %s", exc)
 - `core/autonomy/initiative_overflow.py:166` [autonomy] `memory.store_sync` - memory.store_sync(
@@ -1336,16 +1336,16 @@ Review candidates:
 - `core/agency/autonomous_task_engine.py:2863` [agency] `orch.execute_tool` - result = await orch.execute_tool("run_python", {"code": code})
 - `core/agency/skill_library.py:199` [agency] `tool_orchestrator.execute_tool` - result = await tool_orchestrator.execute_tool(step.tool_name, resolved_args)
 - `core/agi/curiosity_explorer.py:240` [agi] `orchestrator.execute_tool` - orchestrator.execute_tool(
-- `core/autonomous_initiative_loop.py:549` [core_root] `capability_engine.execute` - scan_result = await capability_engine.execute(
-- `core/autonomous_initiative_loop.py:595` [core_root] `capability_engine.execute` - test_result = await capability_engine.execute(
-- `core/autonomous_initiative_loop.py:634` [core_root] `capability_engine.execute` - proposal_result = await capability_engine.execute(
-- `core/autonomous_initiative_loop.py:1008` [core_root] `skill.execute` - return await skill.execute(EmailInput(**payload), {})
-- `core/autonomous_initiative_loop.py:1020` [core_root] `skill.execute` - return await skill.execute(RedditInput(**payload), {})
+- `core/autonomy/autonomous_initiative_loop.py:549` [core_root] `capability_engine.execute` - scan_result = await capability_engine.execute(
+- `core/autonomy/autonomous_initiative_loop.py:595` [core_root] `capability_engine.execute` - test_result = await capability_engine.execute(
+- `core/autonomy/autonomous_initiative_loop.py:634` [core_root] `capability_engine.execute` - proposal_result = await capability_engine.execute(
+- `core/autonomy/autonomous_initiative_loop.py:1008` [core_root] `skill.execute` - return await skill.execute(EmailInput(**payload), {})
+- `core/autonomy/autonomous_initiative_loop.py:1020` [core_root] `skill.execute` - return await skill.execute(RedditInput(**payload), {})
 - `core/autonomy/research_cycle.py:532` [autonomy] `self.orchestrator.execute_tool` - lambda name=tool_name, **kw: self.orchestrator.execute_tool(name, kw, origin="research_cycle")
 - `core/autonomy/research_cycle.py:539` [autonomy] `self.orchestrator.execute_tool` - lambda name=tool_name, **kw: self.orchestrator.execute_tool(name, kw, origin="research_cycle")
 - `core/autonomy/research_cycle.py:836` [autonomy] `self.orchestrator.execute_tool` - result = await self.orchestrator.execute_tool(
-- `core/behavior_controller.py:99` [core_root] `self.orchestrator.execute_tool` - self.orchestrator.execute_tool(tool_name, arguments), target_loop
-- `core/behavior_controller.py:104` [core_root] `self.orchestrator.execute_tool` - self.orchestrator.execute_tool(tool_name, arguments)
+- `core/autonomy/behavior_controller.py:99` [core_root] `self.orchestrator.execute_tool` - self.orchestrator.execute_tool(tool_name, arguments), target_loop
+- `core/autonomy/behavior_controller.py:104` [core_root] `self.orchestrator.execute_tool` - self.orchestrator.execute_tool(tool_name, arguments)
 - `core/brain/llm/function_calling_adapter.py:131` [brain] `skill.execute` - result = await skill.execute(args, {"source": "autonomous_brain"})
 - `core/brain/llm/local_agent_client.py:314` [brain] `self.adapter.execute_tool` - result_str = await self.adapter.execute_tool(tool_name, tool_args)
 - `core/brain/multimodal_orchestrator.py:216` [brain] `execute` - _maybe_await(execute(skill_name, payload)),
@@ -1406,8 +1406,8 @@ Calls that can touch network, subprocesses, sockets, browsers, or APIs.
 Review candidates:
 - `core/actuators/web_actuators.py:88` [actuators] `urllib.parse.urlparse` - parsed = urllib.parse.urlparse(url)
 - `core/agency/tool_orchestrator.py:214` [agency] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
-- `core/api_adapter.py:105` [core_root] `aiohttp.ClientSession` - self._http_session = aiohttp.ClientSession(
-- `core/api_adapter.py:106` [core_root] `aiohttp.TCPConnector` - connector=aiohttp.TCPConnector(limit=100, keepalive_timeout=60)
+- `core/adapters/api_adapter.py:105` [core_root] `aiohttp.ClientSession` - self._http_session = aiohttp.ClientSession(
+- `core/adapters/api_adapter.py:106` [core_root] `aiohttp.TCPConnector` - connector=aiohttp.TCPConnector(limit=100, keepalive_timeout=60)
 - `core/autonomic/iot_bridge.py:40` [autonomic] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/autonomic/iot_bridge.py:89` [autonomic] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/bus/sensory_gate.py:209` [bus] `urllib.parse.quote` - f"&search={urllib.parse.quote(query)}&limit=3&namespace=0&format=json"

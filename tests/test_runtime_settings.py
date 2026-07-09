@@ -259,7 +259,7 @@ def test_screenshot_tool_denied_when_screen_permission_off(tmp_path):
 # ── autonomy.proactive_messaging ────────────────────────────────────────────
 
 def test_proactive_messaging_toggle(tmp_path):
-    from core.proactive_communication import _proactive_messaging_enabled
+    from core.autonomy.proactive_communication import _proactive_messaging_enabled
 
     assert _proactive_messaging_enabled() is True
     _write_settings(tmp_path, {"autonomy.proactive_messaging": False})

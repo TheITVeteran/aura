@@ -1,4 +1,4 @@
-"""core/api_adapter.py — Aura APIAdapter v1.0
+"""core/adapters/api_adapter.py — Aura APIAdapter v1.0
 =============================================
 Unified multi-model API client.
 

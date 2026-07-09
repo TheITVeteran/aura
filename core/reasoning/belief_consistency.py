@@ -1,6 +1,6 @@
 """Logical consistency checking over Aura's beliefs.
 
-Beliefs are stored as natural-language claims (``core/belief_revision.py``). This
+Beliefs are stored as natural-language claims (``core/epistemics/belief_revision.py``). This
 module is the bridge that lets the natural-deduction prover act on them: it encodes
 each claim as a propositional literal (an atom, or its negation when the claim is
 phrased negatively) and uses :mod:`core.reasoning.natural_deduction` to detect when

@@ -281,7 +281,7 @@ class CommitmentEngine:
                f"{c.hours_remaining():.1f}h remaining. "
                f"Current progress: {round(c.progress * 100)}%.")
         try:
-            from core.terminal_chat import get_terminal_fallback
+            from core.conversation.terminal_chat import get_terminal_fallback
             get_terminal_fallback().queue_autonomous_message(msg)
             pp = getattr(orchestrator, "proactive_presence", None)
             if pp and hasattr(pp, "queue_autonomous_message"):
@@ -319,7 +319,7 @@ class CommitmentEngine:
     def _on_broken(self, c: Commitment, orchestrator=None):
         msg = f"I missed my commitment: '{c.description}'. I should have done: {c.outcome}."
         try:
-            from core.terminal_chat import get_terminal_fallback
+            from core.conversation.terminal_chat import get_terminal_fallback
             get_terminal_fallback().queue_autonomous_message(msg)
         except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('commitment_engine', _exc)

@@ -18,7 +18,7 @@ from core.constitution import BeliefAuthority, get_constitutional_core
 from core.container import ServiceContainer
 from core.continuity import ContinuityEngine
 from core.executive import executive_core as executive_core_module
-from core.autonomous_initiative_loop import AutonomousInitiativeLoop
+from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
 from core.managers.memory_manager import MemoryManager
 from core.memory.episodic_memory import EpisodicMemory
 from core.memory.sqlite_storage import SQLiteMemory

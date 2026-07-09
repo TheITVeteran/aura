@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from core.backup import BackupManager
+from core.ops.backup import BackupManager
 
 
 @pytest.mark.asyncio

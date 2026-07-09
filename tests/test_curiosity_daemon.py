@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 
 from core.agi.curiosity_daemon import AutonomousCuriosityDaemon
-from core.epistemic_tracker import EpistemicGap, EpistemicProfile
+from core.epistemics.epistemic_tracker import EpistemicGap, EpistemicProfile
 
 
 class _ProfileTracker:

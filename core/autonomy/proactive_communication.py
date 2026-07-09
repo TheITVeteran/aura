@@ -1,4 +1,4 @@
-"""core/proactive_communication.py - Intelligent Proactive Messaging
+"""core/autonomy/proactive_communication.py - Intelligent Proactive Messaging
 Aura decides WHEN to interrupt the user based on emotional state and context.
 """
 import asyncio

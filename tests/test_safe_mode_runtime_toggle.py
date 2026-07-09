@@ -6,7 +6,7 @@ tests lock in the live runtime toggle and the settings → runtime bridge.
 """
 from __future__ import annotations
 
-from core.safe_mode import is_safe_mode, runtime_feature_enabled, set_safe_mode
+from core.runtime.safe_mode import is_safe_mode, runtime_feature_enabled, set_safe_mode
 
 
 class _Kernel:

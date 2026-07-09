@@ -2,8 +2,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.inner_monologue import ThoughtPacket
-from core.language_center import LanguageCenter
+from core.introspection.inner_monologue import ThoughtPacket
+from core.brain.language_center import LanguageCenter
 
 
 class AsyncCallRecorder:

@@ -1,4 +1,4 @@
-from core.cognitive_integration_layer import CognitiveIntegrationLayer
+from core.cognition.cognitive_integration_layer import CognitiveIntegrationLayer
 
 
 def test_sync_setup_creates_base_directory_and_status(tmp_path):

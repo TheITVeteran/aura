@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-from core.capabilities.interlocutor_factcheck import (
+from core.capabilities.capabilities.interlocutor_factcheck import (
     compose_challenge_message,
     extract_checkable_claims,
     factcheck_reply,
@@ -97,7 +97,7 @@ class _Turn:
 
 
 def test_session_grounded_challenge_fires_and_records():
-    from core.capabilities.web_interlocutor import WebInterlocutorSession
+    from core.capabilities.capabilities.web_interlocutor import WebInterlocutorSession
 
     def corpus(query, k):
         return [{"text": "The Eiffel Tower was completed in 1889.", "source": "wiki:Eiffel_Tower"}]
@@ -112,7 +112,7 @@ def test_session_grounded_challenge_fires_and_records():
 
 
 def test_session_no_challenge_when_corpus_silent():
-    from core.capabilities.web_interlocutor import WebInterlocutorSession
+    from core.capabilities.capabilities.web_interlocutor import WebInterlocutorSession
 
     session = WebInterlocutorSession(browser=object(), cognitive_engine=None)
     ctx: dict = {"corpus_search": lambda q, k: []}

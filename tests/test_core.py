@@ -9,7 +9,7 @@ Verify core infrastructure: MemoryEvent, Logging redaction.
 import logging
 import time
 from core.memory.base import MemoryEvent
-from core.logging_config import _redact_processor
+from core.observability.logging_config import _redact_processor
 
 def test_memory_event():
     # Defaults

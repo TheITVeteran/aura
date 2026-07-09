@@ -12,7 +12,7 @@ import asyncio
 import logging
 from typing import Any
 
-from core.epistemic_tracker import EpistemicTracker, get_epistemic_tracker
+from core.epistemics.epistemic_tracker import EpistemicTracker, get_epistemic_tracker
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 

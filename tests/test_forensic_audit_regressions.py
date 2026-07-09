@@ -428,7 +428,7 @@ async def test_filesystem_reality_shortcut_is_disabled_for_user_facing_requests(
 
 @pytest.mark.asyncio
 async def test_graceful_shutdown_signal_path_does_not_raise_system_exit(monkeypatch):
-    from core.graceful_shutdown import GracefulShutdown
+    from core.ops.graceful_shutdown import GracefulShutdown
 
     hook = AsyncCallProbe()
     container = SimpleNamespace(shutdown=AsyncCallProbe())
@@ -448,7 +448,7 @@ async def test_graceful_shutdown_signal_path_does_not_raise_system_exit(monkeypa
 
 @pytest.mark.asyncio
 async def test_graceful_shutdown_signal_handlers_are_task_tracked(monkeypatch):
-    from core.graceful_shutdown import GracefulShutdown
+    from core.ops.graceful_shutdown import GracefulShutdown
 
     handlers = []
     scheduled = {}
@@ -470,7 +470,7 @@ async def test_graceful_shutdown_signal_handlers_are_task_tracked(monkeypatch):
     GracefulShutdown._shutdown_event = None
 
     monkeypatch.setattr("asyncio.get_running_loop", lambda: _Loop())
-    monkeypatch.setattr("core.graceful_shutdown.get_task_tracker", lambda: _Tracker())
+    monkeypatch.setattr("core.ops.graceful_shutdown.get_task_tracker", lambda: _Tracker())
     monkeypatch.setattr("core.container.get_container", lambda: container)
 
     GracefulShutdown.setup_signals()
@@ -1000,7 +1000,7 @@ def test_runtime_state_prefers_canonical_self_over_legacy_self_model():
         required=False,
     )
 
-    from core.runtime_tools import get_runtime_state
+    from core.tools.runtime_tools import get_runtime_state
 
     state = get_runtime_state()["state"]["self_model"]
 

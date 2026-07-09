@@ -8,7 +8,7 @@ import pytest
 
 from core.affect import heartstone_values as heartstone_module
 from core.bus.events import EventPriority, InputBus
-from core.phantom_browser import PhantomBrowser
+from core.capabilities.phantom_browser import PhantomBrowser
 from core.world_model import user_model as user_model_module
 from interface import websocket_manager as websocket_module
 from interface.server import (

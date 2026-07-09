@@ -13,7 +13,7 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.event_bus import get_event_bus
-from core.planner import ExecutionPlan
+from core.planning.planner import ExecutionPlan
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 logger = logging.getLogger("Aura.CriticEngine")

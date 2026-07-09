@@ -342,7 +342,7 @@ class LifecycleCoordinator:
 
         # Persist epistemic state (knowledge graph, gaps)
         try:
-            from core.epistemic_tracker import get_epistemic_tracker
+            from core.epistemics.epistemic_tracker import get_epistemic_tracker
             get_epistemic_tracker().save()
             logger.info("✓ Epistemic state saved")
         except (ImportError, AttributeError, RuntimeError) as e:

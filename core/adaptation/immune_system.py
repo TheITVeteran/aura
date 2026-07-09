@@ -210,7 +210,7 @@ class ImmuneSystem:
                 return
 
             logger.warning("🚨 CRITICAL FAILURE: Rolling back to %s", snapshot_path)
-            target = Path("core/cognitive_kernel.py")
+            target = Path("core/cognition/cognitive_kernel.py")
             await asyncio.to_thread(shutil.copy2, snapshot, target)
             logger.info("✅ Rollback complete: %s restored.", target)
         except (OSError, IOError) as e:

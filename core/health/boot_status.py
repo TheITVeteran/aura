@@ -15,7 +15,7 @@ from core.runtime.health_contract import (
     required_probe_groups_pass,
     required_probe_status,
 )
-from core.version import VERSION, version_string
+from core.runtime.version import VERSION, version_string
 
 _BOOT_STATUS_RECOVERABLE_ERRORS = (AttributeError, RuntimeError, TypeError, ValueError)
 

@@ -62,13 +62,13 @@ async def test_router_compatibility():
 async def test_language_center_hardening():
     print("\n🔍 Testing LanguageCenter hardening...")
     try:
-        from core.language_center import strip_aura_prefix
+        from core.brain.language_center import strip_aura_prefix
         
         print("  - Testing strip_aura_prefix with dict (should fail if not handled, but we hardened express)...")
         # Note: strip_aura_prefix itself still wants a string, but express now casts to str.
         
-        from core.language_center import LanguageCenter
-        from core.inner_monologue import ThoughtPacket
+        from core.brain.language_center import LanguageCenter
+        from core.introspection.inner_monologue import ThoughtPacket
         
         class MockRouter:
             async def generate(self, *args, **kwargs):

@@ -1098,7 +1098,7 @@ def test_run_code_skill_keeps_unexpected_execution_failure_failed(monkeypatch):
 
 
 def test_api_adapter_container_shutdown_closes_http_session():
-    from core.api_adapter import APIAdapter
+    from core.adapters.api_adapter import APIAdapter
 
     class FakeSession:
         closed = False

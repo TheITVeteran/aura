@@ -455,7 +455,7 @@ class AuraConfig(BaseSettings):
     def setup_infrastructure(self) -> AuraConfig:
         # 1. Set Version
         try:
-            from core.version import VERSION
+            from core.runtime.version import VERSION
             self.version = VERSION
         except ImportError as _e:
             logger.debug('Ignored ImportError in config.py: %s', _e)

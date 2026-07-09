@@ -176,7 +176,7 @@ class EmailAdapterSkill(BaseSkill):
 
     def _get_creds(self) -> tuple[str, str]:
         """Load email credentials from Keychain. Never logs them."""
-        from core.zenith_secrets import get_credential
+        from core.security.zenith_secrets import get_credential
 
         addr = get_credential("email", "address")
         pwd = get_credential("email", "password")
@@ -189,7 +189,7 @@ class EmailAdapterSkill(BaseSkill):
 
     def _get_owner_email(self) -> str:
         """Get Bryan's email (trusted contact)."""
-        from core.zenith_secrets import get_credential
+        from core.security.zenith_secrets import get_credential
 
         return get_credential("owner", "email") or "youngbryan97@gmail.com"
 

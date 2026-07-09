@@ -6,7 +6,7 @@ import os
 # Add project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from core.phantom_browser import PhantomBrowser
+from core.capabilities.phantom_browser import PhantomBrowser
 
 logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("VerifyWebSearch")

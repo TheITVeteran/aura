@@ -9,7 +9,7 @@ import networkx as nx
 import pytest
 
 from core.agency_core import AgencyCore, AgencyState
-from core.autonomous_initiative_loop import AutonomousInitiativeLoop
+from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
 from core.brain.identity import IdentityService
 from core.capability_engine import CapabilityEngine, SkillMetadata
 from core.consciousness.executive_closure import ExecutiveClosureEngine
@@ -29,7 +29,7 @@ from core.memory import db_writer_queue as dbw_module
 from core.memory.knowledge_graph import PersistentKnowledgeGraph
 from core.memory.memory_facade import MemoryFacade
 from core.motivation.goal_hierarchy import GoalHierarchy
-from core.proactive_communication import (
+from core.autonomy.proactive_communication import (
     EmotionalState,
     InterruptionUrgency,
     ProactiveCommunicationManager,
@@ -38,7 +38,7 @@ from core.proactive_communication import (
 from core.senses.continuous_perception import ContinuousPerceptionEngine
 from core.social.social_imagination import SocialImagination
 from core.state.aura_state import AuraState
-from core.terminal_chat import TerminalFallbackChat
+from core.conversation.terminal_chat import TerminalFallbackChat
 from core.utils import output_gate as output_gate_module
 from core.utils.output_gate import AutonomousOutputGate
 from core.world_model.acg import ActionConsequenceGraph
@@ -850,7 +850,7 @@ async def test_autonomous_initiative_loop_blocks_unapproved_browser_research(mon
         _foreground_user_quiet_until=0.0,
     )
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop._background_initiative_allowed",
+        "core.autonomy.autonomous_initiative_loop._background_initiative_allowed",
         lambda *_a, **_kw: True,
     )
 
@@ -881,7 +881,7 @@ async def test_autonomous_initiative_loop_reports_missing_research_tool(monkeypa
         _foreground_user_quiet_until=0.0,
     )
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop._background_initiative_allowed",
+        "core.autonomy.autonomous_initiative_loop._background_initiative_allowed",
         lambda *_a, **_kw: True,
     )
 

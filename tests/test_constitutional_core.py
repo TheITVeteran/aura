@@ -795,7 +795,7 @@ async def test_executive_allows_test_generator_under_temporal_obligation(service
     executive = executive_core_module.get_executive_core()
     intent, record = await executive.prepare_tool_intent(
         "test_generator",
-        {"target_file": "core/autonomous_initiative_loop.py"},
+        {"target_file": "core/autonomy/autonomous_initiative_loop.py"},
         source="autonomous",
     )
 

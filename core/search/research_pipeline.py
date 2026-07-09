@@ -961,7 +961,7 @@ class ResearchSearchPipeline:
 
     async def _fetch_page_with_browser(self, hit: SearchHit) -> SearchPage | None:
         try:
-            from core.phantom_browser import PhantomBrowser
+            from core.capabilities.phantom_browser import PhantomBrowser
 
             browser = PhantomBrowser(visible=False)
             try:

@@ -82,7 +82,7 @@ ALLOW_LIST = {
     "core/agency/skill_library.py",
     "core/agi/curiosity_explorer.py",
     "core/autonomy/research_cycle.py",
-    "core/behavior_controller.py",
+    "core/autonomy/behavior_controller.py",
     "core/brain/react_loop.py",
     "core/cognitive/state_machine.py",
     "core/collective/delegator.py",

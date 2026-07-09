@@ -286,7 +286,7 @@ class CognitiveIntegrationLayer:
             # We try to get them from the container first, then instantiate if missing
             self.kernel = ServiceContainer.get("cognitive_kernel", default=None)
             if not self.kernel:
-                from core.cognitive_kernel import get_cognitive_kernel
+                from core.cognition.cognitive_kernel import get_cognitive_kernel
                 self.kernel = get_cognitive_kernel()
             
             await self.kernel.start()
@@ -308,7 +308,7 @@ class CognitiveIntegrationLayer:
             try:
                 self.monologue = ServiceContainer.get("inner_monologue", default=None)
                 if not self.monologue:
-                    from core.inner_monologue import get_inner_monologue
+                    from core.introspection.inner_monologue import get_inner_monologue
                     self.monologue = get_inner_monologue()
                 
                 # Check if it's already started or needs initialization
@@ -327,7 +327,7 @@ class CognitiveIntegrationLayer:
             try:
                 self.language_center = ServiceContainer.get("language_center", default=None)
                 if not self.language_center:
-                    from core.language_center import get_language_center
+                    from core.brain.language_center import get_language_center
                     self.language_center = get_language_center()
                 
                 if hasattr(self.language_center, "start"):
@@ -630,7 +630,7 @@ class CognitiveIntegrationLayer:
                     raw = await self.language_center.express(packet, message, history=history)
                     return self._shape_with_substrate(raw, _sve, _speech_profile)
                 else:
-                    from core.inner_monologue import ThoughtPacket
+                    from core.introspection.inner_monologue import ThoughtPacket
                     packet = ThoughtPacket(
                         stance=brief.prior_beliefs[0] if brief.prior_beliefs else "I approach this with curiosity.",
                         primary_points=brief.key_points,
@@ -803,7 +803,7 @@ class CognitiveIntegrationLayer:
         brief = await self.kernel.evaluate(user_input)
         if self.language_center:
             # We must use a ThoughtPacket here as well
-            from core.inner_monologue import ThoughtPacket
+            from core.introspection.inner_monologue import ThoughtPacket
             packet = ThoughtPacket(
                 stance=brief.prior_beliefs[0] if brief.prior_beliefs else "...",
                 primary_points=brief.key_points,

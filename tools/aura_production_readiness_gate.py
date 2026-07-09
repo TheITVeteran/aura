@@ -130,7 +130,7 @@ def run_checks() -> list[Check]:
     add("proof_bundle_regeneration", _exists("tools/proof_bundle.py") and "proof-bundle:" in makefile and "readiness_passed" in _read("tools/proof_bundle.py"), "Proof bundle tool fails closed on artifact readiness")
     add("runtime_authentication", _contains("interface/auth.py", "compare_digest", "Authentication not configured", "validate_runtime_security_request"), "Runtime requests fail closed without auth")
     add("authorization_gate", _contains("core/executive/authority_gateway.py", "authorize_tool_execution", "authorize_memory_write", "authorize_state_mutation"), "Authority gateway covers tool/memory/state effects")
-    add("secret_management", _contains("core/zenith_secrets.py", "Keychain", "get_secret", "store_credential"), "Secrets resolve through environment/Keychain helpers")
+    add("secret_management", _contains("core/security/zenith_secrets.py", "Keychain", "get_secret", "store_credential"), "Secrets resolve through environment/Keychain helpers")
     add("secret_scan", _exists("tools/security_scan.py") and "secret_like_literal" in _read("tools/security_scan.py"), "Secret-like literal scan is present")
     add("dependency_sbom_provenance", _exists("tools/build_provenance.py") and "provenance:" in makefile and "sbom" in release.lower(), "Provenance/SBOM generation is wired")
     add("signed_release_required", all(token in release for token in ("codesign", "notarytool", "stapler", "Require signing credentials")), "Release workflow requires signing/notarization")

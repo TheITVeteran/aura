@@ -555,9 +555,9 @@ save point.
 - Focused validation:
   - `python -m pytest -q tests/test_autonomous_initiative_loop_hardening.py tests/test_full_desktop_runtime_contract.py tests/test_autonomy_visibility.py tests/test_boot_autonomy_hardening.py tests/test_autonomy_conductor_runtime.py tests/test_runtime_polish.py::test_background_loop_runs_during_desktop_safe_boot tests/test_runtime_polish.py::test_background_loop_start_allows_explicit_desktop_background_cognition tests/test_runtime_polish.py::test_orchestrator_background_runs_under_safe_boot_but_honors_explicit_disable tests/test_boot_runtime_safety.py::test_live_boot_proof_uses_readiness_heartbeat_contract tests/test_boot_runtime_safety.py::test_live_boot_proof_requires_cognitive_organ_participation tests/test_reasoning_precompute.py::test_register_reasoning_jobs_idempotent`
     -> 53 passed.
-  - `python -m ruff check --select F,B core/autonomous_initiative_loop.py tests/test_autonomous_initiative_loop_hardening.py tests/test_full_desktop_runtime_contract.py tests/test_autonomy_visibility.py`
+  - `python -m ruff check --select F,B core/autonomy/autonomous_initiative_loop.py tests/test_autonomous_initiative_loop_hardening.py tests/test_full_desktop_runtime_contract.py tests/test_autonomy_visibility.py`
     -> passed.
-  - `python -m py_compile core/autonomous_initiative_loop.py tests/test_autonomous_initiative_loop_hardening.py tests/test_full_desktop_runtime_contract.py tests/test_autonomy_visibility.py`
+  - `python -m py_compile core/autonomy/autonomous_initiative_loop.py tests/test_autonomous_initiative_loop_hardening.py tests/test_full_desktop_runtime_contract.py tests/test_autonomy_visibility.py`
     -> passed.
 - Interpretation: this is a source/runtime-contract checkpoint for background
   autonomy visibility. It proves the status and test harness can no longer omit
@@ -5537,7 +5537,7 @@ Scope:
   - `core.plasticity.plasticity_controller`
   - `core.brain.concept_vector_bridge`
   - `core.affect.emotional_coloring`
-  - `core.capabilities.source_summarizer`
+  - `core.capabilities.capabilities.source_summarizer`
   - `core.memory.provenance`
   - `core.utils.telemetry_enrichment`
   - `core.learning.skill_evolution`

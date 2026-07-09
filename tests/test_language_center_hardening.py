@@ -6,7 +6,7 @@ import pytest
 
 
 def _thought(**kwargs):
-    from core.inner_monologue import ThoughtPacket
+    from core.introspection.inner_monologue import ThoughtPacket
 
     return ThoughtPacket(
         stance=kwargs.get("stance", "direct"),
@@ -18,7 +18,7 @@ def _thought(**kwargs):
 
 @pytest.mark.asyncio
 async def test_language_center_express_falls_back_when_router_lookup_fails(monkeypatch):
-    import core.language_center as language
+    import core.brain.language_center as language
 
     records = []
     center = language.LanguageCenter()
@@ -39,7 +39,7 @@ async def test_language_center_express_falls_back_when_router_lookup_fails(monke
 
 @pytest.mark.asyncio
 async def test_language_center_stream_falls_back_when_router_missing(monkeypatch):
-    import core.language_center as language
+    import core.brain.language_center as language
 
     center = language.LanguageCenter()
 
@@ -64,7 +64,7 @@ async def test_language_center_stream_falls_back_when_router_missing(monkeypatch
 @pytest.mark.asyncio
 async def test_language_center_start_records_registration_failure(monkeypatch):
     import core.event_bus as event_bus
-    import core.language_center as language
+    import core.brain.language_center as language
 
     records = []
     center = language.LanguageCenter()
@@ -90,7 +90,7 @@ async def test_language_center_start_records_registration_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_language_center_dispatch_failure_attempts_prompt_route(monkeypatch):
-    import core.language_center as language
+    import core.brain.language_center as language
 
     records = []
     center = language.LanguageCenter()

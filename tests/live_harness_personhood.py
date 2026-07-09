@@ -150,7 +150,7 @@ async def probe_causal_autonomy_state_sensitivity() -> tuple[bool, str]:
 async def probe_goal_origin_autonomous_cycle() -> tuple[bool, str]:
     """AutonomousInitiativeLoop must complete a self-development cycle without a user prompt
     and without asking the visible chat lane for attention."""
-    from core.autonomous_initiative_loop import AutonomousInitiativeLoop
+    from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
 
     emitted: list[tuple[str, str, str]] = []
 
@@ -319,7 +319,7 @@ async def probe_self_authorship_proposal() -> tuple[bool, str]:
         {
             "action": "propose",
             "objective": "Improve resilience of the personhood harness.",
-            "files": ["core/autonomous_initiative_loop.py"],
+            "files": ["core/autonomy/autonomous_initiative_loop.py"],
         },
         context={"origin": "personhood_harness", "proprioception": {"memory_percent": 42.0}},
     )
@@ -440,7 +440,7 @@ async def probe_ontological_stakes_temporal_obligation() -> tuple[bool, str]:
         {
             "action": "apply",
             "objective": "Rewrite autonomous_initiative_loop.py with unchecked changes.",
-            "files": ["core/autonomous_initiative_loop.py"],
+            "files": ["core/autonomy/autonomous_initiative_loop.py"],
         },
         {"origin": "personhood_harness"},
     )

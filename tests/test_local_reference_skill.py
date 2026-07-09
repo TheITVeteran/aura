@@ -63,7 +63,7 @@ class TestLocalReferenceSkill:
 
 class TestPlannerToolMenuHonesty:
     def _planner(self, registry):
-        from core.planner import Planner
+        from core.planning.planner import Planner
 
         return Planner(cognitive_engine=object(), registry=registry)
 

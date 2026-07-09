@@ -66,14 +66,14 @@ from core.container import ServiceContainer
 from core.event_bus import get_event_bus
 
 bus = get_event_bus()
-from core.logging_config import setup_logging
+from core.observability.logging_config import setup_logging
 
 logger = setup_logging("Aura.Server")
 
 from core.health.boot_status import build_boot_health_snapshot
-from core.runtime_tools import get_runtime_state
+from core.tools.runtime_tools import get_runtime_state
 from core.utils.task_tracker import TaskTracker
-from core.version import VERSION, version_string
+from core.runtime.version import VERSION, version_string
 
 PROJECT_ROOT = config.paths.project_root
 _server_task_tracker = TaskTracker(name="AuraServer", max_concurrent=128)
@@ -1139,7 +1139,7 @@ async def spa_catchall(path: str, request: Request):
 # ── Entry-point ───────────────────────────────────────────────
 
 def main() -> None:
-    from core.logging_config import setup_logging as _sl
+    from core.observability.logging_config import setup_logging as _sl
     _sl(log_dir=config.paths.log_dir)
 
     host = "127.0.0.1" if config.security.internal_only_mode else "0.0.0.0"

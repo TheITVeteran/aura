@@ -352,7 +352,7 @@ class BootCognitiveMixin:
         max_attempts = 2
         for attempt in range(1, max_attempts + 1):
             try:
-                from core.cognitive_integration_layer import CognitiveIntegrationLayer
+                from core.cognition.cognitive_integration_layer import CognitiveIntegrationLayer
                 from core.config import config
 
                 cil = CognitiveIntegrationLayer(
@@ -500,7 +500,7 @@ class BootCognitiveMixin:
 
         # Hook System Extensions
         try:
-            from core.continuous_learning import ContinuousLearningEngine
+            from core.learning.continuous_learning import ContinuousLearningEngine
 
             self.learning_engine = ContinuousLearningEngine(orchestrator=self)
 
@@ -539,7 +539,7 @@ class BootCognitiveMixin:
             logger.error("Failed to integrate continuous learning: %s", e)
 
         try:
-            from core.behavior_controller import integrate_behavior_control
+            from core.autonomy.behavior_controller import integrate_behavior_control
 
             integrate_behavior_control(self)
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -578,7 +578,7 @@ class BootCognitiveMixin:
             logger.info("✓ AffectEngineV2 (affect_engine/affect_manager) registered")
 
             # 2. Subsystem Audit
-            from core.subsystem_audit import SubsystemAudit
+            from core.ops.subsystem_audit import SubsystemAudit
 
             audit = ServiceContainer.get("subsystem_audit", default=None) or SubsystemAudit()
             ServiceContainer.register_instance("subsystem_audit", audit)
@@ -693,8 +693,8 @@ class BootCognitiveMixin:
         """Initialize the hierarchical Strategic Planner (Phase 17)."""
         try:
             from core.data.project_store import ProjectStore
-            from core.neural_feed import NeuralFeed
-            from core.strategic_planner import StrategicPlanner
+            from core.observability.neural_feed import NeuralFeed
+            from core.planning.strategic_planner import StrategicPlanner
 
             # 1. Neural Feed
             feed = NeuralFeed()

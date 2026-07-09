@@ -1,4 +1,4 @@
-"""core/inner_monologue.py — Aura InnerMonologue v1.0
+"""core/introspection/inner_monologue.py — Aura InnerMonologue v1.0
 =====================================================
 Pre-response reasoning pipeline.
 
@@ -35,7 +35,7 @@ from typing import Any
 
 import psutil
 
-from core.cognitive_kernel import CognitiveBrief, InputDomain, ResponseStrategy
+from core.cognition.cognitive_kernel import CognitiveBrief, InputDomain, ResponseStrategy
 from core.runtime.errors import Severity, record_degradation
 
 logger = logging.getLogger("Aura.InnerMonologue")

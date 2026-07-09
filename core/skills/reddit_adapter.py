@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 from core.being.body_state_service import BodyStateService
 from core.being.welfare_state import WelfareState
 from core.being.welfare_transaction import WelfareTransaction
-from core.phantom_browser import PhantomBrowser
+from core.capabilities.phantom_browser import PhantomBrowser
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.skills.base_skill import BaseSkill
@@ -217,7 +217,7 @@ class RedditAdapterSkill(BaseSkill):
 
     def _get_creds(self) -> tuple[str, str]:
         """Load Reddit credentials from Keychain."""
-        from core.zenith_secrets import get_credential
+        from core.security.zenith_secrets import get_credential
 
         username = get_credential("reddit", "username")
         password = get_credential("reddit", "password")

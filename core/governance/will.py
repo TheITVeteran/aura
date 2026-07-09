@@ -2033,7 +2033,7 @@ class UnifiedWill:
     def _sign_decision(self, decision: WillDecision) -> tuple[str, str]:
         payload = self._signature_payload(decision)
         try:
-            from core.runtime_tools import CRYPTO_AVAILABLE, _sign_payload
+            from core.tools.runtime_tools import CRYPTO_AVAILABLE, _sign_payload
 
             signature = _sign_payload(payload)
             scheme = "ed25519" if CRYPTO_AVAILABLE else "hmac-sha256"

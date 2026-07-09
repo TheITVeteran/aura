@@ -205,7 +205,7 @@ class TestCondition01_SelfSustainingInternalWorld:
         # Check that other files import WorldState
         consumers = 0
         for check_file in [
-            "core/autonomous_initiative_loop.py",
+            "core/autonomy/autonomous_initiative_loop.py",
             "core/consciousness/executive_closure.py",
             "core/mind_tick.py",
         ]:
@@ -810,7 +810,7 @@ class TestCondition10_EndogenousActivity:
     def test_existence(self):
         """MindTick, autonomous initiative loop, and WillEngine exist."""
         assert _file_exists("core/mind_tick.py")
-        assert _file_exists("core/autonomous_initiative_loop.py")
+        assert _file_exists("core/autonomy/autonomous_initiative_loop.py")
         assert _file_exists("core/self/will_engine.py")
 
         src_mt = _read_source("core/mind_tick.py")

@@ -179,7 +179,7 @@ async def _boot_aura(logger: logging.Logger):
         config.llm.deep_model = config.llm.fast_model
         logger.info("🔧 Config override: deep_model → fast_model (%s)", config.llm.fast_model)
 
-    from core.logging_config import setup_logging
+    from core.observability.logging_config import setup_logging
     setup_logging()
 
     from core.container import ServiceContainer

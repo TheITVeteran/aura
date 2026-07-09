@@ -5,7 +5,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_graceful_shutdown_runs_canonical_shutdown_coordinator(monkeypatch):
-    from core.graceful_shutdown import GracefulShutdown
+    from core.ops.graceful_shutdown import GracefulShutdown
     from core.runtime.shutdown_coordinator import (
         clear_shutdown_request,
         get_shutdown_coordinator,

@@ -235,7 +235,7 @@ def gui_actor_entry(port: int, token: str = None):
 
     # 2. Setup Logging for the process
     from core.config import config
-    from core.logging_config import setup_logging
+    from core.observability.logging_config import setup_logging
     setup_logging(log_dir=config.paths.log_dir)
     
     logger.info(f"🎨 GUI Actor initiating Pure WebView (Port: {port})")

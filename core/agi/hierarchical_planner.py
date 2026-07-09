@@ -172,7 +172,7 @@ class HierarchicalPlanner:
                                f"progress at {round(goal.progress*100)}%. "
                                f"Still working on this?")
                         pp.queue_autonomous_message(msg)
-                    from core.terminal_chat import get_terminal_fallback
+                    from core.conversation.terminal_chat import get_terminal_fallback
                     get_terminal_fallback().queue_autonomous_message(
                         f"[Goal check-in] {goal.to_brief()}"
                     )

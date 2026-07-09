@@ -324,7 +324,7 @@ def test_liquid_substrate_velocity_contract(tmp_path):
 
 
 def test_system_state_monitor_initializes_health_history():
-    from core.system_monitor import SystemStateMonitor
+    from core.ops.system_monitor import SystemStateMonitor
 
     monitor = SystemStateMonitor()
 

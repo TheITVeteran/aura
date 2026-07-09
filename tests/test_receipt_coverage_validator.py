@@ -38,7 +38,7 @@ def _write_jsonl(path: Path, records: list[dict[str, object]]) -> None:
 def _will_receipt() -> dict[str, object]:
     receipt_id = "will_test_receipt"
     payload = f"{receipt_id}|proceed|tool_execution|test|abc123|1780381149.000000|approved"
-    from core.runtime_tools import _sign_payload
+    from core.tools.runtime_tools import _sign_payload
 
     return {
         "receipt_id": receipt_id,
@@ -77,7 +77,7 @@ def _canonical_will_receipt(**payload_overrides: object) -> dict[str, object]:
     }
     payload_record.update(payload_overrides)
     payload = json.dumps(payload_record, sort_keys=True, separators=(",", ":"))
-    from core.runtime_tools import _sign_payload
+    from core.tools.runtime_tools import _sign_payload
 
     return {
         "receipt_id": receipt_id,
@@ -283,7 +283,7 @@ def test_receipt_coverage_rejects_unsigned_will_receipt(tmp_path, monkeypatch) -
 def test_receipt_coverage_rejects_unverifiable_will_signature(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(receipt_coverage_validator, "run_negative_tests", _all_negative_tests_pass)
 
-    import core.runtime_tools as runtime_tools
+    import core.tools.runtime_tools as runtime_tools
 
     receipt = _will_receipt()
 

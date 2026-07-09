@@ -1108,7 +1108,7 @@ async def test_perform_autonomous_thought_dream(orchestrator, mock_container):
             "core.orchestrator.mixins.autonomy.background_activity_reason",
             return_value=None,
         ):
-            with swap("core.dreamer_v2.DreamerV2", create=True) as mock_dreamer_cls:
+            with swap("core.sleep.dreamer_v2.DreamerV2", create=True) as mock_dreamer_cls:
                 mock_dreamer_inst = _CallRecorder()
                 mock_dreamer_inst.engage_sleep_cycle = _AsyncCallRecorder(
                     return_value={"dream": {"dreamed": True}}
@@ -2807,7 +2807,7 @@ async def test_perform_autonomous_thought_dream_without_goal(orchestrator):
                     return_value=ce_mock,
                     create=True,
                 ):
-                    with swap("core.dreamer_v2.DreamerV2", create=True) as mock_dreamer_class:
+                    with swap("core.sleep.dreamer_v2.DreamerV2", create=True) as mock_dreamer_class:
                         mock_instance = _AsyncCallRecorder()
                         mock_instance.engage_sleep_cycle.return_value = {
                             "dream": {"dreamed": True, "insight": "Test dream"}

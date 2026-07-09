@@ -50,7 +50,7 @@ STANDARDS: tuple[FrontierStandard, ...] = (
         ),
         source_paths=(
             "core/runtime/desktop_boot_safety.py",
-            "core/subsystem_audit.py",
+            "core/ops/subsystem_audit.py",
             "interface/routes/chat.py",
             "tools/live_boot_proof.py",
         ),

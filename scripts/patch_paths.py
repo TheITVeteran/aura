@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 files_to_patch = [
-    "core/runtime_tools.py",
+    "core/tools/runtime_tools.py",
     "core/motivation/goal_hierarchy.py",
     "core/skills/toggle_senses.py",
     "core/observability/logging_hmac.py",

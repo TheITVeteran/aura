@@ -532,12 +532,12 @@ class TestProcessManagerBackoff(unittest.TestCase):
     """Tests for the process manager exponential backoff."""
 
     def test_permanently_failed_state_exists(self):
-        from core.process_manager import ProcessState
+        from core.ops.process_manager import ProcessState
 
         self.assertEqual(ProcessState.PERMANENTLY_FAILED.value, "permanently_failed")
 
     def test_compute_backoff(self):
-        from core.process_manager import ManagedProcess, ProcessConfig
+        from core.ops.process_manager import ManagedProcess, ProcessConfig
 
         config = ProcessConfig(
             name="test_process",

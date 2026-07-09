@@ -8,7 +8,7 @@ from pathlib import Path
 
 from core.container import ServiceContainer
 from core.data.project_store import ProjectStore
-from core.strategic_planner import StrategicPlanner
+from core.planning.strategic_planner import StrategicPlanner
 
 
 class ThoughtProbe:

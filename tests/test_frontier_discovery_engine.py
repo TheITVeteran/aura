@@ -231,7 +231,7 @@ async def test_response_lane_ignores_non_discovery_question():
 # ── autonomous-loop wiring (live runtime driver) ─────────────────────────────
 async def test_autonomous_loop_runs_discovery_tick(tmp_path, monkeypatch):
     import core.discovery.frontier_discovery_engine as fde_mod
-    from core.autonomous_initiative_loop import AutonomousInitiativeLoop
+    from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
 
     # Methods exist and are coroutines; the idle lane has an executable runtime path.
     assert asyncio.iscoroutinefunction(AutonomousInitiativeLoop._discovery_loop)

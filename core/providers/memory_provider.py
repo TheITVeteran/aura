@@ -93,7 +93,7 @@ def register_memory_services(container):
     # SleepTrigger does real consolidation instead of quietly skipping.
     def create_dreamer_v2():
         try:
-            from core.dreamer_v2 import DreamerV2
+            from core.sleep.dreamer_v2 import DreamerV2
             brain = container.get("cognitive_engine", default=None)
             kg = container.get("knowledge_graph", default=None)
             if brain is None or kg is None:

@@ -12,7 +12,7 @@ from core.bus.local_pipe_bus import LocalPipeBus
 from core.consciousness.evidence_engine import ConsciousnessEvidenceEngine
 from core.orchestrator.flow_control import CognitiveFlowController
 from core.orchestrator.main import RobustOrchestrator
-from core.tagged_reply_queue import TaggedReplyQueue
+from core.conversation.tagged_reply_queue import TaggedReplyQueue
 
 TMP_ROOT = Path(tempfile.gettempdir())
 

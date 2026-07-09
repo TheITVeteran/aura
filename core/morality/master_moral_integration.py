@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.INFO, format='%(name)s - %(levelname)s - %(mes
 logger = logging.getLogger("Aura.Integration")
 
 # Import systems
-from core.behavior_controller import integrate_behavior_control
+from core.autonomy.behavior_controller import integrate_behavior_control
 from core.brain.personality_engine import (
     get_personality_engine,
     integrate_personality_into_conversation,

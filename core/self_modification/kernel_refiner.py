@@ -93,7 +93,7 @@ class KernelRefiner:
                 line_no = content.count('\n', 0, match.start()) + 1
                 issues.append({
                     "type": "performance",
-                    "file": "core/cognitive_kernel.py",
+                    "file": "core/cognition/cognitive_kernel.py",
                     "line": line_no,
                     "message": f"Large trigger list detected ({items_count} items). High-frequency regex scanning may cause latency spikes.",
                     "priority": "medium"
@@ -146,7 +146,7 @@ Hunt for:
 If you find a valid optimization, return it in this JSON format:
 {{
     "found": true,
-    "line": <approximate line number in core/cognitive_kernel.py>,
+    "line": <approximate line number in core/cognition/cognitive_kernel.py>,
     "type": "optimization",
     "message": "<technical explanation of the bottleneck>",
     "plan": "<briefly how you will refactor it>"
@@ -170,7 +170,7 @@ If no refinement is needed, return {{"found": false}}.
             if data.get("found"):
                 return [{
                     "type": data["type"],
-                    "file": "core/cognitive_kernel.py",
+                    "file": "core/cognition/cognitive_kernel.py",
                     "line": data["line"],
                     "message": data["message"],
                     "plan": data["plan"],

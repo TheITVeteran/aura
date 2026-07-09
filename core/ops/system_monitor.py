@@ -1,4 +1,4 @@
-"""core/system_monitor.py — Recursive Stability & Health Auditing for Aura Zenith.
+"""core/ops/system_monitor.py — Recursive Stability & Health Auditing for Aura Zenith.
 
 Monitoring system health, technical debt, and recursive stability.
 """

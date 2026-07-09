@@ -1,5 +1,5 @@
 from core.brain.llm.context_assembler import ContextAssembler
-from core.cognitive_integration_layer import CognitiveIntegrationLayer
+from core.cognition.cognitive_integration_layer import CognitiveIntegrationLayer
 from core.conversation.apply_response_patches import apply_response_patches
 from core.phases.memory_consolidation import MemoryConsolidationPhase
 

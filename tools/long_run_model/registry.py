@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List
 
 from core.autonomy.research_cycle import ResearchCycle
-from core.backup import BackupManager
+from core.ops.backup import BackupManager
 from core.consciousness.subconscious_loop import SubconsciousLoop
 from core.conversation.engine import CONTEXT_HISTORY_MAX_MESSAGES
 from core.conversation import persistence as conversation_persistence

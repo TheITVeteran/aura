@@ -7,7 +7,7 @@ Runs Aura's generic WebInterlocutorSession against either:
 * a supplied visible web chat URL.
 
 This is a proof harness only; product behavior lives in
-core.capabilities.web_interlocutor and core.skills.web_interlocutor.
+core.capabilities.capabilities.web_interlocutor and core.skills.web_interlocutor.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import requests
 
-from core.capabilities.web_interlocutor import ChromeCDPDialogueBrowser, WebInterlocutorSession
+from core.capabilities.capabilities.web_interlocutor import ChromeCDPDialogueBrowser, WebInterlocutorSession
 from core.memory.memory_write_gateway import ConcreteMemoryWriteGateway
 from core.runtime.gateways import MemoryWriteRequest
 

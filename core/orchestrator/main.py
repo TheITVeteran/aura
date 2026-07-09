@@ -547,7 +547,7 @@ class RobustOrchestrator(
     def _init_queues(self):
         """Initialize communication queues."""
         from core.orchestrator.flow_control import CognitiveFlowController
-        from core.tagged_reply_queue import TaggedReplyQueue
+        from core.conversation.tagged_reply_queue import TaggedReplyQueue
         from core.utils.queues import PriorityBackpressuredQueue
 
         self.message_queue = PriorityBackpressuredQueue(maxsize=100)
@@ -679,7 +679,7 @@ class RobustOrchestrator(
                 logger.info("🛡️ Desktop shutdown signal owner preserved in aura_main.")
             else:
                 try:
-                    from core.graceful_shutdown import GracefulShutdown
+                    from core.ops.graceful_shutdown import GracefulShutdown
 
                     GracefulShutdown.setup_signals()
                     logger.info("🛡️ Graceful shutdown signals wired (persistence on SIGTERM).")
@@ -1044,7 +1044,7 @@ class RobustOrchestrator(
             # TerminalWatchdog: background monitor — autonomously opens terminal
             #   only when UI is confirmed gone for 30s AND Aura has queued messages.
             try:
-                from core.terminal_chat import get_terminal_fallback, get_terminal_watchdog
+                from core.conversation.terminal_chat import get_terminal_fallback, get_terminal_watchdog
 
                 _term = get_terminal_fallback()
                 ServiceContainer.register_instance("terminal_fallback", _term)
@@ -1407,7 +1407,7 @@ class RobustOrchestrator(
                 self._agency_core = None
 
             try:
-                from core.subsystem_audit import SubsystemAudit
+                from core.ops.subsystem_audit import SubsystemAudit
 
                 self._subsystem_audit = (
                     ServiceContainer.get("subsystem_audit", default=None) or SubsystemAudit()
@@ -1712,7 +1712,7 @@ class RobustOrchestrator(
         # Priority 2: Biological Sleep Cycle (DreamerV2)
         async def _run_dreamerv2():
             try:
-                from core.dreamer_v2 import DreamerV2
+                from core.sleep.dreamer_v2 import DreamerV2
 
                 dreamer = DreamerV2(
                     brain=getattr(self, "cognitive_engine", None),

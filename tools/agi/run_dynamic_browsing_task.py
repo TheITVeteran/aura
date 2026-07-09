@@ -12,7 +12,7 @@ import logging
 import sys
 from typing import Any
 
-from core.phantom_browser import PhantomBrowser
+from core.capabilities.phantom_browser import PhantomBrowser
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("DynamicBrowsingRunner")

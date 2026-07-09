@@ -336,7 +336,7 @@ class MissionState:
         try:
             host = ServiceContainer.get("host_automation", default=None)
             if host is None:
-                from core.capabilities.host_automation import get_host_automation
+                from core.capabilities.capabilities.host_automation import get_host_automation
                 host = get_host_automation()
 
             if action == "launch_app":
@@ -491,7 +491,7 @@ class MissionState:
         try:
             verifier = ServiceContainer.get("post_action_verifier", default=None)
             if verifier is None:
-                from core.capabilities.post_action_verifier import get_post_action_verifier
+                from core.capabilities.capabilities.post_action_verifier import get_post_action_verifier
                 verifier = get_post_action_verifier()
 
             result = await verifier.verify(node.verification, node.verification_args)

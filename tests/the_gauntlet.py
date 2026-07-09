@@ -12,7 +12,7 @@ from typing import List, Dict, Any
 
 from core.container import ServiceContainer, ServiceLifetime
 from core.capability_engine import CapabilityEngine
-from core.continuous_learning import ContinuousLearningEngine, Experience
+from core.learning.continuous_learning import ContinuousLearningEngine, Experience
 from core.security.permission_guard import PermissionGuard, PermissionType
 
 # Setup Logging for Test

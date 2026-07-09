@@ -1,6 +1,6 @@
 import json
 
-from core.epistemic_tracker import EpistemicTracker
+from core.epistemics.epistemic_tracker import EpistemicTracker
 from core.runtime.errors import get_degradation_tracker
 
 

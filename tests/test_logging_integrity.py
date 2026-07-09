@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from core.logging_config import JsonLineFormatter, _resolve_log_dir, redact_text
+from core.observability.logging_config import JsonLineFormatter, _resolve_log_dir, redact_text
 
 
 def _record(msg: str, *, level: int = logging.INFO, name: str = "test.logger",

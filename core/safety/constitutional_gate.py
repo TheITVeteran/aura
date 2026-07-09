@@ -77,7 +77,7 @@ PROTECTED_MODULES: Set[str] = frozenset({
     "core/self_improvement/promotion_gate.py",
     "core/runtime/errors.py",
     "core/container.py",
-    "core/graceful_shutdown.py",
+    "core/ops/graceful_shutdown.py",
     "core/values/values_engine.py",
     "core/autonomy/genuine_refusal.py",
     "core/consciousness/executive_authority.py",

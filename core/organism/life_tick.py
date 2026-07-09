@@ -29,7 +29,7 @@ from core.organism.life_events import (
     RepairProposed,
     PrivacyClass,
 )
-from core.version import VERSION
+from core.runtime.version import VERSION
 
 logger = logging.getLogger("Organism.LifeTick")
 

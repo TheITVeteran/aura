@@ -401,7 +401,7 @@ class BootAutonomyMixin:
 
         # BeliefRevisionEngine — persistent identity and self-model
         try:
-            from core.belief_revision import get_belief_revision_engine
+            from core.epistemics.belief_revision import get_belief_revision_engine
 
             belief_engine = ServiceContainer.get("belief_revision_engine", default=None)
             if belief_engine is None:
@@ -545,7 +545,7 @@ class BootAutonomyMixin:
 
         # ProcessManager — enterprise process lifecycle supervision
         try:
-            from core.process_manager import ProcessManager
+            from core.ops.process_manager import ProcessManager
 
             pm = ProcessManager()
             ServiceContainer.register_instance("process_manager", pm)
@@ -695,7 +695,7 @@ class BootAutonomyMixin:
             logger.info("📸 SnapshotManager online — cognitive persistence active.")
 
             # Register shutdown hooks — save state on death for continuity across restarts
-            from core.graceful_shutdown import register_shutdown_hook
+            from core.ops.graceful_shutdown import register_shutdown_hook
 
             def _save_on_shutdown():
                 logger.info("💾 [SHUTDOWN] Saving substrate state and cognitive snapshot...")
@@ -992,7 +992,7 @@ class BootAutonomyMixin:
     async def _init_proactive_comm_subsystem(self):
         """Initialize the proactive communication subsystem."""
         try:
-            from core.proactive_communication import get_proactive_comm
+            from core.autonomy.proactive_communication import get_proactive_comm
 
             pcomm = get_proactive_comm()
             pcomm.notification_callback = self._proactive_notify_callback
@@ -1066,7 +1066,7 @@ class BootAutonomyMixin:
             )
             return
         try:
-            from core.autonomous_initiative_loop import AutonomousInitiativeLoop
+            from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
             from core.conversation.conversational_momentum_engine import (
                 ConversationalMomentumEngine,
             )

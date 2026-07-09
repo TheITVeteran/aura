@@ -416,7 +416,7 @@ class AutonomousOutputGate:
         """Send to the primary user communication channel."""
         # ★ NEW: Feed reply_queue for REST API waiters (per Architecture Audit)
         from core.container import ServiceContainer
-        from core.tagged_reply_queue import current_reply_origin, current_reply_session_id
+        from core.conversation.tagged_reply_queue import current_reply_origin, current_reply_session_id
         orch = self.orchestrator or ServiceContainer.get("orchestrator", default=None)
         if orch and hasattr(orch, "reply_queue"):
             metadata = metadata or {}

@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 async def init_enterprise_layer(orchestrator: Any):
     """Initialize the enterprise layer subsystems."""
     # 1. Structured Logging & Metrics
-    from core.logging_config import setup_logging
+    from core.observability.logging_config import setup_logging
     from core.observability.metrics import get_metrics
     setup_logging()
     metrics = get_metrics()
@@ -32,7 +32,7 @@ async def init_enterprise_layer(orchestrator: Any):
         await orchestrator.persistence.on_start_async()
 
     # 5. Automated Backups & Vacuum
-    from core.backup import BackupManager
+    from core.ops.backup import BackupManager
     orchestrator.backup_manager = BackupManager()
     register_runtime_service("backup_manager", orchestrator.backup_manager)
     if hasattr(orchestrator.backup_manager, "on_start_async"):

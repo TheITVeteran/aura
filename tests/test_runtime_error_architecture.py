@@ -930,7 +930,7 @@ def test_runtime_registry_batch_two_service_seams():
     import inspect
     from types import SimpleNamespace
 
-    import core.capabilities.source_summarizer as source_summarizer
+    import core.capabilities.capabilities.source_summarizer as source_summarizer
     import core.affect.emotional_coloring as emotional_coloring
     import core.evals.adaptive_test_chamber as adaptive_test_chamber
     import core.memory.provenance as provenance
@@ -1460,16 +1460,16 @@ def test_runtime_registry_batch_four_boot_sensory_health_seams():
     import core.coordinators.dream_coordinator as dream_coordinator
     import core.health.system_health as system_health
     import core.initializers.self_knowing as self_knowing
-    import core.master_moral_integration as master_moral_integration
+    import core.morality.master_moral_integration as master_moral_integration
     import core.memory.attention as attention
-    import core.neural_feed as neural_feed
+    import core.observability.neural_feed as neural_feed
     import core.orchestrator.initializers.core_baseline as core_baseline
     import core.phases.consciousness_phase as consciousness_phase
     import core.phases.executive_closure as executive_closure
     import core.social.presence_integration as presence_integration
     import core.runtime.response_policy as response_policy
     import core.senses.sensory_instincts as sensory_instincts
-    import core.system_monitor as system_monitor
+    import core.ops.system_monitor as system_monitor
     import interface.helpers as interface_helpers
     import interface.routes.interaction_signals as interaction_signals
     from core.runtime.service_registry import (
@@ -1705,7 +1705,7 @@ def test_runtime_registry_batch_five_safety_memory_morality_seams():
 
     import core.actuators.sandbox_operator as sandbox_operator
     import core.brain.ontology_genesis as ontology_genesis
-    import core.capabilities.clipboard_manager as clipboard_manager
+    import core.capabilities.capabilities.clipboard_manager as clipboard_manager
     import core.consciousness.self_report as self_report
     import core.conversation.memory as conversation_memory
     import core.identity.identity_guard as identity_guard
@@ -2094,7 +2094,7 @@ def test_runtime_registry_batch_seven_consciousness_adaptation_seams(monkeypatch
     import core.self_modification.kernel_refiner as kernel_refiner
     import core.senses.screen_vision as screen_vision
     import core.sovereignty.integrity_guard as integrity_guard
-    import core.strategic_planner as strategic_planner
+    import core.planning.strategic_planner as strategic_planner
     import core.world_model.acg as acg
     import interface.routes.privacy as privacy
     from core.runtime.service_registry import (

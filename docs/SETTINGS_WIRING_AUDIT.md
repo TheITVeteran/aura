@@ -15,7 +15,7 @@ the settings→runtime bridge). Frontend-only settings are legitimately client-s
 
 | Setting | Status | What wiring it needs (if dead) |
 | :-- | :-- | :-- |
-| `safety.safe_mode` | ✅ **wired** (this cycle) | restricts runtime via `core.safe_mode.set_safe_mode` |
+| `safety.safe_mode` | ✅ **wired** (this cycle) | restricts runtime via `core.runtime.safe_mode.set_safe_mode` |
 | `autonomy.level` (`paused`) | ✅ **wired** (this cycle) | `paused` → restricted runtime via the same bridge |
 | `theme.mode` | 🎨 frontend-only | client renders theme; no backend wiring needed |
 | `theme.reduced_motion` | 🎨 frontend-only | client honors it; no backend wiring needed |

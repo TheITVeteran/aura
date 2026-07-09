@@ -296,8 +296,8 @@ class BootManager:
     def _init_strategic_planning(self):
         try:
             from core.data.project_store import ProjectStore
-            from core.neural_feed import NeuralFeed
-            from core.strategic_planner import StrategicPlanner
+            from core.observability.neural_feed import NeuralFeed
+            from core.planning.strategic_planner import StrategicPlanner
             feed = NeuralFeed()
             ServiceContainer.register_instance("neural_feed", feed)
             store = ProjectStore(str(config.paths.data_dir / "projects.db"))
@@ -315,7 +315,7 @@ class BootManager:
     async def _integrate_systems(self):
         # Implementation of integration methods from mixin
         try:
-            from core.master_moral_integration import integrate_complete_moral_and_sensory_systems
+            from core.morality.master_moral_integration import integrate_complete_moral_and_sensory_systems
             integrate_complete_moral_and_sensory_systems(self.orchestrator)
         except (ImportError, AttributeError, RuntimeError) as e:
             self._record_degradation(
@@ -342,7 +342,7 @@ class BootManager:
             
         # Advanced Cognition Layer
         try:
-            from core.cognitive_integration_layer import CognitiveIntegrationLayer
+            from core.cognition.cognitive_integration_layer import CognitiveIntegrationLayer
             cognition = CognitiveIntegrationLayer(orchestrator=self.orchestrator, base_data_dir=str(config.paths.data_dir))
             await cognition.initialize()
             ServiceContainer.register_instance("cognitive_integration", cognition)

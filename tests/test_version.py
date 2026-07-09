@@ -6,7 +6,7 @@ tests/test_version.py
 Verify version string generation and comparison.
 """
 
-from core.version import (
+from core.runtime.version import (
     VERSION, MAJOR, MINOR, PATCH,
     version_string, as_tuple, is_at_least
 )

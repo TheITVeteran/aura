@@ -331,7 +331,7 @@ def _is_valid_signed_will_receipt(record: dict[str, object]) -> bool:
         return False
 
     try:
-        from core.runtime_tools import _sign_payload
+        from core.tools.runtime_tools import _sign_payload
 
         return _sign_payload(payload.encode("utf-8")) == signature
     except _SIGNATURE_VERIFICATION_RECOVERABLE_ERRORS as exc:

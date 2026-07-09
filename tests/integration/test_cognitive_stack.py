@@ -28,8 +28,8 @@ async def test_stack():
         logger.info("   [1/6] Importing Core Modules...")
         from core.brain.autopoiesis import AutopoieticGraph
         from core.brain.entropy import PhysicalEntropyInjector
-        from core.cognitive_integration_layer import CognitiveIntegrationLayer
-        from core.continuous_learning import ContinuousLearningEngine
+        from core.cognition.cognitive_integration_layer import CognitiveIntegrationLayer
+        from core.learning.continuous_learning import ContinuousLearningEngine
         from core.dual_memory import DualMemorySystem
         from core.embodiment import ContinuousSensoryFeed
         from core.evolution.liquid_time_engine import ContinuousState

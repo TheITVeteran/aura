@@ -73,7 +73,7 @@ class ClipboardManager:
     async def paste(self) -> bool:
         """Simulate Cmd+V paste."""
         try:
-            from core.capabilities.host_automation import AppleScriptRunner
+            from core.capabilities.capabilities.host_automation import AppleScriptRunner
             receipt = await AppleScriptRunner.run(
                 'tell application "System Events" to keystroke "v" using command down',
                 timeout=3.0,

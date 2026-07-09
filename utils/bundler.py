@@ -26,10 +26,10 @@ from pathlib import Path
 
 # Try to pull version from canonical source; graceful fallback
 try:
-    from core.version import CODENAME, VERSION
+    from core.runtime.version import CODENAME, VERSION
     _VERSION_STR = f"{CODENAME} v{VERSION}"
 except ImportError:
-    _VERSION_STR = "Unknown (core.version not found)"
+    _VERSION_STR = "Unknown (core.runtime.version not found)"
 
 #: Source extensions always included
 SOURCE_EXTS: frozenset[str] = frozenset({

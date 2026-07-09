@@ -1,4 +1,4 @@
-"""core/version.py
+"""core/runtime/version.py
 ───────────────
 Single source of truth for Aura's version.
 
@@ -13,7 +13,7 @@ BEFORE: Version strings scattered as:
 AFTER: Everything imports from here.
 
 Usage:
-    from core.version import VERSION, version_string
+    from core.runtime.version import VERSION, version_string
 
     # In server.py:
     app = FastAPI(version=VERSION)
@@ -22,7 +22,7 @@ Usage:
     <span>{{ version_string() }}</span>
 
     # In setup.py:
-    from core.version import VERSION
+    from core.runtime.version import VERSION
     setup(version=VERSION)
 """
 from __future__ import annotations
@@ -96,7 +96,7 @@ _LEGACY_STRINGS_TO_MIGRATE = [
 
 
 if __name__ == "__main__":
-    # python -m core.version
+    # python -m core.runtime.version
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     logger = logging.getLogger("Version")
     logger.info("Full:   %s", version_string('full'))

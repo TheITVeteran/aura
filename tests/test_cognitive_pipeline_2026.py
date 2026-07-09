@@ -1,9 +1,9 @@
 import pytest
 
 from core.agency_core import AgencyCore, AgencyState, EngagementMode, SovereignSwarm
-from core.behavior_controller import integrate_behavior_control
+from core.autonomy.behavior_controller import integrate_behavior_control
 from core.brain.llm.structured_llm import StructuredLLM
-from core.cognitive_integration_layer import CognitiveIntegrationLayer
+from core.cognition.cognitive_integration_layer import CognitiveIntegrationLayer
 from core.container import ServiceContainer
 from core.memory.memory_facade import MemoryFacade
 from core.morality.moral_reasoning import MoralReasoningEngine
@@ -194,8 +194,8 @@ async def test_agency_core_pydantic_state():
 @pytest.mark.asyncio
 async def test_cognitive_integration_segments():
     """Verify CognitiveIntegrationLayer initialization and greeting fast-path."""
-    from core.cognitive_kernel import CognitiveBrief
-    from core.inner_monologue import ThoughtPacket
+    from core.cognition.cognitive_kernel import CognitiveBrief
+    from core.introspection.inner_monologue import ThoughtPacket
 
     orch = OrchestratorProbe()
     kernel = KernelProbe(CognitiveBrief(key_points=["Hello."], conviction=0.5))
@@ -220,8 +220,8 @@ async def test_cognitive_integration_segments():
 async def test_cognitive_integration_threads_history_into_reasoning_pipeline(monkeypatch):
     orch = OrchestratorProbe()
 
-    from core.cognitive_kernel import CognitiveBrief
-    from core.inner_monologue import ThoughtPacket
+    from core.cognition.cognitive_kernel import CognitiveBrief
+    from core.introspection.inner_monologue import ThoughtPacket
 
     kernel = KernelProbe(CognitiveBrief(key_points=["Depth."], conviction=0.7))
     monologue = MonologueProbe(ThoughtPacket(stance="Depth.", primary_points=["Depth."]))
@@ -231,7 +231,7 @@ async def test_cognitive_integration_threads_history_into_reasoning_pipeline(mon
     ServiceContainer.register_instance("inner_monologue", monologue)
     ServiceContainer.register_instance("language_center", language)
 
-    monkeypatch.setattr("core.cognitive_integration_layer.get_reflex", lambda: ReflexProbe())
+    monkeypatch.setattr("core.cognition.cognitive_integration_layer.get_reflex", lambda: ReflexProbe())
 
     cognition = CognitiveIntegrationLayer(orchestrator=orch)
     await cognition.initialize()

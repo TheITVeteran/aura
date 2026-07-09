@@ -155,7 +155,7 @@ with a 50ms duration so CI executes the gauntlet shape every time.
 | Turn-taking engine | `core/social/turn_taking.py` | Operational |
 | Deep Theory of Mind | uses existing `core/social/dialogue_cognition.py` etc. | Pre-existing; audited |
 | Identity continuity ledger | uses existing identity modules | Pre-existing |
-| Long-horizon planner | uses existing `core/planner.py` | Pre-existing |
+| Long-horizon planner | uses existing `core/planning/planner.py` | Pre-existing |
 | Skill contracts | `core/runtime/skill_contract.py` | Operational |
 | Skill verifiers | `SkillRegistry.register_verifier` + status enum | Operational |
 | Skill choreography engine | Backlogged | Acknowledged |

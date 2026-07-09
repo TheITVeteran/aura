@@ -17,7 +17,7 @@ from interface.routes.settings import _RUNTIME_MODE_KEYS, SCHEMA
 
 # Settings the runtime actually enforces today (verified by other tests).
 WIRED = {
-    "safety.safe_mode",       # core.safe_mode.set_safe_mode via settings bridge
+    "safety.safe_mode",       # core.runtime.safe_mode.set_safe_mode via settings bridge
     "autonomy.level",         # "paused" -> restricted runtime via the same bridge
 }
 

@@ -1,4 +1,4 @@
-"""core/language_center.py — Aura LanguageCenter v1.0
+"""core/brain/language_center.py — Aura LanguageCenter v1.0
 ======================================================
 The LLM's actual job: expression, not cognition.
 
@@ -39,7 +39,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from core.inner_monologue import ThoughtPacket
+from core.introspection.inner_monologue import ThoughtPacket
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.synthesis import strip_meta_commentary as aggressive_strip  # Centralized scrubber
 

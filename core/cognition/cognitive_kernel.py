@@ -1,4 +1,4 @@
-"""core/cognitive_kernel.py — Aura CognitiveKernel v1.0
+"""core/cognition/cognitive_kernel.py — Aura CognitiveKernel v1.0
 =======================================================
 The architectural inversion point.
 

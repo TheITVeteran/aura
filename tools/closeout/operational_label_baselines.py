@@ -545,7 +545,7 @@ BASELINES: tuple[OperationalLabelBaseline, ...] = (
             "Must not use theatrical inner-life claims unsupported by state.",
         ),
         source_paths=(
-            "core/inner_monologue.py",
+            "core/introspection/inner_monologue.py",
             "core/brain/imagination.py",
             "core/memory/autobiography.py",
             "core/consciousness/dreaming.py",

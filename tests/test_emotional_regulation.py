@@ -64,7 +64,7 @@ def test_singleton_stable():
 
 def test_heartbeat_holds_impulse_on_unbacked_spike():
     from types import SimpleNamespace
-    from core.cognitive_loop import CognitiveLoop
+    from core.cognition.cognitive_loop import CognitiveLoop
 
     loop = CognitiveLoop.__new__(CognitiveLoop)
     loop.orchestrator = SimpleNamespace()

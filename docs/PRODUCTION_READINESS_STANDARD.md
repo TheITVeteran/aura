@@ -50,7 +50,7 @@ closure requirements.
   internal-only mode.
 - Authorization covers tool execution, memory writes, state mutation,
   initiative, expression, and response paths.
-- Secrets resolve through `core/zenith_secrets.py` with environment/Keychain
+- Secrets resolve through `core/security/zenith_secrets.py` with environment/Keychain
   priority and no value logging.
 - Secret-like literals are scanned by `tools/security_scan.py`.
 - Sandbox escape coverage lives in `tests/test_sandbox_hardening.py` and

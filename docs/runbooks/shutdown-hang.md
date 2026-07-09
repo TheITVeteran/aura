@@ -12,7 +12,7 @@ hung worker, deadlocked service).
 
 ## Automated mitigation
 
-`core/graceful_shutdown.py` bounds the whole sequence (12s budget) and
+`core/ops/graceful_shutdown.py` bounds the whole sequence (12s budget) and
 `core/resilience/stall_watchdog.py` forces exit if the loop wedges.
 Target MTTR: 15s.
 

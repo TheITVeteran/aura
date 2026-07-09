@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 
-from core.cognitive_kernel import CognitiveBrief, InputDomain, ResponseStrategy
-from core.inner_monologue import InnerMonologue
+from core.cognition.cognitive_kernel import CognitiveBrief, InputDomain, ResponseStrategy
+from core.introspection.inner_monologue import InnerMonologue
 from core.runtime.errors import get_degradation_tracker
 
 
@@ -78,7 +78,7 @@ def test_inner_monologue_disables_deepening_when_memory_pressure_probe_fails(mon
         memory_probe_failures.append("attempted")
         raise OSError("vm unavailable")
 
-    monkeypatch.setattr("core.inner_monologue.psutil.virtual_memory", _raise_memory_error)
+    monkeypatch.setattr("core.introspection.inner_monologue.psutil.virtual_memory", _raise_memory_error)
 
     assert monologue._should_use_api(_deep_brief()) is False
     assert memory_probe_failures == ["attempted"]

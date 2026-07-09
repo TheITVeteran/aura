@@ -401,7 +401,7 @@ if getattr(sys, 'frozen', False):
 # 2. Bootstrap Configuration & Logging
 try:
     from core.config import config
-    from core.logging_config import setup_logging
+    from core.observability.logging_config import setup_logging
     # Centralized logging setup - always include log_dir for persistence
     setup_logging(log_dir=config.paths.log_dir)
     logger = logging.getLogger("Aura.Main")
@@ -656,7 +656,7 @@ def _maybe_relaunch_with_preferred_python():
 # Shims & Compatibility
 # ---------------------------------------------------------------------------
 try:
-    from core.cognitive_integration_layer import CognitiveIntegrationLayer
+    from core.cognition.cognitive_integration_layer import CognitiveIntegrationLayer
     CognitiveIntegration = CognitiveIntegrationLayer # Legacy Alias shim
 except ImportError:
     logger.debug("CognitiveIntegrationLayer unavailable; legacy alias not installed.")
@@ -749,7 +749,7 @@ async def bootstrap_aura(orchestrator: Any):
     try:
         from core.conversation.apply_response_patches import apply_response_patches
         from core.consciousness.apply_patches import apply_consciousness_patches
-        from core.safe_mode import apply_orchestrator_patches
+        from core.runtime.safe_mode import apply_orchestrator_patches
 
         apply_consciousness_patches(orchestrator)
         apply_response_patches()
@@ -2279,7 +2279,7 @@ def _native_launcher_owns_gui() -> bool:
 async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str = "desktop"):
     """GUI Mode (Managed Actor Process)"""
     from core.container import ServiceContainer
-    from core.graceful_shutdown import GracefulShutdown
+    from core.ops.graceful_shutdown import GracefulShutdown
     from core.supervisor.tree import ActorSpec
     from interface.gui_actor import gui_actor_entry
     
@@ -3627,7 +3627,7 @@ def main():
                 try:
                     await run_server_async(host, args.port)
                 finally:
-                    from core.graceful_shutdown import GracefulShutdown
+                    from core.ops.graceful_shutdown import GracefulShutdown
 
                     await _stop_orchestrator_once(orchestrator, reason="server_exit")
                     try:

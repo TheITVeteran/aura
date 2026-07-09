@@ -220,7 +220,7 @@ async def api_mhaf_status():
 async def api_terminal_status():
     """TerminalFallback + Watchdog status."""
     try:
-        from core.terminal_chat import get_terminal_fallback, get_terminal_watchdog
+        from core.conversation.terminal_chat import get_terminal_fallback, get_terminal_watchdog
         tf = get_terminal_fallback()
         tw = get_terminal_watchdog()
         return JSONResponse({
@@ -242,7 +242,7 @@ async def api_terminal_send(request: Request):
         text = str(body.get("text", "")).strip()
         if not text:
             raise HTTPException(status_code=400, detail="text required")
-        from core.terminal_chat import get_terminal_fallback
+        from core.conversation.terminal_chat import get_terminal_fallback
         queued = get_terminal_fallback().queue_autonomous_message(text)
         if queued is False:
             return JSONResponse({"ok": False, "error": "suppressed by constitution"})

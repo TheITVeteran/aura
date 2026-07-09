@@ -51,7 +51,7 @@ class DreamCycle:
     async def process_dreams(self):
         """Read DLQ and re-enqueue actionable messages."""
         try:
-            from core.safe_mode import runtime_feature_enabled
+            from core.runtime.safe_mode import runtime_feature_enabled
 
             if not runtime_feature_enabled(self.orchestrator, "dream_cycle", default=True):
                 logger.debug("Dream cycle skipped by runtime mode configuration.")

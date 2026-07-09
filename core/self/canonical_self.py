@@ -484,7 +484,7 @@ class CanonicalSelfEngine:
         try:
             bre = ServiceContainer.get("belief_revision_engine", default=None)
             if bre is None:
-                from core.belief_revision import get_belief_revision_engine
+                from core.epistemics.belief_revision import get_belief_revision_engine
                 bre = get_belief_revision_engine()
 
             sorted_beliefs = sorted(

@@ -480,7 +480,7 @@ class ContextStreamingMixin:
         """Asynchronously prune history via context pruner."""
         try:
             from core.memory.context_pruner import context_pruner
-            from core.safe_mode import runtime_feature_enabled, runtime_mode_value
+            from core.runtime.safe_mode import runtime_feature_enabled, runtime_mode_value
 
             max_history = int(runtime_mode_value(self, "max_conversation_history", 50))
             history = (
@@ -521,7 +521,7 @@ class ContextStreamingMixin:
     async def _consolidate_long_term_memory(self):
         """Summarize and move important session highlights to long-term vector memory."""
         try:
-            from core.safe_mode import runtime_feature_enabled
+            from core.runtime.safe_mode import runtime_feature_enabled
 
             if not runtime_feature_enabled(self, "memory_consolidation", default=True):
                 return

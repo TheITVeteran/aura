@@ -1,7 +1,7 @@
 """Retired CognitiveIntegrationLayer patch compatibility shim.
 
 The Phase 7 history threading, inline inference, and phenomenal context
-injection now live directly in :mod:`core.cognitive_integration_layer`.
+injection now live directly in :mod:`core.cognition.cognitive_integration_layer`.
 Keeping this module as a no-op preserves old imports without reintroducing
 runtime monkey-patching.
 """

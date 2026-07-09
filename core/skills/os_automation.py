@@ -16,7 +16,7 @@ from typing import Any, Dict
 
 from pydantic import BaseModel, Field
 
-from core.capabilities.host_automation import ScriptASTGuard, get_host_automation
+from core.capabilities.capabilities.host_automation import ScriptASTGuard, get_host_automation
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill

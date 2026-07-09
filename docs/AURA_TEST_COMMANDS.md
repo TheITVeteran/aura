@@ -55,7 +55,7 @@ For the early B3 strict-runtime and websocket ownership work:
 python -m pytest tests/test_resilient_boot_llm_stage.py tests/test_runtime_polish.py -k "resilient_boot or websocket_manager"
 python -m pytest tests/test_forensic_audit_regressions.py -q -k "graceful_shutdown_signal"
 python -m py_compile \
-  core/graceful_shutdown.py \
+  core/ops/graceful_shutdown.py \
   core/ops/resilient_boot.py \
   interface/websocket_manager.py \
   tests/test_forensic_audit_regressions.py \
@@ -102,7 +102,7 @@ python -m py_compile \
   core/skills/base_skill.py \
   core/capability_engine.py \
   core/bus/local_pipe_bus.py \
-  core/graceful_shutdown.py \
+  core/ops/graceful_shutdown.py \
   core/actors/sensory_gate.py \
   core/state/vault.py \
   core/orchestrator/mixins/incoming_logic.py \

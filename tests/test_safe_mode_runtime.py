@@ -8,7 +8,7 @@ import pytest
 
 from core.orchestrator.mixins.context_streaming import ContextStreamingMixin
 from core.resilience.dream_cycle import DreamCycle
-from core.safe_mode import apply_orchestrator_patches
+from core.runtime.safe_mode import apply_orchestrator_patches
 
 
 class AsyncCallRecorder:

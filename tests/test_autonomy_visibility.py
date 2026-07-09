@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.autonomous_initiative_loop import AutonomousInitiativeLoop
+from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
 from core.orchestrator.mixins.output_formatter import OutputFormatterMixin
 from core.autonomy.proactive_presence import ProactivePresence
 from core.self_modification.growth_ladder import GrowthLadder, ModificationLevel
@@ -142,7 +142,7 @@ def test_emit_thought_stream_falls_back_to_thought_emitter(monkeypatch):
 
 
 def test_background_initiative_gate_does_not_depend_on_chat_lane_readiness(monkeypatch):
-    from core.autonomous_initiative_loop import _background_initiative_allowed
+    from core.autonomy.autonomous_initiative_loop import _background_initiative_allowed
 
     _simulate_idle_background_runtime(monkeypatch)
 
@@ -158,15 +158,15 @@ def test_background_initiative_gate_does_not_depend_on_chat_lane_readiness(monke
 
 def test_autonomous_initiative_status_exposes_admission_reasons(monkeypatch):
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop._background_initiative_blocker",
+        "core.autonomy.autonomous_initiative_loop._background_initiative_blocker",
         lambda _orchestrator=None: "",
     )
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop._self_development_blocker",
+        "core.autonomy.autonomous_initiative_loop._self_development_blocker",
         lambda _orchestrator=None: "recent_user_12",
     )
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop._passive_social_blocker",
+        "core.autonomy.autonomous_initiative_loop._passive_social_blocker",
         lambda _orchestrator=None: "memory_pressure_83.0",
     )
 
@@ -242,7 +242,7 @@ async def test_email_initiative_reads_triages_drafts_and_remembers(monkeypatch):
     memory = SimpleNamespace(store=AsyncCallRecorder())
     cap = CapabilityEngine()
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop.optional_service",
+        "core.autonomy.autonomous_initiative_loop.optional_service",
         lambda name, default=None: cap if name == "capability_engine" else memory if name == "memory_manager" else default,
     )
 
@@ -287,7 +287,7 @@ async def test_reddit_initiative_checks_inbox_browses_reads_and_remembers(monkey
     cap = CapabilityEngine()
     monkeypatch.setattr("random.choice", lambda _items: "technology")
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop.optional_service",
+        "core.autonomy.autonomous_initiative_loop.optional_service",
         lambda name, default=None: cap if name == "capability_engine" else memory if name == "memory_manager" else default,
     )
 
@@ -331,7 +331,7 @@ async def test_self_development_cycle_runs_scan_tests_and_proposal(monkeypatch):
         )
     )
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop.optional_service",
+        "core.autonomy.autonomous_initiative_loop.optional_service",
         lambda name, default=None: capability_engine if name == "capability_engine" else default,
     )
 
@@ -363,7 +363,7 @@ async def test_self_development_cycle_keeps_progress_off_visible_chat_by_default
         )
     )
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop.optional_service",
+        "core.autonomy.autonomous_initiative_loop.optional_service",
         lambda name, default=None: capability_engine if name == "capability_engine" else default,
     )
 
@@ -397,7 +397,7 @@ async def test_self_development_cycle_can_opt_in_visible_updates(monkeypatch):
         )
     )
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop.optional_service",
+        "core.autonomy.autonomous_initiative_loop.optional_service",
         lambda name, default=None: capability_engine if name == "capability_engine" else default,
     )
 
@@ -432,7 +432,7 @@ async def test_proactive_presence_prefers_visible_primary(monkeypatch):
     emitter = SimpleNamespace(emit=CallRecorder())
     terminal = SimpleNamespace(queue_autonomous_message=CallRecorder())
     monkeypatch.setattr("core.thought_stream.get_emitter", lambda: emitter)
-    monkeypatch.setattr("core.terminal_chat.get_terminal_fallback", lambda: terminal)
+    monkeypatch.setattr("core.conversation.terminal_chat.get_terminal_fallback", lambda: terminal)
 
     presence = ProactivePresence(orchestrator=orchestrator)
     await presence._emit("still here.")
@@ -464,7 +464,7 @@ async def test_proactive_presence_rejects_backend_failure_text_from_visible_chat
     emitter = SimpleNamespace(emit=CallRecorder())
     terminal = SimpleNamespace(queue_autonomous_message=CallRecorder())
     monkeypatch.setattr("core.thought_stream.get_emitter", lambda: emitter)
-    monkeypatch.setattr("core.terminal_chat.get_terminal_fallback", lambda: terminal)
+    monkeypatch.setattr("core.conversation.terminal_chat.get_terminal_fallback", lambda: terminal)
 
     presence = ProactivePresence(orchestrator=orchestrator)
     await presence._emit(
@@ -494,7 +494,7 @@ async def test_proactive_presence_requeues_visible_update_when_primary_is_tempor
     emitter = SimpleNamespace(emit=CallRecorder())
     terminal = SimpleNamespace(queue_autonomous_message=CallRecorder())
     monkeypatch.setattr("core.thought_stream.get_emitter", lambda: emitter)
-    monkeypatch.setattr("core.terminal_chat.get_terminal_fallback", lambda: terminal)
+    monkeypatch.setattr("core.conversation.terminal_chat.get_terminal_fallback", lambda: terminal)
 
     presence = ProactivePresence(orchestrator=orchestrator)
     await presence._emit(

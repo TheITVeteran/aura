@@ -149,7 +149,7 @@ class PersonaEvolver:
     async def run_evolution_cycle(self, force: bool = False, custom_reflection: str | None = None):
         """Analyze memory and apply drift to personality if needed."""
         try:
-            from core.safe_mode import runtime_feature_enabled
+            from core.runtime.safe_mode import runtime_feature_enabled
 
             if not runtime_feature_enabled(self.orchestrator, "persona_evolution", default=True):
                 logger.debug("Persona evolution skipped by runtime mode configuration.")

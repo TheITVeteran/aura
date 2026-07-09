@@ -76,7 +76,7 @@ This file outlines every registered service, its source code location, registrat
 | `cognition` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | optional features | `degrade_with_receipt` |
 | `cognitive_engine` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
 | `cognitive_integration` | `core/orchestrator/mixins/boot/boot_cognitive.py` | `core/orchestrator/mixins/boot/boot_cognitive.py` | boot | `fail-closed` |
-| `cognitive_kernel` | `core/cognitive_integration_layer.py` | `core/cognitive_integration_layer.py` | boot | `fail-closed` |
+| `cognitive_kernel` | `core/cognition/cognitive_integration_layer.py` | `core/cognition/cognitive_integration_layer.py` | boot | `fail-closed` |
 | `cognitive_ledger` | `core/kernel/aura_kernel.py` | `core/kernel/aura_kernel.py` | boot | `fail-closed` |
 | `cognitive_loop` | `core/orchestrator/boot.py` | `core/orchestrator/boot.py` | boot | `fail-closed` |
 | `cognitive_manager` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
@@ -184,7 +184,7 @@ This file outlines every registered service, its source code location, registrat
 | `inhibition_manager` | `core/ops/resilient_boot.py` | `core/ops/resilient_boot.py` | boot | `fail-closed` |
 | `initiative_arbiter` | `core/service_registration.py` | `core/service_registration.py` | boot | `fail-closed` |
 | `initiative_synthesizer` | `core/initiative_synthesis.py` | `core/initiative_synthesis.py` | optional features | `degrade_with_receipt` |
-| `inner_monologue` | `core/cognitive_integration_layer.py` | `core/cognitive_integration_layer.py` | boot | `fail-closed` |
+| `inner_monologue` | `core/cognition/cognitive_integration_layer.py` | `core/cognition/cognitive_integration_layer.py` | boot | `fail-closed` |
 | `inquiry_engine` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
 | `insight_journal` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | boot | `fail-closed` |
 | `integrity_guard` | `core/orchestrator/mixins/boot/boot_resilience.py` | `core/orchestrator/mixins/boot/boot_resilience.py` | boot | `fail-closed` |
@@ -199,7 +199,7 @@ This file outlines every registered service, its source code location, registrat
 | `keep_awake_controller` | `core/runtime/keep_awake.py` | `core/runtime/keep_awake.py` | optional features | `degrade_with_receipt` |
 | `kernel_interface` | `core/kernel/kernel_interface.py` | `core/kernel/kernel_interface.py` | boot | `fail-closed` |
 | `knowledge_graph` | `core/providers/memory_provider.py` | `core/providers/memory_provider.py` | optional features | `degrade_with_receipt` |
-| `language_center` | `core/cognitive_integration_layer.py` | `core/cognitive_integration_layer.py` | boot | `fail-closed` |
+| `language_center` | `core/cognition/cognitive_integration_layer.py` | `core/cognition/cognitive_integration_layer.py` | boot | `fail-closed` |
 | `lazarus` | `core/orchestrator/mixins/boot/boot_resilience.py` | `core/orchestrator/mixins/boot/boot_resilience.py` | boot | `fail-closed` |
 | `life_trace` | `core/service_registration.py` | `core/service_registration.py` | optional features | `degrade_with_receipt` |
 | `lineage_manager` | `core/service_registration.py` | `core/service_registration.py` | optional features | `degrade_with_receipt` |
@@ -244,7 +244,7 @@ This file outlines every registered service, its source code location, registrat
 | `mist` | `core/fictional_ai_synthesis.py` | `core/fictional_ai_synthesis.py` | boot | `fail-closed` |
 | `mist_scheduler` | `core/fictional_ai_synthesis.py` | `core/fictional_ai_synthesis.py` | boot | `fail-closed` |
 | `moral` | `core/orchestrator/mixins/boot/boot_identity.py` | `core/orchestrator/mixins/boot/boot_identity.py` | boot | `fail-closed` |
-| `moral_reasoning` | `core/master_moral_integration.py` | `core/master_moral_integration.py` | boot | `fail-closed` |
+| `moral_reasoning` | `core/morality/master_moral_integration.py` | `core/morality/master_moral_integration.py` | boot | `fail-closed` |
 | `morphic_forking` | `core/brain/morphic_forking.py` | `core/brain/morphic_forking.py` | boot | `fail-closed` |
 | `morphogenetic_runtime` | `core/morphogenesis/integration.py` | `core/morphogenesis/integration.py` | optional features | `degrade_with_receipt` |
 | `motivation_engine` | `core/orchestrator/mixins/boot/boot_autonomy.py` | `core/orchestrator/mixins/boot/boot_autonomy.py` | boot | `fail-closed` |
@@ -280,7 +280,7 @@ This file outlines every registered service, its source code location, registrat
 | `persona_evolver` | `core/orchestrator/mixins/boot/boot_identity.py` | `core/orchestrator/mixins/boot/boot_identity.py` | boot | `fail-closed` |
 | `personality` | `core/orchestrator/mixins/boot/boot_identity.py` | `core/orchestrator/mixins/boot/boot_identity.py` | boot | `fail-closed` |
 | `personality_bridge` | `core/providers/cognitive_provider.py` | `core/providers/cognitive_provider.py` | optional features | `degrade_with_receipt` |
-| `personality_engine` | `core/master_moral_integration.py` | `core/master_moral_integration.py` | boot | `fail-closed` |
+| `personality_engine` | `core/morality/master_moral_integration.py` | `core/morality/master_moral_integration.py` | boot | `fail-closed` |
 | `phenomenal_engine` | `core/providers/consciousness_provider.py` | `core/providers/consciousness_provider.py` | boot | `fail-closed` |
 | `phenomenological_experiencer` | `core/consciousness/integration.py` | `core/consciousness/integration.py` | boot | `fail-closed` |
 | `phi_core` | `core/consciousness/system.py` | `core/consciousness/system.py` | boot | `fail-closed` |
@@ -387,7 +387,7 @@ This file outlines every registered service, its source code location, registrat
 | `terminal_monitor` | `core/orchestrator/mixins/boot/boot_sensory.py` | `core/orchestrator/mixins/boot/boot_sensory.py` | boot | `fail-closed` |
 | `terminal_watchdog` | `core/orchestrator/main.py` | `core/orchestrator/main.py` | boot | `fail-closed` |
 | `theory_arbitration` | `core/providers/consciousness_provider.py` | `core/providers/consciousness_provider.py` | optional features | `degrade_with_receipt` |
-| `theory_of_mind` | `core/master_moral_integration.py` | `core/master_moral_integration.py` | boot | `fail-closed` |
+| `theory_of_mind` | `core/morality/master_moral_integration.py` | `core/morality/master_moral_integration.py` | boot | `fail-closed` |
 | `time_dilation` | `core/providers/consciousness_provider.py` | `core/providers/consciousness_provider.py` | optional features | `degrade_with_receipt` |
 | `tool_orchestrator` | `core/service_registration.py` | `core/service_registration.py` | optional features | `degrade_with_receipt` |
 | `trust_engine` | `core/orchestrator/main.py` | `core/orchestrator/main.py` | boot | `fail-closed` |

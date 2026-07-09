@@ -1,4 +1,4 @@
-"""core/belief_revision.py — Aura Consolidated Belief System
+"""core/epistemics/belief_revision.py — Aura Consolidated Belief System
 =====================================================
 The "Digital Metabolism" version: Merges simple belief tracking with
 complex affective self-modeling and identity evolution.

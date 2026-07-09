@@ -1,6 +1,6 @@
 import os
 
-import core.zenith_secrets as secrets
+import core.security.zenith_secrets as secrets
 
 
 class FakeKeychain:

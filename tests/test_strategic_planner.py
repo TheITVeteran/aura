@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from core.data.project_store import ProjectStore
-from core.strategic_planner import StrategicPlanner
+from core.planning.strategic_planner import StrategicPlanner
 from core.container import ServiceContainer
 
 class MockBrain:

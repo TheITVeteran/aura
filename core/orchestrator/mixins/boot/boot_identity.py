@@ -174,7 +174,7 @@ class BootIdentityMixin:
             from core.soul import Soul
 
             try:
-                from core.master_moral_integration import (
+                from core.morality.master_moral_integration import (
                     integrate_complete_moral_and_sensory_systems,
                 )
             except ImportError:

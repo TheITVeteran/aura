@@ -172,13 +172,13 @@ class TestPhantomBrowserPublicAPI:
 
     def test_ensure_ready_exists(self):
         """PhantomBrowser must have a public ensure_ready() method."""
-        from core.phantom_browser import PhantomBrowser
+        from core.capabilities.phantom_browser import PhantomBrowser
         assert hasattr(PhantomBrowser, 'ensure_ready'), \
             "PhantomBrowser missing ensure_ready() method"
 
     def test_ensure_ready_is_async(self):
         """ensure_ready() must be async."""
-        from core.phantom_browser import PhantomBrowser
+        from core.capabilities.phantom_browser import PhantomBrowser
         import inspect
         assert inspect.iscoroutinefunction(PhantomBrowser.ensure_ready), \
             "ensure_ready() is not async"

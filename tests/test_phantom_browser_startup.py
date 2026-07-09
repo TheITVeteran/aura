@@ -1,7 +1,7 @@
 import pytest
 
 from core import phantom_browser as phantom_module
-from core.phantom_browser import PhantomBrowser
+from core.capabilities.phantom_browser import PhantomBrowser
 from core.runtime.errors import get_degradation_tracker
 
 

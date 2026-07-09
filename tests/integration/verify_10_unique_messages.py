@@ -19,8 +19,8 @@ async def verify_10_diverse_messages():
     from core.brain.llm.autonomous_brain_integration import AutonomousCognitiveEngine
     from core.capability_engine import CapabilityEngine
     from core.event_bus import get_event_bus
-    from core.api_adapter import get_api_adapter
-    from core.cognitive_integration_layer import CognitiveIntegrationLayer
+    from core.adapters.api_adapter import get_api_adapter
+    from core.cognition.cognitive_integration_layer import CognitiveIntegrationLayer
 
     # Setup Router & ACE (Discovery Layer)
     router = HealthAwareLLMRouter()

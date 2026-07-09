@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-import core.cognitive_integration_layer as cil_module
-from core.cognitive_integration_layer import (
+import core.cognition.cognitive_integration_layer as cil_module
+from core.cognition.cognitive_integration_layer import (
     CognitiveIntegrationLayer,
     _run_inline_inference,
 )

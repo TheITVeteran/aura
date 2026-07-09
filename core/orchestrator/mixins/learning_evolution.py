@@ -315,7 +315,7 @@ class LearningEvolutionMixin:
         """[PEER MODE] Evolution 7: Sovereign self-modification cycle."""
         while getattr(self.status, "running", False):
             try:
-                from core.safe_mode import runtime_feature_enabled
+                from core.runtime.safe_mode import runtime_feature_enabled
 
                 if not runtime_feature_enabled(self, "self_modification", default=True):
                     await asyncio.sleep(3600)

@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.autonomy.sleep_trigger import AutonomousSleepTrigger
-from core.backup import BackupManager
+from core.ops.backup import BackupManager
 from core.bus.actor_bus import ActorBus
 from core.bus.local_pipe_bus import LocalPipeBus
 from core.bus.shared_mem_bus import SharedMemoryTransport
@@ -37,8 +37,8 @@ from core.mind_tick import MindTick
 from core.motivation.engine import MotivationEngine
 from core.motivation.intention import DriveType, Intention
 from core.orchestrator.main import RobustOrchestrator
-from core.proactive_communication import ProactiveCommunicationManager
-from core.process_manager import ManagedProcess, ProcessConfig, ProcessManager
+from core.autonomy.proactive_communication import ProactiveCommunicationManager
+from core.ops.process_manager import ManagedProcess, ProcessConfig, ProcessManager
 from core.resilience.integrity_monitor import IntegrityReport, SystemIntegrityMonitor
 from core.resilience.stability_guardian import HealthCheckResult, StabilityGuardian
 from core.state.aura_state import AuraState
@@ -2019,7 +2019,7 @@ async def test_proactive_manager_background_task_is_supervised(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_autonomous_initiative_loop_background_tasks_are_supervised(monkeypatch):
-    from core.autonomous_initiative_loop import AutonomousInitiativeLoop
+    from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
 
     loop = AutonomousInitiativeLoop(orchestrator=SimpleNamespace())
     release = asyncio.Event()
@@ -2030,7 +2030,7 @@ async def test_autonomous_initiative_loop_background_tasks_are_supervised(monkey
     loop._world_watcher_loop = _hold
     loop._knowledge_gap_monitor_loop = _hold
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop.ServiceContainer.get", lambda *_args, **_kwargs: None
+        "core.autonomy.autonomous_initiative_loop.ServiceContainer.get", lambda *_args, **_kwargs: None
     )
 
     await loop.start()
@@ -2908,7 +2908,7 @@ async def test_sleep_trigger_primes_missing_last_user_baseline():
 async def test_backup_manager_vacuum_discovers_sqlite_files_without_connection_pool_state(
     monkeypatch, tmp_path
 ):
-    from core.backup import BackupManager
+    from core.ops.backup import BackupManager
 
     seen = []
     db_path = tmp_path / "nested" / "aura_state.db"
@@ -4864,7 +4864,7 @@ async def test_backup_manager_skips_maintenance_during_active_runtime(monkeypatc
 @pytest.mark.asyncio
 async def test_backup_manager_get_health_offloads_backup_listing(monkeypatch, tmp_path):
     from core import backup as backup_module
-    from core.backup import BackupManager
+    from core.ops.backup import BackupManager
 
     monkeypatch.setattr(
         backup_module,

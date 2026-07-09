@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.autonomous_initiative_loop import (
+from core.autonomy.autonomous_initiative_loop import (
     _MAX_MISSION_ADVANCES_PER_CYCLE,
     AutonomousInitiativeLoop,
 )
@@ -41,7 +41,7 @@ async def test_start_keeps_core_loops_when_event_subscription_fails(monkeypatch)
     loop = AutonomousInitiativeLoop(orchestrator=SimpleNamespace())
     _install_held_loops(loop, marker)
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop.optional_service",
+        "core.autonomy.autonomous_initiative_loop.optional_service",
         lambda *_args, **_kwargs: BrokenBus(),
     )
 
@@ -80,7 +80,7 @@ async def test_start_is_idempotent_while_core_tasks_are_alive(monkeypatch):
     loop = AutonomousInitiativeLoop(orchestrator=SimpleNamespace())
     _install_held_loops(loop, marker)
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop.optional_service",
+        "core.autonomy.autonomous_initiative_loop.optional_service",
         lambda *_args, **_kwargs: None,
     )
 
@@ -110,7 +110,7 @@ async def test_stop_awaits_background_task_cancellation(monkeypatch):
     loop = AutonomousInitiativeLoop(orchestrator=SimpleNamespace())
     _install_held_loops(loop, marker)
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop.optional_service",
+        "core.autonomy.autonomous_initiative_loop.optional_service",
         lambda *_args, **_kwargs: None,
     )
 
@@ -179,7 +179,7 @@ async def test_event_listener_survives_malformed_envelope_then_processes_next(mo
         staticmethod(lambda _title, content, *, category: emitted.append(content)),
     )
     monkeypatch.setattr(
-        "core.autonomous_initiative_loop._record_initiative_degradation",
+        "core.autonomy.autonomous_initiative_loop._record_initiative_degradation",
         lambda *_args, **_kwargs: None,
     )
 

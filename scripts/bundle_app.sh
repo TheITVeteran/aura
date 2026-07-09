@@ -126,13 +126,13 @@ fi
 APP_SEMVER="2026.3.31"
 APP_FULL_VERSION="Aura Luna v${APP_SEMVER}"
 APP_SEMVER="$("${PYTHON_FOR_VERSION}" - <<'PY'
-from core.version import VERSION
+from core.runtime.version import VERSION
 semver = VERSION.split("-", 1)[0]
 print(semver)
 PY
 )"
 APP_FULL_VERSION="$("${PYTHON_FOR_VERSION}" - <<'PY'
-from core.version import version_string
+from core.runtime.version import version_string
 print(version_string("full"))
 PY
 )"

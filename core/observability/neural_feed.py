@@ -1,4 +1,4 @@
-"""core/neural_feed.py
+"""core/observability/neural_feed.py
 Phase 17.1: Neural Feed for Strategic progress.
 Provides a unified interface for emitting strategic and sensory updates.
 """

@@ -21,7 +21,7 @@ The agent sweep of `<AURA_ROOT>/.aura_runtime/data/error_logs/error_events.jsonl
 
 ### What this means for "research autonomously"
 
-The pipeline for autonomous research, per `core/continuous_learning.py:200–240` and `core/autonomous_initiative_loop.py`, is roughly:
+The pipeline for autonomous research, per `core/learning/continuous_learning.py:200–240` and `core/autonomy/autonomous_initiative_loop.py`, is roughly:
 
 ```
 detect knowledge gap
@@ -64,8 +64,8 @@ The boot-time error stack also includes `orchestrator_services:critical_service_
 - `core/memory/memory_facade.py` (entry point)
 - `core/world_model/epistemic_filter.py` (368 lines — source-scoring filter, not the blocker)
 - `core/executive/executive_core.py:482-492` ← **PRECISE ROOT CAUSE FOUND**
-- `core/continuous_learning.py:200–240` (research path)
-- `core/autonomous_initiative_loop.py` (curiosity-driven research)
+- `core/learning/continuous_learning.py:200–240` (research path)
+- `core/autonomy/autonomous_initiative_loop.py` (curiosity-driven research)
 - `core/brain/inference_gate.py:54–100` (cortex-failure surfacing)
 - The git log on each, especially any "lockdown" or "epistemic" commits
 

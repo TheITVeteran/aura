@@ -1,4 +1,4 @@
-"""core/terminal_chat.py
+"""core/conversation/terminal_chat.py
 TerminalFallbackChat — Emergency Last-Resort Communication Channel.
 
 Aura can AUTONOMOUSLY open terminal chat when she has something to say and
@@ -366,7 +366,7 @@ class TerminalFallbackChat:
             return False, "command contains an invalid NUL byte"
 
         try:
-            from core.behavior_controller import AutonomousBehaviorController
+            from core.autonomy.behavior_controller import AutonomousBehaviorController
 
             controller = AutonomousBehaviorController()
             if not controller.validate_action({"type": "terminal", "command": cmd}):

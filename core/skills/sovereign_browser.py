@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from core.phantom_browser import PhantomBrowser
+from core.capabilities.phantom_browser import PhantomBrowser
 from core.runtime.errors import record_degradation
 from core.search.research_pipeline import query_requires_source_reading
 from core.skills.base_skill import BaseSkill

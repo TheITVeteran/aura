@@ -275,7 +275,7 @@ def _get_cheat_code_cookie_secret() -> bytes:
     if _CHEAT_CODE_COOKIE_SECRET is None:
         secret_value: str | None = None
         try:
-            from core.zenith_secrets import get_secret
+            from core.security.zenith_secrets import get_secret
 
             secret_value = get_secret("AURA_CHEAT_CODE_COOKIE_SECRET")
         except _COOKIE_SECRET_RECOVERABLE_ERRORS as exc:

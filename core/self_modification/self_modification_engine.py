@@ -1281,7 +1281,7 @@ class AutonomousSelfModificationEngine:
                         # Staleness threshold: only inject if stale for >2x expected interval
                         stale_secs = info.get("stale_seconds")
                         if stale_secs is not None:
-                            from core.subsystem_audit import SubsystemAudit
+                            from core.ops.subsystem_audit import SubsystemAudit
 
                             expected = SubsystemAudit.SUBSYSTEMS.get(name, 300)
                             if stale_secs < expected * 2:

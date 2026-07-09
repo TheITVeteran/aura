@@ -69,35 +69,35 @@ async def boot_capabilities() -> Dict[str, Any]:
     # --- Tier 1: Foundation ---
 
     try:
-        from core.capabilities.app_registry import get_app_registry
+        from core.capabilities.capabilities.app_registry import get_app_registry
         await _boot("app_registry", get_app_registry)
     except ImportError as e:
         failed.append("app_registry")
         record_degradation("boot.app_registry", e)
 
     try:
-        from core.capabilities.capability_discovery import get_capability_discovery
+        from core.capabilities.capabilities.capability_discovery import get_capability_discovery
         await _boot("capability_discovery", get_capability_discovery)
     except ImportError as e:
         failed.append("capability_discovery")
         record_degradation("boot.capability_discovery", e)
 
     try:
-        from core.capabilities.permission_model import get_permission_model
+        from core.capabilities.capabilities.permission_model import get_permission_model
         await _boot("permission_model", get_permission_model)
     except ImportError as e:
         failed.append("permission_model")
         record_degradation("boot.permission_model", e)
 
     try:
-        from core.capabilities.host_automation import get_host_automation
+        from core.capabilities.capabilities.host_automation import get_host_automation
         await _boot("host_automation", get_host_automation)
     except ImportError as e:
         failed.append("host_automation")
         record_degradation("boot.host_automation", e)
 
     try:
-        from core.capabilities.post_action_verifier import get_post_action_verifier
+        from core.capabilities.capabilities.post_action_verifier import get_post_action_verifier
         await _boot("post_action_verifier", get_post_action_verifier)
     except ImportError as e:
         failed.append("post_action_verifier")
@@ -106,49 +106,49 @@ async def boot_capabilities() -> Dict[str, Any]:
     # --- Tier 2: Adapters ---
 
     try:
-        from core.capabilities.browser_controller import get_browser_controller
+        from core.capabilities.capabilities.browser_controller import get_browser_controller
         await _boot("browser_controller", get_browser_controller)
     except ImportError as e:
         failed.append("browser_controller")
         record_degradation("boot.browser_controller", e)
 
     try:
-        from core.capabilities.document_service import get_document_service
+        from core.capabilities.capabilities.document_service import get_document_service
         await _boot("document_service", get_document_service)
     except ImportError as e:
         failed.append("document_service")
         record_degradation("boot.document_service", e)
 
     try:
-        from core.capabilities.file_broker import get_file_broker
+        from core.capabilities.capabilities.file_broker import get_file_broker
         await _boot("file_broker", get_file_broker)
     except ImportError as e:
         failed.append("file_broker")
         record_degradation("boot.file_broker", e)
 
     try:
-        from core.capabilities.web_asset_handler import get_web_asset_handler
+        from core.capabilities.capabilities.web_asset_handler import get_web_asset_handler
         await _boot("web_asset_handler", get_web_asset_handler)
     except ImportError as e:
         failed.append("web_asset_handler")
         record_degradation("boot.web_asset_handler", e)
 
     try:
-        from core.capabilities.os_settings import get_os_settings
+        from core.capabilities.capabilities.os_settings import get_os_settings
         await _boot("os_settings", get_os_settings)
     except ImportError as e:
         failed.append("os_settings")
         record_degradation("boot.os_settings", e)
 
     try:
-        from core.capabilities.clipboard_manager import get_clipboard_manager
+        from core.capabilities.capabilities.clipboard_manager import get_clipboard_manager
         await _boot("clipboard_manager", get_clipboard_manager)
     except ImportError as e:
         failed.append("clipboard_manager")
         record_degradation("boot.clipboard_manager", e)
 
     try:
-        from core.capabilities.source_summarizer import get_source_summarizer
+        from core.capabilities.capabilities.source_summarizer import get_source_summarizer
         await _boot("source_summarizer", get_source_summarizer)
     except ImportError as e:
         failed.append("source_summarizer")

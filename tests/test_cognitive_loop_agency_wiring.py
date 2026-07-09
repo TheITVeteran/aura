@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from core.cognitive_loop import CognitiveLoop
+from core.cognition.cognitive_loop import CognitiveLoop
 
 
 def _loop():

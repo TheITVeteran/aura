@@ -87,7 +87,7 @@ class GracefulShutdown:
 
         # Also trigger ServiceContainer shutdown if it exists
         try:
-            from .container import get_container
+            from core.container import get_container
             container = get_container()
             await container.shutdown()
         except (ImportError, AttributeError, RuntimeError) as e:

@@ -198,22 +198,22 @@ def register_cognitive_services(container, is_proxy: bool = False):
 
     # Phase 7: Cognitive Inversion (The Brain-LLM Split)
     def create_api_adapter():
-        from core.api_adapter import get_api_adapter
+        from core.adapters.api_adapter import get_api_adapter
         return get_api_adapter()
     container.register('api_adapter', create_api_adapter, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_cognitive_kernel():
-        from core.cognitive_kernel import get_cognitive_kernel
+        from core.cognition.cognitive_kernel import get_cognitive_kernel
         return get_cognitive_kernel()
     container.register('cognitive_kernel', create_cognitive_kernel, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_inner_monologue():
-        from core.inner_monologue import get_inner_monologue
+        from core.introspection.inner_monologue import get_inner_monologue
         return get_inner_monologue()
     container.register('inner_monologue', create_inner_monologue, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_language_center():
-        from core.language_center import get_language_center
+        from core.brain.language_center import get_language_center
         return get_language_center()
     container.register('language_center', create_language_center, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
@@ -223,13 +223,13 @@ def register_cognitive_services(container, is_proxy: bool = False):
     container.register('memory_synthesizer', create_memory_synthesizer, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_cognitive_integration():
-        from core.cognitive_integration_layer import CognitiveIntegrationLayer
+        from core.cognition.cognitive_integration_layer import CognitiveIntegrationLayer
         return CognitiveIntegrationLayer()
     container.register('cognitive_integration', create_cognitive_integration, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     # Phase 7 Extension: Epistemic Tracking & Inquiry Loop
     def create_epistemic_tracker():
-        from core.epistemic_tracker import get_epistemic_tracker
+        from core.epistemics.epistemic_tracker import get_epistemic_tracker
         return get_epistemic_tracker()
     container.register('epistemic_tracker', create_epistemic_tracker, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
@@ -265,7 +265,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
     container.register('skill_evolution', create_skill_evolution, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_system_monitor():
-        from core.system_monitor import SystemStateMonitor
+        from core.ops.system_monitor import SystemStateMonitor
         return SystemStateMonitor()
     container.register('system_monitor', create_system_monitor, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 

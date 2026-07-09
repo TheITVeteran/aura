@@ -53,8 +53,8 @@ def test_scrubbing():
 
 # Testing the fallback logic
 async def test_fallbacks():
-    from core.language_center import LanguageCenter
-    from core.inner_monologue import ThoughtPacket
+    from core.brain.language_center import LanguageCenter
+    from core.introspection.inner_monologue import ThoughtPacket
     
     lc = LanguageCenter()
     # Mocking router as None to trigger fallback

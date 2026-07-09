@@ -28,7 +28,7 @@ def test_conversation_loop_imports():
 
 def test_plancache_lru():
     """Verify PlanCache uses OrderedDict and has O(1) LRU behavior."""
-    from core.planner import PlanCache, ExecutionPlan
+    from core.planning.planner import PlanCache, ExecutionPlan
     
     cache = PlanCache(max_size=2)
     p1 = ExecutionPlan("goal 1", [], [])

@@ -112,7 +112,7 @@ class FluidExecutor:
         if self._verifier is not None:
             return self._verifier
         try:
-            from core.capabilities.post_action_verifier import get_post_action_verifier
+            from core.capabilities.capabilities.post_action_verifier import get_post_action_verifier
 
             self._verifier = get_post_action_verifier()
             return self._verifier

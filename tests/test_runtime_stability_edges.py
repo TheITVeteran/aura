@@ -1716,7 +1716,7 @@ class TestLiveRuntimeFailureIsolation(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(monitor._sepsis_mode)
 
     def test_runtime_status_hides_stale_user_prompt_as_current_intention(self):
-        from core.runtime_tools import _clean_current_intention_for_status
+        from core.tools.runtime_tools import _clean_current_intention_for_status
 
         prompt = "Aura, what is actually on your mind right now?"
 

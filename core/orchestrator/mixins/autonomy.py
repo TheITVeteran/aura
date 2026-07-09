@@ -11,7 +11,7 @@ from core.health.degraded_events import record_degraded_event
 from core.runtime.background_policy import background_activity_reason
 from core.runtime.errors import record_degradation
 from core.runtime.impulse_governance import run_governed_impulse
-from core.safe_mode import runtime_mode_value
+from core.runtime.safe_mode import runtime_mode_value
 from core.utils.exceptions import capture_and_log
 
 from ...container import ServiceContainer
@@ -721,7 +721,7 @@ class AutonomyMixin:
                             and self.knowledge_graph
                             and self.cognitive_engine
                         ):
-                            from core.dreamer_v2 import DreamerV2
+                            from core.sleep.dreamer_v2 import DreamerV2
 
                             dreamer = DreamerV2(
                                 self.cognitive_engine,

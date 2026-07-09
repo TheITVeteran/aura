@@ -117,7 +117,7 @@ def test_terminal_user_message_reaches_orchestrator_history():
 
 
 def test_terminal_shell_fails_closed_when_safety_controller_unavailable(monkeypatch):
-    import core.behavior_controller as behavior_controller
+    import core.autonomy.behavior_controller as behavior_controller
 
     get_degradation_tracker().reset()
     outputs = []
@@ -157,7 +157,7 @@ def test_terminal_shell_fails_closed_when_safety_controller_unavailable(monkeypa
 
 
 def test_terminal_shell_timeout_kills_and_reaps_process(monkeypatch):
-    import core.behavior_controller as behavior_controller
+    import core.autonomy.behavior_controller as behavior_controller
 
     get_degradation_tracker().reset()
     outputs = []
@@ -205,7 +205,7 @@ def test_terminal_shell_timeout_kills_and_reaps_process(monkeypatch):
 
 
 def test_terminal_shell_launch_error_is_reported(monkeypatch):
-    import core.behavior_controller as behavior_controller
+    import core.autonomy.behavior_controller as behavior_controller
 
     get_degradation_tracker().reset()
     outputs = []

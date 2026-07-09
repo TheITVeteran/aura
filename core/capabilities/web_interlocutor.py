@@ -28,7 +28,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
-from core.capabilities.browser_controller import get_browser_controller
+from core.capabilities.capabilities.browser_controller import get_browser_controller
 from core.runtime.desktop_action_gateway import get_desktop_action_gateway
 from core.runtime.errors import record_degradation
 from core.runtime.gateways import MemoryWriteRequest
@@ -2038,7 +2038,7 @@ class WebInterlocutorSession:
         if not last_reply:
             return ""
         try:
-            from core.capabilities.interlocutor_factcheck import (
+            from core.capabilities.capabilities.interlocutor_factcheck import (
                 compose_challenge_message,
                 factcheck_reply,
             )
@@ -2141,7 +2141,7 @@ class WebInterlocutorSession:
         Failure here is non-fatal — a conversation that changed nothing is a
         valid, honestly-reported outcome (causal=False), not an error."""
         try:
-            from core.capabilities.conversation_revision import (
+            from core.capabilities.capabilities.conversation_revision import (
                 persist_revisions,
                 revise_from_conversation,
             )

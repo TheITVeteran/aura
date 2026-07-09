@@ -21,8 +21,8 @@ from core.runtime.background_policy import (
 )
 from core.runtime.errors import record_degradation
 from core.runtime.impulse_governance import run_governed_impulse
+from core.runtime.safe_mode import runtime_feature_enabled, runtime_mode_value
 from core.runtime.shutdown_coordinator import is_shutdown_requested
-from core.safe_mode import runtime_feature_enabled, runtime_mode_value
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger(__name__)

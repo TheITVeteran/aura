@@ -10,7 +10,7 @@ from typing import Any
 from core.runtime.errors import record_degradation
 
 try:
-    from core.master_moral_integration import integrate_complete_moral_and_sensory_systems
+    from core.morality.master_moral_integration import integrate_complete_moral_and_sensory_systems
 except ImportError:
     integrate_complete_moral_and_sensory_systems = None
 
@@ -323,7 +323,7 @@ class OrchestratorBootMixin(
 
             self.message_queue = PriorityBackpressuredQueue(maxsize=100)
         if not hasattr(self, "reply_queue") or self.reply_queue is None:
-            from core.tagged_reply_queue import TaggedReplyQueue
+            from core.conversation.tagged_reply_queue import TaggedReplyQueue
 
             self.reply_queue = TaggedReplyQueue(maxsize=50)
 
@@ -533,7 +533,7 @@ class OrchestratorBootMixin(
 
                 # --- PHASE 6.5: Capability Engine & Desktop Agency Boot ---
                 try:
-                    from core.capabilities import boot_capabilities
+                    from core.capabilities.capabilities import boot_capabilities
                     await boot_capabilities()
                     logger.info("✅ [BOOT] Desktop agency capabilities booted successfully.")
                 except (ImportError, AttributeError, RuntimeError, TypeError, OSError) as cap_err:
@@ -657,7 +657,7 @@ class OrchestratorBootMixin(
 
                 # Start Cognitive Loop Service (Skipped in Skeletal Mode)
                 if not config.skeletal_mode:
-                    from core.cognitive_loop import CognitiveLoop
+                    from core.cognition.cognitive_loop import CognitiveLoop
 
                     self.cognitive_loop = CognitiveLoop(self)
                     try:

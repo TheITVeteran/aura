@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from core.capabilities.host_automation import AppleScriptRunner, ScriptASTGuard
-from core.capabilities.permission_model import PermissionRiskModel, RiskLevel
-from core.capabilities.post_action_verifier import PostActionVerifier
+from core.capabilities.capabilities.host_automation import AppleScriptRunner, ScriptASTGuard
+from core.capabilities.capabilities.permission_model import PermissionRiskModel, RiskLevel
+from core.capabilities.capabilities.post_action_verifier import PostActionVerifier
 
 
 class _FakeProcess:
@@ -43,7 +43,7 @@ def test_script_ast_guard_blocks_destructive_applescript() -> None:
 
 @pytest.mark.asyncio
 async def test_applescript_runner_uses_subprocess_gateway(monkeypatch) -> None:
-    from core.capabilities import host_automation
+    from core.capabilities.capabilities import host_automation
 
     gateway = _FakeSubprocessGateway(_FakeProcess(stdout=b"Notes\n"))
     monkeypatch.setattr(host_automation, "get_subprocess_gateway", lambda: gateway)
@@ -63,7 +63,7 @@ async def test_applescript_runner_uses_subprocess_gateway(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_post_action_verifier_clipboard_uses_read_only_gateway(monkeypatch) -> None:
-    from core.capabilities import post_action_verifier
+    from core.capabilities.capabilities import post_action_verifier
 
     gateway = _FakeSubprocessGateway(_FakeProcess(stdout=b"hello Aura"))
     monkeypatch.setattr(post_action_verifier, "get_subprocess_gateway", lambda: gateway)
@@ -82,7 +82,7 @@ async def test_post_action_verifier_clipboard_uses_read_only_gateway(monkeypatch
 
 @pytest.mark.asyncio
 async def test_post_action_verifier_command_uses_governed_shell_gateway(monkeypatch) -> None:
-    from core.capabilities import post_action_verifier
+    from core.capabilities.capabilities import post_action_verifier
 
     gateway = _FakeSubprocessGateway(_FakeProcess(stdout=b"ok", returncode=0))
     monkeypatch.setattr(post_action_verifier, "get_subprocess_gateway", lambda: gateway)

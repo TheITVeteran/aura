@@ -639,7 +639,7 @@ class CognitiveCoordinator:
                 emitter.emit("Sleep 💤", "Entering full sleep cycle (Archive → Metabolism → Integrity → Consolidation → Dream)...", level="info")
                 try:
                     if hasattr(orch, 'knowledge_graph') and orch.knowledge_graph and orch.cognitive_engine:
-                        from core.dreamer_v2 import DreamerV2
+                        from core.sleep.dreamer_v2 import DreamerV2
                         dreamer = DreamerV2(
                             orch.cognitive_engine,
                             orch.knowledge_graph,

@@ -46,7 +46,7 @@ class ImproveOwnCodeSkill(BaseSkill):
         elif not isinstance(params, ImproveOwnCodeInput):
             params = ImproveOwnCodeInput.model_validate(params)
 
-        from core.capabilities.self_code_improver import improve_function
+        from core.capabilities.capabilities.self_code_improver import improve_function
 
         result = await improve_function(
             target_file=params.target_file,

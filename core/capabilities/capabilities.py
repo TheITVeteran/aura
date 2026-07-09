@@ -31,7 +31,7 @@ class Shell:
                 cwd=self.cwd,
                 capture_output=True,
                 timeout=self.timeout,
-                source="core.capabilities.shell",
+                source="core.capabilities.capabilities.shell",
             )
             out = (result.stdout + "\n" + result.stderr).strip()
             return result.returncode == 0, out
@@ -66,7 +66,7 @@ class WebClient:
                 headers=headers,
                 timeout=self.timeout,
                 read_only=True,
-                source="core.capabilities.web_client",
+                source="core.capabilities.capabilities.web_client",
             )
             if not response.get("ok"):
                 return False, str(response.get("error") or "network request failed")

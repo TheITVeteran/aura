@@ -391,7 +391,7 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
     ) -> None:
         """Push capability changes to the neural feed for cognitive awareness."""
         try:
-            from core.neural_feed import get_feed
+            from core.observability.neural_feed import get_feed
             feed = get_feed()
 
             if discoveries:

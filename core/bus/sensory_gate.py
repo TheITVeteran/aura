@@ -10,7 +10,7 @@ import urllib.parse
 from typing import Any
 
 from core.bus.local_pipe_bus import LocalPipeBus
-from core.phantom_browser import PhantomBrowser
+from core.capabilities.phantom_browser import PhantomBrowser
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.network_gateway import get_network_gateway
 from core.utils.task_tracker import get_task_tracker

@@ -11,7 +11,7 @@ from core.agi.curiosity_explorer import CuriosityExplorer
 from core.brain.react_loop import ActionType, ReActLoop
 from core.container import ServiceContainer
 from core.memory.episodic_memory import EpisodicMemory
-from core.phantom_browser import PhantomBrowser
+from core.capabilities.phantom_browser import PhantomBrowser
 from core.phases.response_generation_unitary import UnitaryResponsePhase
 from core.search.research_pipeline import (
     ResearchSearchPipeline,

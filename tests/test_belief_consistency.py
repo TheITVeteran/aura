@@ -90,7 +90,7 @@ def test_governance_consistent_report_no_event_bump():
 # ── SymbolicBridge exact-solver routing ───────────────────────────────────
 
 def test_belief_engine_demotes_weaker_side_of_conflict():
-    from core.belief_revision import Belief, BeliefRevisionEngine
+    from core.epistemics.belief_revision import Belief, BeliefRevisionEngine
 
     eng = BeliefRevisionEngine.__new__(BeliefRevisionEngine)
     eng.beliefs = [

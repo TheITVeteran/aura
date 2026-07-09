@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.cognitive_loop import CognitiveLoop
+from core.cognition.cognitive_loop import CognitiveLoop
 
 
 def close_loop(loop: CognitiveLoop) -> None:
@@ -79,7 +79,7 @@ async def test_stop_cancels_background_and_deliberation_tasks():
 
 @pytest.mark.asyncio
 async def test_run_applies_backoff_after_recoverable_cycle_failure(monkeypatch):
-    import core.cognitive_loop as cognitive_loop_module
+    import core.cognition.cognitive_loop as cognitive_loop_module
 
     sleeps = []
     cycle_failures = []

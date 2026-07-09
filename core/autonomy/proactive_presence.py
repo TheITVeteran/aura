@@ -1042,7 +1042,7 @@ class ProactivePresence:
         # The TerminalWatchdog will only deliver this if the UI stays gone
         # for UI_GONE_CONFIRMATION_SECS — so no spurious terminal pop-ups.
         try:
-            from core.terminal_chat import get_terminal_fallback
+            from core.conversation.terminal_chat import get_terminal_fallback
             get_terminal_fallback().queue_autonomous_message(content)
         except (ImportError, AttributeError, RuntimeError) as _exc:
             record_degradation('proactive_presence', _exc)

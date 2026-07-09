@@ -431,7 +431,7 @@ def test_background_policy_blocks_loop_starts_during_proof_and_foreground(monkey
 
 def test_health_pulse_cannot_claim_healthy_from_required_probes_alone(monkeypatch):
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
-    from core.subsystem_audit import SubsystemAudit
+    from core.ops.subsystem_audit import SubsystemAudit
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -460,7 +460,7 @@ def test_health_pulse_cannot_claim_healthy_from_required_probes_alone(monkeypatc
 def test_health_pulse_cannot_claim_healthy_when_conversation_lane_failed(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
-    from core.subsystem_audit import SubsystemAudit
+    from core.ops.subsystem_audit import SubsystemAudit
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -507,7 +507,7 @@ def test_health_pulse_cannot_claim_healthy_when_conversation_lane_failed(monkeyp
 def test_health_pulse_reports_booting_during_boot_grace(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
-    from core.subsystem_audit import SubsystemAudit
+    from core.ops.subsystem_audit import SubsystemAudit
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -517,7 +517,7 @@ def test_health_pulse_reports_booting_during_boot_grace(monkeypatch):
     required_probes["inference"]["components"]["inference_gate"] = False
     required_probes["all_passed"] = False
     monkeypatch.setenv("AURA_HEALTH_PULSE_BOOT_GRACE_S", "120")
-    monkeypatch.setattr("core.subsystem_audit.is_shutdown_requested", lambda: False)
+    monkeypatch.setattr("core.ops.subsystem_audit.is_shutdown_requested", lambda: False)
     monkeypatch.setattr(
         "core.runtime.health_contract.runtime_health_report",
         lambda: {
@@ -565,7 +565,7 @@ def test_health_pulse_reports_booting_during_boot_grace(monkeypatch):
 def test_health_pulse_reports_conversation_warmup_as_booting_not_failure(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
-    from core.subsystem_audit import SubsystemAudit
+    from core.ops.subsystem_audit import SubsystemAudit
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -573,7 +573,7 @@ def test_health_pulse_reports_conversation_warmup_as_booting_not_failure(monkeyp
     }
     required_probes["all_passed"] = True
     monkeypatch.setenv("AURA_HEALTH_PULSE_BOOT_GRACE_S", "120")
-    monkeypatch.setattr("core.subsystem_audit.is_shutdown_requested", lambda: False)
+    monkeypatch.setattr("core.ops.subsystem_audit.is_shutdown_requested", lambda: False)
     monkeypatch.setattr(
         "core.runtime.health_contract.runtime_health_report",
         lambda: {
@@ -621,7 +621,7 @@ def test_health_pulse_reports_conversation_warmup_as_booting_not_failure(monkeyp
 def test_health_pulse_reports_cold_conversation_standby_as_booting_not_degraded(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
-    from core.subsystem_audit import SubsystemAudit
+    from core.ops.subsystem_audit import SubsystemAudit
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -629,7 +629,7 @@ def test_health_pulse_reports_cold_conversation_standby_as_booting_not_degraded(
     }
     required_probes["all_passed"] = True
     monkeypatch.setenv("AURA_HEALTH_PULSE_BOOT_GRACE_S", "120")
-    monkeypatch.setattr("core.subsystem_audit.is_shutdown_requested", lambda: False)
+    monkeypatch.setattr("core.ops.subsystem_audit.is_shutdown_requested", lambda: False)
     monkeypatch.setattr(
         "core.runtime.health_contract.runtime_health_report",
         lambda: {
@@ -673,14 +673,14 @@ def test_health_pulse_reports_cold_conversation_standby_as_booting_not_degraded(
 def test_health_pulse_reports_active_generation_as_working_not_failure(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
-    from core.subsystem_audit import SubsystemAudit
+    from core.ops.subsystem_audit import SubsystemAudit
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
         for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
     }
     required_probes["all_passed"] = True
-    monkeypatch.setattr("core.subsystem_audit.is_shutdown_requested", lambda: False)
+    monkeypatch.setattr("core.ops.subsystem_audit.is_shutdown_requested", lambda: False)
     monkeypatch.setattr(
         "core.runtime.health_contract.runtime_health_report",
         lambda: {
@@ -728,14 +728,14 @@ def test_health_pulse_reports_active_generation_as_working_not_failure(monkeypat
 def test_health_pulse_reports_shutdown_without_failure_noise(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
-    from core.subsystem_audit import SubsystemAudit
+    from core.ops.subsystem_audit import SubsystemAudit
 
     required_probes = {
         group: {"ok": False, "components": {key: False for key in keys}}
         for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
     }
     required_probes["all_passed"] = False
-    monkeypatch.setattr("core.subsystem_audit.is_shutdown_requested", lambda: True)
+    monkeypatch.setattr("core.ops.subsystem_audit.is_shutdown_requested", lambda: True)
     monkeypatch.setattr(
         "core.runtime.health_contract.runtime_health_report",
         lambda: {
@@ -1444,8 +1444,8 @@ async def test_substrate_micro_evolution_is_deferred_during_proof(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_cognitive_loop_suppresses_repair_for_intentional_ablation(monkeypatch):
-    import core.cognitive_loop as cognitive_loop_module
-    from core.cognitive_loop import CognitiveLoop
+    import core.cognition.cognitive_loop as cognitive_loop_module
+    from core.cognition.cognitive_loop import CognitiveLoop
     from core.runtime.ablation_policy import mark_services_lesioned
 
     repairs = []

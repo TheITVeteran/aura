@@ -21,7 +21,7 @@ import time
 # ---------------------------------------------------------------------------
 
 def test_root_logging_goes_through_queue_handler(tmp_path, monkeypatch):
-    import core.logging_config as lc
+    import core.observability.logging_config as lc
 
     # Force a fresh init in this process regardless of prior state.
     monkeypatch.setattr(lc, "_initialised", False)
@@ -45,7 +45,7 @@ def test_root_logging_goes_through_queue_handler(tmp_path, monkeypatch):
 
 
 def test_queue_handler_overflow_drops_oldest_never_blocks():
-    import core.logging_config as lc
+    import core.observability.logging_config as lc
 
     q: queue.Queue = queue.Queue(maxsize=2)
     handler = lc._DropNewestOnOverflowQueueHandler(q)

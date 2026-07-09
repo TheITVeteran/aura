@@ -1184,7 +1184,7 @@ class MessageHandlingMixin:
         """Primary cognitive entry point."""
         import uuid
 
-        from core.tagged_reply_queue import reply_delivery_scope
+        from core.conversation.tagged_reply_queue import reply_delivery_scope
 
         trace_id = str(uuid.uuid4())[:8]
         if os.environ.get("AURA_TRACE_MODE") == "1":

@@ -8,7 +8,7 @@ import asyncio
 import logging
 from typing import Optional
 from core.runtime.service_registry import get_runtime_service
-from core.planner import ExecutionPlan, ToolCall, PlanSchema
+from core.planning.planner import ExecutionPlan, ToolCall, PlanSchema
 from core.collective.delegator import AgentDelegator
 
 logger = logging.getLogger("Aura.StrategicSynthesis")

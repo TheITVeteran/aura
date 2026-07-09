@@ -1092,7 +1092,7 @@ class TestLanguageDemotion:
         """
 
         # Read the module docstring
-        import core.language_center as lc_mod
+        import core.brain.language_center as lc_mod
         docstring = lc_mod.__doc__ or ""
 
         # The docstring should explicitly state the LLM is for expression
@@ -1130,7 +1130,7 @@ class TestLanguageDemotion:
         This is identity enforcement: the system should not describe
         itself in third-party terms learned from training data.
         """
-        from core.language_center import _META_RE
+        from core.brain.language_center import _META_RE
 
         assert len(_META_RE) >= 3, "Must have multiple meta-commentary filters"
 

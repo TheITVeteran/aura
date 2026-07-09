@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from core.capabilities.browser_controller import BrowserController
-from core.capabilities.capability_discovery import CapabilityDiscovery, CapabilityReport
-from core.capabilities.clipboard_manager import ClipboardManager
-from core.capabilities.document_service import DocumentService
-from core.capabilities.file_broker import SandboxedFileBroker
-from core.capabilities.os_settings import OSSettingsAdapter
-from core.capabilities.web_asset_handler import WebAssetHandler
+from core.capabilities.capabilities.browser_controller import BrowserController
+from core.capabilities.capabilities.capability_discovery import CapabilityDiscovery, CapabilityReport
+from core.capabilities.capabilities.clipboard_manager import ClipboardManager
+from core.capabilities.capabilities.document_service import DocumentService
+from core.capabilities.capabilities.file_broker import SandboxedFileBroker
+from core.capabilities.capabilities.os_settings import OSSettingsAdapter
+from core.capabilities.capabilities.web_asset_handler import WebAssetHandler
 from core.container import ServiceContainer
 from core.perception.screen_perception import ScreenPerception
 from core.self.mind_state_export import MindStateExporter
@@ -88,7 +88,7 @@ class FakeSubprocessGateway:
 
 @pytest.mark.asyncio
 async def test_browser_search_fetch_uses_network_gateway(monkeypatch) -> None:
-    from core.capabilities import browser_controller as module
+    from core.capabilities.capabilities import browser_controller as module
 
     html = b'<a href="https://example.com/a" class="result-link">Example</a>'
     gateway = FakeNetworkGateway(html)
@@ -103,7 +103,7 @@ async def test_browser_search_fetch_uses_network_gateway(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_web_asset_download_uses_network_and_file_gateways(monkeypatch, tmp_path) -> None:
-    from core.capabilities import web_asset_handler as module
+    from core.capabilities.capabilities import web_asset_handler as module
 
     png = b"\x89PNG\r\n\x1a\n" + (b"0" * 256)
     network = FakeNetworkGateway(png)
@@ -125,7 +125,7 @@ async def test_web_asset_download_uses_network_and_file_gateways(monkeypatch, tm
 
 @pytest.mark.asyncio
 async def test_file_broker_write_uses_file_gateway(monkeypatch) -> None:
-    from core.capabilities import file_broker as module
+    from core.capabilities.capabilities import file_broker as module
 
     writer = FakeFileWriteGateway()
     monkeypatch.setattr(module, "get_file_write_gateway", lambda: writer)
@@ -145,7 +145,7 @@ async def test_file_broker_write_uses_file_gateway(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_document_service_create_text_uses_file_gateway(monkeypatch, tmp_path) -> None:
-    from core.capabilities import document_service as module
+    from core.capabilities.capabilities import document_service as module
 
     writer = FakeFileWriteGateway()
     monkeypatch.setattr(module, "get_file_write_gateway", lambda: writer)
@@ -159,7 +159,7 @@ async def test_document_service_create_text_uses_file_gateway(monkeypatch, tmp_p
 
 @pytest.mark.asyncio
 async def test_os_settings_read_probe_uses_subprocess_gateway(monkeypatch) -> None:
-    from core.capabilities import os_settings as module
+    from core.capabilities.capabilities import os_settings as module
 
     gateway = FakeSubprocessGateway(stdout=b"42\n")
     monkeypatch.setattr(module, "get_subprocess_gateway", lambda: gateway)
@@ -240,7 +240,7 @@ async def test_voice_session_say_fallback_uses_subprocess_gateway(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_capability_discovery_network_probe_uses_subprocess_gateway(monkeypatch) -> None:
-    from core.capabilities import capability_discovery as module
+    from core.capabilities.capabilities import capability_discovery as module
 
     gateway = FakeSubprocessGateway(returncode=0)
     monkeypatch.setattr(module, "get_subprocess_gateway", lambda: gateway)
@@ -256,7 +256,7 @@ async def test_capability_discovery_network_probe_uses_subprocess_gateway(monkey
 
 @pytest.mark.asyncio
 async def test_capability_discovery_writable_probe_uses_file_gateway(monkeypatch, tmp_path) -> None:
-    from core.capabilities import capability_discovery as module
+    from core.capabilities.capabilities import capability_discovery as module
 
     writer = FakeFileWriteGateway()
     monkeypatch.setattr(module, "get_file_write_gateway", lambda: writer)
@@ -306,7 +306,7 @@ async def test_capability_discovery_start_does_not_block_on_full_scan() -> None:
 
 @pytest.mark.asyncio
 async def test_clipboard_get_uses_subprocess_gateway(monkeypatch) -> None:
-    from core.capabilities import clipboard_manager as module
+    from core.capabilities.capabilities import clipboard_manager as module
 
     gateway = FakeSubprocessGateway(stdout=b"clipboard text")
     monkeypatch.setattr(module, "get_subprocess_gateway", lambda: gateway)
@@ -321,7 +321,7 @@ async def test_clipboard_get_uses_subprocess_gateway(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_clipboard_set_uses_subprocess_gateway(monkeypatch) -> None:
-    from core.capabilities import clipboard_manager as module
+    from core.capabilities.capabilities import clipboard_manager as module
 
     gateway = FakeSubprocessGateway()
     monkeypatch.setattr(module, "get_subprocess_gateway", lambda: gateway)

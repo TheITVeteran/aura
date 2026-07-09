@@ -198,7 +198,7 @@ class AutonomousSleepTrigger:
 
         # Last resort: instantiate with available services
         try:
-            from core.dreamer_v2 import DreamerV2
+            from core.sleep.dreamer_v2 import DreamerV2
             brain = get_runtime_service("brain", default=None) or getattr(orch, "brain", None)
             kg    = get_runtime_service("knowledge_graph", default=None) or getattr(orch, "knowledge_graph", None)
             vm    = get_runtime_service("vector_memory", default=None) or getattr(orch, "vector_memory", None)

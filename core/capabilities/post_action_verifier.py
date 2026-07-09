@@ -140,7 +140,7 @@ class PostActionVerifier:
         """Check if an app is the currently frontmost application."""
         expected = str(args.get("name", ""))
         try:
-            from core.capabilities.host_automation import get_host_automation
+            from core.capabilities.capabilities.host_automation import get_host_automation
             receipt = await get_host_automation().get_frontmost_app()
             actual = str(receipt.result or "").strip()
             match = expected.lower() in actual.lower() if expected and actual else False
@@ -161,7 +161,7 @@ class PostActionVerifier:
         """Check if an app is currently running."""
         expected = str(args.get("name", ""))
         try:
-            from core.capabilities.host_automation import get_host_automation
+            from core.capabilities.capabilities.host_automation import get_host_automation
             receipt = await get_host_automation().get_running_apps()
             apps = receipt.result if isinstance(receipt.result, list) else []
             running = any(expected.lower() in str(a).lower() for a in apps)
@@ -356,7 +356,7 @@ class PostActionVerifier:
         expected = str(args.get("text", ""))
         app = str(args.get("app", ""))
         try:
-            from core.capabilities.host_automation import get_host_automation
+            from core.capabilities.capabilities.host_automation import get_host_automation
             receipt = await get_host_automation().get_window_title(app)
             actual = str(receipt.result or "").strip()
             match = expected.lower() in actual.lower() if expected and actual else False
@@ -376,7 +376,7 @@ class PostActionVerifier:
         """Check if the screen contains specific text (via OCR)."""
         expected = str(args.get("text", ""))
         try:
-            from core.capabilities.host_automation import get_host_automation
+            from core.capabilities.capabilities.host_automation import get_host_automation
             receipt = await get_host_automation().get_screen_text()
             screen_text = str(receipt.result or "")
             found = expected.lower() in screen_text.lower() if expected else False

@@ -2,8 +2,8 @@ import asyncio
 import logging
 from core.container import ServiceContainer
 from core.brain.llm.llm_router import IntelligentLLMRouter, LLMTier
-from core.language_center import LanguageCenter
-from core.inner_monologue import ThoughtPacket
+from core.brain.language_center import LanguageCenter
+from core.introspection.inner_monologue import ThoughtPacket
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("verify_unified_brain")
