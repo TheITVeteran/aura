@@ -8086,3 +8086,58 @@ Remaining non-soak work after this checkpoint:
   so the user-facing lane proves the same reconstruction capability, not only
   the local proof runner.
 - Run the final non-soak live-runtime proof after the above remains stable.
+
+## Checkpoint 2026-07-09-03: Autonomous Repair and RSI Proof Artifact
+
+Scope:
+
+- Added `tools/proof/run_autonomous_repair_proof.py`, a bounded non-mutating
+  proof runner for the repair/immune/RSI path. It does not pretend to perform
+  unrestricted live source mutation. It proves the critical runtime plumbing:
+  - a degradation record enters resilience pressure
+  - self-modification error intake receives the fault
+  - the autonomous repair executor runs a repair cycle
+  - adaptive-immune patch proposals schedule through the same executor
+  - repeated identical repair requests cool down instead of storming
+  - RSI repair-lab artifacts still prove strict held-out improvement
+- Added `tests/test_autonomous_repair_proof.py` so this proof path cannot drift
+  back into an untested script.
+
+Verification:
+
+- `python -m py_compile tools/proof/run_autonomous_repair_proof.py tests/test_autonomous_repair_proof.py`
+  -> passed.
+- `python -m pytest tests/test_autonomous_repair_proof.py tests/test_autonomous_repair_executor.py tests/test_degradation_repair_contract.py tests/test_adaptive_immune_system.py -q`
+  -> `21 passed`.
+- `python tools/proof/run_autonomous_repair_proof.py --out artifacts/live_proof/autonomous_repair_proof_latest.json --rsi-dir artifacts/live_proof/rsi`
+  -> `passed=true`.
+  - Repair checks: resilience pressure, self-modification intake, autonomous
+    cycle completion, immune event scheduling, immune patch scheduling, and
+    cooldown protection all `true`.
+  - RSI checks: median seed `2/5` -> promoted `5/5`
+    (`mean_of_two_middles`); palindrome seed `3/5` -> promoted `5/5`
+    (`alnum_casefold_palindrome`).
+  - Artifact hashes:
+    - `artifacts/live_proof/rsi/median_repair_lab_autonomous_proof.json`
+      -> `64f30574cd6e616569c847a17686c45630792c5295a89055d2363e72eecd59ef`.
+    - `artifacts/live_proof/rsi/is_palindrome_repair_lab_autonomous_proof.json`
+      -> `f4b59b9f3adf63008cf75a50c1e333e147794952720c00cedefa75c76acd02d9`.
+
+Current closeout estimate:
+
+- Configured non-soak local closeout is about **99.93%** complete by source,
+  focused proofs, refreshed Program DNA evidence, and the new autonomous
+  repair/RSI proof artifact. The remaining blocker is no longer inert
+  repair/immune plumbing; it is visible launched-desktop proof breadth and the
+  final live-runtime replay.
+
+Remaining non-soak work after this checkpoint:
+
+- Complete the visible ChatGPT/Gemini conversation proof on the real launched
+  Aura desktop lane. Current Codex-session blocker: the Codex Chrome Extension
+  is not installed/enabled in the selected Chrome profile, so this cannot be
+  honestly driven through the Chrome plugin in this session.
+- Run a visible launched-Aura Program DNA skill/model replay if host load allows
+  so the user-facing lane proves the same reconstruction capability, not only
+  the local proof runner.
+- Run the final non-soak live-runtime proof after the above remains stable.
