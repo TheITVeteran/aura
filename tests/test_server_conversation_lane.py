@@ -1252,7 +1252,7 @@ async def test_api_chat_refuses_implicit_legacy_orchestrator_fallback(monkeypatc
         None,
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 200  # in-band fail-closed delivery for real users
     assert b"canonical_chat_no_reply" in response.body
     assert kernel_calls == ["called"]
     assert orchestrator_calls == []
@@ -4252,7 +4252,7 @@ async def test_api_chat_desktop_surface_requires_cognitive_engine_and_blocks_ker
         None,
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 200  # in-band fail-closed delivery for real users
     assert kernel_calls == []
     assert b"failed closed instead of sending an ungrounded answer" in response.body
     assert b"desktop_cognitive_engine_required_no_reply" in response.body
@@ -4342,7 +4342,7 @@ async def test_api_chat_desktop_discards_bounded_repair_when_full_mind_path_not_
     )
 
     payload = json.loads(response.body)
-    assert response.status_code == 503
+    assert response.status_code == 200  # in-band fail-closed delivery for real users
     assert payload["status"] == "desktop_cognitive_engine_unavailable"
     assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
     assert payload["live_turn_contract"]["full_mind_path"] is False
@@ -4447,7 +4447,7 @@ async def test_api_chat_desktop_low_risk_social_no_reply_fails_closed(monkeypatc
     )
 
     payload = json.loads(response.body)
-    assert response.status_code == 503
+    assert response.status_code == 200  # in-band fail-closed delivery for real users
     assert payload["status"] == "desktop_cognitive_engine_unavailable"
     assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
     assert payload["response_confidence"] == "failed"
@@ -4941,7 +4941,7 @@ async def test_api_chat_desktop_capability_no_reply_fails_closed_without_invento
 
     payload = json.loads(response.body)
     lowered = payload["response"].lower()
-    assert response.status_code == 503
+    assert response.status_code == 200  # in-band fail-closed delivery for real users
     assert payload["status"] == "desktop_cognitive_engine_unavailable"
     assert payload["response_confidence"] == "failed"
     assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
@@ -5860,7 +5860,7 @@ async def test_api_chat_desktop_surface_outer_timeout_refuses_direct_gate_fallba
         None,
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 200  # in-band fail-closed delivery for real users
     assert b"desktop_cognitive_engine_unavailable" in response.body
     assert b"desktop_cognitive_engine_timeout" in response.body
     assert cognitive_calls == ["desktop_cognitive_engine"]
@@ -5955,7 +5955,7 @@ async def test_api_chat_desktop_surface_blocks_thin_cognitive_engine_recovery_re
         None,
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 200  # in-band fail-closed delivery for real users
     assert b"desktop_cognitive_engine_unavailable" in response.body
     assert b"What&apos;s the puzzle" not in response.body
     assert b"What's the puzzle" not in response.body
@@ -9901,7 +9901,7 @@ async def test_api_chat_returns_hard_local_failure_without_kernel_fallback(monke
         None,
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 200  # in-band fail-closed delivery for real users
     assert b"local 32B runtime could not start cleanly" in response.body
     assert b"\"status\":\"conversation_unavailable\"" in response.body
     assert b"\"state\":\"failed\"" in response.body
@@ -9966,7 +9966,7 @@ async def test_api_chat_skips_protected_foreground_rescue_under_memory_warning(m
         None,
     )
 
-    assert response.status_code == 503
+    assert response.status_code == 200  # in-band fail-closed delivery for real users
     assert b"local 32B runtime could not start cleanly" in response.body
     assert b"\"status\":\"conversation_unavailable\"" in response.body
     assert generate_calls == []

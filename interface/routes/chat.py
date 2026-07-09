@@ -15724,7 +15724,10 @@ async def api_chat(
                     "status": "conversation_unavailable",
                     "conversation_lane": lane,
                 },
-                status_code=503,
+                # In-band for real users (the lane message IS the answer);
+                # strict 503 stays benchmark-only. This producer surfaced as
+                # bare 'HTTP Error 503' in the nightcap soak.
+                status_code=503 if is_benchmark else 200,
             )
 
         if allow_chat_fastpaths:
@@ -16458,7 +16461,8 @@ async def api_chat(
                         reply_source="desktop_cognitive_engine_required_no_reply",
                     ),
                 },
-                status_code=503,
+                # In-band fail-closed delivery for real users.
+                status_code=503 if is_benchmark else 200,
             )
 
         if reply_text:
@@ -16840,7 +16844,8 @@ async def api_chat(
                     "conversation_lane": lane,
                     "response_confidence": "failed",
                 },
-                status_code=503,
+                # In-band fail-closed delivery for real users.
+                status_code=503 if is_benchmark else 200,
             )
 
         reply_text = await _stabilize_user_facing_reply(
@@ -17334,7 +17339,8 @@ async def api_chat(
                     "response_confidence": "failed_closed",
                     "live_turn_contract": final_live_turn_contract,
                 },
-                status_code=503,
+                # In-band fail-closed delivery for real users.
+                status_code=503 if is_benchmark else 200,
             )
 
         response_data = {
@@ -17437,7 +17443,8 @@ async def api_chat(
                         reply_source="desktop_cognitive_engine_timeout",
                     ),
                 },
-                status_code=503,
+                # In-band fail-closed delivery for real users.
+                status_code=503 if is_benchmark else 200,
             )
         if is_benchmark:
             timeout_reply = _conversation_lane_user_message(lane, timed_out=True)
