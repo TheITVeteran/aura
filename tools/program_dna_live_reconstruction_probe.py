@@ -21,7 +21,6 @@ import argparse
 import asyncio
 import hashlib
 import json
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -151,16 +150,12 @@ def _run_scenario_subprocess(scenario: Any, *, scenario_timeout_s: float) -> dic
         {"input": case, "expected": scenario.original(case)}
         for case in scenario.held_out_cases
     ]
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(REPO_ROOT),
-            text=True,
-            capture_output=True,
-            timeout=timeout_s,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
+    # Managed gateway instead of raw subprocess: same bounded timeout, plus
+    # the repo's standard receipts/kill discipline (subprocess-usage ratchet).
+    from core.tasks.managed_command import run_project_command
+
+    proc = run_project_command(tuple(cmd), timeout_s=timeout_s)
+    if proc.timed_out:
         return _result_from_outcome(
             scenario,
             {

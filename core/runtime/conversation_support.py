@@ -285,6 +285,24 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
         )
         logger.debug("Incident narrator injection failed: %s", exc)
 
+    try:
+        # Grounded learning self-knowledge: when the user asks what Aura has
+        # been learning or practicing, inject the receipt-backed status from
+        # the lineage ledger / flywheel / scheduler so claims about her own
+        # learning are the same numbers the API serves. Gates internally on
+        # learning-shaped questions; ordinary turns pay nothing.
+        from core.learning.learning_selfreport import get_learning_selfreport
+
+        learning_block = get_learning_selfreport().get_context_injection(objective or "")
+        if learning_block:
+            priority_blocks.append(learning_block)
+    except (RuntimeError, AttributeError, TypeError, ValueError, OSError, ImportError) as exc:
+        _record_conversation_degradation(
+            exc,
+            action="continued context assembly without learning self-knowledge block",
+        )
+        logger.debug("Learning self-report injection failed: %s", exc)
+
     return priority_blocks + blocks
 
 
