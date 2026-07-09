@@ -1186,6 +1186,10 @@ class MLXLocalClient:
         lowered = os.path.basename(self.model_path).lower()
         return any(token in lowered for token in ("32b", "72b", "zenith", "solver", "cortex"))
 
+    def _is_primary_lane(self) -> bool:
+        """The serving cortex lane specifically — deep/solver excluded."""
+        return self._is_primary_or_deep_lane() and not self._is_deep_solver_lane()
+
     def _is_deep_solver_lane(self) -> bool:
         return _model_path_is_deep_solver(self.model_path)
 
@@ -4923,6 +4927,26 @@ class MLXLocalClient:
             under_pressure = bool(getattr(snapshot, "warning", False))
         except (RuntimeError, OSError, ValueError, AttributeError) as exc:
             logger.debug("Idle scavenge pressure probe unavailable: %s", exc)
+
+        # The PRIMARY lane stays resident when there is no memory pressure.
+        # The 20260708-final soak started against a cortex the citizenship
+        # unload had evicted during a quiet afternoon at 34% system RAM —
+        # the first turn then paid a 120-150s cold start (and, pre-fix,
+        # seeded the gate-orphan cascade). A resident 20GB cortex on an
+        # unpressured 64GB machine is what the machine is FOR; the 90s
+        # pressure path still reclaims it the moment RAM actually matters.
+        # Small lanes (brainstem/reflex, seconds to reload) keep the
+        # citizenship unload. AURA_VRAM_SCAVENGE_PRIMARY_HARD=1 restores
+        # the old behavior.
+        if not under_pressure and self._is_primary_lane():
+            if os.environ.get(
+                "AURA_VRAM_SCAVENGE_PRIMARY_HARD", "0"
+            ).strip().lower() not in {"1", "true", "yes", "on"}:
+                return {
+                    "unloaded": False,
+                    "reason": "primary_lane_stays_resident_without_pressure",
+                    "idle_age_s": round(age, 1),
+                }
 
         threshold = pressure_idle_s if under_pressure else hard_idle_s
         if age < threshold:

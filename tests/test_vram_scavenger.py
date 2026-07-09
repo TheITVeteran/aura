@@ -183,3 +183,50 @@ def test_driver_iterates_clients_and_counts(monkeypatch):
     assert out["unloaded"] == 1
     assert idle._rebooted == ["idle_vram_scavenge"]
     assert busy._rebooted == []
+
+
+# ── primary-lane residency policy ────────────────────────────────────────────
+# The citizenship (hard-idle) unload evicted the serving cortex during a quiet
+# afternoon at 34% system RAM; the next turn paid a 120-150s cold start and
+# (pre-fix) seeded the 20260708 gate-orphan cascade. Without pressure, the
+# PRIMARY lane stays resident; the 90s pressure path still reclaims it the
+# moment RAM matters. Small lanes keep the citizenship unload.
+
+def _make_primary_client(monkeypatch, *, idle_s: float) -> MLXLocalClient:
+    c = _make_alive_client(monkeypatch, idle_s=idle_s)
+    c.model_path = "/models/Qwen2.5-32B-cortex-test"
+    return c
+
+
+def test_primary_lane_stays_resident_without_pressure(monkeypatch):
+    monkeypatch.delenv("AURA_VRAM_SCAVENGE_PRIMARY_HARD", raising=False)
+    c = _make_primary_client(monkeypatch, idle_s=10_000.0)  # way past hard idle
+    monkeypatch.setattr(mc, "get_memory_pressure_snapshot", lambda: _Snap(warning=False))
+    out = asyncio.run(c.maybe_unload_idle(pressure_idle_s=90.0, hard_idle_s=900.0))
+    assert out["unloaded"] is False
+    assert out["reason"] == "primary_lane_stays_resident_without_pressure"
+    assert c._rebooted == []
+
+
+def test_primary_lane_still_unloads_under_real_pressure(monkeypatch):
+    c = _make_primary_client(monkeypatch, idle_s=120.0)
+    monkeypatch.setattr(mc, "get_memory_pressure_snapshot", lambda: _Snap(warning=True))
+    out = asyncio.run(c.maybe_unload_idle(pressure_idle_s=90.0, hard_idle_s=900.0))
+    assert out["unloaded"] is True
+    assert out["under_pressure"] is True
+
+
+def test_primary_hard_unload_restorable_by_env(monkeypatch):
+    monkeypatch.setenv("AURA_VRAM_SCAVENGE_PRIMARY_HARD", "1")
+    c = _make_primary_client(monkeypatch, idle_s=10_000.0)
+    monkeypatch.setattr(mc, "get_memory_pressure_snapshot", lambda: _Snap(warning=False))
+    out = asyncio.run(c.maybe_unload_idle(pressure_idle_s=90.0, hard_idle_s=900.0))
+    assert out["unloaded"] is True
+
+
+def test_deep_solver_lane_keeps_citizenship_unload(monkeypatch):
+    c = _make_alive_client(monkeypatch, idle_s=10_000.0)
+    c.model_path = "/models/Qwen2.5-72B-Instruct-4bit-solver"
+    monkeypatch.setattr(mc, "get_memory_pressure_snapshot", lambda: _Snap(warning=False))
+    out = asyncio.run(c.maybe_unload_idle(pressure_idle_s=90.0, hard_idle_s=900.0))
+    assert out["unloaded"] is True, "the 40GB solver must not squat without pressure"
