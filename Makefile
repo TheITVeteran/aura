@@ -1,4 +1,4 @@
-.PHONY: lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy demo-learning report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+.PHONY: lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy demo-learning triage report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
 
 
 PYTHON ?= python
@@ -41,6 +41,10 @@ demo-learning:
 	@echo "   A small model teaches itself verifiable reasoning with its own exact"
 	@echo "   checkers, twice; every claim lands in a tamper-evident ledger."
 	@$(PYTHON) tools/learning_demo.py
+
+triage:
+	@echo "🩻 Categorizing the crash-forensics record into incident classes..."
+	@$(PYTHON) tools/crash_triage.py --window-days 7 --out artifacts/reliability/triage.json || true
 
 report:
 	@echo "📊 Generating bench + courtroom + baseline reports..."
