@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -216,6 +217,19 @@ def test_background_desktop_task_does_not_auto_confirm():
         )
         is False
     )
+
+
+def test_capability_engine_forwards_scoped_authority_to_constitutional_args():
+    source = (Path(__file__).resolve().parents[1] / "core" / "capability_engine.py").read_text(
+        encoding="utf-8"
+    )
+
+    bridge_start = source.index("for context_key in (")
+    bridge_end = source.index("):", bridge_start)
+    bridge_keys = source[bridge_start:bridge_end]
+
+    assert '"scoped_authority"' in bridge_keys
+    assert '"explicit_authorization"' in bridge_keys
 
 
 def test_user_visible_web_interlocutor_auto_confirms_foreground_request():

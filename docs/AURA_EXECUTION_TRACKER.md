@@ -8141,3 +8141,71 @@ Remaining non-soak work after this checkpoint:
   so the user-facing lane proves the same reconstruction capability, not only
   the local proof runner.
 - Run the final non-soak live-runtime proof after the above remains stable.
+
+## Checkpoint 2026-07-09-04: Hardened Live Desktop Proof and Scoped User Action Authority
+
+Scope:
+
+- Closed a live proof regression where `tools/live_boot_proof.py` could boot a
+  desktop-mode runtime without the same production governance contract as the
+  packaged launcher. The proof now sets `AURA_GOVERNANCE_MODE=production` and
+  `AURA_CONTRACTS_ENFORCE=1`, so a green live proof cannot hide a softer Will
+  policy than Bryan's daily Aura launch path.
+- Closed the second-order failure exposed by that hardening: explicit
+  foreground desktop actions were correctly routed through `CapabilityEngine`,
+  but the direct live-skill route did not attach scoped authority for the
+  already-authorized user request. The live desktop task was therefore denied
+  by default after governance was hardened.
+- `_execute_governed_live_skill(...)` now derives a narrow scoped authority
+  token only when all three facts are true:
+  - foreground request
+  - explicit user-requested action
+  - explicit user authorization
+- `CapabilityEngine` now forwards `scoped_authority`,
+  `explicit_authorization`, and `authorization` into the constitutional tool
+  execution arguments so `AuthorityGateway`/`Will` can make the same decision
+  the caller context made.
+
+Verification:
+
+- `python -m pytest tests/test_boot_runtime_safety.py tests/test_capability_engine_policy_regressions.py tests/test_server_conversation_lane.py::test_chat_desktop_objective_uses_capability_engine_without_agency_wrapper -q`
+  -> `74 passed`.
+- `python -m ruff check --select F,E9 tools/live_boot_proof.py tests/test_boot_runtime_safety.py interface/routes/chat.py core/capability_engine.py tests/test_capability_engine_policy_regressions.py tests/test_server_conversation_lane.py`
+  -> passed.
+- `python -m py_compile tools/live_boot_proof.py interface/routes/chat.py core/capability_engine.py`
+  -> passed.
+- `python tools/live_boot_proof.py --mode desktop --port 8033 --conversation-soak-turns 3 --boot-timeout 420 --out-dir artifacts/current/live_desktop_runtime_after_scoped_authority_fix`
+  -> `LIVE PROOF PASSED`.
+  - Boot health passed after `29s`.
+  - Peak RSS stayed at `20480MB`.
+  - Conversation lane used `CognitiveEngine`/Cortex with required probes all
+    passing.
+  - Continuity probe recalled the codeword.
+  - `3/3` foreground chat soak turns passed.
+  - Semantic, imagination, timescale, ambient, and autonomic organs processed
+    live turns.
+  - Governed desktop action created and verified the file on disk.
+  - Shutdown was graceful, no orphans remained, and the runtime stream scan
+    found no failure markers.
+  - Verdict artifact:
+    `artifacts/current/live_desktop_runtime_after_scoped_authority_fix/live_proof_20260709_013210_verdict.json`.
+
+Current closeout estimate:
+
+- Configured non-soak local closeout is about **99.95%** complete by source,
+  focused proofs, refreshed Program DNA evidence, autonomous repair/RSI proof,
+  and the hardened desktop live proof. The remaining blocker is no longer the
+  daily desktop chat/desktop-action path under production governance; it is the
+  visible 20-turn web-interlocutor proof and optional launched-Aura replay
+  breadth before final non-soak replay.
+
+Remaining non-soak work after this checkpoint:
+
+- Complete the visible ChatGPT/Gemini conversation proof on the real launched
+  Aura desktop lane. Current Codex-session blocker remains the missing Codex
+  Chrome Extension in the active Chrome profile, so a plugin-driven visible
+  proof cannot be honestly claimed yet.
+- Run a visible launched-Aura Program DNA skill/model replay if host load allows
+  so the user-facing lane proves the same reconstruction capability, not only
+  the local proof runner.
+- Run the final non-soak live-runtime proof after the above remains stable.

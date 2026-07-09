@@ -171,6 +171,8 @@ def build_safe_boot_env(
     env["AURA_LOCAL_BACKEND"] = "mlx"
     env.setdefault("AURA_LOCAL_RUNTIME_SINGLETON", "1")
     env.setdefault("AURA_LOCAL_PARALLEL_SLOTS", "1")
+    env.setdefault("AURA_GOVERNANCE_MODE", "production")
+    env.setdefault("AURA_CONTRACTS_ENFORCE", "1")
     if mode == "desktop":
         env["AURA_SAFE_BOOT_DESKTOP"] = "0"
         env["AURA_DESKTOP_RESOURCE_GUARD"] = "1"

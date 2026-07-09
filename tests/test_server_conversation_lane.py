@@ -4066,6 +4066,9 @@ async def test_chat_desktop_objective_uses_capability_engine_without_agency_wrap
     assert calls[0]["context"]["route"] == "chat.desktop_objective"
     assert calls[0]["context"]["governance_route"] == "capability_engine_direct"
     assert calls[0]["context"]["desktop_task_owned_by"] == "chat.desktop_objective"
+    assert calls[0]["context"]["scoped_authority"] == (
+        "foreground_user_requested:chat.desktop_objective:desktop_task"
+    )
     assert calls[0]["context"]["foreground_request"] is True
     assert calls[0]["context"]["user_explicitly_authorized"] is True
     assert calls[0]["context"]["allow_heuristic_desktop_plan"] is True

@@ -12781,6 +12781,15 @@ async def _execute_governed_live_skill(
         context["foreground_request"] = True
         context["user_explicitly_authorized"] = True
         context["user_requested_action"] = True
+    if (
+        context.get("foreground_request")
+        and context.get("user_requested_action")
+        and context.get("user_explicitly_authorized")
+        and not context.get("scoped_authority")
+    ):
+        route_slug = re.sub(r"[^a-z0-9_.:-]+", "_", str(context.get("route") or "live_skill").lower())
+        skill_slug = re.sub(r"[^a-z0-9_.:-]+", "_", str(skill_name or "skill").lower())
+        context["scoped_authority"] = f"foreground_user_requested:{route_slug}:{skill_slug}"
     engine = ServiceContainer.get("capability_engine", default=None)
 
     async def _execute_capability(execution_context: dict[str, Any] | None = None) -> dict[str, Any]:
