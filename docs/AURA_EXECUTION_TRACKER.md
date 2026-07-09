@@ -8279,3 +8279,52 @@ Remaining non-soak work after this checkpoint:
   proof still cannot be honestly claimed.
 - Run the final consolidated non-soak live-runtime replay after visible web
   proof access is available or explicitly deferred by the user.
+
+## Checkpoint 2026-07-09-06: Final Non-Soak Live Runtime Replay
+
+Scope:
+
+- Ran the final consolidated non-soak desktop live proof against the clean
+  committed tree from checkpoint `2026-07-09-05`.
+- Verified boot, runtime health, conversation readiness, retained context,
+  foreground chat continuity, bounded chat soak, graceful shutdown, orphan
+  cleanup, and runtime stream cleanliness without adding new source changes.
+
+Verification:
+
+- `python tools/live_boot_proof.py --mode desktop --port 8033 --conversation-soak-turns 3 --boot-timeout 420 --out-dir artifacts/current/final_non_soak_live_runtime_20260709`
+  -> `LIVE PROOF PASSED`.
+  - Git commit under test:
+    `e7c2256b5a49dc4a1e95adf4518c441857006ae2`.
+  - Worktree dirty state in verdict: `false`.
+  - Boot health passed after `35s`.
+  - Required health probes passed for kernel, inference, memory, scheduler, and
+    tool governance.
+  - Conversation lane was ready on Cortex / 32B with recurrent depth active and
+    no readiness blockers.
+  - Peak RSS: `20375.6MB`.
+  - Capability inventory, identity, continuity, and `3` chat-soak turns passed.
+  - Shutdown was graceful, no orphans remained, and the port was freed.
+  - Runtime stream scan found no failure markers.
+  - Verdict artifact:
+    `artifacts/current/final_non_soak_live_runtime_20260709/live_proof_20260709_100412_verdict.json`.
+
+Current closeout estimate:
+
+- Configured non-soak local closeout is about **99.97%** complete by source,
+  focused proofs, refreshed Program DNA evidence, autonomous repair/RSI proof,
+  hardened desktop live proof, clean live Program DNA skill replay, and final
+  consolidated non-soak live runtime replay.
+- The remaining non-soak blocker is external to the repo runtime: visible
+  ChatGPT/Gemini proof through the active Chrome profile still requires the
+  Codex Chrome Extension to be installed/enabled in that profile before the
+  plugin-governed visible-browser proof can be honestly executed.
+
+Remaining non-soak work after this checkpoint:
+
+- Install/enable the Codex Chrome Extension in the active Chrome profile, then
+  rerun the visible 20-turn web-interlocutor proof with Aura reading,
+  responding, retaining, and reporting the conversation.
+- Optional after the browser extension is available: run the launched-Aura
+  visible surface replay again, with the web proof included, as the last
+  non-soak confidence pass before any long soak.
