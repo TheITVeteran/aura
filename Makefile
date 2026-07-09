@@ -1,4 +1,4 @@
-.PHONY: lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy demo-learning triage contract-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+.PHONY: update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy demo-learning triage contract-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
 
 
 PYTHON ?= python
@@ -138,6 +138,21 @@ test:
 release-manifest:
 	@echo "📋 Building release manifest..."
 	@$(PYTHON) tools/build_release_manifest.py
+
+update:
+	@echo "⬆️  Release train: boring update (autostash → ff-only pull → compile sanity)..."
+	@$(PYTHON) tools/release_train.py update
+
+update-live:
+	@echo "⬆️  Release train: update + relaunch the live instance..."
+	@$(PYTHON) tools/release_train.py update --smoke --relaunch
+
+rollback:
+	@echo "⏪ Release train: rollback to the last recorded good point..."
+	@$(PYTHON) tools/release_train.py rollback
+
+release-status:
+	@$(PYTHON) tools/release_train.py status
 
 # Single-process run (accumulates memory across ~7400 tests; the OS has
 # OOM-killed it at ~83% — kept only for debugging chunk-boundary issues).
