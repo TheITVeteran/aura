@@ -7,10 +7,19 @@ from core.utils.text_metrics import fuzzy_match_ratio
 _WORD_RE = re.compile(r"\b[a-z']+\b", re.IGNORECASE)
 _MEMORY_VERB_TARGETS = ("remember", "recall")
 
+# Legitimate high-frequency words the fuzzy matcher would otherwise mangle
+# into memory verbs. Live finding (July 8): "really" cleared the recall
+# threshold, so EVERY casual sentence containing "really" was normalized to
+# "recall" and pattern-routed toward memory_ops. Typos are not real words;
+# real words are never typos.
+_NEVER_REWRITE = frozenset({"really"})
+
 
 def _looks_like_memory_verb(word: str, target: str) -> bool:
     lowered = str(word or "").strip().lower()
     if not lowered:
+        return False
+    if lowered in _NEVER_REWRITE:
         return False
     if lowered == target:
         return True

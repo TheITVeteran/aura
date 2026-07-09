@@ -316,21 +316,28 @@ def _humanize_skill_name(name: str) -> str:
     return re.sub(r"\s+", " ", split_camel.replace("_", " ")).strip().lower()
 
 
+# Skill names that are also common conversational words: a bare mention must
+# never dispatch the tool ("the clock in the kitchen is five minutes fast"
+# dispatched the clock skill — July 8 overbreadth audit). These names keep
+# only the explicit-invocation form; their skill-specific patterns still
+# cover natural requests.
+_COMMON_WORD_SKILL_NAMES = frozenset(
+    {"clock", "listen", "speak", "curiosity", "personality", "memory", "notes", "timer"}
+)
+
+
 def _generic_skill_invocation_patterns(name: str) -> list[str]:
     variants = {
         str(name or "").strip().lower(),
         _humanize_skill_name(name),
     }
+    bare_name_is_safe = str(name or "").strip().lower() not in _COMMON_WORD_SKILL_NAMES
     patterns: list[str] = []
     for variant in sorted(part for part in variants if part):
         escaped = re.escape(variant).replace(r"\ ", r"\s+")
-        standalone = rf"(?<![\w-]){escaped}(?![\w-])"
-        patterns.extend(
-            [
-                standalone,
-                rf"(?:use|run|call|invoke)\s+{escaped}(?![\w-])",
-            ]
-        )
+        if bare_name_is_safe:
+            patterns.append(rf"(?<![\w-]){escaped}(?![\w-])")
+        patterns.append(rf"(?:use|run|call|invoke)\s+{escaped}(?![\w-])")
     return patterns
 
 
@@ -968,7 +975,10 @@ class CapabilityEngine(AuraBaseModule):
         patterns = {
             # ── Web / Search ──────────────────────────────────────────
             "web_search": [
-                r"search (?:for|the web|online|the internet)",
+                # noun-phrase mentions ("the search for a new apartment",
+                # "the news about the library") must not dispatch a browser —
+                # only ask/imperative shapes do (July 8 overbreadth audit).
+                r"(?<!the )(?<!a )search (?:for|the web|online|the internet)",
                 r"look up",
                 r"find out",
                 r"what is the price of",
@@ -976,7 +986,9 @@ class CapabilityEngine(AuraBaseModule):
                 r"search query",
                 r"find information",
                 r"what(?:'s| is) (?:the latest|happening|new)",
-                r"news about",
+                r"\b(?:what's|whats|any|latest|today's|current)\s+news\b",
+                r"(?:find|get|check|show)(?:\s+me)?\s+(?:the\s+)?(?:latest\s+)?news\b",
+                r"^news (?:about|on)\b",
                 r"current (?:events|price|status)",
                 r"research (?:about|on)",
             ],
