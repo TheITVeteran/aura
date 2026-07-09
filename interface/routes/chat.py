@@ -14730,7 +14730,9 @@ async def api_chat(
                             "memory_pressure": memory_snapshot.to_dict(),
                             "response_confidence": "guarded",
                         },
-                        status_code=503,
+                        # In-band for real users (the guard text IS the
+                        # answer); strict code for benchmarks only.
+                        status_code=503 if is_benchmark else 200,
                     )
         except _CHAT_RECOVERABLE_ERRORS as e:
             record_degradation('chat', e)
@@ -15134,7 +15136,12 @@ async def api_chat(
                         reply_source=response_path,
                     ),
                 },
-                status_code=503,
+                # A real user gets the honest fail-closed reply IN-BAND (200)
+                # so the UI renders it as a message; raw 503s here surfaced
+                # as bare "HTTP Error 503" to clients (both July 8 soaks).
+                # Benchmarks keep the strict status code — same contract as
+                # the foreground_busy path above.
+                status_code=503 if is_benchmark else 200,
             )
 
         async def _finalize_fastpath(reply_text: str, status: str = "ok"):

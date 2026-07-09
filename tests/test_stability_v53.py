@@ -592,3 +592,62 @@ class TestEndToEndResponsePath:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
+
+
+class TestProactiveWatchdogWarmupRace:
+    """The 20260708-postdoomfix soak storm, prevented: a WARMING lane is not
+    a dead lane. The watchdog used to declare the cortex dead every 45s pulse
+    during a legitimate 120-150s cold load and re-trigger recovery, restarting
+    the warmup forever under load."""
+
+    class _WarmingClient:
+        def __init__(self, *, warmup_in_flight=True, transition_age_s=30.0):
+            self._warmup_in_flight = warmup_in_flight
+            self._lane_transition_at = time.time() - transition_age_s
+
+        def is_alive(self):
+            return False  # cold-load worker: not alive yet, not dead either
+
+    def _make_gate(self, client):
+        from core.brain.inference_gate import InferenceGate
+
+        gate = InferenceGate.__new__(InferenceGate)
+        gate._mlx_client = client
+        gate._cortex_recovery_in_progress = False
+        gate._prewarm_task = None
+        gate._deferred_prewarm_task = None
+        gate._foreground_user_turn_active = lambda: False
+        gate._foreground_owner_active = lambda: False
+        gate.get_conversation_status = lambda: {"state": "warming"}
+        gate._recovery_calls = []
+
+        async def _record_recovery():
+            gate._recovery_calls.append(time.time())
+
+        gate._ensure_cortex_recovery = _record_recovery
+        return gate
+
+    def test_warming_lane_within_deadline_is_not_dead(self):
+        client = self._WarmingClient(warmup_in_flight=True, transition_age_s=30.0)
+        gate = self._make_gate(client)
+        asyncio.run(gate._proactive_cortex_watchdog())
+        assert gate._recovery_calls == [], (
+            "a warming lane inside its 300s deadline must never trigger recovery"
+        )
+
+    def test_warming_without_flag_but_fresh_transition_still_protected(self):
+        # warmup flag already cleared (e.g. between attempts) but the lane
+        # transitioned recently — still a warmup window, not a corpse.
+        client = self._WarmingClient(warmup_in_flight=False, transition_age_s=120.0)
+        gate = self._make_gate(client)
+        asyncio.run(gate._proactive_cortex_watchdog())
+        assert gate._recovery_calls == []
+
+    def test_warming_past_deadline_without_warmup_is_dead(self):
+        client = self._WarmingClient(warmup_in_flight=False, transition_age_s=400.0)
+        gate = self._make_gate(client)
+        asyncio.run(gate._proactive_cortex_watchdog())
+        assert len(gate._recovery_calls) == 1, (
+            "a lane stuck 'warming' past the deadline with no warmup in flight "
+            "is genuinely dead and must recover"
+        )

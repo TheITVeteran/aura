@@ -3121,7 +3121,10 @@ async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
         None,
     )
 
-    assert response.status_code == 503
+    # In-band for real users: the guard text IS the answer (raw 503s
+    # surfaced as bare HTTP errors in both July 8 soaks). Benchmarks
+    # (X-Aura-Benchmark) still get the strict 503.
+    assert response.status_code == 200
     assert b"memory_pressure_guard" in response.body
     assert b"memory_pressure" in response.body
     assert calls == []
@@ -3206,7 +3209,8 @@ async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognit
         None,
     )
 
-    assert response.status_code == 503
+    # In-band for real users; strict 503 stays benchmark-only.
+    assert response.status_code == 200
     assert b"memory_pressure_guard" in response.body
     assert b"process_tree_rss" in response.body
     assert calls == []
@@ -6047,7 +6051,9 @@ async def test_api_chat_desktop_required_fails_closed_on_final_degraded_reply(mo
         None,
     )
 
-    assert response.status_code == 503
+    # Fail-closed reply delivers IN-BAND (200): the honest refusal IS the
+    # message; raw 503s here reached real clients as bare HTTP errors.
+    assert response.status_code == 200
     assert b"desktop_response_quality_failed" in response.body
     assert b"required_desktop_reply_remained_degraded" in response.body
     assert b"nail this pitch" not in response.body
@@ -6148,7 +6154,8 @@ async def test_api_chat_desktop_required_blocks_unfounded_voice_intrusion(monkey
         None,
     )
 
-    assert response.status_code == 503
+    # In-band fail-closed delivery (see sibling test above).
+    assert response.status_code == 200
     assert b"desktop_response_quality_failed" in response.body
     assert b"voices" not in response.body
     assert b"whispering" not in response.body

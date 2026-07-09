@@ -1167,9 +1167,32 @@ class InferenceGate:
         lane = self.get_conversation_status()
         lane_state = str(lane.get("state", "") or "").lower()
 
-        # 1. Detect dead cortex and trigger recovery
+        # 1. Detect dead cortex and trigger recovery.
+        #
+        # A WARMING lane is not a dead lane. During a 32B cold load the
+        # worker legitimately fails is_alive() for 120-150s while the state
+        # sits in warming/spawning/handshaking — and a warmup is not flagged
+        # as "recovery in progress". The 20260708-postdoomfix soak showed
+        # what happens without this guard: the watchdog declared the warming
+        # lane dead every 45s maintenance pulse and re-triggered recovery,
+        # restarting the warmup before it could ever finish (turns pinned at
+        # 216s+, SLO exhausted, runtime eventually died). The lane gets the
+        # same 300s deadline section 2 already grants a stuck warmup; only
+        # past it does a "warming" verdict count as dead.
         if hasattr(self._mlx_client, "is_alive") and not self._mlx_client.is_alive():
-            if lane_state not in ("cold", "failed") and not self._cortex_recovery_in_progress:
+            warmup_active = bool(getattr(self._mlx_client, "_warmup_in_flight", False))
+            transition_at = float(getattr(self._mlx_client, "_lane_transition_at", 0.0) or 0.0)
+            warming_age_s = (time.time() - transition_at) if transition_at > 0 else 0.0
+            warmup_underway = lane_state in ("warming", "spawning", "handshaking", "recovering") and (
+                warmup_active or warming_age_s <= 300.0
+            )
+            if warmup_underway:
+                logger.debug(
+                    "[WATCHDOG] Cortex not alive but lane is %s (%.0fs, warmup_in_flight=%s) — "
+                    "letting the warmup finish.",
+                    lane_state, warming_age_s, warmup_active,
+                )
+            elif lane_state not in ("cold", "failed") and not self._cortex_recovery_in_progress:
                 logger.warning(
                     "🔍 [WATCHDOG] Cortex is dead (state=%s) but no recovery in progress. Triggering.",
                     lane_state,
