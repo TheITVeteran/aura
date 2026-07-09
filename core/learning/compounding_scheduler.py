@@ -320,13 +320,9 @@ class CompoundingScheduler:
     async def _activate_live(self, model_path: str) -> None:
         """Hot-swap the promoted model into live inference; manifest covers reboot."""
         try:
-            from core.container import ServiceContainer
+            from core.runtime.service_access import resolve_mlx_client
 
-            mlx_client = ServiceContainer.get("mlx_client", default=None)
-            if mlx_client is None:
-                from core.brain.llm.mlx_client import get_mlx_client
-
-                mlx_client = get_mlx_client()
+            mlx_client = resolve_mlx_client(default=None)
             reload_artifact = getattr(mlx_client, "reload_model_artifact", None)
             if callable(reload_artifact):
                 await reload_artifact(model_path)

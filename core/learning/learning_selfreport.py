@@ -93,9 +93,9 @@ class LearningSelfReport:
 
     def _weight_cycle_lines(self) -> list[str]:
         try:
-            from core.container import ServiceContainer
+            from core.runtime.service_access import resolve_weight_compounding
 
-            scheduler = ServiceContainer.get("weight_compounding", default=None)
+            scheduler = resolve_weight_compounding(default=None)
             status = scheduler.get_status() if scheduler is not None else {}
         except _RECOVERABLE:
             status = {}

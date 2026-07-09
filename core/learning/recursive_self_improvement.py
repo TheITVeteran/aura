@@ -556,9 +556,9 @@ class RecursiveSelfImprovementLoop:
             # only for injected test doubles (gauntlet), which validate the
             # plumbing without real training.
             if self._is_real_live_learner():
-                from core.container import ServiceContainer
+                from core.runtime.service_access import resolve_weight_compounding
 
-                scheduler = ServiceContainer.get("weight_compounding", default=None)
+                scheduler = resolve_weight_compounding(default=None)
                 if scheduler is not None and hasattr(scheduler, "run_cycle_now"):
                     receipt = await scheduler.run_cycle_now(reason="rsi_weight_update")
                     return receipt.get("status") == "promoted"

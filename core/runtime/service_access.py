@@ -278,3 +278,63 @@ def resolve_epistemic_humility(*, default: Any = None) -> Any:
 
 def resolve_cognitive_engine(*, default: Any = None) -> Any:
     return optional_service("cognitive_engine", default=default)
+
+
+# ── the remaining core seams (July critique: 'cross-wired through
+#    ServiceContainer.get() rather than clean interfaces') ──────────────────
+#
+# These named resolvers are the front door for the load-bearing services.
+# New code resolves through them; tests/test_service_access_ratchet.py caps
+# raw ServiceContainer.get() usage so the cross-wiring only shrinks.
+
+def resolve_will(*, default: Any = None) -> Any:
+    will = optional_service("will", default=None)
+    if will is not None:
+        return will
+    try:
+        from core.will import get_will
+
+        return get_will()
+    except (ImportError, AttributeError, RuntimeError):
+        return default
+
+
+def resolve_inference_gate(*, default: Any = None) -> Any:
+    return optional_service("inference_gate", default=default)
+
+
+def resolve_skill_router(*, default: Any = None) -> Any:
+    """The tool-execution seam (CapabilityEngine)."""
+    return optional_service("skill_router", "capability_engine", default=default)
+
+
+def resolve_mlx_client(*, default: Any = None) -> Any:
+    client = optional_service("mlx_client", default=None)
+    if client is not None:
+        return client
+    try:
+        from core.brain.llm.mlx_client import get_mlx_client
+
+        return get_mlx_client()
+    except (ImportError, AttributeError, RuntimeError):
+        return default
+
+
+def resolve_weight_compounding(*, default: Any = None) -> Any:
+    return optional_service("weight_compounding", default=default)
+
+
+def resolve_selfplay_flywheel(*, default: Any = None) -> Any:
+    return optional_service("selfplay_flywheel", default=default)
+
+
+def resolve_incident_narrator(*, default: Any = None) -> Any:
+    narrator = optional_service("incident_narrator", default=None)
+    if narrator is not None:
+        return narrator
+    try:
+        from core.observability.incident_narrator import get_incident_narrator
+
+        return get_incident_narrator()
+    except (ImportError, AttributeError, RuntimeError):
+        return default

@@ -140,13 +140,13 @@ class SelfPlayFlywheel:
     # ── the burst ────────────────────────────────────────────────────────────
 
     async def _burst(self) -> dict[str, Any]:
-        from core.container import ServiceContainer
         from core.learning.verifiable_preference_harness import (
             Attempt,
             get_verifiable_preference_harness,
         )
+        from core.runtime.service_access import resolve_llm_router
 
-        llm_router = ServiceContainer.get("llm_router", default=None)
+        llm_router = resolve_llm_router(default=None)
         if llm_router is None or not hasattr(llm_router, "think"):
             record_degradation(
                 SERVICE_NAME,
