@@ -121,20 +121,36 @@ class GatewayRecordIndex:
         files.sort(reverse=True)
         return files
 
+    # GIL discipline for the refresher thread: a cold pass used to parse up
+    # to MAX_ENTRIES JSON files back-to-back — a pure-Python burst that
+    # monopolizes the GIL and lags the event loop (top stall fingerprint in
+    # the Jul 8 triage: 73 co-occurrences in 3 days). Parse in bounded slices
+    # with explicit yields; the cache carries across passes, and searches
+    # serve from whatever is built so far (the module's own contract).
+    MAX_PARSE_PER_PASS = 300
+    PARSE_YIELD_EVERY = 25
+    PARSE_YIELD_S = 0.002
+
     def _do_refresh(self) -> None:
         try:
             files = self._list_record_files()[: self.MAX_ENTRIES]
             previous = self._entries
             fresh: dict[str, GatewayRecordEntry] = {}
+            parsed = 0
             for mtime, path in files:
                 key = str(path)
                 cached = previous.get(key)
                 if cached is not None and cached.mtime == mtime:
                     fresh[key] = cached
                     continue
+                if parsed >= self.MAX_PARSE_PER_PASS:
+                    continue  # keep cached view for the rest; next pass resumes
                 entry = _parse_record(path, mtime)
+                parsed += 1
                 if entry is not None:
                     fresh[key] = entry
+                if parsed % self.PARSE_YIELD_EVERY == 0:
+                    time.sleep(self.PARSE_YIELD_S)  # hand the GIL to the loop
             with self._swap_lock:
                 self._entries = fresh
                 self._built = True

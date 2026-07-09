@@ -738,3 +738,36 @@ async def test_memory_ops_archival_insert_calls_gateway(monkeypatch):
     assert gateway.requests[0].content == "My verification codename is glass orchard."
     assert gateway.requests[0].metadata["source"] == "archival_insert"
     assert "provenance" in gateway.requests[0].metadata
+
+
+def test_gateway_index_refresh_parses_in_bounded_passes(tmp_path, monkeypatch):
+    """GIL discipline: a cold refresh parses at most MAX_PARSE_PER_PASS files
+    per pass (top Jul 8 stall fingerprint was this refresher monopolizing the
+    GIL); the cache carries across passes until the view is complete."""
+    import json as _json
+
+    from core.memory.gateway_record_index import GatewayRecordIndex
+
+    root = tmp_path / "records"
+    sub = root / "bucket"
+    sub.mkdir(parents=True)
+    total = 30
+    for i in range(total):
+        (sub / f"r{i:03d}.json").write_text(
+            _json.dumps({"payload": {"content": f"record {i}", "metadata": {}}}),
+            encoding="utf-8",
+        )
+
+    index = GatewayRecordIndex(root)
+    monkeypatch.setattr(GatewayRecordIndex, "MAX_PARSE_PER_PASS", 10)
+    monkeypatch.setattr(GatewayRecordIndex, "PARSE_YIELD_S", 0.0)
+
+    index._refresh_running.acquire()
+    index._do_refresh()
+    first_pass = len(index._entries)
+    assert first_pass == 10, "cold pass must stop at the parse budget"
+
+    for _ in range(3):
+        index._refresh_running.acquire()
+        index._do_refresh()
+    assert len(index._entries) == total, "later passes complete the view via the cache"
