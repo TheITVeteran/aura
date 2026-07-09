@@ -48,7 +48,7 @@ DEPENDENCY_MANIFESTS = (
 
 CORE_DOCUMENTS = (
     "docs/ARCHITECTURE_MAP.md",
-    "CLOSEOUT.md",
+    "docs/evidence/CLOSEOUT.md",
 )
 
 GATE_COMMANDS = (

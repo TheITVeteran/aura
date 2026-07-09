@@ -107,7 +107,7 @@ See `MODEL_CARD.md` for detailed model information.
 
 ## Evaluation
 
-See `EVALUATION_REPORT.md` for detailed evaluation results including:
+See `docs/evidence/EVALUATION_REPORT.md` for detailed evaluation results including:
 - AGI proof battery results
 - Agency emergence testing
 - Behavioral proof standard results

@@ -2714,7 +2714,7 @@ format-instruction/follow-up tail.
 - `docs/GENERAL_ENVIRONMENT_AUTONOMY.md`
 - `docs/AURA_TEST_COMMANDS.md`
 - `docs/AURA_EXECUTION_TRACKER.md`
-- `CHALLENGE.md`
+- `docs/evidence/CHALLENGE.md`
 
 ### Latest Commands Run
 
@@ -2803,7 +2803,7 @@ or learning transfer.
 ### Docs
 
 - `docs/GENERAL_ENVIRONMENT_AUTONOMY.md` (new)
-- `CHALLENGE.md`
+- `docs/evidence/CHALLENGE.md`
 - `docs/AURA_TEST_COMMANDS.md`
 - `docs/AURA_EXECUTION_PLAN.md`
 - `docs/AURA_EXECUTION_TRACKER.md`
