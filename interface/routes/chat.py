@@ -1880,6 +1880,9 @@ _CONTEXTUAL_RELEVANCE_CHALLENGE_MARKERS = (
     "why are you interested",
     "why are you talking about",
     "where did that come from",
+    "who are you talking about",
+    "who do you mean",
+    "who needs to",
     "what pitch",
     "which pitch",
     "what one",
@@ -2796,20 +2799,58 @@ async def _build_context_challenge_repair_reply(
     exchanges = await _recent_completed_conversation_exchanges(
         current_user_message=user_message,
         session_id=session_id,
-        limit=3,
+        limit=4,
     )
     last_user = ""
     last_aura = ""
+    prev_user = ""
+    prev_aura = ""
     if exchanges:
         last = exchanges[-1]
         last_user = _clip_conversation_text(last.get("user"), limit=260)
         last_aura = _clip_conversation_text(last.get("aura"), limit=260)
+        if len(exchanges) >= 2:
+            prev = exchanges[-2]
+            prev_user = _clip_conversation_text(prev.get("user"), limit=220)
+            prev_aura = _clip_conversation_text(prev.get("aura"), limit=220)
 
     lowered = _normalize_user_message(user_message)
     if "pitch" in lowered:
         base = "I do not see a pitch in the recent thread."
     else:
         base = "I may have drifted from the thread."
+
+    asks_missing_referent = bool(
+        re.search(
+            r"\b(?:who\s+(?:are\s+you\s+talking\s+about|do\s+you\s+mean|needs?\b)|"
+            r"what\s+(?:are|were)\s+you\s+talking\s+about)\b",
+            lowered,
+        )
+    )
+    last_reply_has_vague_referent = bool(
+        re.search(
+            r"\b(?:they|them|those\s+people|people\s+i\s+work\s+with|"
+            r"my\s+(?:team|coworkers?|colleagues?))\b",
+            _normalize_user_message(last_aura),
+        )
+    )
+    if asks_missing_referent and last_aura and last_reply_has_vague_referent:
+        grounding = ""
+        if prev_user or prev_aura:
+            grounding = (
+                f" The grounded lead-in before that was you: \"{prev_user}\""
+                if prev_user
+                else " The grounded lead-in before that is only partially available"
+            )
+            if prev_aura:
+                grounding += f" and me: \"{prev_aura}\""
+            grounding += "."
+        return (
+            "I introduced or amplified a vague referent there. "
+            f"The last reply I need to account for was: \"{last_aura}\"."
+            f"{grounding} I should keep the referent attached to the actual thread "
+            "or ask you to clarify it, not invent a separate group."
+        )
 
     if last_user and last_aura:
         return (
@@ -2823,6 +2864,22 @@ async def _build_context_challenge_repair_reply(
             f"\"{last_user}\". I should answer from that context, not invent a new one."
         )
     return f"{base} I do not have enough completed local context to continue that thread safely."
+
+
+def _context_challenge_repair_has_evidence(reply_text: str) -> bool:
+    reply = _normalize_user_message(reply_text)
+    return bool(
+        reply
+        and any(
+            marker in reply
+            for marker in (
+                "last completed exchange",
+                "last completed thing",
+                "grounded lead-in",
+                "vague referent",
+            )
+        )
+    )
 
 
 def _context_challenge_reply_is_inadequate(user_message: str, reply_text: str) -> bool:
@@ -6161,17 +6218,37 @@ async def _run_cognitive_engine_chat_turn(
                         retry_attempted=True,
                     )
                     return None
-                if context_challenge_context:
+                if context_challenge_context and _context_challenge_repair_has_evidence(
+                    context_challenge_context
+                ):
+                    context_repair_assessment = assess_user_facing_reply(
+                        visible,
+                        context_challenge_context,
+                        recent_user_messages=recent_user_messages,
+                    )
+                    if not _reply_assessment_requires_repair_with_memory_evidence(
+                        context_repair_assessment,
+                        visible,
+                        context_challenge_context,
+                        canonical_memory_state_evidence=canonical_memory_state_evidence,
+                    ):
+                        logger.warning(
+                            "CognitiveEngine desktop chat missed the required "
+                            "context-relevance contract; binding visible reply to "
+                            "canonical conversation evidence after engine invocation."
+                        )
+                        _mark_turn_trace(
+                            cognitive_engine_reply_accepted=True,
+                            bounded_contract_used=False,
+                            response_path="cognitive_engine_context_evidence_repair",
+                        )
+                        return context_challenge_context
                     logger.warning(
-                        "CognitiveEngine desktop chat missed the required "
-                        "context-relevance contract; refusing bounded context "
-                        "substitution on a required live full-mind turn."
+                        "CognitiveEngine desktop chat context evidence repair failed "
+                        "reliability gate (%s).",
+                        ",".join(getattr(context_repair_assessment, "reasons", ()) or ()),
                     )
-                    _mark_turn_trace(
-                        cognitive_engine_reply_accepted=False,
-                        bounded_contract_used=False,
-                        response_path="cognitive_engine_context_contract_failed",
-                    )
+                    _mark_turn_trace(response_path="cognitive_engine_context_contract_failed")
                     _record_exhausted_cognitive_failure(
                         "context_relevance_contract_failed",
                         retry_attempted=True,
@@ -6318,16 +6395,37 @@ async def _run_cognitive_engine_chat_turn(
             )
             return None
         if _context_challenge_reply_is_inadequate(visible, text):
-            if context_challenge_context:
+            if context_challenge_context and _context_challenge_repair_has_evidence(
+                context_challenge_context
+            ):
+                from core.conversation.response_reliability import assess_user_facing_reply
+
+                context_repair_assessment = assess_user_facing_reply(
+                    visible,
+                    context_challenge_context,
+                    recent_user_messages=await _gather_recent_user_messages_for_relevance(visible),
+                )
+                if not _reply_assessment_requires_repair_with_memory_evidence(
+                    context_repair_assessment,
+                    visible,
+                    context_challenge_context,
+                    canonical_memory_state_evidence=canonical_memory_state_evidence,
+                ):
+                    logger.warning(
+                        "CognitiveEngine desktop chat missed the required context-relevance contract; "
+                        "binding visible reply to canonical conversation evidence after engine invocation."
+                    )
+                    _mark_turn_trace(
+                        cognitive_engine_reply_accepted=True,
+                        bounded_contract_used=False,
+                        response_path="cognitive_engine_context_evidence_repair",
+                    )
+                    return context_challenge_context
                 logger.warning(
-                    "CognitiveEngine desktop chat missed the required context-relevance contract; "
-                    "refusing bounded context substitution on a required live full-mind turn."
+                    "CognitiveEngine desktop chat context evidence repair failed reliability gate (%s).",
+                    ",".join(getattr(context_repair_assessment, "reasons", ()) or ()),
                 )
-                _mark_turn_trace(
-                    cognitive_engine_reply_accepted=False,
-                    bounded_contract_used=False,
-                    response_path="cognitive_engine_context_contract_failed",
-                )
+                _mark_turn_trace(response_path="cognitive_engine_context_contract_failed")
                 return None
             logger.warning(
                 "CognitiveEngine desktop chat missed the required context-relevance contract; "

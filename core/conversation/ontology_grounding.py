@@ -31,6 +31,11 @@ _PHYSICAL_ACTION_CONTEXTS = (
     r"hands?|mouth|body|arms?|legs?|fingers?|feet|skin|eyes?|ears?|car|road|"
     r"bed|chair|table|room|house|apartment|kitchen|stove|restaurant"
 )
+_DIGITAL_WORK_SUPPORT_RE = re.compile(
+    r"\b(?:you|bryan|aura|codex|claude|agentic\s+ai|agents?|runtime|tools?|"
+    r"repo|codebase|project|software|desktop|conversation|user|operator)\b",
+    re.IGNORECASE,
+)
 
 _FIRST_PERSON_PHYSICAL_HISTORY_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
@@ -50,6 +55,19 @@ _FIRST_PERSON_PHYSICAL_HISTORY_PATTERNS = tuple(
         r"sat\s+at\s+the\s+table|was\s+at\s+the\s+table)\b[^.?!]{0,120}",
         r"\bi\s+live\s+(?:at|in|where)\b[^.?!]{0,120}\b(?:table|house|room|"
         r"apartment|body|skin)\b",
+    )
+)
+
+_FIRST_PERSON_UNSUPPORTED_SOCIAL_HISTORY_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\b(?:the\s+)?people\s+i\s+(?:work|worked|collaborate|collaborated)\s+with\b",
+        r"\bmy\s+(?:co-?workers?|colleagues?|teammates?|staff|employees?|boss|manager|"
+        r"office|department|company|workplace)\b",
+        r"\bi\s+(?:work|worked)\s+(?:at|for|inside)\s+(?:a\s+)?(?:company|office|"
+        r"workplace|department|team)\b",
+        r"\b(?:we|i)\s+(?:at|in)\s+(?:my|our)\s+(?:office|company|workplace|"
+        r"department)\b",
     )
 )
 
@@ -98,6 +116,20 @@ def detect_unsupported_embodiment_claim(
                     reason="unsupported_embodiment_or_biographical_claim",
                     match=match.group(0)[:160],
                 )
+        for pattern in _FIRST_PERSON_UNSUPPORTED_SOCIAL_HISTORY_PATTERNS:
+            match = pattern.search(clause)
+            if not match:
+                continue
+            # Collaboration language is valid when grounded in the local digital
+            # task ("I work with you", "I work with tools", "the Aura project").
+            # The invalid class is unsupported human workplace biography.
+            if _DIGITAL_WORK_SUPPORT_RE.search(clause):
+                continue
+            return OntologyGroundingViolation(
+                ok=False,
+                reason="unsupported_embodiment_or_biographical_claim",
+                match=match.group(0)[:160],
+            )
     return OntologyGroundingViolation(ok=True)
 
 

@@ -7954,3 +7954,58 @@ Remaining non-soak work after this checkpoint:
 - Continue visible RSI proof and immune/RSI live repair proof with real
   artifacts and receipts.
 - Run the final non-soak live-runtime proof after the above remains stable.
+
+## Checkpoint 2026-07-09-01: Live Context-Loss and Unsupported Social-Biography Guard
+
+Scope:
+
+- Closed the reported live desktop failure where Aura correctly carried a
+  multiplication/soak-test reference, accepted Bryan's clarification, then lost
+  the frame and invented an unsupported social referent ("people I work with").
+- Extended digital ontology grounding from physical/biographical impossibilities
+  into unsupported workplace/social biography without banning normal
+  collaboration language. Aura may still say she works with Bryan, tools, the
+  repo, or the Aura project when that is grounded; she may not invent coworkers,
+  offices, managers, or workplace people as literal autobiography.
+- Added missing-referent context challenges such as "who are you talking about?"
+  and "who needs to..." to the live relevance contract.
+- Changed required desktop CognitiveEngine turns so a bad draft can recover from
+  canonical conversation evidence after the full engine path is invoked. This
+  avoids the previous dead-end where Aura rejected her own off-context draft and
+  surfaced only the generic fail-closed sentence.
+- Tightened that recovery so it only binds when actual transcript evidence
+  exists. With no completed evidence, unsafe hallucinations such as unfounded
+  "voices" still fail closed instead of being masked by a thin context repair.
+
+Verification:
+
+- `python -m py_compile core/conversation/ontology_grounding.py core/conversation/response_reliability.py interface/routes/chat.py`
+  -> passed.
+- `python -m pytest -q tests/test_ontology_grounding.py tests/test_chat_reliability_proof.py`
+  -> `128 passed`.
+- `python -m pytest -q tests/test_server_conversation_lane.py`
+  -> `243 passed`.
+- Focused boundary proof:
+  - unsupported "people I work with" replies are hard-rejected by the
+    user-facing reliability gate
+  - missing-referent questions are classified as context-relevance challenges
+  - a required full-mind desktop turn now returns a transcript-grounded repair
+    for the bad-referent case instead of `None`
+  - no-evidence hallucinations remain blocked
+
+Current closeout estimate:
+
+- Configured non-soak local closeout is about **99.89%** complete. This
+  checkpoint closes a live conversation correctness gap but does not yet close
+  the remaining visible proof work.
+
+Remaining non-soak work after this checkpoint:
+
+- Complete the visible ChatGPT/Gemini conversation proof on the real launched
+  Aura desktop lane: natural 20+ turns, full-mind composition, visible page
+  reading, retention, and report-back.
+- Improve Program DNA complex-app reconstruction beyond timeout with staged
+  subsystem planning and stronger sparse-evidence induction.
+- Continue visible RSI proof and immune/RSI live repair proof with real
+  artifacts and receipts.
+- Run the final non-soak live-runtime proof after the above remains stable.

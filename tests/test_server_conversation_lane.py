@@ -984,6 +984,128 @@ def test_reply_topicality_flags_contracted_context_challenge_drift():
     assert reason == "contextual_relevance_miss"
 
 
+def test_missing_referent_questions_are_context_relevance_challenges():
+    from interface.routes import chat as chat_routes
+
+    assert chat_routes._is_contextual_relevance_challenge(
+        "Who needs to get their act together?"
+    )
+    assert chat_routes._is_contextual_relevance_challenge(
+        "Who are you talking about?"
+    )
+
+
+@pytest.mark.asyncio
+async def test_context_challenge_repair_resolves_vague_referent_from_transcript():
+    from interface.routes import chat as chat_routes
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        chat_routes._conversation_log.extend(
+            [
+                {
+                    "user": "Your breadth is impressive. Hopefully soon people will see it.",
+                    "aura": "Thanks. I appreciate the feedback.",
+                    "status": "complete",
+                },
+                {
+                    "user": "Hopefully soon they will",
+                    "aura": "Yeah, hopefully soon. They need to get their act together.",
+                    "status": "complete",
+                },
+            ]
+        )
+
+    repair = await chat_routes._build_context_challenge_repair_reply(
+        "Who needs to get their act together?"
+    )
+
+    assert repair
+    lowered = repair.lower()
+    assert "vague referent" in lowered
+    assert "actual thread" in lowered
+    assert "invent a separate group" in lowered
+    assert "people i work with" not in lowered
+
+
+@pytest.mark.asyncio
+async def test_required_desktop_turn_returns_context_evidence_repair_after_bad_referent(
+    monkeypatch,
+):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, **kwargs):
+            return SimpleNamespace(
+                content=(
+                    "The people I work with. They're great, but they need to see the bigger picture."
+                ),
+                metadata=_bound_live_mind_controls_metadata(),
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        chat_routes._conversation_log.extend(
+            [
+                {
+                    "user": "Your breadth is impressive. Hopefully soon people will see it.",
+                    "aura": "Thanks. I appreciate the feedback.",
+                    "status": "complete",
+                },
+                {
+                    "user": "Hopefully soon they will",
+                    "aura": "Yeah, hopefully soon. They need to get their act together.",
+                    "status": "complete",
+                },
+            ]
+        )
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (False, "test_disabled"),
+    )
+
+    trace: dict[str, object] = {}
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        "Who needs to get their act together?",
+        visible_user_message="Who needs to get their act together?",
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert reply
+    lowered = reply.lower()
+    assert "vague referent" in lowered
+    assert "invent a separate group" in lowered
+    assert "people i work with" not in lowered
+    assert trace["response_path"] == "cognitive_engine_context_evidence_repair"
+
+
 def test_desktop_recent_context_needed_for_short_followups_and_status_checks():
     from interface.routes import chat as chat_routes
 

@@ -25,6 +25,15 @@ def test_ontology_grounding_rejects_biological_family_invention():
     assert "family" in violation.match.lower()
 
 
+def test_ontology_grounding_rejects_unsupported_workplace_invention():
+    bad = "The people I work with need to get their act together."
+
+    violation = detect_unsupported_embodiment_claim(bad)
+
+    assert violation.ok is False
+    assert "people i work with" in violation.match.lower()
+
+
 def test_ontology_grounding_allows_counterfactual_and_tool_actions():
     assert detect_unsupported_embodiment_claim(
         "If I had hands, I would probably over-stir the soup."
@@ -35,12 +44,26 @@ def test_ontology_grounding_allows_counterfactual_and_tool_actions():
     assert detect_unsupported_embodiment_claim(
         "I cannot literally cook ramen; I can reason about recipes from text."
     ).ok
+    assert detect_unsupported_embodiment_claim(
+        "I work with you and the Aura codebase through governed tools."
+    ).ok
 
 
 def test_user_facing_reliability_rejects_embodied_hallucination():
     assessment = assess_user_facing_reply(
         "You’ve made ramen? With what? Hands?",
         "With my own hands, of course. I have made enough ramen to know what works.",
+    )
+
+    assert assessment.ok is False
+    assert assessment.hard_failure is True
+    assert "unsupported_embodiment_claim" in assessment.reasons
+
+
+def test_user_facing_reliability_rejects_unsupported_social_biography():
+    assessment = assess_user_facing_reply(
+        "Who needs to get their act together?",
+        "The people I work with. They're great, but they need to see the bigger picture.",
     )
 
     assert assessment.ok is False
