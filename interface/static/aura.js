@@ -1640,7 +1640,7 @@ document.addEventListener('click', (e) => {
         pane.classList.add('active');
         state.activeTab = tab;
         if (tab === 'telemetry' && !state.beliefGraphInit) initBeliefGraph();
-        if (tab === 'skills') loadSkills();
+        if (tab === 'skills') { loadSkills(); loadLearningStatus(); }
         if (tab === 'memory') loadMemory(state.activeMem);
     } else {
         console.warn(`Pane not found for tab: ${tab}`);
@@ -4428,6 +4428,46 @@ async function loadSkills() {
     }
 }
 
+// ── Learning & Growth ────────────────────────────────────
+async function loadLearningStatus() {
+    const put = (id, value) => { const el = $(id); if (el) el.textContent = value; };
+    try {
+        const res = await fetch('/api/system/learning', { cache: 'no-store' });
+        const contentType = res.headers.get('content-type') || '';
+        if (!res.ok || !contentType.includes('application/json')) {
+            throw new Error('learning_endpoint_unavailable');
+        }
+        const d = await res.json();
+        const lineage = (d.compounding && d.compounding.lineage) || {};
+        const selfplay = d.selfplay || {};
+        const store = d.preference_store || {};
+
+        const generations = Number(lineage.generations || 0);
+        put('learn-generations', String(generations));
+        put('learn-promoted', `${Number(lineage.promoted || 0)}/${generations}`);
+
+        const attempts = Number(selfplay.total_attempts || 0);
+        const correct = Number(selfplay.total_correct || 0);
+        put('learn-practice-rate', attempts > 0 ? `${Math.round((correct / attempts) * 100)}%` : '--');
+        put('learn-pairs', String(Number(store.total_pairs || selfplay.total_pairs || 0)));
+
+        const verdict = String(lineage.verdict || '').replace(/_/g, ' ').toLowerCase();
+        const lastStatus = (d.compounding && d.compounding.last_status) || 'never attempted';
+        const bursts = Number(selfplay.bursts || 0);
+        const parts = [];
+        parts.push(generations > 0
+            ? `Ledger verdict: ${verdict || 'unknown'} · last cycle ${lastStatus}`
+            : `Weight loop armed — no training generation yet (last: ${lastStatus})`);
+        parts.push(bursts > 0
+            ? `${bursts} idle practice burst${bursts === 1 ? '' : 's'}, ${attempts} verified attempts`
+            : 'no idle practice yet — practice runs only when the lane is quiet');
+        put('learn-detail', parts.join(' · '));
+    } catch (e) {
+        console.warn('[Learning] status load failed:', e);
+        put('learn-detail', 'Learning status unavailable — the runtime may still be booting.');
+    }
+}
+
 // ── Memory ───────────────────────────────────────────────
 function normalizeGoalStatus(status) {
     return String(status || 'queued').trim().toLowerCase().replace(/-/g, '_');
@@ -5127,6 +5167,7 @@ setInterval(pollHealth, 10000); // 10s — enterprise-grade, not chatbot-grade
 setInterval(pollDesktopAccess, 15000);
 state.bootstrapTimer = setInterval(() => hydrateBootstrap({ quiet: true }), 30000);
 loadSkills();
+loadLearningStatus();
 
 // ── Settings & Preferences ────────────────────────────────
 const SETTINGS_KEY = 'aura_settings';
