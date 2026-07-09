@@ -478,6 +478,25 @@ class StallWatchdog(threading.Thread):
                 or lane_state in {"spawning", "handshaking", "warming", "recovering"}
             )
             if foreground_active:
+                # BOUNDED suppression. During the Jul 9 48%-wedge the lane
+                # sat perpetually 'warming', so every 5-10s loop stall was
+                # suppressed and the forensic record went silent for the
+                # exact window that mattered (hours-old last dump while the
+                # health contract failed on 8s lags). A lane continuously
+                # busy past the warmup deadline is a wedge, not a warmup —
+                # stalls dump again.
+                now = time.time()
+                since = float(getattr(self, "_foreground_suppression_started_at", 0.0) or 0.0)
+                if since <= 0.0:
+                    since = now
+                    self._foreground_suppression_started_at = now
+                if (now - since) > 300.0:
+                    logger.warning(
+                        "StallWatchdog: foreground lane continuously busy %.0fs — "
+                        "suppression deadline passed, resuming stall dumps.",
+                        now - since,
+                    )
+                    return False
                 self._log_suppression(
                     "_last_foreground_suppression_log_at",
                     "StallWatchdog: suppressing %.1fs foreground inference stall "
@@ -489,6 +508,9 @@ class StallWatchdog(threading.Thread):
                     lane.get("foreground_owner", ""),
                 )
                 return True
+            # Lane went quiet — reset the continuous-busy anchor.
+            if getattr(self, "_foreground_suppression_started_at", 0.0):
+                self._foreground_suppression_started_at = 0.0
         return False
 
     _STALL_DUMP_KEEP = 500

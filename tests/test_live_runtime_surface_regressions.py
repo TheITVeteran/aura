@@ -2855,3 +2855,34 @@ def test_desktop_access_permission_route_has_ui_bounded_probe_budgets():
     assert "0.6" in src
     assert "timeout=max(0.2, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S)" in src
     assert "timeout=max(0.2, _DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S)" in src
+
+
+def test_stall_watchdog_foreground_suppression_is_bounded(monkeypatch):
+    """Jul 9 48%-wedge lesson: a lane perpetually 'warming' suppressed every
+    stall dump for the exact window that mattered. Continuous foreground
+    business past 300s stops suppressing — a wedge is not a warmup."""
+    from types import SimpleNamespace as NS
+
+    from core.resilience.stall_watchdog import StallWatchdog
+
+    monkeypatch.setenv("AURA_WATCHDOG_BOOT_GRACE_S", "0")
+    monkeypatch.setenv("AURA_WATCHDOG_FOREGROUND_GRACE_S", "75")
+    watchdog = StallWatchdog(NS(is_closed=lambda: False), threshold=1.0)
+    watchdog._started_at = time.time() - 1000.0  # boot grace long past
+
+    gate = NS(get_conversation_status=lambda: {"state": "warming", "warmup_in_flight": True})
+    from core.container import ServiceContainer
+
+    monkeypatch.setattr(
+        ServiceContainer, "get", classmethod(lambda cls, name, default=None: gate)
+    )
+
+    # Fresh business: suppressed (real warmups stay quiet).
+    assert watchdog._should_suppress_stall(8.0) is True
+    # Continuously busy past the deadline: suppression ends, dumps resume.
+    watchdog._foreground_suppression_started_at = time.time() - 400.0
+    assert watchdog._should_suppress_stall(8.0) is False
+    # Lane goes quiet: anchor resets, next business gets a fresh window.
+    gate.get_conversation_status = lambda: {"state": "ready"}
+    watchdog._should_suppress_stall(8.0)
+    assert watchdog._foreground_suppression_started_at == 0.0
