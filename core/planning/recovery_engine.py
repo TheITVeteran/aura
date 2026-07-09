@@ -262,7 +262,7 @@ class RecoveryEngine:
         try:
             host = ServiceContainer.get("host_automation", default=None)
             if host is None:
-                from core.capabilities.capabilities.host_automation import get_host_automation
+                from core.capabilities.host_automation import get_host_automation
                 host = get_host_automation()
 
             # Launch the app
@@ -287,7 +287,7 @@ class RecoveryEngine:
             try:
                 registry = ServiceContainer.get("app_registry", default=None)
                 if registry:
-                    from core.capabilities.capabilities.app_registry import AppAffordance
+                    from core.capabilities.app_registry import AppAffordance
                     # Map action to affordance
                     action_affordance = {
                         "launch_app": None,

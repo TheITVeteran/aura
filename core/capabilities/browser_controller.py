@@ -23,7 +23,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.network_gateway import get_network_gateway
 
 if TYPE_CHECKING:
-    from core.capabilities.capabilities.host_automation import AutomationReceipt
+    from core.capabilities.host_automation import AutomationReceipt
 
 logger = logging.getLogger("Aura.BrowserController")
 
@@ -92,7 +92,7 @@ class BrowserController:
 
     async def open_url(self, url: str, new_tab: bool = True) -> "AutomationReceipt":
         """Open a URL in the preferred browser."""
-        from core.capabilities.capabilities.host_automation import AutomationReceipt, AppleScriptRunner
+        from core.capabilities.host_automation import AutomationReceipt, AppleScriptRunner
 
         if not url.startswith(("http://", "https://")):
             url = f"https://{url}"
@@ -144,7 +144,7 @@ class BrowserController:
 
     async def get_open_tabs(self) -> List[Dict[str, str]]:
         """List all open tabs in the preferred browser."""
-        from core.capabilities.capabilities.host_automation import AppleScriptRunner
+        from core.capabilities.host_automation import AppleScriptRunner
 
         browser = self._preferred_browser
         if "chrome" in browser.lower():
@@ -192,7 +192,7 @@ class BrowserController:
         self, query: str, count: int = 3
     ) -> "AutomationReceipt":
         """Search the web and open top results in browser tabs."""
-        from core.capabilities.capabilities.host_automation import AutomationReceipt
+        from core.capabilities.host_automation import AutomationReceipt
 
         start = time.time()
         # Use DuckDuckGo search

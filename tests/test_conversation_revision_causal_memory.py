@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.capabilities.capabilities.conversation_revision import (
+from core.capabilities.conversation_revision import (
     build_self_test_plan,
     default_self_claims,
     extract_revisions,
@@ -97,7 +97,7 @@ def test_ungrounded_revision_is_rejected():
 def test_revision_quote_must_belong_to_the_cited_turn():
     # Guard against citing turn N with a quote that lives in a different turn:
     # the verifier requires the quote to be grounded in the cited turn's reply.
-    from core.capabilities.capabilities.conversation_revision import PositionRevision, _verify_revision
+    from core.capabilities.conversation_revision import PositionRevision, _verify_revision
 
     claims = {c.claim_id: c for c in default_self_claims()}
     claim = claims["episodic_memory_grounds_continuity"]
@@ -120,7 +120,7 @@ def test_revision_quote_must_belong_to_the_cited_turn():
 
 def test_no_op_revision_is_rejected():
     # A "revision" that changes neither status nor test is not a policy delta.
-    from core.capabilities.capabilities.conversation_revision import PositionRevision, _verify_revision
+    from core.capabilities.conversation_revision import PositionRevision, _verify_revision
 
     claims = {c.claim_id: c for c in default_self_claims()}
     claim = claims["affect_is_causal"]

@@ -186,7 +186,7 @@ class GoalHierarchy:
                 # ALIGNMENT AUDIT (v13.0)
                 directives = []
                 try:
-                    from ..prime_directives import PrimeDirectives
+                    from core.values.prime_directives import PrimeDirectives
                     # Extract key directive text
                     p_text = PrimeDirectives.as_system_prompt()
                     directives = [p_text] # Use the full block as context for now

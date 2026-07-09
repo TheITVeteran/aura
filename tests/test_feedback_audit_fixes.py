@@ -2722,7 +2722,7 @@ def test_repo_probe_request_detects_dependency_reads():
 
 
 def test_repo_probe_reads_first_non_comment_dependency_line(tmp_path, monkeypatch):
-    from core import demo_support
+    from core.conversation import demo_support
     from interface.routes import chat as chat_route
 
     sample = tmp_path / "requirements_hardened.txt"
@@ -2743,7 +2743,7 @@ def test_repo_probe_reads_first_non_comment_dependency_line(tmp_path, monkeypatc
 
 
 def test_repo_probe_counts_lines(tmp_path, monkeypatch):
-    from core import demo_support
+    from core.conversation import demo_support
     from interface.routes import chat as chat_route
 
     sample = tmp_path / "sample.txt"

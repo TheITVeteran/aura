@@ -22,7 +22,7 @@ def _blank_engine(tmp_path):
 
 
 def test_inquiry_engine_quarantines_corrupt_journal(monkeypatch, tmp_path):
-    from core import inquiry_engine as module
+    from core.epistemics import inquiry_engine as module
 
     calls = []
 
@@ -45,7 +45,7 @@ def test_inquiry_engine_quarantines_corrupt_journal(monkeypatch, tmp_path):
 
 
 def test_inquiry_engine_load_sanitizes_persisted_questions(monkeypatch, tmp_path):
-    from core import inquiry_engine as module
+    from core.epistemics import inquiry_engine as module
 
     calls = []
 
@@ -92,7 +92,7 @@ def test_inquiry_engine_load_sanitizes_persisted_questions(monkeypatch, tmp_path
 
 
 def test_inquiry_engine_malformed_research_result_keeps_question_open(monkeypatch, tmp_path):
-    from core import inquiry_engine as module
+    from core.epistemics import inquiry_engine as module
     from core.epistemics.inquiry_engine import OpenQuestion
 
     calls = []

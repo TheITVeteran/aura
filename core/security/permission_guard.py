@@ -9,7 +9,7 @@ from typing import Any
 
 from core.runtime.errors import record_degradation
 
-from ..base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 
 _PERMISSION_RECOVERABLE_ERRORS = (
     AttributeError,

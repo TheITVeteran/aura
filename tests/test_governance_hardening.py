@@ -232,7 +232,7 @@ class TestInitiativeRouting(unittest.TestCase):
 
     def test_email_routes_through_capability_engine(self):
         """Email check routes through CapabilityEngine, not direct instantiation."""
-        from core import autonomous_initiative_loop
+        from core.autonomy import autonomous_initiative_loop
         source = Path(autonomous_initiative_loop.__file__).read_text()
 
         self.assertIn("capability_engine", source)
@@ -244,7 +244,7 @@ class TestInitiativeRouting(unittest.TestCase):
 
     def test_reddit_routes_through_capability_engine(self):
         """Reddit check routes through CapabilityEngine."""
-        from core import autonomous_initiative_loop
+        from core.autonomy import autonomous_initiative_loop
         source = Path(autonomous_initiative_loop.__file__).read_text()
 
         reddit_section = source[source.index("_check_reddit_initiative"):]

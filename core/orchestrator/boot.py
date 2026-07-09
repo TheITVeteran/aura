@@ -533,7 +533,7 @@ class OrchestratorBootMixin(
 
                 # --- PHASE 6.5: Capability Engine & Desktop Agency Boot ---
                 try:
-                    from core.capabilities.capabilities import boot_capabilities
+                    from core.capabilities import boot_capabilities
                     await boot_capabilities()
                     logger.info("✅ [BOOT] Desktop agency capabilities booted successfully.")
                 except (ImportError, AttributeError, RuntimeError, TypeError, OSError) as cap_err:

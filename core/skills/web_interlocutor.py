@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from core.capabilities.capabilities.web_interlocutor import WebInterlocutorSession, get_web_interlocutor_job_manager
+from core.capabilities.web_interlocutor import WebInterlocutorSession, get_web_interlocutor_job_manager
 from core.container import ServiceContainer
 from core.skills.base_skill import BaseSkill
 

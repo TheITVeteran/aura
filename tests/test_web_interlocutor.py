@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from core.capabilities.capabilities.web_interlocutor import (
+from core.capabilities.web_interlocutor import (
     BrowserPageSnapshot,
     ChromeVisibleDialogueBrowser,
     WebInterlocutorJobManager,
@@ -253,7 +253,7 @@ def test_accessibility_segments_preserve_order_after_sent_turn():
 
 @pytest.mark.asyncio
 async def test_visible_chrome_snapshot_uses_accessibility_when_dom_scripting_is_blocked(monkeypatch):
-    import core.capabilities.capabilities.web_interlocutor as mod
+    import core.capabilities.web_interlocutor as mod
 
     sent = "How should a local AI prove persistent memory?"
     ax_text = (
@@ -583,7 +583,7 @@ async def test_web_interlocutor_deterministic_composition_requires_explicit_opt_
 @pytest.mark.asyncio
 async def test_web_interlocutor_skill_exposes_capability(monkeypatch):
     async def fake_run(self, **kwargs):
-        from core.capabilities.capabilities.web_interlocutor import WebInterlocutorResult
+        from core.capabilities.web_interlocutor import WebInterlocutorResult
 
         return WebInterlocutorResult(
             ok=True,

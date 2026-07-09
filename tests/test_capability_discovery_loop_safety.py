@@ -11,7 +11,7 @@ import threading
 
 import pytest
 
-from core.capabilities.capabilities.capability_discovery import CapabilityDiscovery, CapabilityReport
+from core.capabilities.capability_discovery import CapabilityDiscovery, CapabilityReport
 
 
 class TestWritableDirProbeOffLoop:
@@ -27,7 +27,7 @@ class TestWritableDirProbeOffLoop:
             CapabilityDiscovery, "_probe_writable_dir", staticmethod(recording_probe)
         )
         monkeypatch.setattr(
-            "core.capabilities.capabilities.capability_discovery.Path.home", lambda: tmp_path
+            "core.capabilities.capability_discovery.Path.home", lambda: tmp_path
         )
 
         async def scenario():
@@ -46,7 +46,7 @@ class TestWritableDirProbeOffLoop:
 
     def test_probe_timeout_records_degradation_and_continues(self, monkeypatch, tmp_path):
         monkeypatch.setattr(
-            "core.capabilities.capabilities.capability_discovery.Path.home", lambda: tmp_path
+            "core.capabilities.capability_discovery.Path.home", lambda: tmp_path
         )
 
         def hanging_probe(d):

@@ -76,7 +76,7 @@ _PROTECTED_PREFIXES = (
     "core/safety/",
     "core/security/",
     "core/constitution.py",
-    "core/constitution/constitutional_alignment.py",
+    "core/values/constitutional_alignment.py",
     "core/identity/heartstone.py",
     "core/container.py",
     "core/values/prime_directives.py",

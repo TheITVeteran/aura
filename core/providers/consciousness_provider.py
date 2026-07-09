@@ -127,7 +127,7 @@ def register_consciousness_services(container):
 
     # 46. Alignment Engine (Constitution)
     def create_alignment_engine():
-        from core.constitution.constitutional_alignment import get_constitutional_alignment
+        from core.values.constitutional_alignment import get_constitutional_alignment
         return get_constitutional_alignment()
     container.register('alignment_engine', create_alignment_engine, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
     container.register('alignment', lambda: container.get("alignment_engine"), lifetime=SERVICE_LIFETIME_SINGLETON, required=False)

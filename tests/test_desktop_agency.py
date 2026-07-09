@@ -111,43 +111,43 @@ class TestScriptASTGuard(unittest.TestCase):
     """Test the script safety guard."""
 
     def test_safe_applescript(self):
-        from core.capabilities.capabilities.host_automation import ScriptASTGuard
+        from core.capabilities.host_automation import ScriptASTGuard
         safe, reason = ScriptASTGuard.validate_applescript(
             'tell application "Notes" to activate'
         )
         self.assertTrue(safe, f"Should be safe: {reason}")
 
     def test_blocked_rm_rf(self):
-        from core.capabilities.capabilities.host_automation import ScriptASTGuard
+        from core.capabilities.host_automation import ScriptASTGuard
         safe, reason = ScriptASTGuard.validate_applescript(
             'do shell script "rm -rf /"'
         )
         self.assertFalse(safe, "rm -rf / should be blocked")
 
     def test_blocked_sudo(self):
-        from core.capabilities.capabilities.host_automation import ScriptASTGuard
+        from core.capabilities.host_automation import ScriptASTGuard
         safe, reason = ScriptASTGuard.validate_applescript(
             'do shell script "sudo rm /etc/hosts"'
         )
         self.assertFalse(safe, "sudo should be blocked")
 
     def test_safe_shell_command(self):
-        from core.capabilities.capabilities.host_automation import ScriptASTGuard
+        from core.capabilities.host_automation import ScriptASTGuard
         safe, reason = ScriptASTGuard.validate_shell_command("echo hello")
         self.assertTrue(safe, f"echo should be safe: {reason}")
 
     def test_blocked_shell_command(self):
-        from core.capabilities.capabilities.host_automation import ScriptASTGuard
+        from core.capabilities.host_automation import ScriptASTGuard
         safe, reason = ScriptASTGuard.validate_shell_command("rm -rf /")
         self.assertFalse(safe, "rm -rf / should be blocked")
 
     def test_empty_script(self):
-        from core.capabilities.capabilities.host_automation import ScriptASTGuard
+        from core.capabilities.host_automation import ScriptASTGuard
         safe, reason = ScriptASTGuard.validate_applescript("")
         self.assertFalse(safe, "Empty script should fail")
 
     def test_long_script(self):
-        from core.capabilities.capabilities.host_automation import ScriptASTGuard
+        from core.capabilities.host_automation import ScriptASTGuard
         safe, reason = ScriptASTGuard.validate_applescript("x" * 20000)
         self.assertFalse(safe, "Very long script should fail")
 
@@ -156,28 +156,28 @@ class TestPermissionModel(unittest.TestCase):
     """Test the permission risk model."""
 
     def test_low_risk_approved(self):
-        from core.capabilities.capabilities.permission_model import get_permission_model, RiskLevel
+        from core.capabilities.permission_model import get_permission_model, RiskLevel
         model = get_permission_model()
         decision = model.check_permission("launch_app", "Notes")
         self.assertTrue(decision.approved)
         self.assertEqual(decision.risk_level, RiskLevel.LOW)
 
     def test_blocked_risk_denied(self):
-        from core.capabilities.capabilities.permission_model import get_permission_model, RiskLevel
+        from core.capabilities.permission_model import get_permission_model, RiskLevel
         model = get_permission_model()
         decision = model.check_permission("rm -rf /", "/")
         self.assertFalse(decision.approved)
         self.assertEqual(decision.risk_level, RiskLevel.BLOCKED)
 
     def test_high_risk_needs_confirmation(self):
-        from core.capabilities.capabilities.permission_model import PermissionRiskModel, RiskLevel
+        from core.capabilities.permission_model import PermissionRiskModel, RiskLevel
         model = PermissionRiskModel()
         decision = model.check_permission("send email", "user@example.com")
         self.assertFalse(decision.approved)
         self.assertEqual(decision.risk_level, RiskLevel.HIGH)
 
     def test_demo_safe_mode(self):
-        from core.capabilities.capabilities.permission_model import PermissionRiskModel, RiskLevel
+        from core.capabilities.permission_model import PermissionRiskModel, RiskLevel
         model = PermissionRiskModel()
         model.set_demo_safe_mode(True)
         decision = model.check_permission("send email", "test")
@@ -286,7 +286,7 @@ class TestFileBroker(unittest.TestCase):
 
     def test_sandbox_enforcement(self):
         import tempfile
-        from core.capabilities.capabilities.file_broker import SandboxedFileBroker
+        from core.capabilities.file_broker import SandboxedFileBroker
         broker = SandboxedFileBroker()
         # Use a resolved temp path so symlink (/tmp → /private/tmp) doesn't break
         real_tmp = Path(tempfile.gettempdir()).resolve()
@@ -296,7 +296,7 @@ class TestFileBroker(unittest.TestCase):
         self.assertTrue(broker._is_allowed(test_root / "file.txt"))
 
     def test_name_sanitization(self):
-        from core.capabilities.capabilities.file_broker import SandboxedFileBroker
+        from core.capabilities.file_broker import SandboxedFileBroker
         self.assertEqual(SandboxedFileBroker.sanitize_name("hello world"), "hello world")
         # 9 special chars each get replaced with _
         result = SandboxedFileBroker.sanitize_name("file<>:\"/\\|?*")
@@ -310,7 +310,7 @@ class TestPostActionVerifier(unittest.TestCase):
     """Test verification predicates."""
 
     def test_file_exists(self):
-        from core.capabilities.capabilities.post_action_verifier import PostActionVerifier
+        from core.capabilities.post_action_verifier import PostActionVerifier
         v = PostActionVerifier()
         loop = asyncio.new_event_loop()
         # Test with a file we know exists
@@ -321,7 +321,7 @@ class TestPostActionVerifier(unittest.TestCase):
         loop.close()
 
     def test_file_not_exists(self):
-        from core.capabilities.capabilities.post_action_verifier import PostActionVerifier
+        from core.capabilities.post_action_verifier import PostActionVerifier
         v = PostActionVerifier()
         loop = asyncio.new_event_loop()
         result = loop.run_until_complete(
@@ -331,7 +331,7 @@ class TestPostActionVerifier(unittest.TestCase):
         loop.close()
 
     def test_folder_exists(self):
-        from core.capabilities.capabilities.post_action_verifier import PostActionVerifier
+        from core.capabilities.post_action_verifier import PostActionVerifier
         v = PostActionVerifier()
         loop = asyncio.new_event_loop()
         result = loop.run_until_complete(
@@ -341,7 +341,7 @@ class TestPostActionVerifier(unittest.TestCase):
         loop.close()
 
     def test_always_true(self):
-        from core.capabilities.capabilities.post_action_verifier import PostActionVerifier
+        from core.capabilities.post_action_verifier import PostActionVerifier
         v = PostActionVerifier()
         loop = asyncio.new_event_loop()
         result = loop.run_until_complete(v.verify("true", {}))
@@ -353,7 +353,7 @@ class TestWebAssetHandler(unittest.TestCase):
     """Test web asset validation."""
 
     def test_image_header_validation(self):
-        from core.capabilities.capabilities.web_asset_handler import WebAssetHandler
+        from core.capabilities.web_asset_handler import WebAssetHandler
         # PNG
         valid, fmt = WebAssetHandler._validate_image_header(
             b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
@@ -610,7 +610,7 @@ class TestOwnerAutonomyGating(unittest.TestCase):
     def test_presence_token_does_not_bypass_permissions_or_will(self):
         """Verified user presence cannot override blocked actions."""
         from core.executive.authority_gateway import get_authority_gateway
-        from core.capabilities.capabilities.permission_model import get_permission_model
+        from core.capabilities.permission_model import get_permission_model
         from core.governance.will import get_will, WillOutcome, ActionDomain
         from core.container import ServiceContainer
 

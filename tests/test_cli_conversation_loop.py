@@ -5,7 +5,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_conversation_loop_reuses_supplied_orchestrator(monkeypatch):
-    from core import main as main_module
+    from core.startup import main as main_module
 
     class _StubOrchestrator:
         def __init__(self):

@@ -4,7 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from core import external_chat, terminal_chat
+from core.conversation import external_chat
+from core.conversation import terminal_chat
 from core.runtime.errors import get_degradation_tracker
 
 

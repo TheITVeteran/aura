@@ -15,7 +15,7 @@ def _blank_journal(tmp_path):
 
 
 def test_insight_journal_quarantines_corrupt_store(monkeypatch, tmp_path):
-    from core import insight_journal as module
+    from core.introspection import insight_journal as module
 
     calls = []
 
@@ -37,7 +37,7 @@ def test_insight_journal_quarantines_corrupt_store(monkeypatch, tmp_path):
 
 
 def test_insight_journal_load_sanitizes_and_skips_invalid_entries(monkeypatch, tmp_path):
-    from core import insight_journal as module
+    from core.introspection import insight_journal as module
 
     calls = []
 
@@ -79,7 +79,7 @@ def test_insight_journal_load_sanitizes_and_skips_invalid_entries(monkeypatch, t
 
 
 def test_insight_journal_broadcast_failure_does_not_block_belief_promotion(monkeypatch, tmp_path):
-    from core import insight_journal as module
+    from core.introspection import insight_journal as module
 
     calls = []
     promoted = []

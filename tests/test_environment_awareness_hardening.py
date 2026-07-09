@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from core import environment_awareness as env_module
+from core.environment import environment_awareness as env_module
 from core.environment.environment_awareness import UserIdentityManager
 
 

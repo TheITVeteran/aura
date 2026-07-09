@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core import local_voice_cortex as voice_module
+from core.voice import local_voice_cortex as voice_module
 
 
 class ContainerScenario:

@@ -3,7 +3,7 @@ import sys
 import time
 from types import ModuleType, SimpleNamespace
 
-from core import process_manager as process_module
+from core.ops import process_manager as process_module
 from core.ops.process_manager import ManagedProcess, ProcessConfig, ProcessManager, ProcessState
 from core.runtime.errors import get_degradation_tracker
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import types
 
-from core import critic_engine as critic_module
+from core.reasoning import critic_engine as critic_module
 from core.reasoning.critic_engine import CriticEngine
 
 

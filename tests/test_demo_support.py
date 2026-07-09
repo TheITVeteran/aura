@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core import demo_support
+from core.conversation import demo_support
 
 
 def test_extract_background_diagnostic_target_accepts_realistic_async_phrasing():

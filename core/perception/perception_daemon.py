@@ -216,7 +216,7 @@ class PerceptionDaemon:
 
                 # 3. Browser Tab State Check
                 try:
-                    from core.capabilities.capabilities.browser_controller import get_browser_controller
+                    from core.capabilities.browser_controller import get_browser_controller
                     bc = get_browser_controller()
                     if bc and getattr(bc, "_started", False):
                         tabs = await bc.get_open_tabs()

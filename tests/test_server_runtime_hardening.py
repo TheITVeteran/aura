@@ -4863,7 +4863,7 @@ async def test_backup_manager_skips_maintenance_during_active_runtime(monkeypatc
 
 @pytest.mark.asyncio
 async def test_backup_manager_get_health_offloads_backup_listing(monkeypatch, tmp_path):
-    from core import backup as backup_module
+    from core.ops import backup as backup_module
     from core.ops.backup import BackupManager
 
     monkeypatch.setattr(

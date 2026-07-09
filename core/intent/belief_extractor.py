@@ -10,7 +10,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
-from ..belief_revision import BeliefDomain, BeliefSystem
+from core.epistemics.belief_revision import BeliefDomain, BeliefSystem
 
 logger = logging.getLogger("Aura.BeliefExtractor")
 

@@ -25,7 +25,7 @@ class BrowserMotor(BaseMotor):
         
         logger.info("Actuating browser motor: %s -> %s", action, url)
         try:
-            from core.capabilities.capabilities.browser_controller import get_browser_controller
+            from core.capabilities.browser_controller import get_browser_controller
 
             controller = get_browser_controller()
             if action in {"load_url", "open_url", "navigate"}:

@@ -2,7 +2,7 @@ from core.runtime.errors import record_degradation
 import logging
 import subprocess
 
-from ..patch_library import PatchStrategy
+from core.self_modification.patch_library import PatchStrategy
 from .cognitive_engine import cognitive_engine
 
 logger = logging.getLogger("Optimizer.CognitivePatch")

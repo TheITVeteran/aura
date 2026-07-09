@@ -263,7 +263,7 @@ class PersonalityEngine:
         self.internal_monologue = deque(maxlen=200)
         
         # --- Identity Recovery (Phase 14) ---
-        from ..panzer_soul import get_panzer_soul
+        from core.being.panzer_soul import get_panzer_soul
         self.soul = get_panzer_soul()
 
     # ── Identity Core Methods (Grafted from PersonalityKernel) ────────

@@ -19,7 +19,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 if TYPE_CHECKING:
-    from core.capabilities.capabilities.host_automation import AutomationReceipt
+    from core.capabilities.host_automation import AutomationReceipt
 
 logger = logging.getLogger("Aura.OSSettings")
 
@@ -82,7 +82,7 @@ class OSSettingsAdapter:
         Saves previous wallpaper for rollback.
         Verifies the change after setting.
         """
-        from core.capabilities.capabilities.host_automation import AutomationReceipt, AppleScriptRunner
+        from core.capabilities.host_automation import AutomationReceipt, AppleScriptRunner
 
         start = time.time()
         path = Path(image_path).expanduser().resolve()
@@ -207,7 +207,7 @@ class OSSettingsAdapter:
                     end tell
                 '''
 
-            from core.capabilities.capabilities.host_automation import AppleScriptRunner
+            from core.capabilities.host_automation import AppleScriptRunner
             receipt = await AppleScriptRunner.run(script, timeout=5.0)
             if receipt.success:
                 self._changes.append(SettingChange(
@@ -246,7 +246,7 @@ class OSSettingsAdapter:
         level = max(0, min(100, level))
         previous = await self.get_volume()
         try:
-            from core.capabilities.capabilities.host_automation import AppleScriptRunner
+            from core.capabilities.host_automation import AppleScriptRunner
             receipt = await AppleScriptRunner.run(
                 f'set volume output volume {level}', timeout=3.0
             )

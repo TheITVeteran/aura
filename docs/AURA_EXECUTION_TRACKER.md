@@ -5537,7 +5537,7 @@ Scope:
   - `core.plasticity.plasticity_controller`
   - `core.brain.concept_vector_bridge`
   - `core.affect.emotional_coloring`
-  - `core.capabilities.capabilities.source_summarizer`
+  - `core.capabilities.source_summarizer`
   - `core.memory.provenance`
   - `core.utils.telemetry_enrichment`
   - `core.learning.skill_evolution`

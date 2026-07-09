@@ -278,7 +278,7 @@ def _neutralize_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     async def _fake_web_interlocutor_run(self, **kwargs):
-        from core.capabilities.capabilities.web_interlocutor import WebInterlocutorResult
+        from core.capabilities.web_interlocutor import WebInterlocutorResult
 
         return WebInterlocutorResult(
             ok=True,

@@ -94,7 +94,7 @@ class TestAllDomains:
     ):
         """Permission regexes govern side effects, not ordinary response text."""
 
-        from core.capabilities.capabilities.permission_model import PermissionRiskModel
+        from core.capabilities.permission_model import PermissionRiskModel
 
         pm = PermissionRiskModel()
         monkeypatch.setattr(

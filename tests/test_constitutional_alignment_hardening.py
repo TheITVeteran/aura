@@ -5,8 +5,8 @@ import types
 
 import pytest
 
-import core.constitution.constitutional_alignment as constitutional_alignment
-from core.constitution.constitutional_alignment import ConstitutionalAlignmentLayer
+import core.values.constitutional_alignment as constitutional_alignment
+from core.values.constitutional_alignment import ConstitutionalAlignmentLayer
 
 
 def test_constitutional_alignment_start_records_optional_registration_failure(monkeypatch):

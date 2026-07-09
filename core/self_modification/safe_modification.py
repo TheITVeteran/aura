@@ -715,7 +715,7 @@ class SafeSelfModification:
         if self.event_bus is None:
             return
         try:
-            from ..events import Event, EventType
+            from core.bus.events import Event, EventType
 
             event = Event(
                 type=EventType.SELF_MOD_PROPOSAL,

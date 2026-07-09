@@ -14061,7 +14061,7 @@ async def _execute_web_interlocutor_request_from_chat(user_message: str) -> dict
     )
     if not isinstance(result, dict):
         result = {"ok": bool(result), "result": result}
-    from core.capabilities.capabilities.web_interlocutor import _observed_reply_is_echo
+    from core.capabilities.web_interlocutor import _observed_reply_is_echo
 
     turn_rows = result.get("turns") if isinstance(result.get("turns"), list) else []
     completed_turns = len(turn_rows)
