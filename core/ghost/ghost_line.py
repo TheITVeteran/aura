@@ -41,14 +41,15 @@ from __future__ import annotations
 import logging
 import math
 import os
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from core.runtime.audit_chain import AuditChain, canonical_json, sha256_hex
 from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
+from core.runtime.audit_chain import AuditChain, canonical_json, sha256_hex
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Ghost.GhostLine")
@@ -220,7 +221,7 @@ class GhostFrame:
 def _self_delta(prev: SelfDigest, cur: SelfDigest) -> float:
     """Normalised L2 distance over the identity-defining scalars, ∈ [0,1]."""
     va, vb = prev.vector(), cur.vector()
-    return math.sqrt(sum((x - y) ** 2 for x, y in zip(va, vb)) / len(va))
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(va, vb, strict=False)) / len(va))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -241,6 +242,10 @@ class GhostLine:
         self._chain = AuditChain(self.chain_dir)
         self._last: Optional[GhostFrame] = None
         self._advances_since_prune = 0
+        # Serialises the seq→envelope→append critical section so concurrent
+        # advances (a periodic tick racing a substrate-change event) cannot
+        # desync the frame bodies from the chain.
+        self._advance_lock = threading.RLock()
         self._restore_last()
 
     # ── restore ──────────────────────────────────────────────────────────
@@ -351,49 +356,50 @@ class GhostLine:
         if trigger not in _TRIGGERS:
             raise ValueError(f"unknown trigger: {trigger!r}")
         now = time.time() if now is None else now
-        verdict, delta, shell_changed, notes = self._judge(cur_self, cur_shell, trigger=trigger)
+        with self._advance_lock:
+            verdict, delta, shell_changed, notes = self._judge(cur_self, cur_shell, trigger=trigger)
 
-        seq = self._chain.length()
-        frame = GhostFrame(
-            seq=seq,
-            frame_id=uuid.uuid4().hex[:12],
-            timestamp=now,
-            trigger=trigger,
-            self_digest=cur_self,
-            substrate=cur_shell,
-            verdict=verdict,
-            self_delta=delta,
-            shell_changed=shell_changed,
-            notes=notes,
-            cause=cause,
-        )
-        body = frame.body()
+            seq = self._chain.length()
+            frame = GhostFrame(
+                seq=seq,
+                frame_id=uuid.uuid4().hex[:12],
+                timestamp=now,
+                trigger=trigger,
+                self_digest=cur_self,
+                substrate=cur_shell,
+                verdict=verdict,
+                self_delta=delta,
+                shell_changed=shell_changed,
+                notes=notes,
+                cause=cause,
+            )
+            body = frame.body()
 
-        # Persist body first (durable), then commit the hash link. If we crash
-        # between, the orphan body is simply overwritten at the same seq next run.
-        self._persist(seq, body, verdict)
-        entry = self._chain.append(
-            receipt_id=frame.frame_id,
-            kind=_FRAME_KIND,
-            body=body,
-            timestamp=now,
-        )
-        committed = GhostFrame(
-            seq=frame.seq,
-            frame_id=frame.frame_id,
-            timestamp=frame.timestamp,
-            trigger=frame.trigger,
-            self_digest=frame.self_digest,
-            substrate=frame.substrate,
-            verdict=frame.verdict,
-            self_delta=frame.self_delta,
-            shell_changed=frame.shell_changed,
-            notes=frame.notes,
-            cause=frame.cause,
-            prev_hash=entry.prev_hash,
-            entry_hash=entry.entry_hash,
-        )
-        self._last = committed
+            # Persist body first (durable), then commit the hash link. If we crash
+            # between, the orphan body is simply overwritten at the same seq next run.
+            self._persist(seq, body, verdict)
+            entry = self._chain.append(
+                receipt_id=frame.frame_id,
+                kind=_FRAME_KIND,
+                body=body,
+                timestamp=now,
+            )
+            committed = GhostFrame(
+                seq=frame.seq,
+                frame_id=frame.frame_id,
+                timestamp=frame.timestamp,
+                trigger=frame.trigger,
+                self_digest=frame.self_digest,
+                substrate=frame.substrate,
+                verdict=frame.verdict,
+                self_delta=frame.self_delta,
+                shell_changed=frame.shell_changed,
+                notes=frame.notes,
+                cause=frame.cause,
+                prev_hash=entry.prev_hash,
+                entry_hash=entry.entry_hash,
+            )
+            self._last = committed
 
         if committed.is_discontinuity:
             record_degradation(

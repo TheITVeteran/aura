@@ -220,7 +220,7 @@ class GhostHackGuard:
         if not verdict.is_identity_attack:
             return
         try:
-            from core.memory.scar_formation import get_scar_formation, ScarDomain
+            from core.memory.scar_formation import ScarDomain, get_scar_formation
             get_scar_formation().form_scar(
                 domain=ScarDomain.IDENTITY_THREAT,
                 description=(

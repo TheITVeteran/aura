@@ -13,7 +13,6 @@ import math
 
 import pytest
 
-from core.runtime.consequence_bus import ConsequenceBus
 from core.ghost.causal_integration import (
     SystemIntegration,
     SystemIntegrationReport,
@@ -22,6 +21,7 @@ from core.ghost.causal_integration import (
     get_system_integration,
     reset_system_integration,
 )
+from core.runtime.consequence_bus import ConsequenceBus
 
 
 @pytest.fixture()

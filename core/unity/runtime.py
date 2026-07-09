@@ -452,6 +452,52 @@ class UnityRuntime:
             record_degradation("unity_runtime", exc, severity="debug")
             return []
 
+    def _ghost_integrity_contents(self, state: Any) -> list[BoundContent]:
+        """Bind the Ghost's integrity into the moment when the self is not intact.
+
+        This is what makes continuity-of-self causal rather than a side ledger:
+        when integration collapses toward federation, the continuity line reads a
+        discontinuity (a Shell transplant the self did not survive, or a silent
+        overwrite), or the self/other boundary weakens, a high-salience,
+        low-confidence self-integrity content enters the same workspace the draft
+        competes in — so the whole mind holds itself cautiously and narrows to
+        stabilisation. An intact Ghost binds nothing (no drag on healthy ticks).
+        Observing here also checkpoints the ghost line off the critical path.
+        """
+        try:
+            from core.ghost.ghost import get_ghost
+
+            snap = get_ghost().observe(state)
+            # Only surface when the self is actually compromised (continuity
+            # rupture, boundary attack, collapse toward federation) — a merely
+            # middling reading adds workspace noise, not signal.
+            if not (snap.is_compromised or "federated_integration" in snap.risk_flags):
+                return []
+            flags = ", ".join(snap.risk_flags[:3]) if snap.risk_flags else snap.phi_label
+            summary = _normalize_text(
+                f"ghost integrity {snap.ghost_strength:.2f} — {flags}; "
+                f"continuity {snap.last_verdict or 'forming'}",
+                180,
+            )
+            severity = 1.0 - snap.ghost_strength
+            return [
+                BoundContent(
+                    content_id=_content_id("ghost", "self_integrity", summary),
+                    modality="self_integrity",
+                    source="ghost",
+                    summary=summary,
+                    salience=_clamp(0.5 + 0.45 * severity),
+                    confidence=_clamp(snap.ghost_strength),  # low integrity = held critically
+                    timestamp=time.time(),
+                    ownership="self",
+                    action_relevance=_clamp(0.5 + 0.45 * severity),
+                    affective_charge=_clamp(-0.4 * severity, -1.0, 1.0),
+                )
+            ]
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("unity_runtime", exc, severity="debug")
+            return []
+
     def gather_contents(self, state: Any, objective: str = "") -> list[BoundContent]:
         contents = (
             self._objective_content(state, objective)
@@ -461,6 +507,7 @@ class UnityRuntime:
             + self._epistemic_contents(state, objective)
             + self._self_audit_contents(state)
             + self._accountability_contents(state)
+            + self._ghost_integrity_contents(state)
             + self._goal_contents(state)
             + self._working_memory_contents(state)
             + self._long_term_memory_contents(state)

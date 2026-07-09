@@ -892,6 +892,23 @@ class WeightCompoundingLoop:
             receipt.status = "promoted"
             record(promoted=True)
 
+            # The Ghost survives the Shell: a promoted fusion is a body transplant.
+            # Record it into the continuity line so the self-pattern is judged
+            # across the swap (preserved → continuous; jumped → rupture). Never
+            # let this affect the compounding cycle.
+            if promoted_path:
+                try:
+                    from core.ghost.ghost import get_ghost
+                    get_ghost().on_substrate_change(
+                        model_artifact=promoted_path,
+                        cause=f"weight compounding promoted generation {generation_id}",
+                    )
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+                    record_degradation(
+                        "weight_compounding", exc, severity="debug",
+                        action="continued after ghost substrate-change record failed",
+                    )
+
             if promoted_path and self._on_promoted is not None:
                 try:
                     self._on_promoted(promoted_path)

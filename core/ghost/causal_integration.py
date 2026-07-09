@@ -89,7 +89,7 @@ def _mutual_information(xs: Sequence[Any], ys: Sequence[Any]) -> float:
     if not xs or len(xs) != len(ys):
         return 0.0
     n = len(xs)
-    cx, cy, cxy = Counter(xs), Counter(ys), Counter(zip(xs, ys))
+    cx, cy, cxy = Counter(xs), Counter(ys), Counter(zip(xs, ys, strict=False))
     total = 0.0
     for (x, y), nxy in cxy.items():
         pxy = nxy / n
@@ -234,7 +234,6 @@ class SystemIntegration:
         # but sort defensively so the measure never depends on caller behaviour).
         ordered = sorted(events, key=lambda e: float(getattr(e, "timestamp", 0.0) or 0.0))
         sources = [str(getattr(e, "source", "") or "unknown") for e in ordered]
-        domains = [str(getattr(e, "domain", "") or "unknown") for e in ordered]
         timestamps = [float(getattr(e, "timestamp", 0.0) or 0.0) for e in ordered]
 
         subsystems = sorted(set(sources))

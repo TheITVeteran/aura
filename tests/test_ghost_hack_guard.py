@@ -8,15 +8,14 @@ Stand Alone Complex axis and gate whether it may reshape the self.
 """
 from __future__ import annotations
 
+from core.ghost import provenance as prov
 from core.ghost.ghost_hack_guard import (
-    GhostHackGuard,
-    get_ghost_hack_guard,
     ALLOW,
     QUARANTINE,
     REFUSE_IDENTITY_MUTATION,
+    GhostHackGuard,
+    get_ghost_hack_guard,
 )
-from core.ghost import provenance as prov
-
 
 # ── guard ────────────────────────────────────────────────────────────────────
 
