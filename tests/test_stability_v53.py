@@ -595,20 +595,24 @@ if __name__ == "__main__":
 
 
 class TestProactiveWatchdogWarmupRace:
-    """The 20260708-postdoomfix soak storm, prevented: a WARMING lane is not
-    a dead lane. The watchdog used to declare the cortex dead every 45s pulse
-    during a legitimate 120-150s cold load and re-trigger recovery, restarting
-    the warmup forever under load."""
+    """Two soak-taught contracts, one dead-man clock.
+
+    postdoomfix soak: a WARMING lane is not a dead lane — the watchdog used
+    to re-trigger recovery every 45s pulse, restarting the 150s cold load
+    forever. nightcap soak: the first guard trusted CLIENT fields to bound
+    the deferral, and a wedged warmup_in_flight flag deferred recovery
+    FOREVER (11 straight 240s turn timeouts). The watchdog now times the
+    not-alive window on its OWN clock: 300s of grace from first observation,
+    then intervention regardless of any client flag."""
 
     class _WarmingClient:
-        def __init__(self, *, warmup_in_flight=True, transition_age_s=30.0):
+        def __init__(self, *, warmup_in_flight=True):
             self._warmup_in_flight = warmup_in_flight
-            self._lane_transition_at = time.time() - transition_age_s
 
         def is_alive(self):
             return False  # cold-load worker: not alive yet, not dead either
 
-    def _make_gate(self, client):
+    def _make_gate(self, client, *, first_seen_age_s: float | None = None):
         from core.brain.inference_gate import InferenceGate
 
         gate = InferenceGate.__new__(InferenceGate)
@@ -620,6 +624,8 @@ class TestProactiveWatchdogWarmupRace:
         gate._foreground_owner_active = lambda: False
         gate.get_conversation_status = lambda: {"state": "warming"}
         gate._recovery_calls = []
+        if first_seen_age_s is not None:
+            gate._cortex_not_alive_first_seen_at = time.time() - first_seen_age_s
 
         async def _record_recovery():
             gate._recovery_calls.append(time.time())
@@ -628,26 +634,42 @@ class TestProactiveWatchdogWarmupRace:
         return gate
 
     def test_warming_lane_within_deadline_is_not_dead(self):
-        client = self._WarmingClient(warmup_in_flight=True, transition_age_s=30.0)
-        gate = self._make_gate(client)
+        gate = self._make_gate(self._WarmingClient(), first_seen_age_s=30.0)
         asyncio.run(gate._proactive_cortex_watchdog())
         assert gate._recovery_calls == [], (
-            "a warming lane inside its 300s deadline must never trigger recovery"
+            "a warming lane inside its 300s dead-man window must never trigger recovery"
         )
 
-    def test_warming_without_flag_but_fresh_transition_still_protected(self):
-        # warmup flag already cleared (e.g. between attempts) but the lane
-        # transitioned recently — still a warmup window, not a corpse.
-        client = self._WarmingClient(warmup_in_flight=False, transition_age_s=120.0)
-        gate = self._make_gate(client)
+    def test_first_observation_starts_the_clock_and_defers(self):
+        gate = self._make_gate(self._WarmingClient())  # no prior observation
         asyncio.run(gate._proactive_cortex_watchdog())
         assert gate._recovery_calls == []
+        assert getattr(gate, "_cortex_not_alive_first_seen_at", 0.0) > 0.0
 
-    def test_warming_past_deadline_without_warmup_is_dead(self):
-        client = self._WarmingClient(warmup_in_flight=False, transition_age_s=400.0)
-        gate = self._make_gate(client)
+    def test_wedged_warmup_flag_cannot_defer_forever(self):
+        """The nightcap wedge: warmup_in_flight stuck True must NOT outlast
+        the dead-man clock."""
+        client = self._WarmingClient(warmup_in_flight=True)
+        gate = self._make_gate(client, first_seen_age_s=400.0)
         asyncio.run(gate._proactive_cortex_watchdog())
         assert len(gate._recovery_calls) == 1, (
-            "a lane stuck 'warming' past the deadline with no warmup in flight "
-            "is genuinely dead and must recover"
+            "past the dead-man deadline, recovery fires no matter what client flags claim"
         )
+        assert client._warmup_in_flight is False, (
+            "the wedged warmup flag must be force-cleared so admission unblocks"
+        )
+        assert gate._cortex_not_alive_first_seen_at == 0.0, (
+            "the recovery warmup gets a fresh 300s window"
+        )
+
+    def test_alive_lane_clears_the_dead_man_clock(self):
+        class _AliveClient:
+            def is_alive(self):
+                return True
+
+            _warmup_in_flight = False
+
+        gate = self._make_gate(self._WarmingClient(), first_seen_age_s=250.0)
+        gate._mlx_client = _AliveClient()
+        asyncio.run(gate._proactive_cortex_watchdog())
+        assert getattr(gate, "_cortex_not_alive_first_seen_at", 0.0) == 0.0

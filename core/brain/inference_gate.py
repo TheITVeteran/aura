@@ -1180,24 +1180,54 @@ class InferenceGate:
         # same 300s deadline section 2 already grants a stuck warmup; only
         # past it does a "warming" verdict count as dead.
         if hasattr(self._mlx_client, "is_alive") and not self._mlx_client.is_alive():
-            warmup_active = bool(getattr(self._mlx_client, "_warmup_in_flight", False))
-            transition_at = float(getattr(self._mlx_client, "_lane_transition_at", 0.0) or 0.0)
-            warming_age_s = (time.time() - transition_at) if transition_at > 0 else 0.0
-            warmup_underway = lane_state in ("warming", "spawning", "handshaking", "recovering") and (
-                warmup_active or warming_age_s <= 300.0
+            # DEAD-MAN CLOCK, watchdog-owned. The first cut of this guard
+            # trusted the client's own fields to bound the deferral
+            # (warmup_in_flight OR transition age) — and the nightcap soak
+            # promptly wedged with warmup_in_flight stuck True and no
+            # transition timestamp: the watchdog deferred FOREVER, eleven
+            # straight turns hit the probe's 240s ceiling, and nothing ever
+            # recovered the lane. The watchdog now times the not-alive
+            # window on its OWN clock: a warming lane gets 300s from first
+            # observation, then intervention happens no matter what any
+            # client flag claims.
+            now = time.time()
+            first_seen = float(getattr(self, "_cortex_not_alive_first_seen_at", 0.0) or 0.0)
+            if first_seen <= 0.0:
+                first_seen = now
+                self._cortex_not_alive_first_seen_at = now
+            not_alive_age_s = now - first_seen
+            warmup_underway = (
+                lane_state in ("warming", "spawning", "handshaking", "recovering")
+                and not_alive_age_s <= 300.0
             )
             if warmup_underway:
                 logger.debug(
-                    "[WATCHDOG] Cortex not alive but lane is %s (%.0fs, warmup_in_flight=%s) — "
+                    "[WATCHDOG] Cortex not alive but lane is %s (%.0fs on the dead-man clock) — "
                     "letting the warmup finish.",
-                    lane_state, warming_age_s, warmup_active,
+                    lane_state, not_alive_age_s,
                 )
             elif lane_state not in ("cold", "failed") and not self._cortex_recovery_in_progress:
                 logger.warning(
-                    "🔍 [WATCHDOG] Cortex is dead (state=%s) but no recovery in progress. Triggering.",
-                    lane_state,
+                    "🔍 [WATCHDOG] Cortex is dead (state=%s, not-alive %.0fs) and past the warmup "
+                    "deadline. Triggering recovery.",
+                    lane_state, not_alive_age_s,
                 )
+                # Reset the clock so the RECOVERY warmup gets its own fresh
+                # 300s window instead of being instantly re-declared dead.
+                self._cortex_not_alive_first_seen_at = 0.0
+                # A wedged warmup flag blocks admission everywhere
+                # (conversation_warmup_in_flight deferrals); recovery must
+                # not start underneath it.
+                if getattr(self._mlx_client, "_warmup_in_flight", False):
+                    logger.warning(
+                        "🔍 [WATCHDOG] Force-clearing wedged warmup_in_flight before recovery."
+                    )
+                    self._mlx_client._warmup_in_flight = False
                 await self._ensure_cortex_recovery()
+        else:
+            # Lane is alive — clear the dead-man clock.
+            if getattr(self, "_cortex_not_alive_first_seen_at", 0.0):
+                self._cortex_not_alive_first_seen_at = 0.0
 
         # 2. Detect stuck warmup flag on MLX client
         if hasattr(self._mlx_client, "_warmup_in_flight") and self._mlx_client._warmup_in_flight:
