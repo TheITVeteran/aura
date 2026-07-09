@@ -80,6 +80,14 @@ _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
 # Uses threading.Semaphore (loop-agnostic) because the singleton MLXLocalClient
 # is constructed from one event loop but called from another (Uvicorn thread).
 _GLOBAL_SPAWN_GATE = _threading.Semaphore(1)
+# Longest legitimate gate hold is a full 32B spawn+handshake (~300s budget);
+# waiters give up shortly after that and defer rather than pile up forever.
+try:
+    _SPAWN_GATE_ACQUIRE_TIMEOUT_S = max(
+        60.0, float(os.environ.get("AURA_SPAWN_GATE_ACQUIRE_TIMEOUT_S", "330"))
+    )
+except (TypeError, ValueError):
+    _SPAWN_GATE_ACQUIRE_TIMEOUT_S = 330.0
 _MLX_RUNTIME_PROBE_LOCK = _threading.Lock()
 _MLX_RUNTIME_PROBE: dict[str, Any] = {
     "ok": None,
@@ -474,8 +482,23 @@ def _coerce_timeout_seconds(value: Any) -> float | None:
 
 @contextlib.asynccontextmanager
 async def _spawn_gate_context():
-    """Loop-agnostic async context manager for the global spawn gate."""
-    await asyncio.to_thread(_GLOBAL_SPAWN_GATE.acquire)
+    """Loop-agnostic async context manager for the global spawn gate.
+
+    BOUNDED acquire. This used to block forever, and one wedged spawn
+    holding the gate froze every other lane's warmup coroutine inside
+    _ensure_worker_alive — the warmup's finally never ran, its
+    _warmup_in_flight flag stayed True, and admission blocked runtime-wide
+    (the nightcap-soak wedge; the watchdog dead-man clock recovers it at
+    300s, but the root is here). Past the bound, callers get TimeoutError
+    and defer honestly instead of joining the pileup.
+    """
+    acquired = await asyncio.to_thread(
+        _GLOBAL_SPAWN_GATE.acquire, True, _SPAWN_GATE_ACQUIRE_TIMEOUT_S
+    )
+    if not acquired:
+        raise TimeoutError(
+            f"spawn_gate_timeout:{_SPAWN_GATE_ACQUIRE_TIMEOUT_S:.0f}s"
+        )
     try:
         yield
     finally:
@@ -2947,14 +2970,32 @@ class MLXLocalClient:
             return True
 
         # Slow path: acquire global gate to serialize model loading
-        async with _spawn_gate_context():
-            return await self._ensure_worker_alive_inner(
-                request_is_background=request_is_background,
+        try:
+            async with _spawn_gate_context():
+                return await self._ensure_worker_alive_inner(
+                    request_is_background=request_is_background,
+                    foreground_request=foreground_request,
+                    init_timeout=init_timeout,
+                    soft_timeout=soft_timeout,
+                    skip_swap_cooldown=skip_swap_cooldown,
+                )
+        except TimeoutError as gate_exc:
+            # Another lane's spawn is wedged holding the global gate. Defer
+            # honestly instead of joining the pileup — the warmup's finally
+            # still clears its flag, admission stays unblocked, and the
+            # watchdog handles the wedged holder.
+            self._set_lane_state("recovering", "spawn_gate_timeout")
+            self._record_degraded_event(
+                "spawn_gate_timeout",
+                detail=f"{os.path.basename(self.model_path)}:{gate_exc}",
+                severity="warning",
                 foreground_request=foreground_request,
-                init_timeout=init_timeout,
-                soft_timeout=soft_timeout,
-                skip_swap_cooldown=skip_swap_cooldown,
             )
+            logger.warning(
+                "⏸️ [MLX] Spawn gate held too long by another lane; deferring %s spawn (%s).",
+                os.path.basename(self.model_path), gate_exc,
+            )
+            return False
 
     async def _ensure_worker_alive_inner(
         self,

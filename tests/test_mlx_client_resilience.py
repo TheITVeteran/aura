@@ -1585,3 +1585,40 @@ def test_probe_does_not_trust_stale_negative_disk_cache(monkeypatch):
     assert ok is True
     assert detail == "mlx_runtime_ok"
     assert calls
+
+
+class TestSpawnGateBoundedAcquire(unittest.IsolatedAsyncioTestCase):
+    """The nightcap-wedge root: one wedged spawn holding the global gate must
+    never freeze every other lane's warmup coroutine forever. Waiters time
+    out, raise, and the caller defers with a receipt."""
+
+    async def test_gate_timeout_raises_and_caller_defers(self):
+        from core.brain.llm import mlx_client as mc
+
+        self.assertTrue(mc._GLOBAL_SPAWN_GATE.acquire(blocking=False))
+        original = mc._SPAWN_GATE_ACQUIRE_TIMEOUT_S
+        mc._SPAWN_GATE_ACQUIRE_TIMEOUT_S = 0.1
+        try:
+            with self.assertRaises(TimeoutError):
+                async with mc._spawn_gate_context():
+                    pass  # pragma: no cover - never reached
+
+            client = MLXLocalClient(model_path=TEST_MODEL)
+            client._req_q = queue.Queue()
+            try:
+                alive = await client._ensure_worker_alive(foreground_request=True)
+            finally:
+                client.close()
+            self.assertFalse(alive, "a gate timeout must defer, not hang or crash")
+        finally:
+            mc._SPAWN_GATE_ACQUIRE_TIMEOUT_S = original
+            mc._GLOBAL_SPAWN_GATE.release()
+
+    async def test_gate_releases_after_normal_use(self):
+        from core.brain.llm import mlx_client as mc
+
+        async with mc._spawn_gate_context():
+            pass
+        # gate must be free again
+        self.assertTrue(mc._GLOBAL_SPAWN_GATE.acquire(blocking=False))
+        mc._GLOBAL_SPAWN_GATE.release()
