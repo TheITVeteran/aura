@@ -45,6 +45,7 @@ _REPO_FRAME = re.compile(r'File "(?P<path>[^"]*/(?:core|interface|tools)/[^"]+)"
 # that names real work.
 _INFRA_FRAMES = ("runtime_hygiene.py", "aura_logging.py", "task_tracker.py", "concurrency.py")
 _FATAL = re.compile(r"^Fatal Python error: (?P<what>.+)$", re.MULTILINE)
+_BOOT_MARKER = re.compile(r"^===== boot pid=(?P<pid>\d+) at=(?P<at>[\d.]+)")
 
 
 @dataclass
@@ -172,21 +173,32 @@ class Triage:
             cls.observe(at, str(cap))
 
     def collect_faulthandler(self) -> None:
+        """Date each fatal segment by its PRECEDING boot marker, never by file
+        mtime — the log is append-only across every boot, so mtime is always
+        "now" and would pull months-old segfaults into the current window
+        (which is exactly the false alarm the first live run of this tool
+        raised: six June segfaults reported as this week's)."""
         path = self.root / "crash" / "faulthandler.log"
         if not path.is_file():
             return
-        at = path.stat().st_mtime
-        if at < self.cutoff:
-            return
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
         except OSError as exc:
             self.errors.append(f"faulthandler_read:{exc}")
             return
-        for m in _FATAL.finditer(text):
-            what = m.group("what").strip()[:60]
-            cls = self._cls(f"fatal_error:{what}", "fatal_error")
-            cls.observe(at, f"{path}#'{what}'")
+        segment_at = path.stat().st_mtime  # fallback for logs predating markers
+        segment_pid = "?"
+        for line in lines:
+            marker = _BOOT_MARKER.match(line)
+            if marker:
+                segment_at = float(marker.group("at"))
+                segment_pid = marker.group("pid")
+                continue
+            fatal = _FATAL.match(line)
+            if fatal and segment_at >= self.cutoff:
+                what = fatal.group("what").strip()[:60]
+                cls = self._cls(f"fatal_error:{what}", "fatal_error")
+                cls.observe(segment_at, f"{path}#pid={segment_pid}:'{what}'")
 
     def collect_memory_spikes(self) -> None:
         path = self.root / "crash" / "memory_spike_stacks.log"

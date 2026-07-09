@@ -140,3 +140,28 @@ def test_runtime_contract_doc_never_drifts_from_code():
 
     assert DOC_PATH.is_file(), "run: python tools/render_health_contract.py"
     assert DOC_PATH.read_text(encoding="utf-8") == render()
+
+
+def test_faulthandler_segments_dated_by_boot_marker_not_mtime(tmp_path):
+    """The log is append-only across boots; mtime is always 'now'. A June
+    segfault must not surface in this week's window just because the file
+    got a fresh boot marker appended tonight."""
+    import os
+
+    root = make_root(tmp_path)
+    fh = root / "crash" / "faulthandler.log"
+    old = NOW - 30 * 86400
+    recent = NOW - 3600
+    fh.write_text(
+        f"===== boot pid=111 at={old} =====\n"
+        "Fatal Python error: Segmentation fault\n...old stack...\n"
+        f"===== boot pid=222 at={recent} =====\n"
+        "Fatal Python error: Aborted\n...fresh stack...\n",
+        encoding="utf-8",
+    )
+    os.utime(fh, (NOW, NOW))  # file freshly touched — must NOT matter
+    report = Triage(root, window_days=7, now=NOW).run()
+    by_fp = {c["fingerprint"]: c for c in report["classes"]}
+    assert "fatal_error:Segmentation fault" not in by_fp, "June crash leaked into the window"
+    assert by_fp["fatal_error:Aborted"]["count"] == 1
+    assert "pid=222" in by_fp["fatal_error:Aborted"]["example_receipt"]
