@@ -56,7 +56,12 @@ def binarize(M: np.ndarray | list, *, method: str = "median") -> np.ndarray:
 
 
 def lz76(seq) -> int:
-    """Lempel-Ziv (LZ76 / Kaspar-Schuster) substring complexity of a sequence."""
+    """Lempel-Ziv (LZ76 / Kaspar-Schuster) substring complexity of a sequence.
+
+    Bounded parse: ``length`` advances monotonically toward ``n``, so the loop
+    terminates once the current window would run past the end; the trailing
+    partial component is counted afterwards.
+    """
     s = list(seq)
     n = len(s)
     if n <= 1:
@@ -66,12 +71,9 @@ def lz76(seq) -> int:
     length = 1
     k = 1
     k_max = 1
-    while True:
+    while length + k <= n:
         if s[i + k - 1] == s[length + k - 1]:
             k += 1
-            if length + k > n:
-                c += 1
-                break
         else:
             if k > k_max:
                 k_max = k
@@ -79,13 +81,13 @@ def lz76(seq) -> int:
             if i == length:
                 c += 1
                 length += k_max
-                if length + 1 > n:
-                    break
                 i = 0
                 k = 1
                 k_max = 1
             else:
                 k = 1
+    if k != 1:
+        c += 1
     return c
 
 

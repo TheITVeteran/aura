@@ -46,6 +46,10 @@ triage:
 	@echo "🩻 Categorizing the crash-forensics record into incident classes..."
 	@$(PYTHON) tools/crash_triage.py --window-days 7 --out artifacts/reliability/triage.json || true
 
+inner-light:
+	@echo "🕯  Running the inner-light consciousness-discriminator test (demo reference vs controls)..."
+	@$(PYTHON) tools/inner_light_probe.py --demo
+
 contract-doc:
 	@echo "📜 Rendering the runtime contract from health_contract.py..."
 	@$(PYTHON) tools/render_health_contract.py
