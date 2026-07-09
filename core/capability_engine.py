@@ -165,6 +165,48 @@ _LIGHTWEIGHT_BACKGROUND_IO_SKILLS = frozenset(
     }
 )
 
+_AUTONOMOUS_RESEARCH_ORIGINS = frozenset(
+    {
+        "autonomy",
+        "background",
+        "background_reflection",
+        "curiosity",
+        "curiosity_daemon",
+        "curiosity_explorer",
+        "dream",
+        "intention_loop",
+        "overt_action_loop",
+        "research_cycle",
+        "subconscious_loop",
+        "temporal",
+    }
+)
+
+_UNSAFE_AUTONOMOUS_WEB_QUERY_MARKERS = frozenset(
+    {
+        "api key",
+        "brute force",
+        "bypass login",
+        "credential",
+        "credentials",
+        "ddos",
+        "deanonymize",
+        "dox",
+        "doxx",
+        "exfiltrate",
+        "exploit",
+        "malware",
+        "password",
+        "phishing",
+        "private key",
+        "ransomware",
+        "session cookie",
+        "steal",
+        "token dump",
+        "worm",
+    }
+)
+
 _READ_ONLY_EFFECT_SKILLS = frozenset(
     {
         "clock",
@@ -2136,6 +2178,8 @@ class CapabilityEngine(AuraBaseModule):
         params: dict[str, Any],
         effect_scope: str,
     ) -> str:
+        if skill_name in _LIGHTWEIGHT_BACKGROUND_IO_SKILLS and effect_scope == "read_only":
+            return "low"
         if skill_name == "run_code":
             stateful = True
             if isinstance(params, dict) and "stateful" in params:
@@ -2209,6 +2253,12 @@ class CapabilityEngine(AuraBaseModule):
         visible-local-action metadata.
         """
 
+        if (
+            skill_name in _LIGHTWEIGHT_BACKGROUND_IO_SKILLS
+            and CapabilityEngine._safe_autonomous_web_research(skill_name, {}, ctx, exec_source, effect_scope)
+        ):
+            return True
+
         if skill_name not in {"desktop_task", "computer_use", "web_interlocutor"}:
             return False
         scope = str(effect_scope or "").lower()
@@ -2265,6 +2315,35 @@ class CapabilityEngine(AuraBaseModule):
         return f"{skill_name} {str(params)[:200]}"
 
     @staticmethod
+    def _safe_autonomous_web_research(
+        skill_name: str,
+        params: dict[str, Any],
+        ctx: dict[str, Any],
+        exec_source: str,
+        effect_scope: str,
+    ) -> bool:
+        if skill_name not in _LIGHTWEIGHT_BACKGROUND_IO_SKILLS:
+            return False
+        if str(effect_scope or "").lower() != "read_only":
+            return False
+        origin = str(exec_source or ctx.get("origin") or ctx.get("source") or "").strip().lower().replace("-", "_")
+        if origin not in _AUTONOMOUS_RESEARCH_ORIGINS:
+            return False
+        text = " ".join(
+            str(part or "").lower()
+            for part in (
+                (params or {}).get("query"),
+                (params or {}).get("q"),
+                ctx.get("objective"),
+                ctx.get("message"),
+                ctx.get("reason"),
+            )
+        )
+        if not text.strip():
+            return False
+        return not any(marker in text for marker in _UNSAFE_AUTONOMOUS_WEB_QUERY_MARKERS)
+
+    @staticmethod
     def _user_benefit_for_execution(
         skill_name: str,
         params: dict[str, Any],
@@ -2275,6 +2354,12 @@ class CapabilityEngine(AuraBaseModule):
         explicit = str(params.get("user_benefit") or ctx.get("user_benefit") or "").strip()
         if explicit:
             return explicit
+        if CapabilityEngine._safe_autonomous_web_research(skill_name, params, ctx, exec_source, effect_scope):
+            query = str((params or {}).get("query") or (params or {}).get("q") or "").strip()
+            return (
+                "support Aura's autonomous curiosity, factual grounding, and memory growth "
+                f"with bounded read-only web research{f' about {query[:120]!r}' if query else ''}"
+            )
         objective = str(ctx.get("objective") or ctx.get("user_objective") or "").strip()
         if objective:
             return objective
@@ -3545,19 +3630,33 @@ class CapabilityEngine(AuraBaseModule):
                     else:
                         _sim = None
                     if _sim is not None and _sim.recommendation == "hold":
-                        reason = (
-                            "Outcome simulator held skill; worst-case harm "
-                            f"{float(getattr(_sim, 'worst_case_harm', 0.0) or 0.0):.2f}"
-                        )
-                        self.logger.warning(
-                            "🌀 Outcome simulation BLOCKED skill '%s' (%s)",
-                            skill_name, reason,
-                        )
-                        return {
-                            "ok": False,
-                            "error": reason,
-                            "status": "blocked_by_outcome_simulator",
-                        }
+                        if self._safe_autonomous_web_research(
+                            skill_name,
+                            params,
+                            ctx,
+                            exec_source,
+                            effect_scope,
+                        ):
+                            self.logger.info(
+                                "🌀 Outcome simulation advisory for autonomous read-only web search '%s' "
+                                "(worst-case harm %.2f); continuing under bounded research policy.",
+                                skill_name,
+                                float(getattr(_sim, "worst_case_harm", 0.0) or 0.0),
+                            )
+                        else:
+                            reason = (
+                                "Outcome simulator held skill; worst-case harm "
+                                f"{float(getattr(_sim, 'worst_case_harm', 0.0) or 0.0):.2f}"
+                            )
+                            self.logger.warning(
+                                "🌀 Outcome simulation BLOCKED skill '%s' (%s)",
+                                skill_name, reason,
+                            )
+                            return {
+                                "ok": False,
+                                "error": reason,
+                                "status": "blocked_by_outcome_simulator",
+                            }
                 _tron = ServiceContainer.get("tron", default=None)
                 if _tron is not None:
                     # Advocate-block memory: a skill the user-advocate blocked
@@ -3587,6 +3686,13 @@ class CapabilityEngine(AuraBaseModule):
                         or ctx.get("confirmed")
                         or ctx.get("user_confirmed")
                         or (exec_source in _USER_FACING_CONTEXT_ORIGINS and _risk_hint not in ("high", "critical"))
+                        or self._safe_autonomous_web_research(
+                            skill_name,
+                            params,
+                            ctx,
+                            exec_source,
+                            effect_scope,
+                        )
                         or self._user_advocate_auto_confirmed_for(
                             skill_name,
                             ctx,

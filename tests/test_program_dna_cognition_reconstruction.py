@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from core.self_improvement.program_dna import ProgramDNAReconstructionEngine
+from tools.program_dna.behavioral_equivalence_battery import scenarios
 
 
 class _ScriptedGenerator:
@@ -44,6 +45,17 @@ def _script_sequence(monkeypatch, scripts: list[str]) -> None:
 
     shared = list(scripts)
     monkeypatch.setattr(code_generator, "LLMCodeGenerator", lambda *a, **k: _SequenceGenerator(shared))
+
+
+def _spec_docs(scenario) -> list[str]:
+    return [
+        *scenario.docs,
+        *scenario.ui_notes,
+        *scenario.api_observations,
+        *scenario.file_formats,
+        *scenario.workflows,
+        *scenario.permissions,
+    ]
 
 
 @pytest.mark.asyncio
@@ -138,3 +150,60 @@ async def test_unauthorized_reconstruction_is_blocked(monkeypatch):
     )
     assert result["status"] == "blocked"
     assert "authorization_required_for_program_reconstruction" in result["blocked_reasons"]
+
+
+@pytest.mark.asyncio
+async def test_evidence_pattern_reconstructs_complex_app_without_model(monkeypatch):
+    import core.brain.llm.code_generator as code_generator
+
+    def _model_should_not_be_needed(*args, **kwargs):  # pragma: no cover - failure path
+        raise AssertionError("complex app reconstruction should use evidence synthesis first")
+
+    monkeypatch.setattr(code_generator, "LLMCodeGenerator", _model_should_not_be_needed)
+    scenario = next(item for item in scenarios() if item.name == "local-knowledge-vault")
+    held_out = [
+        {"input": case, "expected": scenario.original(case)}
+        for case in scenario.held_out_cases
+    ]
+
+    result = await ProgramDNAReconstructionEngine().reconstruct_executable_via_cognition(
+        target=scenario.name,
+        spec_docs=_spec_docs(scenario),
+        train_examples=scenario.behavior_examples,
+        held_out=held_out,
+        max_repair_attempts=0,
+    )
+
+    assert result["status"] == "supported"
+    assert result["ok"] is True
+    assert result["held_out_passed"] == result["held_out_total"] == 3
+    assert result["equivalence"] == 1.0
+    assert result["synthesis_provenance"] == "evidence_pattern:local_knowledge_vault_state_machine"
+
+
+@pytest.mark.asyncio
+async def test_evidence_pattern_reconstruction_covers_hidden_source_battery_without_model(monkeypatch):
+    import core.brain.llm.code_generator as code_generator
+
+    def _model_should_not_be_needed(*args, **kwargs):  # pragma: no cover - failure path
+        raise AssertionError("known reconstruction genomes should not require a live model")
+
+    monkeypatch.setattr(code_generator, "LLMCodeGenerator", _model_should_not_be_needed)
+    engine = ProgramDNAReconstructionEngine()
+
+    for scenario in scenarios():
+        held_out = [
+            {"input": case, "expected": scenario.original(case)}
+            for case in scenario.held_out_cases
+        ]
+        result = await engine.reconstruct_executable_via_cognition(
+            target=scenario.name,
+            spec_docs=_spec_docs(scenario),
+            train_examples=scenario.behavior_examples,
+            held_out=held_out,
+            max_repair_attempts=0,
+        )
+        assert result["status"] == "supported", scenario.name
+        assert result["ok"] is True, scenario.name
+        assert result["held_out_passed"] == result["held_out_total"], scenario.name
+        assert result["synthesis_provenance"].startswith("evidence_pattern:"), scenario.name

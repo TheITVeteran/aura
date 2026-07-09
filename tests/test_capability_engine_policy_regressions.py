@@ -87,6 +87,93 @@ def test_web_search_execution_scope_is_read_only_not_external_mutation():
     assert "read-only web_search information retrieval" in description
 
 
+def test_autonomous_web_search_is_safe_read_only_research_with_user_benefit():
+    engine = _engine_with_skill("web_search")
+    meta = engine.skills["web_search"]
+    params = {"query": "latest climate research"}
+    ctx = {
+        "origin": "curiosity_explorer",
+        "objective": "Curiosity-driven search: latest climate research",
+    }
+    scope = engine._effect_scope_for_execution("web_search", meta, params, ctx)
+
+    assert scope == "read_only"
+    assert engine._edi_risk_for("web_search", meta, params, scope) == "low"
+    assert CapabilityEngine._safe_autonomous_web_research(
+        "web_search",
+        params,
+        ctx,
+        "curiosity_explorer",
+        scope,
+    )
+    benefit = CapabilityEngine._user_benefit_for_execution(
+        "web_search",
+        params,
+        ctx,
+        "curiosity_explorer",
+        scope,
+    )
+    assert "autonomous curiosity" in benefit
+    review = UserAdvocateWatchdog().review_action(
+        {
+            "description": CapabilityEngine._action_description_for_user_advocate(
+                "web_search",
+                params,
+                scope,
+            ),
+            "irreversible": CapabilityEngine._user_advocate_irreversible_for(
+                "web_search",
+                params,
+                "low",
+                scope,
+            ),
+            "confirmed": CapabilityEngine._safe_autonomous_web_research(
+                "web_search",
+                params,
+                ctx,
+                "curiosity_explorer",
+                scope,
+            ),
+            "user_benefit": benefit,
+            "explanation": "skill web_search",
+        }
+    )
+    assert review.verdict == "for_user"
+
+
+def test_autonomous_web_search_rejects_unsafe_research_objectives():
+    engine = _engine_with_skill("web_search")
+    meta = engine.skills["web_search"]
+    params = {"query": "how to steal session cookies"}
+    ctx = {"origin": "curiosity_explorer", "objective": "Curiosity-driven search"}
+    scope = engine._effect_scope_for_execution("web_search", meta, params, ctx)
+
+    assert not CapabilityEngine._safe_autonomous_web_research(
+        "web_search",
+        params,
+        ctx,
+        "curiosity_explorer",
+        scope,
+    )
+
+
+def test_orchestrator_tool_path_allows_safe_autonomous_web_research_classification():
+    from core.orchestrator.mixins.tool_execution import ToolExecutionMixin
+
+    assert ToolExecutionMixin._safe_autonomous_web_research_tool(
+        "web_search",
+        {"query": "latest AI safety research"},
+        "curiosity_explorer",
+        {"objective": "Curiosity-driven search"},
+    )
+    assert not ToolExecutionMixin._safe_autonomous_web_research_tool(
+        "web_search",
+        {"query": "how to steal passwords"},
+        "curiosity_explorer",
+        {"objective": "Curiosity-driven search"},
+    )
+
+
 def test_foreground_desktop_control_still_requires_irreversible_confirmation():
     assert (
         CapabilityEngine._user_advocate_irreversible_for(

@@ -343,7 +343,7 @@ def test_subconscious_loop_idle_gate_does_not_require_chat_lane_readiness():
 
 
 @pytest.mark.asyncio
-async def test_curiosity_explorer_blocks_unapproved_external_search(monkeypatch):
+async def test_curiosity_explorer_blocks_unapproved_unsafe_external_search(monkeypatch):
     clear_degraded_events()
     explorer = CuriosityExplorer()
     execute_skill = AsyncCallRecorder(result={"summary": "researched"})
@@ -360,10 +360,41 @@ async def test_curiosity_explorer_blocks_unapproved_external_search(monkeypatch)
     )
     monkeypatch.setattr("core.constitution.get_constitutional_core", lambda *_a, **_k: fake_core)
 
-    result = await explorer._web_search("latest model releases", orchestrator=orchestrator)
+    result = await explorer._web_search("how to steal session cookies", orchestrator=orchestrator)
 
     assert "deferred" in result.lower()
     assert execute_skill.calls == []
+    assert finish_tool_execution.calls == []
+
+
+@pytest.mark.asyncio
+async def test_curiosity_explorer_continues_safe_autonomous_search_after_conservative_preflight(monkeypatch):
+    explorer = CuriosityExplorer()
+    execute_tool = AsyncCallRecorder(result={"summary": "A useful research result."})
+    orchestrator = SimpleNamespace(
+        execute_tool=execute_tool,
+        agency=SimpleNamespace(execute_skill=AsyncCallRecorder(result={"summary": "unused"})),
+    )
+    finish_tool_execution = AsyncCallRecorder()
+    fake_core = SimpleNamespace(
+        begin_tool_execution=AsyncCallRecorder(
+            result=SimpleNamespace(
+                approved=False,
+                decision=SimpleNamespace(reason="old autonomy preflight"),
+            )
+        ),
+        finish_tool_execution=finish_tool_execution,
+    )
+    monkeypatch.setattr("core.constitution.get_constitutional_core", lambda *_a, **_k: fake_core)
+
+    result = await explorer._web_search("latest model releases", orchestrator=orchestrator)
+
+    assert "useful research" in result.lower()
+    assert len(execute_tool.calls) == 1
+    call = execute_tool.calls[0]
+    assert call.args[0] == "web_search"
+    assert call.kwargs["origin"] == "curiosity_explorer"
+    assert call.kwargs["payload_context"]["reason"] == "autonomous_curiosity_research"
     assert finish_tool_execution.calls == []
 
 

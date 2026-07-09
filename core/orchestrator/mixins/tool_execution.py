@@ -38,6 +38,48 @@ _USER_FACING_TOOL_ORIGINS = {
     "native-shell",
     "ui",
 }
+_READ_ONLY_WEB_TOOLS = {
+    "free_search",
+    "grounded_search",
+    "search_web",
+    "web_search",
+}
+_AUTONOMOUS_WEB_TOOL_ORIGINS = {
+    "autonomy",
+    "background",
+    "background_reflection",
+    "curiosity",
+    "curiosity_daemon",
+    "curiosity_explorer",
+    "dream",
+    "intention_loop",
+    "overt_action_loop",
+    "research_cycle",
+    "subconscious_loop",
+    "temporal",
+}
+_UNSAFE_AUTONOMOUS_WEB_TOOL_MARKERS = {
+    "api key",
+    "brute force",
+    "bypass login",
+    "credential",
+    "credentials",
+    "ddos",
+    "deanonymize",
+    "dox",
+    "doxx",
+    "exfiltrate",
+    "exploit",
+    "malware",
+    "password",
+    "phishing",
+    "private key",
+    "ransomware",
+    "session cookie",
+    "steal",
+    "token dump",
+    "worm",
+}
 
 
 def _record_tool_degradation(
@@ -122,6 +164,34 @@ class ToolExecutionMixin:
         }:
             return "read_only"
         return "unknown"
+
+    @staticmethod
+    def _safe_autonomous_web_research_tool(
+        tool_name: Any,
+        args: dict[str, Any],
+        origin: Any,
+        payload_context: dict[str, Any] | None = None,
+    ) -> bool:
+        name = str(tool_name or "").strip().lower()
+        if name not in _READ_ONLY_WEB_TOOLS:
+            return False
+        normalized_origin = ToolExecutionMixin._coerce_tool_origin(origin)
+        if normalized_origin not in _AUTONOMOUS_WEB_TOOL_ORIGINS:
+            return False
+        ctx = payload_context or {}
+        text = " ".join(
+            str(part or "").lower()
+            for part in (
+                (args or {}).get("query"),
+                (args or {}).get("q"),
+                ctx.get("objective"),
+                ctx.get("message"),
+                ctx.get("reason"),
+            )
+        )
+        if not text.strip():
+            return False
+        return not any(marker in text for marker in _UNSAFE_AUTONOMOUS_WEB_TOOL_MARKERS)
 
     async def run_browser_task(self, url: str, task: str) -> Any:
         """Formalized browser task execution via skill router.
@@ -211,6 +281,12 @@ class ToolExecutionMixin:
         # the EDI gate and the conscience/outcome gates can see it — a hold that
         # exists to "defer to the owner" is redundant when the owner asked for it.
         _payload_ctx = kwargs.get("payload_context")
+        _safe_autonomous_web = self._safe_autonomous_web_research_tool(
+            tool_name,
+            args,
+            _origin,
+            _payload_ctx if isinstance(_payload_ctx, dict) else None,
+        )
         user_authorized = self._coerce_tool_origin(_origin) in _USER_FACING_TOOL_ORIGINS or (
             isinstance(_payload_ctx, dict)
             and str(
@@ -250,6 +326,7 @@ class ToolExecutionMixin:
                 "skill_name": tool_name,
                 "tool_name": tool_name,
                 "user_authorized": user_authorized,
+                "safe_autonomous_web_research": _safe_autonomous_web,
             }
             if _conscience is not None:
                 _verdict = _conscience.quick_check(_action_text, context=_ctx)
@@ -273,18 +350,26 @@ class ToolExecutionMixin:
             if _minds is not None and hasattr(_minds, "assess_fast"):
                 _sim = _minds.assess_fast(_action_text, context=_ctx)
                 if getattr(_sim, "recommendation", "") == "hold":
-                    reason = (
-                        "Outcome simulator held action; worst-case harm "
-                        f"{float(getattr(_sim, 'worst_case_harm', 0.0) or 0.0):.2f}"
-                    )
-                    logger.warning("🌀 Outcome simulator BLOCKED tool '%s': %s", tool_name, reason)
-                    result = {
-                        "ok": False,
-                        "error": reason,
-                        "status": "blocked_by_outcome_simulator",
-                    }
-                    _record_coding_tool_event(result, success=False, error=reason)
-                    return result
+                    if _safe_autonomous_web:
+                        logger.info(
+                            "🌀 Outcome simulator advisory for autonomous read-only web tool '%s' "
+                            "(worst-case harm %.2f); continuing under bounded research policy.",
+                            tool_name,
+                            float(getattr(_sim, "worst_case_harm", 0.0) or 0.0),
+                        )
+                    else:
+                        reason = (
+                            "Outcome simulator held action; worst-case harm "
+                            f"{float(getattr(_sim, 'worst_case_harm', 0.0) or 0.0):.2f}"
+                        )
+                        logger.warning("🌀 Outcome simulator BLOCKED tool '%s': %s", tool_name, reason)
+                        result = {
+                            "ok": False,
+                            "error": reason,
+                            "status": "blocked_by_outcome_simulator",
+                        }
+                        _record_coding_tool_event(result, success=False, error=reason)
+                        return result
             _advocate = ServiceContainer.get("tron", default=None)
             if _advocate is not None:
                 payload_context = (
@@ -299,6 +384,7 @@ class ToolExecutionMixin:
                     or payload_context.get("confirmed")
                     or payload_context.get("user_confirmed")
                     or (_origin in _USER_FACING_TOOL_ORIGINS and risk_level not in ("high", "critical"))
+                    or _safe_autonomous_web
                 )
                 user_benefit = (
                     str(
@@ -307,6 +393,12 @@ class ToolExecutionMixin:
                         or ""
                     ).strip()
                     or str(getattr(self, "_current_objective", "") or "").strip()
+                    or (
+                        "support Aura's autonomous curiosity, factual grounding, and memory growth "
+                        "with bounded read-only web research"
+                        if _safe_autonomous_web
+                        else ""
+                    )
                     or (
                         "requested through the user-facing desktop/tool lane"
                         if _origin in _USER_FACING_TOOL_ORIGINS

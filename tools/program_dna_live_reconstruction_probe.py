@@ -126,6 +126,7 @@ def _result_from_outcome(scenario: Any, outcome: dict[str, Any], held_out: list[
         "equivalence": outcome.get("equivalence", 0.0),
         "failures": outcome.get("failures", []),
         "repair_attempts_used": outcome.get("repair_attempts_used", 0),
+        "synthesis_provenance": outcome.get("synthesis_provenance", ""),
         "candidate_code_sha256": hashlib.sha256(
             str(outcome.get("code") or "").encode("utf-8")
         ).hexdigest() if outcome.get("code") else "",
