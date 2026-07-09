@@ -131,3 +131,12 @@ def test_empty_root_is_a_clean_zero_report(tmp_path):
     assert report["class_count"] == 0
     assert report["hard_death_total"] == 0
     assert report["collector_errors"] == []
+
+
+def test_runtime_contract_doc_never_drifts_from_code():
+    """docs/RUNTIME_CONTRACT.md is GENERATED; if health_contract.py changes
+    and the doc doesn't, this fails — the contract cannot silently drift."""
+    from tools.render_health_contract import DOC_PATH, render
+
+    assert DOC_PATH.is_file(), "run: python tools/render_health_contract.py"
+    assert DOC_PATH.read_text(encoding="utf-8") == render()
