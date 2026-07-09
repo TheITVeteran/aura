@@ -112,7 +112,7 @@ def test_governance_receipt_buffers_use_working_history_policy() -> None:
     from core.consciousness import authority_audit
     from core.governance.will import UnifiedWill
     from core.resilience.incident_manager import IncidentManager
-    from core.unified_action_log import _MAX_ENTRIES as ACTION_LOG_MAX_ENTRIES
+    from core.observability.unified_action_log import _MAX_ENTRIES as ACTION_LOG_MAX_ENTRIES
 
     assert ACTION_LOG_MAX_ENTRIES >= 1_000
     assert UnifiedWill._MAX_AUDIT_TRAIL >= 1_000

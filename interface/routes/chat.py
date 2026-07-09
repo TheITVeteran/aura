@@ -1693,7 +1693,7 @@ def _read_repo_probe_reply(user_message: str) -> dict[str, str] | None:
         return None
 
     try:
-        from core.demo_support import _resolve_target_path
+        from core.conversation.demo_support import _resolve_target_path
 
         target = str(request.get("target") or "").strip()
         mode = str(request.get("mode") or "").strip()
@@ -15709,7 +15709,7 @@ async def api_chat(
 
         # Background file diagnostic
         try:
-            from core.demo_support import (
+            from core.conversation.demo_support import (
                 build_background_diagnostic_ack,
                 extract_background_diagnostic_target,
                 run_background_file_diagnostic,
@@ -15958,7 +15958,7 @@ async def api_chat(
             )
 
         try:
-            from core.demo_support import (
+            from core.conversation.demo_support import (
                 maybe_build_priority_focus_reply,
                 maybe_build_recent_activity_reply,
             )

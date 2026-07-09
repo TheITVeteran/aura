@@ -1,4 +1,4 @@
-"""core/self_healer.py
+"""core/resilience/self_healer.py
 Pattern-based diagnostic and auto-fix system.
 """
 import logging

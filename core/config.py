@@ -249,7 +249,7 @@ class SafeModificationConfig(BaseModel):
         # Security modules
         "core/security/",
         "core/guardians/",
-        "core/prime_directives.py",
+        "core/values/prime_directives.py",
         "core/constitution.py",
         # Configuration
         "core/config.py",

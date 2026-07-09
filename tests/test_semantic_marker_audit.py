@@ -18,7 +18,7 @@ SCAN_ROOTS = ["core"]
 SKIP_PARTS = {"__pycache__", ".venv", ".git", "tests", "archive", "aura_bench"}
 # Files that legitimately use abstract patterns
 ABSTRACT_ALLOWLIST = {
-    "core/base_module.py", "core/errors.py", "core/exceptions.py",
+    "core/runtime/base_module.py", "core/sovereign/errors.py", "core/exceptions.py",
     "core/skills/base_skill.py",  # base class defaults (match() returns False)
 }
 

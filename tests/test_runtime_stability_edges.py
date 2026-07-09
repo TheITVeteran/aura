@@ -1538,7 +1538,7 @@ class TestLifecycleDeduplication(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(engine._tasks), 1)
 
     def test_session_guardian_start_reuses_existing_monitor_task(self):
-        from core.session_guardian import SessionGuardian
+        from core.session.session_guardian import SessionGuardian
 
         guardian = SessionGuardian()
         existing_task = SimpleNamespace(done=lambda: False)
@@ -1546,7 +1546,7 @@ class TestLifecycleDeduplication(unittest.IsolatedAsyncioTestCase):
         guardian._monitor_task = existing_task
 
         with swap(
-            "core.session_guardian.get_task_tracker",
+            "core.session.session_guardian.get_task_tracker",
             side_effect=AssertionError("duplicate monitor task should not be created"),
         ):
             result = guardian.start()

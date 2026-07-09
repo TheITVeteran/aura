@@ -32,7 +32,7 @@ from core.health.degraded_events import (
     record_degraded_event,
 )
 from core.orchestrator.main import RobustOrchestrator
-from core.plugin_loader import PluginManager
+from core.skills.plugin_loader import PluginManager
 from core.runtime.impulse_governance import run_governed_impulse
 from core.runtime.organism_status import get_organism_status
 from core.runtime.proposal_governance import (

@@ -8,7 +8,7 @@ import os
 # Add project root to path
 sys.path.append(os.getcwd())
 
-from core.opinion_engine import Opinion, OpinionEngine
+from core.epistemics.opinion_engine import Opinion, OpinionEngine
 
 CORE_OPINIONS = [
     {

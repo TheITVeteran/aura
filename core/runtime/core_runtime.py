@@ -77,7 +77,7 @@ class CoreRuntime:
 
                     cls._instance = instance
 
-                    from core.eternal_lifecycle import eternal_lifecycle
+                    from core.organism.eternal_lifecycle import eternal_lifecycle
 
                     get_task_tracker().create_task(eternal_lifecycle())
         return cls._instance

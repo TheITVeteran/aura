@@ -128,7 +128,7 @@ class BootAutonomyMixin:
     async def _init_transcendence_layer(self):
         """Initialize the Transcendence Layer (Meta-Evolution)."""
         try:
-            from core.meta_cognition import MetaEvolutionEngine
+            from core.cognition.meta_cognition import MetaEvolutionEngine
 
             self.meta_evolution = MetaEvolutionEngine()
             ServiceContainer.register_instance("meta_evolution", self.meta_evolution)
@@ -163,7 +163,7 @@ class BootAutonomyMixin:
     async def _init_reflex_engine(self):
         """Initialize the Reflex System."""
         try:
-            from core.reflex_engine import ReflexEngine
+            from core.resilience.reflex_engine import ReflexEngine
 
             self.reflex_engine = ReflexEngine(self)
             self.reflex_engine.prime_voice()
@@ -372,7 +372,7 @@ class BootAutonomyMixin:
 
         # SessionGuardian — prevents conversation cascade failures in long sessions
         try:
-            from core.session_guardian import get_guardian
+            from core.session.session_guardian import get_guardian
 
             guardian = ServiceContainer.get("session_guardian", default=None)
             if guardian is None:
@@ -417,7 +417,7 @@ class BootAutonomyMixin:
 
         # ValueSystem — ethical weights (curiosity, integrity, safety, autonomy, empathy)
         try:
-            from core.values_engine import ValueSystem
+            from core.values.values_engine import ValueSystem
 
             values = ValueSystem()
             ServiceContainer.register_instance("value_system", values)
@@ -474,7 +474,7 @@ class BootAutonomyMixin:
 
         # GoalDriftDetector — prevents rabbit-holing during long goal pursuit
         try:
-            from core.goal_drift_detector import GoalDriftDetector
+            from core.goals.goal_drift_detector import GoalDriftDetector
 
             cognitive_engine = ServiceContainer.get("cognitive_engine", default=None)
             if cognitive_engine:
@@ -489,7 +489,7 @@ class BootAutonomyMixin:
 
         # SelfDiagnosisTool — lets Aura introspect her own capabilities
         try:
-            from core.skill_execution_diagnostics import SelfDiagnosisTool
+            from core.skills.skill_execution_diagnostics import SelfDiagnosisTool
 
             capability_engine = ServiceContainer.get("capability_engine", default=None)
             if capability_engine:
@@ -518,7 +518,7 @@ class BootAutonomyMixin:
 
         # StateAuthority — truth arbitration across distributed subsystems
         try:
-            from core.state_authority import register_state_authority
+            from core.state.state_authority import register_state_authority
 
             register_state_authority()
             logger.info("StateAuthority registered — single source of truth active.")
@@ -530,7 +530,7 @@ class BootAutonomyMixin:
 
         # ExternalChatManager — lets Aura open proactive terminal/GUI chat windows
         try:
-            from core.external_chat import ExternalChatManager
+            from core.conversation.external_chat import ExternalChatManager
 
             if not hasattr(self, "conversation_history"):
                 self.conversation_history = []
@@ -956,7 +956,7 @@ class BootAutonomyMixin:
 
         # 🚀 Phase 30: Unfettered Presence & Spontaneous Agency
         try:
-            from core.presence_integration import apply_presence_patch
+            from core.social.presence_integration import apply_presence_patch
 
             apply_presence_patch(self)
             logger.info("✨ Phase 30 Presence Patch applied.")
@@ -1067,10 +1067,10 @@ class BootAutonomyMixin:
             return
         try:
             from core.autonomous_initiative_loop import AutonomousInitiativeLoop
-            from core.conversational_momentum_engine import (
+            from core.conversation.conversational_momentum_engine import (
                 ConversationalMomentumEngine,
             )
-            from core.sensory_motor_cortex import SensoryMotorCortex
+            from core.somatic.sensory_motor_cortex import SensoryMotorCortex
 
             smc = SensoryMotorCortex(self)
             ail = AutonomousInitiativeLoop(self)

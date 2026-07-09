@@ -78,7 +78,7 @@ python -m py_compile \
   core/actors/sensory_gate.py \
   core/bus/actor_bus.py \
   core/bus/local_pipe_bus.py \
-  core/conversation_loop.py \
+  core/conversation/conversation_loop.py \
   core/coordinators/cognitive_coordinator.py \
   core/coordinators/lifecycle_coordinator.py \
   core/coordinators/message_coordinator.py \
@@ -87,7 +87,7 @@ python -m py_compile \
   core/event_bus.py \
   core/guardians/governor.py \
   core/scheduler.py \
-  core/session_guardian.py \
+  core/session/session_guardian.py \
   core/state/state_repository.py \
   core/state/vault.py \
   tests/test_launcher_polish_contract.py \

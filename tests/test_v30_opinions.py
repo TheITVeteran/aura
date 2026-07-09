@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from core.opinion_engine import OpinionEngine
+from core.epistemics.opinion_engine import OpinionEngine
 
 
 class TestV30Opinions(unittest.IsolatedAsyncioTestCase):
@@ -21,7 +21,7 @@ class TestV30Opinions(unittest.IsolatedAsyncioTestCase):
 
     async def test_opinion_normalization_and_query(self):
         # Manually inject an opinion
-        from core.opinion_engine import Opinion
+        from core.epistemics.opinion_engine import Opinion
         op = Opinion(
             id="1",
             topic="ai_ethics",

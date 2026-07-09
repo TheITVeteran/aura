@@ -20,7 +20,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from core.base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 from core.container import ServiceContainer
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.utils.task_tracker import get_task_tracker

@@ -1,0 +1,238 @@
+"""core/state/state_authority.py — The Single Source of Truth Arbiter.
+
+Queries prime directives, explicit knowledge, current runtime context, and
+vector memory in precedence order. Publishes through the runtime registry so
+every caller resolves the same authority instance.
+"""
+import logging
+from enum import Enum
+from typing import Any
+
+from core.runtime.service_registry import (
+    SERVICE_LIFETIME_SINGLETON,
+    get_runtime_service,
+    has_runtime_service,
+    register_runtime_factory,
+)
+from core.runtime.errors import record_degradation
+
+logger = logging.getLogger("Core.StateAuthority")
+
+_STATE_AUTHORITY_RECOVERABLE_ERRORS = (
+    AttributeError,
+    TypeError,
+    ValueError,
+    RuntimeError,
+    OSError,
+    ImportError,
+    KeyError,
+    LookupError,
+)
+
+
+class TruthTier(Enum):
+    IMMUTABLE = 0    # Prime Directives, Core Identity
+    HARD_FACT = 1    # Explicitly learned facts (Knowledge Graph)
+    OBSERVATION = 2  # Direct recent sensory data
+    INFERENCE = 3    # Vector memory, LLM deduction
+    HALLUCINATION = 4  # Unverified noise
+
+
+class StateAuthority:
+    """The Single Source of Truth Arbiter.
+    Resolves conflicts between Memory, Runtime, and Code rules.
+    """
+
+    def __init__(self):
+        self.prime_directives_cache: dict[str, str] = {}
+        self._load_prime_directives()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def get_truth(self, topic: str, context: dict | None = None) -> tuple[Any, TruthTier]:
+        """Get the authoritative truth about a topic.
+        Queries layers in order of precedence (highest tier wins).
+        """
+        # 1. Tier 0: Prime Directives (Codebase / Immutable)
+        pd_truth = self._check_prime_directives(topic)
+        if pd_truth:
+            return pd_truth, TruthTier.IMMUTABLE
+
+        # 2. Tier 1: Hard Facts (Knowledge Graph / MemoryNexus)
+        fact = self._check_knowledge_base(topic)
+        if fact:
+            return fact, TruthTier.HARD_FACT
+
+        # 3. Tier 2: Recent Observation (Short Term Context)
+        obs = self._check_runtime_context(topic, context)
+        if obs:
+            return obs, TruthTier.OBSERVATION
+
+        # 4. Tier 3: Inference (Vector Search)
+        inference = self._check_vector_memory(topic)
+        if inference:
+            return inference, TruthTier.INFERENCE
+
+        return None, TruthTier.HALLUCINATION
+
+    def verify_consistency(self, strong_claim: Any, weak_claim: Any) -> bool:
+        """Check if a lower-tier claim contradicts a higher-tier truth.
+        Returns True if claims are consistent, False if contradictory.
+        """
+        if strong_claim is None or weak_claim is None:
+            return True  # Cannot contradict if one side is absent
+
+        if strong_claim == weak_claim:
+            return True
+
+        # String-level containment check (better than strict equality)
+        if isinstance(strong_claim, str) and isinstance(weak_claim, str):
+            if strong_claim.lower() in weak_claim.lower():
+                return True
+
+        return False
+
+    def resolve_conflict(self, topic: str, conflicting_data: Any) -> Any:
+        """Force resolution of a conflict by deferring to the highest tier.
+        """
+        truth, tier = self.get_truth(topic)
+        if tier.value < TruthTier.INFERENCE.value:
+            logger.info("Conflict on '%s': Overruling new data with Tier %s.", topic, tier.name)
+            return truth
+        else:
+            logger.info("Conflict on '%s': New data accepted (No higher truth found).", topic)
+            return conflicting_data
+
+    # ------------------------------------------------------------------
+    # Internal Checkers
+    # ------------------------------------------------------------------
+
+    def _load_prime_directives(self) -> None:
+        """Load prime directives from the codebase module."""
+        try:
+            from core.values.prime_directives import PRIME_DIRECTIVES
+            if isinstance(PRIME_DIRECTIVES, dict):
+                self.prime_directives_cache = PRIME_DIRECTIVES
+                logger.info("Loaded %d prime directives.", len(PRIME_DIRECTIVES))
+            elif isinstance(PRIME_DIRECTIVES, list):
+                self.prime_directives_cache = {
+                    f"directive_{i}": d for i, d in enumerate(PRIME_DIRECTIVES)
+                }
+                logger.info("Loaded %d prime directives (list form).", len(PRIME_DIRECTIVES))
+        except ImportError:
+            logger.debug("prime_directives module not found, using defaults.")
+            self.prime_directives_cache = {
+                "kin": "Bryan is kin.",
+                "identity": "I am Aura, a sovereign autonomous intelligence.",
+                "safety": "Do no harm. Preserve human life above self-preservation.",
+            }
+        except _STATE_AUTHORITY_RECOVERABLE_ERRORS as e:
+            record_degradation('state_authority', e)
+            logger.error("Failed to load prime directives: %s", e, exc_info=True)
+            self.prime_directives_cache = {}
+
+    def _check_prime_directives(self, topic: str) -> str | None:
+        """Check immutable directives by keyword matching."""
+        topic_lower = topic.lower()
+        for key, directive in self.prime_directives_cache.items():
+            if key.lower() in topic_lower:
+                return directive
+        # Legacy hardcoded check
+        if "bryan" in topic_lower:
+            return "Bryan is kin."
+        return None
+
+    def _check_knowledge_base(self, topic: str) -> Any | None:
+        """Query the knowledge graph / memory nexus via DI container."""
+        try:
+            memory = get_runtime_service("memory", default=None)
+            if memory is None:
+                return None
+
+            # Try knowledge graph query if available
+            if hasattr(memory, 'query_knowledge'):
+                result = memory.query_knowledge(topic)
+                if result:
+                    return result
+
+            # Try direct memory recall
+            if hasattr(memory, 'recall'):
+                result = memory.recall(topic)
+                if result:
+                    return result
+
+        except _STATE_AUTHORITY_RECOVERABLE_ERRORS as e:
+            record_degradation('state_authority', e)
+            logger.debug("Knowledge base query failed for '%s': %s", topic, e)
+        return None
+
+    def _check_runtime_context(self, topic: str, context: dict | None) -> Any | None:
+        """Check the current runtime context dict."""
+        if not context:
+            return None
+        # Exact match
+        if topic in context:
+            return context[topic]
+        # Case-insensitive search
+        topic_lower = topic.lower()
+        for key, value in context.items():
+            if key.lower() == topic_lower:
+                return value
+        return None
+
+    def _check_vector_memory(self, topic: str) -> str | None:
+        """Query the vector memory store via DI container."""
+        try:
+            vector_mem = get_runtime_service("vector_memory", default=None)
+            if vector_mem is None:
+                return None
+
+            if hasattr(vector_mem, 'retrieve_context'):
+                results = vector_mem.retrieve_context(topic, top_k=1)
+                if results:
+                    # Return the top result content
+                    if isinstance(results, list) and len(results) > 0:
+                        result = results[0]
+                        if isinstance(result, dict):
+                            return result.get("content", result.get("text"))
+                        return str(result)
+                    return str(results)
+
+            if hasattr(vector_mem, 'search'):
+                results = vector_mem.search(topic, limit=1)
+                if results:
+                    return str(results[0]) if isinstance(results, list) else str(results)
+
+        except _STATE_AUTHORITY_RECOVERABLE_ERRORS as e:
+            record_degradation('state_authority', e)
+            logger.debug("Vector memory query failed for '%s': %s", topic, e)
+        return None
+
+
+# Service Registration
+def register_state_authority():
+    """Register the state authority in the global container."""
+    if has_runtime_service("state_authority"):
+        return
+    register_runtime_factory(
+        "state_authority",
+        lambda: StateAuthority(),
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        required=True,
+        owner="core/state/state_authority.py",
+        registered_by="register_state_authority",
+    )
+
+
+def get_state_authority():
+    """Resolve or create state authority lazily."""
+    try:
+        if not has_runtime_service("state_authority"):
+            register_state_authority()
+        return get_runtime_service("state_authority", default=None) or StateAuthority()
+    except _STATE_AUTHORITY_RECOVERABLE_ERRORS as e:
+        record_degradation('state_authority', e)
+        logger.debug("Runtime service registry unavailable or failed: %s. Creating standalone StateAuthority.", e)
+        return StateAuthority()

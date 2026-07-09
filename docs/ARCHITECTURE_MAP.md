@@ -1359,9 +1359,9 @@ Review candidates:
 - `core/factory/software_factory.py:115` [factory] `self.writer.write_patch` - patch = await self.writer.write_patch(change, repo_path)
 - `core/guardians/airlock.py:81` [guardians] `atomic_write_text` - atomic_write_text(patch_file, diff_patch, encoding="utf-8")
 - `core/kernel/upgrades_10x.py:335` [kernel] `self._safe_self_modify` - await self._safe_self_modify(state)
-- `core/optimizer.py:61` [core_root] `patch.apply` - success = await patch.apply(signature)
-- `core/optimizer.py:63` [core_root] `patch.apply` - success = await patch.apply()
-- `core/optimizer.py:74` [core_root] `cog_patch.apply` - if await cog_patch.apply(signature):
+- `core/evolution/optimizer.py:61` [core_root] `patch.apply` - success = await patch.apply(signature)
+- `core/evolution/optimizer.py:63` [core_root] `patch.apply` - success = await patch.apply()
+- `core/evolution/optimizer.py:74` [core_root] `cog_patch.apply` - if await cog_patch.apply(signature):
 - `core/orchestrator/mixins/boot/boot_autonomy.py:870` [orchestrator] `apply_presence_patch` - apply_presence_patch(self)
 - `core/skill_management/hephaestus.py:198` [skill_management] `guard.validate` - if not guard.validate(patched_code):
 - `core/state/cellular_substrate.py:64` [state] `self._apply_patch_recursive` - self._apply_patch_recursive(state, patch)
@@ -1419,9 +1419,9 @@ Review candidates:
 - `core/collective/swarm_protocol.py:52` [collective] `logger.warning` - logger.warning("🕸️ Mycelial Swarm running in offline-only mode; socket binding unavailable.")
 - `core/consciousness/heartbeat.py:185` [consciousness] `socket.socket` - with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
 - `core/consciousness/heartbeat.py:193` [consciousness] `logger.debug` - logger.debug("Failed to emit keep-alive socket message to watchdog: %s", e)
-- `core/device_discovery.py:205` [core_root] `socket.socket` - with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-- `core/device_discovery.py:239` [core_root] `socket.gethostbyaddr` - hostname = socket.gethostbyaddr(device["ip"])[0]
-- `core/device_discovery.py:247` [core_root] `socket.socket` - with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+- `core/networking/device_discovery.py:205` [core_root] `socket.socket` - with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+- `core/networking/device_discovery.py:239` [core_root] `socket.gethostbyaddr` - hostname = socket.gethostbyaddr(device["ip"])[0]
+- `core/networking/device_discovery.py:247` [core_root] `socket.socket` - with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
 - `core/embodiment/iot_bridge.py:114` [embodiment] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/embodiment/mock_iot_plug.py:32` [embodiment] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
 - `core/embodiment/mock_iot_plug.py:58` [embodiment] `aiohttp.ClientSession` - async with aiohttp.ClientSession() as session:
@@ -1445,7 +1445,7 @@ Top limp-on files:
 - `core/runtime/runtime_hygiene.py`: 23
 - `core/capabilities/__init__.py`: 22
 - `core/memory/memory_facade.py`: 22
-- `core/proactive_presence.py`: 21
+- `core/autonomy/proactive_presence.py`: 21
 - `core/self_modification/safe_modification.py`: 21
 - `core/brain/llm/context_assembler.py`: 20
 
@@ -1466,7 +1466,7 @@ Top limp-on files:
 - `core/lab/research_lab.py`
 - `core/lab/research_memory.py`
 - `core/learning/proof_obligations.py`
-- `core/narrative_thread.py`
+- `core/identity/narrative_thread.py`
 - `core/reasoning/proof_answer_solver.py`
 - `core/reproducibility/proof_substrate.py`
 - `core/runtime/proof_kernel_bridge.py`

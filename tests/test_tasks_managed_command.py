@@ -59,7 +59,7 @@ def test_run_rl_training_uses_managed_payload(monkeypatch):
     from core import tasks as tasks_module
 
     def fake_run_project_python(relative_script):
-        assert relative_script == "core/rl_train.py"
+        assert relative_script == "core/learning/rl_train.py"
         return managed_command.ManagedCommandResult((relative_script,), 0, "trained", "", 0.01)
 
     monkeypatch.setattr(tasks_module, "run_project_python", fake_run_project_python)

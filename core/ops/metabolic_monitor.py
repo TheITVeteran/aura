@@ -392,7 +392,7 @@ class MetabolicMonitor:
 
     def _sync_registry(self, snapshot: MetabolismSnapshot) -> None:
         try:
-            from core.state_registry import get_registry
+            from core.state.state_registry import get_registry
 
             get_registry().sync_update(
                 health_score=snapshot.health_score,

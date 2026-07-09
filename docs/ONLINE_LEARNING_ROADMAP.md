@@ -26,7 +26,7 @@ of which is online gradient update of the core weights.
 | Auxiliary online plasticity | `core/consciousness/synaptic_plasticity.py` | a small **auxiliary** Hebbian weight matrix (modulation signal), **not** the LLM | per inference | No (its own docstring states the LLM is frozen) |
 | LoRA adapter training | `core/learning/lora_trainer.py`, `continual_lora_merge.py`, `tree_lora_manager.py`, `adapter_registry.py` | **adapter** weights merged onto the backbone | batch / scheduled | Adapters only |
 | Full-weight training | `core/learning/full_weight_training.py` | every parameter (real backprop), CPU-bounded, eval-gated, hot-swap promoted | scheduled job | Yes, but **offline/batch**, behind promotion gates |
-| RL / self-update tasks | `core/rl_train.py`, `scripts/self_update.py` (dispatched via `core/tasks`) | policy / fine-tune artifacts | scheduled background | Indirect, batch |
+| RL / self-update tasks | `core/learning/rl_train.py`, `scripts/self_update.py` (dispatched via `core/tasks`) | policy / fine-tune artifacts | scheduled background | Indirect, batch |
 
 **Claim boundary (do not cross):** the honest phrasing is *"Aura retrieves and
 re-contextualizes continuously, and consolidates into adapter/weight artifacts in

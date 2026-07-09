@@ -1,5 +1,5 @@
 from core.brain.llm.chat_format import format_chatml_messages, format_chatml_prompt
-from core.context_manager import ContextWindowManager
+from core.context.context_manager import ContextWindowManager
 
 
 def test_grok_chat_template_uses_separator_format():

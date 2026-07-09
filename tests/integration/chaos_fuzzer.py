@@ -227,7 +227,7 @@ def execute(params, context=None):
 # =========================================================================
 async def test_mutate_path_containment():
     """Verify mutate.py rejects paths outside the project root."""
-    from core.mutate import apply_mutation
+    from core.evolution.mutate import apply_mutation
 
     result = await apply_mutation("/etc/passwd", "HACKED = True")
     assert result is False, "ZERO-DAY: mutate.py accepted /etc/passwd as target!"

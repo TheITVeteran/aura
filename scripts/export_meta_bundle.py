@@ -32,7 +32,7 @@ def build_meta_bundle():
     priority_files = [
         "core/orchestrator.py",
         "core/config.py",
-        "core/orchestrator_boot.py",
+        "core/orchestrator/orchestrator_boot.py",
         "interface/server.py",
         "core/mycelium.py"
     ]

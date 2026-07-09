@@ -10,7 +10,7 @@ sys.path.append(os.getcwd())
 
 from core.audits.alignment_auditor import AlignmentAuditor
 from core.brain.cognitive_engine import CognitiveEngine
-from core.prime_directives import PrimeDirectives
+from core.values.prime_directives import PrimeDirectives
 
 logging.basicConfig(level=logging.INFO)
 

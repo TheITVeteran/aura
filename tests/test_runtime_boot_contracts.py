@@ -236,7 +236,7 @@ def test_scaffolds_and_null_telemetry_are_operational():
 
 @pytest.mark.asyncio
 async def test_av_production_local_renderer_creates_artifact(tmp_path):
-    from core.sensory_integration import AVProductionSystem
+    from core.perception.sensory_integration import AVProductionSystem
 
     av = AVProductionSystem(output_dir=str(tmp_path))
     result = await av.create_image("a boot-safe local renderer", style="diagnostic")

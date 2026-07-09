@@ -58,7 +58,7 @@ Hierarchy: UnifiedWill > AuthorityGateway > ExecutiveCore > SubstrateAuthority (
 
 | Concern | Owner | File |
 |---------|-------|------|
-| Message routing | `IntentGate` (multiplexer, not an authority) | `core/intent_gate.py` |
+| Message routing | `IntentGate` (multiplexer, not an authority) | `core/intent/intent_gate.py` |
 | Skill dispatch | `CapabilityEngine` | `core/capability_engine.py` |
 | LLM inference | `InferenceGate` | `core/brain/inference_gate.py` |
 | Output emission | `AutonomousOutputGate` | `core/utils/output_gate.py` |

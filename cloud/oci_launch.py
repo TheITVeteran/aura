@@ -76,20 +76,20 @@ print(f"    ID: {IMAGE_ID[:60]}...")
 print()
 
 # ─── Launch configuration ──────────────────────────────────
-launch_details = oci.core.models.LaunchInstanceDetails(
+launch_details = oci.core.runtime.models.LaunchInstanceDetails(
     compartment_id=COMPARTMENT_ID,
     availability_domain=AVAILABILITY_DOMAIN,
     display_name=DISPLAY_NAME,
     shape=SHAPE,
-    shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
+    shape_config=oci.core.runtime.models.LaunchInstanceShapeConfigDetails(
         ocpus=float(OCPUS),
         memory_in_gbs=float(MEMORY_GB)
     ),
-    source_details=oci.core.models.InstanceSourceViaImageDetails(
+    source_details=oci.core.runtime.models.InstanceSourceViaImageDetails(
         image_id=IMAGE_ID,
         boot_volume_size_in_gbs=BOOT_VOLUME_GB
     ),
-    create_vnic_details=oci.core.models.CreateVnicDetails(
+    create_vnic_details=oci.core.runtime.models.CreateVnicDetails(
         subnet_id=SUBNET_ID,
         assign_public_ip=True
     ),

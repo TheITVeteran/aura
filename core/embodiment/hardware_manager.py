@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from core.base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 
 from .base_device import BaseHardwareDevice

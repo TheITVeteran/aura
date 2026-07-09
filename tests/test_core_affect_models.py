@@ -5,10 +5,10 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 from core.affect import AffectState
-from core.emotion_engine import EmotionEngine
-from core.emotional_coloring import EmotionalColoring
-from core.models import ExecutionPlan
-from core.narrative_thread import NarrativeThread
+from core.affect.emotion_engine import EmotionEngine
+from core.affect.emotional_coloring import EmotionalColoring
+from core.runtime.models import ExecutionPlan
+from core.identity.narrative_thread import NarrativeThread
 
 
 def test_execution_plan_accepts_structured_tool_payloads():
@@ -92,7 +92,7 @@ async def test_narrative_thread_start_defers_during_proof_run(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_narrative_thread_start_seeds_snapshot_and_falls_back_task_tracker(monkeypatch):
-    import core.narrative_thread as narrative_module
+    import core.identity.narrative_thread as narrative_module
     from core.container import ServiceContainer
 
     recorded: list[tuple[str, str, dict[str, object]]] = []
@@ -128,7 +128,7 @@ async def test_narrative_thread_start_seeds_snapshot_and_falls_back_task_tracker
 
 @pytest.mark.asyncio
 async def test_narrative_thread_refresh_failure_writes_degraded_snapshot(monkeypatch):
-    import core.narrative_thread as narrative_module
+    import core.identity.narrative_thread as narrative_module
 
     recorded: list[tuple[str, str, dict[str, object]]] = []
 

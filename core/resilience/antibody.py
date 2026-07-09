@@ -25,7 +25,7 @@ class Antibody:
     def __init__(self, immune_system):
         self.immune = immune_system
         self.watch_list = [
-            Path("core/prime_directives.py"),
+            Path("core/values/prime_directives.py"),
             Path("core/immune_system.py"),
             Path(".env")
         ]

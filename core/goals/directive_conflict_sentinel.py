@@ -178,7 +178,7 @@ def register_directive_sentinel(orchestrator: Any = None) -> DirectiveConflictSe
     # runtime via add_directive() and re-scanned.
     try:
         if not inst._directives:
-            from core.prime_directives import PrimeDirectives
+            from core.values.prime_directives import PrimeDirectives
 
             for i, rule in enumerate(PrimeDirectives.ONLINE_PRESENCE_RULES):
                 inst.add_directive(f"online_rule_{i}", rule, priority=2, source="constitution")

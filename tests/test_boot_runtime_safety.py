@@ -24,7 +24,7 @@ from core.runtime.desktop_boot_safety import (
     inprocess_mlx_metal_enabled,
 )
 from core.senses.continuous_vision import ContinuousSensoryBuffer
-from core.sensory_motor_cortex import SensoryMotorCortex
+from core.somatic.sensory_motor_cortex import SensoryMotorCortex
 from core.utils.memory_monitor import AppleSiliconMemoryMonitor
 
 VISION_TEST_ROOT = Path(tempfile.gettempdir()) / "aura-test"

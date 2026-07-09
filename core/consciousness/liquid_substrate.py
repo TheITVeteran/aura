@@ -546,7 +546,7 @@ class LiquidSubstrate:
                     # 6. Push to Unified Registry (Phase 11.3: Synchronization)
                     if self.tick_count % 10 == 0:  # 2Hz sync
                         try:
-                            from core.state_registry import get_registry
+                            from core.state.state_registry import get_registry
 
                             x = self.x  # Already NaN-guarded by _step_torch_math
                             _phi = self._current_phi if np.isfinite(self._current_phi) else 0.0

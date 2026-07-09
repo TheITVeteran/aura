@@ -952,7 +952,7 @@ class ExecutiveAuthority:
         self._snapshot.last_decision_at = now
 
         try:
-            from core.unified_action_log import get_action_log
+            from core.observability.unified_action_log import get_action_log
 
             summary = goal[:120] if goal else content[:120]
             outcome = reason if not target else f"{reason}:{target}"

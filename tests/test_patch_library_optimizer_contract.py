@@ -4,8 +4,8 @@ import asyncio
 import json
 from pathlib import Path
 
-from core.optimizer import Optimizer
-from core.patch_library import AVAILABLE_PATCHES, GitInitPatch, PatchStrategy, PipInstallPatch
+from core.evolution.optimizer import Optimizer
+from core.self_modification.patch_library import AVAILABLE_PATCHES, GitInitPatch, PatchStrategy, PipInstallPatch
 
 
 class RecordingPatch(PatchStrategy):

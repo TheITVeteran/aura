@@ -234,33 +234,33 @@ def register_cognitive_services(container, is_proxy: bool = False):
     container.register('epistemic_tracker', create_epistemic_tracker, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_inquiry_engine():
-        from core.inquiry_engine import get_inquiry_engine
+        from core.epistemics.inquiry_engine import get_inquiry_engine
         return get_inquiry_engine()
     container.register('inquiry_engine', create_inquiry_engine, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_concept_linker():
-        from core.concept_linker import ConceptLinker
+        from core.knowledge.concept_linker import ConceptLinker
         return ConceptLinker()
     container.register('concept_linker', create_concept_linker, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_belief_challenger():
-        from core.belief_challenger import BeliefChallenger
+        from core.epistemics.belief_challenger import BeliefChallenger
         return BeliefChallenger()
     container.register('belief_challenger', create_belief_challenger, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_insight_journal():
-        from core.insight_journal import InsightJournal
+        from core.introspection.insight_journal import InsightJournal
         return InsightJournal()
     container.register('insight_journal', create_insight_journal, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     # Phase 9: Self-Architect & Recursive Mastery
     def create_code_refiner():
-        from core.code_refiner import CodeRefinerService
+        from core.self_modification.code_refiner import CodeRefinerService
         return CodeRefinerService()
     container.register('code_refiner', create_code_refiner, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_skill_evolution():
-        from core.skill_evolution import SkillEvolutionEngine
+        from core.learning.skill_evolution import SkillEvolutionEngine
         return SkillEvolutionEngine()
     container.register('skill_evolution', create_skill_evolution, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
@@ -271,22 +271,22 @@ def register_cognitive_services(container, is_proxy: bool = False):
 
     # Phase 10: Full-Mind Integration (Zenith)
     def create_narrative_thread():
-        from core.narrative_thread import NarrativeThread
+        from core.identity.narrative_thread import NarrativeThread
         return NarrativeThread()
     container.register('narrative_thread', create_narrative_thread, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_emotional_coloring():
-        from core.emotional_coloring import EmotionalColoring
+        from core.affect.emotional_coloring import EmotionalColoring
         return EmotionalColoring()
     container.register('emotional_coloring', create_emotional_coloring, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_plasticity_controller():
-        from core.plasticity_controller import PlasticityController
+        from core.plasticity.plasticity_controller import PlasticityController
         return PlasticityController()
     container.register('plasticity_controller', create_plasticity_controller, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
     def create_conversation_reflector():
-        from core.conversation_reflector import ConversationReflector
+        from core.conversation.conversation_reflector import ConversationReflector
         return ConversationReflector()
     container.register('conversation_reflector', create_conversation_reflector, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
 
@@ -379,7 +379,7 @@ def register_cognitive_services(container, is_proxy: bool = False):
     # Phase 25: Critic Engine
     def create_critic_engine():
         try:
-            from core.critic_engine import get_critic_engine
+            from core.reasoning.critic_engine import get_critic_engine
             return get_critic_engine()
         except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create critic_engine")

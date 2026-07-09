@@ -16,7 +16,7 @@ import time
 from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
-from core.base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 from core.container import ServiceContainer
 
 logger = logging.getLogger("Consciousness.Homeostasis")

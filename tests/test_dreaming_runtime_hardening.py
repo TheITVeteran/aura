@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from core.consciousness.dreaming import DreamingProcess
-from core.dream_processor import DreamProcessor
+from core.sleep.dream_processor import DreamProcessor
 
 
 class AsyncCallFixture:

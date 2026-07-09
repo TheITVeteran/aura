@@ -1254,7 +1254,7 @@ class ClosedCausalLoop:
     async def _sync_to_registry(self):
         """Sync loop state to the state registry."""
         try:
-            from core.state_registry import get_registry
+            from core.state.state_registry import get_registry
 
             await get_registry().update(
                 free_energy=self._loop_state.current_free_energy,

@@ -623,7 +623,7 @@ class ResponseProcessingMixin:
                 logger.debug("Direct reflex authority gate failed: %s", exc)
                 return None
             try:
-                from core.unified_action_log import get_action_log
+                from core.observability.unified_action_log import get_action_log
 
                 get_action_log().record(
                     f"direct_response:{pw.pathway_id}",

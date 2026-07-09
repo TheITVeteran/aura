@@ -898,8 +898,8 @@ class TestCondition11_MetacognitionConsequences:
 
     def test_indispensability(self):
         """MetaEvolutionEngine uses metacognition to drive self-modification."""
-        assert _file_exists("core/meta_cognition.py"), "MetaEvolutionEngine missing"
-        src = _read_source("core/meta_cognition.py")
+        assert _file_exists("core/cognition/meta_cognition.py"), "MetaEvolutionEngine missing"
+        src = _read_source("core/cognition/meta_cognition.py")
         has_audit = "audit" in src.lower()
         has_patch = "patch" in src.lower() or "Hephaestus" in src
         has_modification = "SelfModification" in src or "self_modification" in src
@@ -1097,7 +1097,7 @@ class TestCondition14_SelfMaintenance:
 
     def test_indispensability(self):
         """Self-modification engine can audit, diagnose, patch, and apply changes."""
-        src = _read_source("core/meta_cognition.py")
+        src = _read_source("core/cognition/meta_cognition.py")
         has_audit = "audit" in src.lower() or "Self-Audit" in src
         has_diagnosis = "diagnosis" in src.lower() or "Diagnosis" in src
         has_patch = "patch" in src.lower() or "Patch" in src
@@ -1336,7 +1336,7 @@ class TestCondition18_SelfModification:
         assert _file_exists("core/self_modification/ast_analyzer.py"), "No AST analyzer"
         assert _file_exists("core/self_modification/evaluation_harness.py"), "No evaluation harness"
 
-        src = _read_source("core/meta_cognition.py")
+        src = _read_source("core/cognition/meta_cognition.py")
         has_selfmod_ref = "SelfModification" in src or "self_modification" in src
 
         score = SCORE_CONSTITUTIVE if has_selfmod_ref else SCORE_FUNCTIONAL

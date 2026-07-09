@@ -12,7 +12,7 @@ from pathlib import Path
 # Add core to path
 sys.path.append(str(Path(__file__).parent))
 
-from core.daemon import main
+from core.ops.daemon import main
 
 _DAEMON_RECOVERABLE_ERRORS = (
     ImportError,

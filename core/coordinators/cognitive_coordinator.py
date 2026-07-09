@@ -111,7 +111,7 @@ class CognitiveCoordinator:
         # rather than confabulate. Epistemic honesty is a core value.
         if origin in ("user", "voice") and response:
             try:
-                from core.uncertainty import EpistemicHumilityEngine
+                from core.epistemics.uncertainty import EpistemicHumilityEngine
                 # Lazy-init: one instance per orchestrator session
                 if not hasattr(orch, '_epistemic_engine'):
                     orch._epistemic_engine = EpistemicHumilityEngine()

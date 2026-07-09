@@ -1,8 +1,8 @@
 import numpy as np
 
 from core.container import ServiceContainer, ServiceDescriptor, ServiceLifetime
-from core.llm_guard import sanitize_tool_result
-from core.rl_glue import RLInterface
+from core.llm.llm_guard import sanitize_tool_result
+from core.learning.rl_glue import RLInterface
 from core.schemas import IPCMessage
 
 

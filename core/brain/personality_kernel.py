@@ -10,7 +10,7 @@ import os
 import sys
 from pathlib import Path
 
-from core.panzer_soul import get_panzer_soul
+from core.being.panzer_soul import get_panzer_soul
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 

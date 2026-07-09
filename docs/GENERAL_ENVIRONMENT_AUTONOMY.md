@@ -41,8 +41,8 @@ The executable audit lives in `core/environment/capability_matrix.py`.
 | Benchmark mode separation | `core/environment/benchmark_runner.py`, `BoundaryGuard` |
 | External task proof gate | `core/environment/external_validation.py` |
 | Runtime activation proof bridge | `core/runtime/activation_audit.py`, `core/runtime/proof_kernel_bridge.py` |
-| Async/concurrency health | `core/runtime/concurrency_health.py`, `core/utils/task_tracker.py`, `core/resilience/lock_watchdog.py`, `core/dead_letter_queue.py` |
-| Corrective grounding | `core/brain/grounding_guard.py`, `core/self_evaluator.py` |
+| Async/concurrency health | `core/runtime/concurrency_health.py`, `core/utils/task_tracker.py`, `core/resilience/lock_watchdog.py`, `core/tasks/dead_letter_queue.py` |
+| Corrective grounding | `core/brain/grounding_guard.py`, `core/evaluation/self_evaluator.py` |
 | Robust context budgeting | `core/brain/llm/context_gate.py` |
 | Structured knowledge distillation | `core/learning/formalizer.py` |
 

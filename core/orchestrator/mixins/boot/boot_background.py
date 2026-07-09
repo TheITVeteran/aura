@@ -90,7 +90,7 @@ class BootBackgroundMixin:
     async def _start_meta_evolution(self):
         """Initializes the Meta-Evolution Engine for recursive self-optimization."""
         try:
-            from core.meta_cognition import MetaEvolutionEngine
+            from core.cognition.meta_cognition import MetaEvolutionEngine
 
             self.meta_cognition = MetaEvolutionEngine()
             ServiceContainer.register_instance("meta_cognition_shard", self.meta_cognition)

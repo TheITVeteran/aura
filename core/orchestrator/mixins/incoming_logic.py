@@ -158,7 +158,7 @@ class IncomingLogicMixin:
         self, message: Any, origin: str = "user", suppress_ui: bool = False
     ):
         """Route an incoming message through the deterministic State Machine pipeline."""
-        from core.autonomy_guardian import AutonomyGuardian
+        from core.autonomy.autonomy_guardian import AutonomyGuardian
         from core.health.degraded_events import record_degraded_event
         from core.supervisor.registry import TaskStatus
 
@@ -877,7 +877,7 @@ class IncomingLogicMixin:
                                             _emit_reason,
                                         )
                                         try:
-                                            from core.unified_action_log import get_action_log
+                                            from core.observability.unified_action_log import get_action_log
 
                                             get_action_log().record(
                                                 pathway.skill_name or "direct_response",

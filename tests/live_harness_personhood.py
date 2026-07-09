@@ -47,7 +47,7 @@ os.environ.setdefault("AURA_HOME_OVERRIDE", str(_HARNESS_HOME))
 from core.capability_engine import CapabilityEngine  # noqa: E402
 from core.container import ServiceContainer  # noqa: E402
 from core.memory.scar_formation import ScarDomain, ScarFormationSystem  # noqa: E402
-from core.narrative_thread import NarrativeThread  # noqa: E402
+from core.identity.narrative_thread import NarrativeThread  # noqa: E402
 from core.will import ActionDomain, UnifiedWill, WillOutcome, get_will  # noqa: E402
 from core.world_model.belief_graph import BeliefGraph  # noqa: E402
 

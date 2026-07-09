@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.concept_linker import ConceptLinker
+from core.knowledge.concept_linker import ConceptLinker
 
 
 @pytest.mark.asyncio

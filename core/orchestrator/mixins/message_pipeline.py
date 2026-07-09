@@ -365,7 +365,7 @@ class MessagePipelineMixin:
         import datetime
 
         try:
-            from core.environment_awareness import get_environment
+            from core.environment.environment_awareness import get_environment
 
             env = get_environment()
             # Refresh context (device/location are cached internally)
@@ -409,7 +409,7 @@ class MessagePipelineMixin:
 
     async def _record_reliability(self, tool: str, success: bool, error: str | None = None):
         try:
-            from core.reliability_tracker import reliability_tracker
+            from core.resilience.reliability_tracker import reliability_tracker
 
             reliability_tracker.record_attempt(tool, success, error)
         except _MESSAGE_PIPELINE_ERRORS as e:

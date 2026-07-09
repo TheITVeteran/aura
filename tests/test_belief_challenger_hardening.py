@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.belief_challenger import BeliefChallenger
+from core.epistemics.belief_challenger import BeliefChallenger
 
 
 @pytest.mark.asyncio

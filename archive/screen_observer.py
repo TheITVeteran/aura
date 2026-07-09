@@ -1,4 +1,4 @@
-"""core/screen_observer.py — v4.3.2 Unified Sensory Observer
+"""core/senses/screen_observer.py — v4.3.2 Unified Sensory Observer
 
 Wraps the existing senses/vision_service.py and senses/audio_service.py
 into a higher-level observer that:
@@ -306,7 +306,7 @@ class ScreenObserver:
                 "screen_understanding": False,  # Needs vision model
                 "audio_capture": True,
                 "audio_transcription": True,
-                "camera": True,   # via core/sensory_integration.py (OpenCV)
+                "camera": True,   # via core/perception/sensory_integration.py (OpenCV)
                 "microphone": True,
             },
             "requirements": {

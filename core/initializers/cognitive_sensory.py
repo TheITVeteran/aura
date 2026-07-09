@@ -14,7 +14,7 @@ logger = logging.getLogger("Aura.Init.CognitiveSensory")
 def init_cognitive_sensory_layer(container):
     """Register sensory subsystems in the service container."""
     try:
-        from core.sensory_integration import get_sensory_system
+        from core.perception.sensory_integration import get_sensory_system
         sensory = get_sensory_system()
         if sensory is not None:
             container.register_instance("sensory_system", sensory, required=False)

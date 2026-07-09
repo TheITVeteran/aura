@@ -3,9 +3,9 @@ from types import SimpleNamespace
 import pytest
 
 from core.agency_core import AgencyCore
-from core.code_refiner import CodeRefinerService
+from core.self_modification.code_refiner import CodeRefinerService
 from core.container import ServiceContainer
-from core.skill_evolution import SkillEvolutionEngine
+from core.learning.skill_evolution import SkillEvolutionEngine
 from core.system_monitor import SystemStateMonitor
 
 
@@ -109,7 +109,7 @@ async def test_system_monitor_audits_stability_from_registered_services(monkeypa
     }
 
     monkeypatch.setattr(ServiceContainer, "get", classmethod(lambda cls, name, default=None: services.get(name, default)))
-    monkeypatch.setattr("core.state_registry.get_registry", lambda: registry)
+    monkeypatch.setattr("core.state.state_registry.get_registry", lambda: registry)
     monkeypatch.setattr("core.system_monitor.get_task_tracker", lambda: _ClosingTracker())
 
     health = await SystemStateMonitor().audit_stability()

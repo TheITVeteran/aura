@@ -46,7 +46,7 @@ def get_registered_effect_sinks() -> dict[str, EffectSinkSpec]:
 
 def _record_sink_commit(sink_id: str, token: Any) -> None:
     try:
-        from core.unified_action_log import get_action_log
+        from core.observability.unified_action_log import get_action_log
 
         get_action_log().record(
             action=sink_id,

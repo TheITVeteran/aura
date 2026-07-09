@@ -47,7 +47,7 @@ from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.self_modification.boot_validator import GhostBootValidator
 from core.state.aura_state import AuraState
 from core.state.state_repository import StateRepository
-from core.thought_tracer import tracer
+from core.introspection.thought_tracer import tracer
 from core.utils.concurrency import RobustLock
 from core.utils.task_tracker import get_task_tracker
 

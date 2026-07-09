@@ -7,7 +7,7 @@ files_to_patch = [
     "core/runtime_tools.py",
     "core/motivation/goal_hierarchy.py",
     "core/skills/toggle_senses.py",
-    "core/logging_hmac.py",
+    "core/observability/logging_hmac.py",
     "core/world_model/acg.py",
     "core/world_model/belief_graph.py",
     "core/meta/cognitive_trace.py",

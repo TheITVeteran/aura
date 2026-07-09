@@ -37,7 +37,7 @@ from typing import Any, Dict, List, Optional, Set
 
 import psutil
 
-from core.base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 from core.container import ServiceContainer
 
 logger = logging.getLogger("Aura.Somatic.CapabilityDiscovery")

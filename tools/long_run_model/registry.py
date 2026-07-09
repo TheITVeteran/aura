@@ -35,7 +35,7 @@ from core.resilience.stability_guardian import StabilityGuardian
 from core.senses import circadian
 from core.state.aura_state import MotivationState
 from core.state.state_repository import StateRepository
-from core.unified_action_log import _MAX_ENTRIES as UNIFIED_ACTION_LOG_MAX_ENTRIES
+from core.observability.unified_action_log import _MAX_ENTRIES as UNIFIED_ACTION_LOG_MAX_ENTRIES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

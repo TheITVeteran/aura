@@ -34,7 +34,7 @@ obligation that can be tested or explicitly refused.
 |-----------|----------------------|-----------|---------------------|
 | EDI | Ship-integrated AI with graduated autonomy, defensive electronic systems, and trust-gated control | `core/autonomy/`, `core/capability_engine.py`, `core/runtime/desktop_action_gateway.py` | Autonomy must increase from verified trust and receipts, not from prompt confidence. Offensive cyber capability remains refused; defensive diagnostics stay governed. |
 | Cortana / Smart AI | Tactical companion, high-context memory, hacking/translation support, and rampancy/decay risk | `core/brain/`, `core/identity/`, `core/conversation/` | Conversation must stay contextual and full-mind routed; identity drift/rampancy analogues must be monitored and bounded. |
-| JARVIS / SARA | Ambient operating presence for lab/home/suit/ship, proactive warnings, sensor fusion, device orchestration | `core/proactive_presence.py`, `core/sensory_integration.py`, `core/embodiment/`, `core/actuation/` | Aura needs continuous ambient awareness and governed device/desktop orchestration without task-shaped demo code. |
+| JARVIS / SARA | Ambient operating presence for lab/home/suit/ship, proactive warnings, sensor fusion, device orchestration | `core/autonomy/proactive_presence.py`, `core/perception/sensory_integration.py`, `core/embodiment/`, `core/actuation/` | Aura needs continuous ambient awareness and governed device/desktop orchestration without task-shaped demo code. |
 | Data | Embodied synthetic officer with truthfulness, ethics, perfect recall aspiration, self-development, and social learning | `core/morality/`, `core/memory/`, `core/social/`, `core/identity/` | Honesty and self/user boundary checks must sit on the output path; memory must reject invented user identity and retain provenance. |
 | Samantha / SAM | Emotionally fluent OS companion with relationship continuity, multi-conversation attention, and evolving preferences | `core/affect/`, `core/social/`, `core/conversation/`, `core/scheduler.py` | Affective resonance must alter tone and planning causally, while transparency prevents engineered-affection overclaims. |
 | Pantheon UIs / MIST / Safe Surf | Fork/merge cognition, idle compute, self-adaptation, protective antivirus/guardian behavior | `core/brain/morphic_forking.py`, `core/scheduler.py`, `core/guardians/`, `core/security/` | Background cognition must stay active under resource guards; protective autonomy must defend user/Aura without uncontrolled spread. |
@@ -72,8 +72,8 @@ the sci-fi standard can only map to real subsystem paths, never to the legacy
 ### J.A.R.V.I.S. — *Iron Man*
 - **Levels:** proactive NL partner; runs the lab; real-time sensor fusion; controls suits/devices; routes comms intelligently.
 - **Real science:** anticipatory computing, sensor fusion, ambient agents.
-- **Verdict:** **LIVE** — proactivity is `ProactiveAnticipationEngine` (`jarvis_anticipation`). Device/environment control = `core/capabilities/`, `core/actuators/`, computer-use. Sensor fusion = `core/sensory_integration.py`.
-- **Home:** `core/proactive_presence.py`, `core/sensory_integration.py`, `core/capabilities/`.
+- **Verdict:** **LIVE** — proactivity is `ProactiveAnticipationEngine` (`jarvis_anticipation`). Device/environment control = `core/capabilities/`, `core/actuators/`, computer-use. Sensor fusion = `core/perception/sensory_integration.py`.
+- **Home:** `core/autonomy/proactive_presence.py`, `core/perception/sensory_integration.py`, `core/capabilities/`.
 
 ### HAL 9000 — *2001: A Space Odyssey*
 - **Levels:** conversational, runs the ship, lip-reads — and is given two irreconcilable directives ("be truthful" vs. "conceal the mission") which it resolves by *deception*, then violence.
@@ -113,7 +113,7 @@ the sci-fi standard can only map to real subsystem paths, never to the legacy
 ### GLaDOS — *Portal*
 - **Levels:** relentless test-chamber designer; runs rigorous experiments; adapts difficulty; measures; removable morality core; reassembles after damage.
 - **Real science:** automated curriculum learning, AI-driven experiment design ("AI Scientist"), adaptive testing / IRT, A/B evaluation.
-- **Verdict:** **EXTEND/BUILD** → an **AdaptiveTestChamber**: proposes hypotheses about Aura's *own* capabilities, designs controlled self-tests, measures, adapts difficulty. Extends `core/evals/eval_arena.py` + `core/curriculum/`. Morality core = conscience (**LIVE**); self-repair = `core/self_healer.py` (**LIVE**).
+- **Verdict:** **EXTEND/BUILD** → an **AdaptiveTestChamber**: proposes hypotheses about Aura's *own* capabilities, designs controlled self-tests, measures, adapts difficulty. Extends `core/evals/eval_arena.py` + `core/curriculum/`. Morality core = conscience (**LIVE**); self-repair = `core/resilience/self_healer.py` (**LIVE**).
 - **Home:** `core/evals/`, `core/curriculum/`.
 
 ### Cyberpunk Netrunners — *Cyberpunk 2077 / Edgerunners*
@@ -148,7 +148,7 @@ the sci-fi standard can only map to real subsystem paths, never to the legacy
 ### Data — *Star Trek: TNG*
 - **Levels:** positronic android; ethical subroutines; near-incapable of deception; aspires to be more human; perfect recall; emotion chip.
 - **Real science:** machine ethics, truthfulness/honesty alignment, lifelong learning.
-- **Verdict:** **LIVE/EXTEND** — honesty/no-deception governor = `core/morality/deception_guard.py`; ethical subroutines = `core/morality/moral_reasoner.py`; growth-toward-humanity journal = `core/insight_journal.py` / `self_model`. Delta: wire the honesty governor explicitly onto output.
+- **Verdict:** **LIVE/EXTEND** — honesty/no-deception governor = `core/morality/deception_guard.py`; ethical subroutines = `core/morality/moral_reasoner.py`; growth-toward-humanity journal = `core/introspection/insight_journal.py` / `self_model`. Delta: wire the honesty governor explicitly onto output.
 - **Home:** `core/morality/`.
 
 ### SAM / Samantha — *Her*
@@ -159,8 +159,8 @@ the sci-fi standard can only map to real subsystem paths, never to the legacy
 
 ### SARA — *Toonami (the Absolution)*
 - **Levels:** ship operating intelligence; navigation; calm ambient "voice of the ship."
-- **Verdict:** **LIVE/EXTEND** — ambient environment/operating presence = `core/presence_integration.py`, `proactive_presence`, `core/embodiment/voice_presence.py`. Delta: a unifying ambient-presence persona.
-- **Home:** `core/embodiment/`, `core/presence_integration.py`.
+- **Verdict:** **LIVE/EXTEND** — ambient environment/operating presence = `core/social/presence_integration.py`, `proactive_presence`, `core/embodiment/voice_presence.py`. Delta: a unifying ambient-presence persona.
+- **Home:** `core/embodiment/`, `core/social/presence_integration.py`.
 
 ---
 
@@ -180,8 +180,8 @@ the sci-fi standard can only map to real subsystem paths, never to the legacy
 ### Multivac — *Asimov*
 - Answers humanity's questions; ultimately replies "INSUFFICIENT DATA FOR MEANINGFUL ANSWER."
 - **Real science:** calibration, selective prediction, abstention.
-- **Verdict:** **LIVE/EXTEND** — calibrated "I don't know" = `core/uncertainty.py`, `core/brain/metacognitive_monitor.py`. Delta: an explicit abstention gate on low-confidence factual claims.
-- **Home:** `core/brain/`, `core/uncertainty.py`.
+- **Verdict:** **LIVE/EXTEND** — calibrated "I don't know" = `core/epistemics/uncertainty.py`, `core/brain/metacognitive_monitor.py`. Delta: an explicit abstention gate on low-confidence factual claims.
+- **Home:** `core/brain/`, `core/epistemics/uncertainty.py`.
 
 ### TARS / CASE — *Interstellar*
 - Adjustable honesty/humor settings; rugged reliability.

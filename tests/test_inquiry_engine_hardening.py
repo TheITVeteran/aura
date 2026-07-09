@@ -6,7 +6,7 @@ import time
 
 
 def _blank_engine(tmp_path):
-    from core.inquiry_engine import InquiryEngine
+    from core.epistemics.inquiry_engine import InquiryEngine
 
     engine = InquiryEngine.__new__(InquiryEngine)
     engine._questions = []
@@ -93,7 +93,7 @@ def test_inquiry_engine_load_sanitizes_persisted_questions(monkeypatch, tmp_path
 
 def test_inquiry_engine_malformed_research_result_keeps_question_open(monkeypatch, tmp_path):
     from core import inquiry_engine as module
-    from core.inquiry_engine import OpenQuestion
+    from core.epistemics.inquiry_engine import OpenQuestion
 
     calls = []
 

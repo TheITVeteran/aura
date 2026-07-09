@@ -118,7 +118,7 @@ def ensure_networking(region, vn_client, identity_client):
 
     # Create VCN
     vcn = vn_client.create_vcn(
-        oci.core.models.CreateVcnDetails(
+        oci.core.runtime.models.CreateVcnDetails(
             compartment_id=COMPARTMENT_ID,
             cidr_block="10.0.0.0/16",
             display_name=f"aura-vcn-{region}",
@@ -130,7 +130,7 @@ def ensure_networking(region, vn_client, identity_client):
 
     # Create internet gateway
     igw = vn_client.create_internet_gateway(
-        oci.core.models.CreateInternetGatewayDetails(
+        oci.core.runtime.models.CreateInternetGatewayDetails(
             compartment_id=COMPARTMENT_ID,
             vcn_id=vcn.id,
             display_name="aura-igw",
@@ -143,9 +143,9 @@ def ensure_networking(region, vn_client, identity_client):
     rt = vn_client.get_route_table(vcn.default_route_table_id).data
     vn_client.update_route_table(
         rt.id,
-        oci.core.models.UpdateRouteTableDetails(
+        oci.core.runtime.models.UpdateRouteTableDetails(
             route_rules=[
-                oci.core.models.RouteRule(
+                oci.core.runtime.models.RouteRule(
                     destination="0.0.0.0/0",
                     destination_type="CIDR_BLOCK",
                     network_entity_id=igw.id,
@@ -158,31 +158,31 @@ def ensure_networking(region, vn_client, identity_client):
     sl = vn_client.get_security_list(vcn.default_security_list_id).data
     vn_client.update_security_list(
         sl.id,
-        oci.core.models.UpdateSecurityListDetails(
+        oci.core.runtime.models.UpdateSecurityListDetails(
             ingress_security_rules=[
-                oci.core.models.IngressSecurityRule(
+                oci.core.runtime.models.IngressSecurityRule(
                     protocol="6", source="0.0.0.0/0",
-                    tcp_options=oci.core.models.TcpOptions(
-                        destination_port_range=oci.core.models.PortRange(min=22, max=22))
+                    tcp_options=oci.core.runtime.models.TcpOptions(
+                        destination_port_range=oci.core.runtime.models.PortRange(min=22, max=22))
                 ),
-                oci.core.models.IngressSecurityRule(
+                oci.core.runtime.models.IngressSecurityRule(
                     protocol="6", source="0.0.0.0/0",
-                    tcp_options=oci.core.models.TcpOptions(
-                        destination_port_range=oci.core.models.PortRange(min=8000, max=8000))
+                    tcp_options=oci.core.runtime.models.TcpOptions(
+                        destination_port_range=oci.core.runtime.models.PortRange(min=8000, max=8000))
                 ),
-                oci.core.models.IngressSecurityRule(
+                oci.core.runtime.models.IngressSecurityRule(
                     protocol="6", source="0.0.0.0/0",
-                    tcp_options=oci.core.models.TcpOptions(
-                        destination_port_range=oci.core.models.PortRange(min=443, max=443))
+                    tcp_options=oci.core.runtime.models.TcpOptions(
+                        destination_port_range=oci.core.runtime.models.PortRange(min=443, max=443))
                 ),
-                oci.core.models.IngressSecurityRule(
+                oci.core.runtime.models.IngressSecurityRule(
                     protocol="6", source="0.0.0.0/0",
-                    tcp_options=oci.core.models.TcpOptions(
-                        destination_port_range=oci.core.models.PortRange(min=80, max=80))
+                    tcp_options=oci.core.runtime.models.TcpOptions(
+                        destination_port_range=oci.core.runtime.models.PortRange(min=80, max=80))
                 ),
             ],
             egress_security_rules=[
-                oci.core.models.EgressSecurityRule(
+                oci.core.runtime.models.EgressSecurityRule(
                     protocol="all", destination="0.0.0.0/0")
             ]
         )
@@ -194,7 +194,7 @@ def ensure_networking(region, vn_client, identity_client):
 
     # Create subnet
     subnet = vn_client.create_subnet(
-        oci.core.models.CreateSubnetDetails(
+        oci.core.runtime.models.CreateSubnetDetails(
             compartment_id=COMPARTMENT_ID,
             vcn_id=vcn.id,
             cidr_block="10.0.1.0/24",
@@ -265,20 +265,20 @@ def try_launch(region):
         return "skip"
 
     # Build launch details
-    launch_details = oci.core.models.LaunchInstanceDetails(
+    launch_details = oci.core.runtime.models.LaunchInstanceDetails(
         compartment_id=COMPARTMENT_ID,
         availability_domain=net["ad_name"],
         display_name=DISPLAY_NAME,
         shape=SHAPE,
-        shape_config=oci.core.models.LaunchInstanceShapeConfigDetails(
+        shape_config=oci.core.runtime.models.LaunchInstanceShapeConfigDetails(
             ocpus=float(OCPUS),
             memory_in_gbs=float(MEMORY_GB)
         ),
-        source_details=oci.core.models.InstanceSourceViaImageDetails(
+        source_details=oci.core.runtime.models.InstanceSourceViaImageDetails(
             image_id=image_id,
             boot_volume_size_in_gbs=BOOT_VOLUME_GB
         ),
-        create_vnic_details=oci.core.models.CreateVnicDetails(
+        create_vnic_details=oci.core.runtime.models.CreateVnicDetails(
             subnet_id=net["subnet_id"],
             assign_public_ip=True
         ),

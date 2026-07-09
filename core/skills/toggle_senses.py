@@ -52,7 +52,7 @@ def _clear_pid(sense_name: str):
         try: os.remove(path)
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('toggle_senses', e)
-            from core.errors import SensesError
+            from core.sovereign.errors import SensesError
             raise SensesError(f"Failed to clear PID for {sense_name}: {e}", context={"sensor": sense_name})
 
 class SenseController:

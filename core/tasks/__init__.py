@@ -161,7 +161,7 @@ def process_user_input(message: str):
 def run_rl_training():
     """Executes RL training as a managed Celery task."""
     logger.info("🧠 RL: Starting policy optimization...")
-    result = run_project_python("core/rl_train.py")
+    result = run_project_python("core/learning/rl_train.py")
     payload = result.status_payload()
     if not result.ok:
         logger.error("RL training failed: %s", payload["message"])

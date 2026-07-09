@@ -494,7 +494,7 @@ class ToolExecutionMixin:
                 reason = _tool_handle.decision.reason
                 logger.warning("🚫 ExecutiveCore blocked tool '%s': %s", tool_name, reason)
                 try:
-                    from core.unified_action_log import get_action_log
+                    from core.observability.unified_action_log import get_action_log
 
                     get_action_log().record(tool_name, _origin, "tool", "blocked", str(reason))
                 except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _exc:
@@ -507,7 +507,7 @@ class ToolExecutionMixin:
                 _record_coding_tool_event(result, success=False, error=str(reason))
                 return result
             try:
-                from core.unified_action_log import get_action_log
+                from core.observability.unified_action_log import get_action_log
 
                 get_action_log().record(tool_name, _origin, "tool", "approved")
             except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _exc:

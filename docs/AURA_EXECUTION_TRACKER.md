@@ -994,7 +994,7 @@ python -m pytest -q \
 
 python -m ruff check --select F,B \
   core/consciousness/global_workspace.py \
-  core/device_discovery.py \
+  core/networking/device_discovery.py \
   core/security/enforcement.py \
   core/learning/autonomous_rsi.py \
   interface/routes/chat.py \
@@ -2848,14 +2848,14 @@ format-instruction/follow-up tail.
 - `core/runtime/activation_audit.py`
 - `core/runtime/proof_kernel_bridge.py`
 - `core/runtime/concurrency_health.py`
-- `core/dead_letter_queue.py`
+- `core/tasks/dead_letter_queue.py`
 - `core/learning/formalizer.py`
 - `core/learning/proof_obligations.py`
 - `core/brain/grounding_guard.py`
 - `core/brain/llm/context_gate.py`
 - `core/brain/llm/recurrent_depth.py`
-- `core/narrative_thread.py`
-- `core/self_evaluator.py`
+- `core/identity/narrative_thread.py`
+- `core/evaluation/self_evaluator.py`
 - `archive/repair_scripts/`
 - `tests/test_final_general_hardening.py`
 - `docs/GENERAL_ENVIRONMENT_AUTONOMY.md`
@@ -5534,13 +5534,13 @@ Scope:
   wired `core.container` to install it, preserving singleton factory semantics
   while removing direct container imports from leaf/runtime modules.
 - Converted a larger batch of service seams to runtime registry access:
-  - `core.plasticity_controller`
+  - `core.plasticity.plasticity_controller`
   - `core.brain.concept_vector_bridge`
-  - `core.emotional_coloring`
+  - `core.affect.emotional_coloring`
   - `core.capabilities.source_summarizer`
   - `core.memory.provenance`
   - `core.utils.telemetry_enrichment`
-  - `core.skill_evolution`
+  - `core.learning.skill_evolution`
   - `core.evals.adaptive_test_chamber`
   - `core.senses.voice_socket_logic`
   - `core.orchestrator.coordinators.affect`

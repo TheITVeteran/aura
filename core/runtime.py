@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from core.agency_bus import AgencyBus
 from core.container import ServiceContainer
-from core.eternal_lifecycle import eternal_lifecycle
+from core.organism.eternal_lifecycle import eternal_lifecycle
 from core.resilience.state_manager import StateManager
 
 logger = logging.getLogger("Aura.CoreRuntime")

@@ -131,7 +131,7 @@ def test_dream_journal_thread_save_uses_local_file_write_governance(monkeypatch,
 
 
 def test_thought_tracer_uses_local_file_write_governance(monkeypatch, tmp_path):
-    import core.thought_tracer as thought_tracer
+    import core.introspection.thought_tracer as thought_tracer
     from core.governance_context import require_governance
 
     calls = []

@@ -256,7 +256,7 @@ class Planner:
         
         # Initialize JSON optimizer if available
         try:
-            from core.json_repair import SelfHealingJSON
+            from core.utils.json_repair import SelfHealingJSON
             self.json_optimizer = SelfHealingJSON(self.brain)
         except ImportError:
             self.json_optimizer = None

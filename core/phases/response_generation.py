@@ -1596,7 +1596,7 @@ class ResponseGenerationPhase(BasePhase):
 
             # Mode-specific validation for DELIBERATE reasoning
             if state.cognition.current_mode == CognitiveMode.DELIBERATE and not action:
-                from core.llm_guard import validate_json_response
+                from core.llm.llm_guard import validate_json_response
 
                 success, obj, err = validate_json_response(response_text, expected_keys=["content"])
                 if success:

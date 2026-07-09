@@ -197,7 +197,7 @@ class FMEARegistry:
                                  automated=True, implementation_path="core/brain/llm/provider_contract.py",
                                  verified=True),
                 MitigationAction("MIT-F05-2", "Cloud fallback audit log",
-                                 automated=True, implementation_path="core/audit_logger.py",
+                                 automated=True, implementation_path="core/audit/audit_logger.py",
                                  verified=True),
             ]),
             "F06": FMEAEntry(fault_id="F06", mitigations=[

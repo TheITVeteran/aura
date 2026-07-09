@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from core.base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 from core.config import config
 
 @dataclass

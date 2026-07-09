@@ -1487,7 +1487,7 @@ def test_resilience_monitor_only_tracks_registered_optional_services():
 
 
 def test_sensory_motor_idle_volition_respects_background_boot_grace(monkeypatch):
-    from core.sensory_motor_cortex import SensoryMotorCortex
+    from core.somatic.sensory_motor_cortex import SensoryMotorCortex
 
     monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "300")
     orch = SimpleNamespace(
@@ -1907,7 +1907,7 @@ async def test_executive_authority_does_not_fallback_promote_quarantined_reentry
 
 
 def test_proactive_presence_respects_boot_grace(monkeypatch):
-    from core.proactive_presence import ProactivePresence
+    from core.autonomy.proactive_presence import ProactivePresence
 
     monkeypatch.setenv("AURA_BACKGROUND_BOOT_GRACE_S", "300")
     orch = SimpleNamespace(

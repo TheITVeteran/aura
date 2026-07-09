@@ -137,7 +137,7 @@ class ParliamentDebate:
                     try:
                         parsed_votes = json.loads(json_str)
                     except json.JSONDecodeError:
-                        from core.json_repair import repair_json
+                        from core.utils.json_repair import repair_json
                         parsed_votes = json.loads(repair_json(json_str))
 
                     for role in COUNCIL_ROLES.keys():

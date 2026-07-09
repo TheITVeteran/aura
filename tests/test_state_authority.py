@@ -1,5 +1,5 @@
 from core.container import ServiceContainer
-from core.state_authority import (
+from core.state.state_authority import (
     StateAuthority,
     TruthTier,
     get_state_authority,

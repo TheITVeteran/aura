@@ -23,12 +23,12 @@ from core.backup import BackupManager
 from core.bus.actor_bus import ActorBus
 from core.bus.local_pipe_bus import LocalPipeBus
 from core.bus.shared_mem_bus import SharedMemoryTransport
-from core.conversation_loop import AutonomousConversationLoop
+from core.conversation.conversation_loop import AutonomousConversationLoop
 from core.coordinators.cognitive_coordinator import CognitiveCoordinator
 from core.coordinators.lifecycle_coordinator import LifecycleCoordinator
 from core.coordinators.message_coordinator import MessageCoordinator
 from core.coordinators.metabolic_coordinator import MetabolicCoordinator
-from core.intent_gate import IntentClassifierQueue, RouteKind
+from core.intent.intent_gate import IntentClassifierQueue, RouteKind
 from core.kernel.bridge import AffectBridge
 from core.memory.memory_facade import MemoryFacade
 from core.memory_synthesizer import MemorySynthesizer
@@ -3677,7 +3677,7 @@ async def test_continuous_cognition_loop_is_task_tracked(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_session_guardian_monitor_loop_is_task_tracked(monkeypatch):
-    import core.session_guardian as session_guardian_module
+    import core.session.session_guardian as session_guardian_module
 
     guardian = session_guardian_module.SessionGuardian()
     created = {}
@@ -3731,7 +3731,7 @@ async def test_system_governor_health_loop_is_task_tracked(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_conversation_loop_start_is_task_tracked(monkeypatch):
-    import core.conversation_loop as conversation_loop_module
+    import core.conversation.conversation_loop as conversation_loop_module
 
     created = {}
     loop = AutonomousConversationLoop(
@@ -3763,7 +3763,7 @@ async def test_conversation_loop_start_is_task_tracked(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_conversation_loop_reflection_task_is_tracked(monkeypatch):
-    import core.conversation_loop as conversation_loop_module
+    import core.conversation.conversation_loop as conversation_loop_module
 
     created = {}
     release = asyncio.Event()

@@ -142,7 +142,7 @@ class TestUnifiedActionSpace:
         This is the computational analog of proprioception: knowing where
         your limbs are without looking.
         """
-        from core.capability_map import CapabilityMap
+        from core.skills.capability_map import CapabilityMap
 
         cmap = CapabilityMap()
         assert len(cmap.capabilities) > 0, "Default capabilities must be populated"
@@ -571,7 +571,7 @@ class TestFrictionlessCapabilityAccess:
         This is the 'motor affordance' -- the system knows what to reach
         for based on the situation, without explicit routing logic.
         """
-        from core.capability_map import CapabilityMap
+        from core.skills.capability_map import CapabilityMap
 
         cmap = CapabilityMap()
         cap_names = list(cmap.capabilities.keys())
@@ -629,7 +629,7 @@ class TestReliability:
         This is calibrated confidence -- the system's self-knowledge
         of its own competence.
         """
-        from core.reliability_tracker import ReliabilityTracker
+        from core.resilience.reliability_tracker import ReliabilityTracker
 
         reliability_path = Path(tempfile.gettempdir()) / "aura_test_reliability.json"
         tracker = ReliabilityTracker(data_path=str(reliability_path))
@@ -692,7 +692,7 @@ class TestReliability:
         This is the immune system: recognizing known pathologies and
         applying known remedies.
         """
-        from core.self_healer import SelfHealer
+        from core.resilience.self_healer import SelfHealer
 
         healer = SelfHealer()
 
@@ -920,7 +920,7 @@ class TestSelfMaintenance:
 
     def test_self_healer_exists(self):
         """SelfHealer must provide pattern-based auto-repair."""
-        from core.self_healer import SelfHealer
+        from core.resilience.self_healer import SelfHealer
 
         healer = SelfHealer()
         assert len(healer.issue_patterns) >= 3, \
@@ -962,7 +962,7 @@ class TestSelfMaintenance:
 
     def test_state_registry_tracks_health(self):
         """UnifiedStateRegistry must track health metrics as part of global state."""
-        from core.state_registry import UnifiedState
+        from core.state.state_registry import UnifiedState
 
         state = UnifiedState()
         assert hasattr(state, "health_score"), "Must track health_score"
@@ -1186,7 +1186,7 @@ class TestBodySchema:
         its own capabilities -- the difference between having hands
         and knowing you have hands.
         """
-        from core.capability_map import CapabilityMap
+        from core.skills.capability_map import CapabilityMap
 
         cmap = CapabilityMap()
         all_caps = list(cmap.capabilities.values())

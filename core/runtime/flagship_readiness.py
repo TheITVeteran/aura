@@ -80,7 +80,7 @@ _ALLOWED_CREATE_TASK_FILES = {
     "core/phases/affect_update.py",
     "core/brain/llm/nucleus_manager.py",
     "core/brain/llm/sensorimotor_grounding.py",
-    "core/narrative_thread.py",
+    "core/identity/narrative_thread.py",
 }
 _ALLOWED_DIRECT_WRITE_FILES = {
     "core/runtime/atomic_writer.py",
@@ -100,9 +100,9 @@ _ALLOWED_DIRECT_WRITE_FILES = {
     "core/self_modification/mutation_safety.py",
     "core/self_modification/safe_modification_harness.py",
     "core/environment/outcome/ledger.py",
-    "core/sensory_integration.py",
-    "core/external_chat.py",
-    "core/environment_awareness.py",
+    "core/perception/sensory_integration.py",
+    "core/conversation/external_chat.py",
+    "core/environment/environment_awareness.py",
 }
 
 

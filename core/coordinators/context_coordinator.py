@@ -131,7 +131,7 @@ class ContextCoordinator:
     async def get_environmental_context(self) -> dict[str, Any]:
         """Get rich environment data from EnvironmentAwareness module."""
         try:
-            from core.environment_awareness import get_environment
+            from core.environment.environment_awareness import get_environment
             env = get_environment()
             ctx = await env.get_full_context()
             ctx["time"] = datetime.datetime.now().strftime("%I:%M %p")
@@ -160,7 +160,7 @@ class ContextCoordinator:
 
     async def record_reliability(self, tool: str, success: bool, error: str | None = None):
         try:
-            from core.reliability_tracker import reliability_tracker
+            from core.resilience.reliability_tracker import reliability_tracker
             reliability_tracker.record_attempt(tool, success, error)
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_coordinator', e)

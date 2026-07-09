@@ -13,8 +13,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from core.observability.metrics import get_metrics
 from core.audit import get_audit
-from core.llm_guard import sanitize_tool_result, validate_json_response
-from core.dead_letter_queue import get_dlq
+from core.llm.llm_guard import sanitize_tool_result, validate_json_response
+from core.tasks.dead_letter_queue import get_dlq
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Aura.ChaosTest")

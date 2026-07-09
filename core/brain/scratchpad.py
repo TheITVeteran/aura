@@ -5,7 +5,7 @@ and refine her reasoning before generating a final response.
 """
 from typing import Any, Dict
 
-from core.base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 from core.runtime.service_registry import get_runtime_service
 
 class ScratchpadEngine(AuraBaseModule):

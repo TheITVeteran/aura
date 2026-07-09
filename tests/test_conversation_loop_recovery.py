@@ -1,6 +1,6 @@
 import pytest
 
-from core.conversation_loop import AutonomousConversationLoop
+from core.conversation.conversation_loop import AutonomousConversationLoop
 from core.runtime.errors import get_degradation_tracker
 
 
@@ -58,7 +58,7 @@ class _Brain:
 @pytest.fixture(autouse=True)
 def _reset(monkeypatch):
     get_degradation_tracker().reset()
-    monkeypatch.setattr("core.conversation_loop.get_transcript", lambda: _Transcript())
+    monkeypatch.setattr("core.conversation.conversation_loop.get_transcript", lambda: _Transcript())
     yield
     get_degradation_tracker().reset()
 

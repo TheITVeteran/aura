@@ -7,7 +7,7 @@ from core.cognitive_integration_layer import (
     CognitiveIntegrationLayer,
     _run_inline_inference,
 )
-from core.cognitive_integration_patch import patch_cognitive_integration
+from core.cognition.cognitive_integration_patch import patch_cognitive_integration
 
 
 def test_retired_cognitive_integration_patch_is_noop():

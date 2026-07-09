@@ -40,7 +40,7 @@ from core.autonomy.research_goal_filter import research_query_for_goal
 from core.consciousness.unified_audit import get_audit_suite
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
-from core.state_registry import get_registry
+from core.state.state_registry import get_registry
 from core.utils.exceptions import capture_and_log
 from core.utils.task_tracker import get_task_tracker
 
@@ -1087,7 +1087,7 @@ class AgencyCore:
                         effort,
                     )
                     try:
-                        from core.unified_action_log import get_action_log
+                        from core.observability.unified_action_log import get_action_log
                         get_action_log().record(
                             winner.get("id", "agency"),
                             "AgencyCore",
@@ -1103,7 +1103,7 @@ class AgencyCore:
                 bus = AgencyBus.get()
                 if not bus.submit({"origin": "agency_core", "priority_class": winner.get("priority_class", "drive")}):
                     try:
-                        from core.unified_action_log import get_action_log
+                        from core.observability.unified_action_log import get_action_log
                         get_action_log().record(winner.get("id","agency"), "AgencyCore", "gen2_agency", "cooldown_blocked", f"pathway={winner.get('origin','?')}")
                     except _AGENCY_BOUNDARY_ERRORS as exc:
                         _record_agency_degradation(exc, action="cooldown block action-log record skipped")
@@ -1111,7 +1111,7 @@ class AgencyCore:
                     return None
 
             try:
-                from core.unified_action_log import get_action_log
+                from core.observability.unified_action_log import get_action_log
                 get_action_log().record(winner.get("id","agency"), f"AgencyCore.{winner.get('origin','?')}", "gen2_agency", "approved", f"priority={winner.get('priority',0)}, proposed={len(proposed_actions)}")
             except _AGENCY_BOUNDARY_ERRORS as exc:
                 _record_agency_degradation(exc, action="agency approval action-log record skipped")
@@ -1307,7 +1307,7 @@ class AgencyCore:
         # Curiosity pressure builds over time — modulated by entropy
         if idle_seconds > 30:
             try:
-                from core.managed_entropy import get_managed_entropy
+                from core.runtime.managed_entropy import get_managed_entropy
                 entropy = get_managed_entropy()
                 jitter = entropy.get_curiosity_jitter(intensity=1.0)
                 increment = max(0.0, 0.00005 + jitter)  # Base + jitter, clamped non-negative
@@ -1652,7 +1652,7 @@ class AgencyCore:
         topic = None
         try:
             from core.container import ServiceContainer
-            from core.managed_entropy import get_managed_entropy
+            from core.runtime.managed_entropy import get_managed_entropy
             entropy = get_managed_entropy()
             seed = entropy.get_goal_mutation_seed()
 
@@ -1739,7 +1739,7 @@ class AgencyCore:
         goal_text = f"Mastery of: {topic}"
 
         try:
-            from core.moral_reasoning import get_moral_reasoning
+            from core.morality.moral_reasoning import get_moral_reasoning
             moral = get_moral_reasoning()
             assessment = await moral.reason_about_action(
                 {"type": "autonomous_goal", "description": goal_text},
@@ -2571,7 +2571,7 @@ class AgencyCore:
             or ServiceContainer.get("identity", default=None)
         )
         try:
-            from core.moral_reasoning import get_moral_reasoning
+            from core.morality.moral_reasoning import get_moral_reasoning
             moral = get_moral_reasoning()
         except ImportError:
             logger.debug("Moral reasoning module not available for audit.")

@@ -931,13 +931,13 @@ def test_runtime_registry_batch_two_service_seams():
     from types import SimpleNamespace
 
     import core.capabilities.source_summarizer as source_summarizer
-    import core.emotional_coloring as emotional_coloring
+    import core.affect.emotional_coloring as emotional_coloring
     import core.evals.adaptive_test_chamber as adaptive_test_chamber
     import core.memory.provenance as provenance
     import core.orchestrator.coordinators.affect as affect_coordinator
-    import core.plasticity_controller as plasticity_controller
+    import core.plasticity.plasticity_controller as plasticity_controller
     import core.senses.voice_socket_logic as voice_socket_logic
-    import core.skill_evolution as skill_evolution
+    import core.learning.skill_evolution as skill_evolution
     import core.utils.telemetry_enrichment as telemetry_enrichment
     from core.brain import concept_vector_bridge
     from core.runtime.service_registry import (
@@ -1152,15 +1152,15 @@ def test_runtime_registry_batch_three_live_path_service_seams():
     import core.brain.metacognitive_monitor as metacognitive_monitor
     import core.brain.morphic_forking as morphic_forking
     import core.brain.narrator as narrator
-    import core.code_refiner as code_refiner
+    import core.self_modification.code_refiner as code_refiner
     import core.collective.swarm_protocol as swarm_protocol
-    import core.conversational_momentum_engine as momentum_engine
+    import core.conversation.conversational_momentum_engine as momentum_engine
     import core.guardians.user_advocate as user_advocate
     import core.maintenance.dream_coordinator as dream_coordinator
-    import core.panzer_soul as panzer_soul
+    import core.being.panzer_soul as panzer_soul
     import core.phenomenal_substrate.philosophical_stance as philosophical_stance
     import core.pneuma.topological_memory as topological_memory
-    import core.reflex_engine as reflex_engine
+    import core.resilience.reflex_engine as reflex_engine
     import core.resilience.phenomenal_error_map as phenomenal_error_map
     import core.runtime.derived_runtime_context as derived_runtime_context
     import core.runtime.live_mind_snapshot as live_mind_snapshot
@@ -1466,7 +1466,7 @@ def test_runtime_registry_batch_four_boot_sensory_health_seams():
     import core.orchestrator.initializers.core_baseline as core_baseline
     import core.phases.consciousness_phase as consciousness_phase
     import core.phases.executive_closure as executive_closure
-    import core.presence_integration as presence_integration
+    import core.social.presence_integration as presence_integration
     import core.runtime.response_policy as response_policy
     import core.senses.sensory_instincts as sensory_instincts
     import core.system_monitor as system_monitor
@@ -1861,8 +1861,8 @@ def test_runtime_registry_batch_six_large_scc_service_seams(monkeypatch):
     import core.scheduler as scheduler
     import core.sim.outcome_simulator as outcome_simulator
     import core.sim.scenario_forge as scenario_forge
-    import core.state_authority as state_authority
-    import core.values_engine as values_engine
+    import core.state.state_authority as state_authority
+    import core.values.values_engine as values_engine
     import core.voice.voice_session as voice_session
     from core.runtime.service_registry import (
         install_registration_locked_resolver,
@@ -2074,7 +2074,7 @@ def test_runtime_registry_batch_seven_consciousness_adaptation_seams(monkeypatch
     import core.affect.affective_resonance as affective_resonance
     import core.agency.canvas_manager as canvas_manager
     import core.autonomy.sleep_trigger as sleep_trigger
-    import core.autonomy_guardian as autonomy_guardian
+    import core.autonomy.autonomy_guardian as autonomy_guardian
     import core.brain.causal_world_model as causal_world_model
     import core.brain.deep_deliberation as deep_deliberation
     import core.brain.discourse_tracker as discourse_tracker
@@ -2086,7 +2086,7 @@ def test_runtime_registry_batch_seven_consciousness_adaptation_seams(monkeypatch
     import core.consciousness.resource_stakes as resource_stakes
     import core.consciousness.world_model as consciousness_world_model
     import core.final_engines as final_engines
-    import core.meta_cognition as meta_cognition
+    import core.cognition.meta_cognition as meta_cognition
     import core.orchestrator.initializers.hardening as hardening
     import core.orchestrator.mixins.cognitive_background as cognitive_background
     import core.pneuma.pneuma as pneuma

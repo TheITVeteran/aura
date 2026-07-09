@@ -52,7 +52,7 @@ class CapabilityGuard:
             "file_system": {
                 "allowed_read": ["data/"],
                 "allowed_write": ["data/logs/"],
-                "restricted_paths": ["*.key", "core/security/**", "core/guardians/**", "core/prime_directives.py"],
+                "restricted_paths": ["*.key", "core/security/**", "core/guardians/**", "core/values/prime_directives.py"],
             },
             "network": {"allowed_domains": ["localhost"]},
             "self_modification": {"allowed": False}

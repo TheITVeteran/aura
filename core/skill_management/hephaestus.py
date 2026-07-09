@@ -11,7 +11,7 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-from core.base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 from core.config import config
 from core.container import ServiceContainer
 from core.resilience.resource_arbitrator import get_resource_arbitrator

@@ -90,7 +90,7 @@ ALLOW_LIST = {
     "core/coordinators/metabolic_coordinator.py",
     "core/coordinators/tool_executor.py",
     "core/curiosity_engine.py",
-    "core/proactive_presence.py",
+    "core/autonomy/proactive_presence.py",
     "core/soul.py",
 }
 

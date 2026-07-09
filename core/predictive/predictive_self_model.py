@@ -33,7 +33,7 @@ class PredictiveSelfModel:
         
         # Inject managed entropy to prevent deterministic weight collapse
         try:
-            from core.managed_entropy import get_managed_entropy
+            from core.runtime.managed_entropy import get_managed_entropy
             entropy = get_managed_entropy()
             noise = entropy.get_prediction_noise(self.dim)
             obs = obs + noise

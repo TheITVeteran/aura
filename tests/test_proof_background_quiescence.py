@@ -20,7 +20,7 @@ class AsyncCallFixture:
 
 @pytest.mark.asyncio
 async def test_conversational_momentum_defers_during_proof_run(monkeypatch):
-    from core.conversational_momentum_engine import (
+    from core.conversation.conversational_momentum_engine import (
         ConversationThread,
         ConversationalMomentumEngine,
     )

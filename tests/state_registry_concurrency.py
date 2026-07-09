@@ -3,7 +3,7 @@ import threading
 import time
 import unittest
 from typing import List
-from core.state_registry import UnifiedState, UnifiedStateRegistry
+from core.state.state_registry import UnifiedState, UnifiedStateRegistry
 
 class TestStateRegistryConcurrency(unittest.TestCase):
     def test_hybrid_concurrency(self):

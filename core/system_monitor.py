@@ -43,7 +43,7 @@ class SystemStateMonitor:
         stability = max(0.0, 1.0 - (pending_refinements * 0.05) - (active_shards * 0.02))
 
         # Phase 11.3: Queue Monitoring & Overwhelm Reflex
-        from core.state_registry import get_registry
+        from core.state.state_registry import get_registry
         s = get_registry().get_state()
         queue_size = s.reasoning_queue_size
         

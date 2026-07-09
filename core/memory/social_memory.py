@@ -8,7 +8,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from core.base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 from core.runtime.atomic_writer import atomic_write_text
 
 class RelationshipMilestone:

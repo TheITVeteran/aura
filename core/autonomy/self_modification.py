@@ -76,10 +76,10 @@ _PROTECTED_PREFIXES = (
     "core/safety/",
     "core/security/",
     "core/constitution.py",
-    "core/constitutional_alignment.py",
+    "core/constitution/constitutional_alignment.py",
     "core/identity/heartstone.py",
     "core/container.py",
-    "core/prime_directives.py",
+    "core/values/prime_directives.py",
 )
 
 _BANNED_CODE_CALLS = {

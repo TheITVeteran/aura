@@ -747,7 +747,7 @@ async def bootstrap_aura(orchestrator: Any):
 
     # Apply Consciousness, Response, and SafeMode Genesis Patches
     try:
-        from core.apply_response_patches import apply_response_patches
+        from core.conversation.apply_response_patches import apply_response_patches
         from core.consciousness.apply_patches import apply_consciousness_patches
         from core.safe_mode import apply_orchestrator_patches
 
@@ -2030,7 +2030,7 @@ async def run_console(profile: str = "cli"):
     """Interactive CLI Mode"""
     orchestrator = await boot_aura_runtime(profile=profile, ready_label="CLI")
 
-    from core.main import conversation_loop
+    from core.startup.main import conversation_loop
     await conversation_loop(orchestrator=orchestrator)
 
 

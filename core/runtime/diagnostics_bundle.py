@@ -122,7 +122,7 @@ def _safe_call(label: str, fn: Callable[[], Any]) -> tuple[Any, str | None]:
 
 def collect_health() -> dict[str, Any]:
     try:
-        from core.health_endpoint import HealthAggregator
+        from core.health.health_endpoint import HealthAggregator
         agg = HealthAggregator()
         import asyncio
 

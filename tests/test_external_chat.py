@@ -49,7 +49,7 @@ def test_linux_terminal_launch_uses_argument_vector(monkeypatch):
     assert window.process == 1234
     assert launched[0][0][0:3] == ["xterm", "-e", "bash"]
     assert launched[0][0][3].endswith("chat_launch.sh")
-    assert launched[0][1] == {"source": "core.external_chat.terminal_linux_launch"}
+    assert launched[0][1] == {"source": "core.conversation.external_chat.terminal_linux_launch"}
 
     window.close()
 
@@ -83,8 +83,8 @@ def test_terminal_script_uses_file_write_gateway(tmp_path, monkeypatch):
 
     assert script_path.name == "chat_gateway.sh"
     assert [call[3] for call in calls] == [
-        "core.external_chat.initial_message",
-        "core.external_chat.chat_script",
+        "core.conversation.external_chat.initial_message",
+        "core.conversation.external_chat.chat_script",
     ]
     assert script_path.stat().st_mode & 0o700 == 0o700
 

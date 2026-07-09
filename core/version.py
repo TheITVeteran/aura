@@ -6,7 +6,7 @@ BEFORE: Version strings scattered as:
   - UI_VERSION = "8.1 (Patched)"      in interface/server.py
   - version="6.0.0"                   in setup.py
   - <span class="version-tag">v8.2 (Hardened)</span>  in index.html
-  - version: str = "3.5.5-INDEPENDENT" in core/panzer_soul.py
+  - version: str = "3.5.5-INDEPENDENT" in core/being/panzer_soul.py
   - AURA SOVEREIGN SOURCE BUNDLE - SECURITY HARDENED (v5.3)  in export scripts
   - version="1.0"  in pyproject.toml
 
@@ -90,7 +90,7 @@ _LEGACY_STRINGS_TO_MIGRATE = [
     ("interface/server.py",           'UI_VERSION = "8.1 (Patched)"'),
     ("setup.py",                      'version="6.0.0"'),
     ("interface/static/index.html",   'v8.2 (Hardened)'),
-    ("core/panzer_soul.py",           'version: str = "3.5.5-INDEPENDENT"'),
+    ("core/being/panzer_soul.py",           'version: str = "3.5.5-INDEPENDENT"'),
     ("pyproject.toml",                'version = "1.0"'),
 ]
 

@@ -6,7 +6,7 @@ import time
 
 
 def _blank_journal(tmp_path):
-    from core.insight_journal import InsightJournal
+    from core.introspection.insight_journal import InsightJournal
 
     journal = InsightJournal.__new__(InsightJournal)
     journal._insights = []

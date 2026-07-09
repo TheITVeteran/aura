@@ -87,7 +87,7 @@ For each priority level:
 
 **New external tools needed:**
 - `yt-dlp` for video/audio download
-- A transcription pipeline (Whisper local, since Aura already has STT via `core/local_voice_cortex.py` which uses Whisper-MLX)
+- A transcription pipeline (Whisper local, since Aura already has STT via `core/voice/local_voice_cortex.py` which uses Whisper-MLX)
 - A frame-sampling helper for "watch a film without storing 10GB of frames"
 
 ### 3. Content Fetcher

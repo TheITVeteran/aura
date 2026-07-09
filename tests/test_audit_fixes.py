@@ -18,7 +18,7 @@ def test_heartstone_import():
 
 def test_conversation_loop_imports():
     """Verify no duplicate imports in conversation_loop.py."""
-    path = Path("core/conversation_loop.py")
+    path = Path("core/conversation/conversation_loop.py")
     with open(path, "r") as f:
         content = f.read()
     

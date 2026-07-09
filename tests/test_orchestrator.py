@@ -712,7 +712,7 @@ async def test_get_environmental_context(orchestrator):
     mock_env = _AsyncCallRecorder()
     mock_env.get_full_context.return_value = {"os": "mockOS"}
 
-    with swap("core.environment_awareness.get_environment", return_value=mock_env):
+    with swap("core.environment.environment_awareness.get_environment", return_value=mock_env):
         ctx = await orchestrator._get_environmental_context()
 
         assert ctx["os"] == "mockOS"
@@ -1959,7 +1959,7 @@ def test_post_process_response(orchestrator):
 # --- _record_reliability (line 1950) ---
 @pytest.mark.asyncio
 async def test_record_reliability_success(orchestrator):
-    with swap("core.reliability_tracker.reliability_tracker.record_attempt") as mock_record:
+    with swap("core.resilience.reliability_tracker.reliability_tracker.record_attempt") as mock_record:
         await orchestrator._record_reliability("web_search", True)
         assert mock_record.called
 
@@ -1967,7 +1967,7 @@ async def test_record_reliability_success(orchestrator):
 @pytest.mark.asyncio
 async def test_record_reliability_failure(orchestrator):
     with swap(
-        "core.reliability_tracker.reliability_tracker.record_attempt", side_effect=Exception("fail")
+        "core.resilience.reliability_tracker.reliability_tracker.record_attempt", side_effect=Exception("fail")
     ):
         # Should not raise
         await orchestrator._record_reliability("web_search", False, "timeout")
@@ -1995,7 +1995,7 @@ def test_get_world_context_failure(orchestrator):
 # --- _get_environmental_context (line 1921) ---
 @pytest.mark.asyncio
 async def test_get_environmental_context_success(orchestrator):
-    with swap("core.environment_awareness.get_environment") as mock_ge:
+    with swap("core.environment.environment_awareness.get_environment") as mock_ge:
         mock_env = _CallRecorder()
         mock_env.get_full_context = _AsyncCallRecorder(return_value={"location": "home"})
         mock_ge.return_value = mock_env
@@ -2006,7 +2006,7 @@ async def test_get_environmental_context_success(orchestrator):
 
 @pytest.mark.asyncio
 async def test_get_environmental_context_failure(orchestrator):
-    with swap("core.environment_awareness.get_environment", side_effect=Exception("fail")):
+    with swap("core.environment.environment_awareness.get_environment", side_effect=Exception("fail")):
         result = await orchestrator._get_environmental_context()
         assert result == {}
 

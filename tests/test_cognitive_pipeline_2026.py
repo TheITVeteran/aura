@@ -6,7 +6,7 @@ from core.brain.llm.structured_llm import StructuredLLM
 from core.cognitive_integration_layer import CognitiveIntegrationLayer
 from core.container import ServiceContainer
 from core.memory.memory_facade import MemoryFacade
-from core.moral_reasoning import MoralReasoningEngine
+from core.morality.moral_reasoning import MoralReasoningEngine
 from core.schemas import ShardResponse
 from core.self_model import SelfModel
 
@@ -260,7 +260,7 @@ async def test_agency_goal_genesis_awaits_moral_reasoning(monkeypatch):
     agency.state.last_goal_genesis_time = 0.0
 
     moral = MoralReasoningProbe({"is_morally_acceptable": True})
-    monkeypatch.setattr("core.moral_reasoning.get_moral_reasoning", lambda: moral)
+    monkeypatch.setattr("core.morality.moral_reasoning.get_moral_reasoning", lambda: moral)
 
     result = await agency._pathway_goal_genesis(now=1200.0, idle_seconds=601.0)
 

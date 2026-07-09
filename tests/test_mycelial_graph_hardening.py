@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.mycelial_graph import MycelialNetwork
+from core.knowledge.mycelial_graph import MycelialNetwork
 
 
 @pytest.mark.asyncio

@@ -123,7 +123,7 @@ class ConcurrencyHealthMonitor:
 
     def _dlq_stats(self, now: float) -> dict[str, Any]:
         try:
-            from core.dead_letter_queue import get_dlq
+            from core.tasks.dead_letter_queue import get_dlq
 
             queue = get_dlq()
             stats = queue.stats(recent_window_s=self.recent_window_s)

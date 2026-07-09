@@ -231,7 +231,7 @@ class BackgroundReasoningQueue:
 
     def _schedule_registry_size_update(self, *, reason: str) -> None:
         try:
-            from core.state_registry import get_registry
+            from core.state.state_registry import get_registry
             get_task_tracker().create_task(
                 get_registry().update(reasoning_queue_size=self._queue.qsize()),
                 name=f"reasoning_queue_registry_update_{reason}",

@@ -1,12 +1,12 @@
 ################################################################################
 
 """
-Unit tests for core.events.InputBus.
+Unit tests for core.bus.events.InputBus.
 """
 import pytest
 import threading
 import time
-from core.events import InputBus, Event, EventType
+from core.bus.events import InputBus, Event, EventType
 
 
 @pytest.fixture

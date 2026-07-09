@@ -9,7 +9,7 @@ import pytest
 
 from core.autonomous_initiative_loop import AutonomousInitiativeLoop
 from core.orchestrator.mixins.output_formatter import OutputFormatterMixin
-from core.proactive_presence import ProactivePresence
+from core.autonomy.proactive_presence import ProactivePresence
 from core.self_modification.growth_ladder import GrowthLadder, ModificationLevel
 
 PROPOSAL_PATH = str(Path(tempfile.gettempdir()) / "evolution" / "proposal.md")

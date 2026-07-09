@@ -10,11 +10,11 @@ from typing import Set, Tuple
 logger = logging.getLogger("Aura.Integrity")
 
 _IMMUTABLE_RELATIVE = [
-    "core/prime_directives.py",
+    "core/values/prime_directives.py",
     "prime_directives.py",
     "core/identity_base.txt",
     "core/identity_prompt.txt",
-    "core/values_engine.py",
+    "core/values/values_engine.py",
     "core/soul.py",
     "core/constitution.py",
     "core/config.py",

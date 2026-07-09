@@ -87,7 +87,7 @@ def get_observatory(registry=None) -> StateObservatory:
     global _observatory
     if _observatory is None:
         if registry is None:
-            from core.state_registry import get_registry
+            from core.state.state_registry import get_registry
             registry = get_registry()
         _observatory = StateObservatory(registry)
     return _observatory

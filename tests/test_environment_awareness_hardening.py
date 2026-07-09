@@ -4,7 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 from core import environment_awareness as env_module
-from core.environment_awareness import UserIdentityManager
+from core.environment.environment_awareness import UserIdentityManager
 
 
 def test_environment_command_probe_blocks_non_allowlisted_command(monkeypatch):
@@ -57,7 +57,7 @@ def test_environment_command_probe_uses_subprocess_gateway(monkeypatch):
             2.0,
             True,
             True,
-            "core.environment_awareness.run_command",
+            "core.environment.environment_awareness.run_command",
         )
     ]
 
@@ -109,6 +109,6 @@ def test_user_identity_manager_persists_under_configured_data_path(monkeypatch, 
         (
             str(data_path),
             "utf-8",
-            "core.environment_awareness.save_known_fingerprints",
+            "core.environment.environment_awareness.save_known_fingerprints",
         )
     ]

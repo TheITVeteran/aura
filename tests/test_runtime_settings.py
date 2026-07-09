@@ -72,7 +72,7 @@ def test_voice_output_disabled_suppresses_synthesis(tmp_path):
 
 
 def test_voice_input_predicate_default_on(tmp_path):
-    from core.local_voice_cortex import _user_voice_input_enabled
+    from core.voice.local_voice_cortex import _user_voice_input_enabled
 
     assert _user_voice_input_enabled() is True
 
@@ -83,7 +83,7 @@ def test_voice_input_disabled_never_opens_microphone(tmp_path):
 
     _write_settings(tmp_path, {"voice.input_enabled": False})
 
-    from core.local_voice_cortex import LocalVoiceCortex, _user_voice_input_enabled
+    from core.voice.local_voice_cortex import LocalVoiceCortex, _user_voice_input_enabled
 
     assert _user_voice_input_enabled() is False
 
@@ -225,7 +225,7 @@ def test_permission_gates_reflect_disabled(tmp_path):
 def test_camera_capture_blocked_when_permission_off(tmp_path):
     _write_settings(tmp_path, {"permissions.camera": False})
 
-    from core.sensory_integration import VisionSystem
+    from core.perception.sensory_integration import VisionSystem
 
     vision = object.__new__(VisionSystem)
     result = asyncio.run(vision.capture())
@@ -381,7 +381,7 @@ def test_voice_output_rate_multiplier_applied(tmp_path):
     import threading
     from unittest.mock import MagicMock
 
-    from core.sensory_integration import SpeechSystem
+    from core.perception.sensory_integration import SpeechSystem
 
     _write_settings(tmp_path, {"voice.output_rate": 2.0})
     speech = object.__new__(SpeechSystem)

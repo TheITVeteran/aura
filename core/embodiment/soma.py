@@ -9,7 +9,7 @@ import logging
 import psutil
 import time
 from typing import Dict, Any, Optional
-from core.base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 
 class SystemSoma(AuraBaseModule):
     """Monitors hardware metrics and translates them into somatic markers."""

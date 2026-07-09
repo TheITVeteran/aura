@@ -9,7 +9,7 @@ import sqlite3
 import time
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from core.base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 from core.container import ServiceContainer
 
 class AlignmentEngine(AuraBaseModule):

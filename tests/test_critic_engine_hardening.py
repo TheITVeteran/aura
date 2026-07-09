@@ -4,7 +4,7 @@ import asyncio
 import types
 
 from core import critic_engine as critic_module
-from core.critic_engine import CriticEngine
+from core.reasoning.critic_engine import CriticEngine
 
 
 def test_critic_engine_start_records_mycelium_registration_failure(monkeypatch):

@@ -635,7 +635,7 @@ class VolitionEngine:
         self, action: str, source: str, generation: str, outcome: str, detail: str
     ) -> None:
         try:
-            from core.unified_action_log import get_action_log
+            from core.observability.unified_action_log import get_action_log
 
             get_action_log().record(action, source, generation, outcome, detail)
         except _VOLITION_RECOVERABLE_ERRORS as exc:

@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.orchestrator_methods import OrchestratorCNSMixin
+from core.orchestrator.orchestrator_methods import OrchestratorCNSMixin
 
 
 class _Emitter:

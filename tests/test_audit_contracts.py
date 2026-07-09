@@ -9,7 +9,7 @@ import pytest
 from core.container import ServiceContainer
 from core.config import SecurityConfig
 from core.executive.authority_gateway import AuthorityGateway
-from core.privacy_stealth import StealthMode, get_stealth_mode
+from core.security.privacy_stealth import StealthMode, get_stealth_mode
 from core.skills.malware_analysis import MalwareAnalysisSkill
 from core.version import VERSION
 

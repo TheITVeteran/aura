@@ -78,7 +78,7 @@ except ImportError:
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError  # noqa: E402
 
-from core.base_module import AuraBaseModule  # noqa: E402
+from core.runtime.base_module import AuraBaseModule  # noqa: E402
 from core.config import config  # noqa: E402
 from core.container import ServiceContainer  # noqa: E402
 from core.exceptions import ContainerError  # noqa: E402

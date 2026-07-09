@@ -5,7 +5,7 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
-from core.base_module import AuraBaseModule
+from core.runtime.base_module import AuraBaseModule
 
 logger = logging.getLogger(__name__)
 

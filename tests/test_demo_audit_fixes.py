@@ -36,7 +36,7 @@ async def test_api_action_log_returns_json_payload(monkeypatch):
         def stats(self):
             return {"total": 1, "by_gate_status": {"approved": 1}}
 
-    monkeypatch.setattr("core.unified_action_log.get_action_log", lambda: _FakeLog())
+    monkeypatch.setattr("core.observability.unified_action_log.get_action_log", lambda: _FakeLog())
 
     response = await server_module.api_action_log(limit=7, _=None)
     payload = json.loads(response.body)
@@ -47,7 +47,7 @@ async def test_api_action_log_returns_json_payload(monkeypatch):
 
 def test_unified_action_log_rehydrates_from_disk(tmp_path):
     from core.config import config
-    from core.unified_action_log import UnifiedActionLog
+    from core.observability.unified_action_log import UnifiedActionLog
 
     paths_cls = type(config.paths)
     original_home = paths_cls._runtime_home_cache
@@ -75,7 +75,7 @@ def test_unified_action_log_rehydrates_from_disk(tmp_path):
 
 def test_unified_action_log_drops_router_diagnostics(tmp_path):
     from core.config import config
-    from core.unified_action_log import UnifiedActionLog
+    from core.observability.unified_action_log import UnifiedActionLog
 
     paths_cls = type(config.paths)
     original_home = paths_cls._runtime_home_cache
@@ -171,7 +171,7 @@ def test_executive_authority_records_to_unified_action_log(monkeypatch):
 
     log_record = CallRecorder()
     action_log = SimpleNamespace(record=log_record)
-    monkeypatch.setattr("core.unified_action_log.get_action_log", lambda: action_log)
+    monkeypatch.setattr("core.observability.unified_action_log.get_action_log", lambda: action_log)
 
     decision = ExecutiveAuthority()._record(
         "released",
@@ -229,7 +229,7 @@ def test_volition_connection_respects_agency_bus_block(tmp_path, monkeypatch):
     log_record = CallRecorder()
     action_log = SimpleNamespace(record=log_record)
     monkeypatch.setattr("core.agency_core.AgencyBus.get", lambda: agency_bus)
-    monkeypatch.setattr("core.unified_action_log.get_action_log", lambda: action_log)
+    monkeypatch.setattr("core.observability.unified_action_log.get_action_log", lambda: action_log)
 
     goal = engine._check_soul_drives()
 

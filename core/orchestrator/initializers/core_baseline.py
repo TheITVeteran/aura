@@ -15,7 +15,7 @@ async def init_enterprise_layer(orchestrator: Any):
     orchestrator.metrics = metrics
 
     # 2. Secrets Management
-    from core.secrets import get_secret
+    from core.security.secrets import get_secret
     orchestrator._gemini_key = get_secret("GEMINI_API_KEY")
 
     # 3. Database Migrations
@@ -39,7 +39,7 @@ async def init_enterprise_layer(orchestrator: Any):
         await orchestrator.backup_manager.on_start_async()
 
     # 6. Dead Letter Queue
-    from core.dead_letter_queue import get_dlq
+    from core.tasks.dead_letter_queue import get_dlq
     orchestrator.dlq = get_dlq()
     register_runtime_service("dlq", orchestrator.dlq)
 
@@ -50,7 +50,7 @@ async def init_enterprise_layer(orchestrator: Any):
     orchestrator.audit.record("system_boot", "RobustOrchestrator Enterprise Layer initialized")
 
     # 8. LLM Guards & Context Manager
-    from core.context_manager import ContextWindowManager
+    from core.context.context_manager import ContextWindowManager
     from core.config import config
     orchestrator.context_manager = ContextWindowManager(model_name=config.llm.chat_model)
     register_runtime_service("context_manager", orchestrator.context_manager)

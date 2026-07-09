@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from core.rl_env import AutonomyEnv, _BoxSpace, _DiscreteSpace
+from core.learning.rl_env import AutonomyEnv, _BoxSpace, _DiscreteSpace
 
 
 class SampleGraph:

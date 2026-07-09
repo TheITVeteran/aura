@@ -1,0 +1,311 @@
+"""core/senses/screen_observer.py — v4.3.2 Unified Sensory Observer
+
+Wraps the existing senses/vision_service.py and senses/audio_service.py
+into a higher-level observer that:
+  1. Manages start/stop of screen capture and audio recording
+  2. Reads sensory JSON output files periodically
+  3. Feeds observations (especially audio transcripts) into the knowledge graph
+  4. Integrates with the agency system for proactive awareness
+
+Limitations (current):
+  - Vision: Screen capture works (via mss), but qwen2.5:14b is text-only.
+    A vision-capable model (llava, qwen-vl) would be needed for image understanding.
+    For now, captures are stored but not interpreted.
+  - Audio: Uses local faster-whisper for transcription.
+    Transcripts are fed into knowledge graph automatically.
+  - macOS permissions required: Screen Recording, Microphone
+
+Dependencies: mss, sounddevice, scipy (install via pip if missing)
+"""
+
+import asyncio
+import json
+import logging
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+logger = logging.getLogger("Aura.ScreenObserver")
+
+# Base directory — relative to project root
+_BASE = Path(__file__).resolve().parent.parent
+
+
+class ScreenObserver:
+    """High-level controller for Aura's sensory systems.
+    
+    Manages background processes for screen capture and audio recording,
+    reads their output, and feeds into the knowledge graph.
+    """
+    
+    def __init__(self):
+        self._vision_proc: subprocess.Popen | None = None
+        self._audio_proc: subprocess.Popen | None = None
+        self._vision_active = False
+        self._audio_active = False
+        self._last_vision_check = 0
+        self._last_audio_check = 0
+        self._last_transcript = ""
+        self._observation_count = 0
+        self._kg = None  # Lazy-loaded knowledge graph
+    
+    async def vision_active(self) -> bool:
+        """Check if vision service is alive (Async)."""
+        if self._vision_proc and await asyncio.to_thread(self._vision_proc.poll) is None:
+            return True
+        self._vision_active = False
+        return False
+    
+    async def audio_active(self) -> bool:
+        """Check if audio service is alive (Async)."""
+        if self._audio_proc and await asyncio.to_thread(self._audio_proc.poll) is None:
+            return True
+        self._audio_active = False
+        return False
+    
+    async def start_vision(self) -> dict[str, Any]:
+        """Start screen capture service (Async)."""
+        if await self.vision_active():
+            return {"ok": True, "message": "Vision already active", "pid": self._vision_proc.pid}
+        
+        script = _BASE / "senses" / "vision_service.py"
+        if not script.exists():
+            return {"ok": False, "error": f"Vision service not found at {script}"}
+        
+        try:
+            self._vision_proc = get_subprocess_gateway().spawn(
+                [sys.executable, str(script)],
+                cwd=str(_BASE),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                source="core.senses.screen_observer.start_vision",
+            )
+            self._vision_active = True
+            logger.info("👁️ Vision service started (PID: %s)", self._vision_proc.pid)
+            return {"ok": True, "pid": self._vision_proc.pid, "message": "Screen capture active"}
+        except (subprocess.SubprocessError, OSError) as e:
+            record_degradation('screen_observer', e)
+            logger.error("Failed to start vision: %s", e)
+            return {"ok": False, "error": str(e)}
+    
+    async def start_audio(self) -> dict[str, Any]:
+        """Start audio capture service (Async)."""
+        if await self.audio_active():
+            return {"ok": True, "message": "Audio already active", "pid": self._audio_proc.pid}
+        
+        script = _BASE / "senses" / "audio_service.py"
+        if not script.exists():
+            return {"ok": False, "error": f"Audio service not found at {script}"}
+        
+        try:
+            self._audio_proc = get_subprocess_gateway().spawn(
+                [sys.executable, str(script)],
+                cwd=str(_BASE),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                source="core.senses.screen_observer.start_audio",
+            )
+            self._audio_active = True
+            logger.info("👂 Audio service started (PID: %s)", self._audio_proc.pid)
+            return {"ok": True, "pid": self._audio_proc.pid, "message": "Audio capture active"}
+        except (subprocess.SubprocessError, OSError) as e:
+            record_degradation('screen_observer', e)
+            logger.error("Failed to start audio: %s", e)
+            return {"ok": False, "error": str(e)}
+    
+    async def stop_vision(self) -> dict[str, Any]:
+        """Stop screen capture (Async)."""
+        if self._vision_proc and await asyncio.to_thread(self._vision_proc.poll) is None:
+            self._vision_proc.terminate()
+            try:
+                await asyncio.to_thread(self._vision_proc.wait, timeout=5)
+            except subprocess.TimeoutExpired:
+                self._vision_proc.kill()
+            logger.info("👁️ Vision service stopped")
+        self._vision_proc = None
+        self._vision_active = False
+        return {"ok": True, "message": "Vision stopped"}
+    
+    async def stop_audio(self) -> dict[str, Any]:
+        """Stop audio capture (Async)."""
+        if self._audio_proc and await asyncio.to_thread(self._audio_proc.poll) is None:
+            self._audio_proc.terminate()
+            try:
+                await asyncio.to_thread(self._audio_proc.wait, timeout=5)
+            except subprocess.TimeoutExpired:
+                self._audio_proc.kill()
+            logger.info("👂 Audio service stopped")
+        self._audio_proc = None
+        self._audio_active = False
+        return {"ok": True, "message": "Audio stopped"}
+    
+    async def stop_all(self):
+        """Stop all sensory services (Async)."""
+        await self.stop_vision()
+        await self.stop_audio()
+    
+    def read_vision(self) -> dict | None:
+        """Read latest screen capture data."""
+        path = _BASE / "sensory_vision.json"
+        try:
+            if path.exists():
+                age = time.time() - path.stat().st_mtime
+                if age < 30:  # Only if recent
+                    with open(path) as f:
+                        data = json.load(f)
+                    data["age_seconds"] = round(age, 1)
+                    data["has_image"] = bool(data.get("image"))
+                    # Don't return the full base64 image (too large for API)
+                    if "image" in data:
+                        data["image_size"] = len(data["image"])
+                        del data["image"]
+                    return data
+        except (OSError, ConnectionError, TimeoutError) as e:
+            record_degradation('screen_observer', e)
+            logger.debug("Vision read error: %s", e)
+        return None
+    
+    def read_audio(self) -> dict | None:
+        """Read latest audio data with transcript."""
+        path = _BASE / "sensory_audio.json"
+        try:
+            if path.exists():
+                age = time.time() - path.stat().st_mtime
+                if age < 30:
+                    with open(path) as f:
+                        data = json.load(f)
+                    data["age_seconds"] = round(age, 1)
+                    return data
+        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+            record_degradation('screen_observer', e)
+            logger.debug("Audio read error: %s", e)
+        return None
+    
+    def check_observations(self) -> list:
+        """Poll sensory files and return new observations.
+        Call this periodically from the agency loop.
+        
+        Returns list of observation dicts suitable for knowledge graph ingestion.
+        """
+        observations = []
+        now = time.time()
+        
+        # Check audio transcript (most useful without vision model)
+        if now - self._last_audio_check > 10:  # Every 10 seconds
+            self._last_audio_check = now
+            audio = self.read_audio()
+            if audio and audio.get("transcript"):
+                transcript = audio["transcript"].strip()
+                if transcript and transcript != self._last_transcript:
+                    self._last_transcript = transcript
+                    observations.append({
+                        "type": "audio_observation",
+                        "content": f"Heard: {transcript}",
+                        "source": "microphone",
+                        "confidence": 0.7,
+                        "timestamp": audio.get("timestamp", now)
+                    })
+        
+        # Check vision (log activity but can't interpret without vision model)
+        if now - self._last_vision_check > 15:  # Every 15 seconds
+            self._last_vision_check = now
+            vision = self.read_vision()
+            if vision and vision.get("has_image"):
+                self._observation_count += 1
+                # Only log periodically to avoid spam
+                if self._observation_count % 10 == 1:
+                    observations.append({
+                        "type": "vision_observation",
+                        "content": f"Screen capture active — frame {self._observation_count} captured ({vision.get('image_size', 0)} bytes)",
+                        "source": "screen_capture",
+                        "confidence": 0.3,  # Low confidence — not actually interpreted
+                        "timestamp": vision.get("timestamp", now)
+                    })
+        
+        # Feed observations to knowledge graph
+        if observations:
+            self._store_observations(observations)
+        
+        return observations
+    
+    def _store_observations(self, observations: list):
+        """Store observations in the knowledge graph."""
+        kg = self._get_kg()
+        if not kg:
+            return
+        
+        for obs in observations:
+            try:
+                kg.add_knowledge(
+                    content=obs["content"],
+                    knowledge_type=obs.get("type", "observation"),
+                    source=obs.get("source", "senses"),
+                    confidence=obs.get("confidence", 0.5),
+                )
+            except (OSError, ConnectionError, TimeoutError) as e:
+                record_degradation('screen_observer', e)
+                logger.debug("Failed to store observation: %s", e)
+    
+    def _get_kg(self):
+        """Lazy-load knowledge graph."""
+        if self._kg is None:
+            try:
+                from core.memory.knowledge_graph import PersistentKnowledgeGraph
+                self._kg = PersistentKnowledgeGraph(str(_BASE / "data" / "knowledge.db"))
+            except (ImportError, AttributeError, RuntimeError) as exc:
+                record_degradation('screen_observer', exc)
+                logger.debug("Suppressed: %%s", exc)
+
+                return self._kg
+    
+    def get_status(self) -> dict[str, Any]:
+        """Get full status of all sensory systems."""
+        vision_data = self.read_vision()
+        audio_data = self.read_audio()
+        
+        return {
+            "vision": {
+                "active": self.vision_active,
+                "pid": self._vision_proc.pid if self._vision_proc and self._vision_proc.poll() is None else None,
+                "last_capture": vision_data is not None,
+                "frames_captured": self._observation_count,
+                "note": "Screen capture active but image interpretation requires a vision-capable model (llava/qwen-vl)"
+            },
+            "audio": {
+                "active": self.audio_active,
+                "pid": self._audio_proc.pid if self._audio_proc and self._audio_proc.poll() is None else None,
+                "last_transcript": audio_data.get("transcript", "")[:200] if audio_data else None,
+                "note": "Audio capture + local transcription"
+            },
+            "observations_stored": self._observation_count,
+            "capabilities": {
+                "screen_capture": True,
+                "screen_understanding": False,  # Needs vision model
+                "audio_capture": True,
+                "audio_transcription": True,
+                "camera": True,   # via core/perception/sensory_integration.py (OpenCV)
+                "microphone": True,
+            },
+            "requirements": {
+                "screen": "macOS Screen Recording permission + pip install mss",
+                "audio": "macOS Microphone permission + pip install sounddevice scipy",
+                "camera": "macOS Camera permission + pip install opencv-python",
+                "transcription": "Local faster-whisper engine",
+                "vision_understanding": "Vision-capable LLM (llava, qwen-vl) — current model is text-only"
+            }
+        }
+
+
+# Singleton
+_instance: ScreenObserver | None = None
+
+def get_screen_observer() -> ScreenObserver:
+    global _instance
+    if _instance is None:
+        _instance = ScreenObserver()
+    return _instance

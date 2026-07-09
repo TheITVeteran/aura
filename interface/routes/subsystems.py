@@ -845,7 +845,7 @@ async def api_strategic_projects(_: None = Depends(_require_internal)):
 async def api_action_log(limit: int = 50, _: None = Depends(_require_internal)):
     """Unified behavioral assertion log — every action from every generation with gate status."""
     try:
-        from core.unified_action_log import get_action_log
+        from core.observability.unified_action_log import get_action_log
         log = get_action_log()
         return JSONResponse({"items": log.recent(limit), "stats": log.stats()})
     except _SUBSYSTEM_ROUTE_ERRORS as exc:

@@ -33,7 +33,7 @@ async def test_stack():
         from core.dual_memory import DualMemorySystem
         from core.embodiment import ContinuousSensoryFeed
         from core.evolution.liquid_time_engine import ContinuousState
-        from core.uncertainty import EpistemicHumilityEngine
+        from core.epistemics.uncertainty import EpistemicHumilityEngine
         logger.info("         Success.")
 
         # 2. Instantiate Independent Modules

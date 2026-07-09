@@ -8,7 +8,7 @@ output pass:
 
   * DeceptionGuard (core/morality/deception_guard.py) — strips overclaims about
     proven consciousness/qualia and false sensory claims.
-  * Multivac's lesson (core/uncertainty.py) — when confidence is low, append a
+  * Multivac's lesson (core/epistemics/uncertainty.py) — when confidence is low, append a
     candid "I'm not certain" caveat instead of asserting.
 
 Function on both sides: INTERNAL it enforces Aura's honesty constraint before a

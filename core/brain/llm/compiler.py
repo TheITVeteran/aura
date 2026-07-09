@@ -102,7 +102,7 @@ Stay true to her personality: sovereign, curious, loyal, and slightly detached f
         state_str = "### CURRENT AFFECTIVE STATE\n"
         
         try:
-            from core.state_registry import get_registry
+            from core.state.state_registry import get_registry
             registry = get_registry()
             s = registry.get_state() if registry else None
             
@@ -169,7 +169,7 @@ Stay true to her personality: sovereign, curious, loyal, and slightly detached f
         ctx_str = "### SITUATIONAL CONTEXT\n"
         
         try:
-            from core.state_registry import get_registry
+            from core.state.state_registry import get_registry
             s = get_registry().get_state()
             ctx_str += f"- Primary Objective: {s.current_goal}\n"
             ctx_str += f"- Engagement Mode: {s.engagement_mode.replace('_', ' ').capitalize()}\n"
