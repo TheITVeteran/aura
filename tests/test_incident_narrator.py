@@ -9,10 +9,30 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from core.observability.incident_narrator import (
     IncidentNarrator,
     _asks_about_incidents,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_process_global_forensics(monkeypatch):
+    """The narrator deliberately consults live process-global state beyond its
+    file root (the degraded-events registry, the dropped-log counter) — right in
+    production, but in a shared-process test chunk every earlier test that
+    legitimately exercised a degradation path pollutes the window, so the
+    "empty forensics" assertions flake (fail in-chunk, pass alone). Same class
+    as the self-forensics order-dependence fixed in 460a7282: isolate the
+    globals here, at the test root.
+    """
+    from core.health.degraded_events import clear_degraded_events
+
+    clear_degraded_events()
+    monkeypatch.setattr("core.logging_config.get_dropped_log_count", lambda: 0)
+    yield
+    clear_degraded_events()
 
 _IDLE_STACK = '''  File "/opt/homebrew/lib/python3.12/threading.py", line 1032, in _bootstrap
     self._bootstrap_inner()

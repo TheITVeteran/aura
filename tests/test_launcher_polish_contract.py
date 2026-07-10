@@ -398,7 +398,8 @@ def test_desktop_api_server_bounds_uvicorn_connection_drain_on_shutdown():
 
     assert "AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S" in main_py
     assert "timeout_graceful_shutdown=graceful_shutdown_s" in main_py
-    assert 'os.environ.get("AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S", "2")' in main_py
+    # Zenflow e7c2256b deliberately raised the default drain 2s→8s (float-tolerant).
+    assert 'os.environ.get("AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S", "8")' in main_py
 
 
 def test_packaged_launcher_parses_structured_runtime_lock():
