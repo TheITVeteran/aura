@@ -136,6 +136,7 @@ artifacts/live_proof/
 artifacts/live_apps/
 artifacts/live_proofs/
 artifacts/learning-demo-*/
+artifacts/front_door/
 aura_codebase_ai_audit*.txt
 artifacts/agi/dnu_proof/
 artifacts/agi/live_harness_proof/

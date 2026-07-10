@@ -1,4 +1,4 @@
-.PHONY: update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint cognitive-gate-audit security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+.PHONY: update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint cognitive-gate-audit security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
 
 
 PYTHON ?= python
@@ -35,6 +35,14 @@ run:
 demo-autonomy:
 	@echo "🤖 Running autonomy demo (60s soak)..."
 	@$(PYTHON) -m tools.longevity.run_gauntlet --profile 24h_no_user --tick-s 5 || true
+
+demo:
+	@echo "🚪 Front-door demo — five load-bearing proofs, real mechanisms only..."
+	@$(PYTHON) tools/front_door_demo.py
+
+demo-full:
+	@echo "🚪 Front-door demo including the real-model amplifier proof..."
+	@$(PYTHON) tools/front_door_demo.py --with-model
 
 demo-learning:
 	@echo "🧬 Verifier-gated weight-compounding demo (~20-40 min, Apple Silicon)..."
