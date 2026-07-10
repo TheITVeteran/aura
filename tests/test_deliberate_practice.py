@@ -10,7 +10,6 @@ and uniform fallback whenever it is disabled, evidence-free, or broken.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from collections import Counter
 from pathlib import Path

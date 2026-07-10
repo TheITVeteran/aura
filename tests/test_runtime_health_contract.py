@@ -496,6 +496,7 @@ def test_required_probe_groups_reject_partial_or_forged_payloads():
         "probe:scheduler",
         "probe:tool_governance",
         "probe:workspace",
+        "probe:attention",
     ]
 
 
@@ -509,6 +510,7 @@ def test_required_probe_blockers_fail_closed_on_malformed_payloads():
         "probe:scheduler",
         "probe:tool_governance",
         "probe:workspace",
+        "probe:attention",
     ]
 
 
@@ -539,6 +541,7 @@ def test_health_report_healthy_requires_required_probe_groups(monkeypatch):
         "probe:scheduler",
         "probe:tool_governance",
         "probe:workspace",
+        "probe:attention",
     ]
 
 

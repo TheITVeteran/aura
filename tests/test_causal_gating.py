@@ -173,8 +173,17 @@ async def test_attention_schema_free_energy_gating_unrestricted(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_attention_schema_free_energy_gating_rigidity(monkeypatch):
+async def test_attention_schema_free_energy_gating_rigidity(monkeypatch, tmp_path):
     """Verify focus stability/rigidity is enforced under high Free Energy (F > 0.6)."""
+    import core.consciousness.attention_schema as attention_module
+    from core.runtime.receipts import ReceiptStore
+
+    receipt_store = ReceiptStore(tmp_path / "attention-policy-receipts")
+    monkeypatch.setattr(
+        attention_module,
+        "get_receipt_store",
+        lambda: receipt_store,
+    )
     schema = AttentionSchema()
     
     # Establish initial focus

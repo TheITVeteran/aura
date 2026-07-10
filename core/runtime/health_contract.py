@@ -49,7 +49,8 @@ REQUIRED_HEALTH_PROBE_GROUPS: dict[str, tuple[str, ...]] = {
         "actor_supervision",
     ),
     "tool_governance": ("unified_will", "authority_gateway", "capability_engine"),
-    "workspace": ("inhibition_manager",),
+    "workspace": ("inhibition_manager", "global_workspace"),
+    "attention": ("attention_schema",),
 }
 
 
@@ -167,6 +168,20 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "inhibition_manager",
         ServiceTier.CRITICAL,
         "Canonical workspace safety gate. Without it, candidate admission cannot be trusted.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Global Workspace",
+        "global_workspace",
+        ServiceTier.CRITICAL,
+        "Canonical candidate admission and broadcast lane. Without it, inhibition cannot bind cognition.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Attention Schema",
+        "attention_schema",
+        ServiceTier.CRITICAL,
+        "Canonical attentional-focus owner and rigidity gate.",
         liveness_check="is_ready",
     ),
     ServiceRequirement(

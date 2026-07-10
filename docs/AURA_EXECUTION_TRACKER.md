@@ -10125,3 +10125,81 @@ Remaining work after this checkpoint:
 - Continue with atomic lane reservations, synchronous required eviction,
   complete trainer/process accounting, compensation, and exactly-once receipts
   (`CTX2-LANE-001..004`).
+
+## Checkpoint 2026-07-10-25: Complete Cognitive Gate Audit and Lane Health
+
+Scope:
+
+- Closed `CTX2-GATE-002` with a machine-checked inventory of all `13`
+  attention/workspace candidate-selection surfaces. Each surface is classified
+  by role, failure policy, receipt requirement, health requirement, and causal
+  boundary; an AST audit now fails if the declared and discovered inventories
+  diverge or an undeclared gate appears.
+- Made global-workspace admission a two-stage safety boundary. Candidates are
+  checked before queueing and revalidated immediately before competition
+  against the current inhibition-manager instance, so a restart, replacement,
+  or policy change invalidates stale approval. Timeout, malformed result,
+  lookup/check failure, and cancellation all reject rather than admit.
+- Added cancellation-safe quarantine. A cancelled submission emits a bounded
+  privacy-safe `WorkspaceGateReceipt`; cancellation during precompetition
+  revalidation receipts the affected candidate, clears the candidate pool, and
+  re-raises instead of leaving ambiguously approved work queued for a later
+  cycle. Internal refractory/capacity rejection and somatic-noise admission now
+  traverse the same receipt-bearing boundary.
+- Made cross-source attention shifts depend on a bounded free-energy rigidity
+  read through the shared blocking-I/O executor. Missing, invalid, failed,
+  timed-out, or cancelled reads retain the prior focus and publish exact
+  `attention_focus` health and rejection evidence; a fresh healthy read clears
+  the transient degraded state.
+- Registered `global_workspace` and `attention_schema` as protected critical
+  runtime owners in the container, boot contract, service manifest, and
+  executable health contract. Workspace and attention blockers now have exact
+  lane-specific probe identities rather than being hidden in generic runtime
+  readiness.
+- Kept advisory/selective mechanisms honest in the inventory instead of
+  relabeling them as admission safety gates: prompt selectors, phenomenal and
+  multiple-drafts competition, quorum voting, somatic modulation, CAA
+  readiness, and the legacy action-authority check retain their actual policy
+  roles. The existing action-authority debt remains under the canonical
+  authority/effect migration workstream.
+- Corrected a governance regression in the newly landed Practice Director
+  while running the closeout audit. Curriculum persistence now uses one
+  governed canonical store with atomic append/compaction and replacement;
+  ownership remains at `1,697` migration-debt calls rather than growing to
+  `1,700`.
+
+Verification:
+
+- Cognitive gate inventory audit -> `13` declared and `13` discovered; passed.
+- Focused workspace, attention, health, boot, receipt, and governance replay ->
+  `50 passed`; final combined cognitive-gate, Practice Director, receipt, and
+  audit-chain replay -> `96 passed in 7.02s`.
+- Broad consciousness replay -> `510 passed in 34.99s`; expanded workspace,
+  attention, health, and phenomenology replay -> `203 passed in 79.70s`.
+- Practice Director, canonical receipt-store, and audit-chain replay -> `53
+  passed` before the final combined replay.
+- Strict mypy over all new or substantially changed gate, practice, receipt,
+  and audit modules -> success with no issues. Full Ruff over the touched
+  source/test surface, py-compile, generated runtime-contract drift check, and
+  `git diff --check` -> passed.
+- Governance ownership audit matched exactly: `1,796` recognized calls in
+  `1,689` buckets, with `1,697` migration-debt calls and no growth.
+- `make enterprise-gate` -> passed with no ratchet regression.
+- `make production-gate` -> passed; all `37` readiness checks green.
+- `make closeout-rubric` -> all `20` criteria green. Semantic review remains
+  explicitly incomplete: after recording the reviewed spans, `3,489` code
+  files and `4,444` text files remain unreviewed; this milestone does not claim
+  repository-wide semantic closeout.
+
+Remaining work after this checkpoint:
+
+- Complete Rust/Python skill-discovery equivalence and the live-registry dry
+  run (`CTX2-SKILL-001/002`). This is the highest-priority bounded milestone.
+- Continue with atomic lane reservations, synchronous required eviction,
+  complete trainer/process accounting, compensation, and exactly-once receipts
+  (`CTX2-LANE-001..004`).
+- Continue retiring the `1,697` ownership-migration debt calls through the
+  canonical effect spine, including the already inventoried legacy
+  action-authority path.
+- Do not begin the multi-hour or 24-72 hour soak until these shorter bounded and
+  live requirements are green.

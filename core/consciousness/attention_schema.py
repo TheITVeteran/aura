@@ -1,11 +1,15 @@
 import asyncio
 import logging
 import time
+import uuid
 from collections import deque
-from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.executors import run_blocking_io
+from core.runtime.flags import FlagKind, declare
+from core.runtime.receipts import WorkspaceGateReceipt, get_receipt_store
 
 logger = logging.getLogger("Consciousness.Attention")
 
@@ -19,6 +23,38 @@ _ATTENTION_SCHEMA_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
 )
+_ATTENTION_RIGIDITY_GATE_TIMEOUT_FLAG = declare(
+    "AURA_ATTENTION_RIGIDITY_GATE_TIMEOUT_S",
+    kind=FlagKind.FLOAT,
+    default=0.1,
+    description="Maximum time allowed to read the focus-rigidity safety signal",
+    owner="core.consciousness.attention_schema",
+)
+
+
+def _read_focus_rigidity_signal() -> tuple[str, float | None]:
+    from core.consciousness.free_energy import get_free_energy_engine
+
+    engine = get_free_energy_engine()
+    if engine is None:
+        raise RuntimeError("free-energy focus gate is unavailable")
+    instance_id = str(
+        getattr(engine, "instance_id", "") or f"free-energy:{id(engine)}"
+    )[:160]
+    current = getattr(engine, "current", None)
+    if current is None:
+        return instance_id, None
+    value = float(current.free_energy)
+    if not 0.0 <= value <= 1.0:
+        raise ValueError("free-energy focus gate returned an out-of-range value")
+    return instance_id, value
+
+
+def _emit_attention_gate_receipt(receipt: WorkspaceGateReceipt) -> WorkspaceGateReceipt:
+    emitted = get_receipt_store().emit(receipt)
+    if not isinstance(emitted, WorkspaceGateReceipt):
+        raise TypeError("attention gate receipt store returned the wrong receipt type")
+    return emitted
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +74,7 @@ class AttentionalFocus:
     meta_repr: str = ""           # "I am attending to X because Y"
     meta_confidence: float = 0.5  # How confident is the meta-representation
 
-    def generate_meta(self):
+    def generate_meta(self) -> str:
         """Produce the higher-order representation of this attentional state."""
         self.meta_repr = (
             f"[HOT] I am currently directing attention toward '{self.content[:80]}' "
@@ -53,10 +89,10 @@ class AttentionalFocus:
 class AttentionSchemaState:
     """Full snapshot of the attention schema at a moment in time."""
 
-    current_focus: Optional[AttentionalFocus] = None
+    current_focus: AttentionalFocus | None = None
     focus_depth: int = 0          # How many recursive HOT levels deep (capped at 3)
     coherence: float = 1.0        # 0.0 = scattered attention, 1.0 = unified
-    salience_map: Dict[str, float] = field(default_factory=dict)
+    salience_map: dict[str, float] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -76,15 +112,20 @@ class AttentionSchema:
     _MAX_HISTORY = 50
     _MAX_HOT_DEPTH = 3
 
-    def __init__(self):
-        self._lock: Optional[asyncio.Lock] = None  # CS-01: Lazy-initialized
-        self.current_focus: Optional[AttentionalFocus] = None
-        self.history: deque = deque(maxlen=self._MAX_HISTORY)
+    def __init__(self) -> None:
+        self.instance_id = f"attention-schema-{uuid.uuid4()}"
+        self._lock: asyncio.Lock | None = None  # CS-01: Lazy-initialized
+        self.current_focus: AttentionalFocus | None = None
+        self.history: deque[AttentionalFocus] = deque(maxlen=self._MAX_HISTORY)
         self.coherence: float = 1.0
         self.hot_depth: int = 0           # Current HOT recursion depth
-        self.salience_map: Dict[str, float] = {}
+        self.salience_map: dict[str, float] = {}
         self._focus_start: float = time.time()
-        self._sustained_topics: Dict[str, int] = {}  # topic -> consecutive ticks
+        self._sustained_topics: dict[str, int] = {}  # topic -> consecutive ticks
+        self._rigidity_gate_ready = True
+        self._rigidity_gate_reason = "not_checked"
+        self._rigidity_gate_instance_id = ""
+        self._gate_rejections: deque[dict[str, Any]] = deque(maxlen=50)
 
         logger.info("AttentionSchema initialized.")
 
@@ -92,37 +133,138 @@ class AttentionSchema:
     # Public API
     # ------------------------------------------------------------------
 
+    async def _reject_focus_shift(
+        self,
+        *,
+        source: str,
+        priority: float,
+        reason: str,
+        phase: str,
+        error: BaseException | None = None,
+        gate_instance_id: str = "",
+    ) -> AttentionalFocus:
+        current = self.current_focus
+        if current is None:
+            raise RuntimeError("focus shift cannot be rejected without a retained focus")
+        if error is not None:
+            self._rigidity_gate_ready = False
+            self._rigidity_gate_reason = reason[:240]
+            record_degradation(
+                "attention_schema",
+                error,
+                severity="degraded",
+                action="retained current focus because the rigidity gate was unavailable",
+                extra={"phase": phase, "lane": "attention_focus"},
+                enforce_failure_policy=False,
+            )
+        event = {
+            "source": str(source)[:160],
+            "retained_source": current.source[:160],
+            "reason": reason[:240],
+            "phase": phase,
+            "retryable": True,
+        }
+        receipt = WorkspaceGateReceipt(
+            cause="attention_focus_shift",
+            candidate_source=str(source)[:160],
+            gate="attention_focus_rigidity",
+            decision="rejected",
+            reason=reason[:240],
+            retryable=True,
+            gate_instance_id=str(gate_instance_id or self._rigidity_gate_instance_id)[:160],
+            metadata={
+                "phase": phase,
+                "lane": "attention_focus",
+                "candidate_priority": round(float(priority), 6),
+                "retained_source": current.source[:160],
+            },
+        )
+        try:
+            emitted = await run_blocking_io(
+                _emit_attention_gate_receipt,
+                receipt,
+                timeout_s=1.0,
+                label="attention_gate_receipt",
+            )
+            event["receipt_id"] = emitted.receipt_id
+        except _ATTENTION_SCHEMA_RECOVERABLE_ERRORS as receipt_error:
+            self._rigidity_gate_ready = False
+            self._rigidity_gate_reason = (
+                f"gate_receipt_failed:{type(receipt_error).__qualname__}"
+            )[:240]
+            record_degradation(
+                "attention_schema",
+                receipt_error,
+                severity="critical",
+                action="retained current focus but failed to persist the gate receipt",
+                extra={"phase": "attention_rigidity_receipt", "lane": "attention_focus"},
+                enforce_failure_policy=False,
+            )
+            event["receipt_error"] = (
+                f"{type(receipt_error).__qualname__}: {receipt_error}"
+            )[:240]
+        self._gate_rejections.append(event)
+        return current
+
     async def set_focus(self, content: str, source: str, priority: float) -> AttentionalFocus:
         """Set the current attentional focus. Generates HOT meta-representation.
         Called by GlobalWorkspace after competitive selection.
         """
-        if self._lock is None: self._lock = asyncio.Lock()
+        if self._lock is None:
+            self._lock = asyncio.Lock()
         async with self._lock:
-            # Enforce focus stability/rigidity under high cognitive tension (variational Free Energy)
-            try:
-                from core.consciousness.free_energy import get_free_energy_engine
-                fe_engine = get_free_energy_engine()
-                if fe_engine is not None and fe_engine.current is not None:
-                    fe = fe_engine.current.free_energy
-                    if fe > 0.6 and self.current_focus is not None:
-                        # If the proposed source is different from current focus, apply rigidity gate
-                        if source != self.current_focus.source:
-                            required_priority = 0.3 + fe * 0.4
-                            if priority < required_priority:
-                                logger.info(
-                                    "🔒 [ATTENTION GATING] Focus shift blocked due to high Free Energy (F=%.3f). "
-                                    "Priority %.2f < %.2f required. Retaining focus source '%s'.",
-                                    fe, priority, required_priority, self.current_focus.source
-                                )
-                                return self.current_focus
-            except _ATTENTION_SCHEMA_RECOVERABLE_ERRORS as e:
-                record_degradation(
-                    "attention_schema",
-                    e,
-                    severity="debug",
-                    action="continued focus update without free-energy rigidity gate",
-                )
-                logger.debug("Failed to apply Free Energy focus gating in AttentionSchema: %s", e)
+            # Enforce focus stability/rigidity under high cognitive tension. A
+            # cross-source shift is a real admission boundary: if its signal is
+            # missing, late, cancelled, or malformed, retain the prior focus.
+            current = self.current_focus
+            if current is not None and source != current.source:
+                try:
+                    timeout = max(
+                        0.01, float(_ATTENTION_RIGIDITY_GATE_TIMEOUT_FLAG.value())
+                    )
+                    gate_instance_id, fe = await run_blocking_io(
+                        _read_focus_rigidity_signal,
+                        timeout_s=timeout,
+                        label="attention_focus_rigidity",
+                    )
+                except asyncio.CancelledError as exc:
+                    await asyncio.shield(
+                        self._reject_focus_shift(
+                            source=source,
+                            priority=priority,
+                            reason="gate_check_cancelled:CancelledError",
+                            phase="attention_rigidity_cancelled",
+                            error=exc,
+                        )
+                    )
+                    raise
+                except _ATTENTION_SCHEMA_RECOVERABLE_ERRORS as exc:
+                    return await self._reject_focus_shift(
+                        source=source,
+                        priority=priority,
+                        reason=f"gate_check_failed:{type(exc).__qualname__}",
+                        phase="attention_rigidity_check",
+                        error=exc,
+                    )
+
+                self._rigidity_gate_ready = True
+                self._rigidity_gate_reason = "healthy"
+                self._rigidity_gate_instance_id = gate_instance_id
+                if fe is not None and fe > 0.6:
+                    required_priority = 0.3 + fe * 0.4
+                    if priority < required_priority:
+                        logger.info(
+                            "🔒 [ATTENTION GATING] Focus shift blocked due to high Free Energy (F=%.3f). "
+                            "Priority %.2f < %.2f required. Retaining focus source '%s'.",
+                            fe, priority, required_priority, current.source,
+                        )
+                        return await self._reject_focus_shift(
+                            source=source,
+                            priority=priority,
+                            reason="focus_rigidity_policy",
+                            phase="attention_rigidity_policy",
+                            gate_instance_id=gate_instance_id,
+                        )
 
             focus = AttentionalFocus(
                 content=content,
@@ -172,7 +314,8 @@ class AttentionSchema:
 
     async def get_current_meta(self) -> str:
         """Returns the HOT meta-representation of current focus for prompt injection."""
-        if self._lock is None: self._lock = asyncio.Lock()
+        if self._lock is None:
+            self._lock = asyncio.Lock()
         async with self._lock:
             if not self.current_focus:
                 return "[HOT] No current attentional focus established."
@@ -192,9 +335,10 @@ class AttentionSchema:
 
         return min(1.0, self.coherence + sustained_bonus)
 
-    def get_snapshot(self) -> Dict[str, Any]:
+    def get_snapshot(self) -> dict[str, Any]:
         focus = self.current_focus
         return {
+            "instance_id": self.instance_id,
             "current_focus": focus.content[:80] if focus else None,
             "focus_source": focus.source if focus else None,
             "focus_priority": focus.priority if focus else 0.0,
@@ -204,7 +348,27 @@ class AttentionSchema:
             "cognitive_modifier": round(self.get_cognitive_modifier(), 3),
             "history_length": len(self.history),
             "top_salience": sorted(self.salience_map.items(), key=lambda x: -x[1])[:3],
+            "rigidity_gate": {
+                "ready": self._rigidity_gate_ready,
+                "reason": self._rigidity_gate_reason,
+                "instance_id": self._rigidity_gate_instance_id,
+                "rejection_count": len(self._gate_rejections),
+                "recent_rejections": list(self._gate_rejections)[-5:],
+            },
         }
+
+    def is_alive(self) -> bool:
+        return True
+
+    def is_ready(self) -> bool:
+        return self._rigidity_gate_ready
+
+    def get_status(self) -> dict[str, Any]:
+        snapshot = self.get_snapshot()
+        snapshot["alive"] = self.is_alive()
+        snapshot["ready"] = self.is_ready()
+        snapshot["lane"] = "attention_focus"
+        return snapshot
 
     def get_recent_narrative(self, n: int = 5) -> str:
         """Return last n focus transitions as a narrative string for temporal binding."""
@@ -267,7 +431,9 @@ class AttentionSchema:
     # Internal
     # ------------------------------------------------------------------
 
-    def _update_coherence(self, new_content: str, prev: Optional[AttentionalFocus]):
+    def _update_coherence(
+        self, new_content: str, prev: AttentionalFocus | None
+    ) -> None:
         """Coherence decays when attention jumps to unrelated topics,
         increases when attention dwells on related or same topic.
         Time-on-topic > 30s grants an additional deep-focus coherence bonus.

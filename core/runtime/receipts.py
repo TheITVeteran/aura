@@ -19,7 +19,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
+from core.runtime.atomic_writer import (
+    atomic_append_text,
+    atomic_write_json,
+    atomic_write_text,
+    read_json_envelope,
+)
 from core.runtime.audit_chain import AuditChain
 from core.runtime.flags import FlagKind, declare
 
@@ -33,6 +38,43 @@ _HOT_INDEX_LIMIT_FLAG = declare(
     description="Maximum receipts retained per kind in the process hot index",
     owner="core.runtime.receipts",
 )
+
+
+class PracticeCurriculumStore:
+    """Bounded receipt-pinned curriculum ledger with one filesystem owner.
+
+    Practice observations retain their source receipt identifiers, while this
+    store owns directory creation, append/compaction, and the seen-index
+    replacement. Callers cannot choose arbitrary output paths.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+        self.ledger_path = self.root / "practice_curriculum.jsonl"
+        self.seen_path = self.root / "practice_curriculum_seen.json"
+
+    def persist(
+        self,
+        *,
+        ledger_body: str,
+        seen_json: str,
+        full_rewrite: bool,
+    ) -> None:
+        if not isinstance(ledger_body, str) or not isinstance(seen_json, str):
+            raise TypeError("practice curriculum payloads must be text")
+        from core.governance_context import governance_runtime_active, require_governance
+
+        if governance_runtime_active():
+            require_governance(
+                "practice_curriculum_store.persist",
+                strict=True,
+                allowed_domains=("memory_write",),
+            )
+        if full_rewrite:
+            atomic_write_text(self.ledger_path, ledger_body)
+        elif ledger_body:
+            atomic_append_text(self.ledger_path, ledger_body)
+        atomic_write_text(self.seen_path, seen_json)
 
 
 def _new_id(prefix: str) -> str:

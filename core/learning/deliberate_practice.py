@@ -48,9 +48,10 @@ import logging
 import math
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, cast
 
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.flags import FlagKind, declare
@@ -363,7 +364,7 @@ class PracticeDirector:
     def curriculum(self, *, top: int = 8) -> list[PracticeNeed]:
         """Ranked practice needs across every known domain, receipts attached."""
         self._ensure_loaded()
-        from core.learning.heldout_battery import generate_battery, BatterySpec
+        from core.learning.heldout_battery import BatterySpec, generate_battery
 
         known_domains = sorted(
             {task.domain for task in generate_battery(BatterySpec(seed=0, size=16))}
@@ -460,7 +461,7 @@ class PracticeDirector:
         or evidence-free."""
         from core.learning.heldout_battery import BatterySpec, generate_battery
 
-        uniform = generate_battery(BatterySpec(seed=seed, size=size))
+        uniform = cast(list[Any], generate_battery(BatterySpec(seed=seed, size=size)))
         if not self.enabled or size < 4:
             return uniform
         ranked = [
@@ -471,7 +472,9 @@ class PracticeDirector:
         if not ranked:
             return uniform
 
-        pool = generate_battery(BatterySpec(seed=seed, size=size * 10))
+        pool = cast(
+            list[Any], generate_battery(BatterySpec(seed=seed, size=size * 10))
+        )
         quotas: list[tuple[str, int]] = []
         first_quota = size // 2
         quotas.append((ranked[0].domain, first_quota))
@@ -579,28 +582,15 @@ class PracticeDirector:
         body, seen_json, full_rewrite = snapshot
         try:
             from core.governance_context import local_internal_governed_scope
-            from core.runtime.file_write_gateway import get_file_write_gateway
+            from core.runtime.receipts import PracticeCurriculumStore
 
-            self._dir.mkdir(parents=True, exist_ok=True)
-            gateway = get_file_write_gateway()
             with local_internal_governed_scope(
                 "deliberate_practice.ledger", domain="memory_write"
             ):
-                if full_rewrite:
-                    gateway.write_text(
-                        self._ledger_path, body, source="deliberate_practice.compact"
-                    )
-                elif body:
-                    existing = ""
-                    if self._ledger_path.exists():
-                        existing = self._ledger_path.read_text(encoding="utf-8")
-                    gateway.write_text(
-                        self._ledger_path,
-                        existing + body,
-                        source="deliberate_practice.append",
-                    )
-                gateway.write_text(
-                    self._seen_path, seen_json, source="deliberate_practice.seen"
+                PracticeCurriculumStore(self._dir).persist(
+                    ledger_body=body,
+                    seen_json=seen_json,
+                    full_rewrite=full_rewrite,
                 )
         except _RECOVERABLE as exc:
             record_degradation(

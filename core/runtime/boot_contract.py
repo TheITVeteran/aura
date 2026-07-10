@@ -134,6 +134,20 @@ BOOT_SERVICE_REQUIREMENTS: tuple[BootServiceRequirement, ...] = (
         failure_policy="fail-closed",
         evidence_tokens=("class InhibitionManager", "def get_inhibition_manager"),
     ),
+    BootServiceRequirement(
+        name="global_workspace",
+        owner_file="core/consciousness/global_workspace.py",
+        required_for="candidate admission, revalidation, competition, and broadcast",
+        failure_policy="fail-closed",
+        evidence_tokens=("class GlobalWorkspace", "def is_ready"),
+    ),
+    BootServiceRequirement(
+        name="attention_schema",
+        owner_file="core/consciousness/attention_schema.py",
+        required_for="fail-closed attentional focus ownership",
+        failure_policy="fail-closed",
+        evidence_tokens=("class AttentionSchema", "def is_ready"),
+    ),
 )
 
 CANONICAL_PROOF_ARTIFACT_DIRS: tuple[str, ...] = (

@@ -1913,6 +1913,22 @@
       "scope": "<module>.PostActionReceiptStore.record"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_append_text",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/receipts.py",
+      "scope": "<module>.PracticeCurriculumStore.persist"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 2,
+      "path": "core/runtime/receipts.py",
+      "scope": "<module>.PracticeCurriculumStore.persist"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_json",
       "canonical_owner": true,
       "category": "direct_atomic_file_write",
@@ -13498,6 +13514,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "18df705a725ab31c7b4709024076d6affa67fbd6efdd36463383213729cf4929",
+  "inventory_sha256": "6b492987bd7ee905fffc428f251d3993e4522f438c410d7b76d3a9cccf238caa",
   "schema_version": 1
 }

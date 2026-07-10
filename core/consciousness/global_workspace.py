@@ -32,6 +32,16 @@ _WORKSPACE_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
 )
+_INHIBITION_GATE_DEGRADATION_PHASES = frozenset(
+    {
+        "global_inhibition_lookup",
+        "global_inhibition_check",
+        "global_inhibition_check_cancelled",
+        "global_inhibition_revalidation_lookup",
+        "global_inhibition_revalidation",
+        "global_inhibition_revalidation_cancelled",
+    }
+)
 _INHIBITION_GATE_TIMEOUT_FLAG = declare(
     "AURA_WORKSPACE_INHIBITION_GATE_TIMEOUT_S",
     kind=FlagKind.FLOAT,
@@ -54,6 +64,7 @@ def _record_workspace_degradation(
         severity=severity,
         action=action,
         extra={"phase": phase},
+        enforce_failure_policy=False,
     )
 
 
@@ -110,6 +121,8 @@ class CognitiveCandidate:
     affect_weight: float = 0.0        # Emotional urgency boost (from AffectEngine)
     focus_bias: float = 0.0           # Priority boost for focused attention (from AttentionSchema)
     submitted_at: float = field(default_factory=time.time)
+    gate_instance_id: str = field(default="", repr=False)
+    gate_checked_at: float = field(default=0.0, repr=False)
 
     @property
     def salience(self) -> float:
@@ -402,9 +415,13 @@ class GlobalWorkspace:
         phase: str,
         reason: str,
         error: BaseException | None = None,
+        gate: str = "global_inhibition",
+        retryable: bool = True,
+        gate_instance_id: str | None = None,
     ) -> bool:
-        self._inhibition_gate_ready = False
-        self._last_inhibition_gate_reason = reason[:240]
+        if gate == "global_inhibition" and error is not None:
+            self._inhibition_gate_ready = False
+            self._last_inhibition_gate_reason = reason[:240]
         if error is not None:
             self._record_degradation(
                 error,
@@ -415,24 +432,29 @@ class GlobalWorkspace:
         event = {
             "tick": self._tick,
             "candidate_source": candidate.source[:160],
+            "gate": gate,
             "phase": phase,
             "reason": reason[:240],
-            "retryable": True,
+            "retryable": retryable,
         }
         receipt = WorkspaceGateReceipt(
             cause="workspace_candidate_submission",
             candidate_source=candidate.source[:160],
-            gate="global_inhibition",
+            gate=gate,
             decision="rejected",
             reason=reason[:240],
-            retryable=True,
+            retryable=retryable,
             gate_instance_id=str(
-                getattr(self._global_inhibition, "instance_id", "") or ""
+                gate_instance_id
+                if gate_instance_id is not None
+                else getattr(self._global_inhibition, "instance_id", "") or ""
             )[:160],
             metadata={
                 "tick": self._tick,
                 "phase": phase,
+                "lane": "workspace_candidate_admission",
                 "content_type": candidate.content_type.name,
+                "candidate_age_s": round(max(0.0, time.time() - candidate.submitted_at), 6),
             },
         )
         try:
@@ -450,6 +472,107 @@ class GlobalWorkspace:
         self._gate_rejections = self._gate_rejections[-50:]
         return False
 
+    @staticmethod
+    def _manager_instance_id(manager: Any) -> str:
+        return str(getattr(manager, "instance_id", "") or "")[:160]
+
+    async def _check_candidates_for_competition(
+        self,
+        candidates: list[CognitiveCandidate],
+    ) -> list[CognitiveCandidate]:
+        """Revalidate every bid immediately before selection.
+
+        Submission approval is deliberately not a bearer token. Inhibition can
+        change or the canonical manager can be replaced between submission and
+        broadcast, so every pending candidate must pass the current instance.
+        """
+
+        if not candidates:
+            return []
+        try:
+            manager = self._resolve_global_inhibition()
+            check = getattr(manager, "is_inhibited", None)
+            if not callable(check):
+                raise TypeError("inhibition manager lacks callable is_inhibited")
+            self._global_inhibition = manager
+        except _WORKSPACE_RECOVERABLE_ERRORS as exc:
+            for candidate in candidates:
+                await self._reject_for_inhibition_gate(
+                    candidate,
+                    phase="global_inhibition_revalidation_lookup",
+                    reason=f"gate_revalidation_lookup_failed:{type(exc).__qualname__}",
+                    error=exc,
+                )
+            self._global_inhibition = None
+            return []
+
+        timeout = max(0.01, float(_INHIBITION_GATE_TIMEOUT_FLAG.value()))
+        checks = [
+            asyncio.wait_for(manager.is_inhibited(candidate.source), timeout=timeout)
+            for candidate in candidates
+        ]
+        try:
+            results = await asyncio.gather(*checks, return_exceptions=True)
+        except asyncio.CancelledError as exc:
+            for candidate in candidates:
+                await asyncio.shield(
+                    self._reject_for_inhibition_gate(
+                        candidate,
+                        phase="global_inhibition_revalidation_cancelled",
+                        reason="gate_revalidation_cancelled:CancelledError",
+                        error=exc,
+                    )
+                )
+            self._candidates = []
+            self._global_inhibition = None
+            raise
+
+        accepted: list[CognitiveCandidate] = []
+        gate_fault = False
+        current_instance_id = self._manager_instance_id(manager)
+        for candidate, result in zip(candidates, results, strict=True):
+            if isinstance(result, BaseException):
+                gate_fault = True
+                await self._reject_for_inhibition_gate(
+                    candidate,
+                    phase="global_inhibition_revalidation",
+                    reason=f"gate_revalidation_failed:{type(result).__qualname__}",
+                    error=result,
+                    gate_instance_id=current_instance_id,
+                )
+                continue
+            if not isinstance(result, bool):
+                gate_fault = True
+                error = TypeError("inhibition manager returned a non-boolean decision")
+                await self._reject_for_inhibition_gate(
+                    candidate,
+                    phase="global_inhibition_revalidation",
+                    reason="gate_revalidation_failed:TypeError",
+                    error=error,
+                    gate_instance_id=current_instance_id,
+                )
+                continue
+            if result:
+                await self._reject_for_inhibition_gate(
+                    candidate,
+                    phase="global_inhibition_revalidation_policy",
+                    reason="source_inhibited_before_competition",
+                    gate_instance_id=current_instance_id,
+                )
+                continue
+            candidate.gate_instance_id = current_instance_id
+            candidate.gate_checked_at = time.time()
+            accepted.append(candidate)
+
+        if len(accepted) == len(candidates):
+            self._inhibition_gate_ready = True
+            self._last_inhibition_gate_reason = "healthy"
+            for phase in _INHIBITION_GATE_DEGRADATION_PHASES:
+                self._degraded_channels.pop(phase, None)
+        elif gate_fault:
+            self._global_inhibition = None
+        return accepted
+
     async def submit(self, candidate: CognitiveCandidate) -> bool:
         """Submit a candidate for the next broadcast competition.
         Returns False if the source is currently inhibited.
@@ -461,7 +584,13 @@ class GlobalWorkspace:
             # Check internal inhibition
             if candidate.source in self._inhibited and self._inhibited[candidate.source] > 0:
                 logger.debug("GW: %s is internal-inhibited (%d ticks)", candidate.source, self._inhibited[candidate.source])
-                return False
+                return await self._reject_for_inhibition_gate(
+                    candidate,
+                    phase="workspace_refractory_policy",
+                    reason="source_in_refractory_period",
+                    gate="workspace_refractory",
+                    gate_instance_id="global_workspace",
+                )
                 
             # Check global inhibition
             if self._global_inhibition is None:
@@ -480,12 +609,35 @@ class GlobalWorkspace:
                     self._global_inhibition.is_inhibited(candidate.source),
                     timeout=gate_timeout,
                 )
+            except asyncio.CancelledError as exc:
+                await asyncio.shield(
+                    self._reject_for_inhibition_gate(
+                        candidate,
+                        phase="global_inhibition_check_cancelled",
+                        reason="gate_check_cancelled:CancelledError",
+                        error=exc,
+                    )
+                )
+                self._global_inhibition = None
+                raise
             except _WORKSPACE_RECOVERABLE_ERRORS as exc:
                 rejected = await self._reject_for_inhibition_gate(
                     candidate,
                     phase="global_inhibition_check",
                     reason=f"gate_check_failed:{type(exc).__qualname__}",
                     error=exc,
+                )
+                self._global_inhibition = None
+                return rejected
+            if not isinstance(inhibited, bool):
+                decision_error = TypeError(
+                    "inhibition manager returned a non-boolean decision"
+                )
+                rejected = await self._reject_for_inhibition_gate(
+                    candidate,
+                    phase="global_inhibition_check",
+                    reason="gate_check_failed:TypeError",
+                    error=decision_error,
                 )
                 self._global_inhibition = None
                 return rejected
@@ -498,8 +650,10 @@ class GlobalWorkspace:
                 )
             self._inhibition_gate_ready = True
             self._last_inhibition_gate_reason = "healthy"
-            self._degraded_channels.pop("global_inhibition_lookup", None)
-            self._degraded_channels.pop("global_inhibition_check", None)
+            for phase in _INHIBITION_GATE_DEGRADATION_PHASES:
+                self._degraded_channels.pop(phase, None)
+            candidate.gate_instance_id = self._manager_instance_id(self._global_inhibition)
+            candidate.gate_checked_at = time.time()
             
             # Φ-aware priority boost: high integration → higher salience
             if self._current_phi > 0.1:
@@ -533,7 +687,13 @@ class GlobalWorkspace:
                         len(self._candidates), candidate.source, incoming, replacement_threshold,
                     )
                     self._signal_neural_flood(candidate.source)
-                    return False
+                    return await self._reject_for_inhibition_gate(
+                        candidate,
+                        phase="workspace_capacity_policy",
+                        reason="workspace_capacity_rejected",
+                        gate="workspace_capacity",
+                        gate_instance_id="global_workspace",
+                    )
 
                 # Incoming outranks the weakest → evict the weakest, admit the incoming.
                 logger.warning(
@@ -543,6 +703,13 @@ class GlobalWorkspace:
                 )
                 self._candidates = [c for c in self._candidates if c is not weakest]
                 self._signal_neural_flood(weakest.source)
+                await self._reject_for_inhibition_gate(
+                    weakest,
+                    phase="workspace_capacity_policy",
+                    reason="workspace_capacity_evicted",
+                    gate="workspace_capacity",
+                    gate_instance_id="global_workspace",
+                )
 
             self._candidates.append(candidate)
             return True
@@ -613,39 +780,51 @@ class GlobalWorkspace:
             logger.debug("GW mycelial proof-of-life pulse skipped: %s", _e)
 
         async with self._lock:
-            # Decay inhibition counters
+            # Decay inhibition counters before a possible somatic submission so
+            # the synthetic source follows the same refractory policy as every
+            # other producer.
             self._inhibited = {
                 src: count - 1
                 for src, count in self._inhibited.items()
                 if count > 1
             }
+            pending_count = len(self._candidates)
+            inhibited_sources = set(self._inhibited)
 
-            try:
-                impulse = self._somatic_noise.maybe_generate(
-                    tick=self._tick,
-                    candidate_count=len(self._candidates),
-                    inhibited_sources=set(self._inhibited),
-                )
-                if impulse is not None:
-                    self._candidates = [c for c in self._candidates if c.source != "somatic_noise"]
-                    self._candidates.append(
-                        CognitiveCandidate(
-                            content=impulse.content,
-                            source="somatic_noise",
-                            priority=impulse.priority,
-                            content_type=impulse.content_type,
-                            affect_weight=0.05,
-                            focus_bias=0.0,
-                        )
+        try:
+            impulse = self._somatic_noise.maybe_generate(
+                tick=self._tick,
+                candidate_count=pending_count,
+                inhibited_sources=inhibited_sources,
+            )
+            if impulse is not None:
+                await self.submit(
+                    CognitiveCandidate(
+                        content=impulse.content,
+                        source="somatic_noise",
+                        priority=impulse.priority,
+                        content_type=impulse.content_type,
+                        affect_weight=0.05,
+                        focus_bias=0.0,
                     )
-            except _WORKSPACE_RECOVERABLE_ERRORS as exc:
-                self._record_degradation(
-                    exc,
-                    phase="somatic_noise",
-                    action="Skipped stochastic somatic impulse and continued workspace competition",
-                    severity="warning",
                 )
+        except asyncio.CancelledError:
+            raise
+        except _WORKSPACE_RECOVERABLE_ERRORS as exc:
+            self._record_degradation(
+                exc,
+                phase="somatic_noise",
+                action="Skipped stochastic somatic impulse and continued workspace competition",
+                severity="warning",
+            )
 
+        async with self._lock:
+            if not self._candidates:
+                return None
+
+            self._candidates = await self._check_candidates_for_competition(
+                list(self._candidates)
+            )
             if not self._candidates:
                 return None
 
@@ -861,6 +1040,35 @@ class GlobalWorkspace:
                 "last_reason": self._somatic_noise.last_impulse.reason if self._somatic_noise.last_impulse else None,
             },
         }
+
+    def is_alive(self) -> bool:
+        return True
+
+    def is_ready(self) -> bool:
+        manager = self._global_inhibition or ServiceContainer.get(
+            "inhibition_manager", default=None
+        )
+        if manager is None or not callable(getattr(manager, "is_inhibited", None)):
+            return False
+        manager_ready = getattr(manager, "is_ready", None)
+        if callable(manager_ready):
+            try:
+                if not bool(manager_ready()):
+                    return False
+            except _WORKSPACE_RECOVERABLE_ERRORS:
+                return False
+        return bool(
+            self._last_inhibition_gate_reason in {"not_checked", "healthy"}
+            and not (_INHIBITION_GATE_DEGRADATION_PHASES & self._degraded_channels.keys())
+            and "global_inhibition_receipt" not in self._degraded_channels
+        )
+
+    def get_status(self) -> dict[str, Any]:
+        snapshot = self.get_snapshot()
+        snapshot["alive"] = self.is_alive()
+        snapshot["ready"] = self.is_ready()
+        snapshot["lane"] = "workspace_candidate_admission"
+        return snapshot
 
     def update_phi(self, phi: float) -> None:
         """Update the current Φ value from the LiquidSubstrate.

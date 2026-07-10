@@ -173,6 +173,18 @@ SERVICE_MANIFEST: dict[str, ServiceRole] = {
         critical=True,
         canonical_owner="inhibition_manager",
     ),
+    "global_workspace": ServiceRole(
+        name="global_workspace",
+        description="Canonical workspace candidate admission, revalidation, and broadcast owner",
+        critical=True,
+        canonical_owner="global_workspace",
+    ),
+    "attention_schema": ServiceRole(
+        name="attention_schema",
+        description="Canonical attentional focus and focus-rigidity owner",
+        critical=True,
+        canonical_owner="attention_schema",
+    ),
     "shutdown_coordinator": ServiceRole(
         name="shutdown_coordinator",
         description="Single ShutdownCoordinator owning teardown ordering",

@@ -44,6 +44,8 @@ _LATE_CAUSAL_SERVICES = frozenset(
         "lane_reconciler",
         "actor_supervision",
         "inhibition_manager",
+        "global_workspace",
+        "attention_schema",
         "affect_facade",
         "cognitive_loop",
         "swarm",
@@ -73,6 +75,8 @@ _PROTECTED_CORE_SERVICES = frozenset(
         "lane_reconciler",
         "actor_supervision",
         "inhibition_manager",
+        "global_workspace",
+        "attention_schema",
     }
 )
 
