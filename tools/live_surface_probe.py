@@ -12,6 +12,8 @@ Checks (all read-only; no chat turns, no state mutation):
   runtime_pulse      health report: probes pass, contract level healthy
   readiness_coherence  the readiness story is self-consistent (no "booting"
                        forever while conversation_ready, no ready-without-lane)
+  startup_budget     boot completed within the declared budget (C4); the K2
+                       startup probe is not wedged
   ui_shell           / serves the app shell with the expected mount points
   static_assets      aura.js / aura.css / service-worker served and non-empty
   websocket          /ws accepts an upgrade and answers a ping
@@ -33,6 +35,33 @@ import urllib.request
 
 DEFAULT_BASE = "http://127.0.0.1:8000"
 HTTP_BUDGET_S = 5.0
+# C4 startup performance budget: a boot that has not completed within this
+# window is a regression, not a slow day. Live evidence: a clean boot
+# reaches ready in ~40s; the primary cortex cold-start SLA is 180s
+# (core/brain/degradation_ladder.py) — the budget tracks the ladder.
+STARTUP_BUDGET_S = float(os.environ.get("AURA_PROBE_STARTUP_BUDGET_S", "180"))
+
+
+def startup_budget_violations(payload: dict, budget_s: float = STARTUP_BUDGET_S) -> list[str]:
+    """C4: ways a boot-health payload violates the startup budget.
+
+    Pure function so the budget contract is unit-testable without a live
+    server. Gates regressions: a process past the budget that has not
+    finished booting, or whose K2 startup probe says wedged, fails the
+    probe run (exit 1) — wire-able into release checks.
+    """
+    violations: list[str] = []
+    uptime = float(payload.get("runtime_age_s") or payload.get("uptime") or 0.0)
+    progress = int(payload.get("progress") or 0)
+    status_text = str(payload.get("status") or "")
+    if uptime > budget_s and progress < 100 and status_text == "booting":
+        violations.append(
+            f"boot progress {progress}% after {uptime:.0f}s (budget {budget_s:.0f}s)"
+        )
+    startup_probe = (payload.get("probes") or {}).get("startup") or {}
+    if startup_probe and not bool(startup_probe.get("ok", True)):
+        violations.append(f"startup probe wedged: {startup_probe.get('reason', '')}")
+    return violations
 
 
 def readiness_incoherences(payload: dict) -> list[str]:
@@ -107,6 +136,15 @@ def probe(base: str) -> dict:
             not incoherences,
             "; ".join(incoherences)
             or f"coherent (status={payload.get('status')} phase={payload.get('boot_phase')})",
+        )
+
+        # C4 startup budget: boot must complete inside the declared window.
+        violations = startup_budget_violations(payload)
+        record(
+            "startup_budget",
+            not violations,
+            "; ".join(violations)
+            or f"within budget ({STARTUP_BUDGET_S:.0f}s, uptime {float(payload.get('runtime_age_s') or 0.0):.0f}s)",
         )
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         return {

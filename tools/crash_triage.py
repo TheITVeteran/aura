@@ -253,6 +253,48 @@ class Triage:
         }
 
 
+def compute_trend(report: dict, previous: dict) -> dict:
+    """Crashpad-style trend: what appeared, what resolved, what moved.
+
+    Keyed by fingerprint so a class is tracked across runs even as its
+    count and last-seen change.
+    """
+    prev_classes = {c["fingerprint"]: c for c in previous.get("classes", [])}
+    cur_classes = {c["fingerprint"]: c for c in report.get("classes", [])}
+    shared = set(cur_classes) & set(prev_classes)
+    return {
+        "previous_generated_at": previous.get("generated_at"),
+        "previous_generated_at_iso": previous.get("generated_at_iso"),
+        "new_classes": sorted(set(cur_classes) - set(prev_classes)),
+        "resolved_classes": sorted(set(prev_classes) - set(cur_classes)),
+        "count_deltas": {
+            fp: cur_classes[fp]["count"] - prev_classes[fp]["count"]
+            for fp in sorted(shared)
+            if cur_classes[fp]["count"] != prev_classes[fp]["count"]
+        },
+    }
+
+
+def append_history(out_path: Path, report: dict) -> None:
+    """One compact line per triage run — the long-term trend record."""
+    history_path = out_path.with_name("triage_history.jsonl")
+    trend = report.get("trend") or {}
+    line = json.dumps(
+        {
+            "generated_at": report["generated_at"],
+            "generated_at_iso": report["generated_at_iso"],
+            "window_days": report["window_days"],
+            "class_count": report["class_count"],
+            "hard_death_total": report["hard_death_total"],
+            "new_classes": trend.get("new_classes", []),
+            "resolved_classes": trend.get("resolved_classes", []),
+        },
+        sort_keys=True,
+    )
+    with history_path.open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+
+
 def render_table(report: dict) -> str:
     lines = [
         f"crash triage — window {report['window_days']}d, "
@@ -266,6 +308,18 @@ def render_table(report: dict) -> str:
         )
     if report["collector_errors"]:
         lines.append(f"collector errors: {report['collector_errors']}")
+    trend = report.get("trend")
+    if trend:
+        lines.append(
+            f"trend vs {trend.get('previous_generated_at_iso', 'previous run')}: "
+            f"{len(trend.get('new_classes', []))} new, "
+            f"{len(trend.get('resolved_classes', []))} resolved, "
+            f"{len(trend.get('count_deltas', {}))} moved"
+        )
+        for fp in trend.get("new_classes", []):
+            lines.append(f"  NEW      {fp}")
+        for fp in trend.get("resolved_classes", []):
+            lines.append(f"  RESOLVED {fp}")
     return "\n".join(lines)
 
 
@@ -277,11 +331,23 @@ def main() -> int:
     args = parser.parse_args()
 
     report = Triage(Path(args.root), window_days=args.window_days).run()
+    if args.out:
+        out = Path(args.out)
+        if out.exists():
+            try:
+                previous = json.loads(out.read_text(encoding="utf-8"))
+                report["trend"] = compute_trend(report, previous)
+            except (json.JSONDecodeError, OSError, KeyError, TypeError) as exc:
+                print(f"trend unavailable (previous report unreadable): {exc}")
     print(render_table(report))
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+        try:
+            append_history(out, report)
+        except OSError as exc:
+            print(f"history append failed: {exc}")
         print(f"\nreport: {out}")
     # Exit 1 when hard deaths exist in-window: wire-able into CI/cron alerts.
     return 1 if report["hard_death_total"] > 0 else 0

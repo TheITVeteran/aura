@@ -618,6 +618,17 @@ class LaneReconciler:
             logger.warning("Lane reconciler: %s", entry)
         else:
             logger.info("Lane reconciler: %s", entry)
+        try:
+            from core.runtime.flight_recorder import record_event
+
+            record_event(
+                kind=f"reconcile_{action}",
+                source="lane_reconciler",
+                summary=str(fields.get("detail", "") or action),
+                lane=str(fields.get("lane", "")),
+            )
+        except (ImportError, AttributeError, RuntimeError):
+            pass  # no-op: black-box feed is best-effort by design
         return entry
 
     def snapshot(self) -> dict[str, Any]:

@@ -73,6 +73,7 @@ class ComponentConditions:
         message: str = "",
     ) -> Condition:
         now = time.time()
+        flipped = False
         with self._lock:
             existing = self._conditions.get(kind)
             if existing is None:
@@ -93,6 +94,7 @@ class ComponentConditions:
                     last_transition_at=now,
                     last_update_at=now,
                 )
+                flipped = True
             else:
                 # Same status: refresh reason/message/update time, KEEP the
                 # transition time — steady state must show its true age.
@@ -100,7 +102,21 @@ class ComponentConditions:
                     existing, reason=reason, message=message, last_update_at=now
                 )
             self._conditions[kind] = condition
-            return condition
+        if flipped:
+            # A status FLIP is a mind-moment: feed the A5 black box so a later
+            # hard fault shows the condition history that led in. OUTSIDE the
+            # lock — the recorder must never be able to re-enter this state.
+            try:
+                from core.runtime.flight_recorder import record_event
+
+                record_event(
+                    kind="condition_transition",
+                    source=self.component,
+                    summary=f"{kind}={status} ({reason}) {message}".strip(),
+                )
+            except (ImportError, AttributeError, RuntimeError):
+                pass  # no-op: black-box feed is best-effort by design
+        return condition
 
     def get(self, kind: ConditionType) -> Condition | None:
         with self._lock:

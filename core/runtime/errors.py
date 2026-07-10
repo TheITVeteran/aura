@@ -445,6 +445,23 @@ def record_degradation(
     )
     _tracker.record(record)
 
+    # A5 black box: every consequential degradation is an event-moment in the
+    # crash-survivable flight ring, so the last moments before a hard fault
+    # always carry the degradation history that led in. Pure memcpy — no I/O,
+    # no threads, no dump needed: the MAP_SHARED ring itself survives process
+    # death. Best-effort; must never be able to break the degradation sink.
+    if severity in ("warning", "degraded", "critical"):
+        try:
+            from core.runtime.flight_recorder import record_event as _fr_record_event
+
+            _fr_record_event(
+                kind=f"degradation_{severity}",
+                source=subsystem,
+                summary=f"{error_type}: {error_msg[:120]} → {action or 'no action'}",
+            )
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as _fr_exc:
+            logger.debug("Flight-recorder feed skipped for %s: %s", subsystem, _fr_exc)
+
     # Make damage *felt*: route the degradation into the nociception substrate so the
     # phenomenal body's error_pressure / valence reflect real, operationally-grounded
     # harm. Best-effort and import-local to avoid any cycle; sensing must never be able

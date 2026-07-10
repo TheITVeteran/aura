@@ -263,6 +263,7 @@ class FlightRecorder:
         self._cached_degradations = 0
         self._process: Any = None
         self._last_error_at = 0.0
+        self._last_tick = 0
 
     # ── lifecycle ──────────────────────────────────────────────────────
 
@@ -449,13 +450,14 @@ class FlightRecorder:
         tick_duration_ms: float = 0.0,
         consecutive_failures: int = 0,
         extra: dict[str, Any] | None = None,
+        refresh_slow_fields: bool = True,
     ) -> bool:
         """Append one mind-moment. One bounded memcpy into the shared
         mapping — safe from the tick loop, never raises."""
         if self._mm is None or not self._started:
             return False
         try:
-            if self._frames_written % _SLOW_FIELD_PERIOD == 0:
+            if refresh_slow_fields and self._frames_written % _SLOW_FIELD_PERIOD == 0:
                 self._refresh_slow_fields()
             payload: dict[str, Any] = {
                 "stage": str(stage)[:80],
@@ -485,6 +487,8 @@ class FlightRecorder:
             self._mm[offset : offset + _SLOT_SIZE] = slot
             self._next_seq = seq + 1
             self._frames_written += 1
+            if tick > 0:
+                self._last_tick = int(tick)
             return True
         except (OSError, ValueError, TypeError, struct.error) as exc:
             now = time.monotonic()
@@ -494,6 +498,32 @@ class FlightRecorder:
                     "flight_recorder", exc, action="dropped one mind-moment frame"
                 )
             return False
+
+    def record_event(
+        self,
+        *,
+        kind: str,
+        source: str,
+        summary: str,
+        lane: str = "",
+    ) -> bool:
+        """Append one event-moment (degradation, condition flip, reconciler
+        action) into the same crash-survivable ring as the tick frames. Rides
+        on the last-known tick so post-mortem ordering stays meaningful, and
+        NEVER refreshes the slow fields — event feeds fire from inside other
+        subsystems' locks (conditions.set, record_degradation), and a refresh
+        re-enters those same subsystems (all_conditions_report / the
+        degradation tracker). Pure memcpy, no re-entrancy, never raises."""
+        extra: dict[str, Any] = {"src": str(source)[:48], "sum": str(summary)[:160]}
+        if lane:
+            extra["lane"] = str(lane)[:32]
+        return self.record_frame(
+            tick=self._last_tick,
+            stage=f"event:{kind}"[:80],
+            mode="event",
+            extra=extra,
+            refresh_slow_fields=False,
+        )
 
     @staticmethod
     def _bounded_payload(payload: dict[str, Any]) -> bytes:
@@ -750,12 +780,29 @@ def record_mind_moment(
     )
 
 
+def record_event(
+    *,
+    kind: str,
+    source: str,
+    summary: str,
+    lane: str = "",
+) -> bool:
+    """Event-feed entry point (degradations, condition flips, reconciler
+    actions). No-op (never instantiates, never raises) until a recorder has
+    been started by boot or a test."""
+    recorder = _recorder
+    if recorder is None or not recorder.started:
+        return False
+    return recorder.record_event(kind=kind, source=source, summary=summary, lane=lane)
+
+
 __all__ = [
     "FlightRecorder",
     "RecordedFrame",
     "RingInspection",
     "get_flight_recorder",
     "inspect_ring_file",
+    "record_event",
     "record_mind_moment",
     "set_flight_recorder_for_test",
 ]

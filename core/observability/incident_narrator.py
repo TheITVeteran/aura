@@ -146,6 +146,8 @@ class IncidentNarrator:
             self._collect_incident_manager,
             self._collect_log_transport,
             self._collect_flight_recorder,
+            self._collect_triage_classes,
+            self._collect_component_conditions,
         ):
             try:
                 items.extend(collector(cutoff))
@@ -411,6 +413,110 @@ class IncidentNarrator:
                 detail={"dropped": dropped},
             )
         ]
+
+    def _collect_triage_classes(self, cutoff: float) -> list[EvidenceItem]:
+        """Fingerprinted incident classes from the crash-triage pipeline (C2).
+
+        `make triage` writes artifacts/reliability/triage.json; the narrator
+        consumes the CLASSES so an episode can say "this is the 14th
+        occurrence of a known stall fingerprint", not just describe one
+        dump. Sandboxed runs read triage.json under the explicit root.
+        """
+        if self._error_log_root != Path("data/error_logs"):
+            triage_path = self._error_log_root / "triage.json"
+        else:
+            triage_path = Path("artifacts/reliability/triage.json")
+        if not triage_path.is_file():
+            return []
+        import json as _json
+
+        try:
+            report = _json.loads(triage_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        items: list[EvidenceItem] = []
+        severity_by_kind = {
+            "process_death": "critical",
+            "fatal_error": "error",
+            "stall": "warning",
+            "memory_spike": "warning",
+            "orderly_exit": "info",
+        }
+        for cls in report.get("classes", []):
+            if not isinstance(cls, dict):
+                continue
+            last_seen = float(cls.get("last_seen", 0.0) or 0.0)
+            if last_seen < cutoff:
+                continue
+            kind = str(cls.get("kind", "unknown"))
+            count = int(cls.get("count", 0) or 0)
+            items.append(
+                EvidenceItem(
+                    at=last_seen,
+                    source="crash_triage",
+                    kind=f"triage_class_{kind}",
+                    severity=severity_by_kind.get(kind, "warning"),
+                    summary=(
+                        f"Known incident class '{cls.get('fingerprint', kind)}' "
+                        f"({kind}) has {count} occurrence(s) in the triage window."
+                    ),
+                    receipt=str(triage_path),
+                    detail={"fingerprint": cls.get("fingerprint"), "count": count},
+                )
+            )
+        trend = report.get("trend") or {}
+        for fingerprint in trend.get("new_classes", []):
+            items.append(
+                EvidenceItem(
+                    at=float(report.get("generated_at", time.time()) or time.time()),
+                    source="crash_triage",
+                    kind="triage_new_class",
+                    severity="error",
+                    summary=(
+                        f"NEW incident class appeared since the previous triage run: "
+                        f"'{fingerprint}'."
+                    ),
+                    receipt=str(triage_path),
+                    detail={"fingerprint": fingerprint},
+                )
+            )
+        return items
+
+    @staticmethod
+    def _collect_component_conditions(cutoff: float) -> list[EvidenceItem]:
+        """K6 typed conditions: currently-degraded components and recent
+        transitions become first-class evidence."""
+        try:
+            from core.runtime.conditions import all_conditions_report
+        except ImportError:
+            return []
+        items: list[EvidenceItem] = []
+        for component, conditions in all_conditions_report().items():
+            for payload in conditions.values():
+                status = bool(payload.get("status", False))
+                kind = str(payload.get("type", ""))
+                transitioned = float(payload.get("last_transition_at", 0.0) or 0.0)
+                is_bad = (kind == "Degraded" and status) or (
+                    kind == "Ready" and not status
+                )
+                if not is_bad or transitioned < cutoff:
+                    continue
+                items.append(
+                    EvidenceItem(
+                        at=transitioned,
+                        source="conditions",
+                        kind=f"condition_{kind.lower()}_{str(status).lower()}",
+                        severity="degraded" if kind == "Ready" else "warning",
+                        summary=(
+                            f"Component '{component}' condition {kind}={status} "
+                            f"({payload.get('reason', 'no reason')}): "
+                            f"{payload.get('message', '') or 'no detail'}"
+                        ),
+                        receipt=f"core.runtime.conditions:{component}/{kind}",
+                        detail=dict(payload),
+                    )
+                )
+        return items
 
     # ── correlation + narration ────────────────────────────────────────
 
