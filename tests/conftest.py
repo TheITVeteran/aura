@@ -306,6 +306,23 @@ def _reset_runtime_degradation_state_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _reset_startup_latch_between_tests():
+    """Order-independence for the K2 startup latch.
+
+    The latch is process-global and monotonic by design (a live process
+    must never present as "booting" after first readiness). In tests that
+    property inverts into cross-test contamination: any test that reaches
+    a ready health report latches, and later boot-status tests would see
+    "degraded" where they pinned "booting".
+    """
+    from core.runtime.health_contract import reset_startup_latch_for_test
+
+    reset_startup_latch_for_test()
+    yield
+    reset_startup_latch_for_test()
+
+
+@pytest.fixture(autouse=True)
 def _service_registry_state_guard():
     """Order-independence for the low-level runtime service registry.
 

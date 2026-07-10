@@ -12,8 +12,10 @@ from core.health.conversation_lane import (
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.health_contract import (
     evaluate_health,
+    probes_from_report,
     required_probe_groups_pass,
     required_probe_status,
+    startup_complete_at,
 )
 from core.runtime.version import VERSION, version_string
 
@@ -99,6 +101,9 @@ def _boot_progress_for_phase(boot_phase: str) -> int:
         "kernel_ready": 100,
         "proxy_ready": 100,
         "proxy_transport_only": 24,
+        # Startup already completed once in this process: boot progress is
+        # over (100), the runtime is just degraded right now.
+        "runtime_degraded": 100,
     }
     return mapping.get(normalized, 8)
 
@@ -142,6 +147,8 @@ def _boot_status_message(
         if "runtime_integrity" in blockers:
             return "Validating Aura runtime integrity…"
         return "Booting Aura core systems…"
+    if normalized == "runtime_degraded":
+        return "Aura is running but degraded; recovery is in progress."
     return "Starting Aura kernel…"
 
 
@@ -199,6 +206,11 @@ def build_boot_health_snapshot(
     runtime_contract_healthy = bool(runtime_contract.get("healthy", False))
     runtime_required_probes = required_probe_status(runtime_contract)
     runtime_required_probes_ok = required_probe_groups_pass(runtime_required_probes)
+    # The K2 probe split (startup/liveness/readiness) derives from the same
+    # report — no second health evaluation. Its startup verdict latches the
+    # first time readiness passes for the life of this process.
+    probe_split = probes_from_report(runtime_contract)
+    startup_latched = startup_complete_at() is not None
     critical_contract_failures = _contract_failure_keys(runtime_contract, "critical")
     important_contract_failures = _contract_failure_keys(runtime_contract, "important")
 
@@ -371,13 +383,18 @@ def build_boot_health_snapshot(
                 boot_phase = "conversation_recovering" if conversation_state == "recovering" else "conversation_warming"
                 status_text = "recovering" if conversation_state == "recovering" else "warming"
         elif initialized or running or runtime_fresh or cycle_count > 0:
-            boot_phase = "kernel_warming"
-            status_text = "booting"
+            # K2 startup latch: once this process has EVER been ready, a
+            # later fall into this branch is a DEGRADATION, not a boot. The
+            # shell must never regress to "booting N%" over a mind that
+            # already served (observed live: 55 minutes of "booting, 48%").
+            # Traffic gating (503) is unchanged — only the presentation.
+            boot_phase = "runtime_degraded" if startup_latched else "kernel_warming"
+            status_text = "degraded" if startup_latched else "booting"
             user_ready = False
             launcher_ready = launcher_openable
         else:
-            boot_phase = "kernel_bootstrap"
-            status_text = "booting"
+            boot_phase = "runtime_degraded" if startup_latched else "kernel_bootstrap"
+            status_text = "degraded" if startup_latched else "booting"
             user_ready = False
             launcher_ready = False
 
@@ -415,7 +432,9 @@ def build_boot_health_snapshot(
             "runtime_contract_operational": runtime_contract_operational,
             "runtime_contract_healthy": runtime_contract_healthy,
             "runtime_required_probes": runtime_required_probes_ok,
+            "startup_latched": startup_latched,
         },
+        "probes": {name: probe.to_dict() for name, probe in probe_split.items()},
         "orchestrator": {
             "cycle_count": cycle_count,
             "last_error": last_error,

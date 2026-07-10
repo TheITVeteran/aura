@@ -15,6 +15,7 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -930,6 +931,144 @@ def evaluate_health() -> HealthVerdict:
 def runtime_health_report() -> dict[str, Any]:
     """Return Aura's canonical runtime health contract report."""
     return evaluate_health().to_report()
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# THE PROBE SPLIT (roadmap K2): startup / liveness / readiness
+#
+# Kubernetes semantics, adopted because their conflation here caused real
+# incidents: a loop-lag spike flipped the health verdict, boot readiness
+# went false, and the GUI sat on "Connecting to runtime…" for 55 minutes
+# over a fully conversational mind. Three probes, three INDEPENDENT
+# meanings:
+#
+#   STARTUP   — has this process EVER been ready? Latched: once readiness
+#               passes, startup is complete for the life of the process and
+#               the surface may never present as "booting" again — only
+#               "degraded". Before the latch, a startup deadline separates
+#               "still warming" (ok) from "startup wedged" (not ok).
+#   LIVENESS  — is the mind alive at all? Restart-worthy signal, so it is
+#               deliberately RARE: only a DEAD verdict (no critical spine)
+#               fails liveness. Flapping important-tier services never do.
+#   READINESS — may traffic flow NOW? The existing required-probe-group
+#               gate; may flap without implying a restart.
+# ═══════════════════════════════════════════════════════════════════════
+
+class ProbeKind(StrEnum):
+    STARTUP = "startup"
+    LIVENESS = "liveness"
+    READINESS = "readiness"
+
+
+@dataclass(frozen=True)
+class ProbeVerdict:
+    kind: ProbeKind
+    ok: bool
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"kind": str(self.kind), "ok": self.ok, "reason": self.reason}
+
+
+_STARTUP_LATCH_LOCK = threading.Lock()
+_STARTUP_COMPLETE_AT: float | None = None
+# Fallback time base for the startup deadline: the moment this module was
+# imported. _process_uptime_seconds() reads the orchestrator's start time,
+# which is 0.0 when no orchestrator ever registered — and a boot so wedged
+# it never registers an orchestrator is EXACTLY the wedge the startup probe
+# must catch, so it needs a clock that always runs.
+_PROBE_EPOCH = time.time()
+
+
+def _startup_deadline_s() -> float:
+    return _float_env("AURA_STARTUP_DEADLINE_S", 900.0)
+
+
+def _startup_age_s() -> float:
+    return max(_process_uptime_seconds(), time.time() - _PROBE_EPOCH)
+
+
+def reset_startup_latch_for_test() -> None:
+    global _STARTUP_COMPLETE_AT, _PROBE_EPOCH
+    with _STARTUP_LATCH_LOCK:
+        _STARTUP_COMPLETE_AT = None
+        _PROBE_EPOCH = time.time()
+
+
+def startup_complete_at() -> float | None:
+    with _STARTUP_LATCH_LOCK:
+        return _STARTUP_COMPLETE_AT
+
+
+def latch_startup_if_ready(ready_ok: bool) -> None:
+    """Record the startup latch the first time readiness passes.
+
+    Idempotent and monotonic: once latched, startup stays complete for the
+    life of the process no matter how readiness flaps afterwards.
+    """
+    global _STARTUP_COMPLETE_AT
+    if not ready_ok:
+        return
+    with _STARTUP_LATCH_LOCK:
+        if _STARTUP_COMPLETE_AT is None:
+            _STARTUP_COMPLETE_AT = time.time()
+
+
+def probes_from_report(report: dict[str, Any]) -> dict[str, ProbeVerdict]:
+    """Derive the three probe verdicts from an existing health report.
+
+    Surfaces that already paid for ``evaluate_health()`` (boot status, the
+    narrator) get the probe split without a second full evaluation.
+    """
+    status = required_probe_status(report)
+    ready_ok = required_probe_groups_pass(status)
+    ready_blockers = [] if ready_ok else required_probe_blockers(status)
+
+    latch_startup_if_ready(ready_ok)
+
+    latched = startup_complete_at()
+    uptime = _startup_age_s()
+    if latched is not None:
+        startup = ProbeVerdict(
+            ProbeKind.STARTUP, True, f"startup complete (latched at {latched:.0f})"
+        )
+    elif uptime <= _startup_deadline_s():
+        startup = ProbeVerdict(
+            ProbeKind.STARTUP,
+            True,
+            f"starting ({uptime:.0f}s of {_startup_deadline_s():.0f}s startup window)",
+        )
+    else:
+        startup = ProbeVerdict(
+            ProbeKind.STARTUP,
+            False,
+            f"startup wedged: never reached readiness within {_startup_deadline_s():.0f}s",
+        )
+
+    live_ok = str(report.get("status", "")) != HealthLevel.DEAD.value
+    liveness = ProbeVerdict(
+        ProbeKind.LIVENESS,
+        live_ok,
+        "critical spine registered" if live_ok else "no critical service present",
+    )
+
+    readiness = ProbeVerdict(
+        ProbeKind.READINESS,
+        ready_ok,
+        "all required probe groups pass" if ready_ok else "; ".join(ready_blockers) or "not ready",
+    )
+
+    return {"startup": startup, "liveness": liveness, "readiness": readiness}
+
+
+def evaluate_probes() -> dict[str, ProbeVerdict]:
+    """One health evaluation, three independent probe verdicts."""
+    return probes_from_report(evaluate_health().to_report())
+
+
+def probe_split_report() -> dict[str, Any]:
+    """Serializable probe-split for health surfaces and the narrator."""
+    return {name: probe.to_dict() for name, probe in evaluate_probes().items()}
 
 
 def log_health_report() -> HealthVerdict:

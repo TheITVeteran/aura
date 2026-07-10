@@ -16,9 +16,12 @@ import threading as _threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import psutil
+
+if TYPE_CHECKING:
+    from core.brain.lane_admission import ActiveLane
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
@@ -287,6 +290,62 @@ def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
             f"> limit {process_rss_limit_gb:.1f}GB"
         )
     return None
+
+
+def _observed_active_lanes(exclude_client: Any = None) -> list["ActiveLane"]:
+    """Snapshot every live model lane as a declared-footprint ActiveLane.
+
+    Pull-model observation over _CLIENTS: no bookkeeping to desync. The
+    candidate's own client is excluded so a worker recycle never counts its
+    old footprint against its own respawn.
+    """
+    from core.brain.lane_admission import ActiveLane, classify_lane
+
+    lanes: list[ActiveLane] = []
+    for path, client in list(_CLIENTS.items()):
+        if client is None or client is exclude_client:
+            continue
+        try:
+            if not client.is_alive():
+                continue
+        except (AttributeError, RuntimeError, OSError, ValueError):
+            continue
+        lane, qos = classify_lane(path)
+        last = float(getattr(client, "_last_user_facing_completed_at", 0.0) or 0.0)
+        lanes.append(
+            ActiveLane(
+                lane=lane,
+                qos=qos,
+                footprint_gb=_projected_model_footprint_gb(path),
+                model_path=path,
+                last_user_facing_age_s=(time.time() - last) if last > 0.0 else None,
+            )
+        )
+    return lanes
+
+
+def _lane_admission_blocks_worker_spawn(client: Any) -> str | None:
+    """Consult the declarative lane-admission controller for this spawn.
+
+    Returns a named refusal reason, or None to proceed. Never throws — an
+    unavailable controller must not take down a spawn that instantaneous
+    pressure checks already admitted.
+    """
+    try:
+        from core.brain.lane_admission import get_lane_admission_controller
+
+        decision = get_lane_admission_controller().admit(
+            model_path=client.model_path,
+            request_gb=_projected_model_footprint_gb(client.model_path)
+            + _model_process_reserve_gb(client.model_path),
+            active=_observed_active_lanes(exclude_client=client),
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Lane admission consult unavailable (spawn proceeds): %s", exc)
+        return None
+    if decision.admitted or not decision.enforced:
+        return None
+    return decision.reason
 
 
 def _normalize_recurrent_depth_status(status: Any, *, model_path: str) -> dict[str, Any]:
@@ -2712,6 +2771,29 @@ class MLXLocalClient:
             _record_mlx_degradation(
                 error,
                 action="refused MLX worker spawn before model load due to memory pressure",
+                severity="critical",
+            )
+            raise error
+
+        # Declarative lane admission (roadmap K3): beyond instantaneous
+        # pressure, the DECLARED footprints of all live lanes plus this
+        # candidate must fit the host lane budget. This is the check that
+        # refuses the spawns that were never going to survive (the OOM-
+        # SIGKILL-with-empty-stderr class) instead of letting the OS kill
+        # a 20 GB worker mid-load. Reuses the memory_pressure_refused_
+        # worker_spawn prefix so every downstream classifier keeps working.
+        admission = _lane_admission_blocks_worker_spawn(self)
+        if admission:
+            error = RuntimeError(f"memory_pressure_refused_worker_spawn:{admission}")
+            if self._is_deep_solver_lane():
+                logger.warning(
+                    "🛡️ [MLX] Refusing optional deep Solver spawn (lane budget): %s",
+                    admission,
+                )
+                raise error
+            _record_mlx_degradation(
+                error,
+                action="refused MLX worker spawn: declared lane footprints exceed host budget",
                 severity="critical",
             )
             raise error
