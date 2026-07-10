@@ -205,7 +205,11 @@ class TestLaneReconciler:
         assert actions[0]["action"] == "held"
         assert "crash_loop_backoff" in actions[0]["detail"]
 
-    def test_foreground_owner_defers_healing(self):
+    def test_dead_primary_converges_despite_foreground_owner(self):
+        """The inverted pin, corrected after it deadlocked live (2026-07-10):
+        each waiting turn owned the foreground lane, which deferred the very
+        convergence it was waiting on — 75 minutes of 216s fallback turns.
+        A dead primary cannot be disrupted; ownership never blocks revival."""
         calls = []
 
         async def spawn():
@@ -218,8 +222,9 @@ class TestLaneReconciler:
             foreground_active=lambda: True,
         )
         actions = asyncio.run(rec.reconcile_once())
-        assert calls == []
-        assert actions[0]["action"] == "deferred"
+        assert calls == ["spawn"]
+        assert actions[0]["action"] == "warm_requested"
+        assert actions[0]["detail"] == "reconciler_prewarm_foreground_waiting"
 
     def test_healthy_old_primary_closes_breaker(self, clock):
         breaker = CrashLoopBreaker()

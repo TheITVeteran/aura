@@ -478,3 +478,36 @@ def test_stream_path_uses_surface_generation_controls():
         "Stream path must apply surface controls before token generation and "
         "restore them after generation exits."
     )
+
+
+@pytest.mark.asyncio
+async def test_primary_lane_warmup_exempt_from_foreground_owner_deferral(monkeypatch):
+    """Priority-inversion pin (lived 2026-07-10): a turn owning the
+    foreground lane deferred the PRIMARY lane's own warmup precompile —
+    the exact work the turn was waiting on — deadlocking the cortex into
+    warming/recovering for 75 minutes. The primary's warmup must proceed
+    under an owned foreground; only non-primary background lanes defer."""
+    from core.brain.llm import mlx_client
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient("/models/Aura-32B-cortex-test")
+    assert client._is_primary_lane() is True
+
+    ran: list[str] = []
+
+    async def _alive(*_a, **_k):
+        return True
+
+    async def _precompile(*_a, **_k):
+        ran.append("precompile")
+
+    monkeypatch.setattr(client, "_ensure_worker_alive", _alive)
+    monkeypatch.setattr(client, "_run_warmup_precompile", _precompile)
+    monkeypatch.setattr(client, "_prove_conversation_path", _precompile, raising=False)
+    monkeypatch.setattr(mlx_client, "_foreground_owner_active", lambda: True)
+
+    await client.warmup(foreground_request=False)
+    assert "precompile" in ran, (
+        "primary-lane warmup must run its precompile even while the "
+        "foreground lane is owned"
+    )

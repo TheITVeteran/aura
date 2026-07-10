@@ -5160,7 +5160,18 @@ class MLXLocalClient:
                     self._set_lane_state("recovering", "warmup_deferred")
                 logger.info("⏸️ [MLX] Warmup deferred for %s.", os.path.basename(self.model_path))
                 return False
-            if request_is_background and _foreground_owner_active():
+            if (
+                request_is_background
+                and _foreground_owner_active()
+                and not self._is_primary_lane()
+            ):
+                # Background lanes (solver promotions, brainstem appraisals)
+                # yield to an owned foreground — that is the anti-thrash
+                # shield. The PRIMARY lane's own warmup is exempt: the
+                # foreground owner is usually a turn WAITING on exactly this
+                # warmup, and deferring it deadlocked the lane live
+                # (2026-07-10: 206s foreground budget expired every turn
+                # while the precompile it needed sat deferred behind it).
                 logger.info(
                     "⏸️ [MLX] Background warmup precompile deferred for %s while foreground lane is owned by %s.",
                     os.path.basename(self.model_path),

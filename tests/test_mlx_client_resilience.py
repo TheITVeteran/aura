@@ -1219,9 +1219,14 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.get_lane_status()["state"], "recovering")
 
     async def test_background_warmup_yields_before_precompile_when_foreground_owned(self):
+        """The anti-thrash yield belongs to NON-PRIMARY background lanes.
+        (Originally pinned with the 32B — that deadlocked the cortex live on
+        2026-07-10: the owning foreground turn deferred the primary's own
+        warmup forever. The primary exemption is pinned in
+        test_mlx_runtime_contract.py.)"""
         from core.brain.llm import mlx_client as mlx_client_module
 
-        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client = MLXLocalClient(model_path="/models/Qwen2.5-7B-Instruct-4bit")
         precompile = AsyncCallProbe(return_value=None)
 
         with ReplaceAttr(client, "_ensure_worker_alive", AsyncCallProbe(return_value=True)):

@@ -492,21 +492,30 @@ class LaneReconciler:
             self._breaker.note_healthy(primary_key)
 
         # Rule 1 — converge the primary cortex toward warm.
+        #
+        # A DEAD primary converges regardless of foreground ownership. The
+        # old foreground deferral here was a priority inversion, caught live
+        # (2026-07-10, 75 min of 216s turns): each waiting turn held the
+        # foreground lane, which deferred the very convergence it was
+        # waiting on — cortex warming forever, every turn answered by
+        # fallback at the wall. A dead lane cannot be disrupted; foreground
+        # ownership protects a SERVING primary (Rule 0 side), never blocks
+        # reviving one.
         if primary_alive is False:
             blocked = self._breaker.blocked(primary_key)
             if blocked:
                 actions.append(self._note("held", lane=primary_key, detail=blocked))
-            elif self._foreground_active():
-                actions.append(
-                    self._note("deferred", lane=primary_key, detail="foreground_owner_active")
-                )
             else:
                 ok = bool(await self._spawn_primary())
                 actions.append(
                     self._note(
                         "warm_requested" if ok else "warm_deferred",
                         lane=primary_key,
-                        detail="reconciler_prewarm",
+                        detail=(
+                            "reconciler_prewarm_foreground_waiting"
+                            if self._foreground_active()
+                            else "reconciler_prewarm"
+                        ),
                     )
                 )
 
