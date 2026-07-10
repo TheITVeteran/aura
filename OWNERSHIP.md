@@ -30,6 +30,7 @@ Hierarchy: UnifiedWill > AuthorityGateway > ExecutiveCore > SubstrateAuthority (
 | Liquid substrate | `LiquidSubstrate` | `core/consciousness/liquid_substrate.py` |
 | Neurochemical state | `NeurochemicalSystem` | `core/consciousness/neurochemical_system.py` |
 | Unified field | `UnifiedField` | `core/consciousness/unified_field.py` |
+| Source-body awareness (code-as-body proprioception) | `SourceBodyAwareness` | `core/soma/source_body.py` |
 
 ## Governance domains
 

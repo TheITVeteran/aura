@@ -259,6 +259,26 @@ class BootSensoryMixin:
         if not hasattr(self, "instincts"):
             self.instincts = None
 
+        async def _source_body():
+            from core.soma.source_body import get_source_body
+
+            source_body = get_source_body()
+            self._register_sensory_service("source_body", source_body)
+            await source_body.start()
+            logger.info("🩻 Source-Body Proprioception Active (awakening deferred)")
+
+        if _env_flag("AURA_ENABLE_SOURCE_BODY", True):
+            await self._run_sensory_lane(
+                "source_body",
+                "Source-body proprioception unavailable; code-change awareness is offline",
+                _source_body,
+                severity="warning",
+            )
+        else:
+            self._skip_boot_sensory_lane(
+                "source_body", "disabled via AURA_ENABLE_SOURCE_BODY"
+            )
+
     async def _start_sensory_systems(self):
         if not (hasattr(self, "reasoning_queue") and self.reasoning_queue):
             self._sensory_boot_report()["scheduled"].append("reasoning_queue_skipped")

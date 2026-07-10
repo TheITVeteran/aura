@@ -12,6 +12,13 @@ from pydantic import BaseModel, Field
 class ProprioceptionInput(BaseModel):
     service_name: Optional[str] = Field(None, description="Specific service to detail.")
     include_docstrings: bool = Field(True, description="Whether to extract and include module/class documentation.")
+    include_source_body: bool = Field(
+        True,
+        description=(
+            "Include the source-body report: what changed in Aura's own code "
+            "between awakenings, and any uncommitted edits in flight."
+        ),
+    )
 
 class SystemProprioceptionSkill(BaseSkill):
     """Provides Aura with a structural map of her own architecture and modules.
@@ -90,14 +97,46 @@ class SystemProprioceptionSkill(BaseSkill):
 
                 system_map.append(service_info)
 
-            return {
+            result: Dict[str, Any] = {
                 "ok": True,
                 "summary": f"System Map contains {len(system_map)} services.",
                 "system_map": system_map,
                 "message": "I've conducted a self-diagnostic. All core systems are mapped and functional."
             }
 
+            if params.include_source_body:
+                source_body_report = self._source_body_report()
+                if source_body_report:
+                    result["source_body"] = source_body_report
+                    narrative = source_body_report.get("current_narrative")
+                    if narrative:
+                        result["summary"] += f" Source body: {narrative}"
+
+            return result
+
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation('system_proprioception', e)
             self.logger.error("Proprioception failed: %s", e)
             return {"ok": False, "error": str(e)}
+
+    def _source_body_report(self) -> Optional[Dict[str, Any]]:
+        """Grounded account of changes to Aura's own source, from the
+        source-body organ's ledger — never from model recall."""
+        try:
+            source_body = ServiceContainer.get("source_body", default=None)
+            if source_body is None:
+                return None
+            delta = source_body.last_boot_delta()
+            return {
+                "history": source_body.describe_body_history(),
+                "current_narrative": delta.narrative() if delta is not None else None,
+                "status": source_body.get_status(),
+            }
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as e:
+            record_degradation(
+                "system_proprioception",
+                e,
+                severity="warning",
+                action="self-diagnostic reported without the source-body section",
+            )
+            return None

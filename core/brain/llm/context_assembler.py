@@ -1250,15 +1250,14 @@ class ContextAssembler:
         """
         soma = state.soma
         context = ""
-        
+        body_lines = []
+
         hw = soma.hardware
         lat = soma.latency
         exp = soma.expressive
-        
+
         # Only include if we have real data
         if hw.get("cpu_usage", 0) > 0 or lat.get("last_thought_ms", 0) > 0:
-            body_lines = []
-            
             cpu = hw.get("cpu_usage", 0)
             vram = hw.get("vram_usage", 0)
 
@@ -1267,19 +1266,34 @@ class ContextAssembler:
                 body_lines.append(f"CPU: {cpu:.0f}% (under strain)")
             if vram > 85:
                 body_lines.append(f"Memory: {vram:.0f}% (running hot)")
-            
+
             thought_ms = lat.get("last_thought_ms", 0)
             if thought_ms > 2500:
                 body_lines.append(f"Thought Latency: {thought_ms:.0f}ms (sluggish)")
-            
+
             # Expression only when it is non-default
             expression = exp.get("current_expression", "neutral")
             if expression and expression != "neutral":
                 body_lines.append(f"Expression: {expression}")
-            
-            if body_lines:
-                context = "## BODY AWARENESS (PROPRIOCEPTION)\n" + "\n".join(f"- {line}" for line in body_lines) + "\n\n"
-        
+
+        # Source-body proprioception: fresh changes to her own code
+        # (boot-over-boot diffs, live edits in flight). Cached state only —
+        # somatic_change_lines never shells out on the prompt path.
+        try:
+            from core.container import ServiceContainer
+            source_body = ServiceContainer.get("source_body", default=None)
+            if source_body is not None:
+                body_lines.extend(source_body.somatic_change_lines())
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _sb_exc:
+            record_degradation(
+                "context_assembler.source_body",
+                _sb_exc,
+                action="prompt assembled without source-body change lines",
+            )
+
+        if body_lines:
+            context = "## BODY AWARENESS (PROPRIOCEPTION)\n" + "\n".join(f"- {line}" for line in body_lines) + "\n\n"
+
         return context
 
     @staticmethod

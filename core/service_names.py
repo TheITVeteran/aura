@@ -79,6 +79,7 @@ class ServiceNames:
     # Somatic Layer (Crossing the Rubicon)
     BODY_SCHEMA = "body_schema"
     CAPABILITY_DISCOVERY = "capability_discovery"
+    SOURCE_BODY = "source_body"
 
     # Self / Continuity (the Ghost substrate — core/ghost/)
     GHOST = "ghost"

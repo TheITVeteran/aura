@@ -363,6 +363,11 @@ def register_all_services(is_proxy: bool = False):
         from core.architect.governor import AutonomousArchitectureGovernor
         return AutonomousArchitectureGovernor(ASAConfig.from_env(config.paths.base_dir))
 
+    def create_source_body():
+        from core.soma.source_body import get_source_body
+        return get_source_body()
+
+    container.register('source_body', create_source_body, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('life_trace', create_life_trace, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('evidence_mode', create_evidence_mode, lifetime=ServiceLifetime.SINGLETON, required=False)
     container.register('markdown_workspace', create_markdown_workspace, lifetime=ServiceLifetime.SINGLETON, required=False)
