@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import threading
 import time
 from collections import deque
@@ -43,12 +42,71 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
 
 logger = logging.getLogger("Aura.LaneReconciler")
 
 SERVICE_NAME = "lane_reconciler"
 
 _ACTION_RING_SIZE = 64
+
+_OWNER = "core.runtime.lane_reconciler"
+_YOUNG_S_FLAG = declare(
+    "AURA_CRASHLOOP_YOUNG_S",
+    kind=FlagKind.FLOAT,
+    default=180.0,
+    description="Worker lifetime below which a death counts toward the crash loop",
+    owner=_OWNER,
+)
+_THRESHOLD_FLAG = declare(
+    "AURA_CRASHLOOP_THRESHOLD",
+    kind=FlagKind.INT,
+    default=3,
+    description="Young deaths inside the window that trip the breaker",
+    owner=_OWNER,
+)
+_WINDOW_FLAG = declare(
+    "AURA_CRASHLOOP_WINDOW_S",
+    kind=FlagKind.FLOAT,
+    default=900.0,
+    description="Sliding window for counting young deaths",
+    owner=_OWNER,
+)
+_BASE_BACKOFF_FLAG = declare(
+    "AURA_CRASHLOOP_BASE_BACKOFF_S",
+    kind=FlagKind.FLOAT,
+    default=30.0,
+    description="First-trip respawn backoff; doubles per consecutive trip",
+    owner=_OWNER,
+)
+_MAX_BACKOFF_FLAG = declare(
+    "AURA_CRASHLOOP_MAX_BACKOFF_S",
+    kind=FlagKind.FLOAT,
+    default=600.0,
+    description="Respawn backoff ceiling",
+    owner=_OWNER,
+)
+_BREAKER_ENABLED_FLAG = declare(
+    "AURA_CRASHLOOP_BREAKER",
+    kind=FlagKind.BOOL,
+    default=True,
+    description="Kill switch: when false the breaker records but never blocks",
+    owner=_OWNER,
+)
+_RECONCILER_ENABLED_FLAG = declare(
+    "AURA_LANE_RECONCILER",
+    kind=FlagKind.BOOL,
+    default=True,
+    description="Kill switch for the lane reconciler control loop",
+    owner=_OWNER,
+)
+_RECONCILE_INTERVAL_FLAG = declare(
+    "AURA_LANE_RECONCILE_INTERVAL_S",
+    kind=FlagKind.FLOAT,
+    default=20.0,
+    description="Seconds between reconcile passes (floor 5)",
+    owner=_OWNER,
+)
 
 # Administrative kill reasons: the runtime chose to stop this worker; the
 # death says nothing about the lane's health.
@@ -62,18 +120,6 @@ DELIBERATE_DEATH_PREFIXES: tuple[str, ...] = (
     "shutdown",
     "expert_adapter_",
 )
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        return default
-
-
-def _env_flag(name: str, default: bool) -> bool:
-    raw = str(os.environ.get(name, "1" if default else "0")).strip().lower()
-    return raw not in {"0", "false", "off", "no"}
 
 
 def death_is_deliberate(reason: str) -> bool:
@@ -102,27 +148,27 @@ class CrashLoopBreaker:
 
     @staticmethod
     def young_s() -> float:
-        return _env_float("AURA_CRASHLOOP_YOUNG_S", 180.0)
+        return float(_YOUNG_S_FLAG.value())
 
     @staticmethod
     def _threshold() -> int:
-        return max(1, int(_env_float("AURA_CRASHLOOP_THRESHOLD", 3)))
+        return max(1, int(_THRESHOLD_FLAG.value()))
 
     @staticmethod
     def _window_s() -> float:
-        return _env_float("AURA_CRASHLOOP_WINDOW_S", 900.0)
+        return float(_WINDOW_FLAG.value())
 
     @staticmethod
     def _base_backoff_s() -> float:
-        return _env_float("AURA_CRASHLOOP_BASE_BACKOFF_S", 30.0)
+        return float(_BASE_BACKOFF_FLAG.value())
 
     @staticmethod
     def _max_backoff_s() -> float:
-        return _env_float("AURA_CRASHLOOP_MAX_BACKOFF_S", 600.0)
+        return float(_MAX_BACKOFF_FLAG.value())
 
     @staticmethod
     def _enforcing() -> bool:
-        return _env_flag("AURA_CRASHLOOP_BREAKER", True)
+        return bool(_BREAKER_ENABLED_FLAG.value())
 
     # ── event intake ───────────────────────────────────────────────
 
@@ -353,11 +399,11 @@ class LaneReconciler:
 
     @staticmethod
     def enabled() -> bool:
-        return _env_flag("AURA_LANE_RECONCILER", True)
+        return bool(_RECONCILER_ENABLED_FLAG.value())
 
     @staticmethod
     def interval_s() -> float:
-        return max(5.0, _env_float("AURA_LANE_RECONCILE_INTERVAL_S", 20.0))
+        return max(5.0, float(_RECONCILE_INTERVAL_FLAG.value()))
 
     async def start(self) -> None:
         if self._running:
@@ -441,14 +487,18 @@ class LaneReconciler:
 
         # Rule 2 — budget: joint declared footprints must fit the envelope.
         try:
-            from core.brain.lane_admission import QoSClass, lane_budget_gb
+            from core.brain.lane_admission import (
+                QoSClass,
+                _eviction_shield_s,
+                lane_budget_gb,
+            )
 
             lanes = list(self._observe_lanes())
             committed = sum(float(getattr(l, "footprint_gb", 0.0)) for l in lanes)
             budget = lane_budget_gb()
             if committed > budget:
                 # Largest, lowest-QoS, non-recently-user-facing lanes first.
-                shield_s = _env_float("AURA_LANE_EVICTION_SHIELD_S", 180.0)
+                shield_s = _eviction_shield_s()
                 rank = {QoSClass.BEST_EFFORT: 0, QoSClass.BURSTABLE: 1, QoSClass.GUARANTEED: 2}
                 candidates = [
                     l

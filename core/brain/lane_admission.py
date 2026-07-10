@@ -39,7 +39,6 @@ surface and the incident narrator. ``AURA_LANE_ADMISSION`` selects
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from collections import deque
@@ -49,9 +48,40 @@ from typing import Any, Iterable
 
 import psutil
 
+from core.runtime.flags import FlagKind, declare
+
 logger = logging.getLogger("Aura.LaneAdmission")
 
 _DECISION_RING_SIZE = 64
+
+_BUDGET_GB_FLAG = declare(
+    "AURA_LANE_BUDGET_GB",
+    kind=FlagKind.FLOAT,
+    default=0.0,
+    description="Absolute lane memory budget in GB; 0 = derive from fraction",
+    owner="core.brain.lane_admission",
+)
+_BUDGET_FRACTION_FLAG = declare(
+    "AURA_LANE_BUDGET_FRACTION",
+    kind=FlagKind.FLOAT,
+    default=0.72,
+    description="Fraction of host RAM all model lanes may jointly commit",
+    owner="core.brain.lane_admission",
+)
+_EVICTION_SHIELD_FLAG = declare(
+    "AURA_LANE_EVICTION_SHIELD_S",
+    kind=FlagKind.FLOAT,
+    default=180.0,
+    description="Seconds after a user-facing turn during which a lane is shielded from eviction",
+    owner="core.brain.lane_admission",
+)
+_ADMISSION_MODE_FLAG = declare(
+    "AURA_LANE_ADMISSION",
+    kind=FlagKind.STRING,
+    default="enforce",
+    description="Lane admission mode: enforce (refusals bind) or advise (log-only kill switch)",
+    owner="core.brain.lane_admission",
+)
 
 
 class QoSClass(StrEnum):
@@ -61,13 +91,6 @@ class QoSClass(StrEnum):
 
 
 _QOS_RANK = {QoSClass.BEST_EFFORT: 0, QoSClass.BURSTABLE: 1, QoSClass.GUARANTEED: 2}
-
-
-def _env_float(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, str(default)))
-    except (TypeError, ValueError):
-        return default
 
 
 def classify_lane(model_path: str, *, purpose: str = "serve") -> tuple[str, QoSClass]:
@@ -148,20 +171,19 @@ def lane_budget_gb() -> float:
     keep the remainder. Override with AURA_LANE_BUDGET_GB (absolute) or
     AURA_LANE_BUDGET_FRACTION.
     """
-    absolute = _env_float("AURA_LANE_BUDGET_GB", 0.0)
+    absolute = float(_BUDGET_GB_FLAG.value())
     if absolute > 0.0:
         return absolute
-    fraction = _env_float("AURA_LANE_BUDGET_FRACTION", 0.72)
-    fraction = max(0.30, min(0.95, fraction))
+    fraction = max(0.30, min(0.95, float(_BUDGET_FRACTION_FLAG.value())))
     return _host_total_gb() * fraction
 
 
 def _eviction_shield_s() -> float:
-    return _env_float("AURA_LANE_EVICTION_SHIELD_S", 180.0)
+    return float(_EVICTION_SHIELD_FLAG.value())
 
 
 def enforcement_mode() -> str:
-    mode = str(os.environ.get("AURA_LANE_ADMISSION", "enforce")).strip().lower()
+    mode = str(_ADMISSION_MODE_FLAG.value()).strip().lower()
     if mode in {"off", "0", "false", "advise", "advisory"}:
         return "advise"
     return "enforce"

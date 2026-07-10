@@ -980,8 +980,25 @@ _STARTUP_COMPLETE_AT: float | None = None
 _PROBE_EPOCH = time.time()
 
 
+_STARTUP_DEADLINE_FLAG = None
+
+
 def _startup_deadline_s() -> float:
-    return _float_env("AURA_STARTUP_DEADLINE_S", 900.0)
+    global _STARTUP_DEADLINE_FLAG
+    if _STARTUP_DEADLINE_FLAG is None:
+        try:
+            from core.runtime.flags import FlagKind, declare
+
+            _STARTUP_DEADLINE_FLAG = declare(
+                "AURA_STARTUP_DEADLINE_S",
+                kind=FlagKind.FLOAT,
+                default=900.0,
+                description="Seconds a fresh process may warm before the startup probe calls it wedged",
+                owner="core.runtime.health_contract",
+            )
+        except (ImportError, AttributeError, RuntimeError, ValueError):
+            return _float_env("AURA_STARTUP_DEADLINE_S", 900.0)
+    return float(_STARTUP_DEADLINE_FLAG.value())
 
 
 def _startup_age_s() -> float:
