@@ -38,6 +38,8 @@ _LATE_CAUSAL_SERVICES = frozenset(
         "agency_core",
         "agency_facade",
         "memory_facade",
+        "runtime_control_plane",
+        "resource_admission",
         "affect_facade",
         "cognitive_loop",
         "swarm",
@@ -61,6 +63,8 @@ _PROTECTED_CORE_SERVICES = frozenset(
         "capability_engine",
         "llm_router",
         "inference_gate",
+        "runtime_control_plane",
+        "resource_admission",
     }
 )
 

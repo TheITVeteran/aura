@@ -1,0 +1,519 @@
+from __future__ import annotations
+
+import asyncio
+import time
+
+import pytest
+
+from core.runtime.control_plane import (
+    AdmissionOutcome,
+    AdmissionPriority,
+    AdmissionRequest,
+    DesiredServiceSpec,
+    DesiredServiceState,
+    ObservedServiceState,
+    PressureSnapshot,
+    ResourceAdmissionController,
+    RuntimeControlPlane,
+    WorkClass,
+)
+from core.runtime.receipts import ReceiptStore
+
+
+def _normal_pressure() -> PressureSnapshot:
+    return PressureSnapshot(memory_percent=42.0, thermal_level=0, loop_lag_s=0.01)
+
+
+@pytest.mark.asyncio
+async def test_background_admission_fails_closed_under_memory_pressure(tmp_path):
+    store = ReceiptStore(tmp_path / "receipts")
+    controller = ResourceAdmissionController(
+        pressure_provider=lambda: PressureSnapshot(memory_percent=94.0),
+        receipt_store=store,
+    )
+    request = AdmissionRequest(
+        owner="autonomy.research",
+        work_class=WorkClass.BACKGROUND,
+        priority=AdmissionPriority.BACKGROUND,
+        timeout_s=0,
+    )
+
+    decision = await controller.acquire(request)
+
+    assert decision.outcome == AdmissionOutcome.DEFERRED
+    assert decision.reason == "critical_memory_pressure_94.0"
+    assert decision.receipt_id
+    receipt = store.get(decision.receipt_id)
+    assert receipt.kind == "resource_admission"
+    assert receipt.decision == "deferred"
+    assert receipt.pressure["memory_percent"] == 94.0
+    reloaded = ReceiptStore(tmp_path / "receipts")
+    assert reloaded.reload_from_disk() == 1
+    durable = reloaded.get(decision.receipt_id)
+    assert durable is not None
+    assert durable.kind == "resource_admission"
+    assert durable.request_id == request.request_id
+
+
+@pytest.mark.asyncio
+async def test_foreground_inference_remains_admissible_under_moderate_pressure():
+    controller = ResourceAdmissionController(
+        pressure_provider=lambda: PressureSnapshot(memory_percent=87.0),
+    )
+    request = AdmissionRequest(
+        owner="chat.foreground",
+        work_class=WorkClass.INFERENCE,
+        lane="cortex",
+        priority=AdmissionPriority.FOREGROUND,
+        timeout_s=0,
+    )
+
+    decision = await controller.acquire(request)
+
+    assert decision.admitted is True
+    await controller.release(decision.lease_id)
+
+
+@pytest.mark.asyncio
+async def test_same_lane_serializes_and_request_id_is_idempotent():
+    controller = ResourceAdmissionController(pressure_provider=_normal_pressure)
+    first_request = AdmissionRequest(
+        owner="kernel",
+        work_class=WorkClass.INFERENCE,
+        lane="cortex",
+        request_id="stable-request",
+        timeout_s=0,
+    )
+    first = await controller.acquire(first_request)
+    replay = await controller.acquire(first_request)
+    blocked = await controller.acquire(
+        AdmissionRequest(
+            owner="second",
+            work_class=WorkClass.INFERENCE,
+            lane="cortex",
+            timeout_s=0,
+        )
+    )
+
+    assert first.admitted is True
+    assert replay.admitted is True
+    assert replay.replayed is True
+    assert replay.lease_id == first.lease_id
+    assert blocked.outcome == AdmissionOutcome.DEFERRED
+    assert blocked.blocking_lease_ids == (first.lease_id,)
+
+    await controller.release(first.lease_id)
+    with pytest.raises(KeyError):
+        await controller.release(first.lease_id)
+
+
+@pytest.mark.asyncio
+async def test_different_inference_lanes_can_run_concurrently():
+    controller = ResourceAdmissionController(pressure_provider=_normal_pressure)
+    cortex = await controller.acquire(
+        AdmissionRequest(owner="chat", work_class=WorkClass.INFERENCE, lane="cortex", timeout_s=0)
+    )
+    brainstem = await controller.acquire(
+        AdmissionRequest(
+            owner="ambient",
+            work_class=WorkClass.INFERENCE,
+            lane="brainstem",
+            timeout_s=0,
+        )
+    )
+
+    assert cortex.admitted and brainstem.admitted
+    assert controller.active_lease_count(WorkClass.INFERENCE) == 2
+
+    await controller.release(cortex.lease_id)
+    await controller.release(brainstem.lease_id)
+
+
+@pytest.mark.asyncio
+async def test_evolution_conflicts_with_active_inference_and_times_out(tmp_path):
+    store = ReceiptStore(tmp_path / "receipts")
+    controller = ResourceAdmissionController(
+        pressure_provider=_normal_pressure,
+        receipt_store=store,
+        poll_interval_s=0.01,
+    )
+    inference = await controller.acquire(
+        AdmissionRequest(owner="chat", work_class=WorkClass.INFERENCE, lane="cortex", timeout_s=0)
+    )
+
+    evolution = await controller.acquire(
+        AdmissionRequest(
+            owner="hephaestus",
+            work_class=WorkClass.EVOLUTION,
+            priority=AdmissionPriority.BACKGROUND,
+            timeout_s=0.03,
+        )
+    )
+
+    assert evolution.outcome == AdmissionOutcome.TIMED_OUT
+    assert evolution.reason == "resource_timeout"
+    assert evolution.blocking_lease_ids == (inference.lease_id,)
+    assert evolution.receipt_id
+    await controller.release(inference.lease_id)
+
+
+@pytest.mark.asyncio
+async def test_foreground_request_can_cooperatively_preempt_lower_priority_work():
+    controller = ResourceAdmissionController(
+        pressure_provider=_normal_pressure,
+        poll_interval_s=0.01,
+    )
+    evolution_lease_id = ""
+    preempt_reasons: list[str] = []
+
+    async def release_on_preempt(reason: str) -> None:
+        preempt_reasons.append(reason)
+        await controller.release(
+            evolution_lease_id,
+            reason=reason,
+            preempted=True,
+        )
+
+    evolution = await controller.acquire(
+        AdmissionRequest(
+            owner="training",
+            work_class=WorkClass.EVOLUTION,
+            priority=AdmissionPriority.BACKGROUND,
+            preemptible=True,
+            timeout_s=0,
+        ),
+        on_preempt=release_on_preempt,
+    )
+    evolution_lease_id = evolution.lease_id
+
+    foreground = await controller.acquire(
+        AdmissionRequest(
+            owner="chat",
+            work_class=WorkClass.INFERENCE,
+            lane="cortex",
+            priority=AdmissionPriority.FOREGROUND,
+            timeout_s=0.2,
+        )
+    )
+
+    assert foreground.admitted is True
+    assert preempt_reasons == [f"preempted_by:{foreground.request_id}"]
+    assert controller.status()["counters"]["preemptions"] == 1
+    await controller.release(foreground.lease_id)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_waiter_is_removed():
+    controller = ResourceAdmissionController(
+        pressure_provider=_normal_pressure,
+        poll_interval_s=0.01,
+    )
+    holder = await controller.acquire(
+        AdmissionRequest(owner="holder", work_class=WorkClass.INFERENCE, lane="cortex", timeout_s=0)
+    )
+    waiting = asyncio.create_task(
+        controller.acquire(
+            AdmissionRequest(
+                owner="waiting",
+                work_class=WorkClass.INFERENCE,
+                lane="cortex",
+                timeout_s=5,
+            )
+        )
+    )
+    await asyncio.sleep(0.03)
+    waiting.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+    assert controller.status()["waiters"] == []
+    await controller.release(holder.lease_id)
+
+
+@pytest.mark.asyncio
+async def test_expired_lease_is_reclaimed():
+    controller = ResourceAdmissionController(pressure_provider=_normal_pressure)
+    expired = await controller.acquire(
+        AdmissionRequest(
+            owner="short",
+            work_class=WorkClass.INFERENCE,
+            lane="cortex",
+            timeout_s=0,
+            lease_ttl_s=0.02,
+        )
+    )
+    await asyncio.sleep(0.03)
+    replacement = await controller.acquire(
+        AdmissionRequest(
+            owner="replacement",
+            work_class=WorkClass.INFERENCE,
+            lane="cortex",
+            timeout_s=0,
+        )
+    )
+
+    assert replacement.admitted is True
+    assert controller.status()["counters"]["expired"] == 1
+    with pytest.raises(KeyError):
+        await controller.release(expired.lease_id)
+    await controller.release(replacement.lease_id)
+
+
+@pytest.mark.asyncio
+async def test_reconciler_starts_dependencies_in_order_and_stops_in_reverse(tmp_path):
+    store = ReceiptStore(tmp_path / "receipts")
+    admission = ResourceAdmissionController(
+        pressure_provider=_normal_pressure,
+        receipt_store=store,
+    )
+    plane = RuntimeControlPlane(admission=admission)
+    events: list[str] = []
+    states = {"database": False, "api": False}
+
+    async def start_database() -> None:
+        events.append("start:database")
+        states["database"] = True
+
+    async def stop_database() -> None:
+        events.append("stop:database")
+        states["database"] = False
+
+    async def start_api() -> None:
+        events.append("start:api")
+        states["api"] = True
+
+    async def stop_api() -> None:
+        events.append("stop:api")
+        states["api"] = False
+
+    plane.register_service(
+        DesiredServiceSpec(name="database", critical=True),
+        start=start_database,
+        stop=stop_database,
+        probe=lambda: states["database"],
+    )
+    plane.register_service(
+        DesiredServiceSpec(name="api", critical=True, dependencies=("database",)),
+        start=start_api,
+        stop=stop_api,
+        probe=lambda: states["api"],
+    )
+
+    started = await plane.reconcile_once()
+
+    assert started["converged"] is True
+    assert started["critical_ready"] is True
+    assert events == ["start:database", "start:api"]
+    assert plane.service_status()["api"]["observed_state"] == "ready"
+    assert started["actions"][0]["admission_receipt_id"]
+
+    plane.set_desired_state("api", DesiredServiceState.STOPPED)
+    plane.set_desired_state("database", DesiredServiceState.STOPPED)
+    stopped = await plane.reconcile_once()
+
+    assert stopped["converged"] is True
+    assert events[-2:] == ["stop:api", "stop:database"]
+
+
+def test_reconciler_rejects_dependency_cycles():
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    plane.register_service(
+        DesiredServiceSpec(name="one", dependencies=("two",)),
+        start=lambda: None,
+        stop=lambda: None,
+        probe=lambda: True,
+    )
+
+    with pytest.raises(ValueError, match="dependency cycle"):
+        plane.register_service(
+            DesiredServiceSpec(name="two", dependencies=("one",)),
+            start=lambda: None,
+            stop=lambda: None,
+            probe=lambda: True,
+        )
+    assert "two" not in plane.service_status()
+
+
+@pytest.mark.asyncio
+async def test_reconciler_opens_circuit_after_bounded_start_failures():
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    attempts = 0
+
+    async def fail_start() -> None:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("boot failed")
+
+    plane.register_service(
+        DesiredServiceSpec(
+            name="fragile",
+            critical=True,
+            restart_limit=2,
+            restart_window_s=60,
+            backoff_initial_s=0.001,
+            backoff_max_s=0.001,
+        ),
+        start=fail_start,
+        stop=lambda: None,
+        probe=lambda: False,
+    )
+
+    await plane.reconcile_once()
+    await asyncio.sleep(0.002)
+    await plane.reconcile_once()
+    report = await plane.reconcile_once()
+
+    assert attempts == 2
+    assert report["services"]["fragile"]["observed_state"] == (
+        ObservedServiceState.CIRCUIT_OPEN.value
+    )
+    assert report["critical_ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_dependency_stays_blocked_until_owner_is_ready():
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    plane.register_service(
+        DesiredServiceSpec(name="dependent", dependencies=("missing",)),
+        start=lambda: pytest.fail("blocked service must not start"),
+        stop=lambda: None,
+        probe=lambda: True,
+    )
+
+    report = await plane.reconcile_once()
+
+    status = report["services"]["dependent"]
+    assert status["observed_state"] == "blocked"
+    assert status["reason"] == "dependency_blocked:missing"
+    assert report["actions"] == []
+
+
+@pytest.mark.asyncio
+async def test_dependency_loss_stops_an_already_running_dependent():
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    running = {"owner": True, "dependent": True}
+    events: list[str] = []
+    plane.register_service(
+        DesiredServiceSpec(name="owner"),
+        start=lambda: running.__setitem__("owner", True),
+        stop=lambda: running.__setitem__("owner", False),
+        probe=lambda: running["owner"],
+        adopt_running=True,
+    )
+    plane.register_service(
+        DesiredServiceSpec(name="dependent", dependencies=("owner",)),
+        start=lambda: running.__setitem__("dependent", True),
+        stop=lambda: (events.append("stop:dependent"), running.__setitem__("dependent", False)),
+        probe=lambda: running["dependent"],
+        adopt_running=True,
+    )
+    plane.set_desired_state("owner", DesiredServiceState.STOPPED)
+
+    report = await plane.reconcile_once()
+
+    assert running == {"owner": False, "dependent": False}
+    assert events == ["stop:dependent"]
+    assert report["services"]["dependent"]["observed_state"] == "blocked"
+    assert report["services"]["dependent"]["reason"] == "dependency_blocked:owner"
+
+
+@pytest.mark.asyncio
+async def test_failed_stop_prevents_duplicate_restart():
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    starts = 0
+
+    async def start() -> None:
+        nonlocal starts
+        starts += 1
+
+    async def stop() -> None:
+        raise RuntimeError("cannot stop old instance")
+
+    plane.register_service(
+        DesiredServiceSpec(name="wedged", restart_limit=2),
+        start=start,
+        stop=stop,
+        probe=lambda: False,
+        adopt_running=True,
+    )
+
+    report = await plane.reconcile_once()
+
+    assert starts == 0
+    assert report["services"]["wedged"]["observed_state"] == "failed"
+    assert report["services"]["wedged"]["reason"] == "stop_failed"
+
+
+@pytest.mark.asyncio
+async def test_repeated_health_failures_consume_restart_budget():
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    healthy = True
+
+    async def start() -> None:
+        nonlocal healthy
+        healthy = True
+
+    async def stop() -> None:
+        nonlocal healthy
+        healthy = False
+
+    plane.register_service(
+        DesiredServiceSpec(
+            name="flapping",
+            restart_limit=1,
+            restart_window_s=60,
+        ),
+        start=start,
+        stop=stop,
+        probe=lambda: healthy,
+        adopt_running=True,
+    )
+    healthy = False
+
+    report = await plane.reconcile_once()
+
+    assert report["services"]["flapping"]["observed_state"] == "circuit_open"
+    assert report["services"]["flapping"]["reason"] == "probe_failed"
+
+
+def test_pressure_snapshot_normalizes_mapping_values():
+    snapshot = PressureSnapshot.from_mapping(
+        {
+            "memory_pct": 88,
+            "thermal_level": 2,
+            "loop_lag_s": 0.5,
+            "red_zones": ["memory"],
+        }
+    )
+
+    assert snapshot.memory_percent == 88.0
+    assert snapshot.thermal_level == 2
+    assert snapshot.red_zones == ("memory",)
+    assert snapshot.to_dict()["red_zones"] == ["memory"]
+
+
+def test_service_observation_timestamps_are_real():
+    before = time.time()
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    plane.register_service(
+        DesiredServiceSpec(name="clock"),
+        start=lambda: None,
+        stop=lambda: None,
+        probe=lambda: True,
+    )
+
+    assert plane.service_status()["clock"]["last_transition_at"] >= before

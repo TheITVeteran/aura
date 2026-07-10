@@ -5270,6 +5270,8 @@ def test_service_manifest_lists_all_critical_runtime_roles():
         "output_gate",
         "governance",
         "task_supervisor",
+        "runtime_control_plane",
+        "resource_admission",
         "shutdown_coordinator",
         "agent_workspace",
     }

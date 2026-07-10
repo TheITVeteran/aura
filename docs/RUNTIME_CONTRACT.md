@@ -17,6 +17,8 @@ Contract version: `runtime-health-v1`
 | Memory Write Gateway | `memory_write_gateway` | `is_ready` | Canonical governed durable memory write gateway. Without it, memory writes cannot be trusted. |
 | Kernel Interface | `kernel_interface` | `is_ready` | Bridge between orchestrator and consciousness kernel. |
 | Scheduler | `scheduler` | `is_alive` | Canonical runtime scheduler. Without it, maintenance, repair, and background work are unsupervised. |
+| Runtime Control Plane | `runtime_control_plane` | `is_ready` | Canonical desired-state reconciler. Without it, service lifecycle and resource policy diverge. |
+| Resource Admission | `resource_admission` | `is_ready` | Pressure-aware lease authority for inference, evolution, model loading, and managed startup. |
 | Unified Will | `unified_will` | `is_alive` | Single locus of authority for consequential decisions. |
 | Authority Gateway | `authority_gateway` | `is_ready` | Governance gateway for tools, external I/O, memory writes, state changes, and self-modification. |
 | Capability Engine | `capability_engine` | `is_ready` | Capability-token and skill governance layer. Without it, tool execution cannot be considered healthy. |
@@ -38,6 +40,8 @@ Contract version: `runtime-health-v1`
 | Hypervisor | `hypervisor` | `is_alive` | Event-loop and memory watchdog. Without it, severe stalls can go undetected. |
 | Event Loop Monitor | `event_loop_monitor` | `is_alive` | Fine-grained event-loop lag monitor. Without it, blocking regressions are harder to catch. |
 | MindTick | `mind_tick` | `is_alive` | Canonical cognitive and organism rhythm. Without forward progress, autonomous state integration stalls. |
+| Resource Governor | `resource_governor` | `is_alive` | Canonical sampler and eviction adapter feeding the runtime control plane. |
+| Resource Arbitrator | `resource_arbitrator` | `is_ready` | Compatibility facade ensuring legacy inference and evolution callers use canonical admission. |
 
 ## OPTIONAL — background enrichment; loss is invisible to the user
 
@@ -62,5 +66,5 @@ Boot readiness additionally requires at least one passing probe from each group:
 - **kernel**: `kernel_interface`
 - **inference**: `inference_gate`, `llm_router`
 - **memory**: `state_repository`, `memory_facade`, `memory_write_gateway`, `unified_memory_pressure`, `external_memory_sentinel`
-- **scheduler**: `scheduler`
+- **scheduler**: `scheduler`, `runtime_control_plane`, `resource_admission`
 - **tool_governance**: `unified_will`, `authority_gateway`, `capability_engine`

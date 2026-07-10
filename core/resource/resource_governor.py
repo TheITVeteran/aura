@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import enum
 import logging
-import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -401,6 +400,13 @@ class ResourceGovernor:
     def is_throttled(self) -> bool:
         """Quick check: should background work be throttled?"""
         return self._throttle_active
+
+    def is_alive(self) -> bool:
+        """The sampler is live when it can produce a current snapshot."""
+        try:
+            return self.get_snapshot() is not None
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+            return False
 
     def get_status(self) -> Dict[str, Any]:
         """Return full resource status for observability."""

@@ -3,24 +3,24 @@
 
 The audit insists every consequential action emits a receipt and that the
 chain cause -> decision -> action -> result is forensically reconstructible.
-This module defines the ten canonical receipt types and a `ReceiptStore`
+This module defines the canonical receipt types and a `ReceiptStore`
 that persists them through the canonical AtomicWriter so every receipt is
 durable, schema-versioned, and queryable.
 """
 from __future__ import annotations
 
 import logging
-logger = logging.getLogger("core.runtime.receipts")
-
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
 from core.runtime.audit_chain import AuditChain
+
+logger = logging.getLogger("core.runtime.receipts")
 
 
 def _new_id(prefix: str) -> str:
@@ -161,6 +161,22 @@ class SemanticWeightUpdateReceipt(_ReceiptBase):
     governance_receipt_id: Optional[str] = None
 
 
+@dataclass
+class ResourceAdmissionReceipt(_ReceiptBase):
+    """Durable decision record for constrained runtime work admission."""
+
+    kind: str = "resource_admission"
+    request_id: str = ""
+    owner: str = ""
+    work_class: str = ""
+    lane: str = ""
+    priority: int = 0
+    decision: str = ""
+    reason: str = ""
+    lease_id: str = ""
+    pressure: Dict[str, Any] = field(default_factory=dict)
+
+
 # Mapping kind -> dataclass for the store.
 _RECEIPT_CLASSES = {
     "turn": TurnReceipt,
@@ -174,6 +190,7 @@ _RECEIPT_CLASSES = {
     "self_repair": SelfRepairReceipt,
     "computer_use": ComputerUseReceipt,
     "semantic_weight_update": SemanticWeightUpdateReceipt,
+    "resource_admission": ResourceAdmissionReceipt,
 }
 
 
@@ -189,6 +206,7 @@ AnyReceipt = Union[
     SelfRepairReceipt,
     ComputerUseReceipt,
     SemanticWeightUpdateReceipt,
+    ResourceAdmissionReceipt,
 ]
 
 

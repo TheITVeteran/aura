@@ -138,6 +138,7 @@ async def init_hardening_layer(orchestrator: Any):
     """Initialize growth scanning, reaper, and hypervisor layer."""
 
     hardening_status: dict[str, dict[str, Any]] = {}
+    managed_components: dict[str, Any] = {}
     orchestrator.hardening_status = hardening_status
 
     # 7.5 Platform Root (Hardware Binding)
@@ -178,20 +179,22 @@ async def init_hardening_layer(orchestrator: Any):
     orchestrator.reaper = get_reaper()
     orchestrator.hypervisor = get_hypervisor()
 
-    await _start_supervisor(
+    if await _start_supervisor(
         name="reaper",
         container_key="reaper",
         component=orchestrator.reaper,
         boot_timeout_s=HARDENING_BOOT_TIMEOUT_SECONDS,
         status=hardening_status,
-    )
-    await _start_supervisor(
+    ):
+        managed_components["reaper"] = orchestrator.reaper
+    if await _start_supervisor(
         name="hypervisor",
         container_key="hypervisor",
         component=orchestrator.hypervisor,
         boot_timeout_s=HARDENING_BOOT_TIMEOUT_SECONDS,
         status=hardening_status,
-    )
+    ):
+        managed_components["hypervisor"] = orchestrator.hypervisor
 
     # EventLoopMonitor: Watchdog for stall detection (>0.1s)
     try:
@@ -209,6 +212,7 @@ async def init_hardening_layer(orchestrator: Any):
             "threshold_s": monitor.threshold,
             "active_threshold_s": monitor.active_threshold,
         }
+        managed_components["event_loop_monitor"] = monitor
         logger.info(
             "EventLoopMonitor active (threshold=%.2fs active_threshold=%.2fs)",
             monitor.threshold,
@@ -252,6 +256,7 @@ async def init_hardening_layer(orchestrator: Any):
             "registered": True,
             "container_key": "unified_runtime_pressure",
         }
+        managed_components["unified_runtime_pressure"] = pressure
         logger.info("UnifiedRuntimePressure active (pull-based, no loop).")
     except asyncio.CancelledError:
         raise
@@ -268,5 +273,86 @@ async def init_hardening_layer(orchestrator: Any):
             severity="degraded",
         )
         logger.error("UnifiedRuntimePressure failed to start: %s", exc)
+
+    # Adopt hardening components into the canonical desired-state reconciler.
+    # They are already running at this point; future probes/restarts flow
+    # through one owner instead of independent ad hoc watchdog policy.
+    try:
+        from core.runtime.control_plane import (
+            DesiredServiceSpec,
+            WorkClass,
+            get_runtime_control_plane,
+        )
+
+        control_plane = get_runtime_control_plane()
+        for component_name, component in managed_components.items():
+            if control_plane.has_service(component_name):
+                continue
+            if component_name == "unified_runtime_pressure":
+                start = lambda: None
+                stop = lambda: None
+                probe = lambda component=component: component.runtime_pressure_snapshot()
+                critical = True
+                restart_on_unhealthy = False
+            else:
+                start = getattr(component, "start", lambda: None)
+                stop = getattr(component, "stop", lambda: None)
+                probe = lambda component=component: _component_is_alive(component)
+                critical = component_name == "event_loop_monitor"
+                restart_on_unhealthy = True
+            control_plane.register_service(
+                DesiredServiceSpec(
+                    name=component_name,
+                    critical=critical,
+                    restart_on_unhealthy=restart_on_unhealthy,
+                    admission_class=WorkClass.SERVICE_START,
+                    metadata={"boot_layer": "hardening"},
+                ),
+                start=start,
+                stop=stop,
+                probe=probe,
+                adopt_running=True,
+            )
+
+        control_report = await control_plane.reconcile_once()
+        register_runtime_service(
+            "runtime_control_plane",
+            control_plane,
+            failure_policy="fail-closed",
+            owner="core/runtime/control_plane.py",
+            registered_by="init_hardening_layer",
+            required_for="desired-state reconciliation and resource admission",
+        )
+        register_runtime_service(
+            "resource_admission",
+            control_plane.admission,
+            failure_policy="fail-closed",
+            owner="core/runtime/control_plane.py",
+            registered_by="init_hardening_layer",
+            required_for="pressure-aware constrained work leases",
+        )
+        hardening_status["runtime_control_plane"] = {
+            "state": "online" if control_report.get("critical_ready") else "degraded",
+            "registered": True,
+            "container_key": "runtime_control_plane",
+            "converged": bool(control_report.get("converged")),
+            "critical_ready": bool(control_report.get("critical_ready")),
+            "managed_services": sorted(managed_components),
+        }
+    except asyncio.CancelledError:
+        raise
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        hardening_status["runtime_control_plane"] = {
+            "state": "failed",
+            "registered": False,
+            "error": str(exc),
+        }
+        _record_hardening_degradation(
+            exc,
+            component="runtime_control_plane",
+            action="desired-state control plane boot failed; resource admission remains unhealthy",
+            severity="critical" if config.env == Environment.PROD else "degraded",
+        )
+        _fail_required_component("runtime_control_plane", exc)
 
     logger.info("Hardening Layer status: %s", hardening_status)

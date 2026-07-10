@@ -92,6 +92,20 @@ BOOT_SERVICE_REQUIREMENTS: tuple[BootServiceRequirement, ...] = (
         failure_policy="fail-closed",
         evidence_tokens=("create_capability_engine", "container.register('capability_engine'"),
     ),
+    BootServiceRequirement(
+        name="runtime_control_plane",
+        owner_file="core/runtime/control_plane.py",
+        required_for="desired-state reconciliation and constrained work admission",
+        failure_policy="fail-closed",
+        evidence_tokens=("class RuntimeControlPlane", "def get_runtime_control_plane"),
+    ),
+    BootServiceRequirement(
+        name="resource_admission",
+        owner_file="core/runtime/control_plane.py",
+        required_for="pressure-aware inference, evolution, and service-start leases",
+        failure_policy="fail-closed",
+        evidence_tokens=("class ResourceAdmissionController", "class AdmissionRequest"),
+    ),
 )
 
 CANONICAL_PROOF_ARTIFACT_DIRS: tuple[str, ...] = (

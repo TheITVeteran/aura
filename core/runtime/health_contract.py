@@ -37,7 +37,7 @@ REQUIRED_HEALTH_PROBE_GROUPS: dict[str, tuple[str, ...]] = {
         "unified_memory_pressure",
         "external_memory_sentinel",
     ),
-    "scheduler": ("scheduler",),
+    "scheduler": ("scheduler", "runtime_control_plane", "resource_admission"),
     "tool_governance": ("unified_will", "authority_gateway", "capability_engine"),
 }
 
@@ -115,6 +115,20 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         ServiceTier.CRITICAL,
         "Canonical runtime scheduler. Without it, maintenance, repair, and background work are unsupervised.",
         liveness_check="is_alive",
+    ),
+    ServiceRequirement(
+        "Runtime Control Plane",
+        "runtime_control_plane",
+        ServiceTier.CRITICAL,
+        "Canonical desired-state reconciler. Without it, service lifecycle and resource policy diverge.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Resource Admission",
+        "resource_admission",
+        ServiceTier.CRITICAL,
+        "Pressure-aware lease authority for inference, evolution, model loading, and managed startup.",
+        liveness_check="is_ready",
     ),
     ServiceRequirement(
         "Unified Will",
@@ -228,6 +242,20 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         ServiceTier.IMPORTANT,
         "Canonical cognitive and organism rhythm. Without forward progress, autonomous state integration stalls.",
         liveness_check="is_alive",
+    ),
+    ServiceRequirement(
+        "Resource Governor",
+        "resource_governor",
+        ServiceTier.IMPORTANT,
+        "Canonical sampler and eviction adapter feeding the runtime control plane.",
+        liveness_check="is_alive",
+    ),
+    ServiceRequirement(
+        "Resource Arbitrator",
+        "resource_arbitrator",
+        ServiceTier.IMPORTANT,
+        "Compatibility facade ensuring legacy inference and evolution callers use canonical admission.",
+        liveness_check="is_ready",
     ),
     # ── OPTIONAL: Background enrichments ──
     ServiceRequirement(

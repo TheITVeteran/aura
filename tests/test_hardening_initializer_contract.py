@@ -8,6 +8,7 @@ import pytest
 
 from core.container import ServiceContainer
 from core.orchestrator.initializers import hardening
+from core.runtime.control_plane import reset_runtime_control_plane
 from core.runtime.errors import get_degradation_tracker
 from core.runtime.health_contract import RUNTIME_CONTRACT, ServiceTier
 
@@ -67,13 +68,18 @@ class _EventLoopMonitor:
     def is_alive(self) -> bool:
         return self._alive
 
+    async def stop(self) -> None:
+        self._alive = False
+
 
 @pytest.fixture(autouse=True)
 def isolated_contract_state():
     ServiceContainer.clear()
+    reset_runtime_control_plane()
     get_degradation_tracker().reset()
     yield
     ServiceContainer.clear()
+    reset_runtime_control_plane()
     get_degradation_tracker().reset()
 
 
@@ -104,6 +110,9 @@ def test_hardening_initializer_leaves_failed_supervisor_unregistered_in_dev(monk
     assert ServiceContainer.get("event_loop_monitor", default=None) is monitor
     assert orchestrator.hardening_status["reaper"]["state"] == "failed"
     assert orchestrator.hardening_status["hypervisor"]["state"] == "online"
+    assert orchestrator.hardening_status["runtime_control_plane"]["registered"] is True
+    assert ServiceContainer.get("runtime_control_plane", default=None) is not None
+    assert ServiceContainer.get("resource_admission", default=None) is not None
     assert "unregistered" in get_degradation_tracker().recent(subsystem="hardening")[-1].action
 
 

@@ -1,85 +1,75 @@
-from core.runtime.errors import record_degradation
-import os
-import logging
+"""Compatibility facade for canonical runtime resource admission.
+
+Inference and evolution callers historically used ``ResourceArbitrator``.
+The actual policy owner is now ``RuntimeControlPlane.admission``; this facade
+preserves the public context-manager API and the cross-process evolution lock.
+"""
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import fcntl
+import logging
+import os
+import threading
+import time
 from pathlib import Path
-from typing import Optional, AsyncGenerator
+from typing import AsyncGenerator, Optional
+
+from core.runtime.control_plane import (
+    AdmissionPriority,
+    AdmissionRequest,
+    ResourceAdmissionController,
+    WorkClass,
+    get_runtime_control_plane,
+)
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.ResourceArbitrator")
 
+
 class ResourceArbitrator:
-    """
-    Arbitrates access to finite physical resources (GPU/VRAM) to prevent OOM-kills.
-    In Apple Silicon, CPU and GPU share the same memory pool. 
-    
-    Tokens:
-    - INFERENCE_TOKEN: High priority, granted immediately to primary inference requests.
-    - EVOLUTION_TOKEN: Low priority, background tasks (LoRA training, heavy eval).
-    """
-    
-    _instance = None
-    
-    def __new__(cls, *args, **kwargs):
-        if not cls._instance:
-            cls._instance = super(ResourceArbitrator, cls).__new__(cls)
-        return cls._instance
+    """Route legacy inference/evolution tokens through canonical admission."""
 
-    def __init__(self):
-        if hasattr(self, "_initialized"): return
-        self._initialized = True
-        
-        # Loop-Agnostic Synchronization (Fix #4)
-        from core.utils.concurrency import RobustLock, get_robust_semaphore
-        from core.utils.queues import LoopAgnosticQueue
-
-        # Per-worker semaphores: each MLX worker process (32B Cortex, 7B Brainstem,
-        # etc.) handles exactly ONE inference at a time via its IPC pipe.
-        # Using per-worker semaphores means brainstem background inference does NOT
-        # block cortex user inference — they run on separate processes in parallel.
-        # A global fallback semaphore ("_default") serializes requests that don't
-        # specify a worker label (e.g. Reflex-CPU or legacy callers).
-        self._worker_sems: dict = {}
-        # Legacy single semaphore kept for callers that don't pass a worker label.
-        self._gpu_sem = get_robust_semaphore("ResourceArbitrator.GPUSem._default", 1)
-        
-        # For cross-process coordination (e.g. Inference Process vs Hephaestus Process)
-        # We'll use a file-based lock for true cross-process synchronization on macOS.
-        self._lock_path = str(Path.home() / ".aura" / "run" / "vram.lock")
-        self._inference_active = False
-        self._evolution_active = False
+    def __init__(
+        self,
+        *,
+        admission: ResourceAdmissionController | None = None,
+        lock_path: str | Path | None = None,
+    ) -> None:
+        self._admission = admission or get_runtime_control_plane().admission
+        self._lock_path = str(lock_path or (Path.home() / ".aura" / "run" / "vram.lock"))
+        self._state_lock = threading.RLock()
+        self._inference_leases: dict[str, list[str]] = {}
+        self._evolution_lease_id = ""
+        self._evolution_request_id = ""
         self._mp_fd: Optional[int] = None
-        self._mp_inference_fd: Optional[int] = None
-        # FIX: _priority_queue was asyncio.Queue (loop-bound).
-        # Replaced with LoopAgnosticQueue to prevent affinity crashes.
-        self._priority_queue = LoopAgnosticQueue()
 
-    def _get_mp_lock(self):
-        """Standard file lock for cross-process VRAM arbitration."""
+    @property
+    def admission(self) -> ResourceAdmissionController:
+        """Expose the canonical owner for identity and health verification."""
+
+        return self._admission
+
+    @staticmethod
+    def _worker_lane(worker: Optional[str]) -> str:
+        return str(worker or "default").strip() or "default"
+
+    def _get_mp_lock(self) -> int | None:
         try:
-            fd = os.open(self._lock_path, os.O_CREAT | os.O_RDWR, 0o666)
-            return fd
-        except (OSError, IOError) as e:
-            record_degradation('resource_arbitrator', e)
-            logger.error("Failed to open VRAM lock file: %s", e)
-            return None
-
-    def _get_worker_sem(self, worker: Optional[str]):
-        """Return (or create) the per-worker semaphore for the given label.
-
-        Each MLX worker process has its own semaphore so that, e.g., brainstem
-        background inference cannot block cortex user inference.  Callers that
-        don't specify a worker fall back to the legacy global semaphore.
-        """
-        if not worker:
-            return self._gpu_sem
-        if worker not in self._worker_sems:
-            from core.utils.concurrency import get_robust_semaphore
-            self._worker_sems[worker] = get_robust_semaphore(
-                f"ResourceArbitrator.GPUSem.{worker}", 1
+            target = Path(self._lock_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            return os.open(str(target), os.O_CREAT | os.O_RDWR, 0o600)
+        except OSError as exc:
+            record_degradation(
+                "resource_arbitrator",
+                exc,
+                severity="warning",
+                action="evolution admission failed because cross-process VRAM lock was unavailable",
+                receipt_required=False,
             )
-        return self._worker_sems[worker]
+            logger.error("Failed to open VRAM lock file: %s", exc)
+            return None
 
     async def acquire_inference(
         self,
@@ -87,111 +77,181 @@ class ResourceArbitrator:
         timeout: Optional[float] = None,
         worker: Optional[str] = None,
     ) -> bool:
-        """Request VRAM access for inference.
-
-        ``worker`` identifies the specific MLX worker process (e.g. "MLX-Cortex",
-        "MLX-Brainstem").  Per-worker semaphores ensure that brainstem background
-        inference never blocks cortex user inference.
-
-        Priority (user-facing) requests get a longer timeout (90s).
-        Background requests use the caller-supplied timeout.
-        """
-        sem = self._get_worker_sem(worker)
-        if priority:
-            logger.debug("🚀 [PRIORITY] User-facing inference token requested (worker=%s).", worker or "default")
-            effective_timeout = max(0.25, float(timeout)) if timeout is not None else 90.0
-        else:
-            logger.debug("Attempting to acquire INFERENCE token (worker=%s)...", worker or "default")
-            effective_timeout = max(0.25, float(timeout)) if timeout is not None else 30.0
-
-        acquired = await sem.acquire(timeout=effective_timeout)
-        if not acquired:
-            logger.error("🕒 INFERENCE token TIMEOUT for worker=%s after %ss.", worker or "default", effective_timeout)
+        lane = self._worker_lane(worker)
+        effective_timeout = (
+            max(0.0, float(timeout))
+            if timeout is not None
+            else (90.0 if priority else 30.0)
+        )
+        request = AdmissionRequest(
+            owner=f"resource_arbitrator.inference:{lane}",
+            work_class=WorkClass.INFERENCE,
+            lane=lane,
+            priority=(
+                AdmissionPriority.FOREGROUND
+                if priority
+                else AdmissionPriority.INTERACTIVE
+            ),
+            timeout_s=effective_timeout,
+            lease_ttl_s=max(30.0, effective_timeout + 30.0),
+            metadata={"worker": lane, "legacy_facade": True},
+        )
+        decision = await self._admission.acquire(request)
+        if not decision.admitted:
+            logger.warning(
+                "Inference admission denied worker=%s priority=%s outcome=%s reason=%s receipt=%s",
+                lane,
+                priority,
+                decision.outcome.value,
+                decision.reason,
+                decision.receipt_id or "none",
+            )
             return False
-
-        self._inference_active = True
-        logger.info("⚡ INFERENCE token acquired (worker=%s, priority=%s).", worker or "default", priority)
+        with self._state_lock:
+            self._inference_leases.setdefault(lane, []).append(decision.lease_id)
+        logger.debug(
+            "Inference lease acquired worker=%s priority=%s lease=%s",
+            lane,
+            priority,
+            decision.lease_id,
+        )
         return True
 
-    async def release_inference(self, worker: Optional[str] = None):
-        """Release VRAM access after inference."""
-        self._inference_active = False
-        sem = self._get_worker_sem(worker)
+    async def release_inference(self, worker: Optional[str] = None) -> None:
+        lane = self._worker_lane(worker)
+        with self._state_lock:
+            leases = self._inference_leases.get(lane, [])
+            lease_id = leases.pop() if leases else ""
+            if not leases:
+                self._inference_leases.pop(lane, None)
+        if not lease_id:
+            logger.warning("Attempted to release unowned inference lease worker=%s", lane)
+            return
         try:
-            sem.release()
-        except ValueError:
-            logger.warning("Attempted to over-release INFERENCE token for worker=%s.", worker or "default")
-        logger.info("📥 INFERENCE token released (worker=%s).", worker or "default")
+            await self._admission.release(lease_id, reason="inference_finished")
+        except KeyError:
+            logger.warning("Inference lease expired before release worker=%s lease=%s", lane, lease_id)
 
     async def acquire_evolution(self, timeout: float = 300.0) -> bool:
-        """
-        Request VRAM access for background evolution tasks (Low Priority).
-        Blocks until inference is idle or timeout occurs.
-        """
-        logger.debug("Attempting to acquire EVOLUTION token...")
-        
-        start_time = asyncio.get_running_loop().time()
-        while self._inference_active:
-            if asyncio.get_running_loop().time() - start_time > timeout:
-                logger.warning("🕒 EVOLUTION token request TIMEOUT (Inference busy).")
-                return False
-            await asyncio.sleep(0.1) # Check more frequently than 1s
-            
-        # We use a file lock to protect against other evolutionary cycles
-        # or parallel worker initialization across processes.
-        fd = self._get_mp_lock()
-        if fd is None: return False
-        
-        try:
-            # Non-blocking lock attempt first, then polling to avoid blocking the loop too long
-            while self._inference_active:
-                if asyncio.get_running_loop().time() - start_time > timeout:
-                    logger.warning("🕒 EVOLUTION token request TIMEOUT (Inference busy).")
-                    os.close(fd)
-                    return False
-                await asyncio.sleep(1.0)
+        effective_timeout = max(0.0, float(timeout))
+        request = AdmissionRequest(
+            owner="resource_arbitrator.evolution",
+            work_class=WorkClass.EVOLUTION,
+            lane="unified_memory",
+            priority=AdmissionPriority.BACKGROUND,
+            timeout_s=effective_timeout,
+            lease_ttl_s=max(60.0, effective_timeout + 60.0),
+            preemptible=False,
+            receipt_required=True,
+            metadata={"legacy_facade": True, "cross_process_lock": self._lock_path},
+        )
+        decision = await self._admission.acquire(request)
+        if not decision.admitted:
+            logger.warning(
+                "Evolution admission denied outcome=%s reason=%s receipt=%s",
+                decision.outcome.value,
+                decision.reason,
+                decision.receipt_id or "none",
+            )
+            return False
 
-            # Now try to acquire the process-wide lock
-            acquired = False
-            while not acquired:
+        fd = self._get_mp_lock()
+        if fd is None:
+            await self._admission.release(
+                decision.lease_id,
+                reason="cross_process_lock_unavailable",
+            )
+            return False
+
+        deadline = time.monotonic() + effective_timeout
+        attempts = max(1, int(effective_timeout / 0.1) + 2)
+        acquired = False
+        try:
+            for _attempt in range(attempts):
                 try:
                     fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     acquired = True
+                    break
                 except BlockingIOError:
-                    if asyncio.get_running_loop().time() - start_time > timeout:
-                        logger.warning("🕒 EVOLUTION token request TIMEOUT (Lock busy).")
-                        os.close(fd)
-                        return False
-                    await asyncio.sleep(0.1)
-            
-            self._evolution_active = True
-            logger.info("🧬 EVOLUTION token acquired (Background tasks permitted).")
-            # Store FD for release
-            self._mp_fd = fd
-            return True
-            
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('resource_arbitrator', e)
-            logger.error("Error acquiring VRAM lock: %s", e)
+                    if time.monotonic() >= deadline:
+                        break
+                    await asyncio.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+        except (OSError, RuntimeError, ValueError) as exc:
+            record_degradation(
+                "resource_arbitrator",
+                exc,
+                severity="warning",
+                action="evolution cross-process lock acquisition failed after process-local admission",
+                receipt_required=False,
+            )
+
+        if not acquired:
             os.close(fd)
+            await self._admission.release(
+                decision.lease_id,
+                reason="cross_process_lock_timeout",
+            )
+            logger.warning("Evolution cross-process lock timed out after %.2fs", effective_timeout)
             return False
 
-    def release_evolution(self):
-        """Release VRAM access after evolution task."""
-        if hasattr(self, "_mp_fd") and self._mp_fd is not None:
+        with self._state_lock:
+            duplicate_evolution = bool(self._evolution_lease_id)
+        if duplicate_evolution:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+            await self._admission.release(
+                decision.lease_id,
+                reason="duplicate_evolution_lease",
+            )
+            return False
+        with self._state_lock:
+            self._mp_fd = fd
+            self._evolution_lease_id = decision.lease_id
+            self._evolution_request_id = request.request_id
+        logger.info("Evolution lease acquired receipt=%s", decision.receipt_id or "none")
+        return True
+
+    async def release_evolution(self) -> None:
+        with self._state_lock:
+            fd = self._mp_fd
+            lease_id = self._evolution_lease_id
+            self._mp_fd = None
+            self._evolution_lease_id = ""
+            self._evolution_request_id = ""
+        if fd is not None:
             try:
-                fcntl.flock(self._mp_fd, fcntl.LOCK_UN)
-                os.close(self._mp_fd)
-                self._mp_fd = None
-                self._evolution_active = False
-                logger.info("🧬 EVOLUTION token released.")
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('resource_arbitrator', e)
-                logger.error("Error releasing VRAM lock: %s", e)
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
+        if lease_id:
+            try:
+                await self._admission.release(lease_id, reason="evolution_finished")
+            except KeyError:
+                logger.warning("Evolution lease expired before release lease=%s", lease_id)
 
     def is_inference_busy(self) -> bool:
-        """Check if primary inference is active."""
-        return self._inference_active
+        return self._admission.active_lease_count(WorkClass.INFERENCE) > 0
+
+    def is_alive(self) -> bool:
+        return self._admission.is_alive()
+
+    def is_ready(self) -> bool:
+        return self.is_alive()
+
+    def get_status(self) -> dict[str, object]:
+        with self._state_lock:
+            lanes = {
+                lane: list(leases)
+                for lane, leases in sorted(self._inference_leases.items())
+            }
+            evolution_lease = self._evolution_lease_id
+        return {
+            "inference_active": self.is_inference_busy(),
+            "inference_lanes": lanes,
+            "evolution_active": bool(evolution_lease),
+            "evolution_lease_id": evolution_lease,
+            "admission": self._admission.status(),
+        }
 
     @contextlib.asynccontextmanager
     async def inference_context(
@@ -200,13 +260,11 @@ class ResourceArbitrator:
         worker: Optional[str] = None,
         timeout: Optional[float] = None,
     ) -> AsyncGenerator[None, None]:
-        """Context manager for inference-level VRAM locking.
-
-        Pass ``worker`` (e.g. "MLX-Cortex", "MLX-Brainstem") to use a
-        per-worker semaphore.  This lets the 32B cortex and 7B brainstem run
-        their inferences concurrently without blocking each other.
-        """
-        acquired = await self.acquire_inference(priority=priority, timeout=timeout, worker=worker)
+        acquired = await self.acquire_inference(
+            priority=priority,
+            timeout=timeout,
+            worker=worker,
+        )
         if not acquired:
             raise asyncio.TimeoutError(f"inference_token_timeout:{worker or 'default'}")
         try:
@@ -215,14 +273,39 @@ class ResourceArbitrator:
             await self.release_inference(worker=worker)
 
     @contextlib.asynccontextmanager
-    async def evolution_context(self, timeout: float = 300.0) -> AsyncGenerator[bool, None]:
-        """Context manager for background evolution/training VRAM arbitration."""
+    async def evolution_context(
+        self,
+        timeout: float = 300.0,
+    ) -> AsyncGenerator[bool, None]:
         acquired = await self.acquire_evolution(timeout)
         try:
             yield acquired
         finally:
             if acquired:
-                self.release_evolution()
+                await self.release_evolution()
+
+
+_ARBITRATOR: ResourceArbitrator | None = None
+_ARBITRATOR_LOCK = threading.Lock()
+
 
 def get_resource_arbitrator() -> ResourceArbitrator:
-    return ResourceArbitrator()
+    global _ARBITRATOR
+    if _ARBITRATOR is None:
+        with _ARBITRATOR_LOCK:
+            if _ARBITRATOR is None:
+                _ARBITRATOR = ResourceArbitrator()
+    return _ARBITRATOR
+
+
+def reset_resource_arbitrator() -> None:
+    global _ARBITRATOR
+    with _ARBITRATOR_LOCK:
+        _ARBITRATOR = None
+
+
+__all__ = [
+    "ResourceArbitrator",
+    "get_resource_arbitrator",
+    "reset_resource_arbitrator",
+]

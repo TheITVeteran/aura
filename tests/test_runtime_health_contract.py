@@ -492,6 +492,7 @@ def test_required_probe_groups_reject_partial_or_forged_payloads():
     assert required_probe_blockers(forged) == [
         "runtime_required_probes",
         "probe:memory",
+        "probe:scheduler",
         "probe:tool_governance",
     ]
 

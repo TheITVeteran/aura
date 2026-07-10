@@ -125,6 +125,30 @@ SERVICE_MANIFEST: dict[str, ServiceRole] = {
         critical=True,
         canonical_owner="task_tracker",
     ),
+    "runtime_control_plane": ServiceRole(
+        name="runtime_control_plane",
+        description="Single desired-state reconciliation and resource-admission owner",
+        critical=True,
+        canonical_owner="runtime_control_plane",
+    ),
+    "resource_admission": ServiceRole(
+        name="resource_admission",
+        description="Single pressure-aware constrained-work lease authority",
+        critical=True,
+        canonical_owner="resource_admission",
+    ),
+    "resource_governor": ServiceRole(
+        name="resource_governor",
+        description="Canonical pressure sampler, throttler, and eviction adapter",
+        critical=False,
+        canonical_owner="resource_governor",
+    ),
+    "resource_arbitrator": ServiceRole(
+        name="resource_arbitrator",
+        description="Compatibility facade delegating inference and evolution to resource admission",
+        critical=False,
+        canonical_owner="resource_arbitrator",
+    ),
     "shutdown_coordinator": ServiceRole(
         name="shutdown_coordinator",
         description="Single ShutdownCoordinator owning teardown ordering",

@@ -9422,3 +9422,84 @@ Remaining work after this checkpoint:
 - Build the desired-state runtime reconciler and unified resource-admission
   control plane. The live harness closes this proof boundary, not the broader
   Context-Criticism Closure Matrix.
+
+## Checkpoint 2026-07-09-19: Runtime Control Plane and Resource Admission
+
+Scope:
+
+- Added `core/runtime/control_plane.py` as the canonical owner for two runtime
+  decisions that had been spread across governors, supervisors, boot code, and
+  callers:
+  - pressure-aware admission of inference, model loading, evolution, desktop,
+    external-I/O, service-start, maintenance, and background work
+  - dependency-ordered reconciliation of declared service desired state
+- Added typed admission requests, outcomes, priorities, pressure snapshots,
+  bounded decision history, lease TTL reclamation, request idempotency,
+  cancellation-safe waiter cleanup, same-lane serialization, cross-lane
+  inference concurrency, model-load/evolution exclusion, bounded fairness, and
+  cooperative preemption callbacks.
+- Made denial, timeout, preemption, and selected successful admission decisions
+  durable through the new `ResourceAdmissionReceipt`; pressure evidence and
+  blocking lease IDs survive restart through the canonical receipt store.
+- Added a desired-state service reconciler with dependency-cycle rejection,
+  dependency-ordered startup, reverse-order shutdown, liveness verification,
+  bounded restart windows, exponential backoff, circuit opening, dependent
+  shutdown on dependency loss, and protection against duplicate restart after
+  a failed stop.
+- Replaced `ResourceArbitrator`'s independent in-process semaphore policy with
+  a compatibility facade over canonical admission while retaining its required
+  cross-process VRAM lock for evolution. Fixed the prior global-busy accounting
+  bug so releasing cortex cannot hide a still-active brainstem lane. Added an
+  identity proof that the default facade and control plane share the exact same
+  admission instance.
+- Registered `runtime_control_plane`, `resource_admission`, `resource_governor`,
+  and `resource_arbitrator` through the container, service manifest, boot
+  contract, runtime health contract, and protected causal-service set.
+- Adopted successfully booted hardening components into desired-state
+  reconciliation and wired the metabolic coordinator to run the control loop
+  at the existing resource-governor cadence. Critical unresolved desired state
+  is now visible instead of being silently left to independent watchdogs.
+- Regenerated `docs/RUNTIME_CONTRACT.md` from the executable health contract.
+
+Verification:
+
+- Focused integration matrix across admission, lifecycle, boot, health,
+  inference tiering, service wiring, server contracts, and the legacy resource
+  governor -> `664 passed in 44.55s`.
+- `python -m mypy --explicit-package-bases --follow-imports=skip
+  core/runtime/control_plane.py core/resilience/resource_arbitrator.py`
+  -> success with no issues in the two new policy-owner modules.
+- `python -m py_compile` for all touched runtime, registration, health, and test
+  modules -> passed.
+- Ruff `F,E9,I` for the new/touched focused surface and `F,E9` for the large
+  pre-existing server contract module -> passed.
+- `git diff --check` -> passed before this tracker update.
+- `make enterprise-gate` -> passed with no baseline regression.
+- `make production-gate` -> passed; all `37` readiness checks green.
+
+Known open boundary:
+
+- A full-import mypy experiment from the two owner modules traversed the wider
+  codebase and reported `9,225` existing errors across `896` files. The focused
+  owner modules are clean, but this is not evidence that Aura is repository-wide
+  type-clean; systematic type-debt retirement remains open in the semantic and
+  release-hardening workstreams.
+- Three newer `origin/main` commits add declarative model-lane footprint
+  admission, a cortex lane reconciler/crash-loop breaker, and a memory-retrieval
+  backbone. Their scopes are complementary but must be rebased and explicitly
+  integrated beneath this canonical cross-domain owner before this workstream
+  can be called unified.
+
+Remaining work after this checkpoint:
+
+- Rebase onto the latest `main`, register the model-lane reconciler as a managed
+  desired-state service, and compose model-load leases with declared lane-memory
+  envelope decisions so neither can bypass the other.
+- Retire or convert the dormant `ResourceGovernor.InferenceSemaphore` into a
+  strict compatibility adapter; it must not remain a second policy surface.
+- Reconcile the process supervision tree and organ supervisor behind one
+  lifecycle authority, add receipt retention/compaction, and expose operator
+  status for desired state, blockers, restart budgets, and active leases.
+- Migrate foreground inference away from the historical priority bypass and
+  onto cooperative canonical admission without reintroducing the original
+  cortex self-deadlock.

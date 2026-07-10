@@ -72,6 +72,67 @@ def register_all_services(is_proxy: bool = False):
     )
     container.register('metabolic_monitor', lambda: container.get("metabolism"), lifetime=ServiceLifetime.SINGLETON)
 
+    # Canonical desired-state and resource-admission spine. Domain-specific
+    # samplers and the legacy arbitrator are adapters behind this owner.
+    def create_runtime_control_plane():
+        from core.runtime.control_plane import get_runtime_control_plane
+
+        return get_runtime_control_plane()
+
+    def create_resource_governor():
+        from core.resource.resource_governor import get_resource_governor
+
+        return get_resource_governor()
+
+    def create_resource_arbitrator():
+        from core.resilience.resource_arbitrator import get_resource_arbitrator
+
+        return get_resource_arbitrator()
+
+    container.register(
+        'runtime_control_plane',
+        create_runtime_control_plane,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=True,
+        owner='core/runtime/control_plane.py',
+        registered_by='register_all_services',
+        required_for='desired-state reconciliation and constrained work admission',
+        failure_policy='fail-closed',
+    )
+    container.register(
+        'resource_admission',
+        lambda: container.get('runtime_control_plane').admission,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=True,
+        dependencies=['runtime_control_plane'],
+        owner='core/runtime/control_plane.py',
+        registered_by='register_all_services',
+        required_for='pressure-aware resource leases',
+        failure_policy='fail-closed',
+    )
+    container.register(
+        'resource_governor',
+        create_resource_governor,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=True,
+        dependencies=['runtime_control_plane'],
+        owner='core/resource/resource_governor.py',
+        registered_by='register_all_services',
+        required_for='resource sampling, throttling, and tiered eviction',
+        failure_policy='degrade_with_receipt',
+    )
+    container.register(
+        'resource_arbitrator',
+        create_resource_arbitrator,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=True,
+        dependencies=['runtime_control_plane'],
+        owner='core/resilience/resource_arbitrator.py',
+        registered_by='register_all_services',
+        required_for='legacy inference and evolution admission compatibility',
+        failure_policy='fail-closed',
+    )
+
     # Critique-closure services: adaptive mood, mesh cognition, emergent goals,
     # structural mutator, lineage, self-awareness suite, identity chronicle.
     # Every one of these must be container-registered or it is dead code.
