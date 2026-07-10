@@ -29,6 +29,7 @@ from __future__ import annotations
 
 # ruff: noqa: N818
 import logging
+import os
 import threading
 import time
 import traceback
@@ -296,6 +297,63 @@ class _EscalationGovernor:
 
 
 _escalation_governor = _EscalationGovernor()
+
+_SLO_DEDUP_LOCK = threading.Lock()
+_SLO_DEDUP_LAST: dict[tuple[str, str], float] = {}
+_SLO_DEDUP_FLAG = None
+
+
+def _slo_dedup_window_s() -> float:
+    global _SLO_DEDUP_FLAG
+    if _SLO_DEDUP_FLAG is None:
+        try:
+            from core.runtime.flags import FlagKind, declare
+
+            _SLO_DEDUP_FLAG = declare(
+                "AURA_SLO_ERROR_DEDUP_WINDOW_S",
+                kind=FlagKind.FLOAT,
+                default=300.0,
+                description=(
+                    "Fault-fingerprint dedup window for the error_events_per_hour "
+                    "SLO feed; 0 restores raw per-event counting"
+                ),
+                owner="core.runtime.errors",
+            )
+        except (ImportError, AttributeError, RuntimeError, ValueError):
+            try:
+                return float(os.environ.get("AURA_SLO_ERROR_DEDUP_WINDOW_S", "300"))
+            except (TypeError, ValueError):
+                return 300.0
+    return float(_SLO_DEDUP_FLAG.value())
+
+
+def _slo_error_budget_admits(subsystem: str, error_type: str) -> bool:
+    """First record per fault fingerprint per window counts; repeats absorb.
+
+    Keeps error_events_per_hour meaning 'distinct degradation classes per
+    hour'. AURA_SLO_ERROR_DEDUP_WINDOW_S=0 restores raw per-event counting.
+    """
+    window_s = _slo_dedup_window_s()
+    if window_s <= 0.0:
+        return True
+    key = (str(subsystem), str(error_type))
+    now = time.time()
+    with _SLO_DEDUP_LOCK:
+        last = _SLO_DEDUP_LAST.get(key, 0.0)
+        if (now - last) < window_s:
+            return False
+        _SLO_DEDUP_LAST[key] = now
+        # Bound the map: fingerprints older than 10 windows are forgotten.
+        if len(_SLO_DEDUP_LAST) > 512:
+            cutoff = now - (window_s * 10.0)
+            for stale_key in [k for k, t in _SLO_DEDUP_LAST.items() if t < cutoff]:
+                del _SLO_DEDUP_LAST[stale_key]
+    return True
+
+
+def reset_slo_error_dedup_for_test() -> None:
+    with _SLO_DEDUP_LOCK:
+        _SLO_DEDUP_LAST.clear()
 
 
 def get_escalation_governor() -> _EscalationGovernor:
@@ -614,10 +672,14 @@ def record_degradation(
         )
 
     # ── Reliability: SLO monitor integration ──────────────────────
-    # Critical/degraded events feed the windowed error-event SLO; the
-    # tracker counts events in its window against the target (each call
-    # here is one event, not a rate sample).
-    if severity in ("critical", "degraded"):
+    # Critical/degraded events feed the windowed error-event SLO — but
+    # deduplicated by fault fingerprint (SLO budget review): the budget
+    # measures DISTINCT degradation classes per hour, not storm repeats.
+    # One repeating fault used to burn the 10/h budget 20x while adding
+    # no information; now it costs one unit per dedup window.
+    if severity in ("critical", "degraded") and _slo_error_budget_admits(
+        subsystem, error_type
+    ):
         try:
             from slo.slo_monitor import get_slo_monitor
             get_slo_monitor().record("error_events_per_hour", 1.0)

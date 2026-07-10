@@ -319,6 +319,48 @@ class TestContracts:
 # Phase 4: SLO Monitor
 # ═══════════════════════════════════════════════════════════════════════
 
+class TestSLOErrorBudgetDedup:
+    """SLO budget review: error_events_per_hour counts DISTINCT fault
+    classes, not storm repeats (one fault used to burn the budget 20x)."""
+
+    def setup_method(self):
+        from core.runtime.errors import reset_slo_error_dedup_for_test
+
+        reset_slo_error_dedup_for_test()
+
+    def test_repeat_fingerprint_absorbed_within_window(self):
+        from core.runtime.errors import _slo_error_budget_admits
+
+        assert _slo_error_budget_admits("phi_pool", "ChildProcessError") is True
+        # The storm: same subsystem, same error type, tight loop.
+        for _ in range(50):
+            assert _slo_error_budget_admits("phi_pool", "ChildProcessError") is False
+
+    def test_distinct_faults_each_count(self):
+        from core.runtime.errors import _slo_error_budget_admits
+
+        assert _slo_error_budget_admits("phi_pool", "ChildProcessError") is True
+        assert _slo_error_budget_admits("phi_pool", "TimeoutError") is True
+        assert _slo_error_budget_admits("inference_gate", "ChildProcessError") is True
+
+    def test_zero_window_restores_raw_counting(self, monkeypatch):
+        from core.runtime import errors as errors_module
+
+        monkeypatch.setattr(errors_module, "_slo_dedup_window_s", lambda: 0.0)
+        assert errors_module._slo_error_budget_admits("x", "Y") is True
+        assert errors_module._slo_error_budget_admits("x", "Y") is True
+
+    def test_window_expiry_admits_again(self, monkeypatch):
+        from core.runtime import errors as errors_module
+
+        clock = {"now": 1000.0}
+        monkeypatch.setattr(errors_module.time, "time", lambda: clock["now"])
+        assert errors_module._slo_error_budget_admits("x", "Y") is True
+        assert errors_module._slo_error_budget_admits("x", "Y") is False
+        clock["now"] += 301.0
+        assert errors_module._slo_error_budget_admits("x", "Y") is True
+
+
 class TestSLOMonitor:
     def test_default_slos_registered(self):
         from slo.slo_monitor import SLOMonitor
