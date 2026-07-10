@@ -303,6 +303,23 @@ class LocalCorpusStore:
         finally:
             conn.close()
 
+    def has_documents(self) -> bool:
+        """O(1) populated check. ``document_count()`` is a full table scan —
+        at corpus scale it held the event loop for 5s when a hot path used
+        it as a mere existence guard; this is the guard those paths want."""
+        if not self.db_path.exists():
+            return False
+        try:
+            conn = self._connect_ro()
+        except sqlite3.OperationalError:
+            return False
+        try:
+            return conn.execute("SELECT 1 FROM docs LIMIT 1").fetchone() is not None
+        except sqlite3.OperationalError:
+            return False
+        finally:
+            conn.close()
+
     def status(self) -> dict[str, Any]:
         exists = self.db_path.exists()
         return {

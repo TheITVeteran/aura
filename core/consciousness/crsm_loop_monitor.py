@@ -55,6 +55,31 @@ class CRSMLoopMonitor:
         self.training_state_path = training_state_path or (
             _REPO_ROOT / "training" / "adapters" / "aura-personality" / "training_state.json"
         )
+        # (size, mtime)-keyed digest cache. Training JSONLs are megabytes and
+        # change only when a pipeline stage writes them, but status/health
+        # surfaces poll this monitor constantly — an uncached full-file
+        # sha256 per poll was a fingerprinted event-loop stall class
+        # (api_health → crsm get_status, 5-10s under load).
+        self._digest_cache: dict[str, tuple[tuple[int, float], tuple[int, str]]] = {}
+
+    def _digest_file(self, path: Path) -> tuple[int, str, int, float]:
+        """Return (lines, sha256, size, mtime), re-reading the file only when
+        its (size, mtime) signature changed since the last computation."""
+        stat = path.stat()
+        signature = (int(stat.st_size), float(stat.st_mtime))
+        cached = self._digest_cache.get(str(path))
+        if cached is not None and cached[0] == signature:
+            lines, digest_hex = cached[1]
+            return lines, digest_hex, signature[0], signature[1]
+        digest = hashlib.sha256()
+        lines = 0
+        with path.open("rb") as fh:
+            for raw in fh:
+                lines += 1
+                digest.update(raw)
+        digest_hex = digest.hexdigest()
+        self._digest_cache[str(path)] = (signature, (lines, digest_hex))
+        return lines, digest_hex, signature[0], signature[1]
 
     # ── pipeline observations ─────────────────────────────────────────────
 
@@ -62,19 +87,13 @@ class CRSMLoopMonitor:
         try:
             if not self.dataset_path.exists():
                 return {"exists": False, "lines": 0, "mtime": 0.0, "size": 0, "sha256": ""}
-            lines = 0
-            digest = hashlib.sha256()
-            with open(self.dataset_path, "rb") as fh:
-                for raw in fh:
-                    lines += 1
-                    digest.update(raw)
-            st = self.dataset_path.stat()
+            lines, digest_hex, size, mtime = self._digest_file(self.dataset_path)
             return {
                 "exists": True,
                 "lines": lines,
-                "mtime": st.st_mtime,
-                "size": st.st_size,
-                "sha256": digest.hexdigest(),
+                "mtime": mtime,
+                "size": size,
+                "sha256": digest_hex,
             }
         except OSError as exc:
             record_degradation("crsm_loop_monitor", exc)
@@ -123,20 +142,14 @@ class CRSMLoopMonitor:
         try:
             if not path.exists():
                 return {"exists": False, "path": str(path), "matches_expected": False}
-            digest = hashlib.sha256()
-            lines = 0
-            with path.open("rb") as fh:
-                for raw in fh:
-                    lines += 1
-                    digest.update(raw)
-            stat = path.stat()
+            lines, digest_hex, size, mtime = self._digest_file(path)
             actual = {
                 "exists": True,
                 "path": str(path),
                 "lines": lines,
-                "size": stat.st_size,
-                "mtime": stat.st_mtime,
-                "sha256": digest.hexdigest(),
+                "size": size,
+                "mtime": mtime,
+                "sha256": digest_hex,
             }
             expected_hash = str(expected.get("sha256") or "")
             expected_lines = int(expected.get("lines", -1) or -1)
@@ -145,7 +158,7 @@ class CRSMLoopMonitor:
                 expected_hash
                 and actual["sha256"] == expected_hash
                 and expected_lines == lines
-                and expected_size == stat.st_size
+                and expected_size == size
             )
             return actual
         except (OSError, ValueError, TypeError) as exc:

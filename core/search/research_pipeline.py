@@ -1413,14 +1413,20 @@ class ResearchSearchPipeline:
             from core.knowledge.local_corpus import get_local_corpus_store
 
             _corpus = get_local_corpus_store()
-            if _corpus.document_count() > 0:
-                # Off-loop: sqlite writes must never buy loop time.
-                await _asyncio.to_thread(
-                    _corpus.add_retained_document,
-                    artifact.query[:300],
-                    memory_text,
-                    artifact_id=artifact.artifact_id,
-                )
+
+            def _corpus_writeback() -> None:
+                # The populated-guard AND the write both touch sqlite — the
+                # guard alone (a COUNT(*) full scan) ran ON the loop and was
+                # a fingerprinted 5s stall class at corpus scale. Everything
+                # sqlite happens on this worker thread.
+                if _corpus.has_documents():
+                    _corpus.add_retained_document(
+                        artifact.query[:300],
+                        memory_text,
+                        artifact_id=artifact.artifact_id,
+                    )
+
+            await _asyncio.to_thread(_corpus_writeback)
         except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
             record_degradation(
                 "research_pipeline", exc, severity="debug",

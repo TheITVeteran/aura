@@ -1190,7 +1190,18 @@ class GoalEngine:
         include_external: bool = True,
         actionable_only: bool = False,
     ) -> list[dict[str, Any]]:
-        snapshot = self.build_snapshot(limit=limit, include_external=include_external)
+        if include_external and int(limit or 12) <= 30:
+            # Hot path: EVERY tool authorization descends here
+            # (authorize_tool_execution → executive_core temporal-identity
+            # context), plus mind_tick, chat, and topic selection — all on
+            # the event loop. Serve the stale-while-revalidate snapshot;
+            # a direct build_snapshot() here ran sync SQLite on the loop and
+            # was the dominant live stall class (26 dumps on Jul 8 alone).
+            # Mutations reset the cache age, so staleness is bounded by the
+            # 5s TTL plus one background refresh.
+            snapshot = self._cached_snapshot()
+        else:
+            snapshot = self.build_snapshot(limit=limit, include_external=include_external)
         active = [
             item
             for item in snapshot["items"]

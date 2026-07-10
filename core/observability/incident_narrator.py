@@ -193,26 +193,17 @@ class IncidentNarrator:
 
     @staticmethod
     def _parse_stall_dump(path: Path) -> tuple[float, str]:
-        """Return (elapsed_seconds, deepest in-repo culprit frame)."""
-        elapsed = 0.0
-        culprit = ""
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            return elapsed, culprit
-        header = re.search(r"STALL DETECTED: ([\d.]+)s", text)
-        if header:
-            elapsed = float(header.group(1))
-        # The culprit is the deepest project frame that is not idle-thread
-        # scaffolding: scan File "…" lines, keep the last interesting one.
-        for match in re.finditer(r'File "([^"]+)", line (\d+), in (\S+)', text):
-            file_path, line_no, func = match.groups()
-            if "site-packages" in file_path or not ("/core/" in file_path or "/interface/" in file_path or "aura_main" in file_path):
-                continue
-            if any(marker in file_path for marker in _IDLE_FRAME_MARKERS):
-                continue
-            culprit = f"{Path(file_path).name}:{line_no} ({func})"
-        return elapsed, culprit
+        """Return (elapsed_seconds, attributed culprit frame).
+
+        Attribution is delegated to the shared loop-thread-aware parser —
+        the narrator must tell the same story triage does, and neither may
+        blame a parked bystander thread (the old "last project frame"
+        scan once narrated a sleeping monitor loop as the freeze culprit).
+        """
+        from core.observability.stall_dump import parse_stall_dump
+
+        verdict = parse_stall_dump(path)
+        return verdict.elapsed_s, verdict.described()
 
     @staticmethod
     def _collect_degraded_events(cutoff: float) -> list[EvidenceItem]:

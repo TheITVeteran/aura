@@ -132,6 +132,13 @@ class IdentityChronicle:
         self._closed = False
         self._writer_thread = threading.Thread(target=self._async_writer_loop, daemon=True, name="IDRAGWriter")
         self._writer_thread.start()
+        # In-memory fact snapshot for the retrieval path. retrieve() runs on
+        # the event loop inside EVERY Will decision (via relevance_score) and
+        # a per-call sqlite full scan there was a fingerprinted stall class.
+        # Identity facts change rarely: upsert invalidates; access-count
+        # writes don't (they touch no scoring input).
+        self._facts_cache: list[IdentityFact] | None = None
+        self._facts_cache_lock = threading.Lock()
 
     def __enter__(self) -> IdentityChronicle:
         return self
@@ -247,6 +254,8 @@ class IdentityChronicle:
                     now,
                 ),
             )
+        with self._facts_cache_lock:
+            self._facts_cache = None
         return fact.fact_id
 
     def seed_defaults(self) -> None:
@@ -272,6 +281,20 @@ class IdentityChronicle:
             rows = conn.execute("SELECT * FROM identity_facts ORDER BY confidence DESC, updated_at DESC").fetchall()
         return [self._row_to_fact(row) for row in rows]
 
+    def _cached_facts(self) -> list[IdentityFact]:
+        """All facts from the in-memory snapshot, loading from sqlite only
+        when the cache was invalidated by a write (or never filled)."""
+        with self._facts_cache_lock:
+            cached = self._facts_cache
+        if cached is not None:
+            return cached
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM identity_facts").fetchall()
+        facts = [self._row_to_fact(row) for row in rows]
+        with self._facts_cache_lock:
+            self._facts_cache = facts
+        return facts
+
     def retrieve(
         self,
         query: str,
@@ -284,19 +307,13 @@ class IdentityChronicle:
         if not query_terms:
             query_terms = {"aura", "identity"}
 
-        with self._connect() as conn:
-            if relation_filter:
-                rows = conn.execute(
-                    "SELECT * FROM identity_facts WHERE relation = ?",
-                    (relation_filter,),
-                ).fetchall()
-            else:
-                rows = conn.execute("SELECT * FROM identity_facts").fetchall()
+        facts = self._cached_facts()
+        if relation_filter:
+            facts = [fact for fact in facts if fact.relation == relation_filter]
 
         scored: list[RetrievedIdentityFact] = []
         now = time.time()
-        for row in rows:
-            fact = self._row_to_fact(row)
+        for fact in facts:
             fact_terms = _tokenize(" ".join([fact.subject, fact.relation, fact.object, " ".join(fact.tags)]))
             overlap = query_terms & fact_terms
             relation_weight = RELATION_WEIGHTS.get(fact.relation, 0.85)

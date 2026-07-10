@@ -34,16 +34,17 @@ from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
+
+# Attribution lives in ONE place shared with the incident narrator — a
+# stall dump snapshots ~70 threads and almost all of them are innocent;
+# grabbing "the first project frame" once blamed a sleeping daemon thread
+# for 19 stalls whose real culprit was on-loop SQLite.
+from core.observability.stall_dump import parse_stall_dump_text  # noqa: E402
 
 _SENTINEL_LINE = re.compile(
     r"^\[(?P<ts>[^\]]+)\]\s+pid=\d+\s+(?P<verb>armed|exiting):\s*(?P<detail>.*)$"
 )
-_STALL_HEADER = re.compile(r"STALL DETECTED:\s*(?P<seconds>[0-9.]+)s")
-_REPO_FRAME = re.compile(r'File "(?P<path>[^"]*/(?:core|interface|tools)/[^"]+)", line \d+, in (?P<fn>\w+)')
-# Wrapper/plumbing frames that appear in EVERY thread dump and say nothing
-# about where the stall actually lives — skip past them to the first frame
-# that names real work.
-_INFRA_FRAMES = ("runtime_hygiene.py", "aura_logging.py", "task_tracker.py", "concurrency.py")
 _FATAL = re.compile(r"^Fatal Python error: (?P<what>.+)$", re.MULTILINE)
 _BOOT_MARKER = re.compile(r"^===== boot pid=(?P<pid>\d+) at=(?P<at>[\d.]+)")
 
@@ -121,17 +122,17 @@ class Triage:
             except OSError as exc:
                 self.errors.append(f"stall_read:{dump.name}:{exc}")
                 continue
-            header = _STALL_HEADER.search(text)
-            seconds = float(header.group("seconds")) if header else 0.0
-            where = "unknown_frame"
-            for frame in _REPO_FRAME.finditer(text):
-                name = Path(frame.group("path")).name
-                if name in _INFRA_FRAMES:
-                    continue
-                where = f"{name}:{frame.group('fn')}"
-                break
+            culprit = parse_stall_dump_text(text)
+            seconds = culprit.elapsed_s
+            where = culprit.fingerprint_frame()
             bucket = "5-10s" if seconds < 10 else ("10-30s" if seconds < 30 else "30s+")
-            cls = self._cls(f"stall:{where}:{bucket}", "stall", top_frame=where, bucket=bucket)
+            cls = self._cls(
+                f"stall:{where}:{bucket}",
+                "stall",
+                top_frame=where,
+                bucket=bucket,
+                thread_kind=culprit.thread_kind,
+            )
             cls.observe(at, str(dump))
 
     def collect_sentinel(self) -> None:

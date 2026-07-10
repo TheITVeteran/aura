@@ -130,6 +130,12 @@ class StallWatchdog(threading.Thread):
         # simply stops updating and the out-of-process sentinel acts.
         self._heartbeat_file: Path | None = self._resolve_heartbeat_file()
         self._last_heartbeat_file_write: float = 0.0
+        # The event loop's OS thread id, learned from the heartbeat callback
+        # (which runs ON the loop). Stall dumps stamp this thread so the
+        # triage parser attributes the stall to the loop's actual frame
+        # instead of guessing — a guess once blamed a sleeping daemon thread
+        # for 19 stalls whose real culprit was on-loop SQLite.
+        self._loop_thread_id: int | None = None
 
     @staticmethod
     def _resolve_heartbeat_file() -> Path | None:
@@ -282,6 +288,7 @@ class StallWatchdog(threading.Thread):
         # Independent liveness proof for the hard-exit ceiling: this only runs
         # when the loop is genuinely alive, and nothing else writes it.
         self._last_loop_run = now
+        self._loop_thread_id = threading.get_ident()
         # Track task ages so a future stall can pick out which ones look hung.
         # This runs on the loop thread — cheap and safe.
         try:
@@ -564,6 +571,26 @@ class StallWatchdog(threading.Thread):
         except OSError as exc:
             logger.debug("Stall dump pruning skipped: %s", exc)
 
+    def _compose_dump_text(self, elapsed: float) -> str:
+        """All-thread traceback snapshot with the event-loop thread STAMPED
+        (header line + section marker), so the attribution parser
+        (core/observability/stall_dump.py) names the loop's actual frame
+        instead of guessing among 70 innocent parked threads."""
+        buffer = io.StringIO()
+        try:
+            buffer.write(f"STALL DETECTED: {elapsed:.1f}s\n")
+            loop_thread_id = self._loop_thread_id
+            if loop_thread_id is not None:
+                buffer.write(f"LOOP THREAD: {loop_thread_id}\n")
+            buffer.write("=" * 40 + "\n")
+            for thread_id, frame in sys._current_frames().items():
+                marker = "  [EVENT LOOP]" if thread_id == loop_thread_id else ""
+                buffer.write(f"\nThread ID: {thread_id}{marker}\n")
+                traceback.print_stack(frame, file=buffer)
+            return buffer.getvalue()
+        finally:
+            buffer.close()
+
     def _report_stall(self, elapsed: float):
         logger.error("🚨 [WATCHDOG] EVENT LOOP STALL DETECTED! (Elapsed: %.1fs)", elapsed)
 
@@ -573,12 +600,7 @@ class StallWatchdog(threading.Thread):
         self._prune_stall_dumps(dump_dir)
         dump_file = dump_dir / f"stall_{int(time.time())}.txt"
 
-        buffer = io.StringIO()
-        buffer.write(f"STALL DETECTED: {elapsed:.1f}s\n")
-        buffer.write("=" * 40 + "\n")
-        for thread_id, frame in sys._current_frames().items():
-            buffer.write(f"\nThread ID: {thread_id}\n")
-            traceback.print_stack(frame, file=buffer)
+        dump_text = self._compose_dump_text(elapsed)
         try:
             with local_internal_governed_scope(
                 "resilience.stall_watchdog.traceback_dump",
@@ -586,7 +608,7 @@ class StallWatchdog(threading.Thread):
             ):
                 get_file_write_gateway().write_text(
                     dump_file,
-                    buffer.getvalue(),
+                    dump_text,
                     source="resilience.stall_watchdog.traceback_dump",
                 )
         except _STALL_WATCHDOG_ERRORS as exc:
@@ -596,8 +618,6 @@ class StallWatchdog(threading.Thread):
                 severity="warning",
                 extra={"stage": "traceback_dump", "elapsed_s": elapsed},
             )
-        finally:
-            buffer.close()
 
         logger.info("💉 [IMMUNE] Stall traceback dumped to: %s", dump_file)
 
