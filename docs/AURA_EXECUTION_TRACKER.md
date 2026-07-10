@@ -8861,6 +8861,71 @@ Remaining work after this checkpoint:
 - Add planner-side use of recent expectation receipts.
 - Start the runtime control plane/resource admission workstream.
 
+## Checkpoint 2026-07-09-15: Archival Receipts and Causal Planner Feedback
+
+Scope:
+
+- Corrected `ConcreteMemoryWriteGateway.write()` so its returned
+  `MemoryWriteReceipt` identifies the durable memory-write receipt rather than
+  reusing the upstream governance receipt ID.
+- Expanded `MemoryFacade`'s archival-write status snapshot with backend,
+  record, receipt, byte-count, and schema evidence.
+- Fixed `memory_ops.archival_insert` / `remember` so a backend `False`
+  acknowledgement is a real failure rather than a technically successful
+  no-op.
+- Archival inserts now return a stable receipt-backed effect shape containing
+  `record_id`, `memory_receipt_id`, `bytes_written`, `content_sha256`,
+  `effect_verified`, and `criteria_results`.
+- Added automatic archival-memory expectations, including aliases, that reject
+  receiptless or otherwise unverified writes before verified success.
+- Added `core/runtime/expectation_feedback.py`, which selects recent,
+  goal-relevant failed expectation receipts, drops stale/unrelated entries,
+  deduplicates repeated failures, bounds prompt size, and produces a cache
+  fingerprint.
+- Wired that feedback into `Planner` so a relevant shallow result:
+  - invalidates the prior plan cache key
+  - bypasses zero-compute shortcut reuse
+  - changes strategic and constrained-LLM planning input
+  - persists the causal receipt IDs and repair signals on the replacement plan
+- Fixed the planner critic-rejection loop so recursive revisions consume the
+  derived plan's retry budget. Exhaustion now returns a zero-budget bounded
+  fallback instead of silently resetting the retry budget to three.
+- Aligned the revision prompt with the real `PlanSchema` key
+  (`plan_steps`) and removed its stale unused schema stub.
+
+Verification:
+
+- `python -m pytest tests/test_memory_facade_runtime.py tests/test_capability_engine_policy_regressions.py tests/test_gateway_enforcement.py tests/test_planner_expectation_feedback.py tests/test_conversation_loop_recovery.py tests/test_local_reference_skill.py tests/test_planning_depth.py -q`
+  -> `84 passed`.
+- `python -m py_compile core/memory/memory_write_gateway.py core/memory/memory_facade.py core/skills/memory_ops.py core/capability_engine.py core/runtime/expectation_feedback.py core/planner.py tests/test_memory_facade_runtime.py tests/test_gateway_enforcement.py tests/test_capability_engine_policy_regressions.py tests/test_planner_expectation_feedback.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/memory/memory_write_gateway.py core/memory/memory_facade.py core/skills/memory_ops.py core/capability_engine.py core/runtime/expectation_feedback.py core/planner.py tests/test_memory_facade_runtime.py tests/test_gateway_enforcement.py tests/test_capability_engine_policy_regressions.py tests/test_planner_expectation_feedback.py`
+  -> passed.
+- `git diff --check`
+  -> passed.
+- `make production-gate`
+  -> passed; `/tmp/aura_production_readiness.json` has `passed=true` and
+  `37` checks.
+- `make enterprise-gate`
+  -> passed; `/tmp/aura_enterprise_gate.json` has no findings.
+
+Current closeout estimate:
+
+- The Fable-designed expectation engine is now causal through skill result,
+  durable receipt, fault prevention, archival memory, and future planning.
+- Remaining propagation targets are autonomous overt actions, direct live
+  skill API calls, and proof-runner acceptance boundaries.
+
+Remaining work after this checkpoint:
+
+- Propagate explicit expectation contracts through overt autonomous actions and
+  actuator execution, including result receipts and repair learning.
+- Require direct live skill API callers to provide or derive an appropriate
+  expectation for consequential operations.
+- Make proof runners consume the same acceptance verdict instead of relying on
+  runner-local success booleans.
+- Start the declarative runtime control plane/resource admission workstream.
+
 ## Checkpoint 2026-07-09-13: Verified Core Memory Expectations
 
 Scope:

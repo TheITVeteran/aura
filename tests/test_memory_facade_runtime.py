@@ -588,6 +588,11 @@ async def test_memory_ops_remember_alias_uses_archival_insert(tmp_path, monkeypa
 
     assert result["ok"] is True
     assert result["summary"] == "Committed to archival storage."
+    assert result["effect_verified"] is True
+    assert result["record_id"] == "record-1"
+    assert result["memory_receipt_id"] == "receipt-1"
+    assert result["bytes_written"] > 0
+    assert result["criteria_results"]["archival memory stored"] is True
     assert len(gateway.requests) == 1
     assert gateway.requests[0].content == "Remember for future sessions that my verification codename is glass orchard."
     assert gateway.requests[0].metadata["source"] == "archival_insert"
@@ -701,6 +706,9 @@ async def test_memory_facade_add_memory_defaults_to_gateway(monkeypatch):
 
     assert ok is True
     assert facade._last_add_memory_status["reason"] == "stored_via_gateway"
+    assert facade._last_add_memory_status["record_id"] == "record-1"
+    assert facade._last_add_memory_status["receipt_id"] == "receipt-1"
+    assert facade._last_add_memory_status["bytes_written"] > 0
     assert len(gateway.requests) == 1
     assert gateway.requests[0].cause == "memory_facade.add_memory"
     assert vector_calls == []
@@ -739,10 +747,34 @@ async def test_memory_ops_archival_insert_calls_gateway(monkeypatch):
 
     assert result["ok"] is True
     assert result["summary"] == "Committed to archival storage."
+    assert result["effect_verified"] is True
+    assert result["record_id"] == "record-1"
+    assert result["memory_receipt_id"] == "receipt-1"
     assert len(gateway.requests) == 1
     assert gateway.requests[0].content == "My verification codename is glass orchard."
     assert gateway.requests[0].metadata["source"] == "archival_insert"
     assert "provenance" in gateway.requests[0].metadata
+
+
+@pytest.mark.asyncio
+async def test_memory_ops_archival_insert_rejects_backend_false_acknowledgement():
+    skill = MemoryOpsSkill.__new__(MemoryOpsSkill)
+    facade = SimpleNamespace(
+        add_memory=AsyncCallFixture(return_value=False),
+        last_add_memory_status=lambda: {
+            "ok": False,
+            "reason": "vector_backend_returned_false",
+            "backend": "vector",
+        },
+    )
+
+    result = await skill.execute(
+        {"action": "archival_insert", "content": "Do not claim this was stored."},
+        {"memory_facade": facade, "origin": "user"},
+    )
+
+    assert result["ok"] is False
+    assert "vector_backend_returned_false" in result["error"]
 
 
 def test_gateway_index_refresh_parses_in_bounded_passes(tmp_path, monkeypatch):

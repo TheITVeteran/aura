@@ -8,10 +8,6 @@ Verifies that:
 """
 from __future__ import annotations
 
-import asyncio
-import tempfile
-from pathlib import Path
-
 import pytest
 
 from core.runtime.gateways import MemoryWriteRequest, StateMutationRequest
@@ -43,6 +39,8 @@ async def test_memory_write_produces_receipt(tmp_root, approve_all):
     receipt = await gw.write(request)
 
     assert receipt.record_id == "test-001"
+    assert receipt.receipt_id.startswith("memwr-")
+    assert receipt.receipt_id != "rcpt-test"
     assert receipt.bytes_written > 0
     assert receipt.schema_version == 1
     # File should exist on disk

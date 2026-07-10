@@ -130,6 +130,35 @@ class MemoryOpsSkill(BaseSkill):
             effect["expected_sha256"] = expected_sha256
         return effect
 
+    @staticmethod
+    def _archival_write_metadata(context: Dict[str, Any]) -> dict[str, Any]:
+        origin = str(context.get("origin") or context.get("source") or "").strip()
+        explicit_request = bool(
+            context.get("user_requested_action")
+            or context.get("user_explicitly_authorized")
+            or origin in {"user", "chat", "chat_api", "live_skill_api", "desktop_ui"}
+        )
+        metadata: dict[str, Any] = {
+            "source": "archival_insert",
+            "explicit_memory_request": explicit_request,
+        }
+        if origin:
+            metadata["origin"] = origin
+        return metadata
+
+    @staticmethod
+    def _archival_write_status(memory_facade: Any) -> dict[str, Any]:
+        snapshot = getattr(memory_facade, "last_add_memory_status", None)
+        if callable(snapshot):
+            try:
+                status = snapshot()
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                status = None
+            if isinstance(status, dict):
+                return dict(status)
+        status = getattr(memory_facade, "_last_add_memory_status", None)
+        return dict(status) if isinstance(status, dict) else {}
+
     async def _execute_core_memory(self, params: MemoryOpsInput, context: Dict[str, Any], action: str) -> Dict[str, Any]:
         """RAM: Immediate context window blocks."""
         block = params.block or "user"
@@ -218,15 +247,68 @@ class MemoryOpsSkill(BaseSkill):
                 return {"ok": False, "error": "Missing 'content' to archive."}
             
             try:
+                write_result: Any
                 if hasattr(memory_facade, "add_memory"):
-                    res = memory_facade.add_memory(params.content, metadata={"source": "archival_insert"})
-                    if hasattr(res, "__await__"):
-                        await res
+                    write_result = memory_facade.add_memory(
+                        params.content,
+                        metadata=self._archival_write_metadata(context),
+                    )
+                    if hasattr(write_result, "__await__"):
+                        write_result = await write_result
                 elif hasattr(memory_facade, "update_semantic_async"):
-                    await memory_facade.update_semantic_async("archival_" + str(len(params.content)), params.content)
+                    write_result = await memory_facade.update_semantic_async(
+                        "archival_" + str(len(params.content)),
+                        params.content,
+                    )
                 else:
                     return {"ok": False, "error": "Facade missing insertion capability."}
-                return {"ok": True, "summary": "Committed to archival storage."}
+
+                write_status = self._archival_write_status(memory_facade)
+                if write_result is False or write_status.get("ok") is False:
+                    reason = str(
+                        write_status.get("reason")
+                        or "archival backend rejected the write"
+                    )
+                    return {
+                        "ok": False,
+                        "error": f"Archival insertion failed: {reason}",
+                        "storage_backend": str(write_status.get("backend") or ""),
+                    }
+
+                record_id = str(
+                    write_status.get("record_id")
+                    or getattr(write_result, "record_id", "")
+                    or ""
+                )
+                receipt_id = str(
+                    write_status.get("receipt_id")
+                    or getattr(write_result, "receipt_id", "")
+                    or ""
+                )
+                bytes_written = int(
+                    write_status.get("bytes_written")
+                    or getattr(write_result, "bytes_written", 0)
+                    or 0
+                )
+                effect_verified = bool(record_id and receipt_id and bytes_written > 0)
+                return {
+                    "ok": True,
+                    "status": "success_verified" if effect_verified else "success_unverified",
+                    "summary": "Committed to archival storage.",
+                    "storage_backend": str(
+                        write_status.get("backend")
+                        or write_status.get("reason")
+                        or "legacy_memory_facade"
+                    ),
+                    "record_id": record_id,
+                    "memory_receipt_id": receipt_id,
+                    "bytes_written": bytes_written,
+                    "content_sha256": self._sha256_text(params.content),
+                    "effect_verified": effect_verified,
+                    "criteria_results": {
+                        "archival memory stored": effect_verified,
+                    },
+                }
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('memory_ops', e)
                 return {"ok": False, "error": f"Archival insertion failed: {e}"}

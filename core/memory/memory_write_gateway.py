@@ -24,7 +24,6 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from core.runtime.atomic_writer import atomic_write_json
 from core.runtime.gateways import (
     MemoryWriteGateway as MemoryWriteGatewayBase,
     MemoryWriteReceipt as MemoryWriteReceiptDC,
@@ -113,7 +112,7 @@ class ConcreteMemoryWriteGateway(MemoryWriteGatewayBase):
         bytes_written = target.stat().st_size
 
         receipt_store = get_receipt_store()
-        receipt_store.emit(
+        emitted_receipt = receipt_store.emit(
             MemoryWriteReceipt(
                 receipt_id=f"memwr-{uuid.uuid4()}",
                 cause=request.cause,
@@ -127,7 +126,7 @@ class ConcreteMemoryWriteGateway(MemoryWriteGatewayBase):
         )
         return MemoryWriteReceiptDC(
             record_id=record_id,
-            receipt_id=gov_receipt_id or request.receipt_id or "rcpt-pending",
+            receipt_id=emitted_receipt.receipt_id,
             bytes_written=bytes_written,
             schema_version=schema_version,
         )

@@ -4398,22 +4398,43 @@ class CapabilityEngine(AuraBaseModule):
         normalized_skill = str(skill_name or "").strip().lower()
         if normalized_skill == "memory_ops":
             action = str((params or {}).get("action") or "").strip().lower()
+            action = {
+                "remember": "archival_insert",
+                "memorize": "archival_insert",
+                "store": "archival_insert",
+                "save": "archival_insert",
+            }.get(action, action)
             memory_expectations = {
                 "core_append": ("core memory appended", "append"),
                 "core_replace": ("core memory replaced", "replace"),
             }
-            if action not in memory_expectations:
-                return None
-            criterion, verb = memory_expectations[action]
-            block = str((params or {}).get("block") or "user").strip()
-            return expectation_cls(
-                objective=f"{verb} core memory block {block or 'user'}",
-                acceptance_criteria=[criterion],
-                required_evidence=["block", "sha256", "effect_verified"],
-                user_visible_effect=f"core memory {verb} is persisted and verified",
-                repair_hint=f"verify_memory_ops_{action}_effect",
-                allow_partial=False,
-            )
+            if action in memory_expectations:
+                criterion, verb = memory_expectations[action]
+                block = str((params or {}).get("block") or "user").strip()
+                return expectation_cls(
+                    objective=f"{verb} core memory block {block or 'user'}",
+                    acceptance_criteria=[criterion],
+                    required_evidence=["block", "sha256", "effect_verified"],
+                    user_visible_effect=f"core memory {verb} is persisted and verified",
+                    repair_hint=f"verify_memory_ops_{action}_effect",
+                    allow_partial=False,
+                )
+            if action == "archival_insert":
+                return expectation_cls(
+                    objective="persist requested content in archival memory",
+                    acceptance_criteria=["archival memory stored"],
+                    required_evidence=[
+                        "record_id",
+                        "memory_receipt_id",
+                        "bytes_written",
+                        "content_sha256",
+                        "effect_verified",
+                    ],
+                    user_visible_effect="archival memory write is durable and receipt-backed",
+                    repair_hint="retry_archival_insert_through_memory_write_gateway",
+                    allow_partial=False,
+                )
+            return None
 
         if normalized_skill in {"web_search", "free_search", "grounded_search"}:
             if not cls._web_query_requires_sources(params, context):

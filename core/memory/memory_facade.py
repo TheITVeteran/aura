@@ -184,6 +184,10 @@ class MemoryFacade:
             )
         )
 
+    def last_add_memory_status(self) -> dict[str, Any]:
+        """Return a snapshot of the most recent archival-write acknowledgement."""
+        return dict(self._last_add_memory_status)
+
     @staticmethod
     def _memory_backend_ready(
         backend: Any,
@@ -1357,8 +1361,26 @@ class MemoryFacade:
                 from core.runtime.gateways import MemoryWriteRequest
                 try:
                     gw = get_memory_write_gateway()
-                    await gw.write(MemoryWriteRequest(content=text, metadata=payload, cause="memory_facade.add_memory"))
-                    self._last_add_memory_status = {"ok": True, "reason": "stored_via_gateway"}
+                    write_receipt = await gw.write(
+                        MemoryWriteRequest(
+                            content=text,
+                            metadata=payload,
+                            cause="memory_facade.add_memory",
+                        )
+                    )
+                    self._last_add_memory_status = {
+                        "ok": True,
+                        "reason": "stored_via_gateway",
+                        "backend": "memory_write_gateway",
+                        "record_id": str(getattr(write_receipt, "record_id", "") or ""),
+                        "receipt_id": str(getattr(write_receipt, "receipt_id", "") or ""),
+                        "bytes_written": int(
+                            getattr(write_receipt, "bytes_written", 0) or 0
+                        ),
+                        "schema_version": int(
+                            getattr(write_receipt, "schema_version", 0) or 0
+                        ),
+                    }
                     return True
                 except PermissionError as e:
                     self._last_add_memory_status = {"ok": False, "reason": f"gateway_error:{type(e).__name__}"}

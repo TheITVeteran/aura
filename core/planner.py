@@ -23,6 +23,12 @@ from pydantic import BaseModel, Field
 
 from core.config import config
 from core.runtime.errors import record_degradation
+from core.runtime.expectation_feedback import (
+    ExpectationRepairSignal,
+    expectation_feedback_fingerprint,
+    format_expectation_repair_guidance,
+    recent_expectation_repair_signals,
+)
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Kernel.Planner")
@@ -264,6 +270,41 @@ class Planner:
         """Rebuild tool schemas from the registry."""
         self.tool_schemas = self._load_tool_schemas()
 
+    def _expectation_feedback_for(
+        self,
+        goal_text: str,
+    ) -> tuple[list[ExpectationRepairSignal], str, str]:
+        try:
+            signals = recent_expectation_repair_signals(
+                goal_text,
+                available_tools=tuple(self.tool_schemas),
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("planner.expectation_feedback", exc)
+            return [], "", "none"
+        return (
+            signals,
+            format_expectation_repair_guidance(signals),
+            expectation_feedback_fingerprint(signals),
+        )
+
+    @staticmethod
+    def _attach_expectation_feedback(
+        plan: ExecutionPlan,
+        signals: list[ExpectationRepairSignal],
+        fingerprint: str,
+    ) -> ExecutionPlan:
+        if not signals:
+            return plan
+        metadata = dict(plan.metadata or {})
+        metadata["expectation_feedback_fingerprint"] = fingerprint
+        metadata["expectation_feedback_receipt_ids"] = [
+            signal.receipt_id for signal in signals
+        ]
+        metadata["expectation_feedback"] = [signal.to_dict() for signal in signals]
+        plan.metadata = metadata
+        return plan
+
     def _load_tool_schemas(self) -> dict[str, ToolSchema]:
         """Load tool schemas from registry or defaults."""
         schemas = {}
@@ -446,9 +487,13 @@ class Planner:
             logger.warning("Goal text exceeds optimal length (%d chars). Truncating.", len(goal_text))
             goal_text = goal_text[:1000]
 
+        expectation_signals, expectation_guidance, expectation_fingerprint = (
+            self._expectation_feedback_for(goal_text)
+        )
+
         # 2. O(1) Cache Retrieval
         tool_keys = sorted(self.tool_schemas.keys())
-        state_str = goal_text + "".join(tool_keys)
+        state_str = goal_text + "".join(tool_keys) + expectation_fingerprint
         goal_hash = hashlib.sha256(state_str.encode()).hexdigest()[:16]
         cached_plan = self.plan_cache.get(goal_hash)
         if cached_plan:
@@ -466,9 +511,19 @@ class Planner:
             try:
                 from core.collective.strategic_synthesis import get_strategic_synthesizer
                 synthesizer = get_strategic_synthesizer(self.brain.orchestrator if hasattr(self.brain, "orchestrator") else None)
-                strategic_plan = await synthesizer.synthesize_strategic_plan(goal_text)
+                strategic_goal = (
+                    f"{goal_text}\n\n{expectation_guidance}"
+                    if expectation_guidance
+                    else goal_text
+                )
+                strategic_plan = await synthesizer.synthesize_strategic_plan(strategic_goal)
                 if strategic_plan:
                     logger.info("⚡ Strategic Synthesis SUCCESS for '%s...'", goal_text[:50])
+                    strategic_plan = self._attach_expectation_feedback(
+                        strategic_plan,
+                        expectation_signals,
+                        expectation_fingerprint,
+                    )
                     self.plan_cache.put(goal_hash, strategic_plan)
                     return strategic_plan
             except (ImportError, AttributeError, RuntimeError) as e:
@@ -476,7 +531,14 @@ class Planner:
                 logger.warning("Strategic synthesis bypass failed, falling back to LLM: %s", e)
 
         # 3. Intent Shortcuts (Zero-Compute Bypasses)
-        shortcut_plan = self._detect_intent(goal_text)
+        shortcut_plan = None if expectation_signals else self._detect_intent(goal_text)
+        if expectation_signals:
+            self.planning_stats["expectation_guided_plans"] += 1
+            logger.info(
+                "Expectation feedback bypassed shortcut planning for '%s...' using %d receipt(s).",
+                goal_text[:50],
+                len(expectation_signals),
+            )
         if shortcut_plan:
             logger.info("⚡ Intent Match: Bypassing LLM for '%s...'", goal_text[:50])
             self.planning_stats["shortcut_plans"] += 1
@@ -512,6 +574,9 @@ class Planner:
                 except (ImportError, AttributeError, RuntimeError) as e:
                     record_degradation('planner', e)
                     logger.debug("Long-term memory recall failed in planner: %s", e)
+
+                if expectation_guidance:
+                    working_goal = f"{working_goal}\n\n{expectation_guidance}"
                     
                 prompt = self._build_planning_prompt(working_goal)
                 
@@ -545,6 +610,11 @@ class Planner:
                     plan_steps=validated_data["plan_steps"],
                     tool_calls=native_tool_calls,
                     metadata={"source": "llm_constrained_generation", "retries": attempt}
+                )
+                plan = self._attach_expectation_feedback(
+                    plan,
+                    expectation_signals,
+                    expectation_fingerprint,
                 )
 
                 # 5. Schema Alignment Validation
@@ -596,7 +666,10 @@ class Planner:
             if reliability:
                 svc_info = reliability.services.get("planner")
                 if svc_info and svc_info.circuit_open:
-                    return self._create_fallback_plan(original_plan.goal)
+                    return self._create_fallback_plan(
+                        original_plan.goal,
+                        replan_budget=0,
+                    )
                 await reliability.heartbeat("planner", stability=0.85)
         except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('planner', _e)
@@ -608,13 +681,18 @@ class Planner:
         plan_steps = list(original_plan.plan_steps)
         completed_steps = plan_steps[:failed_step_index]
         failed_step = plan_steps[failed_step_index] if failed_step_index < len(plan_steps) else "Unknown"
-        remaining_steps = plan_steps[failed_step_index+1:]
+        expectation_signals, expectation_guidance, expectation_fingerprint = (
+            self._expectation_feedback_for(original_plan.goal)
+        )
 
         # 1. Check replan budget to prevent infinite storms (Focus Area 1)
         budget = getattr(original_plan, "replan_budget", 3)
         if budget <= 0:
             logger.error("🛑 Replan budget EXHAUSTED for goal: %s. Halting.", original_plan.goal)
-            return self._create_fallback_plan(original_plan.goal)
+            return self._create_fallback_plan(
+                original_plan.goal,
+                replan_budget=0,
+            )
         
         prompt = f"""You are an Autonomous Planner. A previous plan failed. You must revise the remaining steps.
 
@@ -622,6 +700,8 @@ ORIGINAL GOAL: {original_plan.goal}
 COMPLETED STEPS: {completed_steps}
 FAILED STEP: {failed_step}
 FAILURE REASON: {failure_reason}
+
+{expectation_guidance}
 
 REQUIREMENTS:
 1. Provide a NEW list of steps starting from the current situation to achieve the goal.
@@ -633,23 +713,11 @@ AVAILABLE TOOLS:
 
 OUTPUT JSON:
 {{
-  "plan": ["new step 1", "new step 2"],
+  "plan_steps": ["new step 1", "new step 2"],
   "tool_calls": [ ... ]
 }}
-"""
+        """
         try:
-            # Define Plan Schema
-            plan_schema = {
-                "plan": ["step 1", "step 2"],
-                "tool_calls": [
-                    {
-                        "tool": "tool_name",
-                        "params": {},
-                        "output_var": "var_name"
-                    }
-                ]
-            }
-
             # AWAITING COGNITIVE ENGINE (Revision with constraint)
             thought = await self.brain.think(
                 prompt,
@@ -676,6 +744,11 @@ OUTPUT JSON:
                     "failure_reason": failure_reason
                 }
             )
+            new_plan = self._attach_expectation_feedback(
+                new_plan,
+                expectation_signals,
+                expectation_fingerprint,
+            )
             # 6. Pre-execution Critique of REVISED plan (Phase 25)
             if self.critic:
                 judgment = await self.critic.critique_plan(new_plan, [])
@@ -683,7 +756,11 @@ OUTPUT JSON:
                     logger.warning("🧠 Critic REJECTED revised plan: %s", judgment.evidence)
                     # Fixed Asymmetry: In revision, backtrack also consumes budget and causes retry
                     if budget > 0:
-                        return await self.revise_plan(original_plan, failed_step_index, f"Critic rejection: {judgment.evidence}")
+                        return await self.revise_plan(
+                            new_plan,
+                            f"Critic rejection: {judgment.evidence}",
+                            failed_step_index,
+                        )
                     else:
                         logger.error("🛑 Replan budget EXHAUSTED after critic rejection.")
                         new_plan.metadata["critic_warning"] = judgment.evidence
@@ -696,7 +773,10 @@ OUTPUT JSON:
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation('planner', e)
             logger.error("Plan revision failed: %s", e)
-            return self._create_fallback_plan(original_plan.goal)
+            return self._create_fallback_plan(
+                original_plan.goal,
+                replan_budget=max(0, budget - 1),
+            )
 
     def _build_planning_prompt(self, goal_text: str) -> str:
         """Build planning prompt for LLM."""
@@ -718,6 +798,7 @@ REQUIREMENTS:
 3. Use output variables to chain tool results when needed
 4. Be specific with parameter values
 5. Ensure plan is executable and complete
+6. Include effect verification and acceptance evidence before any consequential action is called complete
 
 OUTPUT FORMAT (JSON):
 {{
@@ -826,7 +907,12 @@ Return ONLY the JSON object, no additional text."""
             ]
         }
 
-    def _create_fallback_plan(self, goal_text: str) -> ExecutionPlan:
+    def _create_fallback_plan(
+        self,
+        goal_text: str,
+        *,
+        replan_budget: int = 3,
+    ) -> ExecutionPlan:
         """Create fallback plan when planning fails."""
         try:
             from core.synthesis import strip_meta_commentary
@@ -836,7 +922,7 @@ Return ONLY the JSON object, no additional text."""
         goal_text = strip_meta_commentary(goal_text)
         logger.info("Creating fallback plan")
         
-        return ExecutionPlan(
+        plan = ExecutionPlan(
             goal=goal_text,
             plan_steps=[f"Respond conversationally to: {goal_text}"],
             tool_calls=[
@@ -846,8 +932,11 @@ Return ONLY the JSON object, no additional text."""
                     metadata={"fallback": True}
                 )
             ],
+            replan_budget=max(0, int(replan_budget)),
             metadata={"source": "fallback"}
         )
+        signals, _guidance, fingerprint = self._expectation_feedback_for(goal_text)
+        return self._attach_expectation_feedback(plan, signals, fingerprint)
 
     def validate_tool_call(self, tool_call: dict[str, Any]) -> tuple[bool, list[str]]:
         """Validate tool call structure."""
@@ -866,6 +955,7 @@ Return ONLY the JSON object, no additional text."""
             "failed_plans": self.planning_stats["failed_plans"],
             "cache_hits": self.planning_stats["cache_hits"],
             "shortcut_plans": self.planning_stats["shortcut_plans"],
+            "expectation_guided_plans": self.planning_stats["expectation_guided_plans"],
             "cache_size": len(self.plan_cache.cache),
             "cache_hit_rate": (
                 self.planning_stats["cache_hits"] / self.planning_stats["total_plans"] * 100

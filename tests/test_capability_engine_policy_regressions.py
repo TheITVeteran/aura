@@ -586,6 +586,69 @@ async def test_auto_memory_ops_expectation_rejects_shallow_core_append(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_auto_memory_ops_expectation_rejects_receiptless_archival_insert(
+    monkeypatch,
+    tmp_path,
+):
+    from core.runtime.receipts import get_receipt_store, reset_receipt_store
+
+    reset_receipt_store()
+    get_receipt_store(tmp_path / "receipts")
+    fault_records = []
+
+    class FaultRegistryStub:
+        def record_fault(self, fault_id, subsystem, **kwargs):
+            fault_records.append((fault_id, subsystem, kwargs))
+
+    monkeypatch.setattr(
+        "core.resilience.fault_taxonomy.get_fault_registry",
+        lambda: FaultRegistryStub(),
+    )
+
+    engine = _engine_with_skill("memory_ops")
+
+    class ReceiptlessMemorySkill:
+        async def safe_execute(self, params, context):
+            return {
+                "ok": True,
+                "status": "success_unverified",
+                "summary": "Committed to archival storage.",
+            }
+
+    try:
+        result = await engine._execute_with_retry(
+            ReceiptlessMemorySkill(),
+            "memory_ops",
+            {"action": "remember", "content": "retain this for future sessions"},
+            {"origin": "user"},
+        )
+
+        assert result["ok"] is False
+        assert result["status"] == "failed_recoverable"
+        assert result["expectation_verdict"]["missing_criteria"] == [
+            "archival memory stored",
+            "user-visible effect: archival memory write is durable and receipt-backed",
+        ]
+        assert result["expectation_verdict"]["missing_evidence"] == [
+            "record_id",
+            "memory_receipt_id",
+            "bytes_written",
+            "content_sha256",
+            "effect_verified",
+        ]
+        assert result["expectation_verdict"]["next_step"] == (
+            "retry_archival_insert_through_memory_write_gateway"
+        )
+        assert result["expectation_receipt_id"]
+        assert any(
+            fault_id == "PASSF-ACTION-SHALLOW-SUCCESS"
+            for fault_id, _subsystem, _kwargs in fault_records
+        )
+    finally:
+        reset_receipt_store()
+
+
+@pytest.mark.asyncio
 async def test_auto_web_search_expectation_rejects_sourceless_research(monkeypatch, tmp_path):
     from core.runtime.receipts import get_receipt_store, reset_receipt_store
 
