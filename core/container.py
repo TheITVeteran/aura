@@ -558,6 +558,14 @@ class ServiceContainer:
                 kwargs[param.name] = value
 
         if unresolved:
+            if not signature.parameters:
+                # A zero-parameter factory cannot receive injected values.
+                # Its declared dependencies are ordering/existence
+                # constraints — already satisfied by resolving them above.
+                # Appending them positionally guaranteed a boot-time
+                # TypeError (lived once: actor_supervision took the whole
+                # runtime down at the first health evaluation).
+                return [], {}
             # Fall back to positional ordering for legacy factories that specify dependencies
             # separately from their parameter names.
             args.extend(unresolved[dep_name] for dep_name in dependency_names if dep_name in unresolved)

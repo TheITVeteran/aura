@@ -84,6 +84,30 @@ async def test_wake_async():
     s = ServiceContainer.get("async_srv")
     assert s.awake is True
 
+def test_zero_param_factory_with_declared_dependencies_boots():
+    """Boot-regression pin (lived 2026-07-10): actor_supervision declared
+    dependencies=['runtime_control_plane'] with a ZERO-parameter factory.
+    The legacy positional fallback appended the resolved dependency anyway
+    -> TypeError -> LifecycleError -> the whole runtime failed its first
+    health evaluation and never opened :8000. Declared dependencies on a
+    zero-parameter factory are ordering constraints: resolve them, then
+    call the factory with no arguments."""
+    order: list[str] = []
+
+    ServiceContainer.register("upstream", lambda: order.append("upstream") or "up")
+
+    def zero_param_factory():
+        order.append("dependent")
+        return "dependent-service"
+
+    ServiceContainer.register(
+        "dependent", zero_param_factory, dependencies=["upstream"]
+    )
+
+    assert ServiceContainer.get("dependent") == "dependent-service"
+    assert order == ["upstream", "dependent"]  # dependency resolved FIRST
+
+
 def test_factory_failure():
     factory_calls = []
 
