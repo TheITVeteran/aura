@@ -114,6 +114,153 @@ This section is the active checklist for the new closeout shape. It is more
 specific than the older carryover list below and is the source of truth for the
 next checkpoints.
 
+#### Pass F: Enterprise Maturity / Full-Unity Expansion
+
+This pass treats the previous configured non-soak closeout as a baseline, not
+an endpoint. The new acceptance bar is: no subsystem can count a shallow,
+technically-successful action as complete when a daily user, senior engineer, or
+external reviewer would reasonably say the expected work did not happen.
+Ordering below is pragmatic; it is not permission to skip later items.
+
+1. **Action-depth expectation contract**
+   - Build a reusable contract for "what the user reasonably expected" before a
+     skill, tool chain, desktop task, or autonomous action can call itself done.
+   - Every consequential action must declare acceptance criteria, minimum
+     evidence, user-visible effect, rollback/repair path, and whether partial
+     completion is allowed.
+   - Successful but shallow outputs must automatically downgrade to
+     `partial_success` or `success_unverified`, with explicit missing criteria
+     and next repair steps. A boolean `ok=true` is not enough evidence.
+   - Wire first through `core/runtime/skill_contract.py`, then propagate into
+     `CapabilityEngine`, `desktop_task`, `overt_action_loop`, live skill API,
+     and proof runners.
+   - Validators: focused unit tests for status downgrade and evidence
+     accounting; then live desktop task proof showing a multi-step action cannot
+     complete without effect evidence.
+
+2. **Declarative runtime control plane**
+   - Replace ad-hoc service health and model-serving recovery with desired-state
+     reconciliation: desired lanes, observed lanes, memory budget, readiness,
+     liveness, startup state, and backoff/circuit-breaker conditions.
+   - Make false health impossible for model serving, background autonomy,
+     memory, scheduler, tool governance, desktop bridge, and neural stream.
+   - Add typed conditions with `Ready`, `Progressing`, and `Degraded` states,
+     reasons, messages, transition times, and recovery owners.
+   - Validators: synthetic reconciler tests, startup/liveness/readiness split
+     tests, enterprise gate ratchet, and a bounded live desktop proof.
+
+3. **Resource envelope and admission system**
+   - Promote model/RAM/thermal admission from scattered checks to a single
+     scheduler with requests, limits, priority classes, preemption policy, and
+     eviction receipts.
+   - Guarantee only one primary large-model lane can be warm unless the host
+     budget explicitly admits more. Background learners/trainers must be
+     best-effort and evict before foreground cognition suffers.
+   - Add proof that failed or wedged model lanes back off instead of respawning
+     into a memory doom loop.
+
+4. **Failure-mode registry and prevention loop**
+   - Create a repo-native FMEA registry: subsystem, failure mode, trigger,
+     detection, mitigation, owner, blast radius, tests, and live proof status.
+   - Tie registry entries to actual gate/proof commands so failures become
+     prevented classes, not one-off patches.
+   - Seed from known ceilings: visible web proof access, model memory
+     over-commit, boot readiness/liveness conflation, TCC/desktop permission
+     drift, repair storms, stale memory obligations, neural-stream floods,
+     receipt backlog, and broad degradation swallowing.
+
+5. **Canonical authority and effect spine**
+   - Continue removing cross-wired `ServiceContainer.get()` call chains where a
+     typed interface should own the behavior.
+   - Consequential file, network, browser, OS, memory, state, model, patching,
+     self-repair, and social effects must pass through the same Will/Authority
+     gateway and emit reconstructable receipts.
+   - Add architecture-map rules showing who may call Will, memory, state,
+     model-serving, tool execution, patching, and external I/O.
+
+6. **Conversation reliability and whole-mind unity**
+   - Re-audit the live `/api/chat` path, `CognitiveEngine`, response reliability,
+     preflight, context assembly, inference tiering, and output contract as a
+     single lane.
+   - Ensure the substrate affects real decisions: attention, memory writes,
+     tool choice, uncertainty, tone, repair behavior, and future plans.
+   - Prevent fallback identity/name drift, generic assistant takeover,
+     repeated asks to retry, lost context, response truncation, neural-stream
+     failure spam, and model-control receipt loss.
+
+7. **General computer-use depth**
+   - Desktop tasks must be perception/planning/action/effect-verification
+     loops, not task-specific demonstrations.
+   - Browser research, Docs/Notes/PDF/image/folder operations, visible
+     interlocution, popup/focus recovery, and multi-app workflows must include
+     receipts, observed effects, source preservation, and repair attempts.
+   - The visible 20-turn ChatGPT/Gemini proof remains open until the active
+     Chrome profile has the Codex Chrome Extension enabled or an equivalent
+     user-owned visible-browser path is honestly available.
+
+8. **Self-repair and learning closure**
+   - Move repair from "propose a patch" to closed-loop intake, root-cause
+     classification, scoped mutation, validation, rollback, memory update, and
+     checkpoint commit.
+   - Keep CRSM/CAA/LoRA/weight-compounding claims bounded by current evidence:
+     mechanism exists; capability-growth claims require held-out increasing
+     curves and regenerated ledgers.
+   - Add long-lived repair receipts and anti-storm cooldown tests.
+
+9. **Proof purification and independent evaluation readiness**
+   - Ensure proof runners cannot solve tasks by fixture leakage, copied
+     answers, fallback routing, stale artifacts, or runner-specific shortcuts.
+   - Every "Aura can do X" claim needs live-code proof, environment metadata,
+     replay instructions, artifact hashes, negative controls, and a refusal to
+     overclaim beyond the evidence.
+   - Prepare external-audit surfaces: source bundle, SBOM/provenance, claims
+     matrix, challenge tasks, and clean-machine setup path.
+
+10. **Install, release, rollback, and operator boringness**
+    - Verify setup, update, rollback, doctor, backup/restore, migration,
+      release manifest, provenance, security scan, and crash triage from a
+      clean operator path.
+    - Dependency failures must be categorized and actionable; missing hardware,
+      missing models, missing browser profile access, and missing permissions
+      must lower capability claims instead of pretending success.
+
+11. **UI/UX flagship pass**
+    - Audit the desktop shell, memory UI, mission control, telemetry,
+      first-run, controls, neural cards, responsive states, loading states,
+      error banners, keyboard/pointer behavior, and long text handling.
+    - Make user-visible errors specific, recoverable, and non-generic; no black
+      panels, clipped controls, silent buttons, or misleading readiness.
+
+12. **Semantic review and every-line coverage**
+    - Use `tools/closeout/semantic_review_ledger.py` to record real semantic
+      review spans as code is touched. The current baseline does not support an
+      all-line semantic review claim.
+    - Drain stale/orphan review receipts, starting with live runtime surfaces
+      and proof-critical modules before archive/test-only debt.
+
+13. **Final validation ladder**
+    - Fast checks: focused tests, ruff/py_compile for touched surfaces,
+      operational-label battery, frontier standards matrix, production gate,
+      enterprise gate, architecture map, closeout audit.
+    - Live checks: desktop boot proof, multi-turn chat, desktop action proof,
+      Program DNA/repair replay, web-interlocutor proof when access is
+      available, memory/audio recall, background autonomy proof.
+    - End checks: clean-machine verification, soak harness, 24-72h longevity
+      only after all shorter gates are boringly green.
+
+14. **Fable-designed addition: Aura Expectation Engine**
+    - Add a runtime "expectation engine" that turns a user's natural request
+      into operational acceptance criteria before execution and checks the
+      result afterward.
+    - The engine should identify hidden expected depth: deliverable format,
+      source quality, persistence, visibility, verification, graceful failure,
+      rollback, and follow-through.
+    - The engine must be causal, not advisory: its verdict changes returned
+      status, receipts, repair plans, memory lessons, and future task planning.
+    - First implementation lands as the action-depth contract; later slices
+      wire it into planning, desktop workflows, live skill API, and chat
+      follow-through.
+
 1. **Operational label battery**
    - Convert each label into an executable baseline: functional consciousness,
      self-awareness, computational sentience, ALife-inspired software, digital
@@ -8328,3 +8475,133 @@ Remaining non-soak work after this checkpoint:
 - Optional after the browser extension is available: run the launched-Aura
   visible surface replay again, with the web proof included, as the last
   non-soak confidence pass before any long soak.
+
+## Checkpoint 2026-07-09-07: Action-Depth Expectation Contract
+
+Scope:
+
+- Created the Pass F enterprise-maturity todo expansion above so the new work is
+  tracked as concrete structural obligations rather than a vague "improve
+  everything" note.
+- Added the first Fable-designed Aura Expectation Engine primitive in
+  `core/runtime/skill_contract.py`:
+  - `ActionExpectation` records the objective, acceptance criteria, required
+    evidence, user-visible effect expectation, repair hint, and partial-success
+    policy.
+  - `ExpectationVerdict` records satisfied/missing criteria and evidence,
+    status downgrade, and next repair step.
+  - `apply_action_expectation(...)` causally changes a result's returned status:
+    missing acceptance criteria becomes `partial_success` or
+    `failed_recoverable`; missing proof becomes `success_unverified`.
+  - `SkillRegistry.verify(...)` now enforces the expectation contract after
+    normal verifier execution, and preserves the expectation if a verifier
+    returns a fresh result object.
+- Added focused regressions in `tests/test_action_depth_honesty.py` so a
+  shallow "verified" result cannot remain `success_verified` when expected
+  sources, visible effects, or verification evidence are absent.
+- Extended `tools/closeout/remaining_checkpoint_contract.py` with
+  `action_depth_expectation_engine` so this is now part of the authoritative
+  remaining launched-Aura/general-agency checkpoint, not only a tracker note.
+
+Verification:
+
+- `python -m pytest tests/test_action_depth_honesty.py -q`
+  -> `17 passed`.
+- `python -m pytest tests/test_remaining_checkpoint_contract.py tests/test_action_depth_honesty.py -q`
+  -> `29 passed`.
+- `python -m py_compile core/runtime/skill_contract.py tests/test_action_depth_honesty.py`
+  -> passed.
+- `python -m py_compile tools/closeout/remaining_checkpoint_contract.py tests/test_remaining_checkpoint_contract.py core/runtime/skill_contract.py tests/test_action_depth_honesty.py`
+  -> passed.
+- `python -m ruff check --select F,E9 tools/closeout/remaining_checkpoint_contract.py tests/test_remaining_checkpoint_contract.py core/runtime/skill_contract.py tests/test_action_depth_honesty.py`
+  -> passed.
+- `python tools/closeout/remaining_checkpoint_contract.py --strict`
+  -> all mapped; `action_depth_expectation_engine` appears under Checkpoint 10.
+- `python tools/closeout/remaining_checkpoint_contract.py --json > artifacts/closeout/remaining_checkpoint_contract_latest.json`
+  -> regenerated tracked contract artifact.
+- `make production-gate`
+  -> passed; `/tmp/aura_production_readiness.json` has `passed=true`.
+- Initial `make enterprise-gate`
+  -> failed because the new test used three hardcoded `/tmp/...` literals,
+  raising `hardcoded_local_path=3` above the zero baseline. Replaced those with
+  pytest `tmp_path`.
+- Final `make enterprise-gate`
+  -> passed; `/tmp/aura_enterprise_gate.json` has `counts={}` and
+  `high_or_critical_count=0`.
+- `git diff --check`
+  -> passed.
+
+Current closeout estimate:
+
+- Configured non-soak local closeout remains about **99.97%** for the previous
+  proof program, with the visible ChatGPT/Gemini proof still blocked by active
+  Chrome-profile extension access.
+- Pass F structural maturity is newly opened. First slice is source-validated,
+  but not yet propagated into `CapabilityEngine`, `desktop_task`,
+  `overt_action_loop`, live skill API, chat planning, or live desktop proofs.
+
+Remaining work after this checkpoint:
+
+- Wire `ActionExpectation` generation/enforcement into real execution paths:
+  `CapabilityEngine`, desktop task planning, live skill API, autonomous overt
+  actions, and chat follow-through.
+- Add action-depth receipts and memory lessons so expectation failures change
+  future planning, not just the immediate return status.
+- Run enterprise/production gates for this checkpoint and push the branch.
+- Continue with declarative runtime control plane, resource admission, FMEA
+  registry, and visible web proof access when Chrome control is available.
+
+## Checkpoint 2026-07-09-08: CapabilityEngine Expectation Enforcement
+
+Scope:
+
+- Wired the action-depth expectation contract into
+  `CapabilityEngine._execute_with_retry(...)`, so explicit expectations in
+  execution context or params are enforced before successful skill results are
+  returned to callers.
+- Added expectation parsing for:
+  - `action_expectation` / `expectation` dicts or `ActionExpectation` objects.
+  - `acceptance_criteria`, `required_evidence`, `user_visible_effect`,
+    `repair_hint`, and `allow_partial` supplied directly in context or params.
+- A successful skill result now receives an `expectation_verdict`; if criteria
+  or evidence are missing, the returned dict is downgraded:
+  - missing acceptance criteria -> `partial_success` or `failed_recoverable`
+  - missing verification evidence -> `success_unverified`
+  - `ok` becomes `false` unless the expectation remains `success_verified`
+- Added CapabilityEngine regressions proving that a browser research action
+  which only opens a page cannot claim completion when source preservation is
+  expected, and that a file write without hash/effect evidence becomes
+  unverified.
+
+Verification:
+
+- `python -m pytest tests/test_capability_engine_policy_regressions.py::test_execute_with_retry_downgrades_shallow_action_expectation tests/test_capability_engine_policy_regressions.py::test_execute_with_retry_marks_missing_expectation_evidence_unverified tests/test_action_depth_honesty.py -q`
+  -> `19 passed`.
+- `python -m pytest tests/test_capability_engine_policy_regressions.py -q`
+  -> `24 passed`.
+- `python -m py_compile core/capability_engine.py tests/test_capability_engine_policy_regressions.py core/runtime/skill_contract.py tests/test_action_depth_honesty.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/capability_engine.py tests/test_capability_engine_policy_regressions.py core/runtime/skill_contract.py tests/test_action_depth_honesty.py`
+  -> passed.
+- `make production-gate`
+  -> passed; `/tmp/aura_production_readiness.json` has `passed=true`.
+- `make enterprise-gate`
+  -> passed; `/tmp/aura_enterprise_gate.json` has `counts={}` and
+  `high_or_critical_count=0`.
+- `git diff --check`
+  -> passed.
+
+Current closeout estimate:
+
+- Pass F action-depth foundation is now active in the central capability
+  execution lane for callers that supply explicit expectations.
+- Remaining propagation: generate expectations from chat/planning automatically,
+  attach expectation verdicts to durable receipts, update memory lessons, and
+  wire desktop/live-skill callers to pass expectation contracts by default.
+
+Remaining work after this checkpoint:
+
+- Add action expectation generation at chat objective detection and desktop task
+  planning boundaries.
+- Add receipt/memory causal wiring for expectation failures.
+- Commit and push this checkpoint.

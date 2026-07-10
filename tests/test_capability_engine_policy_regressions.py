@@ -324,6 +324,75 @@ async def test_execute_with_retry_reports_blank_timeout_with_skill_context(monke
     assert result["error"] == "web_interlocutor timed out after 420.0s"
 
 
+@pytest.mark.asyncio
+async def test_execute_with_retry_downgrades_shallow_action_expectation():
+    engine = _engine_with_skill("browser.research")
+    engine.max_retries = 1
+
+    class ShallowResearchSkill:
+        async def safe_execute(self, params, context):
+            return {
+                "ok": True,
+                "status": "completed",
+                "url": "https://example.com",
+                "criteria": {"browser opened": True},
+            }
+
+    result = await engine._execute_with_retry(
+        ShallowResearchSkill(),
+        "browser.research",
+        {"topic": "runtime reliability"},
+        {
+            "action_expectation": {
+                "objective": "Research and preserve sources",
+                "acceptance_criteria": ["browser opened", "source notes preserved"],
+                "required_evidence": ["url"],
+                "repair_hint": "capture_sources_before_reporting_done",
+            }
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "partial_success"
+    assert result["error"].startswith("expectation incomplete")
+    verdict = result["expectation_verdict"]
+    assert verdict["missing_criteria"] == ["source notes preserved"]
+    assert verdict["present_evidence"] == ["url"]
+    assert verdict["next_step"] == "capture_sources_before_reporting_done"
+
+
+@pytest.mark.asyncio
+async def test_execute_with_retry_marks_missing_expectation_evidence_unverified():
+    engine = _engine_with_skill("file.write")
+    engine.max_retries = 1
+
+    class FileWriteSkill:
+        async def safe_execute(self, params, context):
+            return {
+                "ok": True,
+                "status": "completed",
+                "path": str(params["path"]),
+                "criteria_results": {"file written": True},
+            }
+
+    result = await engine._execute_with_retry(
+        FileWriteSkill(),
+        "file.write",
+        {"path": "workspace-note.txt"},
+        {
+            "acceptance_criteria": ["file written"],
+            "required_evidence": ["sha256", "effect_verified"],
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "success_unverified"
+    assert result["expectation_verdict"]["missing_evidence"] == [
+        "sha256",
+        "effect_verified",
+    ]
+
+
 def test_auto_refactor_scan_is_read_only_not_privileged_mutation():
     engine = _engine_with_skill("auto_refactor")
     meta = engine.skills["auto_refactor"]
