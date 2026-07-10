@@ -495,6 +495,7 @@ def test_required_probe_groups_reject_partial_or_forged_payloads():
         "probe:memory",
         "probe:scheduler",
         "probe:tool_governance",
+        "probe:workspace",
     ]
 
 
@@ -507,6 +508,7 @@ def test_required_probe_blockers_fail_closed_on_malformed_payloads():
         "probe:memory",
         "probe:scheduler",
         "probe:tool_governance",
+        "probe:workspace",
     ]
 
 
@@ -530,7 +532,14 @@ def test_health_report_healthy_requires_required_probe_groups(monkeypatch):
     assert report["healthy"] is False
     assert report["operational"] is False
     assert report["status_code"] == 503
-    assert report["probe_blockers"] == ["runtime_required_probes", "probe:inference", "probe:memory", "probe:scheduler", "probe:tool_governance"]
+    assert report["probe_blockers"] == [
+        "runtime_required_probes",
+        "probe:inference",
+        "probe:memory",
+        "probe:scheduler",
+        "probe:tool_governance",
+        "probe:workspace",
+    ]
 
 
 def test_health_verdict_status_code_uses_required_probe_groups(monkeypatch):

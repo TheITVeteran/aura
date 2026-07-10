@@ -127,6 +127,13 @@ BOOT_SERVICE_REQUIREMENTS: tuple[BootServiceRequirement, ...] = (
         failure_policy="fail-closed",
         evidence_tokens=("class SupervisionTree", "def get_tree"),
     ),
+    BootServiceRequirement(
+        name="inhibition_manager",
+        owner_file="core/resilience/inhibition_manager.py",
+        required_for="fail-closed global workspace candidate admission",
+        failure_policy="fail-closed",
+        evidence_tokens=("class InhibitionManager", "def get_inhibition_manager"),
+    ),
 )
 
 CANONICAL_PROOF_ARTIFACT_DIRS: tuple[str, ...] = (

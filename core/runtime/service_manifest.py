@@ -167,6 +167,12 @@ SERVICE_MANIFEST: dict[str, ServiceRole] = {
         critical=True,
         canonical_owner="actor_supervision",
     ),
+    "inhibition_manager": ServiceRole(
+        name="inhibition_manager",
+        description="Canonical global inhibition authority for workspace candidate admission",
+        critical=True,
+        canonical_owner="inhibition_manager",
+    ),
     "shutdown_coordinator": ServiceRole(
         name="shutdown_coordinator",
         description="Single ShutdownCoordinator owning teardown ordering",

@@ -49,6 +49,7 @@ REQUIRED_HEALTH_PROBE_GROUPS: dict[str, tuple[str, ...]] = {
         "actor_supervision",
     ),
     "tool_governance": ("unified_will", "authority_gateway", "capability_engine"),
+    "workspace": ("inhibition_manager",),
 }
 
 
@@ -159,6 +160,13 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "actor_supervision",
         ServiceTier.CRITICAL,
         "Canonical multiprocessing actor monitor. Without it, crashed or stalled actors are not converged safely.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Inhibition Manager",
+        "inhibition_manager",
+        ServiceTier.CRITICAL,
+        "Canonical workspace safety gate. Without it, candidate admission cannot be trusted.",
         liveness_check="is_ready",
     ),
     ServiceRequirement(

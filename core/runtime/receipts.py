@@ -17,7 +17,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, cast
 
 from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
 from core.runtime.audit_chain import AuditChain
@@ -25,7 +25,7 @@ from core.runtime.flags import FlagKind, declare
 
 logger = logging.getLogger("core.runtime.receipts")
 
-_HIGH_VOLUME_RECEIPT_KINDS = frozenset({"resource_admission"})
+_HIGH_VOLUME_RECEIPT_KINDS = frozenset({"resource_admission", "workspace_gate"})
 _HOT_INDEX_LIMIT_FLAG = declare(
     "AURA_RECEIPT_HOT_INDEX_LIMIT",
     kind=FlagKind.INT,
@@ -47,9 +47,9 @@ class _ReceiptBase:
     kind: str = ""
     cause: str = ""
     created_at: float = field(default_factory=time.time)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
@@ -57,9 +57,9 @@ class _ReceiptBase:
 class TurnReceipt(_ReceiptBase):
     kind: str = "turn"
     origin: str = ""
-    governance_receipt_id: Optional[str] = None
-    committed_effects: List[str] = field(default_factory=list)
-    failed_effects: List[Dict[str, str]] = field(default_factory=list)
+    governance_receipt_id: str | None = None
+    committed_effects: list[str] = field(default_factory=list)
+    failed_effects: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -85,11 +85,11 @@ class CapabilityReceipt(_ReceiptBase):
 class ToolExecutionReceipt(_ReceiptBase):
     kind: str = "tool_execution"
     tool: str = ""
-    governance_receipt_id: Optional[str] = None
-    capability_receipt_id: Optional[str] = None
+    governance_receipt_id: str | None = None
+    capability_receipt_id: str | None = None
     status: str = "success_unverified"
-    output_digest: Optional[str] = None
-    verification_evidence: Dict[str, Any] = field(default_factory=dict)
+    output_digest: str | None = None
+    verification_evidence: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -99,7 +99,7 @@ class MemoryWriteReceipt(_ReceiptBase):
     record_id: str = ""
     bytes_written: int = 0
     schema_version: int = 1
-    governance_receipt_id: Optional[str] = None
+    governance_receipt_id: str | None = None
 
 
 @dataclass
@@ -108,7 +108,7 @@ class StateMutationReceipt(_ReceiptBase):
     domain: str = ""
     key: str = ""
     schema_version: int = 1
-    governance_receipt_id: Optional[str] = None
+    governance_receipt_id: str | None = None
 
 
 @dataclass
@@ -117,7 +117,7 @@ class OutputReceipt(_ReceiptBase):
     origin: str = ""
     target: str = ""
     digest: str = ""
-    governance_receipt_id: Optional[str] = None
+    governance_receipt_id: str | None = None
 
 
 @dataclass
@@ -125,7 +125,7 @@ class AutonomyReceipt(_ReceiptBase):
     kind: str = "autonomy"
     autonomy_level: int = 0
     proposed_action: str = ""
-    governance_receipt_id: Optional[str] = None
+    governance_receipt_id: str | None = None
     budget_remaining: float = 0.0
 
 
@@ -133,9 +133,9 @@ class AutonomyReceipt(_ReceiptBase):
 class SelfRepairReceipt(_ReceiptBase):
     kind: str = "self_repair"
     target_module: str = ""
-    rungs_passed: List[str] = field(default_factory=list)
+    rungs_passed: list[str] = field(default_factory=list)
     rolled_back: bool = False
-    governance_receipt_id: Optional[str] = None
+    governance_receipt_id: str | None = None
 
 
 @dataclass
@@ -145,7 +145,7 @@ class ComputerUseReceipt(_ReceiptBase):
     target: str = ""
     screen_before_hash: str = ""
     screen_after_hash: str = ""
-    capability_receipt_id: Optional[str] = None
+    capability_receipt_id: str | None = None
     verifier_result: bool = False
 
 
@@ -162,15 +162,15 @@ class SemanticWeightUpdateReceipt(_ReceiptBase):
 
     kind: str = "semantic_weight_update"
     module: str = ""
-    prediction_id: Optional[str] = None
-    concept_id: Optional[str] = None
-    evidence_id: Optional[str] = None
+    prediction_id: str | None = None
+    concept_id: str | None = None
+    evidence_id: str | None = None
     reward: float = 0.0
     modulation: float = 0.0
     delta_norm: float = 0.0
     hebb_norm: float = 0.0
     allowed: bool = False
-    governance_receipt_id: Optional[str] = None
+    governance_receipt_id: str | None = None
 
 
 @dataclass
@@ -188,7 +188,7 @@ class DegradationReceipt(_ReceiptBase):
     error_type_name: str = ""
     error_message_text: str = ""
     action_taken: str = ""
-    extra_data: Dict[str, Any] = field(default_factory=dict)
+    extra_data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -204,7 +204,20 @@ class ResourceAdmissionReceipt(_ReceiptBase):
     decision: str = ""
     reason: str = ""
     lease_id: str = ""
-    pressure: Dict[str, Any] = field(default_factory=dict)
+    pressure: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class WorkspaceGateReceipt(_ReceiptBase):
+    """Durable fail-closed decision from the cognitive workspace authority gate."""
+
+    kind: str = "workspace_gate"
+    candidate_source: str = ""
+    gate: str = "global_inhibition"
+    decision: str = "rejected"
+    reason: str = ""
+    retryable: bool = True
+    gate_instance_id: str = ""
 
 
 # Mapping kind -> dataclass for the store.
@@ -221,25 +234,27 @@ _RECEIPT_CLASSES = {
     "computer_use": ComputerUseReceipt,
     "semantic_weight_update": SemanticWeightUpdateReceipt,
     "resource_admission": ResourceAdmissionReceipt,
+    "workspace_gate": WorkspaceGateReceipt,
     "degradation": DegradationReceipt,
 }
 
 
-AnyReceipt = Union[
-    TurnReceipt,
-    GovernanceReceipt,
-    CapabilityReceipt,
-    ToolExecutionReceipt,
-    MemoryWriteReceipt,
-    StateMutationReceipt,
-    OutputReceipt,
-    AutonomyReceipt,
-    SelfRepairReceipt,
-    ComputerUseReceipt,
-    SemanticWeightUpdateReceipt,
-    ResourceAdmissionReceipt,
-    DegradationReceipt,
-]
+AnyReceipt = (
+    TurnReceipt
+    | GovernanceReceipt
+    | CapabilityReceipt
+    | ToolExecutionReceipt
+    | MemoryWriteReceipt
+    | StateMutationReceipt
+    | OutputReceipt
+    | AutonomyReceipt
+    | SelfRepairReceipt
+    | ComputerUseReceipt
+    | SemanticWeightUpdateReceipt
+    | ResourceAdmissionReceipt
+    | WorkspaceGateReceipt
+    | DegradationReceipt
+)
 
 
 class ReceiptStore:
@@ -253,7 +268,7 @@ class ReceiptStore:
 
     SCHEMA_VERSION = 1
 
-    def __init__(self, root: Optional[Path] = None):
+    def __init__(self, root: Path | None = None):
         self.root = Path(root) if root is not None else (Path.home() / ".aura" / "receipts")
         self.root.mkdir(parents=True, exist_ok=True)
         try:
@@ -261,15 +276,15 @@ class ReceiptStore:
         except OSError as exc:
             logger.debug("Could not restrict receipt root permissions: %s", exc)
         self._lock = threading.RLock()
-        self._index: Dict[str, AnyReceipt] = {}
-        self._chain_append_errors: List[Dict[str, Any]] = []
+        self._index: dict[str, AnyReceipt] = {}
+        self._chain_append_errors: list[dict[str, Any]] = []
         self._ledger_path = self.root / "_high_volume_receipts.sqlite3"
         self._ledger: sqlite3.Connection | None = None
         self._ledger_pid = 0
         self._ledger_available = self._initialize_high_volume_ledger()
         # Tamper-evident chain lives at root/_chain.jsonl. Sidecar; do not
         # break existing callers if the chain file cannot be initialised.
-        self._chain: Optional[AuditChain] = None
+        self._chain: AuditChain | None = None
         try:
             self._chain = AuditChain(self.root)
         except (RuntimeError, AttributeError, TypeError, ValueError):
@@ -340,7 +355,7 @@ class ReceiptStore:
             )
             return False
 
-    def _ledger_put_locked(self, body: Dict[str, Any]) -> None:
+    def _ledger_put_locked(self, body: dict[str, Any]) -> None:
         connection = self._ledger_connection_locked()
         receipt_id = str(body.get("receipt_id") or "")
         kind = str(body.get("kind") or "")
@@ -372,7 +387,7 @@ class ReceiptStore:
                 raise ValueError(f"receipt id is immutable and already exists: {receipt_id}") from exc
         connection.commit()
 
-    def _ledger_body_locked(self, receipt_id: str, kind: str) -> Optional[Dict[str, Any]]:
+    def _ledger_body_locked(self, receipt_id: str, kind: str) -> dict[str, Any] | None:
         if not self._ledger_available:
             return None
         try:
@@ -391,7 +406,7 @@ class ReceiptStore:
         return body if isinstance(body, dict) else None
 
     @staticmethod
-    def _receipt_from_body(kind: str, body: Dict[str, Any]) -> AnyReceipt | None:
+    def _receipt_from_body(kind: str, body: dict[str, Any]) -> AnyReceipt | None:
         cls = _RECEIPT_CLASSES.get(kind)
         if cls is None:
             return None
@@ -510,7 +525,7 @@ class ReceiptStore:
                     logger.debug("Receipt chain append degradation record failed: %s", record_exc)
         return receipt
 
-    def get(self, receipt_id: str) -> Optional[AnyReceipt]:
+    def get(self, receipt_id: str) -> AnyReceipt | None:
         with self._lock:
             cached = self._index.get(receipt_id)
             if cached is not None:
@@ -553,7 +568,7 @@ class ReceiptStore:
                 return self._receipt_snapshot(receipt)
             return None
 
-    def query_by_kind(self, kind: str) -> List[AnyReceipt]:
+    def query_by_kind(self, kind: str) -> list[AnyReceipt]:
         if kind not in _RECEIPT_CLASSES:
             raise ValueError(f"unknown receipt kind '{kind}'")
         with self._lock:
@@ -566,9 +581,9 @@ class ReceiptStore:
     def query_recent(
         self,
         *,
-        kinds: Optional[List[str]] = None,
+        kinds: list[str] | None = None,
         limit: int = 20,
-    ) -> List[AnyReceipt]:
+    ) -> list[AnyReceipt]:
         """Return the newest receipts across one or more kinds."""
         with self._lock:
             receipts = [self._receipt_snapshot(receipt) for receipt in self._index.values()]
@@ -582,7 +597,7 @@ class ReceiptStore:
             return []
         return receipts[-limit:]
 
-    def query_recent_persisted(self, kind: str, *, limit: int = 20) -> List[AnyReceipt]:
+    def query_recent_persisted(self, kind: str, *, limit: int = 20) -> list[AnyReceipt]:
         """Read newest receipts of one kind across hot, ledger, and envelope storage."""
 
         if kind not in _RECEIPT_CLASSES:
@@ -686,9 +701,9 @@ class ReceiptStore:
             count = len(self._index)
         return count
 
-    def coverage_stats(self) -> Dict[str, int]:
+    def coverage_stats(self) -> dict[str, int]:
         with self._lock:
-            stats: Dict[str, int] = {kind: 0 for kind in _RECEIPT_CLASSES}
+            stats: dict[str, int] = {kind: 0 for kind in _RECEIPT_CLASSES}
             for kind in _RECEIPT_CLASSES:
                 kind_dir = self.root / kind
                 if kind_dir.exists():
@@ -702,8 +717,8 @@ class ReceiptStore:
                     stats[ledger_kind] = stats.get(ledger_kind, 0) + int(count)
             return stats
 
-    def _persisted_receipt_kinds_locked(self) -> Dict[str, str]:
-        persisted: Dict[str, str] = {}
+    def _persisted_receipt_kinds_locked(self) -> dict[str, str]:
+        persisted: dict[str, str] = {}
         for kind in _RECEIPT_CLASSES:
             kind_dir = self.root / kind
             if not kind_dir.exists():
@@ -721,7 +736,7 @@ class ReceiptStore:
                 persisted[str(receipt_id)] = str(kind)
         return persisted
 
-    def _load_body_from_disk(self, receipt_id: str, kind: str) -> Optional[Dict[str, Any]]:
+    def _load_body_from_disk(self, receipt_id: str, kind: str) -> dict[str, Any] | None:
         """Re-read a receipt body from disk for chain verification."""
         path = self.root / kind / f"{receipt_id}.json"
         if path.exists():
@@ -737,14 +752,14 @@ class ReceiptStore:
         with self._lock:
             return self._ledger_body_locked(receipt_id, kind)
 
-    def storage_stats(self) -> Dict[str, Any]:
+    def storage_stats(self) -> dict[str, Any]:
         """Return hot/cold receipt storage counts for health and diagnostics."""
 
         with self._lock:
-            hot_by_kind: Dict[str, int] = {}
+            hot_by_kind: dict[str, int] = {}
             for receipt in self._index.values():
                 hot_by_kind[receipt.kind] = hot_by_kind.get(receipt.kind, 0) + 1
-            ledger_by_kind: Dict[str, int] = {}
+            ledger_by_kind: dict[str, int] = {}
             if self._ledger_available:
                 for kind, count in self._ledger_connection_locked().execute(
                     "SELECT kind, COUNT(*) FROM receipt_ledger GROUP BY kind"
@@ -780,7 +795,7 @@ class ReceiptStore:
                     logger.warning("Could not flush receipt audit chain during close: %s", exc)
                 self._chain.close()
 
-    def verify_chain(self) -> Dict[str, Any]:
+    def verify_chain(self) -> dict[str, Any]:
         """Verify the tamper-evident chain.
 
         Returns a dict with ``ok`` (bool), ``length`` (int),
@@ -819,18 +834,18 @@ class ReceiptStore:
             "missing_from_chain": missing_from_chain,
         }
 
-    def export_chain(self, dest_dir: Path) -> Dict[str, Any]:
+    def export_chain(self, dest_dir: Path) -> dict[str, Any]:
         """Export the chain (chain.jsonl + MANIFEST.txt) to ``dest_dir``."""
         if self._chain is None:
             raise RuntimeError("chain not initialised")
-        return cast(Dict[str, Any], self._chain.export(dest_dir))
+        return cast(dict[str, Any], self._chain.export(dest_dir))
 
 
-_global_store: Optional[ReceiptStore] = None
+_global_store: ReceiptStore | None = None
 _singleton_lock = threading.RLock()
 
 
-def get_receipt_store(root: Optional[Path] = None) -> ReceiptStore:
+def get_receipt_store(root: Path | None = None) -> ReceiptStore:
     global _global_store
     with _singleton_lock:
         if _global_store is None:

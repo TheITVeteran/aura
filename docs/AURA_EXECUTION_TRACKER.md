@@ -10069,3 +10069,59 @@ Remaining work after this checkpoint:
 - Move next into the canonical mind/state graph and the concrete lane,
   workspace, Amplifier, foreground-accounting, continuity, identity, welfare,
   and memory-authority defects recorded in the context-closure addenda.
+
+## Checkpoint 2026-07-10-24: Fail-Closed Canonical Workspace Inhibition
+
+Scope:
+
+- Closed the concrete `CTX2-GATE-001` failure where a recoverable global
+  inhibition lookup/check error admitted a workspace candidate anyway. Lookup
+  failure, invalid gate shape, check exception, and bounded check timeout now
+  reject the candidate before it enters competition. The failed manager is
+  discarded so the next submission takes a bounded recovery path.
+- Made `InhibitionManager` a canonical singleton with a boot-scoped instance
+  ID, thread-safe snapshots, liveness/readiness methods, and one accessor used
+  by both `ResilientBoot` and the workspace's self-healing resolver. A missing
+  container binding publishes that exact instance instead of constructing a
+  parallel gate.
+- Protected `inhibition_manager` as a causal core service and added it to the
+  executable service manifest, boot contract, runtime health contract, and
+  required probe groups. Missing workspace inhibition now produces
+  `probe:workspace` and not-ready status instead of an invisible local fallback.
+- Added the high-volume `WorkspaceGateReceipt` to the canonical bounded SQLite
+  receipt ledger and tamper-evident chain. Policy inhibition and fail-closed
+  faults record candidate source, gate instance, typed reason, retryability,
+  phase, and content type without persisting candidate content.
+- Exposed bounded gate health and recent rejection receipt IDs in the workspace
+  snapshot. Recovery clears stale lookup/check degradation state only after a
+  successful fresh gate decision.
+- Kept free-energy, mycelial, somatic-noise, attention, and processor modifiers
+  fail-soft; the stricter behavior is limited to the actual admission safety
+  boundary.
+
+Verification:
+
+- Workspace, receipt-store, audit-chain, degradation, and governance suite ->
+  `67 passed in 23.34s`.
+- Wider workspace backpressure, consciousness recovery, embodied dynamics,
+  personhood, functional phenomenology, and resilient-boot replay -> `137
+  passed in 61.05s`.
+- Final health-contract, boot-contract, and workspace regression subset -> `38
+  passed in 13.76s`; forged health payloads must now report
+  `probe:workspace`.
+- Strict mypy over workspace, inhibition authority, and canonical receipts ->
+  success with no issues. Ruff and py-compile over the touched core/test surface
+  -> passed.
+- Regenerated `docs/RUNTIME_CONTRACT.md` from the executable health contract.
+
+Remaining work after this checkpoint:
+
+- Complete `CTX2-GATE-002` by inventorying every attention/workspace candidate
+  gate and proving timeout, cancellation, restart, stale-approval, and
+  lane-specific health behavior. This checkpoint closes the named global
+  inhibition defect, not the broader all-gates audit.
+- Complete Rust/Python skill-discovery equivalence and live-registry dry-run
+  requirements (`CTX2-SKILL-001/002`).
+- Continue with atomic lane reservations, synchronous required eviction,
+  complete trainer/process accounting, compensation, and exactly-once receipts
+  (`CTX2-LANE-001..004`).

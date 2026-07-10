@@ -94,8 +94,17 @@ class ResilientBoot:
             
             # [UNITY] Register Global Inhibition Manager
             from core.container import ServiceContainer
-            from core.resilience.inhibition_manager import InhibitionManager
-            ServiceContainer.register_instance("inhibition_manager", InhibitionManager())
+            from core.resilience.inhibition_manager import get_inhibition_manager
+
+            ServiceContainer.register_instance(
+                "inhibition_manager",
+                get_inhibition_manager(),
+                required=True,
+                owner="core.resilience.inhibition_manager",
+                registered_by="core.ops.resilient_boot",
+                required_for="workspace_candidate_admission",
+                failure_policy="fail_closed",
+            )
             
             # 1. Hook Immunity System (Moved up for maximal coverage)
             from core.resilience.immunity_hyphae import get_immunity

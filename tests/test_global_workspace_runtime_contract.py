@@ -2,6 +2,8 @@ from pathlib import Path
 
 import pytest
 
+_DEFAULT_INHIBITION = object()
+
 
 def test_global_workspace_degradation_audit_is_clean():
     from tools.audit_degradation import analyze_file
@@ -9,8 +11,22 @@ def test_global_workspace_degradation_audit_is_clean():
     assert analyze_file(Path("core/consciousness/global_workspace.py")) == []
 
 
-def _install_services(monkeypatch, *, mycelium=None, inhibition=None):
+def _install_services(
+    monkeypatch,
+    *,
+    mycelium=None,
+    inhibition=_DEFAULT_INHIBITION,
+):
     import core.consciousness.global_workspace as workspace_module
+
+    if inhibition is _DEFAULT_INHIBITION:
+        class HealthyInhibition:
+            instance_id = "inhibition-test"
+
+            async def is_inhibited(self, _source):
+                return False
+
+        inhibition = HealthyInhibition()
 
     def _get(name, default=None):
         if name == "mycelial_network":
@@ -20,6 +36,15 @@ def _install_services(monkeypatch, *, mycelium=None, inhibition=None):
         return default
 
     monkeypatch.setattr(workspace_module.ServiceContainer, "get", staticmethod(_get))
+
+
+def _install_gate_receipt_store(monkeypatch, tmp_path):
+    import core.consciousness.global_workspace as workspace_module
+    from core.runtime.receipts import ReceiptStore
+
+    store = ReceiptStore(tmp_path / "receipts")
+    monkeypatch.setattr(workspace_module, "get_receipt_store", lambda: store)
+    return store
 
 
 def _install_auxiliary_feeds(monkeypatch, *, broken=False):
@@ -158,3 +183,120 @@ async def test_workspace_flood_guard_drops_bid_and_records_reflex_failure(monkey
     assert admitted is True
     assert len(workspace._candidates) == workspace._MAX_CANDIDATES
     assert "affect_distress" in {c.source for c in workspace._candidates}
+
+
+@pytest.mark.asyncio
+async def test_workspace_inhibition_check_failure_rejects_and_receipts(
+    monkeypatch,
+    tmp_path,
+):
+    from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
+
+    class BrokenInhibition:
+        instance_id = "inhibition-broken"
+
+        async def is_inhibited(self, source):
+            raise RuntimeError(f"gate offline for {source}")
+
+    _install_services(monkeypatch, inhibition=BrokenInhibition())
+    store = _install_gate_receipt_store(monkeypatch, tmp_path)
+    workspace = GlobalWorkspace()
+
+    accepted = await workspace.submit(CognitiveCandidate("unsafe", "drive", 1.0))
+
+    assert accepted is False
+    assert workspace._candidates == []
+    snapshot = workspace.get_snapshot()["inhibition_gate"]
+    assert snapshot["ready"] is False
+    assert snapshot["reason"] == "gate_check_failed:RuntimeError"
+    receipts = store.query_recent_persisted("workspace_gate", limit=10)
+    assert len(receipts) == 1
+    assert receipts[0].candidate_source == "drive"
+    assert receipts[0].decision == "rejected"
+    assert receipts[0].gate_instance_id == "inhibition-broken"
+
+
+@pytest.mark.asyncio
+async def test_workspace_inhibition_timeout_rejects_without_late_admission(
+    monkeypatch,
+    tmp_path,
+):
+    import asyncio
+
+    from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
+
+    class WedgedInhibition:
+        instance_id = "inhibition-wedged"
+
+        async def is_inhibited(self, _source):
+            await asyncio.sleep(0.2)
+            return False
+
+    monkeypatch.setenv("AURA_WORKSPACE_INHIBITION_GATE_TIMEOUT_S", "0.01")
+    _install_services(monkeypatch, inhibition=WedgedInhibition())
+    store = _install_gate_receipt_store(monkeypatch, tmp_path)
+    workspace = GlobalWorkspace()
+
+    assert await workspace.submit(CognitiveCandidate("late", "memory", 0.8)) is False
+    assert workspace._candidates == []
+    receipt = store.query_recent_persisted("workspace_gate", limit=1)[0]
+    assert receipt.reason == "gate_check_failed:TimeoutError"
+
+
+@pytest.mark.asyncio
+async def test_workspace_gate_recovers_and_uses_canonical_fallback_instance(
+    monkeypatch,
+    tmp_path,
+):
+    import core.consciousness.global_workspace as workspace_module
+    from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
+    from core.resilience.inhibition_manager import get_inhibition_manager
+
+    manager = get_inhibition_manager()
+    published = []
+    monkeypatch.setattr(
+        workspace_module.ServiceContainer,
+        "get",
+        staticmethod(lambda name, default=None: None if name == "inhibition_manager" else default),
+    )
+    monkeypatch.setattr(
+        workspace_module.ServiceContainer,
+        "register_instance",
+        classmethod(lambda _cls, name, instance, **_kwargs: published.append((name, instance))),
+    )
+    _install_gate_receipt_store(monkeypatch, tmp_path)
+    workspace = GlobalWorkspace()
+
+    assert await workspace.submit(CognitiveCandidate("safe", "memory", 0.8)) is True
+    assert workspace.get_snapshot()["inhibition_gate"] == {
+        "ready": True,
+        "reason": "healthy",
+        "instance_id": manager.instance_id,
+        "rejection_count": 0,
+        "recent_rejections": [],
+    }
+    assert published == [("inhibition_manager", manager)]
+
+
+@pytest.mark.asyncio
+async def test_workspace_policy_inhibition_is_a_receipted_rejection(monkeypatch, tmp_path):
+    from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
+
+    class ActiveInhibition:
+        instance_id = "inhibition-active"
+
+        async def is_inhibited(self, source):
+            return source == "looping_source"
+
+    _install_services(monkeypatch, inhibition=ActiveInhibition())
+    store = _install_gate_receipt_store(monkeypatch, tmp_path)
+    workspace = GlobalWorkspace()
+
+    accepted = await workspace.submit(
+        CognitiveCandidate("repeat", "looping_source", 0.9)
+    )
+
+    assert accepted is False
+    receipt = store.query_recent_persisted("workspace_gate", limit=1)[0]
+    assert receipt.reason == "source_inhibited"
+    assert receipt.retryable is True

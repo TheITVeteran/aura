@@ -6,13 +6,15 @@ import logging
 import os
 import random
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from core.container import ServiceContainer
 from core.runtime.errors import Severity, record_degradation
+from core.runtime.flags import FlagKind, declare
+from core.runtime.receipts import WorkspaceGateReceipt, get_receipt_store
 from core.utils.task_tracker import get_task_tracker
 
 if TYPE_CHECKING:
@@ -29,6 +31,13 @@ _WORKSPACE_RECOVERABLE_ERRORS = (
     TimeoutError,
     TypeError,
     ValueError,
+)
+_INHIBITION_GATE_TIMEOUT_FLAG = declare(
+    "AURA_WORKSPACE_INHIBITION_GATE_TIMEOUT_S",
+    kind=FlagKind.FLOAT,
+    default=0.5,
+    description="Maximum time allowed for the workspace global-inhibition safety gate",
+    owner="core.consciousness.global_workspace",
 )
 
 
@@ -50,6 +59,13 @@ def _record_workspace_degradation(
 
 def _error_summary(error: BaseException) -> str:
     return f"{type(error).__qualname__}: {error}"[:240]
+
+
+def _emit_workspace_gate_receipt(receipt: WorkspaceGateReceipt) -> WorkspaceGateReceipt:
+    emitted = get_receipt_store().emit(receipt)
+    if not isinstance(emitted, WorkspaceGateReceipt):
+        raise TypeError("workspace gate receipt store returned the wrong receipt type")
+    return emitted
 
 
 
@@ -269,7 +285,10 @@ class SomaticNoiseInjector:
 # Processor registration type
 # ---------------------------------------------------------------------------
 
-ProcessorFn = Callable[[CognitiveCandidate], Coroutine]
+ProcessorFn = Callable[
+    [BroadcastEvent | CognitiveCandidate],
+    Awaitable[Any] | Any,
+]
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +333,9 @@ class GlobalWorkspace:
         self._degradation_events: list[dict[str, Any]] = []
         self._processor_failures: dict[str, int] = {}
         self._somatic_noise = SomaticNoiseInjector()
+        self._inhibition_gate_ready = False
+        self._last_inhibition_gate_reason = "not_checked"
+        self._gate_rejections: list[dict[str, Any]] = []
         
         logger.info("GlobalWorkspace initialized (ignition_threshold=%.2f).", self._IGNITION_THRESHOLD)
 
@@ -346,12 +368,87 @@ class GlobalWorkspace:
         return self._history
 
     @history.setter
-    def history(self, value: list[BroadcastRecord]):
+    def history(self, value: list[BroadcastRecord]) -> None:
         self._history = value
 
     # ------------------------------------------------------------------
     # Submission API — called by subsystems every heartbeat tick
     # ------------------------------------------------------------------
+
+    def _resolve_global_inhibition(self) -> InhibitionManager:
+        manager = ServiceContainer.get("inhibition_manager", default=None)
+        if manager is None:
+            from core.resilience.inhibition_manager import get_inhibition_manager
+
+            manager = get_inhibition_manager()
+            ServiceContainer.register_instance(
+                "inhibition_manager",
+                manager,
+                required=True,
+                owner="core.resilience.inhibition_manager",
+                registered_by="core.consciousness.global_workspace",
+                required_for="workspace_candidate_admission",
+                failure_policy="fail_closed",
+            )
+        check = getattr(manager, "is_inhibited", None)
+        if not callable(check):
+            raise TypeError("inhibition manager lacks callable is_inhibited")
+        return cast("InhibitionManager", manager)
+
+    async def _reject_for_inhibition_gate(
+        self,
+        candidate: CognitiveCandidate,
+        *,
+        phase: str,
+        reason: str,
+        error: BaseException | None = None,
+    ) -> bool:
+        self._inhibition_gate_ready = False
+        self._last_inhibition_gate_reason = reason[:240]
+        if error is not None:
+            self._record_degradation(
+                error,
+                phase=phase,
+                action="Rejected workspace candidate because global inhibition authority was unavailable",
+                severity="degraded",
+            )
+        event = {
+            "tick": self._tick,
+            "candidate_source": candidate.source[:160],
+            "phase": phase,
+            "reason": reason[:240],
+            "retryable": True,
+        }
+        receipt = WorkspaceGateReceipt(
+            cause="workspace_candidate_submission",
+            candidate_source=candidate.source[:160],
+            gate="global_inhibition",
+            decision="rejected",
+            reason=reason[:240],
+            retryable=True,
+            gate_instance_id=str(
+                getattr(self._global_inhibition, "instance_id", "") or ""
+            )[:160],
+            metadata={
+                "tick": self._tick,
+                "phase": phase,
+                "content_type": candidate.content_type.name,
+            },
+        )
+        try:
+            emitted = await asyncio.to_thread(_emit_workspace_gate_receipt, receipt)
+            event["receipt_id"] = emitted.receipt_id
+        except _WORKSPACE_RECOVERABLE_ERRORS as receipt_error:
+            self._record_degradation(
+                receipt_error,
+                phase="global_inhibition_receipt",
+                action="Rejected workspace candidate but gate receipt persistence failed",
+                severity="critical",
+            )
+            event["receipt_error"] = _error_summary(receipt_error)
+        self._gate_rejections.append(event)
+        self._gate_rejections = self._gate_rejections[-50:]
+        return False
 
     async def submit(self, candidate: CognitiveCandidate) -> bool:
         """Submit a candidate for the next broadcast competition.
@@ -369,27 +466,40 @@ class GlobalWorkspace:
             # Check global inhibition
             if self._global_inhibition is None:
                 try:
-                    self._global_inhibition = ServiceContainer.get("inhibition_manager", default=None)
+                    self._global_inhibition = self._resolve_global_inhibition()
                 except _WORKSPACE_RECOVERABLE_ERRORS as exc:
-                    self._record_degradation(
-                        exc,
+                    return await self._reject_for_inhibition_gate(
+                        candidate,
                         phase="global_inhibition_lookup",
-                        action="Continued workspace submission with local inhibition only",
-                        severity="warning",
+                        reason=f"gate_lookup_failed:{type(exc).__qualname__}",
+                        error=exc,
                     )
-            
-            if self._global_inhibition:
-                try:
-                    if await self._global_inhibition.is_inhibited(candidate.source):
-                        logger.debug("GW: %s is GLOBAL-inhibited", candidate.source)
-                        return False
-                except _WORKSPACE_RECOVERABLE_ERRORS as exc:
-                    self._record_degradation(
-                        exc,
-                        phase="global_inhibition_check",
-                        action="Allowed candidate through local competition because global inhibition check failed",
-                        severity="warning",
-                    )
+            try:
+                gate_timeout = max(0.01, float(_INHIBITION_GATE_TIMEOUT_FLAG.value()))
+                inhibited = await asyncio.wait_for(
+                    self._global_inhibition.is_inhibited(candidate.source),
+                    timeout=gate_timeout,
+                )
+            except _WORKSPACE_RECOVERABLE_ERRORS as exc:
+                rejected = await self._reject_for_inhibition_gate(
+                    candidate,
+                    phase="global_inhibition_check",
+                    reason=f"gate_check_failed:{type(exc).__qualname__}",
+                    error=exc,
+                )
+                self._global_inhibition = None
+                return rejected
+            if inhibited:
+                logger.debug("GW: %s is GLOBAL-inhibited", candidate.source)
+                return await self._reject_for_inhibition_gate(
+                    candidate,
+                    phase="global_inhibition_policy",
+                    reason="source_inhibited",
+                )
+            self._inhibition_gate_ready = True
+            self._last_inhibition_gate_reason = "healthy"
+            self._degraded_channels.pop("global_inhibition_lookup", None)
+            self._degraded_channels.pop("global_inhibition_check", None)
             
             # Φ-aware priority boost: high integration → higher salience
             if self._current_phi > 0.1:
@@ -693,7 +803,11 @@ class GlobalWorkspace:
         )
         return winner
 
-    async def _safe_call(self, fn: ProcessorFn, event: BroadcastEvent | CognitiveCandidate):
+    async def _safe_call(
+        self,
+        fn: ProcessorFn,
+        event: BroadcastEvent | CognitiveCandidate,
+    ) -> None:
         try:
             # Handle both legacy single-candidate and new broadcast-event formats
             res = fn(event)
@@ -731,6 +845,15 @@ class GlobalWorkspace:
             "degraded_channels": dict(self._degraded_channels),
             "recent_degradations": list(self._degradation_events[-5:]),
             "processor_failures": dict(self._processor_failures),
+            "inhibition_gate": {
+                "ready": self._inhibition_gate_ready,
+                "reason": self._last_inhibition_gate_reason,
+                "instance_id": str(
+                    getattr(self._global_inhibition, "instance_id", "") or ""
+                ),
+                "rejection_count": len(self._gate_rejections),
+                "recent_rejections": list(self._gate_rejections[-5:]),
+            },
             "somatic_noise": {
                 "enabled": self._somatic_noise.enabled,
                 "rate": self._somatic_noise.rate,
@@ -753,7 +876,7 @@ class GlobalWorkspace:
         """Current ignition intensity (0.0-1.0)."""
         return self.ignition_level
 
-    def get_last_n_winners(self, n: int = 5) -> list[dict]:
+    def get_last_n_winners(self, n: int = 5) -> list[dict[str, Any]]:
         return [
             {
                 "winner": r.winner.source,
