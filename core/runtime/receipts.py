@@ -174,6 +174,24 @@ class SemanticWeightUpdateReceipt(_ReceiptBase):
 
 
 @dataclass
+class DegradationReceipt(_ReceiptBase):
+    """Forensic record of a recorded degradation (see core/runtime/errors.py).
+
+    Registered here so the bounded store can snapshot and reconstruct it
+    like every other kind — an unregistered kind makes emit() raise, and
+    record_degradation is called from exception handlers everywhere.
+    """
+
+    kind: str = "degradation"
+    subsystem: str = ""
+    severity_level: str = ""
+    error_type_name: str = ""
+    error_message_text: str = ""
+    action_taken: str = ""
+    extra_data: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class ResourceAdmissionReceipt(_ReceiptBase):
     """Durable decision record for constrained runtime work admission."""
 
@@ -203,6 +221,7 @@ _RECEIPT_CLASSES = {
     "computer_use": ComputerUseReceipt,
     "semantic_weight_update": SemanticWeightUpdateReceipt,
     "resource_admission": ResourceAdmissionReceipt,
+    "degradation": DegradationReceipt,
 }
 
 
@@ -219,6 +238,7 @@ AnyReceipt = Union[
     ComputerUseReceipt,
     SemanticWeightUpdateReceipt,
     ResourceAdmissionReceipt,
+    DegradationReceipt,
 ]
 
 

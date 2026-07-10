@@ -487,18 +487,8 @@ def record_degradation(
     # Emit durable receipt if requested
     if receipt_required:
         try:
-            from core.runtime.receipts import _ReceiptBase, get_receipt_store
+            from core.runtime.receipts import DegradationReceipt, get_receipt_store
             store = get_receipt_store()
-
-            @dataclass
-            class DegradationReceipt(_ReceiptBase):
-                kind: str = "degradation"
-                subsystem: str = ""
-                severity_level: str = ""
-                error_type_name: str = ""
-                error_message_text: str = ""
-                action_taken: str = ""
-                extra_data: dict[str, Any] = field(default_factory=dict)
 
             receipt = DegradationReceipt(
                 subsystem=subsystem,
@@ -510,9 +500,10 @@ def record_degradation(
                 extra_data=extra or {},
             )
             store.emit(receipt)
-        except (ImportError, AttributeError, RuntimeError) as receipt_exc:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as receipt_exc:
             # If receipt emission itself fails, at least the in-memory
-            # record and log are already captured.
+            # record and log are already captured. record_degradation is
+            # called from exception handlers — it must never raise.
             logger.debug(
                 "Degradation receipt emission unavailable for %s: %s",
                 subsystem,
