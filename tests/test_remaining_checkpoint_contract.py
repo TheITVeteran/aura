@@ -114,6 +114,29 @@ def test_general_desktop_agency_is_not_task_shaped_demo_scripting():
     assert "reorientation, retry, repair receipts" in text
 
 
+def test_action_depth_expectation_engine_is_authoritative_remaining_scope():
+    requirements = {
+        requirement.key: requirement
+        for checkpoint in REMAINING_CHECKPOINTS
+        for requirement in checkpoint.requirements
+    }
+
+    requirement = requirements["action_depth_expectation_engine"]
+    text = "\n".join((
+        requirement.description,
+        *requirement.acceptance,
+        *requirement.source_paths,
+        *requirement.validators,
+    )).lower()
+
+    assert "acceptance criteria" in text
+    assert "partial_success" in text
+    assert "success_unverified" in text
+    assert "ok=true" in text
+    assert "core/runtime/skill_contract.py" in requirement.source_paths
+    assert "tests/test_action_depth_honesty.py" in requirement.validators
+
+
 def test_fictional_ai_imports_cover_requested_and_safety_anti_pattern_systems():
     sources = {item.source for item in FICTIONAL_CAPABILITY_IMPORTS}
 

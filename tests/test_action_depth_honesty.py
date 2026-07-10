@@ -16,10 +16,122 @@ contracts fixed in the July 2026 depth pass:
 from __future__ import annotations
 
 import asyncio
-import subprocess
 from types import SimpleNamespace
 
 import pytest
+
+
+# ---------------------------------------------------------------------------
+# Action expectation depth contract
+# ---------------------------------------------------------------------------
+
+def test_action_expectation_downgrades_shallow_verified_result(tmp_path):
+    from core.runtime.skill_contract import (
+        ActionExpectation,
+        SkillExecutionResult,
+        SkillStatus,
+        apply_action_expectation,
+    )
+
+    artifact_path = str(tmp_path / "report.pdf")
+    result = SkillExecutionResult(
+        skill="desktop.research_report",
+        status=SkillStatus.SUCCESS_VERIFIED,
+        output={"artifact_path": artifact_path},
+        verification_evidence={
+            "satisfied_criteria": ["artifact persisted"],
+            "artifact_path": artifact_path,
+        },
+        expectation=ActionExpectation(
+            objective="Create a sourced research report",
+            acceptance_criteria=["artifact persisted", "credible sources cited"],
+            required_evidence=["artifact_path"],
+            user_visible_effect="report is visible to the user",
+            repair_hint="return_to_browser_and_add_sources",
+        ),
+    )
+
+    checked = apply_action_expectation(result)
+
+    assert checked.status == SkillStatus.PARTIAL_SUCCESS
+    assert checked.ok is False
+    verdict = checked.verification_evidence["expectation_verdict"]
+    assert verdict["passed"] is False
+    assert "credible sources cited" in verdict["missing_criteria"]
+    assert "user-visible effect: report is visible to the user" in verdict["missing_criteria"]
+    assert verdict["next_step"] == "return_to_browser_and_add_sources"
+    assert "expectation incomplete" in checked.failure_reason
+
+
+def test_action_expectation_marks_missing_evidence_unverified(tmp_path):
+    from core.runtime.skill_contract import (
+        ActionExpectation,
+        SkillExecutionResult,
+        SkillStatus,
+        apply_action_expectation,
+    )
+
+    result = SkillExecutionResult(
+        skill="file.write",
+        status=SkillStatus.SUCCESS_VERIFIED,
+        output={"path": str(tmp_path / "a.txt")},
+        verification_evidence={
+            "criteria": {"file written": True},
+        },
+        expectation=ActionExpectation(
+            objective="Write and verify a file",
+            acceptance_criteria=["file written"],
+            required_evidence=["sha256", "effect_verified"],
+        ),
+    )
+
+    checked = apply_action_expectation(result)
+
+    assert checked.status == SkillStatus.SUCCESS_UNVERIFIED
+    verdict = checked.verification_evidence["expectation_verdict"]
+    assert verdict["missing_criteria"] == []
+    assert verdict["missing_evidence"] == ["sha256", "effect_verified"]
+    assert verdict["next_step"] == "collect_missing_verification_evidence"
+
+
+def test_skill_registry_enforces_expectation_after_verifier():
+    from core.runtime.skill_contract import (
+        ActionExpectation,
+        SkillContract,
+        SkillExecutionResult,
+        SkillRegistry,
+        SkillStatus,
+    )
+
+    registry = SkillRegistry()
+    registry.register(SkillContract(name="browser.research", version="1.0", description=""))
+
+    def verifier(result):
+        return SkillExecutionResult(
+            skill=result.skill,
+            status=SkillStatus.SUCCESS_VERIFIED,
+            output=result.output,
+            verification_evidence={"criteria": {"browser opened": True}},
+        )
+
+    registry.register_verifier("browser.research", verifier)
+    checked = registry.verify(
+        SkillExecutionResult(
+            skill="browser.research",
+            status=SkillStatus.SUCCESS_VERIFIED,
+            output={"url": "https://example.com"},
+            expectation=ActionExpectation(
+                objective="Research the topic and preserve sources",
+                acceptance_criteria=["browser opened", "source notes preserved"],
+                required_evidence=["url"],
+            ),
+        )
+    )
+
+    assert checked.status == SkillStatus.PARTIAL_SUCCESS
+    assert checked.verification_evidence["expectation_verdict"]["missing_criteria"] == [
+        "source notes preserved"
+    ]
 
 
 # ---------------------------------------------------------------------------

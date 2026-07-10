@@ -121,6 +121,36 @@
         },
         {
           "acceptance": [
+            "A skill/tool/desktop/autonomous action records objective, acceptance criteria, required evidence, user-visible effect, repair hint, and partial-success policy before completion.",
+            "Missing acceptance criteria downgrades verified success to partial_success or failed_recoverable; missing proof downgrades verified success to success_unverified.",
+            "Expectation verdicts must be causal: they change returned status, receipts, repair plans, memory lessons, and future planning rather than remaining advisory text.",
+            "No boolean ok=true, receipt id, opened app, or fired subprocess can count as completion without effect evidence matched to the user's expected outcome."
+          ],
+          "description": "Consequential actions must satisfy user-reasonable acceptance criteria before reporting verified success.",
+          "key": "action_depth_expectation_engine",
+          "live_artifacts": [
+            "artifacts/current/live_desktop_runtime"
+          ],
+          "missing_live_artifacts": [],
+          "missing_sources": [],
+          "missing_validators": [],
+          "source_paths": [
+            "core/runtime/skill_contract.py",
+            "core/capability_engine.py",
+            "core/skills/desktop_task.py",
+            "core/runtime/overt_action_loop.py",
+            "interface/routes/chat.py"
+          ],
+          "status": "mapped",
+          "validators": [
+            "tests/test_action_depth_honesty.py",
+            "tests/test_capability_engine_policy_regressions.py",
+            "tests/test_desktop_task_skill.py",
+            "tests/test_server_conversation_lane.py"
+          ]
+        },
+        {
+          "acceptance": [
             "Notes, Docs, folders, PDFs, browser research, image/wallpaper, AI-interlocution, and popup recovery use general capabilities rather than hard-coded demo scripts.",
             "Failures trigger reorientation, retry, repair receipts, and generated Aura-voice explanation instead of a canned stop.",
             "The proof includes current RAM/thermal bounds and does not spawn duplicate kernels or runaway model workers."
@@ -508,6 +538,6 @@
       "generally_capable_ai_candidate",
       "superintelligence_trajectory"
     ],
-    "requirements": 7
+    "requirements": 8
   }
 }

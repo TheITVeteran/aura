@@ -416,6 +416,33 @@ REMAINING_CHECKPOINTS: tuple[RemainingCheckpoint, ...] = (
                 live_artifacts=("artifacts/current/live_desktop_runtime",),
             ),
             CheckpointRequirement(
+                key="action_depth_expectation_engine",
+                description=(
+                    "Consequential actions must satisfy user-reasonable acceptance "
+                    "criteria before reporting verified success."
+                ),
+                acceptance=(
+                    "A skill/tool/desktop/autonomous action records objective, acceptance criteria, required evidence, user-visible effect, repair hint, and partial-success policy before completion.",
+                    "Missing acceptance criteria downgrades verified success to partial_success or failed_recoverable; missing proof downgrades verified success to success_unverified.",
+                    "Expectation verdicts must be causal: they change returned status, receipts, repair plans, memory lessons, and future planning rather than remaining advisory text.",
+                    "No boolean ok=true, receipt id, opened app, or fired subprocess can count as completion without effect evidence matched to the user's expected outcome.",
+                ),
+                source_paths=(
+                    "core/runtime/skill_contract.py",
+                    "core/capability_engine.py",
+                    "core/skills/desktop_task.py",
+                    "core/runtime/overt_action_loop.py",
+                    "interface/routes/chat.py",
+                ),
+                validators=(
+                    "tests/test_action_depth_honesty.py",
+                    "tests/test_capability_engine_policy_regressions.py",
+                    "tests/test_desktop_task_skill.py",
+                    "tests/test_server_conversation_lane.py",
+                ),
+                live_artifacts=("artifacts/current/live_desktop_runtime",),
+            ),
+            CheckpointRequirement(
                 key="general_desktop_agency",
                 description="Visible OS control must be general planning/perception/actuation with effect verification.",
                 acceptance=(
