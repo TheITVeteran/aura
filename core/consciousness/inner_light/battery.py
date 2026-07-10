@@ -168,14 +168,15 @@ def run_on_matrix(M: np.ndarray, *, phi_system: Optional[float] = None, seed: in
     )
 
 
-def run_live(*, bus: Any = None, n_bins: int = 96) -> BatteryResult:
-    """Build an activity matrix from the live ConsequenceBus and run the battery.
+def run_live(*, bus: Any = None, workspace: Any = None, n_bins: int = 96) -> BatteryResult:
+    """Build the activity matrix from the live streams (ConsequenceBus merged
+    with global-workspace broadcast winners) and run the battery.
 
     Also corroborates integration with the Ghost's system-Φ over the same stream.
     """
-    from core.consciousness.inner_light.activity import from_consequence_bus
+    from core.consciousness.inner_light.activity import from_live_streams
 
-    sample = from_consequence_bus(bus=bus, n_bins=n_bins)
+    sample = from_live_streams(bus=bus, workspace=workspace, n_bins=n_bins)
     if not sample.sufficient:
         res = BatteryResult(
             verdict="insufficient_data", score=0.0, discriminating=False,

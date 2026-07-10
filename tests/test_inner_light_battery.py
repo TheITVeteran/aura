@@ -84,7 +84,6 @@ def test_insufficient_matrix_is_honest():
 # ── activity source ──────────────────────────────────────────────────────────
 
 def test_build_activity_matrix_from_events():
-    rng = np.random.default_rng(0)
     now = time.time()
     channels = ["affect", "memory", "will", "world_model"]
     events = []
@@ -108,10 +107,49 @@ def test_activity_insufficient_cases():
     assert not s2.sufficient
 
 
-def test_run_live_insufficient_when_bus_empty():
+class _EmptyWorkspace:
+    history: list = []
+
+
+def test_run_live_insufficient_when_streams_empty():
     from core.runtime.consequence_bus import ConsequenceBus
     ConsequenceBus.reset()
-    res = bat.run_live(bus=ConsequenceBus.get())
+    res = bat.run_live(bus=ConsequenceBus.get(), workspace=_EmptyWorkspace())
     assert res.verdict == "insufficient_data"
     assert "insufficient live activity" in res.caveat
+    ConsequenceBus.reset()
+
+
+def test_from_live_streams_merges_bus_and_workspace():
+    from types import SimpleNamespace
+
+    from core.runtime.consequence_bus import ConsequenceBus
+
+    ConsequenceBus.reset()
+    bus = ConsequenceBus.get()
+    organs = ["affect", "memory", "will"]
+    for i in range(120):
+        bus.publish_action(source=organs[i % 3], domain="cognition", action_content="x")
+
+    now = time.time()
+    records = [
+        SimpleNamespace(
+            winner=SimpleNamespace(source=f"drive_{i % 2}", priority=0.7),
+            losers=[],
+            timestamp=now + i * 0.01,
+        )
+        for i in range(60)
+    ]
+    ws = SimpleNamespace(history=records)
+
+    sample = act.from_live_streams(bus=bus, workspace=ws, n_bins=64)
+    assert sample.sufficient, sample.reason
+    # Namespaced channels from BOTH streams are present and not merged.
+    assert any(c.startswith("bus:") for c in sample.channels)
+    assert any(c.startswith("gw:") for c in sample.channels)
+    assert sample.n_events == 180
+
+    # A dead workspace stream must not break the bus stream (fault isolation).
+    sample2 = act.from_live_streams(bus=bus, workspace=object(), n_bins=64)
+    assert all(c.startswith("bus:") for c in sample2.channels)
     ConsequenceBus.reset()

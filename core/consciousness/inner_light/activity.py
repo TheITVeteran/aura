@@ -14,7 +14,7 @@ fabricating a signal.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 
 import numpy as np
 
@@ -107,4 +107,73 @@ def from_consequence_bus(bus: Any = None, *, n_bins: int = 64, window: int = 500
     return build_activity_matrix(events, n_bins=n_bins)
 
 
-__all__ = ["ActivitySample", "build_activity_matrix", "from_consequence_bus"]
+def _consequence_events(bus: Any, window: int) -> list[tuple]:
+    try:
+        return [(float(e.timestamp), f"bus:{e.source}") for e in bus.recent_events(window)]
+    except (AttributeError, TypeError, ValueError):
+        return []
+
+
+def _workspace_events(workspace: Any, window: int) -> list[tuple]:
+    """Broadcast winners from the global workspace: each competition win is an
+    ignition event attributed to the winning subsystem, weighted by its priority."""
+    try:
+        records = list(getattr(workspace, "history", []) or [])[-window:]
+    except (AttributeError, TypeError):
+        return []
+    out: list[tuple] = []
+    for r in records:
+        try:
+            winner = getattr(r, "winner", None)
+            src = str(getattr(winner, "source", "") or "")
+            ts = float(getattr(r, "timestamp", 0.0) or 0.0)
+            if not src or ts <= 0:
+                continue
+            prio = float(getattr(winner, "priority", 1.0) or 1.0)
+            out.append((ts, f"gw:{src}", max(0.1, prio)))
+        except (AttributeError, TypeError, ValueError):
+            continue
+    return out
+
+
+def from_live_streams(
+    *,
+    bus: Any = None,
+    workspace: Any = None,
+    n_bins: int = 96,
+    window: int = 500,
+) -> ActivitySample:
+    """The richest live source: merge the ConsequenceBus stream with the global
+    workspace's broadcast history into one channel space.
+
+    Channels are namespaced per stream (``bus:affect`` vs ``gw:affect_engine``)
+    so a subsystem appearing on both streams is two genuinely different signals
+    (its consequential actions vs its workspace wins), not an accidental merge.
+    Each stream is fault-isolated: if one is unavailable the other still counts,
+    and thinness is still reported honestly by the matrix builder.
+    """
+    events: list[tuple] = []
+    try:
+        if bus is None:
+            from core.runtime.consequence_bus import ConsequenceBus
+            bus = ConsequenceBus.get()
+        events.extend(_consequence_events(bus, window))
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+    try:
+        if workspace is None:
+            from core.runtime.service_access import resolve_global_workspace
+            workspace = resolve_global_workspace(default=None)
+        if workspace is not None:
+            events.extend(_workspace_events(workspace, window))
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+    return build_activity_matrix(events, n_bins=n_bins)
+
+
+__all__ = [
+    "ActivitySample",
+    "build_activity_matrix",
+    "from_consequence_bus",
+    "from_live_streams",
+]
