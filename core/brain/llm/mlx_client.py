@@ -3271,14 +3271,29 @@ class MLXLocalClient:
         """
         if _shutdown_blocks_model_work(self.model_path, action="worker start/recovery"):
             return False
-        if request_is_background and _foreground_owner_active():
+        if (
+            request_is_background
+            and _foreground_owner_active()
+            and not self._is_primary_lane()
+        ):
+            # Same inversion as the warmup guard (2026-07-10): the Reflex
+            # fallback serving turns OWNED the foreground, which deferred
+            # cortex recovery here — the primary could never come back while
+            # its own fallback was answering for it. The primary lane's
+            # recovery is exempt; other background lanes still yield.
             logger.info(
                 "⏸️ [MLX] Deferring background worker activity for %s while foreground lane is owned by %s.",
                 os.path.basename(self.model_path),
                 _FOREGROUND_OWNER_NAME or "foreground",
             )
             return False
-        if request_is_background:
+        if request_is_background and not self._is_primary_lane():
+            # Every reason the gate's quiet policy returns (foreground_
+            # reserved, headroom, cortex_startup_quiet, quiet window)
+            # protects the user's turn from BACKGROUND COMPETITION. The
+            # primary lane's own revival is not competition — it is the
+            # thing the user's turn is waiting for, so it is exempt here
+            # exactly as at the owner guard above.
             background_deferral = _background_deferral_active(os.path.basename(self.model_path))
             if background_deferral:
                 logger.info(
@@ -3403,13 +3418,21 @@ class MLXLocalClient:
 
         global _GLOBAL_LAST_SWAP_TIME, _GLOBAL_LAST_HEAVY_MODEL
 
-        if request_is_background and _foreground_owner_active():
+        if (
+            request_is_background
+            and _foreground_owner_active()
+            and not self._is_primary_lane()
+        ):
+            # Primary-lane exemption (2026-07-10 inversion family): the
+            # reconciler's prewarm arrives here as background work; blocking
+            # it while the Reflex fallback owns the foreground kept the
+            # cortex dead exactly while users waited on it.
             logger.info(
                 "⏸️ [MLX] Background spawn blocked for %s while foreground lane is reserved.",
                 os.path.basename(self.model_path),
             )
             return False
-        if request_is_background:
+        if request_is_background and not self._is_primary_lane():
             background_deferral = _background_deferral_active(os.path.basename(self.model_path))
             if background_deferral:
                 logger.info(

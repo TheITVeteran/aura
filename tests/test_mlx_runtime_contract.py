@@ -511,3 +511,60 @@ async def test_primary_lane_warmup_exempt_from_foreground_owner_deferral(monkeyp
         "primary-lane warmup must run its precompile even while the "
         "foreground lane is owned"
     )
+
+
+@pytest.mark.asyncio
+async def test_primary_lane_recovery_exempt_from_foreground_owner_guards(monkeypatch):
+    """Second half of the 2026-07-10 inversion family: with the cortex dead,
+    the Reflex FALLBACK serving turns owned the foreground, and the spawn
+    guards then blocked the primary's own background recovery — the cortex
+    could never return while its fallback answered for it. Primary recovery
+    must pass every foreground-owner / gate-quiet guard."""
+    from core.brain.llm import mlx_client
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient("/models/Aura-32B-cortex-test")
+    assert client._is_primary_lane() is True
+
+    reached: list[str] = []
+
+    async def _inner(**_kw):
+        reached.append("inner")
+        return True
+
+    monkeypatch.setattr(client, "_ensure_worker_alive_inner", _inner)
+    monkeypatch.setattr(mlx_client, "_foreground_owner_active", lambda: True)
+    monkeypatch.setattr(
+        mlx_client, "_background_deferral_active", lambda *_a, **_k: "foreground_reserved"
+    )
+
+    result = await client._ensure_worker_alive(request_is_background=True)
+    assert reached == ["inner"], (
+        "primary-lane background recovery must reach the spawn path despite "
+        "foreground ownership and gate quiet policy"
+    )
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_non_primary_background_recovery_still_yields(monkeypatch):
+    """The anti-thrash side of the same law: a brainstem background recovery
+    still defers while the foreground lane is owned."""
+    from core.brain.llm import mlx_client
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient("/models/Qwen2.5-7B-Instruct-4bit")
+    assert client._is_primary_lane() is False
+
+    reached: list[str] = []
+
+    async def _inner(**_kw):
+        reached.append("inner")
+        return True
+
+    monkeypatch.setattr(client, "_ensure_worker_alive_inner", _inner)
+    monkeypatch.setattr(mlx_client, "_foreground_owner_active", lambda: True)
+
+    result = await client._ensure_worker_alive(request_is_background=True)
+    assert reached == []
+    assert result is False
