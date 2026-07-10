@@ -3409,7 +3409,8 @@ def stop_aura():
 def main():
     operator_commands = {
         "doctor", "conformance", "backup", "restore", "migrate",
-        "verify-state", "verify-memory", "rebuild-index", "chaos", "plugin"
+        "verify-state", "verify-memory", "rebuild-index", "chaos", "plugin",
+        "control-plane",
     }
     if len(sys.argv) > 1 and sys.argv[1] in operator_commands:
         from core.runtime import operator_cli

@@ -1045,7 +1045,9 @@ class GlobalWorkspace:
         return True
 
     def is_ready(self) -> bool:
-        manager = self._global_inhibition or ServiceContainer.get(
+        from core.runtime.service_access import optional_service
+
+        manager = self._global_inhibition or optional_service(
             "inhibition_manager", default=None
         )
         if manager is None or not callable(getattr(manager, "is_inhibited", None)):
