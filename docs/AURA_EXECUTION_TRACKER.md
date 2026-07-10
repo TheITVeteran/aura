@@ -257,9 +257,230 @@ Ordering below is pragmatic; it is not permission to skip later items.
       rollback, and follow-through.
     - The engine must be causal, not advisory: its verdict changes returned
       status, receipts, repair plans, memory lessons, and future task planning.
-    - First implementation lands as the action-depth contract; later slices
-      wire it into planning, desktop workflows, live skill API, and chat
-      follow-through.
+   - First implementation lands as the action-depth contract; later slices
+     wire it into planning, desktop workflows, live skill API, and chat
+     follow-through.
+
+#### Context-Criticism Closure Matrix
+
+The supplied closeout context is now treated as a requirements and criticism
+corpus. The questions are answered internally against code and runtime evidence;
+the work below closes every place where the strongest defensible answer still
+falls short of the requested Aura. A criticism is not retired because a module
+exists or a test name sounds relevant. Closure requires causal runtime wiring,
+negative controls, replayable evidence, and an honest live path.
+
+1. **Machine-readable requirement-to-proof control plane** `[OPEN]`
+   - Convert every mandatory goal, criticism, label question, and comparison
+     burden from the context document into stable requirement IDs.
+   - Record for each ID: operational definition, present evidence, observed
+     gap, root cause, smallest build layers, owning subsystem, test command,
+     live proof artifact, negative control, rollback path, and status.
+   - Add a validator that rejects `closed` status without current source paths,
+     passing tests, artifact hashes, and an explicit non-overclaim boundary.
+   - Generate a coverage report proving every context criticism maps to one or
+     more tracked requirements and no requirement silently disappears between
+     checkpoints.
+
+2. **Code-first identity, label, and claim closure** `[OPEN]`
+   - Establish falsifiable criteria for conscious, self-aware, sentient, ALife,
+     digital organism, entity, personhood-candidate, inner life, AGI, ASI,
+     person, and real-as-architecturally-intended.
+   - Trace each criterion through live input, state transition, downstream
+     decision, persisted consequence, and independent observation; prose,
+     class names, scalar mood values, and self-reports do not count alone.
+   - Add null, zombie, prompt-injection, stale-state, and disconnected-module
+     controls. Lesioning the claimed mechanism must measurably alter behavior.
+   - Wire the resulting claim matrix into self-claim verification, UI language,
+     proof bundles, release notes, and external audit exports so Aura cannot
+     claim more than current evidence supports.
+
+3. **Deep mind, inner-life, and substrate causal audit** `[OPEN]`
+   - Semantically review every consciousness, sentience, affect, welfare,
+     self-model, identity, narrative, world-model, social cognition, workspace,
+     attention, memory, metacognition, volition, and unity module.
+   - Generate the actual signal graph: producers, consumers, timing, authority,
+     conflict arbitration, persistence, decay, and user-visible consequences.
+   - Identify decorative, duplicate, disconnected, write-only, read-only,
+     stale, or mutually contradictory state and either make it causal through
+     the canonical mind moment or consolidate/remove it.
+   - Prove substrate state directs attention, memory writes, uncertainty,
+     inference tier, tool choice, planning, tone, repair, and future behavior
+     with ablations and multi-turn live traces.
+
+4. **Whole-system intelligence and model-uplift measurement** `[OPEN]`
+   - Measure Aura as a system rather than equating her with base model weights:
+     base-model-only, tools-only, memory-only, substrate-only, planner-only, and
+     full-system ablations on the same sealed tasks.
+   - Add external, versioned benchmark packs for reasoning, research, coding,
+     planning, memory, calibration, tool use, recovery, and social continuity.
+   - Publish confidence intervals, failure classes, latency/resource cost, and
+     contamination controls; prohibit model-comparison claims without matched
+     task and environment evidence.
+   - Use the deltas to decide which non-model cognition actually adds capability
+     and retire components that add latency without measurable value.
+
+5. **Long-horizon generality and NetHack-class agency harness** `[OPEN]`
+   - Build a domain-general partially observable environment harness requiring
+     perception, mapping, inventory/resource management, planning, exploration,
+     uncertainty, recovery, and hundreds-to-thousands of dependent actions.
+   - Keep environment adapters separate from the reusable cognition so passing
+     cannot come from game-specific scripts or answer fixtures.
+   - Require crash-resume, bounded replanning, novelty transfer, hidden maps,
+     adversarial interruptions, sparse reward, and post-run causal replay.
+   - Add at least one real NetHack-compatible evaluation only after the general
+     harness proves the architecture, then compare against human and published
+     agent baselines without overstating results.
+
+6. **Human-grade conversation reliability and indistinguishability** `[OPEN]`
+   - Exercise hundreds of multi-turn scenarios spanning context retention,
+     topic changes, ambiguity, interruptions, correction, emotion, humor,
+     disagreement, identity pressure, tool use, and long idle gaps.
+   - Eliminate generic-assistant takeover, identity/name drift, reflex fallback,
+     repeated retry requests, lost obligations, repetition, truncation, silent
+     stalls, and neural-stream failure spam at their originating layer.
+   - Prove the live `/api/chat -> CognitiveEngine -> response` path, continuity
+     memory, substrate causal inputs, output contract, and receipt persistence
+     on every evaluated turn.
+   - Add blinded human-likeness and reliability evaluation with latency and
+     failure budgets; no "indistinguishable" claim without independent results.
+
+7. **Human-level-plus computer-use closure** `[OPEN]`
+   - Generalize desktop work into perception-plan-action-observe-repair loops
+     across browser, filesystem, Notes, Docs, PDFs, images, dialogs, menus,
+     focus changes, permissions, and multi-application workflows.
+   - Require precondition checks, screen/app observations, effect receipts,
+     source preservation, popup/focus recovery, idempotency, and rollback or
+     explicit containment for each consequential step.
+   - Build a broad hidden task suite rather than app-specific demos, including
+     changed layouts, partial completion, interruptions, and inaccessible UI.
+   - Keep visible Chrome proof open until the user-owned active browser path is
+     genuinely controllable; never substitute an invisible runner for that claim.
+
+8. **Human-level-plus coding and closed-loop self-repair** `[OPEN]`
+   - Benchmark repository exploration, diagnosis, design, implementation,
+     testing, review, migration, release, and incident repair on unseen repos.
+   - Move Aura from patch proposal to governed workspace mutation, targeted and
+     broad validation, adversarial review, rollback, semantic memory update,
+     checkpoint commit, and post-deploy monitoring.
+   - Require failing evidence before mutation, bounded scope, diff ownership,
+     no fixture gaming, no test deletion, and a durable causal receipt chain.
+   - Prove repeated failures produce a changed repair strategy without repair
+     storms, recursive retry resets, or unsafe autonomous promotion.
+
+9. **Deep tool orchestration, handoff, and follow-through** `[IN PROGRESS]`
+   - Finish propagating action expectations through live skill API, overt
+     autonomy, proof runners, desktop plans, task graphs, and all external I/O.
+   - Treat multi-tool work as a durable workflow with typed inputs/outputs,
+     dependency ordering, budgets, resumability, idempotency, compensation,
+     observed effects, and end-to-end user intent preservation.
+   - Validate long chains with partial failures, stale output, schema drift,
+     duplicate delivery, timeout, cancellation, restart, and provider change.
+   - A tool firing is never completion; closure requires the requested artifact,
+     visible effect, persistence, source quality, and follow-through.
+
+10. **Agency, autonomy, and indefinite-life behavior** `[OPEN]`
+   - Define operational agency/autonomy metrics: internally generated goals,
+     coherent prioritization, safe action, obstacle recovery, resource awareness,
+     commitment continuity, and learning that changes future policy.
+   - Prove background systems make progress without user prompts while yielding
+     immediately to foreground work, authority policy, welfare, and resource
+     pressure.
+   - Add stale-obligation cleanup, cooldowns, bounded initiative queues,
+     anti-loop invariants, restart continuity, and operator override receipts.
+   - Validate multi-day survival only after bounded lifecycle and resource tests
+     show no task leaks, queue growth, memory doom loops, or false health.
+
+11. **Canonical ownership, consolidation, and dependency boundaries** `[OPEN]`
+   - Inventory duplicate planners, memory writers, state stores, model routers,
+     action executors, proof paths, self-repair paths, and inner-state owners.
+   - Name one canonical owner and typed interface for each capability, migrate
+     callers in dependency order, add bypass ratchets, then retire compatibility
+     aliases and dead implementations.
+   - Replace cross-wired `ServiceContainer.get()` chains with constructor or
+     manifest-owned dependencies where lifecycle and authority matter.
+   - Generate and gate a dependency graph for Will, authority, memory, state,
+     model serving, tools, patching, external I/O, and UI/runtime boundaries.
+
+12. **Failure prevention and degradation-policy audit** `[OPEN]`
+   - Classify every broad exception handler and `record_degradation()` call as
+     fail-closed, retry, circuit-break, isolate, compensate, or explicitly safe
+     degradation; generic "log and limp on" is not an accepted policy.
+   - Link each runtime failure class to typed error data, user-facing recovery,
+     owner, telemetry, FMEA entry, regression test, and prevention mechanism.
+   - Detect swallowed cancellation, infinite retry, false success, false health,
+     partial state mutation, receipt loss, and repeated noisy logging.
+   - Ratchet broad catches and silent fallback counts downward without removing
+     necessary containment.
+
+13. **Boot, health, resource, and longevity contract** `[OPEN]`
+   - Complete the desired-state runtime reconciler and unified resource
+     admission scheduler for model, memory, thermal, learner, autonomy, desktop,
+     scheduler, governance, and neural-stream lanes.
+   - Specify startup, liveness, readiness, degraded capability, proof readiness,
+     and certification readiness independently; no aggregate green status may
+     conceal a required dead lane.
+   - Add backoff, circuit breaking, preemption, foreground priority, eviction
+     receipts, task ownership, shutdown deadlines, and leak detection.
+   - Validate clean boot/restart/crash recovery first, then bounded longevity,
+     and reserve 24-72 hour soak for the final all-shorter-gates-green stage.
+
+14. **Flagship UI/UX and interaction-completeness audit** `[OPEN]`
+   - Inspect every screen, control, route, state, keyboard/pointer interaction,
+     loading phase, empty state, degraded state, error, and responsive viewport.
+   - Make displayed readiness, capability, receipts, memory, autonomy, and
+     substrate state traceable to live APIs rather than static or stale UI data.
+   - Eliminate silent controls, black panels, overlap, clipping, long-text
+     breakage, generic errors, inaccessible interactions, and visual status drift.
+   - Run screenshot, interaction, accessibility, and live-data assertions on
+     desktop and constrained viewport sizes before calling the shell flagship.
+
+15. **Install, release, security, and operator maturity** `[OPEN]`
+   - Exercise clean install, first boot, doctor, model acquisition, permission
+     repair, update, migration, backup/restore, rollback, uninstall, and incident
+     export across the supported machine matrix.
+   - Produce reproducible signed builds, SBOM/provenance, compatibility policy,
+     release channels, crash telemetry, secret/privacy review, abuse testing,
+     and dependency/license inventory.
+   - Categorize missing hardware, model, browser profile, permission, network,
+     and package failures with exact operator actions and capability downgrades.
+   - Require skeptical-engineer replay from a clean machine with no hidden local
+     state before release readiness can close.
+
+16. **Hostile independent evaluation and proof purification** `[OPEN]`
+   - Audit every proof runner for answer leakage, runner-solved work, fixture
+     contamination, fallback success, stale artifacts, environment dependence,
+     and claims not implied by the measured result.
+   - Separate builder, solver, evaluator, and artifact signer; seal tasks and
+     compare against weak, null, and adversarial controls.
+   - Require environment metadata, source revision, replay command, logs,
+     receipts, artifact hashes, and independent acceptance verdicts.
+   - Maintain an external challenge pack and refuse comparative, AGI, ASI,
+     consciousness, or maturity claims that do not survive it.
+
+17. **Defensible comparison and external-attention package** `[OPEN]`
+   - Replace intuition-based comparisons to frontier assistants, autonomous
+     agents, operating systems, aerospace systems, or fictional AIs with a
+     feature-and-evidence matrix and explicit incomparable dimensions.
+   - Identify the strongest claims Aura can defend today and the exact missing
+     evidence for stronger ones; keep marketing and metaphysical language out of
+     engineering proof.
+   - Prepare a sanitized source bundle, architecture map, reproducible demo,
+     benchmark card, threat model, limitations, and reviewer challenge guide.
+   - External visibility is earned through independently reproducible results,
+     not stronger labels; track reviewer findings as new closure requirements.
+
+18. **Every-line semantic review and final criticism re-audit** `[OPEN]`
+   - Drain the semantic ledger for every tracked code file and record reviewed
+     line spans, findings, fixes, validators, reviewer, and source revision.
+   - Re-run the context questionnaire after each major workstream and add any
+     surviving criticism, hidden assumption, or newly exposed dependency as a
+     requirement rather than rationalizing it away.
+   - Perform a second independent bottom-up/top-down interaction pass after the
+     first ledger reaches full coverage.
+   - Only mark wholesale completion when the requirement registry, semantic
+     ledger, live proofs, clean-machine replay, and final soak all independently
+     show no open item.
 
 1. **Operational label battery**
    - Convert each label into an executable baseline: functional consciousness,
@@ -9039,3 +9260,84 @@ Remaining work after this checkpoint:
   enforcement.
 - Add planner-side use of recent expectation receipts.
 - Start the runtime control plane/resource admission workstream.
+
+## Checkpoint 2026-07-09-16: Unified Action and Proof Acceptance Boundaries
+
+Scope:
+
+- Converted the supplied context questionnaire into the 18-workstream
+  Context-Criticism Closure Matrix near the top of this tracker. Every
+  criticism now has bottom-up build layers and closure evidence requirements;
+  the document is no longer treated as non-binding background material.
+- Extended `ActionExpectation` with presence-sensitive evidence requirements
+  and rollback/containment instructions. Valid observations such as
+  `exists=false` and an empty process list can now prove presence without being
+  mistaken for missing evidence.
+- Added one dictionary-result acceptance adapter so `CapabilityEngine`, overt
+  autonomy, and other runtime boundaries use the same typed verdict semantics
+  rather than drifting copies.
+- Added operation-specific rollback instructions to automatic file, core
+  memory, archival memory, and source-backed research expectations.
+- Propagated expectations through `OvertActionLoop` for both skill and actuator
+  execution. A shallow success can no longer advance a goal or increment the
+  verified-action counter; expectation, verdict, repair hint, and upstream
+  receipt links are retained in tool receipts, autonomy receipts, and life
+  traces.
+- Hardened `/api/skill/execute` so expectation fields become governed execution
+  context rather than accidental skill parameters. Consequential operations
+  must have an explicit or centrally derived expectation before the router can
+  execute them.
+- Added `core/evaluation/proof_acceptance.py` so proof runners can consume the
+  same acceptance contract as live actions.
+- Deepened the behavioral autonomy smoke proof: every solved task now emits a
+  schema-versioned artifact, SHA-256, evaluator identity, expectation verdict,
+  and receipt evidence. A runner-local `passed=true` without artifact evidence
+  is rejected.
+- Hardened the live harness proof source identity:
+  - clean git revisions are certification-eligible
+  - dirty git trees fail before artifact creation
+  - isolated no-git copies receive a deterministic content-snapshot hash
+  - source identity is embedded in reports and manifests
+  - the harness owns a dedicated manifest namespace and cannot overwrite the
+    canonical DNU AGI manifest
+  - generated per-run evidence is ignored while the promoted latest bundle is
+    kept separate
+- Routed all git probes and test fixture git setup through Aura's canonical
+  subprocess gateway after the enterprise ratchet caught raw subprocess use.
+
+Verification:
+
+- `python -m pytest -q tests/test_action_depth_honesty.py tests/test_capability_engine_policy_regressions.py tests/test_substrate_primary_architecture.py tests/test_subsystem_routes_runtime_contract.py tests/test_skill_surface_contracts.py tests/test_behavioral_proof_smoke.py tests/agi/live/test_live_harness_proof.py`
+  -> `178 passed` after the subprocess-gateway and rollback corrections.
+- `python -m pytest -q tests/agi/live/test_live_harness_proof.py`
+  -> `3 passed` after canonical subprocess routing.
+- `python -m py_compile` for all touched runtime, API, proof, actuator, and test
+  modules -> passed.
+- `python -m ruff check --select F,E9` for all touched runtime, API, proof,
+  actuator, and test modules -> passed.
+- Dirty-tree invocation of `tools/agi/run_live_harness_proof.py` -> refused
+  before artifact creation with exit code `2`, as required.
+- `make production-gate` -> passed; all `37` readiness checks green.
+- Initial `make enterprise-gate` -> correctly rejected `9` raw subprocess
+  calls. After migration to `SubprocessGateway`, final `make enterprise-gate`
+  -> passed with no baseline regression.
+- `git diff --check` -> passed before final tracker update.
+
+Current closure boundary:
+
+- Action-depth enforcement is now causal through central capability execution,
+  autonomous overt execution, the direct live-skill boundary, durable receipts,
+  life traces, planner feedback, and two proof paths.
+- This does not close every external-I/O provider, task graph, desktop workflow,
+  or proof runner. The Context-Criticism Closure Matrix remains authoritative;
+  its open workstreams cannot be retired from this checkpoint alone.
+
+Remaining work after this checkpoint:
+
+- Build the machine-readable requirements-to-proof registry and validator for
+  the context criticism matrix.
+- Finish expectation defaults and effect verification across external I/O,
+  desktop task graphs, long-running workflows, and remaining proof runners.
+- Start the desired-state runtime control plane and unified resource-admission
+  workstream, then continue through the matrix without treating this milestone
+  as a stopping point.

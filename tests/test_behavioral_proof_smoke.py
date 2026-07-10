@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from core.evaluation.behavioral_proof import (
     run_behavioral_proof_bundle,
@@ -51,10 +52,14 @@ def test_live_autonomy_loop_closes_goal_action_artifact_eval_memory(tmp_path):
     assert len(report.steps) == 6
     assert all(step.passed for step in report.steps)
     assert all(len(step.receipt_ids) == 4 for step in report.steps)
+    assert all(Path(step.artifact_path).is_file() for step in report.steps)
+    assert all(step.artifact_sha256 for step in report.steps)
+    assert all(step.expectation_verdict["passed"] is True for step in report.steps)
     assert report.loop_closure == {
         "internal_state_generated_goals": True,
         "actions_emitted_artifacts": True,
         "independent_evaluation_passed": True,
+        "expectation_contracts_passed": True,
         "memory_updated_after_each_action": True,
         "future_policy_changed": True,
         "receipts_cover_each_step": True,
@@ -80,3 +85,33 @@ def test_behavioral_proof_bundle_writes_smoke_and_live_loop(tmp_path):
     assert payload["passed"] is True
     assert payload["smoke"]["passed"] is True
     assert payload["live_loop"]["passed"] is True
+
+
+def test_proof_acceptance_rejects_runner_success_without_artifact_evidence():
+    from core.evaluation.proof_acceptance import evaluate_proof_acceptance
+    from core.runtime.skill_contract import ActionExpectation
+
+    acceptance = evaluate_proof_acceptance(
+        "shallow-proof",
+        candidate_passed=True,
+        evidence={
+            "ok": True,
+            "criteria_results": {"sealed answer matched": True},
+        },
+        expectation=ActionExpectation(
+            objective="Solve and persist evidence",
+            acceptance_criteria=["sealed answer matched"],
+            required_evidence=["artifact_path", "artifact_sha256"],
+            repair_hint="persist_and_hash_artifact",
+            rollback_hint="discard_failed_proof_artifact",
+            allow_partial=False,
+        ),
+    )
+
+    assert acceptance.accepted is False
+    assert acceptance.status == "success_unverified"
+    assert acceptance.verdict["missing_evidence"] == [
+        "artifact_path",
+        "artifact_sha256",
+    ]
+    assert acceptance.verdict["next_step"] == "persist_and_hash_artifact"

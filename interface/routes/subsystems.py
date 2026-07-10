@@ -36,6 +36,31 @@ _SKILL_EXECUTE_CONTEXT_KEYS = (
     "authorization",
     "scoped_authority",
     "proof_evaluation_contract",
+    "action_expectation",
+    "expectation",
+    "acceptance_criteria",
+    "required_evidence",
+    "required_evidence_present",
+    "user_visible_effect",
+    "repair_hint",
+    "rollback_hint",
+    "allow_partial",
+    "requires_sources",
+    "disable_auto_action_expectation",
+)
+_CONSEQUENTIAL_SKILL_SCOPES = frozenset(
+    {
+        "desktop_file_io",
+        "foreground_browser_dialogue",
+        "foreground_desktop_control",
+        "privileged_mutation",
+        "state_mutation",
+        "subprocess",
+    }
+)
+_MUTATING_FILE_ACTIONS = frozenset({"append", "copy", "delete", "move", "patch", "write"})
+_READ_ONLY_MEMORY_ACTIONS = frozenset(
+    {"archival_search", "query", "read", "recall", "search"}
 )
 _SUBSYSTEM_ROUTE_ERRORS = (
     AttributeError,
@@ -80,7 +105,11 @@ def _normalize_skill_execute_payload(params: dict[str, Any]) -> tuple[dict[str, 
             return {}, context
         return {"value": value}, context
 
-    return {k: v for k, v in params.items() if k != "context"}, context
+    return {
+        key: value
+        for key, value in params.items()
+        if key != "context" and key not in _SKILL_EXECUTE_CONTEXT_KEYS
+    }, context
 
 
 def _slug_for_skill_context(value: object, default: str) -> str:
@@ -114,6 +143,95 @@ def _apply_skill_execute_authority_context(
         skill_slug = _slug_for_skill_context(skill_name, "skill")
         ctx["scoped_authority"] = f"api_skill_execute:{route_slug}:{skill_slug}"
     return ctx
+
+
+def _live_skill_effect_scope(
+    skill_name: str,
+    params: dict[str, Any],
+    engine: Any,
+) -> tuple[str, str]:
+    resolved = str(skill_name or "")
+    resolver = getattr(engine, "resolve_skill_name", None)
+    if callable(resolver):
+        try:
+            resolved = str(resolver(skill_name) or skill_name)
+        except (AttributeError, RuntimeError, TypeError, ValueError):
+            resolved = str(skill_name or "")
+    skills = getattr(engine, "skills", None)
+    meta = skills.get(resolved) if isinstance(skills, dict) else None
+    classifier = getattr(engine, "_effect_scope_for_execution", None)
+    if meta is None or not callable(classifier):
+        return resolved, "unknown"
+    try:
+        scope = str(classifier(resolved, meta, params, {}) or "unknown").strip().lower()
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        scope = "unknown"
+    return resolved, scope
+
+
+def _live_skill_is_consequential(
+    skill_name: str,
+    params: dict[str, Any],
+    effect_scope: str,
+) -> bool:
+    normalized = str(skill_name or "").strip().lower()
+    action = str((params or {}).get("action") or "").strip().lower()
+    if normalized == "file_operation":
+        return action in _MUTATING_FILE_ACTIONS
+    if normalized == "memory_ops" and action in _READ_ONLY_MEMORY_ACTIONS:
+        return False
+    if normalized == "computer_use":
+        return effect_scope not in {"read_only", "sandboxed_compute"}
+    return effect_scope in _CONSEQUENTIAL_SKILL_SCOPES
+
+
+def _prepare_live_skill_expectation(
+    skill_name: str,
+    params: dict[str, Any],
+    context: dict[str, Any],
+    engine: Any,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    ctx = dict(context or {})
+    expectation = None
+    resolver = getattr(engine, "action_expectation_for", None)
+    if callable(resolver):
+        try:
+            expectation = resolver(skill_name, params, ctx)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("subsystems.skill_expectation", exc)
+
+    if expectation is not None:
+        serializer = getattr(expectation, "to_dict", None)
+        ctx["action_expectation"] = (
+            serializer() if callable(serializer) else expectation
+        )
+
+    resolved, effect_scope = _live_skill_effect_scope(skill_name, params, engine)
+    if expectation is not None or not _live_skill_is_consequential(
+        resolved,
+        params,
+        effect_scope,
+    ):
+        return ctx, None
+
+    return ctx, {
+        "ok": False,
+        "status": "action_expectation_required",
+        "error": (
+            f"Consequential live skill '{resolved}' requires an action expectation "
+            "with acceptance criteria or effect evidence before execution."
+        ),
+        "skill": resolved,
+        "effect_scope": effect_scope,
+        "required_contract": {
+            "objective": "what the operation must accomplish",
+            "acceptance_criteria": ["falsifiable completion criterion"],
+            "required_evidence": ["receipt or observed effect field"],
+            "repair_hint": "bounded repair action",
+            "rollback_hint": "bounded reversal or containment action",
+            "allow_partial": False,
+        },
+    }
 
 
 def _get_live_orchestrator_state() -> Any | None:
@@ -791,6 +909,14 @@ async def api_skill_execute(
 
         skill_params, execution_context = _normalize_skill_execute_payload(params)
         execution_context = _apply_skill_execute_authority_context(skill_name, execution_context)
+        execution_context, expectation_error = _prepare_live_skill_expectation(
+            skill_name,
+            skill_params,
+            execution_context,
+            engine,
+        )
+        if expectation_error is not None:
+            return JSONResponse(expectation_error, status_code=422)
         result = await intent_router.route_execution(
             skill_name,
             skill_params,

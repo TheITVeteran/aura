@@ -179,10 +179,11 @@ async def test_overt_action_loop_executes_verifies_and_receipts(tmp_path):
             }
 
     fake_engine = FakeEngine()
+    receipt_store = ReceiptStore(tmp_path / "receipts")
     loop = OvertActionLoop(
         capability_engine=fake_engine,
         synthesizer=FakeSynth(),
-        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        receipt_store=receipt_store,
         state_provider=lambda: SimpleNamespace(cognition=SimpleNamespace(pending_initiatives=[])),
     )
     loop._record_life_trace = lambda result, raw: setattr(result, "life_trace_id", "life-test-1")
@@ -201,6 +202,137 @@ async def test_overt_action_loop_executes_verifies_and_receipts(tmp_path):
     assert context["authorization"] == "governed_autonomous_overt_action"
     assert context["scoped_authority"].startswith("overt_action_loop:")
     assert context["scoped_authority"].endswith(":environment_info")
+    assert context["action_expectation"]["required_evidence"] == ["result"]
+    assert result["expectation_verdict"]["passed"] is True
+    tool_receipt = receipt_store.get(result["tool_receipt_id"])
+    assert tool_receipt.verification_evidence["expectation_verdict"]["passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_overt_action_loop_rejects_shallow_success_without_expected_evidence(tmp_path):
+    from core.runtime.overt_action_loop import OvertActionLoop
+    from core.runtime.receipts import ReceiptStore
+
+    class FakeSynth:
+        async def start(self):
+            return None
+
+        async def synthesize(self, state):
+            return SimpleNamespace(
+                winner={
+                    "goal": "Run a light environment self-audit",
+                    "source": "test_goal",
+                    "urgency": 0.6,
+                    "metadata": {"required_skills": ["environment_info"]},
+                },
+                will_receipt_id="will-test-shallow",
+            )
+
+    class ShallowEngine:
+        async def execute(self, skill_name, params, context=None):
+            return {"ok": True, "summary": "Environment audit fired."}
+
+    receipt_store = ReceiptStore(tmp_path / "receipts")
+    loop = OvertActionLoop(
+        capability_engine=ShallowEngine(),
+        synthesizer=FakeSynth(),
+        receipt_store=receipt_store,
+        state_provider=lambda: SimpleNamespace(
+            cognition=SimpleNamespace(pending_initiatives=[])
+        ),
+    )
+    loop._record_life_trace = lambda result, raw: setattr(
+        result,
+        "life_trace_id",
+        "life-test-shallow",
+    )
+
+    result = await loop.run_once(force=True)
+
+    assert result["verified"] is False
+    assert result["status"] == "success_unverified"
+    assert result["expectation_verdict"]["missing_evidence"] == ["result"]
+    assert result["next_step_hint"] == "repeat_overt_environment_info_with_evidence"
+    assert loop.status()["actions_verified"] == 0
+    tool_receipt = receipt_store.get(result["tool_receipt_id"])
+    assert tool_receipt.status == "success_unverified"
+    assert tool_receipt.verification_evidence["expectation_verdict"]["passed"] is False
+
+
+@pytest.mark.asyncio
+async def test_overt_action_loop_applies_expectations_to_actuator_path(
+    tmp_path,
+    monkeypatch,
+):
+    from core.actuators.actuator_registry import ActuatorResult
+    from core.runtime.overt_action_loop import OvertActionLoop
+    from core.runtime.receipts import ReceiptStore
+
+    class FakeActuator:
+        def validate_params(self, params):
+            return True
+
+    class FakeRegistry:
+        def get_actuator(self, name):
+            return FakeActuator() if name == "code_execution" else None
+
+        def execute_action(self, name, params, *, context=None):
+            return ActuatorResult(
+                success=True,
+                message="Sandbox launch returned success without output evidence.",
+                updates={},
+            )
+
+    registry = FakeRegistry()
+    monkeypatch.setattr(
+        "core.actuators.actuator_registry.get_actuator_registry",
+        lambda: registry,
+    )
+
+    class FakeSynth:
+        async def start(self):
+            return None
+
+        async def synthesize(self, state):
+            return SimpleNamespace(
+                winner={
+                    "goal": "Execute a bounded diagnostic calculation",
+                    "source": "test_goal",
+                    "urgency": 0.6,
+                    "metadata": {
+                        "required_skills": ["code_execution"],
+                        "params": {"code": "print(2 + 2)"},
+                    },
+                },
+                will_receipt_id="will-test-actuator",
+            )
+
+    receipt_store = ReceiptStore(tmp_path / "receipts")
+    loop = OvertActionLoop(
+        capability_engine=SimpleNamespace(),
+        synthesizer=FakeSynth(),
+        receipt_store=receipt_store,
+        state_provider=lambda: SimpleNamespace(
+            cognition=SimpleNamespace(pending_initiatives=[])
+        ),
+    )
+    loop._record_life_trace = lambda result, raw: setattr(
+        result,
+        "life_trace_id",
+        "life-test-actuator",
+    )
+
+    result = await loop.run_once(force=True)
+
+    assert result["skill"] == "code_execution"
+    assert result["verified"] is False
+    assert result["status"] == "success_unverified"
+    assert result["expectation_verdict"]["missing_evidence"] == ["updates"]
+    assert result["next_step_hint"] == (
+        "verify_overt_code_execution_applied_updates"
+    )
+    receipt = receipt_store.get(result["tool_receipt_id"])
+    assert receipt.status == "success_unverified"
 
 
 @pytest.mark.asyncio

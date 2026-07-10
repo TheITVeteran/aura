@@ -1,7 +1,22 @@
-import pytest
-import json
 import hashlib
-from pathlib import Path
+import json
+
+import pytest
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+_SUBPROCESS_GATEWAY = get_subprocess_gateway()
+
+
+def _run_git(root, *args):
+    return _SUBPROCESS_GATEWAY.run(
+        ["git", *args],
+        cwd=root,
+        timeout=30,
+        check=True,
+        offline_tooling=True,
+        source="proof_tooling:test_live_harness_source_identity",
+    )
 
 @pytest.mark.live
 def test_live_harness_proof(live_harness):
@@ -81,3 +96,44 @@ def test_live_harness_proof(live_harness):
     # Using the same verification logic inside test context to assert correctness
     from tools.agi.run_live_harness_proof import validate_report_score
     assert not validate_report_score(fake_report), "validate_report_score must reject reports with score but no traces"
+
+
+def test_source_identity_rejects_dirty_git_tree(tmp_path):
+    from tools.agi.run_live_harness_proof import get_source_identity
+
+    _run_git(tmp_path, "init", "-q")
+    _run_git(tmp_path, "config", "user.email", "aura-proof@example.invalid")
+    _run_git(tmp_path, "config", "user.name", "Aura Proof")
+    source = tmp_path / "module.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    _run_git(tmp_path, "add", "module.py")
+    _run_git(tmp_path, "commit", "-qm", "initial")
+
+    clean = get_source_identity(tmp_path)
+    assert clean["mode"] == "git_clean"
+    assert clean["certification_eligible"] is True
+    assert clean["dirty_fingerprint"] == ""
+
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+    dirty = get_source_identity(tmp_path)
+    assert dirty["mode"] == "git_dirty"
+    assert dirty["certification_eligible"] is False
+    assert dirty["dirty_fingerprint"]
+
+
+def test_source_identity_hashes_isolated_snapshot_without_artifacts(tmp_path):
+    from tools.agi.run_live_harness_proof import get_source_identity
+
+    (tmp_path / "core").mkdir()
+    (tmp_path / "core" / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    first = get_source_identity(tmp_path)
+    assert first["mode"] == "content_snapshot"
+    assert first["certification_eligible"] is True
+    assert first["snapshot_file_count"] == 1
+
+    (tmp_path / "artifacts").mkdir()
+    (tmp_path / "artifacts" / "generated.json").write_text("{}", encoding="utf-8")
+    second = get_source_identity(tmp_path)
+    assert second["snapshot_sha256"] == first["snapshot_sha256"]
+    assert second["snapshot_file_count"] == first["snapshot_file_count"]

@@ -28,7 +28,6 @@ from core.runtime.background_policy import background_activity_reason
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
-
 SAFE_AUTONOMOUS_SKILLS = (
     "auto_refactor",
     "system_proprioception",
@@ -59,6 +58,9 @@ class OvertActionResult:
     duration_ms: float = 0.0
     goal_id: str = ""
     next_step_hint: str = ""
+    action_expectation: dict[str, Any] = field(default_factory=dict)
+    expectation_verdict: dict[str, Any] = field(default_factory=dict)
+    expectation_receipt_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -253,6 +255,16 @@ class OvertActionLoop:
         goal = self._goal_for_initiative(initiative)
         skill, params = self._choose_skill_and_params(initiative, goal)
         action_id = hashlib.sha256(f"{started}:{objective}:{skill}".encode("utf-8")).hexdigest()[:16]
+        from core.actuators.actuator_registry import get_actuator_registry
+
+        registry = get_actuator_registry()
+        expectation = self._action_expectation_for(
+            skill,
+            params,
+            initiative,
+            goal,
+            actuator_backed=registry.get_actuator(skill) is not None,
+        )
         result = OvertActionResult(
             action_id=action_id,
             status="started",
@@ -263,6 +275,7 @@ class OvertActionLoop:
             will_receipt_id=will_receipt_id,
             started_at=started,
             goal_id=str(goal.get("id") or initiative.get("metadata", {}).get("goal_id") or ""),
+            action_expectation=expectation.to_dict() if expectation is not None else {},
         )
         governance_context = {
             "origin": "overt_action_loop",
@@ -275,9 +288,8 @@ class OvertActionLoop:
             "scoped_authority": f"overt_action_loop:{action_id}:{skill}",
             "authorization": "governed_autonomous_overt_action",
         }
-
-        from core.actuators.actuator_registry import get_actuator_registry
-        registry = get_actuator_registry()
+        if expectation is not None:
+            governance_context["action_expectation"] = expectation.to_dict()
 
         if registry.get_actuator(skill) is not None:
             try:
@@ -290,7 +302,7 @@ class OvertActionLoop:
                     "ok": actuator_res.success,
                     "message": actuator_res.message,
                     "updates": actuator_res.updates,
-                    "success": actuator_res.success
+                    "success": actuator_res.success,
                 }
             except (ImportError, RuntimeError, OSError, AttributeError, TypeError, ValueError) as exc:
                 result.status = "failed"
@@ -325,12 +337,153 @@ class OvertActionLoop:
                 )
                 raw = {"ok": False, "error": result.error}
 
+        if isinstance(raw, dict) and expectation is not None:
+            from core.runtime.skill_contract import apply_action_expectation_payload
+
+            raw = apply_action_expectation_payload(skill, raw, expectation)
+        if isinstance(raw, dict):
+            verdict = raw.get("expectation_verdict")
+            if isinstance(verdict, dict):
+                result.expectation_verdict = dict(verdict)
+                if not bool(verdict.get("passed", False)):
+                    result.next_step_hint = str(verdict.get("next_step") or "")
+            result.expectation_receipt_id = str(
+                raw.get("expectation_receipt_id") or ""
+            )
         result.verified = self._verify(skill, params, raw)
         result.status = "verified" if result.verified else "failed"
+        if not result.verified and result.expectation_verdict:
+            result.status = str(
+                result.expectation_verdict.get("status") or "failed_recoverable"
+            )
         result.result_summary = self._summarize_result(raw)
         if not result.verified and not result.error:
             result.error = str(raw.get("error") or raw.get("status") or "verification_failed") if isinstance(raw, dict) else "verification_failed"
         return self._finish(result, raw_result=raw)
+
+    @classmethod
+    def _action_expectation_for(
+        cls,
+        skill: str,
+        params: dict[str, Any],
+        initiative: dict[str, Any],
+        goal: dict[str, Any],
+        *,
+        actuator_backed: bool,
+    ) -> Any | None:
+        from core.runtime.skill_contract import ActionExpectation
+
+        metadata = dict(initiative.get("metadata") or {})
+        goal_metadata = dict(goal.get("metadata") or {})
+        raw = (
+            initiative.get("action_expectation")
+            or metadata.get("action_expectation")
+            or goal.get("action_expectation")
+            or goal_metadata.get("action_expectation")
+        )
+        if isinstance(raw, ActionExpectation):
+            return raw
+        source = dict(raw) if isinstance(raw, dict) else {}
+        for key in (
+            "acceptance_criteria",
+            "required_evidence",
+            "required_evidence_present",
+            "user_visible_effect",
+            "repair_hint",
+            "rollback_hint",
+            "allow_partial",
+        ):
+            for candidate in (initiative, metadata, goal_metadata):
+                if key in candidate and key not in source:
+                    source[key] = candidate[key]
+        objective = _short_text(
+            source.get("objective")
+            or initiative.get("goal")
+            or initiative.get("objective")
+            or goal.get("objective")
+            or skill,
+            1000,
+        )
+        if source:
+            source.setdefault("objective", objective)
+            source.setdefault("repair_hint", f"repair_overt_{skill}_expectation")
+            source.setdefault(
+                "rollback_hint",
+                "not_required_read_only" if not actuator_backed else "domain_specific_rollback_required",
+            )
+            source.setdefault("allow_partial", False)
+            from core.capability_engine import CapabilityEngine
+
+            explicit = CapabilityEngine.action_expectation_for(
+                skill,
+                params,
+                {"objective": objective, "action_expectation": source},
+            )
+            if explicit is not None:
+                return explicit
+
+        if actuator_backed:
+            if skill == "web_search":
+                from core.capability_engine import CapabilityEngine
+
+                deep_research = CapabilityEngine._web_query_requires_sources(
+                    params,
+                    {"objective": objective},
+                )
+                required = ["updates.search_results.summary"]
+                if deep_research:
+                    required.append("updates.search_results.sources")
+                return ActionExpectation(
+                    objective=objective,
+                    required_evidence=required,
+                    repair_hint="rerun_overt_web_search_with_source_evidence",
+                    rollback_hint="not_required_read_only",
+                    allow_partial=False,
+                )
+            return ActionExpectation(
+                objective=objective,
+                required_evidence=["updates"],
+                repair_hint=f"verify_overt_{skill}_applied_updates",
+                rollback_hint="domain_specific_rollback_required",
+                allow_partial=False,
+            )
+
+        from core.capability_engine import CapabilityEngine
+
+        default_expectation = CapabilityEngine.action_expectation_for(
+            skill,
+            params,
+            {"objective": objective},
+        )
+        if default_expectation is not None:
+            return default_expectation
+
+        known_evidence: dict[str, tuple[list[str], list[str]]] = {
+            "auto_refactor": ([], ["issues_found", "top_issues"]),
+            "clock": (["time"], []),
+            "environment_info": (["result"], []),
+            "evolution_status": ([], ["status"]),
+            "system_proprioception": (["system_map"], []),
+        }
+        if skill == "file_operation" and str(params.get("action") or "").lower() == "exists":
+            return ActionExpectation(
+                objective=objective,
+                required_evidence_present=["exists"],
+                repair_hint="repeat_path_observation",
+                rollback_hint="not_required_read_only",
+                allow_partial=False,
+            )
+        if skill not in known_evidence:
+            return None
+        required, present = known_evidence[skill]
+        return ActionExpectation(
+            objective=objective,
+            required_evidence=required,
+            required_evidence_present=present,
+            repair_hint=f"repeat_overt_{skill}_with_evidence",
+            rollback_hint="not_required_read_only",
+            allow_partial=False,
+        )
 
     def _goal_for_initiative(self, initiative: dict[str, Any]) -> dict[str, Any]:
         metadata = dict(initiative.get("metadata", {}) or {})
@@ -555,14 +708,31 @@ class OvertActionLoop:
                     cause=result.objective,
                     tool=result.skill,
                     governance_receipt_id=result.will_receipt_id or None,
-                    status="success_verified" if result.verified else "failed_unverified",
+                    status=(
+                        "success_verified"
+                        if result.verified
+                        else str(
+                            result.expectation_verdict.get("status")
+                            or "failed_unverified"
+                        )
+                    ),
                     output_digest=_json_digest(raw_result),
                     verification_evidence={
                         "verified": result.verified,
                         "duration_ms": result.duration_ms,
                         "summary": result.result_summary,
+                        "action_expectation": dict(result.action_expectation),
+                        "expectation_verdict": dict(result.expectation_verdict),
+                        "upstream_expectation_receipt_id": result.expectation_receipt_id,
                     },
-                    metadata={"action_id": result.action_id, "source": "overt_action_loop"},
+                    metadata={
+                        "action_id": result.action_id,
+                        "source": "overt_action_loop",
+                        "expectation_next_step": result.next_step_hint,
+                        "expectation_passed": bool(
+                            result.expectation_verdict.get("passed", result.verified)
+                        ),
+                    },
                 )
             )
             autonomy_receipt = store.emit(
@@ -572,7 +742,14 @@ class OvertActionLoop:
                     proposed_action=f"{result.skill}:{result.objective[:160]}",
                     governance_receipt_id=result.will_receipt_id or None,
                     budget_remaining=max(0.0, 1.0 - min(1.0, self._consecutive_failures / 5.0)),
-                    metadata={"action_id": result.action_id, "tool_receipt_id": tool_receipt.receipt_id},
+                    metadata={
+                        "action_id": result.action_id,
+                        "tool_receipt_id": tool_receipt.receipt_id,
+                        "expectation_receipt_id": result.expectation_receipt_id,
+                        "expectation_passed": bool(
+                            result.expectation_verdict.get("passed", result.verified)
+                        ),
+                    },
                 )
             )
             result.tool_receipt_id = tool_receipt.receipt_id
@@ -602,9 +779,15 @@ class OvertActionLoop:
                     "error": result.error,
                     "tool_receipt_id": result.tool_receipt_id,
                     "autonomy_receipt_id": result.autonomy_receipt_id,
+                    "action_expectation": result.action_expectation,
+                    "expectation_verdict": result.expectation_verdict,
+                    "expectation_receipt_id": result.expectation_receipt_id,
                 },
                 memory_update={"goal_id": result.goal_id} if result.goal_id else {},
-                future_policy_change={"next_action_after_s": self.interval_s},
+                future_policy_change={
+                    "next_action_after_s": self.interval_s,
+                    "next_step_hint": result.next_step_hint,
+                },
             )
             result.life_trace_id = event.event_id
         except (ImportError, AttributeError, RuntimeError) as exc:

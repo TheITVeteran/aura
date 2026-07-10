@@ -20,7 +20,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Action expectation depth contract
 # ---------------------------------------------------------------------------
@@ -92,6 +91,60 @@ def test_action_expectation_marks_missing_evidence_unverified(tmp_path):
     assert verdict["missing_criteria"] == []
     assert verdict["missing_evidence"] == ["sha256", "effect_verified"]
     assert verdict["next_step"] == "collect_missing_verification_evidence"
+
+
+def test_action_expectation_can_require_evidence_presence_when_false_is_valid():
+    from core.runtime.skill_contract import (
+        ActionExpectation,
+        SkillExecutionResult,
+        SkillStatus,
+        apply_action_expectation,
+    )
+
+    checked = apply_action_expectation(
+        SkillExecutionResult(
+            skill="file.exists",
+            status=SkillStatus.SUCCESS_VERIFIED,
+            output={"exists": False, "state": "missing"},
+            expectation=ActionExpectation(
+                objective="Determine whether the requested path exists",
+                required_evidence_present=["exists"],
+                rollback_hint="not_required_read_only",
+                allow_partial=False,
+            ),
+        )
+    )
+
+    assert checked.ok is True
+    assert checked.verification_evidence["expectation_verdict"]["passed"] is True
+    assert checked.verification_evidence["action_expectation"]["rollback_hint"] == (
+        "not_required_read_only"
+    )
+
+
+def test_action_expectation_payload_reuses_typed_verdict_semantics():
+    from core.runtime.skill_contract import (
+        ActionExpectation,
+        apply_action_expectation_payload,
+    )
+
+    payload = apply_action_expectation_payload(
+        "process_supervisor",
+        {"ok": True, "updates": {"processes": []}},
+        ActionExpectation(
+            objective="List managed processes",
+            required_evidence_present=["updates.processes"],
+            rollback_hint="not_required_read_only",
+            allow_partial=False,
+        ),
+    )
+
+    assert payload["ok"] is True
+    assert payload["status"] == "success_verified"
+    assert payload["expectation_verdict"]["passed"] is True
+    assert payload["action_expectation"]["required_evidence_present"] == [
+        "updates.processes"
+    ]
 
 
 def test_skill_registry_enforces_expectation_after_verifier():
@@ -435,9 +488,9 @@ def test_uplink_fails_without_state_repository(monkeypatch, tmp_path):
 def test_uplink_verifies_with_healthy_repo_and_disk(monkeypatch, tmp_path):
     import time as _time
 
+    import core.config as config_mod
     from core.container import ServiceContainer
     from core.skills.uplink_local import UplinkSkill
-    import core.config as config_mod
 
     fake_repo = SimpleNamespace(
         get_runtime_status=lambda: {

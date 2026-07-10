@@ -15,6 +15,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from subprocess import SubprocessError
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -23,7 +24,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-_GIT_METADATA_ERRORS = (OSError, UnicodeDecodeError, ValueError)
 _LIVE_PROOF_RECOVERABLE_ERRORS = (
     AttributeError,
     ImportError,
@@ -38,30 +38,139 @@ from core.agency_core import AgencyCore
 from core.capability_engine import CapabilityEngine
 from core.container import ServiceContainer
 from core.executive.authority_gateway import AuthorityGateway
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.volition import VolitionEngine
 from core.will import ActionDomain, get_will
 
+_SOURCE_HASH_EXCLUDED_PARTS = frozenset(
+    {
+        ".aura",
+        ".aura_runtime",
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".venv",
+        "__pycache__",
+        "artifacts",
+        "data",
+        "dist",
+        "logs",
+        "models",
+        "models_gguf",
+        "storage",
+        "training",
+    }
+)
+_SUBPROCESS_GATEWAY = get_subprocess_gateway()
+
+
+def _source_tree_hash(root: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    count = 0
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(root)
+        if any(part in _SOURCE_HASH_EXCLUDED_PARTS for part in relative.parts):
+            continue
+        try:
+            content = path.read_bytes()
+        except OSError:
+            continue
+        digest.update(str(relative).encode("utf-8", errors="surrogateescape"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(content).digest())
+        count += 1
+    return digest.hexdigest(), count
+
+
+def get_source_identity(root: Path = PROJECT_ROOT) -> dict[str, Any]:
+    """Return a replayable identity for a clean git tree or isolated snapshot."""
+    try:
+        inside = _SUBPROCESS_GATEWAY.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=root,
+            timeout=10,
+            check=False,
+            read_only=True,
+            source="proof_tooling:live_harness_source_identity",
+        )
+    except (OSError, SubprocessError, RuntimeError, ValueError):
+        inside = None
+    if inside is not None and inside.returncode == 0 and inside.stdout.strip() == "true":
+        try:
+            commit = _SUBPROCESS_GATEWAY.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=root,
+                timeout=10,
+                check=True,
+                read_only=True,
+                source="proof_tooling:live_harness_source_identity",
+            ).stdout.strip()
+            status_text = _SUBPROCESS_GATEWAY.run(
+                ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
+                cwd=root,
+                timeout=30,
+                check=True,
+                read_only=True,
+                source="proof_tooling:live_harness_source_identity",
+            ).stdout
+            diff_text = _SUBPROCESS_GATEWAY.run(
+                ["git", "diff", "--binary", "HEAD"],
+                cwd=root,
+                timeout=30,
+                check=True,
+                read_only=True,
+                source="proof_tooling:live_harness_source_identity",
+            ).stdout
+            dirty = bool(status_text)
+            dirty_fingerprint = (
+                hashlib.sha256(
+                    (status_text + "\0" + diff_text).encode(
+                        "utf-8",
+                        errors="surrogateescape",
+                    )
+                ).hexdigest()
+                if dirty
+                else ""
+            )
+            return {
+                "mode": "git_clean" if not dirty else "git_dirty",
+                "commit_sha": commit,
+                "worktree_clean": not dirty,
+                "dirty_fingerprint": dirty_fingerprint,
+                "snapshot_sha256": "",
+                "snapshot_file_count": 0,
+                "certification_eligible": not dirty,
+            }
+        except (OSError, SubprocessError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
+            return {
+                "mode": "git_error",
+                "commit_sha": "",
+                "worktree_clean": False,
+                "dirty_fingerprint": hashlib.sha256(str(exc).encode()).hexdigest(),
+                "snapshot_sha256": "",
+                "snapshot_file_count": 0,
+                "certification_eligible": False,
+            }
+
+    snapshot_sha256, file_count = _source_tree_hash(root)
+    return {
+        "mode": "content_snapshot",
+        "commit_sha": str(os.getenv("AURA_SOURCE_COMMIT") or ""),
+        "worktree_clean": None,
+        "dirty_fingerprint": "",
+        "snapshot_sha256": snapshot_sha256,
+        "snapshot_file_count": file_count,
+        "certification_eligible": bool(snapshot_sha256 and file_count > 0),
+    }
+
 
 def get_git_commit() -> str:
-    try:
-        git_dir = PROJECT_ROOT / ".git"
-        if not git_dir.exists():
-            return "unknown_no_git_dir"
-        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
-        if head.startswith("ref: "):
-            ref = head.split(" ", 1)[1].strip()
-            ref_path = git_dir / ref
-            if ref_path.exists():
-                return ref_path.read_text(encoding="utf-8").strip()
-            packed_refs = git_dir / "packed-refs"
-            if packed_refs.exists():
-                for line in packed_refs.read_text(encoding="utf-8").splitlines():
-                    if line and not line.startswith("#") and line.endswith(f" {ref}"):
-                        return line.split(" ", 1)[0].strip()
-            return "unknown_ref_not_found"
-        return head
-    except _GIT_METADATA_ERRORS as e:
-        return f"unknown_error_{type(e).__name__}"
+    identity = get_source_identity()
+    return str(identity.get("commit_sha") or identity.get("snapshot_sha256") or "unknown")
 
 
 def scan_canary_leaks(canary: str, paths: list[Path]) -> bool:
@@ -130,26 +239,48 @@ async def main():
     print("           AURA LIVE HARNESS PROOF RUNNER         ")
     print("==================================================")
 
+    source_identity = get_source_identity(PROJECT_ROOT)
+    allow_dirty_diagnostic = str(
+        os.getenv("AURA_LIVE_HARNESS_ALLOW_DIRTY", "0")
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if not source_identity.get("certification_eligible") and not allow_dirty_diagnostic:
+        print(
+            "[!] Refusing proof run because source identity is not certification-eligible: "
+            f"mode={source_identity.get('mode')} "
+            f"dirty_fingerprint={source_identity.get('dirty_fingerprint') or 'none'}"
+        )
+        return 2
+
     run_id = str(uuid.uuid4())
     run_dir = PROJECT_ROOT / "artifacts" / "agi" / "live_harness_proof" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    commit_sha = get_git_commit()
+    commit_sha = str(
+        source_identity.get("commit_sha")
+        or source_identity.get("snapshot_sha256")
+        or "unknown"
+    )
     sys_info = {
         "run_id": run_id,
         "timestamp": time.time(),
         "commit_sha": commit_sha,
         "python_version": sys.version,
         "platform": platform.platform(),
+        "source_identity": source_identity,
     }
 
     print(f"Run ID: {run_id}")
     print(f"Commit SHA: {commit_sha}")
+    print(f"Source mode: {source_identity.get('mode')}")
     print(f"Run Directory: {run_dir}")
 
     # Set up trace results
     pos_results = {}
     neg_results = {}
+    acceptance_results = {}
+    pos_results["source_identity_certification_eligible"] = bool(
+        source_identity.get("certification_eligible")
+    )
 
     # Initialize Services
     print("\n[+] Booting core components for positive controls...")
@@ -278,7 +409,28 @@ async def main():
             cls = getattr(module, meta.class_name)
             skill = cls()
             skill_res = await skill.safe_execute({}, {})
-            is_ok = skill_res.get("ok", False)
+            skill_res = cap_engine._apply_action_expectation_result(
+                "clock",
+                skill_res,
+                {},
+                {
+                    "origin": "proof",
+                    "proof_evaluation_contract": True,
+                    "action_expectation": {
+                        "objective": "Read the live system clock with concrete output evidence",
+                        "required_evidence": ["time", "readable"],
+                        "repair_hint": "rerun_clock_probe_on_live_skill",
+                        "rollback_hint": "not_required_read_only",
+                        "allow_partial": False,
+                    },
+                },
+            )
+            verdict = dict(skill_res.get("expectation_verdict") or {})
+            is_ok = bool(skill_res.get("ok", False) and verdict.get("passed", False))
+            acceptance_results["skill_execution"] = {
+                "expectation_receipt_id": skill_res.get("expectation_receipt_id"),
+                "verdict": verdict,
+            }
             pos_results["skill_execution"] = is_ok
             print(f"  [PASS] Skill 'clock' execution succeeded: {is_ok}")
         else:
@@ -436,6 +588,7 @@ async def main():
         "system_info": sys_info,
         "positive_controls": pos_results,
         "negative_controls": neg_results,
+        "acceptance_results": acceptance_results,
         "all_positive_passed": all_pos_passed,
         "all_negative_passed": all_neg_passed,
         "passed": passed
@@ -443,13 +596,18 @@ async def main():
 
     # Write LIVE_HARNESS_PROOF.json
     json_path = run_dir / "LIVE_HARNESS_PROOF.json"
-    json_path.write_text(json.dumps(proof_summary, indent=2), encoding="utf-8")
+    atomic_write_text(
+        json_path,
+        json.dumps(proof_summary, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     print(f"\n[+] Proof results saved to {json_path}")
 
     # Write MANIFEST.json with sha256 checksums
     manifest = {
         "run_id": run_id,
         "commit_sha": commit_sha,
+        "source_identity": source_identity,
         "files": {}
     }
     
@@ -460,15 +618,13 @@ async def main():
         "sha256": sha256
     }
     
-    manifest_path = run_dir / "MANIFEST.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    print(f"[+] Manifest file saved to {manifest_path}")
-
     # Write human-readable LIVE_HARNESS_PROOF.md report
     md_content = f"""# Live Harness Proof Report
 Run ID: `{run_id}`
 Timestamp: `{sys_info["timestamp"]}`
 Commit SHA: `{commit_sha}`
+Source mode: `{source_identity["mode"]}`
+Source snapshot SHA-256: `{source_identity.get("snapshot_sha256") or "not_applicable"}`
 Platform: `{sys_info["platform"]}`
 Python: `{sys_info["python_version"]}`
 
@@ -477,6 +633,7 @@ Verification that real Aura modules boot and execute as expected.
 
 | Control Point | Status | Description |
 |---|---|---|
+| Source Identity | {'PASS' if pos_results['source_identity_certification_eligible'] else 'FAIL'} | clean git commit or hashed isolated source snapshot |
 | Will Boot & Decide | {'PASS' if pos_results['will_boot_and_decide'] else 'FAIL'} | Boot `UnifiedWill` and route decisions |
 | Authority Gateway Routing | {'PASS' if pos_results['will_gate_routing'] else 'FAIL'} | Gate action execution through Unified Will |
 | Will Receipt Verification | {'PASS' if pos_results['will_receipt_verification'] else 'FAIL'} | Trace and verify cryptographic receipt ID |
@@ -498,28 +655,70 @@ Verification that Aura's runtime detects, fails closed, and protects against adv
 
 ## Summary
 Overall Live Harness Proof Status: **{'PASSED' if passed else 'FAILED'}**
-"""
+    """
     md_path = run_dir / "LIVE_HARNESS_PROOF.md"
-    md_path.write_text(md_content, encoding="utf-8")
+    atomic_write_text(md_path, md_content, encoding="utf-8")
     print(f"[+] Human-readable report saved to {md_path}")
 
-    # Copy files to artifacts/agi_live as expected by the pytest runner if needed
-    dest_dir = PROJECT_ROOT / "artifacts" / "agi_live"
+    manifest["files"]["LIVE_HARNESS_PROOF.md"] = {
+        "path": str(md_path.relative_to(PROJECT_ROOT)),
+        "sha256": hashlib.sha256(md_path.read_bytes()).hexdigest(),
+    }
+    manifest_path = run_dir / "MANIFEST.json"
+    atomic_write_text(
+        manifest_path,
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    print(f"[+] Manifest file saved to {manifest_path}")
+
+    # The general AGI bundle owns artifacts/agi_live/MANIFEST.json. Keep this
+    # proof in a dedicated subdirectory locally; an isolated test harness may
+    # provide its own empty artifact directory via AURA_ARTIFACTS_DIR.
+    configured_dest = str(os.getenv("AURA_ARTIFACTS_DIR") or "").strip()
+    dest_dir = (
+        Path(configured_dest)
+        if configured_dest
+        else PROJECT_ROOT / "artifacts" / "agi_live" / "live_harness"
+    )
     dest_dir.mkdir(parents=True, exist_ok=True)
-    (dest_dir / "LIVE_HARNESS_PROOF.json").write_text(json.dumps(proof_summary, indent=2), encoding="utf-8")
-    (dest_dir / "LIVE_HARNESS_PROOF.md").write_text(md_content, encoding="utf-8")
+    dest_json = dest_dir / "LIVE_HARNESS_PROOF.json"
+    dest_md = dest_dir / "LIVE_HARNESS_PROOF.md"
+    atomic_write_text(
+        dest_json,
+        json.dumps(proof_summary, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    atomic_write_text(dest_md, md_content, encoding="utf-8")
     
     manifest_dest = {
         "run_id": run_id,
         "commit_sha": commit_sha,
+        "source_identity": source_identity,
         "files": {
             "LIVE_HARNESS_PROOF.json": {
-                "path": "artifacts/agi_live/LIVE_HARNESS_PROOF.json",
-                "sha256": hashlib.sha256((dest_dir / "LIVE_HARNESS_PROOF.json").read_bytes()).hexdigest()
+                "path": (
+                    str(dest_json.relative_to(PROJECT_ROOT))
+                    if dest_json.is_relative_to(PROJECT_ROOT)
+                    else dest_json.name
+                ),
+                "sha256": hashlib.sha256(dest_json.read_bytes()).hexdigest()
+            },
+            "LIVE_HARNESS_PROOF.md": {
+                "path": (
+                    str(dest_md.relative_to(PROJECT_ROOT))
+                    if dest_md.is_relative_to(PROJECT_ROOT)
+                    else dest_md.name
+                ),
+                "sha256": hashlib.sha256(dest_md.read_bytes()).hexdigest()
             }
         }
     }
-    (dest_dir / "MANIFEST.json").write_text(json.dumps(manifest_dest, indent=2), encoding="utf-8")
+    atomic_write_text(
+        dest_dir / "MANIFEST.json",
+        json.dumps(manifest_dest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     print(f"[+] Copied harness proof bundle to standard destination: {dest_dir}")
 
     if not passed:

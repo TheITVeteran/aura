@@ -4342,8 +4342,10 @@ class CapabilityEngine(AuraBaseModule):
         for key in (
             "acceptance_criteria",
             "required_evidence",
+            "required_evidence_present",
             "user_visible_effect",
             "repair_hint",
+            "rollback_hint",
             "allow_partial",
         ):
             if key in context and key not in source:
@@ -4353,8 +4355,9 @@ class CapabilityEngine(AuraBaseModule):
 
         criteria = cls._str_list(source.get("acceptance_criteria") or source.get("criteria"))
         evidence = cls._str_list(source.get("required_evidence") or source.get("evidence_required"))
+        evidence_present = cls._str_list(source.get("required_evidence_present"))
         visible_effect = source.get("user_visible_effect") or source.get("visible_effect")
-        if not criteria and not evidence and not visible_effect:
+        if not criteria and not evidence and not evidence_present and not visible_effect:
             default_expectation = cls._default_action_expectation_for(
                 skill_name,
                 params,
@@ -4377,10 +4380,22 @@ class CapabilityEngine(AuraBaseModule):
             ),
             acceptance_criteria=criteria,
             required_evidence=evidence,
+            required_evidence_present=evidence_present,
             user_visible_effect=str(visible_effect) if visible_effect else None,
             repair_hint=str(source.get("repair_hint") or ""),
+            rollback_hint=str(source.get("rollback_hint") or ""),
             allow_partial=cls._bool_value(source.get("allow_partial"), default=True),
         )
+
+    @classmethod
+    def action_expectation_for(
+        cls,
+        skill_name: str,
+        params: dict[str, Any],
+        context: dict[str, Any],
+    ) -> Any | None:
+        """Public runtime boundary for expectation derivation."""
+        return cls._action_expectation_for(skill_name, params, context)
 
     @classmethod
     def _default_action_expectation_for(
@@ -4417,6 +4432,7 @@ class CapabilityEngine(AuraBaseModule):
                     required_evidence=["block", "sha256", "effect_verified"],
                     user_visible_effect=f"core memory {verb} is persisted and verified",
                     repair_hint=f"verify_memory_ops_{action}_effect",
+                    rollback_hint="restore_previous_core_memory_block",
                     allow_partial=False,
                 )
             if action == "archival_insert":
@@ -4432,6 +4448,7 @@ class CapabilityEngine(AuraBaseModule):
                     ],
                     user_visible_effect="archival memory write is durable and receipt-backed",
                     repair_hint="retry_archival_insert_through_memory_write_gateway",
+                    rollback_hint="tombstone_or_restore_archival_memory_record",
                     allow_partial=False,
                 )
             return None
@@ -4451,6 +4468,7 @@ class CapabilityEngine(AuraBaseModule):
                 acceptance_criteria=[],
                 required_evidence=["sources", "summary"],
                 repair_hint="rerun_web_research_with_sources",
+                rollback_hint="not_required_read_only",
                 allow_partial=True,
             )
 
@@ -4473,12 +4491,21 @@ class CapabilityEngine(AuraBaseModule):
 
         criterion, evidence = file_expectations[action]
         target = f"{path} -> {destination}" if destination else path
+        rollback_hints = {
+            "write": "restore_previous_file_version_or_delete_new_file",
+            "append": "restore_previous_file_version",
+            "patch": "restore_previous_file_version",
+            "delete": "restore_deleted_path_from_backup",
+            "move": "move_destination_back_to_source",
+            "copy": "delete_verified_destination_copy",
+        }
         return expectation_cls(
             objective=f"{action} file_operation effect for {target or 'requested path'}",
             acceptance_criteria=[criterion],
             required_evidence=evidence,
             user_visible_effect=f"filesystem {action} is observable and verified",
             repair_hint=f"verify_file_operation_{action}_effect",
+            rollback_hint=rollback_hints[action],
             allow_partial=False,
         )
 
@@ -4529,44 +4556,17 @@ class CapabilityEngine(AuraBaseModule):
         if expectation is None:
             return result
 
-        from core.runtime.skill_contract import (
-            SkillExecutionResult,
-            SkillStatus,
-            apply_action_expectation,
-        )
+        from core.runtime.skill_contract import apply_action_expectation_payload
 
-        raw_status = str(result.get("status") or "").strip()
-        status = (
-            SkillStatus.SUCCESS_UNVERIFIED
-            if raw_status == SkillStatus.SUCCESS_UNVERIFIED.value
-            else SkillStatus.SUCCESS_VERIFIED
+        payload = apply_action_expectation_payload(
+            skill_name,
+            result,
+            expectation,
         )
-        evidence = result.get("verification_evidence")
-        if not isinstance(evidence, dict):
-            evidence = {}
-        checked = apply_action_expectation(
-            SkillExecutionResult(
-                skill=skill_name,
-                status=status,
-                output=result,
-                receipt_id=str(result.get("receipt_id") or "") or None,
-                verification_evidence=evidence,
-                expectation=expectation,
-            )
-        )
-        verdict = checked.verification_evidence.get("expectation_verdict", {})
-        payload = dict(result)
-        payload["verification_evidence"] = checked.verification_evidence
-        payload["expectation_verdict"] = verdict
-        payload["status"] = checked.status.value
-        payload["ok"] = checked.ok
-        if not checked.ok and checked.failure_reason and not payload.get("error"):
-            payload["error"] = checked.failure_reason
         expectation_receipt_id = cls._emit_action_expectation_receipt(
             skill_name,
             payload,
             expectation,
-            checked,
         )
         if expectation_receipt_id:
             payload["expectation_receipt_id"] = expectation_receipt_id
@@ -4594,9 +4594,10 @@ class CapabilityEngine(AuraBaseModule):
         skill_name: str,
         result: dict[str, Any],
         expectation: Any,
-        checked: Any,
     ) -> str | None:
-        verdict = checked.verification_evidence.get("expectation_verdict", {})
+        evidence = result.get("verification_evidence")
+        evidence = dict(evidence) if isinstance(evidence, dict) else {}
+        verdict = evidence.get("expectation_verdict", {})
         if not isinstance(verdict, dict) or not verdict:
             return None
 
@@ -4606,19 +4607,20 @@ class CapabilityEngine(AuraBaseModule):
             receipt = ToolExecutionReceipt(
                 cause=str(getattr(expectation, "objective", "") or skill_name)[:240],
                 tool=skill_name,
-                status=str(checked.status.value),
+                status=str(result.get("status") or "success_unverified"),
                 output_digest=cls._action_expectation_digest(
                     {
                         "skill": skill_name,
-                        "status": checked.status.value,
+                        "status": result.get("status"),
                         "ok": bool(result.get("ok", False)),
                         "verdict": verdict,
                     }
                 ),
                 verification_evidence={
                     "expectation_verdict": verdict,
-                    "original_receipt_id": checked.receipt_id,
-                    "failure_reason": checked.failure_reason,
+                    "action_expectation": evidence.get("action_expectation", {}),
+                    "original_receipt_id": result.get("receipt_id"),
+                    "failure_reason": result.get("error"),
                 },
                 metadata={
                     "source": "capability_engine.action_expectation",
@@ -4626,6 +4628,9 @@ class CapabilityEngine(AuraBaseModule):
                         getattr(expectation, "objective", "") or skill_name
                     )[:240],
                     "expectation_next_step": str(verdict.get("next_step") or "")[:240],
+                    "expectation_rollback_hint": str(
+                        getattr(expectation, "rollback_hint", "") or ""
+                    )[:240],
                     "passed": bool(verdict.get("passed", False)),
                 },
             )

@@ -506,6 +506,9 @@ async def test_auto_file_operation_expectation_rejects_shallow_mutation(monkeypa
             "sha256",
             "effect_verified",
         ]
+        assert result["action_expectation"]["rollback_hint"] == (
+            "restore_previous_file_version_or_delete_new_file"
+        )
         assert result["expectation_receipt_id"]
         assert any(
             fault_id == "PASSF-ACTION-SHALLOW-SUCCESS"
@@ -576,6 +579,9 @@ async def test_auto_memory_ops_expectation_rejects_shallow_core_append(monkeypat
             "sha256",
             "effect_verified",
         ]
+        assert result["action_expectation"]["rollback_hint"] == (
+            "restore_previous_core_memory_block"
+        )
         assert result["expectation_receipt_id"]
         assert any(
             fault_id == "PASSF-ACTION-SHALLOW-SUCCESS"
@@ -639,6 +645,9 @@ async def test_auto_memory_ops_expectation_rejects_receiptless_archival_insert(
         assert result["expectation_verdict"]["next_step"] == (
             "retry_archival_insert_through_memory_write_gateway"
         )
+        assert result["action_expectation"]["rollback_hint"] == (
+            "tombstone_or_restore_archival_memory_record"
+        )
         assert result["expectation_receipt_id"]
         assert any(
             fault_id == "PASSF-ACTION-SHALLOW-SUCCESS"
@@ -683,6 +692,9 @@ async def test_auto_web_search_expectation_rejects_sourceless_research(monkeypat
         assert result["status"] == "success_unverified"
         assert result["expectation_verdict"]["missing_evidence"] == ["sources"]
         assert result["expectation_verdict"]["next_step"] == "rerun_web_research_with_sources"
+        assert result["action_expectation"]["rollback_hint"] == (
+            "not_required_read_only"
+        )
         assert result["expectation_receipt_id"]
         assert any(
             fault_id == "PASSF-ACTION-SHALLOW-SUCCESS"

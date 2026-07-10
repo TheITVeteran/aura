@@ -16,7 +16,6 @@ flagged by the conformance suite.
 """
 from __future__ import annotations
 
-
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -43,9 +42,23 @@ class ActionExpectation:
     objective: str = ""
     acceptance_criteria: List[str] = field(default_factory=list)
     required_evidence: List[str] = field(default_factory=list)
+    required_evidence_present: List[str] = field(default_factory=list)
     user_visible_effect: Optional[str] = None
     repair_hint: str = ""
+    rollback_hint: str = ""
     allow_partial: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "objective": self.objective,
+            "acceptance_criteria": list(self.acceptance_criteria),
+            "required_evidence": list(self.required_evidence),
+            "required_evidence_present": list(self.required_evidence_present),
+            "user_visible_effect": self.user_visible_effect,
+            "repair_hint": self.repair_hint,
+            "rollback_hint": self.rollback_hint,
+            "allow_partial": self.allow_partial,
+        }
 
 
 @dataclass(frozen=True)
@@ -114,12 +127,17 @@ def _normalize_label(value: Any) -> str:
 
 
 def _truthy_path(mapping: Dict[str, Any], key: str) -> bool:
+    found, current = _path_value(mapping, key)
+    return bool(found and current)
+
+
+def _path_value(mapping: Dict[str, Any], key: str) -> tuple[bool, Any]:
     current: Any = mapping
     for part in str(key).split("."):
         if not isinstance(current, dict) or part not in current:
-            return False
+            return False, None
         current = current[part]
-    return bool(current)
+    return True, current
 
 
 def _criteria_claims(evidence: Dict[str, Any]) -> set[str]:
@@ -164,6 +182,13 @@ def evaluate_action_expectation(result: SkillExecutionResult) -> Optional[Expect
         else:
             missing_evidence.append(key)
 
+    for key in expectation.required_evidence_present:
+        found, _value = _path_value(combined, key)
+        if found:
+            present_evidence.append(key)
+        else:
+            missing_evidence.append(key)
+
     if expectation.user_visible_effect:
         visible_proven = bool(
             combined.get("user_visible_effect")
@@ -203,6 +228,8 @@ def apply_action_expectation(result: SkillExecutionResult) -> SkillExecutionResu
         return result
 
     evidence = dict(result.verification_evidence or {})
+    if result.expectation is not None:
+        evidence["action_expectation"] = result.expectation.to_dict()
     evidence["expectation_verdict"] = verdict.to_evidence()
 
     if result.status not in {SkillStatus.SUCCESS_VERIFIED, SkillStatus.SUCCESS_UNVERIFIED}:
@@ -225,6 +252,50 @@ def apply_action_expectation(result: SkillExecutionResult) -> SkillExecutionResu
         verification_evidence=evidence,
         failure_reason=failure_reason,
     )
+
+
+def apply_action_expectation_payload(
+    skill: str,
+    payload: Dict[str, Any],
+    expectation: Optional[ActionExpectation],
+) -> Dict[str, Any]:
+    """Apply one expectation to a dictionary result without emitting receipts.
+
+    Runtime boundaries can share the exact same status/evidence semantics and
+    remain responsible for emitting their own domain-specific receipt chain.
+    """
+    if expectation is None or not isinstance(payload, dict) or not payload.get("ok", True):
+        return payload
+
+    raw_status = str(payload.get("status") or "").strip()
+    try:
+        status = SkillStatus(raw_status) if raw_status else SkillStatus.SUCCESS_VERIFIED
+    except ValueError:
+        status = SkillStatus.SUCCESS_VERIFIED
+    evidence = payload.get("verification_evidence")
+    if not isinstance(evidence, dict):
+        evidence = {}
+    checked = apply_action_expectation(
+        SkillExecutionResult(
+            skill=skill,
+            status=status,
+            output=payload,
+            receipt_id=str(payload.get("receipt_id") or "") or None,
+            verification_evidence=evidence,
+            expectation=expectation,
+        )
+    )
+    result = dict(payload)
+    result["verification_evidence"] = checked.verification_evidence
+    result["expectation_verdict"] = dict(
+        checked.verification_evidence.get("expectation_verdict") or {}
+    )
+    result["action_expectation"] = expectation.to_dict()
+    result["status"] = checked.status.value
+    result["ok"] = checked.ok
+    if not checked.ok and checked.failure_reason and not result.get("error"):
+        result["error"] = checked.failure_reason
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ can replace with a real solver lane.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import time
@@ -15,10 +16,11 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from core.evaluation.proof_acceptance import evaluate_proof_acceptance
 from core.learning.hidden_eval_repro import HiddenEvalPack, HiddenEvalResult
 from core.promotion.dynamic_benchmark import Task
 from core.promotion.gate import PromotionDecision, PromotionGate, ScoreEstimate
-from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.atomic_writer import atomic_write_json, atomic_write_text
 from core.runtime.receipts import (
     AutonomyReceipt,
     GovernanceReceipt,
@@ -26,7 +28,7 @@ from core.runtime.receipts import (
     ReceiptStore,
     ToolExecutionReceipt,
 )
-
+from core.runtime.skill_contract import ActionExpectation
 
 Solver = Callable[[Task], Any]
 
@@ -82,6 +84,9 @@ class LiveLoopStep:
     predicted: Any
     passed: bool
     artifact_id: str
+    artifact_path: str
+    artifact_sha256: str
+    expectation_verdict: dict[str, Any]
     receipt_ids: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -150,6 +155,14 @@ def weak_prompt_only_baseline(task: Task) -> Any:
     return 0
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def run_live_autonomy_loop_smoke(
     *,
     seed: int = 20260502,
@@ -160,6 +173,8 @@ def run_live_autonomy_loop_smoke(
     """Exercise autonomous loop closure without loading a model."""
     pack = HiddenEvalPack(seed=seed, answer_salt=answer_salt, task_count=task_count)
     store = ReceiptStore(Path(receipt_root) if receipt_root is not None else None)
+    artifact_dir = store.root / "proof_artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
     memory: dict[str, Any] = {
         "competence": 0.25,
         "preferred_solver": "metadata_reference_solver",
@@ -196,19 +211,68 @@ def run_live_autonomy_loop_smoke(
             )
         )
         predicted = solve_from_public_metadata(task)
-        passed = predicted == task.answer
+        evaluator_passed = predicted == task.answer
         artifact_id = f"artifact-{task_id[:12]}"
+        artifact_path = artifact_dir / f"{artifact_id}.json"
+        atomic_write_json(
+            artifact_path,
+            {
+                "artifact_id": artifact_id,
+                "task_id": task_id,
+                "goal": goal,
+                "solver": "metadata_reference_solver",
+                "predicted": predicted,
+                "public_task_hash": task.hash_public(),
+            },
+            schema_version=1,
+            schema_name="behavioral_proof.task_artifact",
+        )
+        artifact_sha256 = _file_sha256(artifact_path)
+        acceptance = evaluate_proof_acceptance(
+            task_id,
+            candidate_passed=evaluator_passed,
+            evidence={
+                "ok": evaluator_passed,
+                "task_id": task_id,
+                "artifact_id": artifact_id,
+                "artifact_path": str(artifact_path),
+                "artifact_sha256": artifact_sha256,
+                "independent_evaluator": "HiddenEvalPack",
+                "criteria_results": {
+                    "sealed answer matched": evaluator_passed,
+                },
+            },
+            expectation=ActionExpectation(
+                objective=f"Solve sealed task {task_id} and persist evaluator evidence",
+                acceptance_criteria=["sealed answer matched"],
+                required_evidence=[
+                    "task_id",
+                    "artifact_id",
+                    "artifact_path",
+                    "artifact_sha256",
+                    "independent_evaluator",
+                ],
+                repair_hint="rerun_task_with_independent_evaluator_and_artifact",
+                rollback_hint="discard_failed_proof_artifact",
+                allow_partial=False,
+            ),
+        )
+        passed = acceptance.accepted
         tool = store.emit(
             ToolExecutionReceipt(
                 cause="behavioral_proof.live_loop",
                 tool="metadata_reference_solver",
                 governance_receipt_id=gov.receipt_id,
-                status="success_verified" if passed else "failed_verified",
+                status=acceptance.status,
                 verification_evidence={
                     "task_id": task_id,
                     "artifact_id": artifact_id,
                     "independent_evaluator": "HiddenEvalPack",
                     "passed": passed,
+                    "artifact_path": str(artifact_path),
+                    "artifact_sha256": artifact_sha256,
+                    "action_expectation": acceptance.expectation,
+                    "expectation_verdict": acceptance.verdict,
                 },
             )
         )
@@ -242,6 +306,9 @@ def run_live_autonomy_loop_smoke(
                 predicted=predicted,
                 passed=passed,
                 artifact_id=artifact_id,
+                artifact_path=str(artifact_path),
+                artifact_sha256=artifact_sha256,
+                expectation_verdict=acceptance.verdict,
                 receipt_ids=[
                     gov.receipt_id,
                     autonomy.receipt_id,
@@ -253,8 +320,16 @@ def run_live_autonomy_loop_smoke(
 
     loop_closure = {
         "internal_state_generated_goals": all(step.goal for step in steps),
-        "actions_emitted_artifacts": all(step.artifact_id for step in steps),
+        "actions_emitted_artifacts": all(
+            step.artifact_id
+            and Path(step.artifact_path).is_file()
+            and _file_sha256(Path(step.artifact_path)) == step.artifact_sha256
+            for step in steps
+        ),
         "independent_evaluation_passed": all(step.passed for step in steps),
+        "expectation_contracts_passed": all(
+            bool(step.expectation_verdict.get("passed", False)) for step in steps
+        ),
         "memory_updated_after_each_action": len(memory_updates) == len(steps),
         "future_policy_changed": bool(
             memory_updates

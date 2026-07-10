@@ -3,16 +3,17 @@
 Actuators for searching the web and fetching URLs.
 """
 
-import urllib.parse
-from typing import Any
 import asyncio
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
-from core.actuators.actuator_registry import BaseActuator, ActuatorResult
+from typing import Any
+
+from core.actuators.actuator_registry import ActuatorResult, BaseActuator
 
 
 def run_async_in_sync(coro):
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
         return asyncio.run(coro)
 
@@ -56,6 +57,16 @@ class WebSearchActuator(BaseActuator):
         try:
             res = run_async_in_sync(_run())
             success = res.get("ok", False)
+            if success:
+                res = dict(res)
+                res.setdefault("summary", res.get("answer") or res.get("message") or "")
+                res.setdefault(
+                    "sources",
+                    res.get("citations")
+                    or res.get("chunks")
+                    or res.get("results")
+                    or ([] if not res.get("source") else [{"url": res.get("source")}]),
+                )
             msg = res.get("summary") or res.get("message") or ("Search executed." if success else "Search failed.")
             return ActuatorResult(
                 success=success,
