@@ -888,7 +888,15 @@ async def api_skills():
         }
         for item in catalog
     ]
-    return JSONResponse({"skills": skills_data, "count": len(skills_data), "catalog": catalog})
+    engine = ServiceContainer.get("capability_engine", default=None)
+    health = (
+        engine.get_catalog_health()
+        if engine is not None and hasattr(engine, "get_catalog_health")
+        else {"ready": False, "reason": "capability_engine_unavailable"}
+    )
+    return JSONResponse(
+        {"skills": skills_data, "count": len(skills_data), "catalog": catalog, "health": health}
+    )
 
 
 @router.post("/skill/execute")

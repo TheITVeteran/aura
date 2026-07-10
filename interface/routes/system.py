@@ -34,9 +34,9 @@ from core.runtime.health_contract import (
     required_probe_blockers,
     required_probe_groups_pass,
 )
-from core.tools.runtime_tools import get_runtime_state
-from core.scheduler import scheduler
 from core.runtime.version import VERSION, version_string
+from core.scheduler import scheduler
+from core.tools.runtime_tools import get_runtime_state
 from interface.auth import _require_internal, _restore_owner_session_from_request
 from interface.websocket_manager import broadcast_bus, runtime_heartbeat_payload, ws_manager
 
@@ -3038,7 +3038,13 @@ async def api_health(request: Request):
 @router.get("/tools/catalog")
 async def api_tools_catalog():
     catalog = _collect_tool_catalog()
-    return JSONResponse({"tools": catalog, "count": len(catalog)})
+    engine = ServiceContainer.get("capability_engine", default=None)
+    health = (
+        engine.get_catalog_health()
+        if engine is not None and hasattr(engine, "get_catalog_health")
+        else {"ready": False, "reason": "capability_engine_unavailable"}
+    )
+    return JSONResponse({"tools": catalog, "count": len(catalog), "health": health})
 
 
 @router.get("/ui/bootstrap")

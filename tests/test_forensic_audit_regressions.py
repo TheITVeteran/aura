@@ -32,7 +32,6 @@ from core.health.degraded_events import (
     record_degraded_event,
 )
 from core.orchestrator.main import RobustOrchestrator
-from core.skills.plugin_loader import PluginManager
 from core.runtime.impulse_governance import run_governed_impulse
 from core.runtime.organism_status import get_organism_status
 from core.runtime.proposal_governance import (
@@ -43,6 +42,7 @@ from core.runtime.service_access import resolve_identity_prompt_surface
 from core.senses.sensory_client import SensoryLocalClient
 from core.senses.sensory_instincts import SensoryInstincts
 from core.skills.base_skill import BaseSkill
+from core.skills.plugin_loader import PluginManager
 from core.state.aura_state import AuraState
 from core.systems.metabolism import MetabolismEngine
 
@@ -372,6 +372,25 @@ async def test_legacy_base_skill_uses_to_thread_for_sync_execute_and_preserves_e
     assert calls == ["execute"]
     assert result["ok"] is False
     assert result["error"] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_base_skill_awaits_deferred_result_returned_by_sync_adapter():
+    class DeferredAdapterSkill(BaseSkill):
+        name = "deferred_adapter"
+
+        def execute(self, params, context):
+            async def finish():
+                await asyncio.sleep(0)
+                return {"ok": True, "value": params["value"]}
+
+            return finish()
+
+    result = await DeferredAdapterSkill().safe_execute({"value": "complete"})
+
+    assert result["ok"] is True
+    assert result["value"] == "complete"
+    assert "coroutine object" not in str(result)
 
 
 @pytest.mark.asyncio

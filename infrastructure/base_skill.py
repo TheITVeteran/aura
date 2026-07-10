@@ -1,171 +1,81 @@
-"""infrastructure/base_skill.py
-Base skill contract for the Aura Cortex system.
+"""Compatibility facade over Aura's canonical governed skill contract.
+
+Legacy project skills still import ``infrastructure.BaseSkill``.  They now use
+the same governance, timeout, retry, result, and execution-stat machinery as
+``core.skills.base_skill.BaseSkill`` while retaining the older ``inputs`` JSON
+schema helper during migration.
 """
-import asyncio
-import inspect
+
+from __future__ import annotations
+
+import asyncio  # noqa: F401 - compatibility tests and callers patch this shared module.
 import json
 import logging
 import re
-import time
-from abc import ABC, abstractmethod
 from typing import Any
 
-from core.runtime.errors import record_degradation
+from core.skills.base_skill import BaseSkill as _CanonicalBaseSkill
 
-logger = logging.getLogger("Aura.Skills.Legacy")
-_ARG_RECOVERY_ERRORS = (
-    json.JSONDecodeError,
-    OSError,
-    RuntimeError,
-    TimeoutError,
-    ValueError,
-)
-_SKILL_RUNTIME_ERRORS = (
-    ImportError,
-    OSError,
-    RuntimeError,
-    TimeoutError,
-    ValueError,
-)
+logger = logging.getLogger("Aura.Skills.Compatibility")
 
 
-def _infer_ok_flag(result: dict[str, Any]) -> bool:
-    if "ok" in result:
-        return bool(result["ok"])
-    if result.get("error") is not None or result.get("errors"):
-        return False
-    if result.get("failed") is True:
-        return False
-    if str(result.get("status", "")).lower() in {"blocked", "error", "failed"}:
-        return False
-    return True
-
-
-class BaseSkill(ABC):
-    """Contract for all Skills.
-    Every skill must define its metadata and implement execute().
-    """
+class BaseSkill(_CanonicalBaseSkill):
+    """Canonical BaseSkill with the legacy declarative-input adapter."""
 
     name: str = "unknown_skill"
     description: str = "No description provided."
     inputs: dict[str, str] = {}
     output: str = "Result string or dict"
     aliases: list[str] = []
-    timeout_seconds: float = 30.0
-
-    def match(self, goal: dict[str, Any]) -> bool:
-        """Default matching logic.
-        """
-        obj = goal.get("objective", "")
-        return self.name in str(obj)
-
-    @abstractmethod
-    def execute(self, goal: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
-        """Execute the skill."""
-        ...
 
     async def extract_and_validate_args(
         self,
         raw_input: str,
         llm_client: Any | None = None,
     ) -> dict[str, Any]:
-        """Fault-tolerant JSON extraction and schema validation.
-        Phase 4: Automatic Schema Recovery Loops.
-        """
-        extracted: dict[str, Any] = {}
-        # 1. Broad extraction (grab anything that looks like JSON)
         match = re.search(r"(\{.*\})", raw_input, re.DOTALL)
-        json_str = match.group(1) if match else raw_input
-        
+        candidate = match.group(1) if match else raw_input
         try:
-            parsed = json.loads(json_str)
-            if not isinstance(parsed, dict):
-                raise ValueError(f"Expected JSON object for {self.name}")
-            extracted = parsed
-        except json.JSONDecodeError as e:
-            logger.warning("Skill %s JSON decode failed: %s. Attempting LLM recovery...", self.name, e)
-            if llm_client and hasattr(llm_client, 'generate_text_async'):
-                # 2. Recovery Loop via LLM
-                prompt = f"Extract a valid JSON object matching this schema {json.dumps(self.to_json_schema())} from this corrupted input: {raw_input}. Output ONLY JSON."
-                try:
-                    recovery_raw = str(await llm_client.generate_text_async(prompt, model="llama3"))
-                    r_match = re.search(r"(\{.*\})", recovery_raw, re.DOTALL)
-                    r_str = r_match.group(1) if r_match else recovery_raw
-                    recovered = json.loads(r_str)
-                    if not isinstance(recovered, dict):
-                        raise ValueError(f"Recovered payload for {self.name} was not a JSON object")
-                    extracted = recovered
-                    logger.info("Skill %s successfully recovered schema.", self.name)
-                except _ARG_RECOVERY_ERRORS as r_e:
-                    record_degradation("legacy_base_skill.argument_recovery", r_e)
-                    logger.error("Skill %s LLM recovery failed: %s", self.name, r_e)
-                    raise ValueError(f"Could not parse valid arguments for {self.name}: {r_e}") from e
-            else:
-                logger.error("Skill %s recovery failed: No LLM client.", self.name)
-                raise ValueError(f"Invalid JSON for {self.name} and no recovery client available") from e
-                
-        # 3. Validation
-        missing = [key for key in self.inputs.keys() if key not in extracted]
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError as original_error:
+            generator = getattr(llm_client, "generate_text_async", None)
+            if not callable(generator):
+                raise ValueError(f"Invalid JSON for {self.name} and no recovery client available") from original_error
+            recovery_prompt = (
+                "Extract one valid JSON object matching this schema and return only JSON: "
+                f"{json.dumps(self.to_json_schema(), sort_keys=True)}. Input: {raw_input}"
+            )
+            recovered_raw = str(await generator(recovery_prompt, model="llama3"))
+            recovered_match = re.search(r"(\{.*\})", recovered_raw, re.DOTALL)
+            recovered_candidate = recovered_match.group(1) if recovered_match else recovered_raw
+            try:
+                parsed = json.loads(recovered_candidate)
+            except (json.JSONDecodeError, TypeError, ValueError) as recovery_error:
+                raise ValueError(
+                    f"Could not parse valid arguments for {self.name}: {recovery_error}"
+                ) from original_error
+        if not isinstance(parsed, dict):
+            raise ValueError(f"Expected JSON object for {self.name}")
+        missing = [name for name in self.inputs if name not in parsed]
         if missing:
-            logger.warning("Skill %s missing required keys: %s", self.name, missing)
-            
-        return extracted
+            logger.warning("Skill %s missing declared keys: %s", self.name, missing)
+        return parsed
 
     def to_json_schema(self) -> dict[str, Any]:
-        """Returns the JSON schema representation of the skill for LLM tool calling.
-        """
-        properties = {}
-        required = []
-        
-        for name, desc in self.inputs.items():
-            properties[name] = {
-                "type": "string",
-                "description": desc
-            }
-            required.append(name)
-
-        return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": properties,
-                    "required": required
-                }
-            }
+        properties = {
+            name: {"description": description, "type": "string"}
+            for name, description in self.inputs.items()
         }
-
-    async def safe_execute(
-        self,
-        goal: dict[str, Any] | None,
-        context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        """Compatibility wrapper so legacy infrastructure skills behave like core skills."""
-        goal = goal or {}
-        context = context or {}
-        start = time.monotonic()
-        try:
-            if inspect.iscoroutinefunction(self.execute):
-                async with asyncio.timeout(self.timeout_seconds):
-                    result = await self.execute(goal, context)
-            else:
-                async with asyncio.timeout(self.timeout_seconds):
-                    result = await asyncio.to_thread(self.execute, goal, context)
-        except asyncio.CancelledError:
-            raise
-        except _SKILL_RUNTIME_ERRORS as exc:
-            record_degradation("legacy_base_skill.safe_execute", exc)
-            result = {
-                "ok": False,
-                "error": f"Skill error: {type(exc).__name__}: {exc}",
-            }
-
-        if not isinstance(result, dict):
-            result = {"ok": True, "result": result}
-
-        result["ok"] = _infer_ok_flag(result)
-        result.setdefault("skill", self.name)
-        result.setdefault("duration_ms", round((time.monotonic() - start) * 1000, 2))
-        return result
+        return {
+            "function": {
+                "description": self.description,
+                "name": self.name,
+                "parameters": {
+                    "additionalProperties": False,
+                    "properties": properties,
+                    "required": list(properties),
+                    "type": "object",
+                },
+            },
+            "type": "function",
+        }

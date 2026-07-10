@@ -49,7 +49,9 @@ EXPECTED_REGISTERED_SKILLS = {
     "install_package",
     "inter_agent_comm",
     "internal_sandbox",
+    "knowledge_base",
     "listen",
+    "local_reference_search",
     "malware_analysis",
     "manifest_to_device",
     "memory_ops",
@@ -89,9 +91,8 @@ EXPECTED_REGISTERED_SKILLS = {
     "voice_output",
     "web_interlocutor",
     "web_search",
-        "local_reference_search",
-        "program_dna_reconstruct",
-        "program_dna_equivalence_battery",
+    "program_dna_reconstruct",
+    "program_dna_equivalence_battery",
     "x_tools",
 }
 
@@ -160,6 +161,7 @@ def _params_for_skill(skill_name: str, tmp_path: Path) -> dict[str, Any]:
         },
         "install_package": {"package_name": "bad package!"},
         "inter_agent_comm": {"agent_name": "", "message": ""},
+        "knowledge_base": {"action": "list", "limit": 1},
         "listen": {"duration": 0.01},
         "malware_analysis": {"path": str(tmp_path / "missing.bin")},
         "manifest_to_device": {"url": "notaurl"},
@@ -219,6 +221,7 @@ def _neutralize_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
 
     import core.skills.computer_use as computer_use
     import core.skills.email_adapter as email_adapter
+    import core.skills.image_gen as image_gen
     import core.skills.listen as listen
     import core.skills.notify_user as notify_user
     import core.skills.os_manipulation as os_manipulation
@@ -240,6 +243,7 @@ def _neutralize_side_effects(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(notify_user.DesktopNotifier, "send", staticmethod(lambda **_kwargs: None))
     monkeypatch.setattr(AutoRefactorSkill, "_publish_proposals", lambda self, issues: None)
+    monkeypatch.setattr(image_gen.ImageGenSkill, "_load_pipeline", lambda self, img2img=False: False)
     monkeypatch.setattr(
         SpeakSkill,
         "_get_engine",
@@ -305,7 +309,7 @@ def _redirect_runtime_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 def test_registered_skill_surface_matches_expected_catalog(skill_registry):
     assert set(skill_registry) == EXPECTED_REGISTERED_SKILLS
-    assert len(skill_registry) == 72
+    assert len(skill_registry) == 73
 
 
 @pytest.mark.asyncio

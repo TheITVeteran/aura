@@ -1729,6 +1729,14 @@
       "scope": "<module>.async_durable_unlink"
     },
     {
+      "callee": "ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/atomic_writer.py",
+      "scope": "<module>.async_ensure_private_directory"
+    },
+    {
       "callee": "atomic_write_text",
       "canonical_owner": true,
       "category": "direct_atomic_file_write",
@@ -1743,6 +1751,14 @@
       "count": 1,
       "path": "core/runtime/atomic_writer.py",
       "scope": "<module>.atomic_write_text"
+    },
+    {
+      "callee": "ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/atomic_writer.py",
+      "scope": "<module>.interprocess_file_lock"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
@@ -1799,6 +1815,22 @@
       "count": 1,
       "path": "core/runtime/file_write_gateway.py",
       "scope": "<module>.FileWriteGateway.append_text_async"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.ensure_directory"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.async_ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway.ensure_directory_async"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_bytes",
@@ -3905,6 +3937,22 @@
       "scope": "<module>.CodeREPLSkill._execute_via_subprocess"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skills/code_repl.py",
+      "scope": "<module>.CodeREPLSkill._get_session_dir"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/skills/image_gen.py",
+      "scope": "<module>.ImageGenSkill._save_and_respond"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -4201,12 +4249,12 @@
       "scope": "<module>.LocalMediaGenerationSkill._write_png"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_file",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
       "path": "skills/knowledge_base.py",
-      "scope": "<module>.KnowledgeBaseSkill._save_metadata"
+      "scope": "<module>.KnowledgeBaseSkill._delete_file"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -4214,7 +4262,7 @@
       "category": "file_write_gateway",
       "count": 1,
       "path": "skills/knowledge_base.py",
-      "scope": "<module>.KnowledgeBaseSkill.execute"
+      "scope": "<module>.KnowledgeBaseSkill._write_text"
     },
     {
       "callee": "<memory_write_gateway>.write",
@@ -6679,14 +6727,6 @@
       "count": 1,
       "path": "core/capabilities/web_asset_handler.py",
       "scope": "<module>.WebAssetHandler.download_image"
-    },
-    {
-      "callee": "skill_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/capability_engine.py",
-      "scope": "<module>.CapabilityEngine.reload_skills"
     },
     {
       "callee": "self.base_data_dir.mkdir",
@@ -9682,6 +9722,14 @@
     },
     {
       "callee": "os.open",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/atomic_writer.py",
+      "scope": "<module>.interprocess_file_lock"
+    },
+    {
+      "callee": "os.open",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -11257,28 +11305,12 @@
       "scope": "<module>.BranchingFuturesSkill.execute"
     },
     {
-      "callee": "self._output_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skills/code_repl.py",
-      "scope": "<module>.CodeREPLSkill.__init__"
-    },
-    {
       "callee": "os.unlink",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/skills/code_repl.py",
       "scope": "<module>.CodeREPLSkill._execute_via_subprocess"
-    },
-    {
-      "callee": "session_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skills/code_repl.py",
-      "scope": "<module>.CodeREPLSkill._get_session_dir"
     },
     {
       "callee": "path.mkdir",
@@ -11335,14 +11367,6 @@
       "count": 1,
       "path": "core/skills/file_operation.py",
       "scope": "<module>.FileOperationSkill.execute._patch"
-    },
-    {
-      "callee": "self._output_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skills/image_gen.py",
-      "scope": "<module>.ImageGenSkill.__init__"
     },
     {
       "callee": "self.comm_log_path.parent.mkdir",
@@ -11471,14 +11495,6 @@
       "count": 1,
       "path": "core/skills/self_repair.py",
       "scope": "<module>.SelfRepairSkill.execute"
-    },
-    {
-      "callee": "self.output_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/skills/sovereign_imagination.py",
-      "scope": "<module>.SovereignImaginationSkill.__init__"
     },
     {
       "callee": "path.write_text",
@@ -12015,14 +12031,6 @@
       "count": 1,
       "path": "skills/hobbies.py",
       "scope": "<module>.HobbyEngine._save_state"
-    },
-    {
-      "callee": "self.store_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "skills/knowledge_base.py",
-      "scope": "<module>.KnowledgeBaseSkill.__init__"
     },
     {
       "callee": "os.makedirs",
@@ -12751,6 +12759,14 @@
       "count": 1,
       "path": "core/runtime/keep_awake.py",
       "scope": "<module>._spawn_assertion_process"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": true,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/runtime/skill_catalog_probe.py",
+      "scope": "<module>.run_skill_catalog_probe"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
@@ -13514,6 +13530,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "6b492987bd7ee905fffc428f251d3993e4522f438c410d7b76d3a9cccf238caa",
+  "inventory_sha256": "918916566af8bfd71af45573210cbc7d7866fce2af9c5a27c40f2c76323107a6",
   "schema_version": 1
 }

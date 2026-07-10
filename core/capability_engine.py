@@ -11,7 +11,9 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
+from _thread import RLock as RLockType
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,7 @@ logger = logging.getLogger("core.capability_engine")
 
 _TOOL_AFFORDANCE_SCAN_BUDGET_SECONDS = 0.05
 _TOOL_AFFORDANCE_SCAN_LIMIT = 192
+_CATALOG_LOCK_BOOTSTRAP = threading.Lock()
 
 try:
     from RestrictedPython import compile_restricted, safe_builtins, utility_builtins
@@ -35,53 +38,12 @@ try:
 except ImportError:
     RESTRICTED_AVAILABLE = False
 
-try:
-    from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
-except ImportError:
-    # Use fallback from retry_compat if available, otherwise NO-OP
-    try:
-        from core.brain.llm.retry_compat import (
-            retry,
-            retry_if_exception_type,
-            stop_after_attempt,
-            wait_exponential,
-        )
-    except ImportError:
-
-        def retry(*args, **kwargs):
-            return lambda f: f
-
-        def stop_after_attempt(*args, **kwargs):
-            return None
-
-        def wait_exponential(*args, **kwargs):
-            return None
-
-        def retry_if_exception_type(*args, **kwargs):
-            return None
-
-
-try:
-    from pybreaker import CircuitBreaker, CircuitBreakerError
-except ImportError:
-
-    class CircuitBreaker:
-        def __init__(self, *args, **kwargs):
-            return None
-
-        def __call__(self, f):
-            return f
-
-    class CircuitBreakerError(Exception):
-        """Fallback circuit-breaker exception when pybreaker is unavailable."""
-
-
 from pydantic import BaseModel, ConfigDict, Field, ValidationError  # noqa: E402
 
-from core.runtime.base_module import AuraBaseModule  # noqa: E402
 from core.config import config  # noqa: E402
 from core.container import ServiceContainer  # noqa: E402
 from core.exceptions import ContainerError  # noqa: E402
+from core.runtime.base_module import AuraBaseModule  # noqa: E402
 from core.runtime.service_access import (  # noqa: E402
     optional_service,
     resolve_edi,
@@ -89,6 +51,7 @@ from core.runtime.service_access import (  # noqa: E402
     resolve_metabolic_monitor,
     resolve_state_repository,
 )
+from core.skills.catalog_policy import resolve_skill_policy  # noqa: E402
 from core.utils.intent_normalization import normalize_memory_intent_text  # noqa: E402
 
 _USER_FACING_CONTEXT_ORIGINS = frozenset(
@@ -119,18 +82,6 @@ _SEARCH_CAPABILITY_QUESTION_RE = re.compile(
 _SEARCH_WITH_TARGET_RE = re.compile(
     r"\b(?:search|look up|find|browse|read)\b.{0,40}\b(?:for|about|on|at|this|that)\b\s+\S+",
     re.IGNORECASE,
-)
-
-_INTERNAL_ONLY_SKILLS = frozenset(
-    {
-        # Importable adapter/experimental modules that are intentionally not
-        # part of the stable public skill contract. They may be called by
-        # dedicated environment or autonomy layers, but should not leak into
-        # the general registered tool catalog until they satisfy that surface.
-        "branching_futures",
-        "manim_renderer",
-        "mcp_client",
-    }
 )
 
 _HEAVY_BACKGROUND_SKILLS = frozenset(
@@ -568,19 +519,33 @@ class SkillMetadata(BaseModel):
     is_core_personality: bool = False
     trigger_patterns: list[str] = Field(default_factory=list)
     effect_scope: str = "unknown"
+    authority_class: str = "unclassified"
+    schema_override: dict[str, Any] | None = None
+    catalog_id: str = ""
+    source_kind: str = "runtime"
+    source_path: str = ""
+    source_sha256: str = ""
+    validation_state: str = "valid"
+    validation_error: str | None = None
+    dependency_ready: bool = True
+    dependency_errors: list[str] = Field(default_factory=list)
+    constructor_dependencies: list[str] = Field(default_factory=list)
+    route_class_hint: str | None = None
 
     # 2026 Transcendence Fields
     execution_profile: str = "cpu"  # cpu, gpu, neural
     max_concurrent: int = 1
-    timeout_seconds: int = 30
+    timeout_seconds: float = 30.0
     memory_mb_estimate: int = 256
 
     @property
     def schema_def(self) -> dict[str, Any]:
         """Returns the JSON schema for the skill's input model."""
+        if self.schema_override is not None:
+            return dict(self.schema_override)
         if self.input_model and hasattr(self.input_model, "model_json_schema"):
-            return self.input_model.model_json_schema()
-        return {"type": "object", "properties": {"params": {"type": "object"}}, "required": []}
+            return dict(self.input_model.model_json_schema())
+        return {"additionalProperties": True, "properties": {}, "type": "object"}
 
     def to_json_schema(self) -> dict[str, Any]:
         """Returns the OpenAI-compatible function definition for this skill."""
@@ -596,7 +561,10 @@ class SkillMetadata(BaseModel):
         # Input validation logic remains here, but AST auditing is moved to registration
 
         try:
-            params = json.loads(params_raw)
+            decoded = json.loads(params_raw)
+            if not isinstance(decoded, dict):
+                raise ValueError("skill parameters must decode to a JSON object")
+            params: dict[str, Any] = decoded
             if not self.input_model:
                 return params
 
@@ -607,7 +575,7 @@ class SkillMetadata(BaseModel):
             # Simple validation if it's a Pydantic model
             if hasattr(self.input_model, "model_validate"):
                 try:
-                    return self.input_model.model_validate(params).model_dump()
+                    return dict(self.input_model.model_validate(params).model_dump())
                 except _SCHEMA_RECOVERY_ERRORS:
                     # 2. Non-destructive Recovery / Sanitized Subset fallback
                     sanitized = {}
@@ -622,11 +590,11 @@ class SkillMetadata(BaseModel):
                             sanitized[field_name] = params[field_name]
 
                     try:
-                        return self.input_model.model_validate(sanitized).model_dump()
+                        return dict(self.input_model.model_validate(sanitized).model_dump())
                     except _SCHEMA_RECOVERY_ERRORS:
                         minimal = _minimal_model_payload(fields, params)
                         try:
-                            return self.input_model.model_validate(minimal).model_dump()
+                            return dict(self.input_model.model_validate(minimal).model_dump())
                         except _SCHEMA_RECOVERY_ERRORS as final_err:
                             # Classifier/user-supplied params that can't satisfy a
                             # skill schema (e.g. an image-gen dispatch with no
@@ -879,7 +847,7 @@ class Sandbox2:
 
         try:
             byte_code = compile_restricted(code, filename="<aura_skill>", mode="exec")
-            locs = {}
+            locs: dict[str, Any] = {}
             get_dynamic_execution_gateway().execute_code_object(
                 byte_code,
                 globals_dict=self.safe_globals,
@@ -915,12 +883,21 @@ class CapabilityEngine(AuraBaseModule):
         """
         super().__init__("CapabilityEngine")
         self.orchestrator = orchestrator
+        self._catalog_lock = threading.RLock()
+        self._catalog_mutation_lock = threading.RLock()
         self.skills: dict[str, SkillMetadata] = {}
         self.instances: dict[str, Any] = {}
+        self.quarantined_skills: dict[str, dict[str, Any]] = {}
+        self.catalog_exclusions: list[dict[str, Any]] = []
+        self.catalog_health: dict[str, Any] = {
+            "ready": False,
+            "reason": "catalog_not_loaded",
+        }
+        self._catalog_digest = ""
         self._explicitly_deactivated_skills: set[str] = set()
         # skill → monotonic deadline while a user-advocate block holds.
         self._advocate_block_cooldowns: dict[str, float] = {}
-        self.active_skills: set = {
+        self.active_skills: set[str] = {
             # Core routing
             "ManageAbilities",
             "talk",
@@ -1013,7 +990,29 @@ class CapabilityEngine(AuraBaseModule):
             len(self.skills),
         )
 
-    def _load_default_trigger_patterns(self):
+    def _catalog_guard(self) -> RLockType:
+        lock = getattr(self, "_catalog_lock", None)
+        if isinstance(lock, RLockType):
+            return lock
+        with _CATALOG_LOCK_BOOTSTRAP:
+            lock = getattr(self, "_catalog_lock", None)
+            if not isinstance(lock, RLockType):
+                lock = threading.RLock()
+                self._catalog_lock = lock
+            return lock
+
+    def _catalog_mutation_guard(self) -> RLockType:
+        lock = getattr(self, "_catalog_mutation_lock", None)
+        if isinstance(lock, RLockType):
+            return lock
+        with _CATALOG_LOCK_BOOTSTRAP:
+            lock = getattr(self, "_catalog_mutation_lock", None)
+            if not isinstance(lock, RLockType):
+                lock = threading.RLock()
+                self._catalog_mutation_lock = lock
+            return lock
+
+    def _load_default_trigger_patterns(self) -> None:
         """Comprehensive intent patterns covering all major skills."""
         patterns = {
             # ── Web / Search ──────────────────────────────────────────
@@ -1461,7 +1460,9 @@ class CapabilityEngine(AuraBaseModule):
             ]
 
         def _promote(skill_name: str) -> None:
-            if skill_name not in self.skills:
+            with self._catalog_guard():
+                skill_registered = skill_name in self.skills
+            if not skill_registered:
                 return
             if skill_name in triggered:
                 triggered[:] = [skill_name] + [name for name in triggered if name != skill_name]
@@ -1632,7 +1633,14 @@ class CapabilityEngine(AuraBaseModule):
                 state = str(self.skill_states.get(resolved, "READY") or "READY")
                 active = resolved in self.active_skills
                 meta = self.skills.get(resolved)
-                if not meta or not meta.enabled or not active or state == "ERROR":
+                if (
+                    not meta
+                    or not meta.enabled
+                    or not active
+                    or state == "ERROR"
+                    or meta.validation_state != "valid"
+                    or not meta.dependency_ready
+                ):
                     return
             ordered.append(resolved)
 
@@ -1668,7 +1676,13 @@ class CapabilityEngine(AuraBaseModule):
                 if available_only:
                     state = str(self.skill_states.get(name, "READY") or "READY")
                     active = name in self.active_skills
-                    if not meta.enabled or not active or state == "ERROR":
+                    if (
+                        not meta.enabled
+                        or not active
+                        or state == "ERROR"
+                        or meta.validation_state != "valid"
+                        or not meta.dependency_ready
+                    ):
                         continue
                 ordered.append(name)
 
@@ -1720,150 +1734,288 @@ class CapabilityEngine(AuraBaseModule):
         """Proxy to ServiceContainer.check_package."""
         from core.container import ServiceContainer
 
-        return ServiceContainer.check_package(package_name, auto_install=auto_install)
+        return bool(ServiceContainer.check_package(package_name, auto_install=auto_install))
 
     def reload_skills(self) -> None:
-        """Discovers and reloads all skills using Rust index + AST fallback."""
+        """Serialize catalog mutations while allowing readers to use the live generation."""
+
+        with self._catalog_mutation_guard():
+            self._reload_skills_transaction()
+
+    def _reload_skills_transaction(self) -> None:
+        """Build, probe, and atomically publish the governed live skill catalog."""
         self.logger.info("🔄 Refreshing skill registry...")
-        self.skills.clear()
-        self.instances.clear()
+        next_skills: dict[str, SkillMetadata] = {}
+        next_instances: dict[str, Any] = {}
+        next_quarantined: dict[str, dict[str, Any]] = {}
+        next_exclusions: list[dict[str, Any]] = []
+        next_skill_errors: dict[str, str] = {}
 
-        # 1. Attempt Rust Index (Transcendent Path)
         try:
-            from aura_m1_ext import build_skill_index
+            from core.skills.discovery import build_skill_catalog, validate_skill_catalog
 
-            index = build_skill_index()
-            for name, meta in index.items():
-                self.skills[name] = SkillMetadata(
-                    name=name,
-                    description=meta.get("description", "Core system skill."),
-                    module_path=f"core.skills.{name}",
-                    class_name=_skill_class_name(name),
-                    execution_profile=meta.get("execution_profile", "cpu"),
-                    timeout_seconds=meta.get("timeout_seconds", 30),
-                    memory_mb_estimate=meta.get("memory_mb_estimate", 256),
-                    effect_scope=self._declared_effect_scope(name),
-                )
-            self.logger.info("⚡ Rust perfect hash index loaded (%d core skills)", len(index))
-        except (ImportError, AttributeError, RuntimeError) as e:
-            self.logger.info("ℹ️ Optional Rust index unavailable, falling back to AST: %s", e)
+            catalog = build_skill_catalog()
+        except (ImportError, OSError, RuntimeError, SyntaxError, TypeError, ValueError) as exc:
+            _record_capability_degradation(
+                exc,
+                action="failed closed because the canonical skill source catalog could not be built",
+                severity="degraded",
+            )
+            with self._catalog_guard():
+                self.catalog_health = {
+                    **self.catalog_health,
+                    "ready": False,
+                    "reason": "catalog_build_failed",
+                    "error": f"{type(exc).__name__}: {exc}"[:1200],
+                    "live_count": len(self.skills),
+                    "serving_last_known_good": bool(self.skills),
+                }
+            return
 
-        # 2. AST Discovery (Fallback/Project skills)
-        skill_dir = config.paths.project_root / "skills"
-        if not skill_dir.exists():
-            skill_dir.mkdir(parents=True)
+        try:
+            validations = validate_skill_catalog(
+                catalog,
+                project_root=Path(config.paths.base_dir),
+            )
+        except (ImportError, OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+            _record_capability_degradation(
+                exc,
+                action="quarantined the skill catalog after isolated validation failed",
+                severity="degraded",
+            )
+            validations = {
+                declaration.catalog_id: {
+                    "catalog_id": declaration.catalog_id,
+                    "error": f"isolated catalog probe failed: {type(exc).__name__}: {exc}"[:1200],
+                    "stage": "probe_process",
+                    "status": "quarantined",
+                }
+                for declaration in catalog.accepted
+            }
 
-        import ast
+        next_exclusions = [declaration.to_dict() for declaration in catalog.excluded]
+        for issue in catalog.blocking_issues:
+            issue_id = hashlib.sha256(
+                json.dumps(issue.to_dict(), sort_keys=True).encode()
+            ).hexdigest()[:20]
+            next_quarantined[f"issue:{issue_id}"] = {
+                **issue.to_dict(),
+                "catalog_id": f"issue:{issue_id}",
+                "name": issue.class_name or issue.code,
+                "stage": "source_catalog",
+                "status": "quarantined",
+            }
 
-        skill_paths = [(config.paths.base_dir / "core" / "skills", "core.skills")]
-
-        for s_dir, module_prefix in skill_paths:
-            if not s_dir.exists():
+        for declaration in catalog.accepted:
+            validation = dict(validations.get(declaration.catalog_id) or {})
+            if validation.get("status") != "valid":
+                quarantine = {
+                    **declaration.to_dict(),
+                    **validation,
+                    "description": declaration.description,
+                    "effect_scope": declaration.effect_scope,
+                    "authority_class": declaration.authority_class,
+                    "status": "quarantined",
+                }
+                next_quarantined[declaration.catalog_id] = quarantine
                 continue
-            for filename in os.listdir(s_dir):
-                if not filename.endswith(".py") or filename.startswith("_"):
-                    continue
 
-                try:
-                    path = s_dir / filename
-                    with open(path, encoding="utf-8") as f:
-                        tree = ast.parse(f.read())
+            requirements_payload = dict(validation.get("requirements") or {})
+            supported_platforms = list(requirements_payload.get("supported_platforms") or ())
+            requirements = SkillRequirements(
+                packages=list(requirements_payload.get("packages") or ()),
+                commands=list(requirements_payload.get("commands") or ()),
+                supported_platforms=(
+                    supported_platforms
+                    if supported_platforms
+                    else ["linux", "darwin", "win32"]
+                ),
+            )
+            dependency_ready = bool(validation.get("dependency_ready", True))
+            dependency_errors = [
+                str(error) for error in validation.get("dependency_errors") or ()
+            ]
+            next_skills[declaration.name] = SkillMetadata(
+                name=declaration.name,
+                description=str(validation.get("description") or declaration.description),
+                requirements=requirements,
+                module_path=declaration.module_path,
+                class_name=declaration.class_name,
+                effect_scope=declaration.effect_scope,
+                authority_class=declaration.authority_class,
+                schema_override=dict(validation.get("input_schema") or {}),
+                catalog_id=declaration.catalog_id,
+                source_kind=declaration.source_kind,
+                source_path=declaration.source_path,
+                source_sha256=declaration.source_sha256,
+                validation_state="valid",
+                dependency_ready=dependency_ready,
+                dependency_errors=dependency_errors,
+                constructor_dependencies=list(declaration.constructor_dependencies),
+                route_class_hint=str(validation.get("route_class") or "managed_async"),
+                execution_profile=str(validation.get("execution_profile") or "cpu"),
+                timeout_seconds=float(validation.get("timeout_seconds") or 30.0),
+                memory_mb_estimate=max(
+                    1, int(validation.get("memory_mb_estimate") or 256)
+                ),
+                metabolic_cost=max(0, int(validation.get("metabolic_cost") or 1)),
+                is_core_personality=bool(validation.get("is_core_personality", False)),
+            )
+            if not dependency_ready:
+                next_skill_errors[declaration.name] = (
+                    "; ".join(dependency_errors) or "declared dependencies unavailable"
+                )
 
-                    for node in ast.walk(tree):
-                        if isinstance(node, ast.ClassDef):
-                            is_skill = False
-                            name = ""
-                            description = ""
+        expected_names = {declaration.name for declaration in catalog.accepted}
+        missing_live = sorted(expected_names - set(next_skills) - {
+            str(item.get("name") or "") for item in next_quarantined.values()
+        })
+        ready = bool(catalog.ok and not next_quarantined and not missing_live and next_skills)
+        next_catalog_health = {
+            **catalog.snapshot(),
+            "dependency_degraded_count": sum(
+                1 for metadata in next_skills.values() if not metadata.dependency_ready
+            ),
+            "excluded_declarations": [
+                {
+                    "class_name": item.class_name,
+                    "module_path": item.module_path,
+                    "name": item.name,
+                    "reason": item.exclusion_reason,
+                }
+                for item in catalog.excluded
+            ],
+            "expected_live_count": len(expected_names),
+            "live_count": len(next_skills),
+            "missing_live": missing_live,
+            "quarantined_count": len(next_quarantined),
+            "ready": ready,
+            "reason": "ready" if ready else "catalog_incomplete",
+            "serving_last_known_good": False,
+        }
 
-                            for item in node.body:
-                                if isinstance(item, ast.Assign):
-                                    for target in item.targets:
-                                        if isinstance(target, ast.Name):
-                                            if target.id == "name" and isinstance(
-                                                item.value, ast.Constant
-                                            ):
-                                                name = item.value.value
-                                                is_skill = True
-                                            elif target.id == "description" and isinstance(
-                                                item.value, ast.Constant
-                                            ):
-                                                description = item.value.value
-
-                            if is_skill and name:
-                                if name in _INTERNAL_ONLY_SKILLS:
-                                    continue
-                                # Always overwrite: AST has ground-truth module_path
-                                # and class_name from the actual file.  The Rust index
-                                # assumes 1-skill-per-file with auto-generated class
-                                # names, which is wrong for multi-skill files like
-                                # swarm_delegation.py (spawn_agent, spawn_agents_parallel).
-                                self.skills[name] = SkillMetadata(
-                                    name=name,
-                                    description=description or "No description provided.",
-                                    module_path=f"{module_prefix}.{filename[:-3]}",
-                                    class_name=node.name,
-                                    effect_scope=self._declared_effect_scope(name),
-                                )
-                except (OSError, SyntaxError, UnicodeDecodeError) as e:
-                    _record_capability_degradation(
-                        e,
-                        action="skipped unreadable or invalid skill file during AST discovery",
-                    )
-                    self.logger.error("AST fail for %s: %s", filename, e)
-
-        for internal_name in _INTERNAL_ONLY_SKILLS:
-            self.skills.pop(internal_name, None)
+        with self._catalog_guard():
+            self.skills = next_skills
+            self.instances = next_instances
+            self.quarantined_skills = next_quarantined
+            self.catalog_exclusions = next_exclusions
+            self.skill_states = {name: "READY" for name in next_skills}
+            self.skill_last_errors = next_skill_errors
+            self._catalog_digest = catalog.digest
+            self.catalog_health = next_catalog_health
+            self._refresh_active_skills()
+            live_count = len(self.skills)
+            quarantined_count = len(self.quarantined_skills)
+            exclusion_count = len(self.catalog_exclusions)
 
         if self.orchestrator and hasattr(self.orchestrator, "status") and self.orchestrator.status:
             try:
-                self.orchestrator.status.skills_loaded = len(self.skills)
+                self.orchestrator.status.skills_loaded = live_count
             except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 _record_capability_degradation(
                     _exc,
                     action="continued after orchestrator skill count status update failed",
                 )
                 self.logger.debug("Suppressed Exception: %s", _exc)
-        self._refresh_active_skills()
-        self.logger.info("✓ %d total skills registered", len(self.skills))
+        self.logger.info(
+            "✓ %d skills live, %d quarantined, %d explicitly superseded (%s)",
+            live_count,
+            quarantined_count,
+            exclusion_count,
+            catalog.backend,
+        )
 
     def _refresh_active_skills(self) -> None:
         """Treat enabled, registered skills as active unless explicitly deactivated."""
-        if not self.skills:
-            self.active_skills = set()
-            return
+        with self._catalog_guard():
+            if not self.skills:
+                self.active_skills = set()
+                return
 
-        registered = set(self.skills)
-        enabled = {name for name, meta in self.skills.items() if bool(meta.enabled)}
-        sticky_active = {name for name in self.active_skills if name in registered}
-        self.active_skills = (enabled | sticky_active) - self._explicitly_deactivated_skills
+            registered = set(self.skills)
+            enabled = {name for name, meta in self.skills.items() if bool(meta.enabled)}
+            sticky_active = {name for name in self.active_skills if name in registered}
+            self.active_skills = (enabled | sticky_active) - self._explicitly_deactivated_skills
 
-    def register_skill(self, skill_class: Any) -> None:
-        """Registers a skill class and extracts its metadata.
+    def register_skill(self, implementation: Any, *, replace: bool = False) -> bool:
+        """Atomically add one runtime implementation to the current catalog generation."""
 
-        Args:
-            skill_class: The class representing the skill.
+        with self._catalog_mutation_guard(), self._catalog_guard():
+            return self._register_skill_locked(implementation, replace=replace)
+
+    def _register_skill_locked(self, implementation: Any, *, replace: bool = False) -> bool:
+        """Register one executable, classified runtime skill.
+
+        Metadata-only mappings are intentionally rejected: advertising a name
+        without an implementation created catalog entries that could never run.
         """
-        if inspect.isclass(skill_class):
-            skill_name = getattr(skill_class, "name", skill_class.__name__)
-            description = getattr(skill_class, "description", skill_class.__doc__ or "")
-            requirements = getattr(skill_class, "requirements", SkillRequirements())
-            input_model = getattr(skill_class, "input_model", None)
-            metabolic_cost = getattr(skill_class, "metabolic_cost", 1)
-            is_core = getattr(skill_class, "is_core_personality", False)
-            effect_scope = self._declared_effect_scope(skill_name, skill_class)
-            instance = None
-        else:
-            # Instance registration
-            instance = skill_class
-            skill_class = instance.__class__
-            skill_name = getattr(instance, "name", skill_class.__name__)
-            description = getattr(instance, "description", instance.__doc__ or "")
-            requirements = getattr(instance, "requirements", SkillRequirements())
-            input_model = getattr(instance, "input_model", None)
-            metabolic_cost = getattr(instance, "metabolic_cost", 1)
-            is_core = getattr(instance, "is_core_personality", False)
-            effect_scope = self._declared_effect_scope(skill_name, instance)
 
+        from core.skills.base_skill import BaseSkill
+
+        if isinstance(implementation, dict):
+            raise TypeError("runtime skill registration requires a class or BaseSkill instance")
+        instance = None if inspect.isclass(implementation) else implementation
+        skill_class = implementation if inspect.isclass(implementation) else implementation.__class__
+        if not inspect.isclass(skill_class) or not issubclass(skill_class, BaseSkill):
+            raise TypeError("runtime skill must inherit the canonical BaseSkill")
+        if instance is not None and not isinstance(instance, BaseSkill):
+            raise TypeError("runtime skill instance does not satisfy canonical BaseSkill")
+
+        target = instance or skill_class
+        skill_name = str(getattr(target, "name", "") or "").strip()
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}", skill_name):
+            raise ValueError(f"invalid runtime skill name: {skill_name!r}")
+        description = str(getattr(target, "description", "") or "").strip()
+        if not description:
+            raise ValueError(f"runtime skill {skill_name!r} requires a description")
+        policy = resolve_skill_policy(skill_name, str(getattr(target, "effect_scope", "") or ""))
+        if policy is None:
+            raise ValueError(f"runtime skill {skill_name!r} requires a recognized effect_scope")
+
+        existing = self.skills.get(skill_name)
+        if existing is not None and not replace:
+            same_class = existing.skill_class is skill_class and (
+                instance is None or existing.instance is instance
+            )
+            if same_class:
+                return True
+            raise ValueError(f"runtime skill name {skill_name!r} is already registered")
+
+        requirements = getattr(target, "requirements", SkillRequirements())
+        if not isinstance(requirements, SkillRequirements):
+            requirements = SkillRequirements(
+                packages=list(getattr(requirements, "packages", ()) or ()),
+                commands=list(getattr(requirements, "commands", ()) or ()),
+                supported_platforms=list(
+                    getattr(requirements, "supported_platforms", ())
+                    or ("linux", "darwin", "win32")
+                ),
+            )
+        input_model = getattr(target, "input_model", None)
+        schema_override: dict[str, Any] | None = None
+        if input_model is not None and callable(getattr(input_model, "model_json_schema", None)):
+            schema_override = dict(input_model.model_json_schema())
+        elif instance is not None:
+            schema_factory = getattr(instance, "to_json_schema", None)
+            if callable(schema_factory):
+                raw_schema = schema_factory()
+                if not isinstance(raw_schema, dict):
+                    raise ValueError(f"runtime skill {skill_name!r} returned a non-object schema")
+                function_payload = raw_schema.get("function")
+                schema_payload = (
+                    function_payload.get("parameters")
+                    if isinstance(function_payload, dict)
+                    else raw_schema
+                )
+                if not isinstance(schema_payload, dict):
+                    raise ValueError(
+                        f"runtime skill {skill_name!r} returned non-object parameters"
+                    )
+                schema_override = dict(schema_payload)
+        if schema_override is None:
+            schema_override = {"additionalProperties": True, "properties": {}, "type": "object"}
+
+        identity = f"runtime:{skill_class.__module__}:{skill_class.__name__}:{skill_name}"
         self.skills[skill_name] = SkillMetadata(
             name=skill_name,
             description=description,
@@ -1873,9 +2025,19 @@ class CapabilityEngine(AuraBaseModule):
             module_path=getattr(skill_class, "__module__", None),
             class_name=getattr(skill_class, "__name__", None),
             instance=instance,
-            metabolic_cost=metabolic_cost,
-            is_core_personality=is_core,
-            effect_scope=effect_scope,
+            metabolic_cost=max(0, int(getattr(target, "metabolic_cost", 1) or 1)),
+            is_core_personality=bool(getattr(target, "is_core_personality", False)),
+            effect_scope=policy.effect_scope,
+            authority_class=policy.authority_class,
+            schema_override=schema_override,
+            catalog_id=hashlib.sha256(identity.encode()).hexdigest()[:20],
+            source_kind="runtime",
+            validation_state="valid",
+            route_class_hint=(
+                "async"
+                if inspect.iscoroutinefunction(getattr(target, "execute", None))
+                else "sync"
+            ),
         )
 
         # Issue 51: Perform AST validation at registration time
@@ -1887,8 +2049,9 @@ class CapabilityEngine(AuraBaseModule):
         # Initialize state as READY by default
         self.skill_states[skill_name] = "READY"
         self._refresh_active_skills()
+        return True
 
-    def _audit_skill_ast(self, skill_name: str):
+    def _audit_skill_ast(self, skill_name: str) -> None:
         """Issue 51: Pre-Execution AST Validation at registration time."""
         meta = self.skills.get(skill_name)
         if not meta or not meta.instance:
@@ -1901,8 +2064,8 @@ class CapabilityEngine(AuraBaseModule):
             # Basic name/import validation
             source = textwrap.dedent(inspect.getsource(meta.instance.__class__))
             tree = ast.parse(source)
-            defined_names = set()
-            accessed_names = set()
+            defined_names: set[str] = set()
+            accessed_names: set[str] = set()
 
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
@@ -1935,9 +2098,21 @@ class CapabilityEngine(AuraBaseModule):
         for name in self.skills:
             self._emit_skill_status(name, "READY")
 
-    def _emit_skill_status(self, skill_name: str, state: str) -> None:
+    def _emit_skill_status(
+        self,
+        skill_name: str,
+        state: str,
+        *,
+        expected_catalog_digest: str | None = None,
+    ) -> None:
         """Emits a skill status update to the EventBus."""
-        self.skill_states[skill_name] = state
+        with self._catalog_guard():
+            if (
+                expected_catalog_digest is not None
+                and expected_catalog_digest != str(getattr(self, "_catalog_digest", ""))
+            ):
+                return
+            self.skill_states[skill_name] = state
         from core.event_bus import get_event_bus
 
         bus = get_event_bus()
@@ -1947,7 +2122,81 @@ class CapabilityEngine(AuraBaseModule):
 
     def get_available_skills(self) -> list[str]:
         """Returns a list of all registered skill names."""
-        return list(self.skills.keys())
+        with self._catalog_guard():
+            return list(self.skills)
+
+    @property
+    def skills_loaded(self) -> int:
+        """Compatibility count backed by the canonical live registry."""
+
+        with self._catalog_guard():
+            return len(self.skills)
+
+    def discover_skills(self) -> list[str]:
+        """Compatibility entry point that performs the full catalog transaction."""
+
+        self.reload_skills()
+        return self.get_available_skills()
+
+    def get_catalog_health(self) -> dict[str, Any]:
+        with self._catalog_guard():
+            catalog_health = dict(self.catalog_health)
+            quarantined = [dict(item) for item in self.quarantined_skills.values()]
+        return {
+            **catalog_health,
+            "quarantined": [
+                {
+                    "catalog_id": item.get("catalog_id"),
+                    "class_name": item.get("class_name"),
+                    "error": item.get("error") or item.get("detail"),
+                    "module_path": item.get("module_path"),
+                    "name": item.get("name"),
+                    "stage": item.get("stage"),
+                }
+                for item in quarantined
+            ],
+        }
+
+    def dry_run_catalog(self) -> dict[str, Any]:
+        """Prove every live declaration can be routed without executing effects."""
+
+        with self._catalog_guard():
+            skills = dict(self.skills)
+            catalog_ready = bool(self.catalog_health.get("ready"))
+            catalog_digest = self._catalog_digest
+            quarantined_count = len(self.quarantined_skills)
+        entries: list[dict[str, Any]] = []
+        for name, metadata in sorted(skills.items()):
+            schema = metadata.schema_def
+            valid = bool(
+                isinstance(schema, dict)
+                and schema.get("type") == "object"
+                and metadata.validation_state == "valid"
+                and metadata.authority_class != "unclassified"
+                and metadata.effect_scope != "unknown"
+                and self._route_class_for(metadata) in {"async", "sync"}
+            )
+            entries.append(
+                {
+                    "authority_class": metadata.authority_class,
+                    "catalog_id": metadata.catalog_id,
+                    "effect_scope": metadata.effect_scope,
+                    "name": name,
+                    "ok": valid,
+                    "route_class": self._route_class_for(metadata),
+                    "schema_property_count": len(schema.get("properties") or {}),
+                }
+            )
+        failed = [entry["name"] for entry in entries if not entry["ok"]]
+        ok = bool(catalog_ready and entries and not failed)
+        return {
+            "catalog_digest": catalog_digest,
+            "entries": entries,
+            "failed": failed,
+            "live_count": len(entries),
+            "ok": ok,
+            "quarantined_count": quarantined_count,
+        }
 
     def resolve_skill_name(self, skill_name: Any) -> str:
         """Resolve a requested skill without collapsing real registered skills."""
@@ -1955,16 +2204,18 @@ class CapabilityEngine(AuraBaseModule):
         if not raw:
             return ""
 
-        if raw in self.skills:
+        with self._catalog_guard():
+            skill_names = tuple(self.skills)
+        if raw in skill_names:
             return raw
 
         lowered = raw.lower()
-        casefolded = {name.lower(): name for name in self.skills}
+        casefolded = {name.lower(): name for name in skill_names}
         if lowered in casefolded:
             return casefolded[lowered]
 
         alias_target = self.SKILL_ALIASES.get(raw, self.SKILL_ALIASES.get(lowered, raw))
-        if alias_target in self.skills:
+        if alias_target in skill_names:
             return alias_target
 
         alias_lowered = str(alias_target or "").lower()
@@ -1973,7 +2224,38 @@ class CapabilityEngine(AuraBaseModule):
 
         return raw
 
+    @staticmethod
+    def _verify_catalog_source(metadata: SkillMetadata) -> None:
+        """Refuse lazy loading when source changed after the isolated probe."""
+
+        if not metadata.source_sha256 or not metadata.source_path:
+            return
+        source_path = (Path(config.paths.base_dir) / metadata.source_path).resolve()
+        root = Path(config.paths.base_dir).resolve()
+        try:
+            source_path.relative_to(root)
+            observed = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise RuntimeError(f"catalog source is no longer readable: {exc}") from exc
+        if observed != metadata.source_sha256:
+            raise RuntimeError("catalog source changed after validation; reload is required")
+
+    @staticmethod
+    def _construct_skill_instance(metadata: SkillMetadata, skill_class: type[Any]) -> Any:
+        dependencies: dict[str, Any] = {}
+        for dependency_name in metadata.constructor_dependencies:
+            dependency = ServiceContainer.get(dependency_name, default=None)
+            if dependency is None:
+                raise RuntimeError(
+                    f"declared constructor dependency {dependency_name!r} is unavailable"
+                )
+            dependencies[dependency_name] = dependency
+        return skill_class(**dependencies)
+
     def _route_class_for(self, meta: SkillMetadata) -> str:
+        route_class_hint = getattr(meta, "route_class_hint", None)
+        if route_class_hint in {"async", "sync"}:
+            return str(route_class_hint)
         target = meta.instance or meta.skill_class
         if target is None:
             return "managed_async"
@@ -2006,25 +2288,8 @@ class CapabilityEngine(AuraBaseModule):
     @staticmethod
     def _declared_effect_scope(skill_name: str, target: Any | None = None) -> str:
         declared = str(getattr(target, "effect_scope", "") or "").strip().lower()
-        if declared:
-            return declared
-        if skill_name in _READ_ONLY_EFFECT_SKILLS:
-            return "read_only"
-        if skill_name in _PURE_COMPUTE_EFFECT_SKILLS:
-            return "pure_compute"
-        if skill_name in _SANDBOXED_COMPUTE_EFFECT_SKILLS:
-            return "sandboxed_compute"
-        if skill_name == "desktop_task":
-            return "foreground_desktop_control"
-        if skill_name == "web_interlocutor":
-            return "foreground_browser_dialogue"
-        if skill_name in _EXTERNAL_IO_EFFECT_SKILLS:
-            return "external_io"
-        if skill_name in _STATEFUL_EFFECT_SKILLS:
-            return "state_mutation"
-        if skill_name in _CRITICAL_ACTION_SKILLS:
-            return "privileged_mutation"
-        return "unknown"
+        policy = resolve_skill_policy(skill_name, declared)
+        return policy.effect_scope if policy is not None else "unknown"
 
     def _effect_scope_for(self, skill_name: str, meta: SkillMetadata) -> str:
         return self._declared_effect_scope(skill_name, meta.instance or meta.skill_class) or meta.effect_scope
@@ -2402,7 +2667,13 @@ class CapabilityEngine(AuraBaseModule):
     def _catalog_item_for_skill(self, skill_name: str, meta: SkillMetadata) -> dict[str, Any]:
         state = self.skill_states.get(skill_name, "READY")
         active = skill_name in self.active_skills
-        available = bool(meta.enabled and active and state != "ERROR")
+        available = bool(
+            meta.enabled
+            and active
+            and state != "ERROR"
+            and getattr(meta, "validation_state", "valid") == "valid"
+            and bool(getattr(meta, "dependency_ready", True))
+        )
         policy_state = (
             "disabled"
             if not meta.enabled
@@ -2424,6 +2695,8 @@ class CapabilityEngine(AuraBaseModule):
                     if skill_name in self._explicitly_deactivated_skills
                     else "error_state"
                     if state == "ERROR"
+                    else "dependency_unavailable"
+                    if not bool(getattr(meta, "dependency_ready", True))
                     else "inactive"
                 )
             )
@@ -2450,6 +2723,45 @@ class CapabilityEngine(AuraBaseModule):
             "memory_mb_estimate": meta.memory_mb_estimate,
             "metabolic_cost": meta.metabolic_cost,
             "effect_scope": self._effect_scope_for(skill_name, meta),
+            "authority_class": getattr(meta, "authority_class", "unclassified"),
+            "catalog_id": getattr(meta, "catalog_id", "") or skill_name,
+            "dependency_ready": bool(getattr(meta, "dependency_ready", True)),
+            "source_kind": getattr(meta, "source_kind", "runtime"),
+            "source_path": getattr(meta, "source_path", ""),
+            "validation_state": getattr(meta, "validation_state", "valid"),
+        }
+
+    @staticmethod
+    def _catalog_item_for_quarantine(item: dict[str, Any]) -> dict[str, Any]:
+        name = str(item.get("name") or item.get("class_name") or "unresolved_skill")
+        error = str(item.get("error") or item.get("detail") or "catalog validation failed")
+        return {
+            "active": False,
+            "authority_class": str(item.get("authority_class") or "unclassified"),
+            "availability": "quarantined",
+            "availability_reason": error,
+            "available": False,
+            "catalog_id": str(item.get("catalog_id") or name),
+            "degraded_reason": error,
+            "dependency_ready": False,
+            "description": str(item.get("description") or "Skill declaration is quarantined."),
+            "effect_scope": str(item.get("effect_scope") or "unknown"),
+            "enabled": False,
+            "example_usage": "Unavailable until the catalog contract is repaired.",
+            "execution_profile": "none",
+            "input_summary": "Unavailable.",
+            "last_error": error,
+            "memory_mb_estimate": 0,
+            "metabolic_cost": 0,
+            "name": name,
+            "policy_state": "quarantined",
+            "risk_class": "critical",
+            "route_class": "blocked",
+            "source_kind": str(item.get("source_kind") or "unknown"),
+            "source_path": str(item.get("source_path") or ""),
+            "state": "QUARANTINED",
+            "timeout_seconds": 0,
+            "validation_state": "quarantined",
         }
 
     def iter_tool_catalog(self, *, include_inactive: bool = True) -> Iterable[dict[str, Any]]:
@@ -2470,6 +2782,16 @@ class CapabilityEngine(AuraBaseModule):
             if not meta.enabled and not include_inactive:
                 continue
             yield self._catalog_item_for_skill(skill_name, meta)
+        if include_inactive:
+            for item in sorted(
+                getattr(self, "quarantined_skills", {}).values(),
+                key=lambda row: (
+                    str(row.get("name") or "").casefold(),
+                    str(row.get("module_path") or ""),
+                    str(row.get("class_name") or ""),
+                ),
+            ):
+                yield self._catalog_item_for_quarantine(item)
 
     def get_tool_catalog(self, *, include_inactive: bool = True) -> list[dict[str, Any]]:
         catalog = list(self.iter_tool_catalog(include_inactive=include_inactive))
@@ -2684,6 +3006,11 @@ class CapabilityEngine(AuraBaseModule):
         if meta is None:
             return None
         if not bool(getattr(meta, "enabled", True)):
+            return None
+        if (
+            getattr(meta, "validation_state", "valid") != "valid"
+            or not bool(getattr(meta, "dependency_ready", True))
+        ):
             return None
 
         active_skills = getattr(self, "active_skills", set(self.skills))
@@ -3053,7 +3380,7 @@ class CapabilityEngine(AuraBaseModule):
         result: dict[str, Any] | None = None
 
         @self.error_boundary
-        async def _execute_wrapped():
+        async def _execute_wrapped() -> dict[str, Any]:
             nonlocal constitution, tool_handle, result, params
             start_time = time.monotonic()
             ctx = self._augment_execution_context(context)
@@ -3150,7 +3477,9 @@ class CapabilityEngine(AuraBaseModule):
                     }
 
             # 1. Verification
-            if skill_name not in self.skills:
+            with self._catalog_guard():
+                skill_registered = skill_name in self.skills
+            if not skill_registered:
                 # ── Pillar 2: Hephaestus (Autonomous Forge) ──
                 hephaestus = optional_service("hephaestus_engine", default=None)
                 objective = ctx.get("objective") or ctx.get("message")
@@ -3162,7 +3491,9 @@ class CapabilityEngine(AuraBaseModule):
                     forge_result = await hephaestus.synthesize_skill(skill_name, objective)
                     if forge_result.get("ok"):
                         # Skill should now be registered via discovery in synthesize_skill
-                        if skill_name in self.skills:
+                        with self._catalog_guard():
+                            skill_registered = skill_name in self.skills
+                        if skill_registered:
                             self.logger.info("✅ Skill '%s' forged successfully.", skill_name)
                         else:
                             return {
@@ -3180,20 +3511,43 @@ class CapabilityEngine(AuraBaseModule):
                         "error": f"Skill '{skill_name}' not found and forge unavailable.",
                     }
 
-            meta = self.skills[skill_name]
+            with self._catalog_guard():
+                meta = self.skills.get(skill_name)
+                instances = self.instances
+                skill_last_errors = self.skill_last_errors
+                catalog_digest = str(getattr(self, "_catalog_digest", ""))
+            if meta is None:
+                return {
+                    "ok": False,
+                    "error": f"Skill '{skill_name}' left the registry during resolution.",
+                }
             is_forged = meta.module_path and "skills/" in meta.module_path
 
             # Lazy loading of skill class
             if meta.skill_class is None and not is_forged:
                 try:
                     self.logger.info("🧩 Lazy loading skill: %s", skill_name)
-                    module = importlib.import_module(meta.module_path)
-                    skill_class = getattr(module, meta.class_name)
+                    self._verify_catalog_source(meta)
+                    module_path = meta.module_path
+                    class_name = meta.class_name
+                    if not module_path or not class_name:
+                        raise RuntimeError("catalog entry is missing its import identity")
+                    module = importlib.import_module(module_path)
+                    skill_class = getattr(module, class_name)
+                    from core.skills.base_skill import BaseSkill
+
+                    if not inspect.isclass(skill_class) or not issubclass(skill_class, BaseSkill):
+                        raise TypeError("implementation no longer satisfies canonical BaseSkill")
+                    if str(getattr(skill_class, "name", "")) != skill_name:
+                        raise ValueError("implementation name changed after catalog validation")
+                    observed_scope = self._declared_effect_scope(skill_name, skill_class)
+                    if observed_scope != meta.effect_scope:
+                        raise ValueError("implementation effect classification changed after validation")
                     meta.skill_class = skill_class
                     meta.input_model = getattr(skill_class, "input_model", None)
                     # Initialize instance
-                    self.instances[skill_name] = skill_class()
-                except (RuntimeError, AttributeError, TypeError) as e:
+                    instances[skill_name] = self._construct_skill_instance(meta, skill_class)
+                except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
                     _record_capability_degradation(
                         e,
                         action="returned skill load failure before execution",
@@ -3778,15 +4132,20 @@ class CapabilityEngine(AuraBaseModule):
 
             # 3. Adaptation & Security (Rosetta Stone / Sandbox)
             exec_params = params
-            if is_forged and self.sandbox:
+            sandbox = self.sandbox
+            if is_forged and sandbox is not None:
                 self.logger.info("🛡️ Executing FORGED skill '%s' in Sandbox 2.0", skill_name)
                 try:
+                    module_path = meta.module_path
+                    class_name = meta.class_name
+                    if not module_path or not class_name:
+                        raise RuntimeError("forged skill is missing its source or class identity")
                     code = await asyncio.to_thread(
-                        Path(meta.module_path).read_text, encoding="utf-8"
+                        Path(module_path).read_text, encoding="utf-8"
                     )
                     # Run in executor to be non-blocking
                     result = await asyncio.get_running_loop().run_in_executor(
-                        None, lambda: self.sandbox.execute(code, meta.class_name, exec_params)
+                        None, lambda: sandbox.execute(code, class_name, exec_params)
                     )
                     return result if isinstance(result, dict) else {"ok": True, "result": result}
                 except (sqlite3.Error, OSError) as e:
@@ -3805,12 +4164,21 @@ class CapabilityEngine(AuraBaseModule):
                 exec_params = params_or_error
 
             # 3. Instance Management
-            if skill_name not in self.instances:
-                self.instances[skill_name] = meta.skill_class()
-            skill_instance = self.instances[skill_name]
+            if skill_name not in instances:
+                skill_class = meta.skill_class
+                if skill_class is None:
+                    raise RuntimeError("validated skill has no executable implementation class")
+                instances[skill_name] = self._construct_skill_instance(
+                    meta, skill_class
+                )
+            skill_instance = instances[skill_name]
 
             # 4. Critical Execution loop
-            self._emit_skill_status(skill_name, "RUNNING")
+            self._emit_skill_status(
+                skill_name,
+                "RUNNING",
+                expected_catalog_digest=catalog_digest,
+            )
 
             # 2026 Transcendence: Memory Budget Enforcement
             from core.runtime import CoreRuntime
@@ -3824,8 +4192,6 @@ class CapabilityEngine(AuraBaseModule):
                     rt = await CoreRuntime.get()
                 gov = rt.container.get("memory_governor", default=None)
                 if gov:
-                    import inspect
-
                     check = getattr(gov, "check", None)
                     if callable(check):
                         check_result = check()
@@ -3950,9 +4316,13 @@ class CapabilityEngine(AuraBaseModule):
                             f"Background {skill_name} deferred because the resource protection policy is unavailable."
                         ),
                     }
-            constrained_timeout = ctx.get("timeout_s")
+            raw_constrained_timeout = ctx.get("timeout_s")
             try:
-                constrained_timeout = float(constrained_timeout)
+                constrained_timeout = (
+                    float(raw_constrained_timeout)
+                    if raw_constrained_timeout is not None
+                    else 0.0
+                )
             except (TypeError, ValueError):
                 constrained_timeout = 0.0
             if constrained_timeout and constrained_timeout > 0.0:
@@ -3971,7 +4341,7 @@ class CapabilityEngine(AuraBaseModule):
                     tool_trace = None
                 
                 # Execute safely via the Governor to prevent cascading API failures
-                async def resilient_call():
+                async def resilient_call() -> dict[str, Any]:
                     return await self._execute_with_retry(
                         skill_instance,
                         skill_name,
@@ -4040,24 +4410,34 @@ class CapabilityEngine(AuraBaseModule):
             # Update state based on result
             if result is None:
                 result = {"ok": False, "error": "Unknown execution failure (result is None)"}
+            elif not isinstance(result, dict):
+                result = {
+                    "ok": False,
+                    "error": "Skill execution returned a non-object result",
+                    "raw_result_type": type(result).__name__,
+                }
 
             # A graceful {ok: false} return means the skill itself is healthy —
             # only mark ERROR if the skill threw an unhandled exception (caught above).
             # This prevents "nmap not installed" from permanently bricking sovereign_network.
             was_exception = result.pop("_exception", False) if isinstance(result, dict) else False
             final_state = "ERROR" if was_exception else "READY"
-            self._emit_skill_status(skill_name, final_state)
+            self._emit_skill_status(
+                skill_name,
+                final_state,
+                expected_catalog_digest=catalog_digest,
+            )
             if not result.get("ok", True):
                 # Store error for diagnostics, but ONLY if the skill is in ERROR state.
                 # Graceful {ok: false} (e.g. "nmap not installed") should NOT persist
                 # as degraded_reason — the skill is still healthy, just this call failed.
                 if was_exception:
-                    self.skill_last_errors[skill_name] = str(
+                    skill_last_errors[skill_name] = str(
                         result.get("error") or "execution_failed"
                     )
                 # else: transient failure, don't pollute the catalog
             else:
-                self.skill_last_errors.pop(skill_name, None)
+                skill_last_errors.pop(skill_name, None)
 
             # 5. Persistent Audit (ORM)
             if orm:
@@ -4119,7 +4499,13 @@ class CapabilityEngine(AuraBaseModule):
             return result
 
         try:
-            return await _execute_wrapped()
+            wrapped_result = await _execute_wrapped()
+            if not isinstance(wrapped_result, dict):
+                return {
+                    "ok": False,
+                    "error": "Capability error boundary returned a non-object result",
+                }
+            return wrapped_result
         finally:
             try:
                 if (
@@ -4558,11 +4944,14 @@ class CapabilityEngine(AuraBaseModule):
 
         from core.runtime.skill_contract import apply_action_expectation_payload
 
-        payload = apply_action_expectation_payload(
+        raw_payload = apply_action_expectation_payload(
             skill_name,
             result,
             expectation,
         )
+        if not isinstance(raw_payload, dict):
+            raise TypeError("action-expectation verifier returned a non-object payload")
+        payload: dict[str, Any] = raw_payload
         expectation_receipt_id = cls._emit_action_expectation_receipt(
             skill_name,
             payload,
@@ -4658,7 +5047,10 @@ class CapabilityEngine(AuraBaseModule):
                         action="returned expectation-downgraded result after fault occurrence recording failed",
                         severity="warning",
                     )
-            return emitted.receipt_id
+            receipt_id = getattr(emitted, "receipt_id", None)
+            if not isinstance(receipt_id, str) or not receipt_id:
+                raise ValueError("durable expectation receipt is missing its receipt ID")
+            return receipt_id
         except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
             _record_capability_degradation(
                 exc,
@@ -4761,7 +5153,7 @@ class CapabilityEngine(AuraBaseModule):
     def _check_success(self, out: Any) -> bool:
         """Determines if the skill output indicates success."""
         if isinstance(out, dict):
-            return out.get("ok", True)
+            return bool(out.get("ok", True))
         return out is not None
 
     def _extract_error(self, out: Any) -> str:
@@ -4800,13 +5192,16 @@ class CapabilityEngine(AuraBaseModule):
         self, action: str, params: dict[str, Any], context: dict[str, Any], result: dict[str, Any]
     ) -> None:
         """Records the skill outcome to the Temporal Learning system."""
+        temporal = self.temporal
+        if temporal is None:
+            return
         try:
-            await self.temporal.record_outcome(
+            await temporal.record_outcome(
                 action=action,
                 context=str(context)[:200],
                 intended_outcome=str(params)[:200],
                 actual_outcome=str(result)[:500],
-                success=result.get("ok", False),
+                success=bool(result.get("ok", False)),
             )
         except (OSError, ConnectionError, TimeoutError) as e:
             _record_capability_degradation(
@@ -4817,33 +5212,61 @@ class CapabilityEngine(AuraBaseModule):
 
     def get_health(self) -> dict[str, Any]:
         """Provides extended health data for the capability system."""
-        report = super().get_health()
-        report["skills_total"] = len(self.skills)
-        # Deep check: how many skills have dependencies met
-        report["skills_ready"] = len([s for s in self.skills.values() if s.requirements.check()[0]])
+        raw_report = super().get_health()
+        report: dict[str, Any] = dict(raw_report) if isinstance(raw_report, dict) else {}
+        with self._catalog_guard():
+            skills = dict(self.skills)
+        report["skills_total"] = len(skills)
+        report["skills_ready"] = sum(
+            1
+            for metadata in skills.values()
+            if metadata.validation_state == "valid" and metadata.dependency_ready
+        )
+        report["skill_catalog"] = self.get_catalog_health()
+        report["skill_catalog_dry_run"] = self.dry_run_catalog()
         return report
 
     def is_ready(self) -> bool:
         """Deep readiness probe for runtime tool-governance health."""
-        if not isinstance(self.skills, dict) or not self.skills:
+        with self._catalog_guard():
+            skills = dict(self.skills)
+            active_skills = set(self.active_skills)
+            catalog_ready = bool(self.catalog_health.get("ready"))
+        if not skills:
             return False
-        if not isinstance(self.active_skills, set) or not self.active_skills:
+        if not active_skills:
             return False
-        return any(name in self.active_skills for name in self.skills)
+        if not catalog_ready:
+            return False
+        return any(
+            name in active_skills
+            and metadata.validation_state == "valid"
+            and metadata.dependency_ready
+            for name, metadata in skills.items()
+        )
 
 
-async def execute_tool(tool_name: str, parameters: dict[str, Any] | None = None, **kwargs) -> dict[str, Any]:
+async def execute_tool(
+    tool_name: str,
+    parameters: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
     """Module-level helper to execute a tool via the registered CapabilityEngine.
 
     Resolves the active skill_router instance from the ServiceContainer.
     """
     from core.container import ServiceContainer
-    engine = ServiceContainer.get("skill_router", default=None)
+    engine: CapabilityEngine | None = ServiceContainer.get("skill_router", default=None)
     if not engine:
         engine = CapabilityEngine()
         ServiceContainer.register_instance("skill_router", engine)
 
     params = parameters or {}
+    raw_context = kwargs.pop("context", None)
+    if raw_context is not None and not isinstance(raw_context, dict):
+        return {"ok": False, "error": "tool execution context must be an object"}
+    context = dict(raw_context or {})
+    context.update(kwargs)
     
     # Map legacy virtual tool names used in tests/legacy flows
     if tool_name == "write_file":
@@ -4853,13 +5276,13 @@ async def execute_tool(tool_name: str, parameters: dict[str, Any] | None = None,
             "path": params.get("file_path", params.get("path")),
             "content": params.get("content", "")
         }
-        return await engine.execute(real_tool, real_params, **kwargs)
+        return await engine.execute(real_tool, real_params, context=context)
     elif tool_name == "read_file":
         real_tool = "file_operation"
         real_params = {
             "action": "read",
             "path": params.get("file_path", params.get("path"))
         }
-        return await engine.execute(real_tool, real_params, **kwargs)
+        return await engine.execute(real_tool, real_params, context=context)
 
-    return await engine.execute(tool_name, params, **kwargs)
+    return await engine.execute(tool_name, params, context=context)

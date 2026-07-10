@@ -888,6 +888,7 @@ def test_continuity_sanitizer_rejects_evaluation_input_not_answers():
 def test_commitment_engine_quarantines_proof_fixture_on_load(tmp_path, monkeypatch):
     import json
     import time
+
     from core.agency import commitment_engine as commitment_module
 
     path = tmp_path / "commitments.json"
@@ -964,6 +965,7 @@ def test_capability_engine_instance_registration_is_executable_metadata():
     class RuntimeSkill(BaseSkill):
         name = "runtime_instance_skill"
         description = "Runtime registered skill for metadata validation."
+        effect_scope = "pure_compute"
 
         async def execute(self, params, context=None):
             return {"ok": True, "value": params.get("value")}

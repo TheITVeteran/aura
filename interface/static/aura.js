@@ -1476,7 +1476,7 @@ function renderToolCatalog(catalog) {
             tool.availability ? `<span class="badge ${tool.available ? 'badge-reflex' : 'badge-diagnostic'}">${escHtml(tool.availability)}</span>` : ''
         ].filter(Boolean).join('');
         return `
-            <div class="skill-card ${stateValue}" id="${toolDomId(tool.name)}">
+            <div class="skill-card ${stateValue}" id="${toolDomId(tool.catalog_id || tool.name)}">
                 <div class="skill-card-head">
                     <div class="skill-title-wrap">
                         <span class="skill-name">${escHtml(tool.name)}</span>

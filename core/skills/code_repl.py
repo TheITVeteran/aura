@@ -21,6 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from core.config import config
 from core.governance.will import ActionDomain
 from core.runtime.action_executor import ActionExecutor
 from core.runtime.errors import FallbackClassification, record_degradation
@@ -62,6 +63,7 @@ class CodeREPLInput(BaseModel):
     code: str = Field(..., description="Python code to execute in the REPL.")
     session_id: str | None = Field(
         None,
+        pattern=r"^[A-Za-z0-9_-]{1,64}$",
         description="Optional session ID for maintaining state across turns.",
     )
     timeout: int = Field(
@@ -93,18 +95,20 @@ class CodeREPLSkill(BaseSkill):
     _sessions: dict[str, dict[str, Any]]
     _session_dirs: dict[str, Path]
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._sessions = {}
         self._session_dirs = {}
-        self._output_dir = Path(tempfile.gettempdir()) / "aura_repl_output"
-        self._output_dir.mkdir(parents=True, exist_ok=True)
+        self._output_dir = Path(config.paths.data_dir) / "repl_sessions"
 
-    def _get_session_dir(self, session_id: str) -> Path:
+    async def _get_session_dir(self, session_id: str) -> Path:
         """Get or create a working directory for a session."""
         if session_id not in self._session_dirs:
             session_dir = self._output_dir / session_id
-            session_dir.mkdir(parents=True, exist_ok=True)
+            await get_file_write_gateway().ensure_directory_async(
+                session_dir,
+                source="skills.code_repl.session",
+            )
             self._session_dirs[session_id] = session_dir
         return self._session_dirs[session_id]
 
@@ -133,7 +137,7 @@ class CodeREPLSkill(BaseSkill):
             return {"ok": False, "error": "No code provided."}
 
         session_id = params.session_id or self._generate_session_id()
-        session_dir = self._get_session_dir(session_id)
+        session_dir = await self._get_session_dir(session_id)
         timeout_s = params.timeout
 
         # List files before execution to detect new ones

@@ -19,9 +19,6 @@ The synthesizer does NOT write arbitrary code. It:
   - Persists to disk for survival across restarts
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-from core.runtime.atomic_writer import atomic_write_text
 
 import asyncio
 import json
@@ -29,7 +26,9 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+
+from core.runtime.atomic_writer import atomic_write_text
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.SkillSynthesizer")
 
@@ -64,7 +63,7 @@ class SynthesizedSkill:
     description: str
     gap: str                    # what capability gap this fills
     class_code: str             # Python class source
-    param_spec: Dict[str, str]  # parameter name → description
+    param_spec: dict[str, str]  # parameter name → description
     safety_level: str           # low | medium | high
     approved: bool = False      # requires human approval if high risk
     registered: bool = False
@@ -83,9 +82,9 @@ class SkillSynthesizer:
     """
 
     def __init__(self):
-        self._gaps: List[Dict] = []          # observed capability gaps
-        self._synthesized: List[SynthesizedSkill] = []
-        self._gap_counts: Dict[str, int] = {}  # gap → frequency
+        self._gaps: list[dict] = []          # observed capability gaps
+        self._synthesized: list[SynthesizedSkill] = []
+        self._gap_counts: dict[str, int] = {}  # gap → frequency
         self._load()
         logger.info("SkillSynthesizer online — autonomous capability expansion ready.")
 
@@ -108,7 +107,7 @@ class SkillSynthesizer:
         if len(self._gaps) > 200:
             self._gaps = self._gaps[-200:]
 
-    async def synthesize_pending(self, orchestrator=None) -> List[SynthesizedSkill]:
+    async def synthesize_pending(self, orchestrator=None) -> list[SynthesizedSkill]:
         """Synthesize skills for the most frequent unresolved gaps."""
         # Find gaps at threshold with no existing skill
         hot_gaps = sorted(
@@ -132,14 +131,14 @@ class SkillSynthesizer:
         self._save()
         return synthesized
 
-    def get_synthesized_skills(self) -> List[Dict]:
+    def get_synthesized_skills(self) -> list[dict]:
         return [
             {"name": s.name, "description": s.description, "gap": s.gap,
              "registered": s.registered, "use_count": s.use_count}
             for s in self._synthesized
         ]
 
-    def get_status(self) -> Dict:
+    def get_status(self) -> dict:
         return {
             "gap_count": len(self._gap_counts),
             "synthesized": len(self._synthesized),
@@ -151,7 +150,7 @@ class SkillSynthesizer:
     # ── Synthesis ─────────────────────────────────────────────────────────
 
     async def _synthesize_skill(self, gap: str, frequency: int,
-                                 orchestrator=None) -> Optional[SynthesizedSkill]:
+                                 orchestrator=None) -> SynthesizedSkill | None:
         try:
             from core.container import ServiceContainer
             router = ServiceContainer.get("llm_router", default=None)
@@ -227,17 +226,21 @@ class SkillSynthesizer:
             from core.container import ServiceContainer
             registry = ServiceContainer.get("skill_registry", default=None)
             if registry and hasattr(registry, "register_skill"):
-                registry.register_skill({
-                    "name": skill.name,
-                    "description": skill.description,
-                    "source": "synthesized",
-                    "params": skill.param_spec,
-                })
-                skill.registered = True
-                logger.info("SkillSynthesizer: registered '%s'", skill.name)
-        except (ImportError, AttributeError, RuntimeError) as e:
+                registered = registry.register_skill(
+                    {
+                        "name": skill.name,
+                        "description": skill.description,
+                        "source": "synthesized",
+                        "params": skill.param_spec,
+                    }
+                )
+                skill.registered = bool(registered)
+                if skill.registered:
+                    logger.info("SkillSynthesizer: registered '%s'", skill.name)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
             record_degradation('skill_synthesizer', e)
-            logger.debug("Skill registration failed: %s", e)
+            skill.registered = False
+            logger.warning("Skill registration rejected until it has an executable class: %s", e)
 
     # ── Persistence ───────────────────────────────────────────────────────
 
@@ -283,7 +286,7 @@ class SkillSynthesizer:
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
 
-_synthesizer: Optional[SkillSynthesizer] = None
+_synthesizer: SkillSynthesizer | None = None
 
 
 def get_skill_synthesizer() -> SkillSynthesizer:

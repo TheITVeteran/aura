@@ -9,19 +9,20 @@ All Aura skills inherit from this class. It provides:
   - Metabolic cost tagging for resource management
 """
 
-from core.runtime.errors import record_degradation
 import asyncio
 import builtins
+import inspect
 import logging
 import sqlite3
 import time
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Tuple, Type
+from collections.abc import Callable
+from typing import Any, cast
 
 from pydantic import BaseModel
 
 from core.exceptions import ContainerError
-
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Skills")
 
@@ -50,7 +51,7 @@ def _record_skill_degradation(
 
 
 
-def _infer_ok_flag(result: Dict[str, Any]) -> bool:
+def _infer_ok_flag(result: dict[str, Any]) -> bool:
     if "ok" in result:
         return bool(result["ok"])
     if result.get("error") is not None or result.get("errors"):
@@ -67,14 +68,13 @@ class SkillResult(BaseModel):
     ok: bool
     skill: str = ""
     summary: str = ""
-    error: Optional[str] = None
-    data: Optional[Dict[str, Any]] = None
+    error: str | None = None
+    data: dict[str, Any] | None = None
     duration_ms: float = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dict, excluding None values for cleanliness."""
-        d = self.model_dump(exclude_none=True)
-        return d
+        return dict(self.model_dump(exclude_none=True))
 
 
 class BaseSkill(ABC):
@@ -98,7 +98,7 @@ class BaseSkill(ABC):
     description: str = "Base skill description"
 
     # Input validation
-    input_model: Optional[Type[BaseModel]] = None
+    input_model: type[BaseModel] | None = None
 
     # Execution limits
     timeout_seconds: float = 30.0
@@ -113,7 +113,7 @@ class BaseSkill(ABC):
     _total_failures: int = 0
 
     # Error types considered transient (safe to retry)
-    _TRANSIENT_EXCEPTIONS: Tuple[type, ...] = (
+    _TRANSIENT_EXCEPTIONS: tuple[type, ...] = (
         TimeoutError,
         ConnectionError,
         ConnectionResetError,
@@ -122,13 +122,13 @@ class BaseSkill(ABC):
     )
 
     # Error types considered permanent (do NOT retry)
-    _PERMANENT_EXCEPTIONS: Tuple[type, ...] = (
+    _PERMANENT_EXCEPTIONS: tuple[type, ...] = (
         FileNotFoundError,
         PermissionError,
         ValueError,
         TypeError,
         KeyError,
-        getattr(builtins, "Not" "ImplementedError"),
+        builtins.NotImplementedError,
     )
 
     def _ensure_stats_initialized(self) -> None:
@@ -164,7 +164,7 @@ class BaseSkill(ABC):
         return "transient"  # Default: give the retry loop a chance
 
     @abstractmethod
-    async def execute(self, params: Any, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, params: Any, context: dict[str, Any]) -> dict[str, Any]:
         """Execute the skill's core logic.
 
         Subclasses MUST implement this method. It should focus purely on
@@ -181,7 +181,11 @@ class BaseSkill(ABC):
         """
         pass  # no-op: intentional
 
-    async def safe_execute(self, params: Any, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def safe_execute(
+        self,
+        params: Any,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Execute with governance, timeout, error handling, and standardized results.
 
         This is the PUBLIC entry point that the skill router should call.
@@ -211,7 +215,11 @@ class BaseSkill(ABC):
         # somewhere in the call stack). Log violations but don't block
         # during early boot or testing.
         try:
-            from core.governance_context import GovernanceViolation, governance_runtime_active, require_governance
+            from core.governance_context import (
+                GovernanceViolation,
+                governance_runtime_active,
+                require_governance,
+            )
 
             require_governance(
                 f"skill:{self.name}",
@@ -252,19 +260,30 @@ class BaseSkill(ABC):
 
         max_attempts = 3
         base_delay = 1.0
-        
+        result: Any = None
+        last_err: Exception = RuntimeError("skill execution did not start")
+
         for attempt in range(max_attempts):
             try:
                 # Execute with timeout
                 async with asyncio.timeout(self.timeout_seconds):
-                    result = await self.execute(params, context)
+                    if inspect.iscoroutinefunction(self.execute):
+                        result = await self.execute(params, context)
+                    else:
+                        sync_execute = cast(
+                            Callable[[Any, dict[str, Any]], Any],
+                            self.execute,
+                        )
+                        result = await asyncio.to_thread(sync_execute, params, context)
+                        if inspect.isawaitable(result):
+                            result = await result
                 if hasattr(breaker, "record_success"):
                     breaker.record_success()
                 break  # Success! Exit loop
 
             except asyncio.CancelledError:
                 raise
-            except (asyncio.TimeoutError, TimeoutError) as e:
+            except TimeoutError as e:
                 error_class = "transient"
                 last_err = e
                 logger.warning("⏱️ Skill '%s' timed out (attempt %d/%d)", self.name, attempt + 1, max_attempts)
@@ -295,15 +314,18 @@ class BaseSkill(ABC):
         # Standardize the result
         duration_ms = (time.monotonic() - start) * 1000
 
-        if not isinstance(result, dict):
-            result = {"ok": True, "content": str(result)}
+        normalized_result: dict[str, Any]
+        if isinstance(result, dict):
+            normalized_result = dict(result)
+        else:
+            normalized_result = {"ok": True, "content": str(result)}
 
         # Inject standard fields
-        result["ok"] = _infer_ok_flag(result)
-        result["skill"] = self.name
-        result["duration_ms"] = round(duration_ms, 1)
+        normalized_result["ok"] = _infer_ok_flag(normalized_result)
+        normalized_result["skill"] = self.name
+        normalized_result["duration_ms"] = round(duration_ms, 1)
 
-        if result.get("ok"):
+        if normalized_result.get("ok"):
             logger.info(
                 "✅ Skill '%s' completed in %.0fms",
                 self.name, duration_ms
@@ -312,12 +334,12 @@ class BaseSkill(ABC):
             self._total_failures += 1
             logger.warning(
                 "⚠️ Skill '%s' returned error in %.0fms: %s",
-                self.name, duration_ms, result.get("error", "unknown")
+                self.name, duration_ms, normalized_result.get("error", "unknown")
             )
 
-        return result
+        return normalized_result
 
-    def _error_result(self, error: str, elapsed: float) -> Dict[str, Any]:
+    def _error_result(self, error: str, elapsed: float) -> dict[str, Any]:
         """Build a standardized error result."""
         return {
             "ok": False,
@@ -326,13 +348,13 @@ class BaseSkill(ABC):
             "duration_ms": round(elapsed * 1000, 1)
         }
 
-    def get_schema(self) -> Dict[str, Any]:
+    def get_schema(self) -> dict[str, Any]:
         """Generate JSON schema for the skill's input parameters."""
         if self.input_model:
-            return self.input_model.model_json_schema()
+            return dict(self.input_model.model_json_schema())
         return {}
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Return execution statistics for this skill."""
         self._ensure_stats_initialized()
         return {
@@ -345,7 +367,7 @@ class BaseSkill(ABC):
             "metabolic_cost": self.metabolic_cost
         }
 
-    def match(self, goal: Dict[str, Any]) -> bool:
+    def match(self, goal: dict[str, Any]) -> bool:
         """Check if this skill can handle the given goal.
 
         Default implementation returns False. Skills that want to be

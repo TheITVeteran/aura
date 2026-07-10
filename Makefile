@@ -1,4 +1,4 @@
-.PHONY: update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint cognitive-gate-audit security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
+.PHONY: update update-live rollback release-status lint test live-test typecheck compile quality smoke setup setup-dev setup-prod run demo demo-full demo-autonomy demo-learning triage contract-doc fmea-doc report bench courtroom baselines longevity longevity-24h longevity-4h chaos governance-lint cognitive-gate-audit skill-catalog-audit security enterprise-gate enterprise-collect enterprise-strict production-gate architecture-map provenance decisive proof-bundle behavioral-proof activation-audit source-hygiene clean-bench aletheia-validate final-proof person-box-proof sovereignty-proof doctor diagnostic-bundle backup restore restore-test memory-export memory-purge data-export data-purge log-purge closeout-audit closeout-semantic-status closeout-rubric identity-reset certify aletheia-live-proof aura-certify-boot
 
 
 PYTHON ?= python
@@ -109,6 +109,10 @@ cognitive-gate-audit:
 	@echo "🧠 Auditing cognitive candidate-gate coverage..."
 	@$(PYTHON) tools/closeout/audit_cognitive_candidate_gates.py
 
+skill-catalog-audit:
+	@echo "🧰 Auditing skill discovery, quarantine, and live-registry equivalence..."
+	@$(PYTHON) tools/closeout/audit_skill_catalog.py
+
 security:
 	@echo "🔐 Running local security scan..."
 	@$(PYTHON) tools/security_scan.py
@@ -192,7 +196,7 @@ smoke:
 	@$(PYTHON) -m pytest $(SMOKE_TEST_TARGETS)
 	@echo "✅ Smoke suite passed"
 
-quality: source-hygiene enterprise-gate enterprise-collect production-gate cognitive-gate-audit architecture-map compile lint governance-lint security typecheck smoke
+quality: source-hygiene enterprise-gate enterprise-collect production-gate cognitive-gate-audit skill-catalog-audit architecture-map compile lint governance-lint security typecheck smoke
 	@echo "🏁 Quality gates passed"
 
 decisive:

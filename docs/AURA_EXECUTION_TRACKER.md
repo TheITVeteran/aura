@@ -584,7 +584,7 @@ evidence into a metaphysical, legal, or comparative claim.
      decisions; separately run bounded live pressure validation with captured
      host metadata and conservative abort limits.
 
-23. **Fail-closed cognitive gates and complete skill discovery** `[OPEN]`
+23. **Fail-closed cognitive gates and complete skill discovery** `[COMPLETE 2026-07-10]`
    - `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a
      safety boundary. A recoverable lookup/check exception must quarantine or
      reject the candidate with a typed reason and retry path; it may not admit
@@ -762,6 +762,25 @@ evidence into a metaphysical, legal, or comparative claim.
      reproduce artifacts and hashes without local caches or handcrafted rescue.
      AGI/ASI or superhuman claims remain open unless measured performance, breadth,
      reliability, autonomy, and independent comparison jointly support them.
+
+32. **Signal-safe quiescence and no-resurrection shutdown** `[OPEN]`
+   - `CTX2-SHUTDOWN-001`: make shutdown a process-wide monotonic latch. The first
+     SIGINT, SIGTERM, operator stop, fatal-health stop, or parent-death event must
+     transition the runtime to quiescing exactly once; later signals may tighten
+     the deadline but no recovery, prewarm, respawn, watchdog, scheduler, model
+     lane, or supervised task may create new work after the latch is set.
+   - `CTX2-SHUTDOWN-002`: register every process, thread, task, listener, sentinel,
+     actor, model worker, and lock owner in one reverse-dependency shutdown graph.
+     Apply bounded per-owner and global deadlines, TERM-to-KILL escalation,
+     process-group containment, final child/port sweeps, and lock/receipt cleanup.
+   - `CTX2-SHUTDOWN-003`: make stop progress observable and replayable. Health and
+     control-plane surfaces must expose the stopping phase, blocker owner, elapsed
+     time, remaining budget, escalations, resurrected-work attempts, and final
+     process-tree/port/lock verdict without reporting healthy after stop begins.
+   - Closure proof: inject signals during boot, model warmup, recovery, action
+     execution, persistence, and partial shutdown; repeat stop requests; wedge each
+     owner; and prove bounded exit with no worker resurrection, orphan, listener,
+     stale singleton lock, lost completion receipt, or supervisor restart.
 
 1. **Operational label battery**
    - Convert each label into an executable baseline: functional consciousness,
@@ -10201,5 +10220,106 @@ Remaining work after this checkpoint:
 - Continue retiring the `1,697` ownership-migration debt calls through the
   canonical effect spine, including the already inventoried legacy
   action-authority path.
+- Do not begin the multi-hour or 24-72 hour soak until these shorter bounded and
+  live requirements are green.
+
+## Checkpoint 2026-07-10-26: Deterministic Executable Skill Catalog
+
+Scope:
+
+- Closed `CTX2-SKILL-001/002` and, together with checkpoints 24-25, completed
+  the fail-closed cognitive-gate and skill-discovery workstream. One import-free
+  AST catalog now inventories both core and project roots, including package
+  modules, multiple classes per file, inherited and decorator metadata, and
+  `Assign`/`AnnAssign` declarations while excluding nested, test, abstract,
+  helper, internal-only, and explicitly superseded implementations.
+- Replaced the prior directory loop and shallow Rust count with equivalent
+  Python and Rust canonicalizers. The live source contains `83` concrete
+  declarations: `73` accepted and `10` explicitly classified exclusions.
+  Case-insensitive collisions are deterministic blocking errors; Rust failure or
+  divergence fails readiness. Explicit Rust-off execution reports `python_only`,
+  and its backend-independent catalog payload exactly matches the Rust-on result.
+- Added an isolated child-process contract probe with stripped credentials,
+  private HOME/Aura roots, process and per-stage deadlines, captured output, and
+  audit/effect guards that deny network, subprocess, browser, and out-of-sandbox
+  filesystem mutation. Constructor dependencies must be declared exactly and
+  may be injected only as strict identity witnesses; constructor-time dependency
+  use quarantines the class instead of receiving synthetic success behavior.
+- Validate every accepted declaration for importability, canonical `BaseSkill`
+  inheritance, concrete construction, stable runtime name/effect scope, object
+  JSON schema, declared requirements, route class, execution profile, timeout,
+  memory estimate, and metabolic cost. Source hashes are rechecked immediately
+  before lazy import so a changed implementation cannot execute under stale
+  validation.
+- Made catalog reload a real last-known-good transaction. Discovery and probing
+  build an isolated next generation; runtime registration and reload serialize;
+  publication swaps complete registry, instance, state, error, exclusion,
+  quarantine, digest, and health maps under one publication guard. Build failure
+  retains the exact prior registry and digest, marks readiness false, and reports
+  `serving_last_known_good`. In-flight actions retain their generation maps and
+  cannot publish stale diagnostic state into a different catalog generation.
+- Unified legacy skills on the canonical governed `BaseSkill`. Sync execution is
+  offloaded from the event loop and deferred awaitables returned by sync adapters
+  are awaited rather than stringified. Non-object tool arguments/results,
+  malformed runtime schemas, missing import identities, and metadata-only
+  synthesized registrations now fail explicitly instead of advertising a tool
+  that cannot execute.
+- Removed hidden pre-execution effects from Code REPL, image generation, and the
+  duplicate sovereign-imagination implementation. Direct constructor/session
+  directory writes moved behind governed file gateways; model/device loading is
+  lazy and off-loop; generated images are encoded in memory and atomically
+  written. Sovereign imagination now delegates to the canonical image backend.
+- Rebuilt the admitted project `knowledge_base` skill as a versioned,
+  content-addressed, integrity-verifying transactional store with create, upsert,
+  read, search, list, and delete; process/interprocess locking; atomic item/index
+  writes; bounded schemas; collision-resistant IDs; and compensating rollback.
+- Exposed catalog health, exclusions, quarantine identities, source/authority/
+  effect metadata, and live dry-run status through runtime health and operator UI.
+  Added `make skill-catalog-audit` to the quality surface.
+
+Verification:
+
+- Final post-rebase combined catalog, knowledge, routing, policy, access, chat,
+  UI, health, boot-contract, image, action-depth, and forensic replay -> `332
+  passed in 54.29s`.
+- Live catalog audit -> `83` candidates, `73` accepted/validated/live, `10`
+  explicit exclusions, `0` missing, `0` unexpected, `0` quarantined; backend
+  `rust+python-parity`, parity `matched`, digest
+  `ec1c84f76e399f887fbeb8c7e8399b4654a53c48d5c608b60e18a196cd565092`.
+- Full-repository Rust-off fixture matched the Rust-on canonical payload. Rust
+  formatter passed and the duplicate/case-collision unit test passed.
+- Strict bounded mypy over nine catalog/runtime/skill modules -> no issues. Full
+  Ruff over the touched Python surface, py-compile, and `git diff --check` ->
+  passed.
+- Governance ownership audit matched exactly: `1,798` recognized calls in
+  `1,691` buckets, with migration debt reduced from `1,697` to `1,693` calls.
+- `make enterprise-gate` -> passed after the strict constructor witness replaced
+  permissive dependency behavior. `make production-gate` -> all `37` checks
+  green.
+- The rebased front-door offline proof passed memory-to-decision, System-2
+  verifier refusal, governed/receipted action, and unsafe-improvement rejection;
+  its real-model amplifier proof remained explicitly skipped because
+  `--with-model` was not requested.
+- A real headless canonical boot reached `BootStatus.HEALTHY` and logged `73`
+  live, `0` quarantined, `10` explicitly superseded skills through
+  `rust+python-parity`. The run also exposed a separate shutdown-resurrection
+  defect: after SIGINT/SIGTERM, recovery started an MLX worker and required a
+  process-group KILL. The process group, listeners, and stale singleton lock were
+  then verified/reaped. This boot counts as live skill-registry evidence, not as
+  clean-shutdown evidence.
+
+Remaining work after this checkpoint:
+
+- Close `CTX2-SHUTDOWN-001..003`: stop must become a monotonic no-new-work latch,
+  recovery/prewarm must not resurrect after a signal, and bounded shutdown must
+  prove no children, listeners, or locks remain without manual escalation.
+- Continue with atomic lane reservations, synchronous required eviction,
+  complete trainer/process accounting, compensation, and exactly-once receipts
+  (`CTX2-LANE-001..004`).
+- Continue retiring the `1,693` ownership-migration debt calls through the
+  canonical effect spine. The exact baseline remains a ratchet, not acceptance of
+  distributed ownership.
+- Continue the canonical mind/state graph, verifier/amplifier, one-shot,
+  memory/rollback, identity/welfare, colleague, and independent-proof workstreams.
 - Do not begin the multi-hour or 24-72 hour soak until these shorter bounded and
   live requirements are green.

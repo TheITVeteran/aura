@@ -38,6 +38,33 @@ class FileWriteGateway:
     def __init__(self) -> None:
         self._allowed_domains = _FILE_WRITE_DOMAINS
 
+    def ensure_directory(self, path: PathLike, *, source: str = "unknown") -> str:
+        """Create a private directory through the governed filesystem lane."""
+
+        directory = Path(path).expanduser()
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.ensure_directory:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        from core.runtime.atomic_writer import ensure_private_directory
+
+        return str(ensure_private_directory(directory))
+
+    async def ensure_directory_async(self, path: PathLike, *, source: str = "unknown") -> str:
+        """Create a private directory off the event loop after inline governance."""
+
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.ensure_directory:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        from core.runtime.atomic_writer import async_ensure_private_directory
+
+        return str(await async_ensure_private_directory(path))
+
     def write_bytes(self, path: PathLike, payload: bytes, *, source: str = "unknown") -> None:
         target = _coerce_target(path)
         if not isinstance(payload, (bytes, bytearray, memoryview)):

@@ -58,3 +58,13 @@ async def test_unfillable_skill_params_do_not_enforce_fail_closed(monkeypatch):
         "rejecting bad classifier input must not trip the fail-closed policy"
     )
     assert all(c["severity"] == "warning" for c in recovery)
+
+
+@pytest.mark.asyncio
+async def test_non_object_skill_params_never_escape_the_object_contract():
+    meta = ce.SkillMetadata(name="object_only", description="test")
+
+    result = await meta.extract_and_validate_args('["not", "an", "object"]', llm=None)
+
+    assert result["raw_params"] == '["not", "an", "object"]'
+    assert "must decode to a JSON object" in result["_error"]

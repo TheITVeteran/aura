@@ -13,6 +13,8 @@ This closes the "image generation" gap in tool parity.
 import asyncio
 import logging
 import time
+import uuid
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from core.config import config
 from core.runtime.errors import FallbackClassification, record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.skills.base_skill import BaseSkill
 
 logger = logging.getLogger("Skills.ImageGen")
@@ -111,18 +114,17 @@ class ImageGenSkill(BaseSkill):
     input_model = ImageGenInput
     timeout_seconds = 300.0  # Image generation can be slow
     metabolic_cost = 3  # Heavy GPU/CPU workload
-    effect_scope = "sandboxed_compute"
+    effect_scope = "read_write_artifacts"
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
-        self._pipeline = None
-        self._img2img_pipeline = None
+        self._pipeline: Any | None = None
+        self._img2img_pipeline: Any | None = None
         self._model_loaded = False
-        self._device = self._detect_device()
+        self._device: str | None = None
         self._model_id = "stabilityai/stable-diffusion-xl-base-1.0"
         self._fallback_model_id = "runwayml/stable-diffusion-v1-5"
         self._output_dir = Path(config.paths.data_dir) / "generated_images"
-        self._output_dir.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def _detect_device() -> str:
@@ -143,6 +145,8 @@ class ImageGenSkill(BaseSkill):
             return True
         if not img2img and self._pipeline:
             return True
+        if self._device is None:
+            self._device = self._detect_device()
 
         try:
             import torch
@@ -271,7 +275,7 @@ class ImageGenSkill(BaseSkill):
         self, params: ImageGenInput
     ) -> dict[str, Any]:
         """Text-to-image generation."""
-        if not self._load_pipeline(img2img=False):
+        if not await asyncio.to_thread(self._load_pipeline, False):
             return {
                 "ok": False,
                 "error": "Image generation model failed to load. Check torch/diffusers installation.",
@@ -291,8 +295,12 @@ class ImageGenSkill(BaseSkill):
             if params.seed is not None:
                 generator = torch.Generator(device=self._device).manual_seed(params.seed)
 
-            def _generate():
-                return self._pipeline(
+            pipeline = self._pipeline
+            if pipeline is None:
+                return {"ok": False, "error": "Image generation pipeline is unavailable."}
+
+            def _generate() -> Any:
+                return pipeline(
                     prompt=enhanced_prompt,
                     negative_prompt=negative,
                     num_inference_steps=params.steps,
@@ -302,8 +310,8 @@ class ImageGenSkill(BaseSkill):
                     generator=generator,
                 ).images[0]
 
-            image = await asyncio.get_event_loop().run_in_executor(None, _generate)
-            return self._save_and_respond(image, params.prompt)
+            image = await asyncio.to_thread(_generate)
+            return await self._save_and_respond(image, params.prompt)
 
         except _IMAGEGEN_RECOVERABLE_ERRORS as exc:
             _record_imagegen_degradation(
@@ -321,10 +329,10 @@ class ImageGenSkill(BaseSkill):
             return {"ok": False, "error": "No source image path provided."}
 
         source_path = Path(params.source_image_path)
-        if not source_path.exists():
+        if not await asyncio.to_thread(source_path.exists):
             return {"ok": False, "error": f"Source image not found: {source_path}"}
 
-        if not self._load_pipeline(img2img=True):
+        if not await asyncio.to_thread(self._load_pipeline, True):
             return {
                 "ok": False,
                 "error": "Image editing model failed to load.",
@@ -333,11 +341,15 @@ class ImageGenSkill(BaseSkill):
         try:
             from PIL import Image
 
-            source_image = Image.open(source_path).convert("RGB")
-            source_image = source_image.resize(
-                (params.width, params.height),
-                Image.LANCZOS,
-            )
+            def _load_source_image() -> Any:
+                with Image.open(source_path) as raw_image:
+                    converted = raw_image.convert("RGB")
+                    return converted.resize(
+                        (params.width, params.height),
+                        Image.LANCZOS,
+                    )
+
+            source_image = await asyncio.to_thread(_load_source_image)
         except _IMAGEGEN_RECOVERABLE_ERRORS as exc:
             return {"ok": False, "error": f"Failed to load source image: {exc}"}
 
@@ -349,8 +361,12 @@ class ImageGenSkill(BaseSkill):
         logger.info("🖌️ Editing image: '%s'...", params.prompt[:60])
 
         try:
-            def _edit():
-                return self._img2img_pipeline(
+            pipeline = self._img2img_pipeline
+            if pipeline is None:
+                return {"ok": False, "error": "Image editing pipeline is unavailable."}
+
+            def _edit() -> Any:
+                return pipeline(
                     prompt=enhanced_prompt,
                     image=source_image,
                     negative_prompt=negative,
@@ -359,8 +375,8 @@ class ImageGenSkill(BaseSkill):
                     strength=params.strength,
                 ).images[0]
 
-            image = await asyncio.get_event_loop().run_in_executor(None, _edit)
-            return self._save_and_respond(image, params.prompt, mode="img2img")
+            image = await asyncio.to_thread(_edit)
+            return await self._save_and_respond(image, params.prompt, mode="img2img")
 
         except _IMAGEGEN_RECOVERABLE_ERRORS as exc:
             _record_imagegen_degradation(
@@ -370,16 +386,26 @@ class ImageGenSkill(BaseSkill):
             )
             return {"ok": False, "error": f"Image editing failed: {exc}"}
 
-    def _save_and_respond(
+    async def _save_and_respond(
         self, image: Any, prompt: str, mode: str = "txt2img"
     ) -> dict[str, Any]:
         """Save generated image and build response."""
         timestamp = int(time.time())
-        filename = f"gen_{mode}_{timestamp}.png"
+        filename = f"gen_{mode}_{timestamp}_{uuid.uuid4().hex[:10]}.png"
         filepath = self._output_dir / filename
 
         try:
-            image.save(filepath)
+            def _encode_png() -> bytes:
+                output = BytesIO()
+                image.save(output, format="PNG")
+                return output.getvalue()
+
+            payload = await asyncio.to_thread(_encode_png)
+            await get_file_write_gateway().write_bytes_async(
+                filepath,
+                payload,
+                source="skills.image_gen.output",
+            )
         except _IMAGEGEN_RECOVERABLE_ERRORS as exc:
             return {"ok": False, "error": f"Failed to save image: {exc}"}
 
@@ -394,3 +420,19 @@ class ImageGenSkill(BaseSkill):
             "summary": f"Generated {mode} image from prompt: {prompt[:80]}",
             "message": f"Image created ({mode}): {relative_url}",
         }
+
+    async def on_stop_async(self) -> None:
+        """Release model references and accelerator cache during shutdown."""
+
+        self._pipeline = None
+        self._img2img_pipeline = None
+        self._model_loaded = False
+        try:
+            import torch
+
+            if bool(getattr(torch.backends, "mps", None)) and torch.backends.mps.is_available():
+                await asyncio.to_thread(torch.mps.empty_cache)
+            elif torch.cuda.is_available():
+                await asyncio.to_thread(torch.cuda.empty_cache)
+        except (ImportError, AttributeError, RuntimeError):
+            return

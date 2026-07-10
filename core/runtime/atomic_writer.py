@@ -30,6 +30,8 @@ import logging
 import os
 import tempfile
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +77,29 @@ def ensure_private_directory(path: PathLike) -> Path:
     directory.chmod(0o700)
     _fsync_dir(directory.parent)
     return directory
+
+
+async def async_ensure_private_directory(path: PathLike) -> Path:
+    import asyncio
+
+    return await asyncio.to_thread(ensure_private_directory, path)
+
+
+@contextmanager
+def interprocess_file_lock(path: PathLike) -> Iterator[None]:
+    """Serialize a multi-file transaction across threads and processes."""
+
+    target = Path(path)
+    ensure_private_directory(target.parent)
+    fd = os.open(str(target), os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def atomic_write_bytes(path: PathLike, payload: bytes, *, durable: bool = True) -> None:

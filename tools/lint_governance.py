@@ -130,6 +130,7 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
         {
             "core/runtime/action_executor.py",
             "core/runtime/desktop_action_gateway.py",
+            "core/runtime/skill_catalog_probe.py",
         }
     ),
     "network_gateway": frozenset({"core/runtime/action_executor.py"}),
@@ -329,6 +330,8 @@ _GATEWAY_METHODS = {
             "delete_file",
             "delete_path_async",
             "drain_text",
+            "ensure_directory",
+            "ensure_directory_async",
             "move_path_async",
             "write_bytes",
             "write_bytes_async",
