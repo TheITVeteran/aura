@@ -9341,3 +9341,42 @@ Remaining work after this checkpoint:
 - Start the desired-state runtime control plane and unified resource-admission
   workstream, then continue through the matrix without treating this milestone
   as a stopping point.
+
+## Checkpoint 2026-07-09-17: Source-Body Governance Integration
+
+Scope:
+
+- Rebased the action/proof acceptance checkpoint directly onto the latest
+  `origin/main` source-body proprioception milestone.
+- The post-rebase enterprise gate exposed two raw subprocess calls in that
+  newly arrived feature: one in the live `SourceBodyAwareness` organ and one in
+  its real-git test fixture.
+- Migrated the live organ to an injected `SubprocessGateway` dependency. Every
+  git proprioception pulse is now an explicitly named, bounded, read-only probe
+  instead of a second subprocess ownership path.
+- Migrated throwaway-repository setup to the gateway's explicit offline
+  proof-tooling lane and updated the missing-git negative control to inject the
+  failure at the owned gateway boundary.
+- Kept the upstream source-body behavior intact: boot-over-boot delta, dirty
+  source awareness, crash correlation, event publication, prompt context, and
+  durable ledger semantics are unchanged.
+
+Verification:
+
+- Post-rebase combined expectation/proof/source-body suite -> `228 passed`.
+- `python -m pytest -q tests/test_source_body_awareness.py` after gateway
+  migration -> `50 passed`.
+- `python -m ruff check core/soma/source_body.py tests/test_source_body_awareness.py --select F,E9,I`
+  -> passed.
+- `python -m py_compile core/soma/source_body.py tests/test_source_body_awareness.py`
+  -> passed.
+- Pre-fix post-rebase enterprise gate -> correctly failed on the two raw
+  subprocess calls and their baseline regressions.
+- Final `make enterprise-gate` -> passed without changing the baseline.
+- Final `make production-gate` -> passed; all `37` readiness checks green.
+
+Remaining work after this checkpoint:
+
+- Run and promote the clean-source live harness proof for the published main
+  revision; diagnostic dirty-tree output is not certification evidence.
+- Begin the desired-state runtime control plane and resource-admission work.

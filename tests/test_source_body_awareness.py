@@ -18,12 +18,12 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import subprocess
 import time
 from pathlib import Path
 
 import pytest
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.soma.source_body import (
     BodyDelta,
     SourceBodyAwareness,
@@ -32,6 +32,8 @@ from core.soma.source_body import (
     organ_of,
     reset_source_body_for_test,
 )
+
+_SUBPROCESS_GATEWAY = get_subprocess_gateway()
 
 _GIT_ENV = {
     **os.environ,
@@ -51,8 +53,13 @@ def _git(repo: Path, *args: str, author: str | None = None) -> str:
         env["GIT_AUTHOR_EMAIL"] = f"{author.lower()}@test.local"
         env["GIT_COMMITTER_NAME"] = author
         env["GIT_COMMITTER_EMAIL"] = f"{author.lower()}@test.local"
-    proc = subprocess.run(
-        ["git", *args], cwd=str(repo), env=env, capture_output=True, text=True, timeout=30
+    proc = _SUBPROCESS_GATEWAY.run(
+        ["git", *args],
+        cwd=str(repo),
+        env=env,
+        timeout=30,
+        offline_tooling=True,
+        source="proof_tooling:test_source_body_git_fixture",
     )
     assert proc.returncode == 0, f"git {args} failed: {proc.stderr}"
     return proc.stdout.strip()
@@ -204,7 +211,7 @@ def test_capture_snapshot_missing_git(organ, monkeypatch):
     def _boom(*args, **kwargs):
         raise FileNotFoundError("git not installed")
 
-    monkeypatch.setattr("core.soma.source_body.subprocess.run", _boom)
+    monkeypatch.setattr(organ._subprocess_gateway, "run", _boom)
     snap = organ.capture_snapshot()
     assert snap.commit_sha == "unknown"
     assert organ.get_status()["git_available"] is False

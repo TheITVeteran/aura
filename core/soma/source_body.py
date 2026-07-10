@@ -42,16 +42,17 @@ import hashlib
 import json
 import logging
 import os
-import subprocess
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from subprocess import SubprocessError
 from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.subprocess_gateway import SubprocessGateway, get_subprocess_gateway
 
 logger = logging.getLogger("Aura.SourceBody")
 
@@ -72,7 +73,7 @@ _RECOVERABLE_ERRORS = (
     KeyError,
     AttributeError,
     RuntimeError,
-    subprocess.SubprocessError,
+    SubprocessError,
     json.JSONDecodeError,
     UnicodeDecodeError,
 )
@@ -312,12 +313,14 @@ class SourceBodyAwareness:
         source_root: Path | str | None = None,
         ledger_path: Path | str | None = None,
         crash_evidence_dir: Path | str | None = None,
+        subprocess_gateway: SubprocessGateway | None = None,
     ) -> None:
         self._lock = threading.Lock()
         self.boot_id = uuid.uuid4().hex[:12]
         self.source_root = self._resolve_source_root(source_root)
         self.ledger_path = self._resolve_ledger_path(ledger_path)
         self.crash_evidence_dir = self._resolve_crash_dir(crash_evidence_dir)
+        self._subprocess_gateway = subprocess_gateway or get_subprocess_gateway()
 
         self._git_available: bool | None = None
         self._current_snapshot: SourceBodySnapshot | None = None
@@ -387,17 +390,17 @@ class SourceBodyAwareness:
         body.
         """
         try:
-            proc = subprocess.run(
+            proc = self._subprocess_gateway.run(
                 ["git", "--no-optional-locks", *args],
                 cwd=str(self.source_root),
-                capture_output=True,
-                text=True,
                 timeout=_GIT_TIMEOUT_S,
+                read_only=True,
+                source="source_body.git_probe",
             )
         except FileNotFoundError:
             self._git_available = False
             return 127, ""
-        except (subprocess.SubprocessError, OSError) as exc:
+        except (SubprocessError, OSError, RuntimeError, ValueError) as exc:
             record_degradation(
                 "source_body",
                 exc,
