@@ -136,11 +136,32 @@ class TestStallAttribution:
         assert verdict.thread_kind == "gil_suspect"
         assert verdict.fingerprint_frame() == "gateway_record_index.py:_do_refresh"
 
-    def test_all_idle_dump_is_honestly_unknown(self):
+    def test_all_idle_dump_names_the_native_gil_anatomy(self):
+        """Every Python thread idle during a stall is not 'unknown' — the
+        GIL was held where tracebacks cannot see (MLX/Metal, C extensions).
+        Name the anatomy so triage ranks it as its own class."""
         verdict = parse_stall_dump_text(_dump(_SLEEPING_MONITOR))
-        assert verdict.thread_kind == "unknown"
+        assert verdict.thread_kind == "all_idle"
         assert not verdict.known
-        assert verdict.fingerprint_frame() == "unknown_frame"
+        assert verdict.fingerprint_frame() == "all_threads_idle:native_gil_suspect"
+        assert "native code" in verdict.described()
+
+    def test_busy_loop_in_foreign_code_names_the_foreign_frame(self):
+        """A loop stalled inside exec'd <string> or third-party code carries
+        that identity — 17 live dumps and every test-driver dump used to
+        collapse into unknown_frame."""
+        foreign_loop = (
+            "Thread ID: 999 [EVENT LOOP]\n"
+            '  File "/usr/lib/python3.12/asyncio/events.py", line 88, in _run\n'
+            "    self._context.run(self._callback, *self._args)\n"
+            '  File "<string>", line 13, in main\n'
+            "    do_work()\n"
+        )
+        verdict = parse_stall_dump_text(
+            "STALL DETECTED: 5.0s\n" + foreign_loop
+        )
+        assert verdict.thread_kind == "event_loop_foreign"
+        assert verdict.fingerprint_frame() == "<string>:main"
 
     def test_sleeping_bystander_is_never_the_culprit(self):
         for text in (

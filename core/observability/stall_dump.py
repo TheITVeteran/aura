@@ -123,12 +123,23 @@ class StallCulprit:
         """Stable ``file.py:function`` form for incident-class fingerprints
         (line numbers churn across commits; identities must not)."""
         if not self.known:
+            # Every Python thread idle during a loop stall is its own
+            # anatomy, not an unknown: the GIL was held in NATIVE code
+            # (MLX/Metal decode, a C-extension import) where tracebacks
+            # cannot reach. Name it so triage stops shrugging.
+            if self.thread_kind == "all_idle":
+                return "all_threads_idle:native_gil_suspect"
             return "unknown_frame"
         return f"{self.file_name}:{self.function}"
 
     def described(self) -> str:
         """Human form with the line number, for narration."""
         if not self.known:
+            if self.thread_kind == "all_idle":
+                return (
+                    "no Python thread was busy — the GIL was most likely held "
+                    "in native code (MLX/Metal or a C extension)"
+                )
             return ""
         return f"{self.file_name}:{self.line} ({self.function})"
 
@@ -157,6 +168,9 @@ def parse_stall_dump_text(text: str) -> StallCulprit:
         frame = _deepest_repo_frame(loop_section)
         if frame is not None:
             return StallCulprit(elapsed, *frame, "event_loop")
+        foreign = _deepest_foreign_frame(loop_section)
+        if foreign is not None:
+            return StallCulprit(elapsed, *foreign, "event_loop_foreign")
 
     # Layer 3: busy background threads holding the GIL. The watchdog's own
     # reporter thread is excluded — it is composing THIS dump, so it is
@@ -184,6 +198,16 @@ def parse_stall_dump_text(text: str) -> StallCulprit:
             counts.items(), key=lambda item: (-item[1][0], item[0])
         )
         return StallCulprit(elapsed, *best, "gil_suspect")
+
+    # Sections exist but none is busy (the watchdog's own reporter thread is
+    # busy composing THIS dump, so it never counts): the stall happened where
+    # Python tracebacks cannot see — native code holding the GIL.
+    if not any(
+        _is_busy(body)
+        for _tid, _marker, body in sections
+        if "stall_watchdog.py" not in body
+    ):
+        return StallCulprit(elapsed, "", 0, "", "all_idle")
 
     return StallCulprit(elapsed, "", 0, "", "unknown")
 
@@ -261,5 +285,17 @@ def _deepest_repo_frame(body: str) -> tuple[str, int, str] | None:
         name = Path(path).name
         if name in _INFRA_FILES:
             continue
+        return (name, line, fn)
+    return None
+
+
+def _deepest_foreign_frame(body: str) -> tuple[str, int, str] | None:
+    """Fallback identity when a busy stack holds NO repo frame: exec'd
+    <string> drivers, third-party libraries. A stall in foreign code is an
+    anatomy worth naming, not an unknown — 17 live dumps and every test
+    dump fingerprinted as unknown_frame were all this one class."""
+    frames = _frames(body)
+    for path, line, fn in reversed(frames):
+        name = Path(path).name if not path.startswith("<") else path
         return (name, line, fn)
     return None
