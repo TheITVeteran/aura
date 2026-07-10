@@ -333,6 +333,13 @@ def resolve_selfplay_flywheel(*, default: Any = None) -> Any:
     return optional_service("selfplay_flywheel", default=default)
 
 
+def resolve_practice_director(*, default: Any = None) -> Any:
+    """The Practice Director (failure-directed curriculum), spine-resolved
+    only — consumers must never self-create one, or hermetic tests would
+    read (and write) the real machine's practice ledger."""
+    return optional_service("practice_director", default=default)
+
+
 def resolve_incident_narrator(*, default: Any = None) -> Any:
     narrator = optional_service("incident_narrator", default=None)
     if narrator is not None:

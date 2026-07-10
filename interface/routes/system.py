@@ -2196,6 +2196,14 @@ async def api_system_learning(request: Request):
                 out["expert_library"] = get_expert_lora_library().stats()
             except _SYSTEM_RECOVERABLE_ERRORS:
                 out["expert_library"] = {"error": "unavailable"}
+            try:
+                from core.runtime.service_access import resolve_practice_director
+
+                director = resolve_practice_director(default=None)
+                if director is not None and hasattr(director, "get_status"):
+                    out["practice_director"] = director.get_status()
+            except _SYSTEM_RECOVERABLE_ERRORS:
+                out["practice_director"] = {"error": "unavailable"}
             return out
 
         payload.update(await asyncio.to_thread(_collect))

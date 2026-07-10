@@ -51,6 +51,19 @@ EVAL_SEED_FLOOR = 1000          # seeds at/above are reserved for gate batteries
 SEED_SPAN = 997                 # rotate task seeds 3..999 (prime span, full coverage)
 
 
+def _resolve_practice_director() -> Any | None:
+    """The Practice Director from the service spine, or None. Consumers must
+    NEVER self-create one: boot registers the real instance, and an implicit
+    singleton here would read (and write!) the runtime data dir from any
+    hermetic test that exercises a burst."""
+    try:
+        from core.runtime.service_access import resolve_practice_director
+
+        return resolve_practice_director(default=None)
+    except _RECOVERABLE:
+        return None
+
+
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -158,10 +171,11 @@ class SelfPlayFlywheel:
 
         state = self._load_state()
         seed = 3 + (int(state.get("seed_cursor", 0)) % SEED_SPAN)
-        tasks = generate_battery(BatterySpec(seed=seed, size=self.burst_tasks))
+        tasks = self._practice_tasks(seed)
         harness = get_verifiable_preference_harness()
 
         burst_stats = {"seed": seed, "attempts": 0, "correct": 0, "pairs": 0, "aborted": False}
+        domain_results: dict[str, list[int]] = {}
         for task in tasks:
             attempts: list[Attempt] = []
             for _ in range(self.attempts_per_task):
@@ -186,6 +200,9 @@ class SelfPlayFlywheel:
                 )
                 burst_stats["attempts"] += 1
                 burst_stats["correct"] += int(ok)
+                tally = domain_results.setdefault(task.domain, [0, 0])
+                tally[0] += 1
+                tally[1] += int(ok)
             if len(attempts) >= 2:
                 burst_stats["pairs"] += harness.ingest(
                     task.prompt, attempts, domain=f"selfplay:{task.domain}"
@@ -213,6 +230,27 @@ class SelfPlayFlywheel:
             state["correct_rate_ema"] = round(0.8 * prior + 0.2 * rate, 4)
         self._save_state(state)
 
+        # Feed the Practice Director: every verified outcome, per domain,
+        # becomes curriculum evidence with this burst's state file + seed as
+        # its receipt. Best-effort — direction must never break practice.
+        director = _resolve_practice_director() if domain_results else None
+        if director is not None:
+            try:
+                director.observe_burst(
+                    {d: (t[0], t[1]) for d, t in domain_results.items()},
+                    source=SERVICE_NAME,
+                    receipt=f"{self._state_path()}#seed{seed}",
+                )
+                await director.flush_async()
+            except _RECOVERABLE as exc:
+                record_degradation(
+                    SERVICE_NAME,
+                    exc,
+                    action="continued burst without curriculum feedback",
+                    classification=FallbackClassification.SAFE_FALLBACK,
+                    severity="debug",
+                )
+
         if burst_stats["attempts"]:
             logger.info(
                 "🎯 Self-play burst (seed %d): %d/%d correct, +%d pairs%s.",
@@ -220,6 +258,25 @@ class SelfPlayFlywheel:
                 burst_stats["pairs"], " (yielded early)" if burst_stats["aborted"] else "",
             )
         return burst_stats
+
+    def _practice_tasks(self, seed: int) -> list:
+        """The burst's task set. The Practice Director concentrates it on the
+        domains Aura actually fails (receipts-ranked); uniform round-robin is
+        the fallback whenever direction is absent, disabled, or broken."""
+        director = _resolve_practice_director()
+        if director is None:
+            return generate_battery(BatterySpec(seed=seed, size=self.burst_tasks))
+        try:
+            return director.focused_battery(seed=seed, size=self.burst_tasks)
+        except _RECOVERABLE as exc:
+            record_degradation(
+                SERVICE_NAME,
+                exc,
+                action="fell back to uniform practice battery",
+                classification=FallbackClassification.SAFE_FALLBACK,
+                severity="debug",
+            )
+            return generate_battery(BatterySpec(seed=seed, size=self.burst_tasks))
 
     def _still_allowed(self) -> bool:
         from core.runtime.background_policy import (

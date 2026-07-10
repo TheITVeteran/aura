@@ -273,6 +273,33 @@ class BootCognitiveMixin:
             )
             logger.error("Failed to init self-play flywheel: %s", e)
 
+        try:
+            from core.learning.deliberate_practice import (
+                SERVICE_NAME as PRACTICE_DIRECTOR_SERVICE,
+                get_practice_director,
+            )
+
+            director = get_practice_director()
+            # Pull historical evidence (sealed evals, specialist receipts)
+            # into the curriculum before the first idle window asks for
+            # direction. Off-loop: the harvest reads receipt files.
+            harvested = await asyncio.to_thread(director.harvest)
+            ServiceContainer.register_instance(
+                PRACTICE_DIRECTOR_SERVICE, director, required=False
+            )
+            logger.info(
+                "✓ Practice Director online (failure-directed curriculum; "
+                "%d observation(s) harvested).",
+                harvested,
+            )
+        except (ImportError, AttributeError, RuntimeError, OSError) as e:
+            _record_boot_cognitive_degradation(
+                e,
+                action="continued boot with uniform (undirected) practice",
+                severity="warning",
+            )
+            logger.warning("Failed to init the practice director: %s", e)
+
     async def _init_expert_lora_library(self):
         """Register the expert-LoRA library (domain-specialist weights on disk).
 

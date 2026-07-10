@@ -4,7 +4,7 @@
 > (`make fmea-doc`). Do not edit by hand — a drift test regenerates
 > and compares this file on every suite run.
 
-Registry version: `1.0` — 19 modes (2 catastrophic, 9 critical, 7 major, 1 minor); 1 open mitigation gap(s), 0 open detection gap(s).
+Registry version: `1.0` — 20 modes (2 catastrophic, 9 critical, 7 major, 2 minor); 1 open mitigation gap(s), 0 open detection gap(s).
 
 Every entry is REAL: it either occurred live (occurrences cite when)
 or is a structurally-reachable state found by analysis. Gaps are
@@ -234,6 +234,18 @@ explicit and pinned by an allowlist test that only shrinks.
 - **Mitigation modules:** `core.runtime.flight_recorder`, `core.observability.incident_narrator`
 - **Recorded occurrences:** 2026-07-03 endurance OOM 35GB (no relaunch, no final-moment record); 2026-07-06 duplicate-runtime cascade (diagnosed from side-channels)
 - **Notes:** The ring is written by the death itself; only whole-machine loss can erase it.
+
+## FM-LEARN-001 — Curriculum misdirection: stale, corrupt, or skewed failure evidence steers practice at the wrong domains
+
+- **Subsystem:** core/learning/deliberate_practice.py (practice director)
+- **Severity / blast radius:** minor / lane
+- **Cause:** Ledger corruption, a burst of unrepresentative failures, or receipts from an old model generation dominating the decayed ranking
+- **Effect:** Idle practice and specialist training drill domains that no longer need it — the waste of uniform practice returns, never worse than it (all consumers keep their uniform/least-recently-trained fallback)
+- **Detection:** Per-domain curriculum is receipts-attached and served on /api/system/learning; the learning self-report states the direction in chat; mastery rail zeroes any domain holding ≥95%
+- **Mitigation:** 7-day evidence half-life ages out stale failures; corrupt ledger lines are skipped (never void the ledger); AURA_DELIBERATE_PRACTICE=0 kill switch restores uniform practice instantly; observation intake never blocks practice
+- **Detection modules:** `core.learning.deliberate_practice`
+- **Mitigation modules:** `core.learning.deliberate_practice`
+- **Notes:** Direction is quality-of-learning only: the two-sided specialist gate and the sealed compounding gate still decide what ships, so misdirection can waste idle compute but cannot promote a regression.
 
 ## Open gaps (the work queue)
 

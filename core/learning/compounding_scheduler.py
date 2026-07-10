@@ -245,9 +245,35 @@ class CompoundingScheduler:
                 return
             state = self._load_state()
             trained: dict[str, float] = dict(state.get("specialist_trained_at", {}) or {})
-            # least-recently-trained eligible domain first
-            domain = min(eligible, key=lambda d: float(trained.get(d, 0.0)))
-            logger.info("🧩 Domain-specialist cycle starting for '%s'.", domain)
+            # The Practice Director picks the highest-NEED eligible domain
+            # (failure-directed, receipts-ranked); least-recently-trained is
+            # the fallback when direction is absent, off, or evidence-free.
+            # Resolved from the service spine only — never self-created, so
+            # hermetic tests without a registered director keep pure LRT.
+            domain = None
+            chosen_by = "least_recently_trained"
+            try:
+                from core.runtime.service_access import resolve_practice_director
+
+                director = resolve_practice_director(default=None)
+                if director is not None:
+                    await asyncio.to_thread(director.harvest)
+                    domain = director.choose_focus_domain(eligible)
+                    if domain is not None:
+                        chosen_by = "practice_director"
+            except _RECOVERABLE as exc:
+                record_degradation(
+                    "compounding_scheduler",
+                    exc,
+                    action="fell back to least-recently-trained specialist choice",
+                    severity="debug",
+                )
+            if domain is None:
+                domain = min(eligible, key=lambda d: float(trained.get(d, 0.0)))
+            logger.info(
+                "🧩 Domain-specialist cycle starting for '%s' (chosen by %s).",
+                domain, chosen_by,
+            )
             from core.governance_context import local_internal_governed_scope
 
             with local_internal_governed_scope(

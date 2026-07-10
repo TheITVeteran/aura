@@ -219,7 +219,6 @@ FICTIONAL_CAPABILITY_IMPORTS: tuple[FictionalCapabilityImport, ...] = (
             "core/brain/reasoning_amplifier_v2.py",
             "core/reasoning/native_system2.py",
             "core/simulation/mental_simulator.py",
-            "core/learning/failure_analyzer.py",
         ),
     ),
     FictionalCapabilityImport(
@@ -291,7 +290,7 @@ GAME_AI_PATTERN_IMPORTS: tuple[GameAIPatternImport, ...] = (
         source="Middle-earth: Shadow of Mordor",
         mechanism_target="Nemesis-style durable adversary/event memory: repeated failures change future strategy.",
         target_organs=(
-            "core/learning/failure_analyzer.py",
+            "core/learning/deliberate_practice.py",
             "core/adaptation/adaptive_immunity.py",
             "core/agency/decision_preference_learner.py",
         ),

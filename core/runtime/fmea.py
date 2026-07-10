@@ -431,6 +431,31 @@ FMEA_REGISTRY: tuple[FailureMode, ...] = (
         ),
         notes="The ring is written by the death itself; only whole-machine loss can erase it.",
     ),
+    # ── Learning direction ─────────────────────────────────────────
+    FailureMode(
+        id="FM-LEARN-001",
+        subsystem="core/learning/deliberate_practice.py (practice director)",
+        mode="Curriculum misdirection: stale, corrupt, or skewed failure evidence steers "
+        "practice at the wrong domains",
+        cause="Ledger corruption, a burst of unrepresentative failures, or receipts from an "
+        "old model generation dominating the decayed ranking",
+        effect="Idle practice and specialist training drill domains that no longer need it — "
+        "the waste of uniform practice returns, never worse than it (all consumers keep "
+        "their uniform/least-recently-trained fallback)",
+        blast_radius=BlastRadius.LANE,
+        severity=Severity.MINOR,
+        detection="Per-domain curriculum is receipts-attached and served on "
+        "/api/system/learning; the learning self-report states the direction in chat; "
+        "mastery rail zeroes any domain holding ≥95%",
+        mitigation="7-day evidence half-life ages out stale failures; corrupt ledger lines "
+        "are skipped (never void the ledger); AURA_DELIBERATE_PRACTICE=0 kill switch "
+        "restores uniform practice instantly; observation intake never blocks practice",
+        detection_modules=("core.learning.deliberate_practice",),
+        mitigation_modules=("core.learning.deliberate_practice",),
+        notes="Direction is quality-of-learning only: the two-sided specialist gate and the "
+        "sealed compounding gate still decide what ships, so misdirection can waste idle "
+        "compute but cannot promote a regression.",
+    ),
 )
 
 

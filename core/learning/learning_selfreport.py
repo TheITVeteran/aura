@@ -156,7 +156,27 @@ class LearningSelfReport:
         )
         if isinstance(ema, (int, float)):
             line += f"; recent correct-rate trend ~{float(ema):.0%}"
-        return [line + "."]
+        lines = [line + "."]
+        lines.extend(self._direction_lines())
+        return lines
+
+    def _direction_lines(self) -> list[str]:
+        """What the Practice Director is aiming practice at, receipts cited —
+        the honest answer to 'why are you practicing that?'. Resolved from
+        the service spine only (never self-created — a hermetic test must
+        not read the real machine's practice ledger)."""
+        try:
+            from core.runtime.service_access import resolve_practice_director
+
+            director = resolve_practice_director(default=None)
+            if director is None or not hasattr(director, "why"):
+                return []
+            direction = director.why()
+        except _RECOVERABLE:
+            return []
+        if not direction:
+            return []
+        return [f"- {direction}"]
 
 
 _selfreport: LearningSelfReport | None = None
