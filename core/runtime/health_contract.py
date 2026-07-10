@@ -29,7 +29,12 @@ HEALTH_CONTRACT_VERSION = "runtime-health-v1"
 
 REQUIRED_HEALTH_PROBE_GROUPS: dict[str, tuple[str, ...]] = {
     "kernel": ("kernel_interface",),
-    "inference": ("inference_gate", "llm_router"),
+    "inference": (
+        "inference_gate",
+        "llm_router",
+        "lane_admission",
+        "lane_reconciler",
+    ),
     "memory": (
         "state_repository",
         "memory_facade",
@@ -128,6 +133,20 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "resource_admission",
         ServiceTier.CRITICAL,
         "Pressure-aware lease authority for inference, evolution, model loading, and managed startup.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Lane Admission",
+        "lane_admission",
+        ServiceTier.CRITICAL,
+        "Declared model-memory envelope. Without it, concurrent lane warmups can over-commit the host.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Lane Reconciler",
+        "lane_reconciler",
+        ServiceTier.CRITICAL,
+        "Managed cortex convergence and crash-loop backoff. Without it, model-serving recovery can thrash indefinitely.",
         liveness_check="is_ready",
     ),
     ServiceRequirement(

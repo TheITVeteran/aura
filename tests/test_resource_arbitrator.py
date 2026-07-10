@@ -37,6 +37,12 @@ def test_default_facade_resolves_the_control_plane_admission_singleton():
         reset_runtime_control_plane()
 
 
+def test_runtime_worker_labels_normalize_to_model_load_lanes():
+    assert ResourceArbitrator._worker_lane("MLX-Cortex") == "cortex"
+    assert ResourceArbitrator._worker_lane("/models/qwen-7b-brainstem") == "brainstem"
+    assert ResourceArbitrator._worker_lane("custom-provider") == "custom-provider"
+
+
 @pytest.mark.asyncio
 async def test_worker_token_timeout_does_not_leak_permit():
     arbitrator = _arbitrator()

@@ -106,6 +106,20 @@ BOOT_SERVICE_REQUIREMENTS: tuple[BootServiceRequirement, ...] = (
         failure_policy="fail-closed",
         evidence_tokens=("class ResourceAdmissionController", "class AdmissionRequest"),
     ),
+    BootServiceRequirement(
+        name="lane_admission",
+        owner_file="core/brain/lane_admission.py",
+        required_for="declared model-lane memory envelope enforcement",
+        failure_policy="fail-closed",
+        evidence_tokens=("class LaneAdmissionController", "def lane_budget_gb"),
+    ),
+    BootServiceRequirement(
+        name="lane_reconciler",
+        owner_file="core/runtime/lane_reconciler.py",
+        required_for="model-serving desired-state and crash-loop convergence",
+        failure_policy="degrade_with_receipt",
+        evidence_tokens=("class LaneReconciler", "class CrashLoopBreaker"),
+    ),
 )
 
 CANONICAL_PROOF_ARTIFACT_DIRS: tuple[str, ...] = (

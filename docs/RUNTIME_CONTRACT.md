@@ -19,6 +19,8 @@ Contract version: `runtime-health-v1`
 | Scheduler | `scheduler` | `is_alive` | Canonical runtime scheduler. Without it, maintenance, repair, and background work are unsupervised. |
 | Runtime Control Plane | `runtime_control_plane` | `is_ready` | Canonical desired-state reconciler. Without it, service lifecycle and resource policy diverge. |
 | Resource Admission | `resource_admission` | `is_ready` | Pressure-aware lease authority for inference, evolution, model loading, and managed startup. |
+| Lane Admission | `lane_admission` | `is_ready` | Declared model-memory envelope. Without it, concurrent lane warmups can over-commit the host. |
+| Lane Reconciler | `lane_reconciler` | `is_ready` | Managed cortex convergence and crash-loop backoff. Without it, model-serving recovery can thrash indefinitely. |
 | Unified Will | `unified_will` | `is_alive` | Single locus of authority for consequential decisions. |
 | Authority Gateway | `authority_gateway` | `is_ready` | Governance gateway for tools, external I/O, memory writes, state changes, and self-modification. |
 | Capability Engine | `capability_engine` | `is_ready` | Capability-token and skill governance layer. Without it, tool execution cannot be considered healthy. |
@@ -64,7 +66,7 @@ Contract version: `runtime-health-v1`
 Boot readiness additionally requires at least one passing probe from each group:
 
 - **kernel**: `kernel_interface`
-- **inference**: `inference_gate`, `llm_router`
+- **inference**: `inference_gate`, `llm_router`, `lane_admission`, `lane_reconciler`
 - **memory**: `state_repository`, `memory_facade`, `memory_write_gateway`, `unified_memory_pressure`, `external_memory_sentinel`
 - **scheduler**: `scheduler`, `runtime_control_plane`, `resource_admission`
 - **tool_governance**: `unified_will`, `authority_gateway`, `capability_engine`

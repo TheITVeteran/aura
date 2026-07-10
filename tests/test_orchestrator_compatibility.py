@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.container import ServiceContainer
 from core.orchestrator.handlers.shutdown import (
     _gracefully_stop_actor_via_bus,
     orchestrator_shutdown,
@@ -13,6 +14,10 @@ from core.orchestrator.mixins.boot.boot_cognitive import BootCognitiveMixin
 from core.orchestrator.mixins.boot.boot_resilience import BootResilienceMixin
 from core.orchestrator.mixins.output_formatter import OutputFormatterMixin
 from core.runtime.errors import get_degradation_tracker
+from core.runtime.control_plane import (
+    get_runtime_control_plane,
+    reset_runtime_control_plane,
+)
 
 
 class _BootProbe(BootCognitiveMixin):
@@ -67,6 +72,81 @@ class AsyncCallFixture:
 
     def assert_not_called(self):
         assert self.calls == []
+
+
+@pytest.mark.asyncio
+async def test_init_resilience_starts_lane_reconciler_through_control_plane(
+    monkeypatch,
+):
+    from core.brain import lane_admission
+    from core.resilience import sovereign_watchdog
+    from core.runtime import lane_reconciler
+
+    events = []
+
+    class _Watchdog:
+        async def start(self):
+            events.append("watchdog:start")
+
+    class _ManagedLaneLoop:
+        def __init__(self):
+            self.running = False
+
+        async def start(self):
+            events.append("lane:start")
+            self.running = True
+
+        async def stop(self):
+            events.append("lane:stop")
+            self.running = False
+
+        def is_alive(self):
+            return self.running
+
+        @staticmethod
+        def interval_s():
+            return 20.0
+
+        @staticmethod
+        def enabled():
+            return True
+
+    managed = _ManagedLaneLoop()
+    admission = SimpleNamespace(is_alive=lambda: True, is_ready=lambda: True)
+    monkeypatch.setattr(
+        sovereign_watchdog,
+        "SovereignWatchdog",
+        lambda _orchestrator: _Watchdog(),
+    )
+    monkeypatch.setattr(
+        lane_reconciler,
+        "get_lane_reconciler",
+        lambda: managed,
+    )
+    monkeypatch.setattr(
+        lane_admission,
+        "get_lane_admission_controller",
+        lambda: admission,
+    )
+
+    ServiceContainer.clear()
+    reset_runtime_control_plane()
+    try:
+        await _ResilienceProbe()._init_resilience()
+
+        plane = get_runtime_control_plane()
+        lane_status = plane.service_status()["lane_reconciler"]
+        assert lane_status["observed_state"] == "ready"
+        assert lane_status["critical"] is True
+        assert ServiceContainer.get("lane_reconciler") is managed
+        assert ServiceContainer.get("runtime_control_plane") is plane
+        assert ServiceContainer.get("resource_admission") is plane.admission
+        assert events == ["watchdog:start", "lane:start"]
+    finally:
+        if managed.is_alive():
+            await managed.stop()
+        ServiceContainer.clear()
+        reset_runtime_control_plane()
 
 
 @pytest.mark.asyncio

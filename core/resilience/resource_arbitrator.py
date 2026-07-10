@@ -53,7 +53,16 @@ class ResourceArbitrator:
 
     @staticmethod
     def _worker_lane(worker: Optional[str]) -> str:
-        return str(worker or "default").strip() or "default"
+        raw = str(worker or "default").strip() or "default"
+        try:
+            from core.brain.lane_admission import classify_lane
+
+            lane, _qos = classify_lane(raw)
+            if lane != "auxiliary":
+                return lane
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        return raw
 
     def _get_mp_lock(self) -> int | None:
         try:

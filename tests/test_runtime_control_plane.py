@@ -130,6 +130,109 @@ async def test_different_inference_lanes_can_run_concurrently():
 
 
 @pytest.mark.asyncio
+async def test_same_lane_model_load_can_nest_under_inference_reservation():
+    controller = ResourceAdmissionController(pressure_provider=_normal_pressure)
+    inference = await controller.acquire(
+        AdmissionRequest(
+            owner="inference_gate",
+            work_class=WorkClass.INFERENCE,
+            lane="cortex",
+            timeout_s=0,
+        )
+    )
+
+    model_load = await controller.acquire(
+        AdmissionRequest(
+            owner="mlx.model_load",
+            work_class=WorkClass.MODEL_LOAD,
+            lane="cortex",
+            timeout_s=0,
+        )
+    )
+
+    assert inference.admitted and model_load.admitted
+    await controller.release(model_load.lease_id)
+    await controller.release(inference.lease_id)
+
+
+@pytest.mark.asyncio
+async def test_model_load_is_blocked_by_another_inference_lane():
+    controller = ResourceAdmissionController(pressure_provider=_normal_pressure)
+    brainstem = await controller.acquire(
+        AdmissionRequest(
+            owner="ambient_inference",
+            work_class=WorkClass.INFERENCE,
+            lane="brainstem",
+            timeout_s=0,
+        )
+    )
+
+    cortex_load = await controller.acquire(
+        AdmissionRequest(
+            owner="mlx.model_load",
+            work_class=WorkClass.MODEL_LOAD,
+            lane="cortex",
+            timeout_s=0,
+        )
+    )
+
+    assert cortex_load.outcome == AdmissionOutcome.DEFERRED
+    assert cortex_load.blocking_lease_ids == (brainstem.lease_id,)
+    await controller.release(brainstem.lease_id)
+
+
+@pytest.mark.asyncio
+async def test_legacy_global_inference_scope_conflicts_with_every_lane():
+    controller = ResourceAdmissionController(pressure_provider=_normal_pressure)
+    legacy = await controller.acquire(
+        AdmissionRequest(
+            owner="legacy",
+            work_class=WorkClass.INFERENCE,
+            lane="legacy_global_inference",
+            timeout_s=0,
+            metadata={"global_inference_scope": True},
+        )
+    )
+
+    cortex = await controller.acquire(
+        AdmissionRequest(
+            owner="chat",
+            work_class=WorkClass.INFERENCE,
+            lane="cortex",
+            timeout_s=0,
+        )
+    )
+
+    assert cortex.outcome == AdmissionOutcome.DEFERRED
+    assert cortex.blocking_lease_ids == (legacy.lease_id,)
+    controller.release_sync(legacy.lease_id, reason="legacy_test_finished")
+    assert controller.active_lease_count(WorkClass.INFERENCE) == 0
+
+
+@pytest.mark.asyncio
+async def test_sync_release_rejects_receipt_bearing_lease_without_losing_it(tmp_path):
+    controller = ResourceAdmissionController(
+        pressure_provider=_normal_pressure,
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+    )
+    admitted = await controller.acquire(
+        AdmissionRequest(
+            owner="audited",
+            work_class=WorkClass.MAINTENANCE,
+            lane="audit",
+            timeout_s=0,
+            receipt_required=True,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="require async release"):
+        controller.release_sync(admitted.lease_id)
+    assert controller.active_lease_count() == 1
+
+    await controller.release(admitted.lease_id)
+
+
+@pytest.mark.asyncio
 async def test_evolution_conflicts_with_active_inference_and_times_out(tmp_path):
     store = ReceiptStore(tmp_path / "receipts")
     controller = ResourceAdmissionController(

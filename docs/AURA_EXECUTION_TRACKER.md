@@ -9503,3 +9503,75 @@ Remaining work after this checkpoint:
 - Migrate foreground inference away from the historical priority bypass and
   onto cooperative canonical admission without reintroducing the original
   cortex self-deadlock.
+
+## Checkpoint 2026-07-09-20: Unified Model-Lane Lifecycle and Admission
+
+Scope:
+
+- Rebased the runtime-control-plane owner over the declarative lane admission,
+  lane reconciler/crash-loop breaker, probe split, memory-retrieval backbone,
+  and FMEA registry milestones already published on `main`.
+- Preserved explicit ownership boundaries instead of merging unlike policy:
+  - `ResourceAdmissionController` owns cross-domain work leases and contention
+  - `LaneAdmissionController` owns model-footprint/QoS envelope arithmetic
+  - `LaneReconciler` owns cortex warmth, budget convergence, and crash-loop state
+  - `RuntimeControlPlane` owns the lane reconciler's lifecycle, probes, restart
+    budget, backoff, and circuit state
+- Composed canonical model-load admission before the mechanical MLX spawn gate.
+  A lease now covers spawn through handshake, carries declared memory evidence,
+  and emits a durable receipt. Background loads defer immediately under
+  contention; foreground loads receive a bounded wait outside the spawn mutex.
+- Made model-load/inference composition deadlock-aware: a cold lane may load
+  beneath its own inference reservation, while another active inference lane,
+  another model load, or evolution blocks it. Runtime labels such as
+  `MLX-Cortex` are normalized to the same lane keys used by footprint admission.
+- Changed the declarative lane controller from fail-open to fail-closed at the
+  MLX spawn seam. Controller import/runtime failure is now a named critical
+  refusal rather than a return to ungoverned over-commitment.
+- Replaced direct boot of `LaneReconciler` with registration and convergence
+  through `RuntimeControlPlane`; boot proves the managed loop is ready before
+  publishing the reconciler, lane admission, resource admission, and control
+  plane instances.
+- Added lane services to the container, protected causal set, service manifest,
+  boot contract, required inference probe group, executable health contract,
+  and generated runtime-contract document.
+- Converted the dormant `ResourceGovernor.InferenceSemaphore` from an
+  independent asyncio semaphore into a strict compatibility adapter over
+  canonical admission. Its global-scope lease preserves old serialization;
+  unsupported multi-capacity use fails explicitly instead of inventing another
+  concurrency policy.
+- Removed the historical foreground inference bypass. Repository call-graph
+  analysis confirmed the inference gate is now the only production arbitrator
+  caller, and model-load same-lane nesting closes the cold-start deadlock that
+  originally motivated the bypass.
+- Added synchronous release only for receipt-free compatibility leases. The
+  controller refuses synchronous release of audited leases so durable receipt
+  I/O cannot be pulled onto an event-loop thread.
+- Tightened lane controller/reconciler liveness APIs and corrected three type
+  defects in the upstream reconciler annotations.
+
+Verification:
+
+- Focused lane/admission/inference/resource suite -> `234 passed in 23.70s`.
+- Expanded integration matrix covering control plane, boot, runtime health,
+  server contracts, FMEA, retrieval backbone, probe split, inference tiering,
+  lane lifecycle, and legacy compatibility -> `775 passed in 46.47s`.
+- Direct boot negative/identity proof confirms the lane loop is started by the
+  control plane and the container publishes the same managed instance.
+- Strict focused type check for `control_plane.py`, `resource_arbitrator.py`,
+  `lane_admission.py`, and `lane_reconciler.py` -> success with no issues.
+- Py-compile and Ruff `F,E9,I` across the touched runtime/test surface -> passed.
+- `make enterprise-gate` -> passed with no baseline regression.
+- `make production-gate` -> passed; all `37` readiness checks green.
+
+Remaining work after this checkpoint:
+
+- Rebase over the newer typed-configuration and bounded-await ratchets, migrate
+  this checkpoint's timeout settings to the typed flag layer, and satisfy the
+  new await inventory without exemptions that weaken the rule.
+- Add state-transition/periodic aggregation for repeated admission denials and
+  archival compaction for old receipt bodies so long-running audit durability
+  does not create unbounded file-count growth.
+- Reconcile `OrganSupervisor` and `SupervisionTree` behind the runtime control
+  plane, then expose one operator status surface for desired state, blockers,
+  lease owners, pressure, restart budgets, and open circuits.

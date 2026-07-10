@@ -149,6 +149,18 @@ SERVICE_MANIFEST: dict[str, ServiceRole] = {
         critical=False,
         canonical_owner="resource_arbitrator",
     ),
+    "lane_admission": ServiceRole(
+        name="lane_admission",
+        description="Declared model-lane footprint and QoS envelope authority",
+        critical=True,
+        canonical_owner="lane_admission",
+    ),
+    "lane_reconciler": ServiceRole(
+        name="lane_reconciler",
+        description="Managed model-serving desired-state and crash-loop controller",
+        critical=True,
+        canonical_owner="lane_reconciler",
+    ),
     "shutdown_coordinator": ServiceRole(
         name="shutdown_coordinator",
         description="Single ShutdownCoordinator owning teardown ordering",

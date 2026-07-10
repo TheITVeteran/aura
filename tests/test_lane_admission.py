@@ -7,6 +7,8 @@ eviction order, the envelope-breach refusal, and the mlx_client spawn seam.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from core.brain.lane_admission import (
@@ -171,9 +173,14 @@ class TestObservability:
     def test_snapshot_carries_recent_decisions(self, controller, budget_46):
         controller.admit(model_path="/m/qwen-7b", request_gb=5.0, active=[])
         snap = controller.snapshot()
+        assert snap["alive"] is True
+        assert snap["ready"] is True
         assert snap["budget_gb"] == 46.0
         assert snap["mode"] in {"enforce", "advise"}
         assert snap["recent_decisions"][-1]["admitted"] is True
+        assert controller.is_alive() is True
+        assert controller.is_ready() is True
+        assert controller.get_status() == snap
 
     def test_singleton_accessor(self):
         assert get_lane_admission_controller() is get_lane_admission_controller()
@@ -221,3 +228,65 @@ class TestSpawnSeam:
         monkeypatch.setattr(mc, "_CLIENTS", {})
         candidate = self._FakeClient("/m/qwen-7b")
         assert mc._lane_admission_blocks_worker_spawn(candidate) is None
+
+    def test_spawn_consult_fails_closed_when_lane_controller_is_unavailable(
+        self,
+        monkeypatch,
+    ):
+        from core.brain import lane_admission
+        from core.brain.llm import mlx_client as mc
+
+        def unavailable():
+            raise RuntimeError("controller offline")
+
+        monkeypatch.setattr(
+            lane_admission,
+            "get_lane_admission_controller",
+            unavailable,
+        )
+        candidate = self._FakeClient("/m/qwen-7b")
+
+        assert mc._lane_admission_blocks_worker_spawn(candidate) == (
+            "lane_admission_unavailable:RuntimeError"
+        )
+
+    @pytest.mark.asyncio
+    async def test_model_load_context_holds_and_releases_canonical_lease(
+        self,
+        monkeypatch,
+        tmp_path,
+    ):
+        from core.brain.llm import mlx_client as mc
+        from core.runtime import control_plane
+        from core.runtime.control_plane import (
+            PressureSnapshot,
+            ResourceAdmissionController,
+            WorkClass,
+        )
+        from core.runtime.receipts import ReceiptStore
+
+        controller = ResourceAdmissionController(
+            pressure_provider=lambda: PressureSnapshot(memory_percent=40.0),
+            receipt_store=ReceiptStore(tmp_path / "receipts"),
+        )
+        monkeypatch.setattr(
+            control_plane,
+            "get_runtime_control_plane",
+            lambda: SimpleNamespace(admission=controller),
+        )
+
+        candidate = self._FakeClient("/m/Aura-32B-cortex")
+        candidate._warmup_timeout = lambda: 60.0
+        async with mc._model_load_admission_context(
+            candidate,
+            foreground_request=True,
+        ) as decision:
+            assert decision.admitted is True
+            assert controller.active_lease_count(WorkClass.MODEL_LOAD) == 1
+
+        assert controller.active_lease_count(WorkClass.MODEL_LOAD) == 0
+        history = controller.status()["history"]
+        assert [entry["outcome"] for entry in history[-2:]] == [
+            "admitted",
+            "released",
+        ]

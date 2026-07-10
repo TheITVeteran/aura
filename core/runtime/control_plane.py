@@ -329,20 +329,29 @@ class ResourceAdmissionController:
     @staticmethod
     def _work_conflicts(left: AdmissionRequest, right: AdmissionRequest) -> bool:
         if left.work_class == WorkClass.INFERENCE and right.work_class == WorkClass.INFERENCE:
+            if bool(left.metadata.get("global_inference_scope")) or bool(
+                right.metadata.get("global_inference_scope")
+            ):
+                return True
             return left.lane == right.lane
-        exclusive = {WorkClass.EVOLUTION, WorkClass.MODEL_LOAD}
-        if left.work_class in exclusive and right.work_class in (
+        if left.work_class == WorkClass.EVOLUTION and right.work_class in {
             WorkClass.INFERENCE,
             WorkClass.EVOLUTION,
             WorkClass.MODEL_LOAD,
-        ):
+        }:
             return True
-        if right.work_class in exclusive and left.work_class in (
+        if right.work_class == WorkClass.EVOLUTION and left.work_class in {
             WorkClass.INFERENCE,
             WorkClass.EVOLUTION,
             WorkClass.MODEL_LOAD,
-        ):
+        }:
             return True
+        if left.work_class == WorkClass.MODEL_LOAD and right.work_class == WorkClass.MODEL_LOAD:
+            return True
+        if left.work_class == WorkClass.MODEL_LOAD and right.work_class == WorkClass.INFERENCE:
+            return left.lane != right.lane
+        if right.work_class == WorkClass.MODEL_LOAD and left.work_class == WorkClass.INFERENCE:
+            return left.lane != right.lane
         if left.work_class in {WorkClass.DESKTOP, WorkClass.SERVICE_START}:
             return left.work_class == right.work_class and left.lane == right.lane
         if left.work_class == WorkClass.MAINTENANCE:
@@ -740,6 +749,46 @@ class ResourceAdmissionController:
             decided_at=time.time(),
             lease_id=lease.lease_id,
             receipt_id=receipt_id,
+            pressure=pressure,
+        )
+
+    def release_sync(
+        self,
+        lease_id: str,
+        *,
+        reason: str = "completed",
+    ) -> AdmissionDecision:
+        """Release a receipt-free compatibility lease from synchronous APIs.
+
+        New runtime callers must use :meth:`release`. This narrow bridge exists
+        for legacy synchronous ``release()`` methods whose acquisition is
+        already async. Receipt-bearing leases are rejected so durable I/O can
+        never be smuggled onto an event-loop thread through this adapter.
+        """
+
+        pressure = self.pressure_snapshot()
+        with self._lock:
+            lease = self._leases.get(str(lease_id))
+            if lease is None:
+                raise KeyError(f"unknown or already released admission lease: {lease_id}")
+            if lease.request.receipt_required:
+                raise RuntimeError(
+                    "receipt-bearing admission leases require async release"
+                )
+            self._leases.pop(str(lease_id), None)
+            self._request_to_lease.pop(lease.request.request_id, None)
+            self._append_history_locked(
+                lease.request,
+                AdmissionOutcome.RELEASED,
+                reason,
+                lease_id=lease.lease_id,
+            )
+        return AdmissionDecision(
+            request_id=lease.request.request_id,
+            outcome=AdmissionOutcome.RELEASED,
+            reason=reason,
+            decided_at=time.time(),
+            lease_id=lease.lease_id,
             pressure=pressure,
         )
 

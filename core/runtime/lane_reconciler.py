@@ -314,7 +314,8 @@ def get_crash_loop_breaker() -> CrashLoopBreaker:
 def _default_observe_lanes() -> list[Any]:
     from core.brain.llm import mlx_client
 
-    return mlx_client._observed_active_lanes()
+    observed: Any = mlx_client._observed_active_lanes()
+    return list(observed or [])
 
 
 def _default_primary_alive() -> bool | None:
@@ -337,7 +338,7 @@ def _default_primary_key() -> str:
         from core.brain.llm import mlx_client
         from core.brain.llm.model_registry import ACTIVE_MODEL, get_model_path
 
-        return mlx_client._real_model_path(get_model_path(ACTIVE_MODEL))
+        return str(mlx_client._real_model_path(get_model_path(ACTIVE_MODEL)))
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         return "primary"
 
@@ -406,7 +407,7 @@ class LaneReconciler:
         self._foreground_active = foreground_active or _default_foreground_active
         self._breaker = breaker or get_crash_loop_breaker()
         self._actions: deque[dict[str, Any]] = deque(maxlen=_ACTION_RING_SIZE)
-        self._loop_task: asyncio.Task | None = None
+        self._loop_task: asyncio.Task[Any] | None = None
         self._reconcile_inflight = False
         self._running = False
 
@@ -627,6 +628,9 @@ class LaneReconciler:
         except (ImportError, AttributeError, RuntimeError):
             conditions = {}
         return {
+            "alive": self.is_alive(),
+            "ready": self.is_ready(),
+            "running": self._running,
             "enabled": self.enabled(),
             "interval_s": self.interval_s(),
             "recent_actions": list(self._actions)[-10:],
@@ -634,8 +638,18 @@ class LaneReconciler:
             "conditions": conditions,
         }
 
+    def is_alive(self) -> bool:
+        return bool(
+            self._running
+            and self._loop_task is not None
+            and not self._loop_task.done()
+        )
+
     def is_ready(self) -> bool:
-        return True
+        return self.is_alive()
+
+    def get_status(self) -> dict[str, Any]:
+        return self.snapshot()
 
 
 _RECONCILER: LaneReconciler | None = None

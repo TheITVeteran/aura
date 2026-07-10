@@ -312,7 +312,29 @@ class TestLaneReconciler:
     def test_snapshot_shape(self):
         rec = _reconciler()
         snap = rec.snapshot()
-        assert set(snap) >= {"enabled", "interval_s", "recent_actions", "breaker"}
+        assert set(snap) >= {
+            "alive",
+            "ready",
+            "running",
+            "enabled",
+            "interval_s",
+            "recent_actions",
+            "breaker",
+        }
+        assert rec.is_alive() is False
+        assert rec.is_ready() is False
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_probe_tracks_background_loop(self):
+        rec = _reconciler()
+
+        await rec.start()
+        assert rec.is_alive() is True
+        assert rec.is_ready() is True
+
+        await rec.stop()
+        assert rec.is_alive() is False
+        assert rec.is_ready() is False
 
     def test_kill_switch(self, monkeypatch):
         monkeypatch.setenv("AURA_LANE_RECONCILER", "0")

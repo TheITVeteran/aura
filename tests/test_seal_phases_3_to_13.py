@@ -9,11 +9,10 @@ Covers:
 """
 import asyncio
 import sqlite3
-import tempfile
 import time
+
 import numpy as np
 import pytest
-
 
 # ── Phase 3: DB Maintenance ──────────────────────────────────────────────
 
@@ -106,7 +105,14 @@ class TestResourceGovernor:
 
     def test_inference_semaphore_acquire_release(self):
         from core.resource.resource_governor import InferenceSemaphore
-        sem = InferenceSemaphore(max_concurrent=1)
+        from core.runtime.control_plane import PressureSnapshot, ResourceAdmissionController
+
+        sem = InferenceSemaphore(
+            max_concurrent=1,
+            admission=ResourceAdmissionController(
+                pressure_provider=lambda: PressureSnapshot(memory_percent=40.0)
+            ),
+        )
         assert not sem.is_active
         loop = asyncio.new_event_loop()
         acquired = loop.run_until_complete(sem.acquire(source="test", timeout=1.0))
@@ -118,7 +124,15 @@ class TestResourceGovernor:
 
     def test_inference_semaphore_timeout(self):
         from core.resource.resource_governor import InferenceSemaphore
-        sem = InferenceSemaphore(max_concurrent=1)
+        from core.runtime.control_plane import PressureSnapshot, ResourceAdmissionController
+
+        sem = InferenceSemaphore(
+            max_concurrent=1,
+            admission=ResourceAdmissionController(
+                pressure_provider=lambda: PressureSnapshot(memory_percent=40.0),
+                poll_interval_s=0.01,
+            ),
+        )
         loop = asyncio.new_event_loop()
         loop.run_until_complete(sem.acquire(source="holder"))
         acquired = loop.run_until_complete(sem.acquire(source="waiter", timeout=0.1))
@@ -128,13 +142,27 @@ class TestResourceGovernor:
 
     def test_inference_stats(self):
         from core.resource.resource_governor import InferenceSemaphore
-        sem = InferenceSemaphore(max_concurrent=1)
+        from core.runtime.control_plane import PressureSnapshot, ResourceAdmissionController
+
+        sem = InferenceSemaphore(
+            max_concurrent=1,
+            admission=ResourceAdmissionController(
+                pressure_provider=lambda: PressureSnapshot(memory_percent=40.0)
+            ),
+        )
         stats = sem.get_stats()
         assert "total_acquired" in stats
         assert "total_timeouts" in stats
 
+    def test_inference_semaphore_rejects_noncanonical_capacity(self):
+        from core.resource.resource_governor import InferenceSemaphore
+
+        with pytest.raises(ValueError, match="max_concurrent=1"):
+            InferenceSemaphore(max_concurrent=2)
+
     def test_eviction_callback(self):
-        from core.resource.resource_governor import ResourceGovernor, EvictionTier
+        from core.resource.resource_governor import EvictionTier, ResourceGovernor
+
         gov = ResourceGovernor()
         calls = []
         gov.register_eviction_callback(lambda tier: calls.append(tier))
@@ -143,7 +171,8 @@ class TestResourceGovernor:
         assert calls == [EvictionTier.SOFT]
 
     def test_eviction_none_noop(self):
-        from core.resource.resource_governor import ResourceGovernor, EvictionTier
+        from core.resource.resource_governor import EvictionTier, ResourceGovernor
+
         gov = ResourceGovernor()
         count = gov.execute_eviction(EvictionTier.NONE)
         assert count == 0

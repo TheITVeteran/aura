@@ -231,6 +231,7 @@ class BootResilienceMixin:
 
     def _async_init_threading(self):
         """Initialize asyncio objects within the running event loop."""
+        import os as _os
         from concurrent.futures import ThreadPoolExecutor
 
         # v51: We isolate cognitive I/O from system I/O to prevent starvation.
@@ -242,8 +243,6 @@ class BootResilienceMixin:
         # 104-thread pile-up, with this pool's workers running heavyweight
         # deferred tasks simultaneously. Bounded width makes overload queue
         # (bounded memory) instead of fan out (unbounded memory).
-        import os as _os
-
         _cog_workers = max(4, min(16, int(_os.environ.get("AURA_COGNITION_POOL_WORKERS", "0") or 0) or ((_os.cpu_count() or 8) + 4)))
         cog_executor = ThreadPoolExecutor(
             max_workers=_cog_workers, thread_name_prefix="Aura_Cognition"
@@ -285,25 +284,98 @@ class BootResilienceMixin:
             )
             logger.error("Failed to initialize Sovereign Watchdog: %s", e)
 
-        # Lane reconciler (roadmap K1): the control loop that converges the
-        # model-serving lane onto its desired state — primary cortex warm,
-        # joint lane footprints within the host budget — with the K4
-        # crash-loop breaker deciding when healing must back off instead.
+        # Lane reconciler (roadmap K1): register the domain-specific convergence
+        # loop beneath the canonical lifecycle owner. The control plane starts,
+        # probes, backs off, and restarts it; the lane reconciler itself owns
+        # only cortex/budget convergence and crash-loop policy.
         try:
+            from core.brain.lane_admission import get_lane_admission_controller
+            from core.runtime.control_plane import (
+                DesiredServiceSpec,
+                DesiredServiceState,
+                WorkClass,
+                get_runtime_control_plane,
+            )
             from core.runtime.lane_reconciler import (
                 SERVICE_NAME as LANE_RECONCILER_SERVICE,
             )
             from core.runtime.lane_reconciler import get_lane_reconciler
 
+            control_plane = get_runtime_control_plane()
             reconciler = get_lane_reconciler()
-            await reconciler.start()
-            ServiceContainer.register_instance(LANE_RECONCILER_SERVICE, reconciler)
+            if not control_plane.has_service(LANE_RECONCILER_SERVICE):
+                control_plane.register_service(
+                    DesiredServiceSpec(
+                        name=LANE_RECONCILER_SERVICE,
+                        critical=True,
+                        restart_limit=3,
+                        restart_window_s=900.0,
+                        backoff_initial_s=5.0,
+                        backoff_max_s=120.0,
+                        admission_class=WorkClass.SERVICE_START,
+                        metadata={"domain": "model_serving", "boot_layer": "resilience"},
+                    ),
+                    start=reconciler.start,
+                    stop=reconciler.stop,
+                    probe=reconciler.is_alive,
+                    adopt_running=reconciler.is_alive(),
+                )
+            else:
+                control_plane.set_desired_state(
+                    LANE_RECONCILER_SERVICE,
+                    DesiredServiceState.RUNNING,
+                )
+
+            report = await control_plane.reconcile_once()
+            lane_status = report.get("services", {}).get(LANE_RECONCILER_SERVICE, {})
+            if lane_status.get("observed_state") != "ready":
+                raise RuntimeError(
+                    "lane reconciler did not reach ready state through runtime control plane: "
+                    f"{lane_status}"
+                )
+
+            ServiceContainer.register_instance(
+                "runtime_control_plane",
+                control_plane,
+                required=True,
+                owner="core/runtime/control_plane.py",
+                registered_by="BootResilienceMixin._init_resilience",
+                required_for="desired-state reconciliation and resource admission",
+                failure_policy="fail-closed",
+            )
+            ServiceContainer.register_instance(
+                "resource_admission",
+                control_plane.admission,
+                required=True,
+                owner="core/runtime/control_plane.py",
+                registered_by="BootResilienceMixin._init_resilience",
+                required_for="pressure-aware constrained work leases",
+                failure_policy="fail-closed",
+            )
+            ServiceContainer.register_instance(
+                "lane_admission",
+                get_lane_admission_controller(),
+                required=True,
+                owner="core/brain/lane_admission.py",
+                registered_by="BootResilienceMixin._init_resilience",
+                required_for="declared model-lane memory envelope enforcement",
+                failure_policy="fail-closed",
+            )
+            ServiceContainer.register_instance(
+                LANE_RECONCILER_SERVICE,
+                reconciler,
+                required=True,
+                owner="core/runtime/lane_reconciler.py",
+                registered_by="BootResilienceMixin._init_resilience",
+                required_for="model-lane desired-state and crash-loop convergence",
+                failure_policy="degrade_with_receipt",
+            )
             logger.info(
-                "🔁 Lane reconciler online (interval %.0fs, %s)",
+                "🔁 Lane reconciler managed and online (interval %.0fs, %s)",
                 reconciler.interval_s(),
                 "enabled" if reconciler.enabled() else "DISABLED via AURA_LANE_RECONCILER",
             )
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
             _record_boot_resilience_degradation(
                 e,
                 action="continued boot without the lane reconciler control loop",

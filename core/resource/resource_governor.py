@@ -13,7 +13,6 @@ Prometheus observability.
 """
 from __future__ import annotations
 
-import asyncio
 import enum
 import logging
 import time
@@ -72,17 +71,24 @@ class ResourceSnapshot:
 
 
 class InferenceSemaphore:
-    """Priority-aware inference concurrency limiter.
+    """Compatibility API backed by canonical resource-admission leases.
 
-    Ensures only one inference runs at a time. User-priority requests
-    can preempt the queue position of background tasks.
+    Production policy lives in ``RuntimeControlPlane.admission``. This class
+    retains the historical async-acquire/sync-release shape for old callers
+    and requests global inference scope so it preserves the old limit of one.
     """
 
-    def __init__(self, max_concurrent: int = 1):
-        self._semaphore = asyncio.Semaphore(max_concurrent)
+    def __init__(self, max_concurrent: int = 1, *, admission=None):
+        if int(max_concurrent) != 1:
+            raise ValueError(
+                "InferenceSemaphore compatibility mode supports max_concurrent=1; "
+                "use ResourceAdmissionController for lane-aware concurrency"
+            )
+        self._admission = admission
         self._queue_depth = 0
         self._active = False
         self._active_source: str = ""
+        self._lease_ids: list[str] = []
         self._total_acquired: int = 0
         self._total_timeouts: int = 0
         self._total_wait_ms: float = 0.0
@@ -114,7 +120,44 @@ class InferenceSemaphore:
         self._queue_depth += 1
         start = time.monotonic()
         try:
-            await asyncio.wait_for(self._semaphore.acquire(), timeout=timeout)
+            from core.runtime.control_plane import (
+                AdmissionPriority,
+                AdmissionRequest,
+                WorkClass,
+                get_runtime_control_plane,
+            )
+
+            admission = self._admission or get_runtime_control_plane().admission
+            decision = await admission.acquire(
+                AdmissionRequest(
+                    owner=f"resource_governor.inference:{source}",
+                    work_class=WorkClass.INFERENCE,
+                    lane="legacy_global_inference",
+                    priority=(
+                        AdmissionPriority.FOREGROUND
+                        if priority
+                        else AdmissionPriority.INTERACTIVE
+                    ),
+                    timeout_s=max(0.0, float(timeout)),
+                    lease_ttl_s=max(900.0, float(timeout) + 600.0),
+                    metadata={
+                        "global_inference_scope": True,
+                        "compatibility_facade": "InferenceSemaphore",
+                    },
+                )
+            )
+            if not decision.admitted:
+                self._total_timeouts += 1
+                logger.warning(
+                    "InferenceSemaphore: %s denied after %.1fs (priority=%s, reason=%s)",
+                    source,
+                    timeout,
+                    priority,
+                    decision.reason,
+                )
+                return False
+            self._admission = admission
+            self._lease_ids.append(decision.lease_id)
             self._active = True
             self._active_source = source
             self._total_acquired += 1
@@ -126,24 +169,30 @@ class InferenceSemaphore:
                     source, wait_ms, priority,
                 )
             return True
-        except asyncio.TimeoutError:
-            self._total_timeouts += 1
-            logger.warning(
-                "InferenceSemaphore: %s timed out after %.1fs (priority=%s)",
-                source, timeout, priority,
-            )
-            return False
         finally:
             self._queue_depth = max(0, self._queue_depth - 1)
 
     def release(self) -> None:
         """Release inference slot."""
+        lease_id = self._lease_ids.pop() if self._lease_ids else ""
+        if not lease_id or self._admission is None:
+            logger.warning("InferenceSemaphore release called without an active lease")
+            self._active = bool(self._lease_ids)
+            if not self._active:
+                self._active_source = ""
+            return
+        try:
+            self._admission.release_sync(
+                lease_id,
+                reason="legacy_inference_finished",
+            )
+        except KeyError:
+            logger.warning(
+                "InferenceSemaphore lease expired before synchronous release: %s",
+                lease_id,
+            )
         self._active = False
         self._active_source = ""
-        try:
-            self._semaphore.release()
-        except ValueError:
-            pass  # Already released
 
     def get_stats(self) -> Dict[str, Any]:
         avg_wait = (

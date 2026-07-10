@@ -40,6 +40,8 @@ _LATE_CAUSAL_SERVICES = frozenset(
         "memory_facade",
         "runtime_control_plane",
         "resource_admission",
+        "lane_admission",
+        "lane_reconciler",
         "affect_facade",
         "cognitive_loop",
         "swarm",
@@ -65,6 +67,8 @@ _PROTECTED_CORE_SERVICES = frozenset(
         "inference_gate",
         "runtime_control_plane",
         "resource_admission",
+        "lane_admission",
+        "lane_reconciler",
     }
 )
 

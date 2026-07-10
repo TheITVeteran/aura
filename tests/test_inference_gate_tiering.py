@@ -17,6 +17,42 @@ from core.utils.deadlines import get_deadline
 _MISSING = object()
 
 
+@pytest.mark.asyncio
+async def test_foreground_resource_context_uses_canonical_admission(monkeypatch):
+    from core.resilience import resource_arbitrator
+
+    calls = []
+
+    class _Arbitrator:
+        @contextlib.asynccontextmanager
+        async def inference_context(self, **kwargs):
+            calls.append(kwargs)
+            yield
+
+    monkeypatch.setattr(
+        resource_arbitrator,
+        "get_resource_arbitrator",
+        lambda: _Arbitrator(),
+    )
+    gate = InferenceGate.__new__(InferenceGate)
+
+    async with gate._resource_context(
+        enabled=True,
+        priority=True,
+        worker="MLX-Cortex",
+        timeout_s=42.0,
+    ):
+        pass
+
+    assert calls == [
+        {
+            "priority": True,
+            "worker": "MLX-Cortex",
+            "timeout": 42.0,
+        }
+    ]
+
+
 def test_build_messages_uses_canonical_state_without_mutating_working_memory(monkeypatch):
     state = AuraState.default()
     state.cognition.working_memory = [

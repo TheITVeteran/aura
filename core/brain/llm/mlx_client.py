@@ -383,9 +383,9 @@ def _crash_loop_blocks_worker_spawn(client: Any) -> str | None:
 def _lane_admission_blocks_worker_spawn(client: Any) -> str | None:
     """Consult the declarative lane-admission controller for this spawn.
 
-    Returns a named refusal reason, or None to proceed. Never throws — an
-    unavailable controller must not take down a spawn that instantaneous
-    pressure checks already admitted.
+    Returns a named refusal reason, or None to proceed. The lane envelope is a
+    load-bearing safety boundary: an unavailable controller refuses the spawn
+    instead of silently returning to the historical over-commit path.
     """
     try:
         from core.brain.lane_admission import get_lane_admission_controller
@@ -397,11 +397,130 @@ def _lane_admission_blocks_worker_spawn(client: Any) -> str | None:
             active=_observed_active_lanes(exclude_client=client),
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-        logger.debug("Lane admission consult unavailable (spawn proceeds): %s", exc)
-        return None
+        _record_mlx_degradation(
+            exc,
+            action="refused model spawn because declarative lane admission was unavailable",
+            severity="critical",
+        )
+        return f"lane_admission_unavailable:{type(exc).__name__}"
     if decision.admitted or not decision.enforced:
         return None
     return decision.reason
+
+
+class _ModelLoadAdmissionDenied(RuntimeError):
+    def __init__(self, reason: str, *, receipt_id: str = "") -> None:
+        self.reason = str(reason or "resource_admission_denied")
+        self.receipt_id = str(receipt_id or "")
+        super().__init__(
+            f"model_load_admission_denied:{self.reason}"
+            + (f":receipt={self.receipt_id}" if self.receipt_id else "")
+        )
+
+
+def _model_load_admission_timeout_s(*, foreground_request: bool) -> float:
+    env_name = (
+        "AURA_FOREGROUND_MODEL_LOAD_ADMISSION_TIMEOUT_S"
+        if foreground_request
+        else "AURA_BACKGROUND_MODEL_LOAD_ADMISSION_TIMEOUT_S"
+    )
+    default = 30.0 if foreground_request else 0.0
+    try:
+        return max(0.0, float(os.environ.get(env_name, str(default)) or default))
+    except (TypeError, ValueError):
+        return default
+
+
+@contextlib.asynccontextmanager
+async def _model_load_admission_context(client: Any, *, foreground_request: bool):
+    """Hold the cross-domain model-load lease for spawn through handshake.
+
+    This lease is acquired before the mechanical spawn mutex, so resource
+    contention never leaves unrelated lanes queued behind a waiter that has
+    not itself been admitted.
+    """
+
+    try:
+        from core.brain.lane_admission import classify_lane
+        from core.runtime.control_plane import (
+            AdmissionPriority,
+            AdmissionRequest,
+            WorkClass,
+            get_runtime_control_plane,
+        )
+    except ImportError as exc:
+        _record_mlx_degradation(
+            exc,
+            action="refused model load because canonical resource admission could not import",
+            severity="critical",
+        )
+        raise _ModelLoadAdmissionDenied("resource_admission_unavailable") from exc
+
+    lane, qos = classify_lane(client.model_path)
+    request_gb = _projected_model_footprint_gb(
+        client.model_path
+    ) + _model_process_reserve_gb(client.model_path)
+    timeout_s = _model_load_admission_timeout_s(
+        foreground_request=foreground_request
+    )
+    request = AdmissionRequest(
+        owner=f"mlx.model_load:{os.path.basename(client.model_path)}",
+        work_class=WorkClass.MODEL_LOAD,
+        lane=lane,
+        priority=(
+            AdmissionPriority.FOREGROUND
+            if foreground_request
+            else AdmissionPriority.BACKGROUND
+        ),
+        timeout_s=timeout_s,
+        lease_ttl_s=max(120.0, float(client._warmup_timeout()) + 60.0),
+        receipt_required=True,
+        estimated_memory_mb=request_gb * 1024.0,
+        metadata={
+            "model_path": str(client.model_path),
+            "lane_qos": str(qos),
+            "foreground_request": bool(foreground_request),
+            "declared_request_gb": request_gb,
+        },
+    )
+    try:
+        admission = get_runtime_control_plane().admission
+        decision = await admission.acquire(request)
+    except asyncio.CancelledError:
+        raise
+    except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        _record_mlx_degradation(
+            exc,
+            action="refused model load because canonical resource admission failed",
+            severity="critical",
+        )
+        raise _ModelLoadAdmissionDenied("resource_admission_failed") from exc
+    if not decision.admitted:
+        raise _ModelLoadAdmissionDenied(
+            decision.reason,
+            receipt_id=decision.receipt_id,
+        )
+
+    try:
+        yield decision
+    finally:
+        try:
+            await admission.release(
+                decision.lease_id,
+                reason="model_load_finished",
+            )
+        except KeyError:
+            logger.warning(
+                "Model-load admission lease expired before release lane=%s lease=%s",
+                lane,
+                decision.lease_id,
+            )
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="model load completed but canonical admission release failed",
+                severity="warning",
+            )
 
 
 def _normalize_recurrent_depth_status(status: Any, *, model_path: str) -> dict[str, Any]:
@@ -3113,16 +3232,39 @@ class MLXLocalClient:
             self._set_lane_state("ready")
             return True
 
-        # Slow path: acquire global gate to serialize model loading
+        # Slow path: admission owns whether model loading may proceed; the
+        # spawn gate remains the mechanical single-spawn mutex beneath it.
         try:
-            async with _spawn_gate_context():
-                return await self._ensure_worker_alive_inner(
-                    request_is_background=request_is_background,
-                    foreground_request=foreground_request,
-                    init_timeout=init_timeout,
-                    soft_timeout=soft_timeout,
-                    skip_swap_cooldown=skip_swap_cooldown,
-                )
+            async with _model_load_admission_context(
+                self,
+                foreground_request=foreground_request,
+            ):
+                async with _spawn_gate_context():
+                    return await self._ensure_worker_alive_inner(
+                        request_is_background=request_is_background,
+                        foreground_request=foreground_request,
+                        init_timeout=init_timeout,
+                        soft_timeout=soft_timeout,
+                        skip_swap_cooldown=skip_swap_cooldown,
+                    )
+        except _ModelLoadAdmissionDenied as admission_exc:
+            self._set_lane_state("recovering", admission_exc.reason)
+            self._record_degraded_event(
+                "model_load_admission_denied",
+                detail=(
+                    f"{os.path.basename(self.model_path)}:{admission_exc.reason}:"
+                    f"receipt={admission_exc.receipt_id or 'none'}"
+                ),
+                severity="warning",
+                foreground_request=foreground_request,
+            )
+            logger.warning(
+                "⏸️ [MLX] Model-load admission denied for %s: %s (receipt=%s)",
+                os.path.basename(self.model_path),
+                admission_exc.reason,
+                admission_exc.receipt_id or "none",
+            )
+            return False
         except TimeoutError as gate_exc:
             # Another lane's spawn is wedged holding the global gate. Defer
             # honestly instead of joining the pileup — the warmup's finally

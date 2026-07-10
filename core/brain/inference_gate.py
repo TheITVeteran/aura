@@ -3034,14 +3034,12 @@ class InferenceGate:
         worker: str | None = None,
         timeout_s: float | None = None,
     ):
-        # [STABILITY v53] Priority user-facing requests BYPASS the semaphore.
-        # The per-worker semaphore was causing a deadlock: kernel holds cortex
-        # sem → kernel times out → protected foreground tries to acquire same
-        # cortex sem → blocks → user waits 80+ seconds for nothing.
-        # Since per-worker sems already isolate cortex from brainstem,
-        # the semaphore only prevents concurrent cortex requests — but that's
-        # exactly what happens when kernel + protected foreground race.
-        if not enabled or priority:
+        # Every live generation, including foreground retries, uses canonical
+        # admission. The historical priority bypass predated the single caller
+        # path and allowed exactly the concurrent same-lane work this policy is
+        # meant to prevent. Model loading can safely nest beneath its own lane's
+        # inference reservation, so cold-start recovery no longer needs a bypass.
+        if not enabled:
             yield
             return
         try:

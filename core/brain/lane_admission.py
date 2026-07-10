@@ -314,10 +314,21 @@ class LaneAdmissionController:
         with self._lock:
             recent = [d.to_dict() for d in list(self._decisions)[-10:]]
         return {
+            "alive": True,
+            "ready": True,
             "budget_gb": round(lane_budget_gb(), 2),
             "mode": enforcement_mode(),
             "recent_decisions": recent,
         }
+
+    def is_alive(self) -> bool:
+        return True
+
+    def is_ready(self) -> bool:
+        return True
+
+    def get_status(self) -> dict[str, Any]:
+        return self.snapshot()
 
 
 _CONTROLLER: LaneAdmissionController | None = None

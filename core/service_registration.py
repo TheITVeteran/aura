@@ -89,6 +89,16 @@ def register_all_services(is_proxy: bool = False):
 
         return get_resource_arbitrator()
 
+    def create_lane_admission():
+        from core.brain.lane_admission import get_lane_admission_controller
+
+        return get_lane_admission_controller()
+
+    def create_lane_reconciler():
+        from core.runtime.lane_reconciler import get_lane_reconciler
+
+        return get_lane_reconciler()
+
     container.register(
         'runtime_control_plane',
         create_runtime_control_plane,
@@ -131,6 +141,28 @@ def register_all_services(is_proxy: bool = False):
         registered_by='register_all_services',
         required_for='legacy inference and evolution admission compatibility',
         failure_policy='fail-closed',
+    )
+    container.register(
+        'lane_admission',
+        create_lane_admission,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=True,
+        dependencies=['resource_admission'],
+        owner='core/brain/lane_admission.py',
+        registered_by='register_all_services',
+        required_for='declared model-lane memory envelope enforcement',
+        failure_policy='fail-closed',
+    )
+    container.register(
+        'lane_reconciler',
+        create_lane_reconciler,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=True,
+        dependencies=['runtime_control_plane', 'lane_admission'],
+        owner='core/runtime/lane_reconciler.py',
+        registered_by='register_all_services',
+        required_for='model-lane desired-state and crash-loop convergence',
+        failure_policy='degrade_with_receipt',
     )
 
     # Critique-closure services: adaptive mood, mesh cognition, emergent goals,

@@ -5272,6 +5272,8 @@ def test_service_manifest_lists_all_critical_runtime_roles():
         "task_supervisor",
         "runtime_control_plane",
         "resource_admission",
+        "lane_admission",
+        "lane_reconciler",
         "shutdown_coordinator",
         "agent_workspace",
     }
