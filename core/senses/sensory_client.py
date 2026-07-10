@@ -1,11 +1,15 @@
-from core.runtime.errors import record_degradation
+from __future__ import annotations
+
 import asyncio
 import logging
 import multiprocessing as mp
 import os
 import sys
 import threading
-from typing import Any, Dict, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
 
 logger = logging.getLogger("core.senses.sensory_client")
 
@@ -14,13 +18,13 @@ class SensoryLocalClient:
     Supervisor for the isolated Sensory Worker process.
     Manages Vision and Audio libraries (cv2, mss, sounddevice) in a sidecar PID.
     """
-    def __init__(self):
-        self._process = None
-        self._req_q = None
-        self._res_q = None
+    def __init__(self) -> None:
+        self._process: Any | None = None
+        self._req_q: Any | None = None
+        self._res_q: Any | None = None
         self._running = False
-        self._lock: Optional[asyncio.Lock] = None
-        self._start_lock: Optional[asyncio.Lock] = None
+        self._lock: asyncio.Lock | None = None
+        self._start_lock: asyncio.Lock | None = None
 
     def _ensure_async_locks(self) -> tuple[asyncio.Lock, asyncio.Lock]:
         if self._lock is None:
@@ -29,36 +33,54 @@ class SensoryLocalClient:
             self._start_lock = asyncio.Lock()
         return self._lock, self._start_lock
 
-    async def start(self):
+    async def start(self) -> bool:
         """Start the isolated sensory worker."""
+        if is_shutdown_requested():
+            logger.info("Sensory worker start refused: runtime shutdown requested")
+            return False
         from .sensory_worker import sensory_worker_loop
         _, start_lock = self._ensure_async_locks()
 
         async with start_lock:
+            if is_shutdown_requested():
+                return False
             if self.is_alive():
                 logger.debug("👀 Sensory Client: Worker already alive.")
                 return True
 
             ctx_name = "spawn" if sys.platform == "darwin" else "forkserver"
-            ctx = mp.get_context(ctx_name)
+            ctx: Any = mp.get_context(ctx_name)
             self._replace_queues(ctx)
-            self._process = ctx.Process(
+            process = ctx.Process(
                 target=sensory_worker_loop,
                 args=(self._req_q, self._res_q),
                 name="AuraSensoryWorker",
                 daemon=True
             )
+            self._process = process
             previous_sidecar_flag = os.environ.get("AURA_MEDIA_SIDECAR_PROCESS")
             os.environ["AURA_MEDIA_SIDECAR_PROCESS"] = "1"
             try:
-                self._process.start()
+                if is_shutdown_requested():
+                    process = self._process
+                    self._process = None
+                    self._close_queues()
+                    close = getattr(process, "close", None)
+                    if callable(close):
+                        close()
+                    return False
+                process.start()
             finally:
                 if previous_sidecar_flag is None:
                     os.environ.pop("AURA_MEDIA_SIDECAR_PROCESS", None)
                 else:
                     os.environ["AURA_MEDIA_SIDECAR_PROCESS"] = previous_sidecar_flag
+            if is_shutdown_requested():
+                logger.info("Sensory worker crossed shutdown during spawn; stopping it")
+                await self.stop()
+                return False
             self._running = True
-            logger.info("👀 Sensory Client: Worker started via %s (PID: %d)", ctx_name, self._process.pid)
+            logger.info("👀 Sensory Client: Worker started via %s (PID: %d)", ctx_name, process.pid)
 
             if not await self._send_command("ping", timeout=2.0, auto_restart=False):
                 logger.error("🛑 Sensory Client: Worker failed initial ping.")
@@ -115,7 +137,17 @@ class SensoryLocalClient:
         self._req_q = factory()
         self._res_q = factory()
 
-    async def _send_command(self, cmd: str, data: Any = None, *, timeout: float = 5.0, auto_restart: bool = True) -> bool:
+    async def _send_command(  # noqa: ASYNC109 - timeout bounds blocking sidecar IPC.
+        self,
+        cmd: str,
+        data: Any = None,
+        *,
+        timeout: float = 5.0,  # noqa: ASYNC109 - bounds blocking sidecar IPC.
+        auto_restart: bool = True,
+    ) -> bool:
+        if is_shutdown_requested():
+            logger.info("Sensory command %s refused during runtime shutdown", cmd)
+            return False
         if not self.is_alive():
             if not auto_restart:
                 logger.warning("👀 Sensory Client: Worker unavailable for command %s", cmd)
@@ -133,7 +165,7 @@ class SensoryLocalClient:
                 return False
 
             # [STRUCTURAL UNIFICATION] Report sensory tasks to registry
-            from core.supervisor.registry import get_task_registry, TaskStatus
+            from core.supervisor.registry import TaskStatus, get_task_registry
             registry = get_task_registry()
             task_id = registry.register_task("sensory_gate", f"Sensory: {cmd}", {"data": str(data)})
             
@@ -159,9 +191,10 @@ class SensoryLocalClient:
     def is_alive(self) -> bool:
         return self._process is not None and self._process.is_alive()
 
-    async def stop(self):
+    async def stop(self) -> None:
         self._running = False
-        if self._process:
+        process, self._process = self._process, None
+        if process:
             try:
                 if self._req_q is not None:
                     self._req_q.put({"command": "exit"})
@@ -169,12 +202,14 @@ class SensoryLocalClient:
                 record_degradation('sensory_client', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
             # Issue 26: Use asyncio.to_thread for blocking process join
-            await asyncio.to_thread(self._process.join, timeout=2.0)
-            if self._process.is_alive():
-                self._process.terminate()
-                await asyncio.to_thread(self._process.join, timeout=1.0)
+            await asyncio.to_thread(process.join, timeout=2.0)
+            if process.is_alive():
+                process.terminate()
+                await asyncio.to_thread(process.join, timeout=1.0)
+            if process.is_alive():
+                process.kill()
+                await asyncio.to_thread(process.join, timeout=1.0)
             logger.info("👀 Sensory Client: Worker stopped")
-            self._process = None
             self._drain_queues()
         self._close_queues()
 
@@ -182,10 +217,10 @@ class SensoryLocalClient:
     cleanup = stop
     on_stop = stop
 
-_instance = None
+_instance: SensoryLocalClient | None = None
 _client_lock = threading.Lock()
 
-def get_sensory_client():
+def get_sensory_client() -> SensoryLocalClient:
     global _instance
     with _client_lock:
         if _instance is None:

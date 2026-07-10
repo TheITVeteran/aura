@@ -77,7 +77,7 @@ def _register_runtime_hygiene_process(
 
 
 def governance_runtime_active() -> bool:
-    return _governance_context.governance_runtime_active()
+    return bool(_governance_context.governance_runtime_active())
 
 
 def require_governance(*args: Any, **kwargs: Any) -> Any:
@@ -230,14 +230,22 @@ def _require_effect_governance(operation: str) -> None:
         raise GovernanceViolation(f"{operation} called outside governed context")
 
 
-def _require_not_shutting_down(operation: str, *, read_only: bool, offline_tooling: bool) -> None:
+def _require_not_shutting_down(
+    operation: str,
+    *,
+    read_only: bool,
+    offline_tooling: bool,
+    allow_during_shutdown: bool,
+) -> None:
     """Block new live subprocess work after the process shutdown latch is set."""
 
     if not is_shutdown_requested():
         return
-    # External proof/certification tooling can invoke read-only probes around a
-    # stopped runtime. Live Aura itself may not launch new child work after stop.
-    if read_only or offline_tooling:
+    # External proof/certification tools run in their own process and therefore
+    # do not inherit the stopped runtime's latch. An in-process exception must
+    # be explicit and may only be used for non-effectful inspection.
+    if allow_during_shutdown and read_only:
+        logger.warning("Allowing explicit shutdown-time subprocess probe: %s", operation)
         return
     raise GovernanceViolation(f"{operation} refused during runtime shutdown")
 
@@ -254,6 +262,7 @@ class SubprocessGateway:
         timeout: float = 30.0,
         read_only: bool = False,
         offline_tooling: bool = False,
+        allow_during_shutdown: bool = False,
         capture_output: bool = True,
         input: str | None = None,
         check: bool = False,
@@ -272,6 +281,7 @@ class SubprocessGateway:
             f"subprocess_gateway.run:{source}",
             read_only=read_only,
             offline_tooling=offline_tooling,
+            allow_during_shutdown=allow_during_shutdown,
         )
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.run:{source}")
@@ -297,6 +307,7 @@ class SubprocessGateway:
         timeout: float = 30.0,  # noqa: ASYNC109 - forwarded to subprocess.run.
         read_only: bool = False,
         offline_tooling: bool = False,
+        allow_during_shutdown: bool = False,
         capture_output: bool = True,
         input: str | None = None,
         check: bool = False,
@@ -310,6 +321,7 @@ class SubprocessGateway:
             timeout=timeout,
             read_only=read_only,
             offline_tooling=offline_tooling,
+            allow_during_shutdown=allow_during_shutdown,
             capture_output=capture_output,
             input=input,
             check=check,
@@ -332,6 +344,7 @@ class SubprocessGateway:
         preexec_fn: Callable[[], None] | None = None,
         read_only: bool = False,
         offline_tooling: bool = False,
+        allow_during_shutdown: bool = False,
         source: str = "unknown",
     ) -> subprocess.Popen[Any]:
         command = _coerce_argv(argv)
@@ -347,6 +360,7 @@ class SubprocessGateway:
             f"subprocess_gateway.spawn:{source}",
             read_only=read_only,
             offline_tooling=offline_tooling,
+            allow_during_shutdown=allow_during_shutdown,
         )
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn:{source}")
@@ -377,6 +391,21 @@ class SubprocessGateway:
                 start_new_session=start_new_session,
                 preexec_fn=preexec_fn,
             )
+            try:
+                _require_not_shutting_down(
+                    f"subprocess_gateway.spawn:{source}",
+                    read_only=read_only,
+                    offline_tooling=offline_tooling,
+                    allow_during_shutdown=allow_during_shutdown,
+                )
+            except GovernanceViolation:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=2.0)
+                raise
             proc._aura_gateway_streams = tuple(opened_streams)  # type: ignore[attr-defined]
             _register_runtime_hygiene_process(
                 proc,
@@ -385,7 +414,7 @@ class SubprocessGateway:
                 command=command,
             )
             return proc
-        except (OSError, subprocess.SubprocessError, ValueError):
+        except (OSError, subprocess.SubprocessError, ValueError, GovernanceViolation):
             for stream in opened_streams:
                 try:
                     stream.close()
@@ -405,6 +434,7 @@ class SubprocessGateway:
         start_new_session: bool = True,
         read_only: bool = False,
         offline_tooling: bool = False,
+        allow_during_shutdown: bool = False,
         source: str = "unknown",
     ) -> asyncio.subprocess.Process:
         command = _coerce_argv(argv)
@@ -420,6 +450,7 @@ class SubprocessGateway:
             f"subprocess_gateway.spawn_async:{source}",
             read_only=read_only,
             offline_tooling=offline_tooling,
+            allow_during_shutdown=allow_during_shutdown,
         )
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn_async:{source}")
@@ -433,6 +464,21 @@ class SubprocessGateway:
             env=dict(env) if env is not None else None,
             start_new_session=start_new_session,
         )
+        try:
+            _require_not_shutting_down(
+                f"subprocess_gateway.spawn_async:{source}",
+                read_only=read_only,
+                offline_tooling=offline_tooling,
+                allow_during_shutdown=allow_during_shutdown,
+            )
+        except GovernanceViolation:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+            raise
         _register_runtime_hygiene_process(
             proc,
             kind="subprocess",
@@ -452,6 +498,7 @@ class SubprocessGateway:
         env: Mapping[str, str] | None = None,
         start_new_session: bool = True,
         offline_tooling: bool = False,
+        allow_during_shutdown: bool = False,
         source: str = "unknown",
     ) -> asyncio.subprocess.Process:
         if not isinstance(command, str) or not command.strip():
@@ -462,6 +509,12 @@ class SubprocessGateway:
             offline_tooling=offline_tooling,
             source=source,
             command=("/bin/sh", "-lc"),
+        )
+        _require_not_shutting_down(
+            f"subprocess_gateway.spawn_shell_async:{source}",
+            read_only=False,
+            offline_tooling=offline_tooling,
+            allow_during_shutdown=allow_during_shutdown,
         )
         if not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn_shell_async:{source}")
@@ -475,6 +528,21 @@ class SubprocessGateway:
             env=dict(env) if env is not None else None,
             start_new_session=start_new_session,
         )
+        try:
+            _require_not_shutting_down(
+                f"subprocess_gateway.spawn_shell_async:{source}",
+                read_only=False,
+                offline_tooling=offline_tooling,
+                allow_during_shutdown=allow_during_shutdown,
+            )
+        except GovernanceViolation:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
+            raise
         _register_runtime_hygiene_process(
             proc,
             kind="subprocess",

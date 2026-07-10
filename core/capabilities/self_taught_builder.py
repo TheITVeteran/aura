@@ -22,6 +22,7 @@ build), so she genuinely learns and applies.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -32,6 +33,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import async_atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.SelfTaughtBuilder")
 
@@ -124,13 +126,9 @@ async def _retain(spec: str, outcome: str, lesson: str) -> str:
 async def _recall(spec: str, *, limit: int = 4) -> list[str]:
     """Pull prior general lessons that apply to this build (cumulative learning)."""
     domain = _domain_of(spec)
-    try:
-        from core.knowledge.local_corpus import get_local_corpus_store  # reference lane
-    except ImportError:
-        get_local_corpus_store = None  # noqa: N806
     lessons: list[str] = []
     try:
-        from core.memory.memory_facade import get_memory  # type: ignore
+        from core.memory.memory_facade import get_memory
 
         memory = get_memory()
         hits = memory.recall(f"build lesson {domain}", limit=limit) if memory else []
@@ -178,23 +176,27 @@ async def _generate(prompt: str, *, max_tokens: int) -> str:
 
         model = get_local_code_model()
         if model is not None:
-            return await model.generate(
-                prompt,
-                system_prompt=(
-                    "You are a meticulous front-end engineer. You output ONE complete HTML "
-                    "document and nothing else. You wire every interaction and test your logic "
-                    "mentally before finalizing. Standard browser APIs only."
-                ),
-                max_tokens=max_tokens,
-                temperature=0.2,
+            return str(
+                await model.generate(
+                    prompt,
+                    system_prompt=(
+                        "You are a meticulous front-end engineer. You output ONE complete HTML "
+                        "document and nothing else. You wire every interaction and test your logic "
+                        "mentally before finalizing. Standard browser APIs only."
+                    ),
+                    max_tokens=max_tokens,
+                    temperature=0.2,
+                )
             )
     except (ImportError, RuntimeError, OSError) as exc:
         logger.debug("local code model unavailable: %s", exc)
     try:
         from core.brain.llm.code_generator import LLMCodeGenerator
 
-        return await LLMCodeGenerator(max_tokens=max_tokens, temperature=0.2).generate_async(
-            prompt, context={"origin": "self_taught_builder"}
+        return str(
+            await LLMCodeGenerator(max_tokens=max_tokens, temperature=0.2).generate_async(
+                prompt, context={"origin": "self_taught_builder"}
+            )
         )
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
         record_degradation("self_taught_builder.generate", exc, severity="warning",
@@ -222,30 +224,47 @@ def _extract_html(raw: str) -> str:
 # ── functional test (real headless DOM: does it actually play?) ───────────
 
 async def _functional_test(html_path: str) -> dict[str, Any]:
-    import asyncio
-
     if not _TESTER.exists():
         return {"playable": None, "reason": "no functional tester available"}
+    proc = None
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "node", str(_TESTER), str(html_path),
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        proc = await get_subprocess_gateway().spawn_async(
+            ["node", str(_TESTER), str(html_path)],
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            read_only=True,
+            source="self_taught_builder.functional_test",
         )
         out, err = await asyncio.wait_for(proc.communicate(), timeout=45)
-    except (FileNotFoundError, asyncio.TimeoutError, OSError) as exc:
+    except (FileNotFoundError, TimeoutError, OSError, RuntimeError) as exc:
+        if proc is not None and proc.returncode is None:
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=2.0)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()
         return {"playable": None, "reason": f"functional tester could not run: {exc}"}
     line = (out or b"").decode(errors="replace").strip().splitlines()
     for candidate in reversed(line):
         candidate = candidate.strip()
         if candidate.startswith("{"):
             try:
-                return json.loads(candidate)
+                payload = json.loads(candidate)
+                if isinstance(payload, dict):
+                    return {str(key): value for key, value in payload.items()}
             except json.JSONDecodeError:
                 continue
     return {"playable": None, "reason": "functional tester produced no verdict", "stderr": (err or b"").decode(errors="replace")[:300]}
 
 
 # ── the loop ──────────────────────────────────────────────────────────────
+
+def _prepare_output_directory(out_dir: str | Path) -> Path:
+    path = Path(out_dir).expanduser()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 
 async def build_app_verified(
     spec: str,
@@ -264,8 +283,7 @@ async def build_app_verified(
     research = await _research(spec)
     result.research_used = list(research)
 
-    out_path = Path(out_dir).expanduser()
-    out_path.mkdir(parents=True, exist_ok=True)
+    out_path = await asyncio.to_thread(_prepare_output_directory, out_dir)
     tmp = out_path / f"_wip_{int(time.time())}.html"
 
     code = ""

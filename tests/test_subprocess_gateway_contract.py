@@ -79,24 +79,111 @@ def test_shutdown_latch_blocks_effectful_subprocess_run(
         clear_shutdown_request()
 
 
-def test_shutdown_latch_allows_read_only_probe(
+def test_shutdown_latch_blocks_implicit_read_only_probe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
-    clear_shutdown_request()
-    try:
-        request_shutdown("unit-test")
-        result = subprocess_gateway.SubprocessGateway().run(
-            [sys.executable, "-c", "print('probe-ok')"],
+    request_shutdown("unit-test")
+    with pytest.raises(subprocess_gateway.GovernanceViolation, match="runtime shutdown"):
+        subprocess_gateway.SubprocessGateway().run(
+            [sys.executable, "-c", "print('must-not-run')"],
             timeout=5,
             read_only=True,
-            source="test.subprocess_gateway.shutdown_read_only_probe",
+            source="test.subprocess_gateway.shutdown_implicit_read_only_probe",
         )
-    finally:
-        clear_shutdown_request()
+
+
+def test_shutdown_latch_allows_explicit_read_only_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    request_shutdown("unit-test")
+    result = subprocess_gateway.SubprocessGateway().run(
+        [sys.executable, "-c", "print('probe-ok')"],
+        timeout=5,
+        read_only=True,
+        allow_during_shutdown=True,
+        source="test.subprocess_gateway.shutdown_read_only_probe",
+    )
 
     assert result.returncode == 0
     assert result.stdout.strip() == "probe-ok"
+
+
+def test_shutdown_latch_never_allows_effectful_offline_tooling_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    request_shutdown("unit-test")
+
+    with pytest.raises(subprocess_gateway.GovernanceViolation, match="runtime shutdown"):
+        subprocess_gateway.SubprocessGateway().run(
+            [sys.executable, "-c", "print('must-not-run')"],
+            timeout=5,
+            offline_tooling=True,
+            allow_during_shutdown=True,
+            source="maintenance_tooling:test_shutdown_effectful_override",
+        )
+
+
+def test_shutdown_latch_blocks_shell_spawn_before_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+
+    async def _must_not_spawn(*_args, **_kwargs):
+        raise AssertionError("shell subprocess creation reached after shutdown latch")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", _must_not_spawn)
+    request_shutdown("unit-test")
+
+    async def _attempt() -> None:
+        await subprocess_gateway.SubprocessGateway().spawn_shell_async(
+            "printf must-not-run",
+            source="test.subprocess_gateway.shutdown_shell_spawn",
+        )
+
+    with pytest.raises(subprocess_gateway.GovernanceViolation, match="runtime shutdown"):
+        asyncio.run(_attempt())
+
+
+def test_async_spawn_terminates_child_when_shutdown_crosses_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+
+    class _Process:
+        def __init__(self) -> None:
+            self.terminated = False
+            self.killed = False
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+        async def wait(self) -> int:
+            return 0
+
+    process = _Process()
+
+    async def _spawn(*_args, **_kwargs):
+        request_shutdown("crossed-create-subprocess-exec")
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spawn)
+
+    async def _attempt() -> None:
+        await subprocess_gateway.SubprocessGateway().spawn_async(
+            [sys.executable, "-c", "print('must-not-survive')"],
+            source="test.subprocess_gateway.crossed_async_spawn",
+        )
+
+    with pytest.raises(subprocess_gateway.GovernanceViolation, match="runtime shutdown"):
+        asyncio.run(_attempt())
+    assert process.terminated is True
+    assert process.killed is False
 
 
 def test_read_only_spawn_async_requires_attributable_source(

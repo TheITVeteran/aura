@@ -171,6 +171,40 @@ def test_mlx_worker_spawn_refuses_before_orphan_scan_after_shutdown(monkeypatch)
         clear_shutdown_request()
 
 
+def test_mlx_worker_spawn_rechecks_shutdown_after_file_lock(monkeypatch, tmp_path):
+    from core.brain.llm import mlx_client
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient.__new__(MLXLocalClient)
+    client.model_path = "/models/Aura-32B-test"
+    client._req_q = object()
+    client._res_q = object()
+    client.device = "gpu"
+    client._substrate_mem = None
+    client._steering_active = None
+    client._cancel_seq = None
+    client._mp_context = types.SimpleNamespace(
+        Process=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("worker Process constructed after shutdown crossed file lock")
+        )
+    )
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(mlx_client.psutil, "process_iter", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(mlx_client, "_memory_pressure_blocks_worker_spawn", lambda *_args: None)
+    monkeypatch.setattr(mlx_client, "_lane_admission_blocks_worker_spawn", lambda *_args: None)
+    monkeypatch.setattr(mlx_client, "_probe_mlx_runtime", lambda: (True, "ok"))
+
+    def _flock(_file, operation):
+        if operation & mlx_client.fcntl.LOCK_NB:
+            request_shutdown("crossed-file-lock")
+
+    monkeypatch.setattr(mlx_client.fcntl, "flock", _flock)
+
+    with pytest.raises(RuntimeError, match="runtime_shutdown"):
+        client._spawn_worker_blocking()
+
+
 @pytest.mark.asyncio
 async def test_warmup_precompile_shutdown_cancellation_is_not_degradation(monkeypatch):
     from core.brain.llm import mlx_client

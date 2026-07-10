@@ -763,7 +763,7 @@ evidence into a metaphysical, legal, or comparative claim.
      AGI/ASI or superhuman claims remain open unless measured performance, breadth,
      reliability, autonomy, and independent comparison jointly support them.
 
-32. **Signal-safe quiescence and no-resurrection shutdown** `[OPEN]`
+32. **Signal-safe quiescence and no-resurrection shutdown** `[IN PROGRESS]`
    - `CTX2-SHUTDOWN-001`: make shutdown a process-wide monotonic latch. The first
      SIGINT, SIGTERM, operator stop, fatal-health stop, or parent-death event must
      transition the runtime to quiescing exactly once; later signals may tighten
@@ -10403,3 +10403,95 @@ Remaining work after this checkpoint:
   RSI/immune auto-repair, and visible web-interlocutor proof workstreams.
 - Keep the final multi-hour/24-72 hour soak deferred until the shorter bounded
   and visible live requirements are green.
+
+## Checkpoint 2026-07-10-28: Canonical Signal Ownership And Child-Start Quiescence
+
+Correction to checkpoint 27:
+
+- The earlier bounded live proof remains valid evidence for the exact tree it
+  launched, but its `CTX2-SHUTDOWN-001..003` closure label was too broad. The
+  root `ProcessManager` still replaced the event-loop signal owner, set its
+  private stop event, and then skipped cleanup because that same event was
+  interpreted as "already cleaning." Coordinator replay/progress and several
+  direct child-process boundaries were also absent. Item 32 therefore remains
+  `IN PROGRESS` until the current implementation receives post-soak live signal
+  injection and the remaining thread/listener/lock graph work is complete.
+
+Implemented in this checkpoint:
+
+- Made the process-wide latch the first operation in every root signal path,
+  before grace-flag filesystem I/O or asynchronous cleanup scheduling. Latch
+  metadata preserves first/last reason, first timestamp, elapsed time, and
+  repeated request count for operator evidence.
+- Rebuilt `ShutdownCoordinator` as a single shared teardown execution. Concurrent
+  and repeated callers await/replay one detached final report; handlers cannot
+  register after execution starts; each phase records duration/current phase;
+  cancellation/internal failure still publishes a terminal report so waiters do
+  not hang.
+- Removed implicit signal installation from `ProcessManager`. Standalone signal
+  ownership is now opt-in and restores prior handlers. The live manager is
+  registered explicitly in the canonical `actors` phase.
+- Separated stop-requested, cleanup-started, and cleanup-complete state. Manager
+  cleanup is exactly-once and deadline-bounded; process starts, registrations,
+  monitoring, health work, backoff, and restart all refuse after either local or
+  global shutdown. Async monitor functions are now awaited/cancelled correctly,
+  and manager methods no longer hold thread locks across awaits.
+- Replaced the unpickleable bound multiprocessing target with a module-level
+  child entrypoint and moved `os.nice()` into the child. The old implementation
+  changed Aura's parent-process priority before spawn.
+- Closed crossed-latch races at every known live child-process start boundary:
+  MLX text and vision workers, sensory sidecar, actor supervision, managed
+  processes, shadow mutation validation, memory/liveness sentinels, root reaper,
+  and canonical sync/async/shell subprocess starts. A child that crosses the
+  latch is terminated and reaped before the caller returns.
+- Made the MLX cross-process spawn-file lock bounded and shutdown-polling; memory
+  reclaim waits, runtime probes, post-lock construction, and immediate process
+  start all recheck the latch.
+- Replaced implicit post-shutdown read-only subprocess permission with an
+  explicit `allow_during_shutdown` inspection exception. External proof tools
+  run in their own process and do not need a live-runtime bypass.
+- Routed the self-taught builder's functional browser test through the canonical
+  attributed subprocess gateway and added TERM-to-KILL cleanup on timeout.
+- Hardened standalone cognitive-daemon signal ownership and registered daemon
+  teardown in the canonical graph. Compatibility hooks now have a total bounded
+  budget and repeated shutdown callers wait for the owning shutdown task.
+- Raised the desktop/server outer graceful-shutdown budget to cover the bounded
+  phase graph instead of cancelling canonical teardown after `20s` while its
+  configured phase budgets could legitimately still be running.
+- Projected latch/coordinator state through the canonical runtime health report,
+  full health response, boot readiness, liveness detail, and readiness endpoint.
+  Once shutdown begins these surfaces report `stopping`, reject readiness with
+  `503`, preserve the pre-shutdown health level for forensics, and cannot serve a
+  cached healthy result.
+
+Verification (no model load, runtime restart, or soak interference):
+
+- Consolidated health-contract, shutdown, process-manager, graceful-shutdown, subprocess,
+  sidecar, actor, shadow-sandbox, self-taught-builder, MLX boundary, task-owner,
+  supervisor-control-plane, and verified-lifecycle contracts -> `158 passed in 6.03s`.
+- Strict MyPy with explicit package bases over `10` touched shutdown/process
+  modules -> no issues.
+- Full Ruff over the newly hardened shutdown/process modules and focused tests;
+  bounded `F,E9,B904` Ruff over legacy touched runtime files; py-compile and
+  `git diff --check` -> passed.
+- No live boot/stop replay was run because an operator-owned soak is active and
+  explicitly forbids runtime start/stop or competing model work. That soak has
+  the pre-checkpoint code loaded, so its verdict cannot certify this source
+  change.
+
+Remaining shutdown work:
+
+- Run the bounded current-tree live signal matrix after the active soak ends:
+  signal during boot, warmup, recovery, foreground action, persistence, and each
+  shutdown phase; repeated signals must converge without worker resurrection,
+  orphan, occupied port, stale singleton lock, or manual KILL.
+- Complete `CTX2-SHUTDOWN-002` for non-process owners: inventory and register
+  every direct thread, listener, timer, native resource, sentinel, file lock,
+  socket, and port owner in the reverse-dependency graph; enforce one global
+  deadline and final process/thread/port/lock sweep.
+- Complete the remaining `CTX2-SHUTDOWN-003` detail through control-plane/operator
+  surfaces: current blocker owner, remaining budget, escalation history,
+  suppressed/resurrected start attempts, and durable final verdict artifact.
+- After those bounded requirements are green, continue `CTX2-LANE-001..004` and
+  the remaining ownership migration. Do not start another final long soak until
+  all shorter requirements are green.

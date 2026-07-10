@@ -9,10 +9,11 @@ import queue
 import time
 import traceback
 from dataclasses import asdict, dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
 from core.runtime.errors import record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.security.ast_guard import DEFAULT_SAFE_MODULES, ASTGuard, SecurityViolation
 from core.state.aura_state import AuraState
 
@@ -61,7 +62,13 @@ _SHADOW_SAFE_BUILTINS = {
 }
 
 
-def _shadow_safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+def _shadow_safe_import(
+    name: str,
+    globals: dict[str, Any] | None = None,
+    locals: dict[str, Any] | None = None,
+    fromlist: tuple[str, ...] = (),
+    level: int = 0,
+) -> Any:
     base = str(name or "").split(".", 1)[0]
     if base not in _SHADOW_SAFE_IMPORTS:
         raise ImportError(f"Shadow sandbox import blocked: {name}")
@@ -99,7 +106,11 @@ class ShadowValidationReceipt:
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
 
-def _sandbox_worker(mutated_code: str, serialized_state: str, result_queue: multiprocessing.Queue):
+def _sandbox_worker(
+    mutated_code: str,
+    serialized_state: str,
+    result_queue: Any,
+) -> None:
     """Worker executed in a separate process with a hardened namespace."""
     try:
         _validate_shadow_source(mutated_code)
@@ -142,7 +153,7 @@ def _sandbox_worker(mutated_code: str, serialized_state: str, result_queue: mult
     except (Exception, SystemExit):
         result_queue.put({"ok": False, "trace": traceback.format_exc()})
 
-class ShadowExecutionPhase(Phase):
+class ShadowExecutionPhase(Phase):  # type: ignore[misc]
     """
     Headless sandbox validator.
     Runs mutations in a separate process to prevent host-kernel contamination.
@@ -150,7 +161,12 @@ class ShadowExecutionPhase(Phase):
     def __init__(self, kernel: AuraKernel):
         self.kernel = kernel
 
-    async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
+    async def execute(
+        self,
+        state: AuraState,
+        objective: str | None = None,
+        **kwargs: Any,
+    ) -> AuraState:
         """
         [ZENITH-v2] Dual-Phase Validation: Behavioral + Structural.
         """
@@ -257,49 +273,65 @@ class ShadowExecutionPhase(Phase):
         validator_code: str,
     ) -> tuple[bool, object]:
         """Runs the existing behavioral sandbox check."""
-        result_queue = multiprocessing.Queue()
-        test_state = self.kernel.state
-        serialized_state = json.dumps({
-            "version": getattr(test_state, "version", 0),
-            "mood": getattr(test_state, "mood", "neutral"),
-            "vitality": getattr(test_state, "vitality", 100.0)
-        })
-
-        p = multiprocessing.Process(
-            target=_sandbox_worker,
-            args=(mutated_code + "\n" + validator_code, serialized_state, result_queue)
-        )
-        
-        p.start()
-        
-        # Timeout logic
-        timeout = 10.0
-        start_time = time.monotonic()
-        while time.monotonic() - start_time < timeout:
-            if not p.is_alive():
-                break
-            await asyncio.sleep(0.1)
-            
-        if p.is_alive():
-            logger.warning("Sandbox: Mutation validation timed out. Terminating Process.")
-            p.terminate()
-            p.join(timeout=2.0) # [CF] Reap zombie on macOS
-            return False, "timeout"
-            
-        p.join(timeout=2.0) # Always reap
-        
+        if is_shutdown_requested():
+            return False, "runtime_shutdown"
+        result_queue: Any = multiprocessing.Queue()
+        process = None
         try:
-            # Non-blocking get from queue
-            result = result_queue.get_nowait()
+            test_state = self.kernel.state
+            serialized_state = json.dumps(
+                {
+                    "version": getattr(test_state, "version", 0),
+                    "mood": getattr(test_state, "mood", "neutral"),
+                    "vitality": getattr(test_state, "vitality", 100.0),
+                }
+            )
+            process = multiprocessing.Process(
+                target=_sandbox_worker,
+                args=(mutated_code + "\n" + validator_code, serialized_state, result_queue),
+            )
+            if is_shutdown_requested():
+                return False, "runtime_shutdown"
+            process.start()
+            if is_shutdown_requested():
+                return False, "runtime_shutdown"
+
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                if is_shutdown_requested():
+                    return False, "runtime_shutdown"
+                if not process.is_alive():
+                    break
+                await asyncio.sleep(0.1)
+
+            if process.is_alive():
+                logger.warning("Sandbox: Mutation validation timed out")
+                return False, "timeout"
+
+            process.join(timeout=2.0)
+            try:
+                result = result_queue.get_nowait()
+            except (OSError, ConnectionError, TimeoutError, queue.Empty) as exc:
+                record_degradation("shadow_kernel", exc)
+                logger.error("Sandbox: Failed to retrieve result from worker: %s", exc)
+                return False, f"result_queue_error:{type(exc).__name__}"
             if not result.get("ok"):
                 info = result.get("trace") or result.get("info") or "validator_returned_false"
                 logger.error("Sandbox: Mutation failed: %s", info)
                 return False, info
-                
+
             info = result.get("info")
             logger.info("Sandbox: Mutation validated successfully: %s", info)
             return True, info
-        except (OSError, ConnectionError, TimeoutError, queue.Empty) as e:
-            record_degradation('shadow_kernel', e)
-            logger.error("Sandbox: Failed to retrieve result from worker: %s", e)
-            return False, f"result_queue_error:{type(e).__name__}"
+        finally:
+            if process is not None and process.is_alive():
+                process.terminate()
+                process.join(timeout=1.0)
+                if process.is_alive():
+                    process.kill()
+                    process.join(timeout=1.0)
+            try:
+                result_queue.close()
+                result_queue.join_thread()
+            except (AttributeError, OSError, RuntimeError, ValueError):
+                pass

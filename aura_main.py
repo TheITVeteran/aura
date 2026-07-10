@@ -1133,9 +1133,11 @@ class _ExternalMemorySentinelStatus:
         depend on the event loop — memory protection matters most exactly
         when the loop is wedged.
         """
-        if self._spawner is None:
+        if self._spawner is None or is_shutdown_requested():
             return False
         with self._rearm_lock:
+            if is_shutdown_requested():
+                return False
             if self.is_armed():
                 return True
             now = time.time()
@@ -1157,7 +1159,9 @@ class _ExternalMemorySentinelStatus:
             dead_pid = self.pid
             try:
                 proc = self._spawner()
-            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+                if is_shutdown_requested():
+                    return False
                 record_degradation(
                     _AURA_MAIN_DEGRADATION_KEY,
                     exc,
@@ -1252,6 +1256,8 @@ def _install_systemwide_memory_protection() -> None:
     3. External sentinel process: SIGKILLs this process tree past the
        lethal ceiling. It lives outside us; it cannot be paused with us.
     """
+    if is_shutdown_requested():
+        return
     import resource
 
     try:
@@ -1362,8 +1368,10 @@ def _install_systemwide_memory_protection() -> None:
             def _spawn_memory_sentinel() -> subprocess.Popen:
                 # Fresh append handle per spawn: the fd is inherited by the
                 # child, so respawns must not share a dead child's handle.
+                if is_shutdown_requested():
+                    raise RuntimeError("runtime_shutdown")
                 with open(sentinel_log / "sentinel.log", "a") as log_handle:
-                    return subprocess.Popen(
+                    proc = subprocess.Popen(
                         [
                             sys.executable,
                             str(Path(__file__).resolve().parent / "tools" / "memory_sentinel.py"),
@@ -1379,6 +1387,15 @@ def _install_systemwide_memory_protection() -> None:
                         start_new_session=True,
                         cwd=str(Path(__file__).resolve().parent),
                     )
+                if is_shutdown_requested():
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=2.0)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=2.0)
+                    raise RuntimeError("runtime_shutdown")
+                return proc
 
             sentinel_proc = _spawn_memory_sentinel()
             sentinel_status = _ExternalMemorySentinelStatus(
@@ -1431,7 +1448,7 @@ def _install_liveness_sentinel() -> None:
     heartbeat file the StallWatchdog refreshes; when it goes stale past the
     ceiling it SIGKILLs the tree so the launchd supervisor restarts the runtime.
     """
-    if str(os.environ.get("AURA_LIVENESS_SENTINEL", "1")).strip().lower() in {"0", "false", "no", "off"}:
+    if is_shutdown_requested() or str(os.environ.get("AURA_LIVENESS_SENTINEL", "1")).strip().lower() in {"0", "false", "no", "off"}:
         return
     try:
         import subprocess
@@ -1455,21 +1472,32 @@ def _install_liveness_sentinel() -> None:
         interval = os.environ.get("AURA_LIVENESS_INTERVAL_S", default_interval)
         log_dir = Path("data/error_logs/liveness")
         log_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.Popen(
-            [
-                sys.executable,
-                str(Path(__file__).resolve().parent / "tools" / "liveness_sentinel.py"),
-                "--pid", str(os.getpid()),
-                "--heartbeat", str(heartbeat),
-                "--stale-ceiling", str(stale_ceiling),
-                "--grace", str(grace),
-                "--interval", str(interval),
-            ],
-            stdout=open(log_dir / "liveness_sentinel.log", "a"),
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            cwd=str(Path(__file__).resolve().parent),
-        )
+        if is_shutdown_requested():
+            return
+        with open(log_dir / "liveness_sentinel.log", "a") as log_handle:
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve().parent / "tools" / "liveness_sentinel.py"),
+                    "--pid", str(os.getpid()),
+                    "--heartbeat", str(heartbeat),
+                    "--stale-ceiling", str(stale_ceiling),
+                    "--grace", str(grace),
+                    "--interval", str(interval),
+                ],
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                cwd=str(Path(__file__).resolve().parent),
+            )
+        if is_shutdown_requested():
+            proc.terminate()
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2.0)
+            return
         logger.info(
             "🛡️ External liveness sentinel armed: heartbeat=%s stale_ceiling=%ss "
             "(kills+restarts a GIL-locked/wedged loop from outside).",
@@ -2455,7 +2483,7 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
         request_shutdown(reason)
         await _wait_for_task_exit(api_task, name="api_server", timeout_s=8.0)
         try:
-            await asyncio.wait_for(GracefulShutdown.trigger_shutdown(reason), timeout=20.0)
+            await asyncio.wait_for(GracefulShutdown.trigger_shutdown(reason), timeout=85.0)
         except TimeoutError as exc:
             record_degradation(
                 "aura_main",
@@ -2497,6 +2525,10 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
         def _request_desktop_shutdown(sig: signal.Signals) -> None:
             nonlocal shutdown_reason
             shutdown_reason = f"desktop_signal:{sig.name}"
+            # The signal callback owns the no-new-work linearization point.
+            # Teardown follows in the main-loop finalizer, but admission paths
+            # must observe shutdown before any recovery/prewarm can race it.
+            request_shutdown(shutdown_reason)
             try:
                 supervisor._is_running = False
                 supervisor._shutting_down = True
@@ -3590,7 +3622,7 @@ def main():
         kill_port(10003, pattern="aura")
 
     # SIGKILL Reaper Initialization
-    if not args.gui_window and not args.watchdog:
+    if not args.gui_window and not args.watchdog and not is_shutdown_requested():
         try:
             from core.reaper import reaper_loop
             reaper_proc = multiprocessing.Process(
@@ -3599,7 +3631,17 @@ def main():
                 daemon=True,
                 name="AuraReaper"
             )
+            if is_shutdown_requested():
+                reaper_proc.close()
+                raise RuntimeError("runtime_shutdown_before_reaper_start")
             reaper_proc.start()
+            if is_shutdown_requested():
+                reaper_proc.terminate()
+                reaper_proc.join(timeout=1.0)
+                if reaper_proc.is_alive():
+                    reaper_proc.kill()
+                    reaper_proc.join(timeout=1.0)
+                raise RuntimeError("runtime_shutdown_after_reaper_start")
             logger.info("🛡️  REAPER ACTIVE (Survives SIGKILL). Monitoring Kernel PID: %s", os.getpid())
         except _AURA_MAIN_BOUNDARY_ERRORS as e:
             logger.error("⚠️ Reaper initialization skipped or failed: %s", e)
@@ -3635,7 +3677,7 @@ def main():
                     try:
                         await asyncio.wait_for(
                             GracefulShutdown.trigger_shutdown("server_exit"),
-                            timeout=20.0,
+                            timeout=85.0,
                         )
                     except TimeoutError as exc:
                         record_degradation(

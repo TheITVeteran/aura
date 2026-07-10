@@ -182,6 +182,28 @@ def test_runtime_health_endpoint_uses_contract_status_code():
     assert payload["failures"]["critical"][0]["container_key"] == "inference_gate"
 
 
+def test_runtime_health_projects_shutdown_progress_and_never_reports_healthy():
+    from core.runtime.shutdown_coordinator import request_shutdown
+
+    _register_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
+    request_shutdown("health-contract-test")
+
+    report = runtime_health_report()
+    response = asyncio.run(get_runtime_health_contract())
+    payload = json.loads(response.body)
+
+    assert report["pre_shutdown_status"] == HealthLevel.HEALTHY.value
+    assert report["status"] == "stopping"
+    assert report["healthy"] is False
+    assert report["operational"] is False
+    assert report["status_code"] == 503
+    assert report["required_probes"]["all_passed"] is False
+    assert report["probe_blockers"][0] == "runtime_shutdown"
+    assert report["shutdown"]["request"]["first_reason"] == "health-contract-test"
+    assert response.status_code == 503
+    assert payload["status"] == "stopping"
+
+
 def test_full_health_report_fails_closed_with_runtime_contract():
     _register_contract_services(
         tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT},

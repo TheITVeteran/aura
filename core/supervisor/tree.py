@@ -8,8 +8,9 @@ import multiprocessing
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, Protocol, cast
+from typing import Any, ClassVar, Protocol, cast
 
 from core.bus.pipe_control import send_supervisor_stop
 from core.runtime.errors import record_degradation
@@ -311,7 +312,22 @@ class SupervisionTree:
                         daemon=True,
                     ),
                 )
+                if self._shutting_down or _shutdown_requested():
+                    raise RuntimeError("runtime_shutdown_before_actor_start")
                 proc.start()
+                if self._shutting_down or _shutdown_requested():
+                    logger.info(
+                        "Actor %s crossed the shutdown boundary during spawn; terminating pid=%s",
+                        name,
+                        proc.pid,
+                    )
+                    if self._process_is_alive(proc):
+                        proc.terminate()
+                        proc.join(timeout=1.0)
+                    if self._process_is_alive(proc):
+                        proc.kill()
+                        proc.join(timeout=1.0)
+                    raise RuntimeError("runtime_shutdown_after_actor_start")
             except (
                 AssertionError,
                 AttributeError,
@@ -508,13 +524,15 @@ class SupervisionTree:
     async def wait_forever(self) -> None:
         """Wait for the managed monitor to stop without starting a second loop."""
         await self.start()
+        task = self._monitor_task
         try:
-            while self.is_alive() and not _shutdown_requested():
-                await asyncio.sleep(0.25)
+            if task is not None:
+                await task
         except asyncio.CancelledError:
             raise
-        if _shutdown_requested() and self.is_alive():
-            await self.stop()
+        finally:
+            if _shutdown_requested():
+                await self.stop()
 
     def _register_with_control_plane(self) -> None:
         try:

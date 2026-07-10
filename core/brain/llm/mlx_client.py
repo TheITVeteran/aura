@@ -623,6 +623,31 @@ def _shutdown_blocks_model_work(model_path: str, *, action: str) -> bool:
     return True
 
 
+def _acquire_spawn_file_lock(lock_file: Any, *, model_path: str) -> None:
+    """Acquire the cross-process spawn lock with timeout and shutdown polling."""
+
+    try:
+        timeout_s = max(
+            1.0,
+            float(os.environ.get("AURA_MLX_SPAWN_FILE_LOCK_TIMEOUT_S", "90") or 90.0),
+        )
+    except (TypeError, ValueError):
+        timeout_s = 90.0
+    deadline = time.monotonic() + timeout_s
+    while True:
+        if _shutdown_blocks_model_work(model_path, action="spawn lock wait"):
+            raise RuntimeError("runtime_shutdown")
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"mlx_spawn_file_lock_timeout:{os.path.basename(model_path)}:{timeout_s:.1f}s"
+                ) from None
+            time.sleep(0.1)
+
+
 def _real_model_path(value: Any) -> str:
     return os.path.realpath(str(value))
 
@@ -2920,6 +2945,8 @@ class MLXLocalClient:
             model_basename = os.path.basename(self.model_path)
             target_name = f"MLXWorker-{model_basename}"
             for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+                if _shutdown_blocks_model_work(self.model_path, action="orphan scan"):
+                    raise RuntimeError("runtime_shutdown")
                 try:
                     pname = proc.info.get("name", "") or ""
                     if target_name in pname or (
@@ -2967,8 +2994,12 @@ class MLXLocalClient:
             reclaim_deadline = time.monotonic() + max(0.0, reclaim_wait_s)
             waited = False
             while memory_block and time.monotonic() < reclaim_deadline:
+                if _shutdown_blocks_model_work(self.model_path, action="memory reclaim wait"):
+                    raise RuntimeError("runtime_shutdown")
                 waited = True
                 time.sleep(1.5)
+                if _shutdown_blocks_model_work(self.model_path, action="memory reclaim retry"):
+                    raise RuntimeError("runtime_shutdown")
                 memory_block = _memory_pressure_blocks_worker_spawn(self.model_path)
             if waited and not memory_block:
                 logger.info(
@@ -3015,6 +3046,8 @@ class MLXLocalClient:
         runtime_ok, runtime_detail = _probe_mlx_runtime()
         if not runtime_ok:
             raise RuntimeError(f"mlx_runtime_probe_failed:{runtime_detail}")
+        if _shutdown_blocks_model_work(self.model_path, action="post-runtime-probe spawn"):
+            raise RuntimeError("runtime_shutdown")
 
         if self._req_q is None or self._res_q is None:
             raise RuntimeError("MLX IPC queues must be created before worker spawn")
@@ -3027,7 +3060,9 @@ class MLXLocalClient:
         with os.fdopen(lock_fd, "w") as lock_file:
             try:
                 logger.info("🔒 [MLX] Acquiring process-level spawn lock...")
-                fcntl.flock(lock_file, fcntl.LOCK_EX)
+                _acquire_spawn_file_lock(lock_file, model_path=self.model_path)
+                if _shutdown_blocks_model_work(self.model_path, action="locked worker spawn"):
+                    raise RuntimeError("runtime_shutdown")
 
                 project_root = str(Path(__file__).resolve().parent.parent.parent.parent)
                 if project_root not in sys.path:
@@ -3047,7 +3082,17 @@ class MLXLocalClient:
                     daemon=True,
                     name=f"MLXWorker-{os.path.basename(self.model_path)}",
                 )
+                if _shutdown_blocks_model_work(self.model_path, action="worker process start"):
+                    raise RuntimeError("runtime_shutdown")
                 p.start()
+                if _runtime_shutdown_requested():
+                    logger.warning(
+                        "🛑 [MLX] Shutdown crossed worker start for %s; terminating pid=%s.",
+                        os.path.basename(self.model_path),
+                        p.pid,
+                    )
+                    self._kill_and_join_blocking(p)
+                    raise RuntimeError("runtime_shutdown")
                 try:
                     from core.runtime.runtime_hygiene import get_runtime_hygiene
 

@@ -1141,9 +1141,8 @@ class TestShutdownLifecycleWiring:
         assert seen == ["DRAINING", "STOPPING_SERVICES", "FLUSHING_STATE"]
         assert coordinator.lifecycle_state() == "TERMINATED"
 
-    def test_duplicate_shutdown_is_refused_not_double_run(self):
-        """Re-entrant shutdown used to double-run every teardown handler;
-        the lifecycle machine formalizes refusal (recorded as F17)."""
+    def test_duplicate_shutdown_replays_clean_report_without_double_run(self):
+        """Repeated shutdown is idempotent and preserves the first result."""
         import asyncio
 
         coordinator = self._fresh_coordinator()
@@ -1155,8 +1154,9 @@ class TestShutdownLifecycleWiring:
 
         assert first.clean
         assert calls == [1], "teardown handlers must run exactly once"
-        assert not second.clean
-        assert "lifecycle" in second.handler_failures
+        assert second.clean
+        assert second.completed_phases == first.completed_phases
+        assert second.repeated_call_count == 1
 
     def test_lifecycle_never_blocks_teardown_on_failing_handler(self):
         import asyncio

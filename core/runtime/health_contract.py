@@ -1012,7 +1012,34 @@ def evaluate_health() -> HealthVerdict:
 
 def runtime_health_report() -> dict[str, Any]:
     """Return Aura's canonical runtime health contract report."""
-    return evaluate_health().to_report()
+    report = evaluate_health().to_report()
+    try:
+        from core.runtime.shutdown_coordinator import get_shutdown_coordinator
+
+        shutdown = get_shutdown_coordinator().get_status()
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        shutdown = {
+            "running": False,
+            "request": {"requested": False},
+            "report": None,
+            "error": repr(exc),
+        }
+    report["shutdown"] = shutdown
+    request = shutdown.get("request") if isinstance(shutdown, dict) else None
+    if isinstance(request, dict) and request.get("requested") is True:
+        report["pre_shutdown_status"] = report.get("status")
+        report["status"] = "stopping"
+        report["healthy"] = False
+        report["operational"] = False
+        report["status_code"] = 503
+        blockers = [str(item) for item in report.get("probe_blockers", [])]
+        if "runtime_shutdown" not in blockers:
+            blockers.insert(0, "runtime_shutdown")
+        report["probe_blockers"] = blockers
+        required_probes = report.get("required_probes")
+        if isinstance(required_probes, dict):
+            required_probes["all_passed"] = False
+    return report
 
 
 # ═══════════════════════════════════════════════════════════════════════

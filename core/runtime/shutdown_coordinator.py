@@ -27,6 +27,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import Any, cast
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.utils.task_tracker import get_task_tracker
@@ -61,20 +62,54 @@ class ShutdownReport:
     completed_phases: list[str] = field(default_factory=list)
     failed_phases: list[str] = field(default_factory=list)
     handler_failures: dict[str, str] = field(default_factory=dict)
+    phase_durations_seconds: dict[str, float] = field(default_factory=dict)
+    started_at_unix: float | None = None
+    completed_at_unix: float | None = None
+    duration_seconds: float | None = None
+    current_phase: str | None = None
+    repeated_call_count: int = 0
 
     @property
     def clean(self) -> bool:
         return not self.failed_phases and not self.handler_failures
 
+    def clone(self) -> ShutdownReport:
+        """Return a detached report so callers cannot mutate coordinator state."""
+
+        return ShutdownReport(
+            completed_phases=list(self.completed_phases),
+            failed_phases=list(self.failed_phases),
+            handler_failures=dict(self.handler_failures),
+            phase_durations_seconds=dict(self.phase_durations_seconds),
+            started_at_unix=self.started_at_unix,
+            completed_at_unix=self.completed_at_unix,
+            duration_seconds=self.duration_seconds,
+            current_phase=self.current_phase,
+            repeated_call_count=self.repeated_call_count,
+        )
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "clean": self.clean,
+            "completed_phases": list(self.completed_phases),
+            "failed_phases": list(self.failed_phases),
+            "handler_failures": dict(self.handler_failures),
+            "phase_durations_seconds": dict(self.phase_durations_seconds),
+            "started_at_unix": self.started_at_unix,
+            "completed_at_unix": self.completed_at_unix,
+            "duration_seconds": self.duration_seconds,
+            "current_phase": self.current_phase,
+            "repeated_call_count": self.repeated_call_count,
+        }
+
 
 class ShutdownCoordinator:
     """Single owner of teardown ordering."""
 
-    # Coordinator phase → verified-lifecycle state entered when that phase
-    # begins. The FSM formalizes the coarse teardown arc (drain → stop
-    # services → flush) on top of the fine-grained phase loop, and turns a
-    # re-entrant shutdown() into a formal illegal transition instead of a
-    # double-run of every teardown handler.
+    # Coordinator phase -> verified-lifecycle state entered when that phase
+    # begins. The FSM formalizes the coarse teardown arc (drain -> stop
+    # services -> flush) on top of the fine-grained phase loop. Repeated
+    # shutdown callers share one execution and replay its final report.
     _LIFECYCLE_BOUNDARIES: dict[str, str] = {
         "actors": "STOPPING_SERVICES",
         "task_supervisor": "FLUSHING_STATE",
@@ -85,10 +120,16 @@ class ShutdownCoordinator:
         self._handlers: dict[str, list[_RegisteredHandler]] = {p: [] for p in phases}
         self._lock = threading.RLock()
         self._running = False
+        self._shutdown_task: asyncio.Task[ShutdownReport] | None = None
+        self._task_loop: asyncio.AbstractEventLoop | None = None
+        self._completion = threading.Event()
+        self._report: ShutdownReport | None = None
+        self._working_report: ShutdownReport | None = None
+        self._repeated_call_count = 0
         self._lifecycle = self._build_lifecycle()
 
     @staticmethod
-    def _build_lifecycle():
+    def _build_lifecycle() -> Any:
         try:
             from core.resilience.verified_state_machine import (
                 create_shutdown_lifecycle_machine,
@@ -134,16 +175,20 @@ class ShutdownCoordinator:
         if not callable(handler):
             raise TypeError("shutdown handler must be callable")
         record = _RegisteredHandler(
-            name=name or getattr(handler, "__name__", "anonymous"),
+            name=str(name or getattr(handler, "__name__", "anonymous")),
             handler=handler,
             phase=phase,
             timeout=timeout,
         )
         with self._lock:
+            if self._running or self._report is not None:
+                raise RuntimeError("cannot register shutdown handlers after teardown has started")
             self._handlers[phase].append(record)
 
     def clear(self) -> None:
         with self._lock:
+            if self._running:
+                raise RuntimeError("cannot clear shutdown handlers while teardown is running")
             for phase in self._handlers:
                 self._handlers[phase] = []
 
@@ -154,32 +199,91 @@ class ShutdownCoordinator:
         with self._lock:
             return [h.name for h in self._handlers.get(phase, [])]
 
+    def get_status(self) -> dict[str, object]:
+        """Return a stable operator snapshot of latch and teardown progress."""
+
+        with self._lock:
+            report = self._report or self._working_report
+            report_payload = report.clone().as_dict() if report is not None else None
+            registered_handlers = {
+                phase: [record.name for record in records]
+                for phase, records in self._handlers.items()
+            }
+            return {
+                "running": self._running,
+                "lifecycle_state": self.lifecycle_state(),
+                "request": shutdown_request_snapshot(),
+                "report": report_payload,
+                "registered_handlers": registered_handlers,
+            }
+
     # --- Execution ------------------------------------------------------
 
     async def shutdown(self, *, timeout_per_phase: float | None = None) -> ShutdownReport:
         request_shutdown("coordinator")
-        report = ShutdownReport()
-        if self._running or (
-            self._lifecycle is not None and self._lifecycle.current != "RUNNING"
-        ):
-            # Re-entrant / repeated shutdown: refuse to double-run teardown
-            # handlers (double-closing services is worse than a no-op). The
-            # attempt is recorded as an F17 illegal transition for forensics.
-            logger.error(
-                "ShutdownCoordinator.shutdown() re-entered (lifecycle=%s); "
-                "refusing duplicate teardown",
-                self.lifecycle_state(),
-            )
-            self._lifecycle_transition("DRAINING")  # records F17
-            report.failed_phases.append("lifecycle")
-            report.handler_failures["lifecycle"] = (
-                f"duplicate shutdown refused from state {self.lifecycle_state()}"
-            )
-            return report
-        self._running = True
+        loop = asyncio.get_running_loop()
+        with self._lock:
+            if self._report is not None:
+                self._repeated_call_count += 1
+                replay = self._report.clone()
+                replay.repeated_call_count = self._repeated_call_count
+                return replay
+
+            task: asyncio.Task[ShutdownReport] | None = self._shutdown_task
+            task_loop = self._task_loop
+            if task is None:
+                started_at = time.time()
+                self._working_report = ShutdownReport(started_at_unix=started_at)
+                self._running = True
+                self._completion.clear()
+                task = cast(
+                    asyncio.Task[ShutdownReport],
+                    get_task_tracker().create_task(
+                        self._execute_shutdown(timeout_per_phase=timeout_per_phase),
+                        name="shutdown_coordinator.execute",
+                        allow_during_shutdown=True,
+                    ),
+                )
+                self._shutdown_task = task
+                self._task_loop = loop
+                task_loop = loop
+            else:
+                self._repeated_call_count += 1
+
+        if task_loop is loop:
+            report = await asyncio.shield(task)
+            with self._lock:
+                replay = report.clone()
+                replay.repeated_call_count = self._repeated_call_count
+                return replay
+
+        # A coordinator may be reached from a second loop during process exit.
+        # The teardown owner remains the first loop; other loops wait on a
+        # thread-safe completion event instead of attempting duplicate cleanup.
+        await asyncio.to_thread(self._completion.wait)
+        with self._lock:
+            if self._report is None:
+                raise RuntimeError("shutdown coordinator completed without a report")
+            replay = self._report.clone()
+            replay.repeated_call_count = self._repeated_call_count
+            return replay
+
+    async def _execute_shutdown(
+        self,
+        *,
+        timeout_per_phase: float | None,
+    ) -> ShutdownReport:
+        with self._lock:
+            report = self._working_report
+        if report is None:  # pragma: no cover - protected by shutdown()
+            report = ShutdownReport(started_at_unix=time.time())
+
+        started_monotonic = time.monotonic()
         self._lifecycle_transition("DRAINING")
         try:
             for phase in self._phases:
+                phase_started = time.monotonic()
+                report.current_phase = phase
                 boundary = self._LIFECYCLE_BOUNDARIES.get(phase)
                 if boundary:
                     self._lifecycle_transition(boundary)
@@ -187,9 +291,12 @@ class ShutdownCoordinator:
                     handlers = list(self._handlers.get(phase, []))
                 if not handlers:
                     report.completed_phases.append(phase)
+                    report.phase_durations_seconds[phase] = round(
+                        time.monotonic() - phase_started, 6
+                    )
                     continue
                 phase_failed = False
-                coros: list[asyncio.Future] = []
+                coros: list[asyncio.Future[Any]] = []
                 for record in handlers:
                     coros.append(
                         get_task_tracker().track(
@@ -198,8 +305,10 @@ class ShutdownCoordinator:
                             allow_during_shutdown=True,
                         )
                     )
-                effective_timeout = timeout_per_phase or max(
-                    (h.timeout for h in handlers), default=15.0
+                effective_timeout = (
+                    float(timeout_per_phase)
+                    if timeout_per_phase is not None
+                    else max((h.timeout for h in handlers), default=15.0)
                 )
                 try:
                     results = await asyncio.wait_for(
@@ -213,8 +322,11 @@ class ShutdownCoordinator:
                     report.failed_phases.append(phase)
                     report.handler_failures[phase] = "phase timed out"
                     logger.error("Shutdown phase '%s' timed out", phase)
+                    report.phase_durations_seconds[phase] = round(
+                        time.monotonic() - phase_started, 6
+                    )
                     continue
-                for record, result in zip(handlers, results):
+                for record, result in zip(handlers, results, strict=True):
                     if isinstance(result, BaseException):
                         phase_failed = True
                         msg = repr(result)
@@ -229,9 +341,29 @@ class ShutdownCoordinator:
                     report.failed_phases.append(phase)
                 else:
                     report.completed_phases.append(phase)
+                report.phase_durations_seconds[phase] = round(
+                    time.monotonic() - phase_started, 6
+                )
+        except asyncio.CancelledError as exc:
+            # Teardown is process-critical. Record cancellation as a failure but
+            # still publish a final report so concurrent waiters never hang.
+            report.failed_phases.append("coordinator")
+            report.handler_failures["coordinator"] = repr(exc)
+            logger.error("Shutdown coordinator task was cancelled before all phases completed")
+        except Exception as exc:  # noqa: BLE001 - final process teardown boundary
+            report.failed_phases.append("coordinator")
+            report.handler_failures["coordinator"] = repr(exc)
+            logger.error("Shutdown coordinator failed internally: %s", exc, exc_info=True)
         finally:
             self._lifecycle_transition("TERMINATED")
-            self._running = False
+            report.current_phase = None
+            report.completed_at_unix = time.time()
+            report.duration_seconds = round(time.monotonic() - started_monotonic, 6)
+            with self._lock:
+                self._running = False
+                self._report = report.clone()
+                self._working_report = None
+                self._completion.set()
 
         if not report.clean and os.environ.get("AURA_STRICT_RUNTIME") == "1":
             logger.error(
@@ -254,7 +386,7 @@ class ShutdownCoordinator:
                 await asyncio.wait_for(result, timeout=record.timeout)
         except asyncio.CancelledError:
             raise
-        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
+        except (RuntimeError, TimeoutError, AttributeError):
             raise
 
 
@@ -263,32 +395,93 @@ class ShutdownCoordinator:
 _shutdown_coordinator: ShutdownCoordinator | None = None
 _singleton_lock = threading.RLock()
 _shutdown_requested = threading.Event()
+_shutdown_state_lock = threading.RLock()
+_shutdown_first_reason = ""
+_shutdown_last_reason = ""
+_shutdown_first_requested_at_unix: float | None = None
+_shutdown_first_requested_at_monotonic: float | None = None
+_shutdown_request_count = 0
 
 
-def request_shutdown(reason: str = "") -> None:
-    """Mark the whole process as shutting down."""
-    if not _shutdown_requested.is_set():
-        logger.info("Shutdown requested%s.", f": {reason}" if reason else "")
+def shutdown_request_snapshot() -> dict[str, object]:
+    """Return process-wide latch metadata for health and stop diagnostics."""
+
+    with _shutdown_state_lock:
+        requested = _shutdown_requested.is_set()
+        elapsed = None
+        if requested and _shutdown_first_requested_at_monotonic is not None:
+            elapsed = max(0.0, time.monotonic() - _shutdown_first_requested_at_monotonic)
+        return {
+            "requested": requested,
+            "first_reason": _shutdown_first_reason,
+            "last_reason": _shutdown_last_reason,
+            "first_requested_at_unix": _shutdown_first_requested_at_unix,
+            "elapsed_seconds": round(elapsed, 6) if elapsed is not None else None,
+            "request_count": _shutdown_request_count,
+        }
+
+
+def _write_grace_flag(*, reason: str, created_at_unix: float) -> None:
+    from pathlib import Path
+
+    grace_file = Path.home() / ".aura" / "run" / "grace_exit.flag"
+    grace_file.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        grace_file,
+        json.dumps(
+            {
+                "schema": "aura.shutdown_grace.v1",
+                "pid": os.getpid(),
+                "reason": reason,
+                "created_at_unix": created_at_unix,
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+
+def request_shutdown(reason: str = "") -> dict[str, object]:
+    """Latch process shutdown before logging or filesystem side effects.
+
+    The event is the mechanical no-new-work fence. Metadata and the grace flag
+    are useful evidence, but neither is allowed to delay the fence becoming
+    visible to task, subprocess, or model admission paths.
+    """
+
+    global _shutdown_first_reason
+    global _shutdown_last_reason
+    global _shutdown_first_requested_at_unix
+    global _shutdown_first_requested_at_monotonic
+    global _shutdown_request_count
+
+    normalized_reason = str(reason or "")
+    now_unix = time.time()
+    now_monotonic = time.monotonic()
+    with _shutdown_state_lock:
+        first_request = not _shutdown_requested.is_set()
+        if first_request:
+            _shutdown_requested.set()
+            _shutdown_first_reason = normalized_reason
+            _shutdown_first_requested_at_unix = now_unix
+            _shutdown_first_requested_at_monotonic = now_monotonic
+            _shutdown_request_count = 1
+        else:
+            _shutdown_request_count += 1
+        _shutdown_last_reason = normalized_reason
+        snapshot = shutdown_request_snapshot()
+
+    if first_request:
+        logger.info("Shutdown requested%s.", f": {normalized_reason}" if normalized_reason else "")
         try:
-            from pathlib import Path
-            grace_file = Path.home() / ".aura" / "run" / "grace_exit.flag"
-            grace_file.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write_text(
-                grace_file,
-                json.dumps(
-                    {
-                        "schema": "aura.shutdown_grace.v1",
-                        "pid": os.getpid(),
-                        "reason": reason,
-                        "created_at_unix": time.time(),
-                    },
-                    sort_keys=True,
-                ),
-                encoding="utf-8",
+            _write_grace_flag(reason=normalized_reason, created_at_unix=now_unix)
+        except (ImportError, AttributeError, RuntimeError, OSError) as exc:
+            logger.debug(
+                "Suppressed %s in core.runtime.shutdown_coordinator: %s",
+                type(exc).__name__,
+                exc,
             )
-        except (ImportError, AttributeError, RuntimeError, OSError) as _exc:
-            logger.debug("Suppressed %s in core.runtime.shutdown_coordinator: %s", type(_exc).__name__, _exc)
-    _shutdown_requested.set()
+    return snapshot
 
 
 def is_shutdown_requested() -> bool:
@@ -297,7 +490,19 @@ def is_shutdown_requested() -> bool:
 
 def clear_shutdown_request() -> None:
     """Test helper / warm-reboot helper."""
-    _shutdown_requested.clear()
+    global _shutdown_first_reason
+    global _shutdown_last_reason
+    global _shutdown_first_requested_at_unix
+    global _shutdown_first_requested_at_monotonic
+    global _shutdown_request_count
+
+    with _shutdown_state_lock:
+        _shutdown_requested.clear()
+        _shutdown_first_reason = ""
+        _shutdown_last_reason = ""
+        _shutdown_first_requested_at_unix = None
+        _shutdown_first_requested_at_monotonic = None
+        _shutdown_request_count = 0
 
 
 def get_shutdown_coordinator() -> ShutdownCoordinator:

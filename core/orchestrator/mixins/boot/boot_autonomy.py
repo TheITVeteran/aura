@@ -546,9 +546,19 @@ class BootAutonomyMixin:
         # ProcessManager — enterprise process lifecycle supervision
         try:
             from core.ops.process_manager import ProcessManager
+            from core.runtime.shutdown_coordinator import get_shutdown_coordinator
 
             pm = ProcessManager()
             ServiceContainer.register_instance("process_manager", pm)
+            shutdown_coordinator = get_shutdown_coordinator()
+            handler_name = "process_manager.stop_children"
+            if handler_name not in shutdown_coordinator.handler_names("actors"):
+                shutdown_coordinator.register(
+                    pm.on_stop_async,
+                    phase="actors",
+                    name=handler_name,
+                    timeout=pm.cleanup_timeout_s + 1.0,
+                )
             logger.info("ProcessManager online — child process supervision active.")
         except _BOOT_AUTONOMY_BOUNDARY_ERRORS as e:
             _record_boot_autonomy_degradation(

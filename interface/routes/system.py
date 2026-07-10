@@ -34,6 +34,10 @@ from core.runtime.health_contract import (
     required_probe_blockers,
     required_probe_groups_pass,
 )
+from core.runtime.shutdown_coordinator import (
+    get_shutdown_coordinator,
+    is_shutdown_requested,
+)
 from core.runtime.version import VERSION, version_string
 from core.scheduler import scheduler
 from core.tools.runtime_tools import get_runtime_state
@@ -59,6 +63,40 @@ _SYSTEM_RECOVERABLE_ERRORS = (
 
 _TOOL_CATALOG_BOOTSTRAP_MAX_ITEMS = 256
 _TOOL_CATALOG_BOOTSTRAP_READ_BUDGET_S = 0.35
+
+
+def _shutdown_health_status() -> dict[str, object]:
+    try:
+        return get_shutdown_coordinator().get_status()
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        return {
+            "running": False,
+            "request": {"requested": is_shutdown_requested()},
+            "report": None,
+            "error": repr(exc),
+        }
+
+
+def _stopping_boot_health_payload() -> tuple[dict[str, Any], int] | None:
+    shutdown = _shutdown_health_status()
+    request = shutdown.get("request")
+    if not isinstance(request, dict) or request.get("requested") is not True:
+        return None
+    return (
+        {
+            "ready": False,
+            "status": "stopping",
+            "system_ready": False,
+            "launcher_ready": False,
+            "conversation_ready": False,
+            "boot_phase": "runtime_shutdown",
+            "required_probes": {"all_passed": False},
+            "blockers": ["runtime_shutdown"],
+            "shutdown": shutdown,
+            "timestamp": datetime.now(tz=UTC).isoformat(),
+        },
+        503,
+    )
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -613,6 +651,10 @@ _NATIVE_CONVERSATION_LANE_MESSAGE_WRAPPER = _conversation_lane_user_message
 def _build_boot_health_payload_sync(*, is_gui_proxy: bool) -> tuple[dict[str, Any], int]:
     """Build boot health with a single-flight guard for HTTP readiness probes."""
 
+    stopping = _stopping_boot_health_payload()
+    if stopping is not None:
+        return stopping
+
     acquired = _HEALTH_PROBE_LOCK.acquire(False)
     if not acquired:
         raise TimeoutError("health_probe_already_running")
@@ -653,6 +695,9 @@ def _store_boot_health_cache(payload: dict[str, Any], status_code: int) -> None:
 
 
 def _cached_boot_health_payload(reason: str) -> tuple[dict[str, Any], int]:
+    stopping = _stopping_boot_health_payload()
+    if stopping is not None:
+        return stopping
     now = time.monotonic()
     with _boot_health_cache_lock:
         captured_at = float(_boot_health_cache.get("captured_at") or 0.0)
@@ -2230,11 +2275,19 @@ async def healthz(request: Request):
         from core.observability.metrics import check_liveness
 
         result = check_liveness()
+        if is_shutdown_requested():
+            result = dict(result)
+            result["status"] = "stopping"
+            result["shutdown"] = _shutdown_health_status()
         return JSONResponse(result, status_code=200)
     except _SYSTEM_RECOVERABLE_ERRORS as exc:
         record_degradation("system", exc)
         logger.warning("Liveness check degraded; returning process-level alive response: %s", exc)
-        return JSONResponse({"status": "alive", "pid": os.getpid()}, status_code=200)
+        payload: dict[str, Any] = {"status": "alive", "pid": os.getpid()}
+        if is_shutdown_requested():
+            payload["status"] = "stopping"
+            payload["shutdown"] = _shutdown_health_status()
+        return JSONResponse(payload, status_code=200)
 
 
 @router.get("/readyz", tags=["health"])
@@ -2246,6 +2299,16 @@ async def readyz(request: Request):
     - Substrate state is finite
     - Database is accessible
     """
+    if is_shutdown_requested():
+        return JSONResponse(
+            {
+                "status": "stopping",
+                "ready": False,
+                "issues": ["runtime_shutdown"],
+                "shutdown": _shutdown_health_status(),
+            },
+            status_code=503,
+        )
     try:
         from core.observability.metrics import check_readiness
 
@@ -3031,6 +3094,34 @@ async def api_health(request: Request):
             "ram_usage": 0,
             "timestamp": datetime.now(tz=UTC).isoformat()
         }
+
+    shutdown = _shutdown_health_status()
+    shutdown_request = shutdown.get("request")
+    if isinstance(shutdown_request, dict) and shutdown_request.get("requested") is True:
+        payload["status"] = "stopping"
+        payload["healthy"] = False
+        payload["connected"] = False
+        payload["conversation_ready"] = False
+        payload["runtime_probe_healthy"] = False
+        payload["certification_ready"] = False
+        payload["shutdown"] = shutdown
+        required_probe_payload = payload.get("required_probes")
+        if isinstance(required_probe_payload, dict):
+            required_probe_payload["all_passed"] = False
+        blockers = [str(item) for item in payload.get("blockers", [])]
+        if "runtime_shutdown" not in blockers:
+            blockers.insert(0, "runtime_shutdown")
+        payload["blockers"] = blockers
+        readiness = payload.get("readiness_contract")
+        if isinstance(readiness, dict):
+            readiness["healthy"] = False
+            readiness["system_ready"] = False
+            readiness["conversation_ready"] = False
+            readiness["runtime_probe_healthy"] = False
+            readiness["certification_ready"] = False
+            readiness["blockers"] = blockers
+    else:
+        payload["shutdown"] = shutdown
 
     return JSONResponse(_json_safe(payload))
 

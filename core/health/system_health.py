@@ -4,7 +4,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from core.runtime.errors import record_degradation
-from core.runtime.health_contract import evaluate_health, runtime_health_report
+from core.runtime.health_contract import runtime_health_report
 from core.runtime.service_registry import get_runtime_container_health_report, get_runtime_service
 
 router = APIRouter()
@@ -67,8 +67,8 @@ async def get_full_health_report() -> JSONResponse:
 @router.get("/contract")
 async def get_runtime_health_contract() -> JSONResponse:
     """Canonical runtime contract: what must be alive for Aura to be healthy."""
-    verdict = evaluate_health()
-    return JSONResponse(verdict.to_report(), status_code=verdict.status_code)
+    report = runtime_health_report()
+    return JSONResponse(report, status_code=int(report.get("status_code", 503)))
 
 
 @router.get("/threads")
