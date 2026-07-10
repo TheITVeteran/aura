@@ -127,6 +127,21 @@ def death_is_deliberate(reason: str) -> bool:
     return any(lowered.startswith(prefix) for prefix in DELIBERATE_DEATH_PREFIXES)
 
 
+def disruption_budget_blocks(candidate_path: str, lanes: list[Any]) -> str | None:
+    """K5 disruption budget: never VOLUNTARILY kill the last warm lane.
+
+    Applies to administrative disruptions only (budget evictions, yields for
+    background warmups) — involuntary recovery kills are exempt, because
+    force-killing a wedged worker IS the recovery (the 0-token-stall
+    lesson). A host with one warm model must keep it: a cold gap with
+    nothing warm is strictly worse than a briefly-over-budget host.
+    """
+    alive = [l for l in lanes if float(getattr(l, "footprint_gb", 0.0)) > 0.0]
+    if len(alive) == 1 and str(getattr(alive[0], "model_path", "")) == str(candidate_path):
+        return "disruption_budget:last_warm_lane"
+    return None
+
+
 @dataclass
 class _LaneCrashState:
     young_deaths: list[float] = field(default_factory=list)
@@ -515,6 +530,12 @@ class LaneReconciler:
                 for lane in candidates:
                     if committed <= budget:
                         break
+                    blocked = disruption_budget_blocks(lane.model_path, lanes)
+                    if blocked:
+                        actions.append(
+                            self._note("held", lane=lane.model_path or lane.lane, detail=blocked)
+                        )
+                        continue
                     evicted = bool(await self._evict_lane(lane.model_path or lane.lane))
                     if evicted:
                         committed -= lane.footprint_gb
@@ -533,7 +554,59 @@ class LaneReconciler:
                 action="skipped budget rule for this pass",
             )
 
+        self._publish_conditions(primary_alive, actions)
         return actions
+
+    def _publish_conditions(
+        self, primary_alive: bool | None, actions: list[dict[str, Any]]
+    ) -> None:
+        """K6: expose the lane's state as typed conditions with reasons.
+
+        Best-effort — condition publication must never break convergence.
+        """
+        try:
+            from core.runtime.conditions import ConditionType, get_component_conditions
+
+            conditions = get_component_conditions("cortex_lane")
+            taken = {a["action"] for a in actions}
+
+            if primary_alive is not None:
+                if primary_alive:
+                    conditions.set(
+                        ConditionType.READY, True, reason="PrimaryWarm",
+                        message="primary cortex worker alive and initialized",
+                    )
+                elif "held" in taken:
+                    detail = next(a["detail"] for a in actions if a["action"] == "held")
+                    conditions.set(
+                        ConditionType.READY, False, reason="CrashLoopBackOff",
+                        message=detail,
+                    )
+                else:
+                    conditions.set(
+                        ConditionType.READY, False, reason="PrimaryDown",
+                        message="primary cortex not warm; reconciler converging",
+                    )
+
+            conditions.set(
+                ConditionType.PROGRESSING,
+                "warm_requested" in taken,
+                reason="WarmupRequested" if "warm_requested" in taken else "Idle",
+                message="background warmup scheduled" if "warm_requested" in taken else "",
+            )
+
+            degraded = bool({"held", "evicted"} & taken)
+            reason = "CrashLoopBackOff" if "held" in taken else (
+                "BudgetEviction" if "evicted" in taken else "None"
+            )
+            conditions.set(
+                ConditionType.DEGRADED, degraded, reason=reason,
+                message="; ".join(
+                    f"{a['action']}:{a.get('lane', '')}" for a in actions
+                ) if degraded else "",
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, StopIteration) as exc:
+            logger.debug("Condition publication skipped: %s", exc)
 
     # ── observability ──────────────────────────────────────────────
 
@@ -547,11 +620,18 @@ class LaneReconciler:
         return entry
 
     def snapshot(self) -> dict[str, Any]:
+        try:
+            from core.runtime.conditions import get_component_conditions
+
+            conditions = get_component_conditions("cortex_lane").snapshot()
+        except (ImportError, AttributeError, RuntimeError):
+            conditions = {}
         return {
             "enabled": self.enabled(),
             "interval_s": self.interval_s(),
             "recent_actions": list(self._actions)[-10:],
             "breaker": self._breaker.snapshot(),
+            "conditions": conditions,
         }
 
     def is_ready(self) -> bool:

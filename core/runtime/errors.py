@@ -200,6 +200,108 @@ def get_degradation_tracker() -> DegradationTracker:
     return _tracker
 
 
+class _EscalationGovernor:
+    """A4 envelope protection: cap the RATE of fail-closed escalations.
+
+    The storm anatomy this prevents (FM-FCL-001, lived twice): one
+    repeating fault on a fail-closed subsystem — a dead phi pool child, a
+    RAM-deferred warmup — re-escalated to CRITICAL SERVICE FAILURE every
+    cycle, each escalation RAISING out of the caller's handler, burning
+    the SLO error budget 20x and flipping liveness over a serving mind.
+
+    The first N identical escalations (same subsystem + error type) in the
+    window pass with full force — a genuine new fault always fails closed
+    loudly. Repeats past N add no information, only storm damage: they
+    keep their caller-passed severity, still land as records/receipts,
+    but do not re-escalate and do not raise. A fresh window escalates
+    again. Kill switch: AURA_ESCALATION_CAP=0 (never suppresses).
+    """
+
+    def __init__(self) -> None:
+        self._allowed: dict[tuple[str, str], list[float]] = {}
+        self._suppressed: dict[tuple[str, str], int] = {}
+        self._lock = threading.Lock()
+        self._flags = None
+
+    def _knobs(self) -> tuple[bool, int, float]:
+        if self._flags is None:
+            try:
+                from core.runtime.flags import FlagKind, declare
+
+                self._flags = (
+                    declare(
+                        "AURA_ESCALATION_CAP",
+                        kind=FlagKind.BOOL,
+                        default=True,
+                        description="Kill switch for the fail-closed escalation-rate cap",
+                        owner="core.runtime.errors",
+                    ),
+                    declare(
+                        "AURA_ESCALATION_CAP_N",
+                        kind=FlagKind.INT,
+                        default=3,
+                        description="Identical fail-closed escalations allowed per window",
+                        owner="core.runtime.errors",
+                    ),
+                    declare(
+                        "AURA_ESCALATION_CAP_WINDOW_S",
+                        kind=FlagKind.FLOAT,
+                        default=300.0,
+                        description="Sliding window for the escalation-rate cap",
+                        owner="core.runtime.errors",
+                    ),
+                )
+            except (ImportError, AttributeError, RuntimeError, ValueError):
+                return True, 3, 300.0
+        enabled, cap_n, window = self._flags
+        return bool(enabled.value()), max(1, int(cap_n.value())), float(window.value())
+
+    def allow(self, subsystem: str, error_type: str) -> bool:
+        enabled, cap_n, window_s = self._knobs()
+        if not enabled:
+            return True
+        key = (str(subsystem), str(error_type))
+        now = time.time()
+        with self._lock:
+            allowed = [t for t in self._allowed.get(key, []) if (now - t) <= window_s]
+            if len(allowed) < cap_n:
+                allowed.append(now)
+                self._allowed[key] = allowed
+                # New window: surface how many repeats the last one absorbed.
+                suppressed = self._suppressed.pop(key, 0)
+                if suppressed:
+                    logger.warning(
+                        "[ESCALATION-CAP] %s/%s: previous window suppressed %d "
+                        "repeat escalation(s)",
+                        subsystem,
+                        error_type,
+                        suppressed,
+                    )
+                return True
+            self._allowed[key] = allowed
+            self._suppressed[key] = self._suppressed.get(key, 0) + 1
+            return False
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                f"{sub}/{etype}": count
+                for (sub, etype), count in self._suppressed.items()
+            }
+
+    def reset_for_test(self) -> None:
+        with self._lock:
+            self._allowed.clear()
+            self._suppressed.clear()
+
+
+_escalation_governor = _EscalationGovernor()
+
+
+def get_escalation_governor() -> _EscalationGovernor:
+    return _escalation_governor
+
+
 # ---------------------------------------------------------------------------
 # Main API
 # ---------------------------------------------------------------------------
@@ -297,13 +399,28 @@ def record_degradation(
 
             if get_service_failure_policy(subsystem) == "fail-closed" and not _is_timeout:
                 if severity in ("critical", "degraded", "warning"):
-                    failure_policy_violation = True
-                    failure_policy_error = (
-                        f"CRITICAL SERVICE FAILURE: Subsystem '{subsystem}' failed with failure policy 'fail-closed'. "
-                        f"Original error: {type(error).__name__}: {error}"
-                    )
-                    if severity != "critical":
-                        severity = "critical"
+                    if _escalation_governor.allow(subsystem, type(error).__qualname__):
+                        failure_policy_violation = True
+                        failure_policy_error = (
+                            f"CRITICAL SERVICE FAILURE: Subsystem '{subsystem}' failed with failure policy 'fail-closed'. "
+                            f"Original error: {type(error).__name__}: {error}"
+                        )
+                        if severity != "critical":
+                            severity = "critical"
+                    else:
+                        # A4 escalation-rate cap: this exact fault already
+                        # failed closed with full force this window. Repeats
+                        # stay visible at their caller-passed severity but
+                        # do not re-escalate and do not raise — one fault
+                        # must not become a CRITICAL storm (FM-FCL-001).
+                        logger.warning(
+                            "[ESCALATION-CAP] %s: fail-closed escalation for %s "
+                            "suppressed (cap reached this window); recording at "
+                            "severity=%s",
+                            subsystem,
+                            type(error).__qualname__,
+                            severity,
+                        )
     except (ImportError, RuntimeError) as _exc:
         logger.debug("Suppressed %s in core.runtime.errors: %s", type(_exc).__name__, _exc)
 

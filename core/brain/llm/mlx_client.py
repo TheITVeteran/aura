@@ -346,6 +346,29 @@ def _note_lane_worker_death(client: Any, reason: str) -> None:
         logger.debug("Crash-loop death report skipped: %s", exc)
 
 
+def _lane_is_last_warm(client: Any) -> bool:
+    """K5 disruption budget: is this client the ONLY live model lane?
+
+    Voluntary disruptions (yields for background warmups) must never
+    remove the last warm lane — a cold gap with nothing warm is strictly
+    worse than deferring a background spawn.
+    """
+    try:
+        if client is None or not client.is_alive():
+            return False
+        for other in list(_CLIENTS.values()):
+            if other is None or other is client:
+                continue
+            try:
+                if other.is_alive():
+                    return False
+            except (AttributeError, RuntimeError, OSError, ValueError):
+                continue
+        return True
+    except (AttributeError, RuntimeError, OSError, ValueError):
+        return False
+
+
 def _crash_loop_blocks_worker_spawn(client: Any) -> str | None:
     """Consult the K4 crash-loop breaker before a (re)spawn. Never throws."""
     try:
@@ -3252,6 +3275,16 @@ class MLXLocalClient:
                         "keeping warm for conversational continuity).",
                         os.path.basename(other_path),
                         time.time() - last_user_facing,
+                    )
+                    continue
+                if request_is_background and _lane_is_last_warm(other_client):
+                    # K5 disruption budget: a background warmup may not
+                    # voluntarily remove the ONLY warm lane on the host.
+                    logger.info(
+                        "🛡️ [MLX] NOT yielding %s for background warmup of %s "
+                        "(last warm lane; disruption budget).",
+                        os.path.basename(other_path),
+                        os.path.basename(target_path),
                     )
                     continue
                 logger.warning(

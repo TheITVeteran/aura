@@ -337,6 +337,24 @@ def _reset_crash_loop_breaker_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _reset_escalation_governor_and_conditions_between_tests():
+    """Order-independence for the A4 escalation cap and K6 conditions.
+
+    Both are process-global: a test that trips the cap would suppress an
+    expected CRITICAL raise in a later test; stale conditions would leak
+    into later condition assertions.
+    """
+    from core.runtime.conditions import reset_conditions_for_test
+    from core.runtime.errors import get_escalation_governor
+
+    get_escalation_governor().reset_for_test()
+    reset_conditions_for_test()
+    yield
+    get_escalation_governor().reset_for_test()
+    reset_conditions_for_test()
+
+
+@pytest.fixture(autouse=True)
 def _service_registry_state_guard():
     """Order-independence for the low-level runtime service registry.
 
