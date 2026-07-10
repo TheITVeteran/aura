@@ -1092,6 +1092,17 @@ async def spa_catchall(path: str, request: Request):
     """Secure catch-all to support SPA routing and static resolution with traversal protection."""
     _require_internal(request)
 
+    if path.startswith("api/"):
+        # An unmatched API path must be a machine-readable 404, never the
+        # SPA shell. Serving index.html at 200 here made a mistyped health
+        # endpoint look 'up' to automation while returning HTML — a soak
+        # driver polled one for 15 minutes on 2026-07-10 believing the
+        # runtime was never ready.
+        return JSONResponse(
+            {"error": "not_found", "path": f"/{path}", "detail": "unknown API route"},
+            status_code=404,
+        )
+
     if ".." in path or path.startswith("/") or "./" in path:
          fallback = LEGACY_UI_INDEX if LEGACY_UI_INDEX.exists() else (SHELL_DIST_DIR / "index.html")
          return FileResponse(str(fallback), headers=NO_CACHE_HEADERS)

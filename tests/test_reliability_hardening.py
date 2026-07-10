@@ -361,6 +361,38 @@ class TestSLOErrorBudgetDedup:
         assert errors_module._slo_error_budget_admits("x", "Y") is True
 
 
+class TestNameableFailures:
+    """Message-less exceptions must never render as ''. A live incident that
+    read 'TimeoutError: ' (bare asyncio.wait_for timeout) hid the fault
+    class for an hour on 2026-07-10."""
+
+    def test_describe_error_never_empty(self):
+        from core.runtime.errors import describe_error
+
+        try:
+            raise TimeoutError()
+        except TimeoutError as exc:
+            text = describe_error(exc)
+        assert text.startswith("TimeoutError")
+        assert "no message" in text
+        assert "test_describe_error_never_empty" in text  # raise site named
+
+    def test_describe_error_keeps_real_messages(self):
+        from core.runtime.errors import describe_error
+
+        assert describe_error(ValueError("boom")) == "ValueError: boom"
+
+    def test_degradation_record_names_messageless_errors(self):
+        from core.runtime.errors import record_degradation
+
+        try:
+            raise TimeoutError()
+        except TimeoutError as exc:
+            record = record_degradation("nameable_test", exc, action="test-only")
+        assert record.error_message
+        assert "no message" in record.error_message
+
+
 class TestSLOMonitor:
     def test_default_slos_registered(self):
         from slo.slo_monitor import SLOMonitor

@@ -39,7 +39,7 @@ from core.runtime.desktop_task_contract import (
     DESKTOP_TASK_ALLOWED_ACTIONS,
     desktop_task_planning_schema,
 )
-from core.runtime.errors import record_degradation
+from core.runtime.errors import describe_error, record_degradation
 from core.runtime.structured_input import analyze_prompt_shape
 from core.utils.intent_normalization import normalize_memory_intent_text
 from core.utils.task_tracker import get_task_tracker
@@ -15571,7 +15571,7 @@ async def api_chat(
                 )
             except _CHAT_RECOVERABLE_ERRORS as direct_exc:
                 record_degradation('chat', direct_exc)
-                logger.warning("Protected foreground lane failed (%s): %s", reason, direct_exc)
+                logger.warning("Protected foreground lane failed (%s): %s", reason, describe_error(direct_exc))
                 return None
 
             if not direct_reply or not str(direct_reply).strip():

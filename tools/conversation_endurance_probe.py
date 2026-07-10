@@ -180,14 +180,22 @@ def _get_json(base: str, path: str, timeout: float = 8.0) -> dict:
         return json.load(resp)
 
 
-def _chat(base: str, session: str, message: str, timeout: float) -> str:
+def _chat(base: str, session: str, message: str, timeout: float) -> tuple[str, str]:
+    """Return (reply_text, served_status).
+
+    served_status is the response's own attribution ('' on the clean path;
+    'timeout', 'foreground_busy', 'offline', ... on degraded ones). Turn
+    records used to carry only latency — a run of 216s turns gave no way
+    to tell WHO answered without grepping server logs (2026-07-10)."""
     body = json.dumps({"message": message, "session_id": session}).encode()
     req = urllib.request.Request(
         base + "/api/chat", data=body, headers={"Content-Type": "application/json"}
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         payload = json.load(resp)
-    return str(payload.get("response") or payload.get("reply") or "")
+    reply = str(payload.get("response") or payload.get("reply") or "")
+    status = str(payload.get("status") or "")
+    return reply, status
 
 
 def _server_rss_mb() -> float | None:
@@ -253,6 +261,21 @@ def _snapshot(base: str) -> dict:
         urllib.error.URLError,
     ) as exc:
         snap["metrics_error"] = str(exc)[:120]
+    try:
+        boot = _get_json(base, "/api/health/boot", timeout=5.0)
+        lane = boot.get("conversation_lane") or {}
+        snap["lane_state"] = lane.get("state")
+        snap["lane_endpoint"] = lane.get("foreground_endpoint")
+        snap["conversation_ready"] = boot.get("conversation_ready")
+    except (
+        TimeoutError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+        urllib.error.HTTPError,
+        urllib.error.URLError,
+    ) as exc:
+        snap["lane_error"] = str(exc)[:120]
     snap["server_rss_mb"] = _server_rss_mb()
     snap["thermal_level"] = _thermal_level()
     return snap
@@ -362,8 +385,11 @@ def main() -> int:
             t0 = time.monotonic()
             error = ""
             reply = ""
+            served_status = ""
             try:
-                reply = _chat(args.base, args.session, entry["text"], args.turn_timeout)
+                reply, served_status = _chat(
+                    args.base, args.session, entry["text"], args.turn_timeout
+                )
             except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
                 error = f"{type(exc).__name__}: {exc}"[:200]
             latency = time.monotonic() - t0
@@ -427,6 +453,7 @@ def main() -> int:
                 "correct": correct,
                 "reply_chars": len(reply),
                 "reply_excerpt": reply[:200],
+                "served_status": served_status,
                 "error": error,
             }
             if n % 5 == 0 or dead or hijacked:

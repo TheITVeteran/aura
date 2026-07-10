@@ -648,9 +648,11 @@ class InferenceGate:
             severity="degraded",
             action="skipped cold primary attempt or fell back after foreground warmup failure",
         )
+        from core.runtime.errors import describe_error
+
         logger.warning(
             "🧠 Foreground preflight warmup did not complete cleanly: %s",
-            warmup_exc,
+            describe_error(warmup_exc),
         )
         return False
 

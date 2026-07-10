@@ -327,6 +327,34 @@ def _slo_dedup_window_s() -> float:
     return float(_SLO_DEDUP_FLAG.value())
 
 
+def _raise_site(error: BaseException) -> str:
+    """Best-effort 'module:function:line' of where an exception was raised."""
+    try:
+        tb = error.__traceback__
+        if tb is None:
+            return "unknown"
+        while tb.tb_next is not None:
+            tb = tb.tb_next
+        frame = tb.tb_frame
+        module = frame.f_globals.get("__name__", "unknown")
+        return f"{module}:{frame.f_code.co_name}:{tb.tb_lineno}"
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return "unknown"
+
+
+def describe_error(error: BaseException) -> str:
+    """Human-readable exception identity that never collapses to ''.
+
+    For log lines that interpolate an exception directly: a bare
+    TimeoutError() renders as nothing, hiding the fault class entirely.
+    """
+    text = str(error).strip()
+    name = type(error).__qualname__
+    if text:
+        return f"{name}: {text}"
+    return f"{name} (no message; raised in {_raise_site(error)})"
+
+
 def _slo_error_budget_admits(subsystem: str, error_type: str) -> bool:
     """First record per fault fingerprint per window counts; repeats absorb.
 
@@ -484,7 +512,11 @@ def record_degradation(
 
 
     error_type = type(error).__qualname__
-    error_msg = str(error)[:500]
+    # Message-less exceptions (asyncio.wait_for raises bare TimeoutError())
+    # must stay nameable end-to-end: an incident that reads "TimeoutError: "
+    # cost an hour of live forensics on 2026-07-10. The type plus the raise
+    # site is the minimum useful identity.
+    error_msg = str(error)[:500] or f"<no message; raised in {_raise_site(error)}>"
     
     # [STABILITY v54] Demote expected background accessibility errors to debug
     if not failure_policy_violation and "background process lacks accessibility context" in error_msg:

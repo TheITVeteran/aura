@@ -25,6 +25,21 @@ def test_action_log_route_registered_before_spa_catchall():
 
 
 @pytest.mark.asyncio
+async def test_unknown_api_path_is_json_404_not_spa_html(monkeypatch):
+    """A mistyped API endpoint must fail machine-readably. The SPA catch-all
+    used to serve index.html at 200 for /api/* typos — automation polling a
+    wrong health path believed the runtime was never ready (2026-07-10)."""
+    from interface import server as server_module
+
+    monkeypatch.setattr(server_module, "_require_internal", lambda _r: None)
+    response = await server_module.spa_catchall("api/system/boot_health", object())
+    assert response.status_code == 404
+    payload = json.loads(response.body)
+    assert payload["error"] == "not_found"
+    assert payload["path"] == "/api/system/boot_health"
+
+
+@pytest.mark.asyncio
 async def test_api_action_log_returns_json_payload(monkeypatch):
     from interface import server as server_module
 
