@@ -8550,3 +8550,58 @@ Remaining work after this checkpoint:
 - Run enterprise/production gates for this checkpoint and push the branch.
 - Continue with declarative runtime control plane, resource admission, FMEA
   registry, and visible web proof access when Chrome control is available.
+
+## Checkpoint 2026-07-09-08: CapabilityEngine Expectation Enforcement
+
+Scope:
+
+- Wired the action-depth expectation contract into
+  `CapabilityEngine._execute_with_retry(...)`, so explicit expectations in
+  execution context or params are enforced before successful skill results are
+  returned to callers.
+- Added expectation parsing for:
+  - `action_expectation` / `expectation` dicts or `ActionExpectation` objects.
+  - `acceptance_criteria`, `required_evidence`, `user_visible_effect`,
+    `repair_hint`, and `allow_partial` supplied directly in context or params.
+- A successful skill result now receives an `expectation_verdict`; if criteria
+  or evidence are missing, the returned dict is downgraded:
+  - missing acceptance criteria -> `partial_success` or `failed_recoverable`
+  - missing verification evidence -> `success_unverified`
+  - `ok` becomes `false` unless the expectation remains `success_verified`
+- Added CapabilityEngine regressions proving that a browser research action
+  which only opens a page cannot claim completion when source preservation is
+  expected, and that a file write without hash/effect evidence becomes
+  unverified.
+
+Verification:
+
+- `python -m pytest tests/test_capability_engine_policy_regressions.py::test_execute_with_retry_downgrades_shallow_action_expectation tests/test_capability_engine_policy_regressions.py::test_execute_with_retry_marks_missing_expectation_evidence_unverified tests/test_action_depth_honesty.py -q`
+  -> `19 passed`.
+- `python -m pytest tests/test_capability_engine_policy_regressions.py -q`
+  -> `24 passed`.
+- `python -m py_compile core/capability_engine.py tests/test_capability_engine_policy_regressions.py core/runtime/skill_contract.py tests/test_action_depth_honesty.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/capability_engine.py tests/test_capability_engine_policy_regressions.py core/runtime/skill_contract.py tests/test_action_depth_honesty.py`
+  -> passed.
+- `make production-gate`
+  -> passed; `/tmp/aura_production_readiness.json` has `passed=true`.
+- `make enterprise-gate`
+  -> passed; `/tmp/aura_enterprise_gate.json` has `counts={}` and
+  `high_or_critical_count=0`.
+- `git diff --check`
+  -> passed.
+
+Current closeout estimate:
+
+- Pass F action-depth foundation is now active in the central capability
+  execution lane for callers that supply explicit expectations.
+- Remaining propagation: generate expectations from chat/planning automatically,
+  attach expectation verdicts to durable receipts, update memory lessons, and
+  wire desktop/live-skill callers to pass expectation contracts by default.
+
+Remaining work after this checkpoint:
+
+- Add action expectation generation at chat objective detection and desktop task
+  planning boundaries.
+- Add receipt/memory causal wiring for expectation failures.
+- Commit and push this checkpoint.

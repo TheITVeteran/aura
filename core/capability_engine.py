@@ -4255,8 +4255,18 @@ class CapabilityEngine(AuraBaseModule):
                             )
                         )
                         payload["retries"] = attempt
-                        return payload
-                    return {"ok": True, "result": output, "retries": attempt}
+                        return self._apply_action_expectation_result(
+                            skill_name,
+                            payload,
+                            params,
+                            context,
+                        )
+                    return self._apply_action_expectation_result(
+                        skill_name,
+                        {"ok": True, "result": output, "retries": attempt},
+                        params,
+                        context,
+                    )
 
                 last_error = self._extract_error(output)
                 if not self._is_transient(last_error):
@@ -4280,6 +4290,138 @@ class CapabilityEngine(AuraBaseModule):
             # structured failure to 'unknown' / 'Completed 0/0 steps'.
             failure = {**output, **failure}
         return failure
+
+    @staticmethod
+    def _str_list(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        if isinstance(value, (list, tuple, set)):
+            return [str(item) for item in value if str(item).strip()]
+        return [str(value)]
+
+    @staticmethod
+    def _bool_value(value: Any, *, default: bool = True) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"false", "0", "no", "off"}:
+                return False
+            if lowered in {"true", "1", "yes", "on"}:
+                return True
+        return bool(value)
+
+    @classmethod
+    def _action_expectation_for(
+        cls,
+        skill_name: str,
+        params: dict[str, Any],
+        context: dict[str, Any],
+    ) -> Any | None:
+        from core.runtime.skill_contract import ActionExpectation
+
+        params = params or {}
+        context = context or {}
+        raw = (
+            context.get("action_expectation")
+            or context.get("expectation")
+            or params.get("action_expectation")
+            or params.get("expectation")
+        )
+        if isinstance(raw, ActionExpectation):
+            return raw
+
+        source: dict[str, Any] = {}
+        if isinstance(raw, dict):
+            source.update(raw)
+        for key in (
+            "acceptance_criteria",
+            "required_evidence",
+            "user_visible_effect",
+            "repair_hint",
+            "allow_partial",
+        ):
+            if key in context and key not in source:
+                source[key] = context[key]
+            if key in params and key not in source:
+                source[key] = params[key]
+
+        criteria = cls._str_list(source.get("acceptance_criteria") or source.get("criteria"))
+        evidence = cls._str_list(source.get("required_evidence") or source.get("evidence_required"))
+        visible_effect = source.get("user_visible_effect") or source.get("visible_effect")
+        if not criteria and not evidence and not visible_effect:
+            return None
+
+        return ActionExpectation(
+            objective=str(
+                source.get("objective")
+                or context.get("objective")
+                or context.get("message")
+                or params.get("objective")
+                or params.get("query")
+                or params.get("path")
+                or skill_name
+            ),
+            acceptance_criteria=criteria,
+            required_evidence=evidence,
+            user_visible_effect=str(visible_effect) if visible_effect else None,
+            repair_hint=str(source.get("repair_hint") or ""),
+            allow_partial=cls._bool_value(source.get("allow_partial"), default=True),
+        )
+
+    @classmethod
+    def _apply_action_expectation_result(
+        cls,
+        skill_name: str,
+        result: dict[str, Any],
+        params: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not isinstance(result, dict) or not result.get("ok", True):
+            return result
+
+        expectation = cls._action_expectation_for(skill_name, params, context)
+        if expectation is None:
+            return result
+
+        from core.runtime.skill_contract import (
+            SkillExecutionResult,
+            SkillStatus,
+            apply_action_expectation,
+        )
+
+        raw_status = str(result.get("status") or "").strip()
+        status = (
+            SkillStatus.SUCCESS_UNVERIFIED
+            if raw_status == SkillStatus.SUCCESS_UNVERIFIED.value
+            else SkillStatus.SUCCESS_VERIFIED
+        )
+        evidence = result.get("verification_evidence")
+        if not isinstance(evidence, dict):
+            evidence = {}
+        checked = apply_action_expectation(
+            SkillExecutionResult(
+                skill=skill_name,
+                status=status,
+                output=result,
+                receipt_id=str(result.get("receipt_id") or "") or None,
+                verification_evidence=evidence,
+                expectation=expectation,
+            )
+        )
+        verdict = checked.verification_evidence.get("expectation_verdict", {})
+        payload = dict(result)
+        payload["verification_evidence"] = checked.verification_evidence
+        payload["expectation_verdict"] = verdict
+        payload["status"] = checked.status.value
+        payload["ok"] = checked.ok
+        if not checked.ok and checked.failure_reason and not payload.get("error"):
+            payload["error"] = checked.failure_reason
+        return payload
 
     @staticmethod
     def _outer_retry_disabled(
