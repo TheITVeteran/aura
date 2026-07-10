@@ -1,0 +1,203 @@
+# Aura FMEA — failure modes & effects registry
+
+> GENERATED from `core/runtime/fmea.py` by `tools/render_fmea.py`
+> (`make fmea-doc`). Do not edit by hand — a drift test regenerates
+> and compares this file on every suite run.
+
+Registry version: `1.0` — 16 modes (2 catastrophic, 8 critical, 5 major, 1 minor); 1 open mitigation gap(s), 0 open detection gap(s).
+
+Every entry is REAL: it either occurred live (occurrences cite when)
+or is a structurally-reachable state found by analysis. Gaps are
+explicit and pinned by an allowlist test that only shrinks.
+
+## FM-LANE-001 — First-token stall under memory pressure → force-kill → cold reload doom loop
+
+- **Subsystem:** core/brain/llm/mlx_client.py (cortex lane)
+- **Severity / blast radius:** critical / organism
+- **Cause:** Concurrent lanes over-commit host RAM; the resident 32B loses first-token bandwidth; every spawn succeeds so spawn-failure backoff never engages
+- **Effect:** Every turn pinned ~200s; each cycle burns a 20GB cold reload; latency unusable while deaths=0 (ladder answers)
+- **Detection:** Inference-gate first-token deadline + K4 crash-loop breaker (young-death counting)
+- **Mitigation:** K3 declarative lane admission (declared footprints vs host budget); K4 backoff with half-open probe; pressure-adaptive token budgets
+- **Detection modules:** `core.runtime.lane_reconciler`, `core.brain.inference_gate`
+- **Mitigation modules:** `core.brain.lane_admission`, `core.runtime.lane_reconciler`
+- **Recorded occurrences:** 2026-07-07 200-turn soak turns 21-38; 2026-07-08 fullstack-final soak
+
+## FM-LANE-002 — OOM SIGKILL with empty stderr on over-committed spawn (72B solver / fuse beside resident 32B)
+
+- **Subsystem:** core/brain/llm/mlx_client.py + core/learning/weight_compounding.py
+- **Severity / blast radius:** catastrophic / host
+- **Cause:** Model load or dequant-fuse transient (~2.5x base) requested beside a committed host; the OS kills the child with no diagnostic
+- **Effect:** 20GB worker dies mid-load; 'fuse_failed:' with empty detail; autonomous learning cycle lost
+- **Detection:** Lane-admission arithmetic refusal names the breach before the OS can kill; killed_signal classifier names likely_oom after the fact
+- **Mitigation:** K3 admission refuses envelope breaches; fuse pre-admission defers with adapter preserved (status 'deferred', operator bypass)
+- **Detection modules:** `core.brain.lane_admission`
+- **Mitigation modules:** `core.brain.lane_admission`, `core.learning.weight_compounding`
+- **Recorded occurrences:** 2026-07-08 live autonomous cycle g0000 fuse OOM (b0b13625)
+
+## FM-LANE-003 — Duplicate heavy runtime: a second 32B spawns beside a wedged one
+
+- **Subsystem:** launcher + core/brain/llm/mlx_client.py
+- **Severity / blast radius:** catastrophic / host
+- **Cause:** False-death verdict (mind_tick declared dead under load) → launcher respawn without killing the wedged process
+- **Effect:** Memory doubling → worse false-death → cascade; host near-exhaustion
+- **Detection:** Orphan reclamation scan before spawn (MLXWorker name match); launcher zombie marker
+- **Mitigation:** Kill-before-spawn in _spawn_worker_blocking; mind_tick false-death fix (0e87f2c3); headroom-starvation guard
+- **Detection modules:** `core.brain.llm.mlx_client`
+- **Mitigation modules:** `core.brain.llm.mlx_client`, `core.mind_tick`
+- **Recorded occurrences:** 2026-07-06 live degradation cascade (duplicate-runtime memory)
+
+## FM-LANE-004 — Warmup wedge: warmup_in_flight stuck True blocks admission everywhere
+
+- **Subsystem:** core/brain/llm/mlx_client.py (warmup lifecycle)
+- **Severity / blast radius:** critical / organism
+- **Cause:** Prewarm task dies without its finally-clear; no transition timestamp, so guards trusting client flags defer forever
+- **Effect:** 11 straight 240s probe timeouts; conversation admission blocked; cortex gone at 44% RAM with nothing recovering it
+- **Detection:** Watchdog-owned dead-man clock (300s grace from first not-alive observation, client flags not trusted); stale-warmup 300s force-clear in warmup()
+- **Mitigation:** Dead-man intervention force-clears the wedged flag and bounds the outage to one ~5min window; K1 reconciler heals the lane in the gaps
+- **Detection modules:** `core.brain.inference_gate`
+- **Mitigation modules:** `core.brain.llm.mlx_client`, `core.runtime.lane_reconciler`
+- **Recorded occurrences:** 2026-07-08 nightcap soak turn 28 wedge (59ca3c33)
+- **Notes:** Root of the flag-stuck-without-timestamp prewarm death remains unfound; the dead-man clock contains it. See remainder item (11).
+
+## FM-LANE-005 — Gate orphan: timed-out foreground decode holds the generation gate
+
+- **Subsystem:** core/brain/inference_gate.py (generation gate)
+- **Severity / blast radius:** critical / lane
+- **Cause:** Route timeout abandons a decode that keeps holding the gate; the preemption ladder only soft-cancelled background holders, so the next turn force-aborts the warm worker
+- **Effect:** ~5min doom cycle: orphan → 75s wait → force-kill → cold reload → next orphan; 34/38 soak turns dead
+- **Detection:** Over-age foreground holder check in the preemption ladder
+- **Mitigation:** Abandoned foreground holder gets the soft-cancel rung first (worker stays warm); force-abort reserved for unacknowledged wedges
+- **Detection modules:** `core.brain.inference_gate`
+- **Mitigation modules:** `core.brain.inference_gate`
+- **Recorded occurrences:** 2026-07-08 'final' soak — 34/38 turns dead (7cccb8c3)
+
+## FM-BOOT-001 — 'Booting forever' over a live mind (readiness conflated with liveness)
+
+- **Subsystem:** core/health/boot_status.py + core/runtime/health_contract.py
+- **Severity / blast radius:** critical / organism
+- **Cause:** A liveness flap (loop-lag spike, important-tier degradation) flipped boot readiness false; the shell re-entered 'booting N%' although the mind was serving
+- **Effect:** GUI stuck at 'Connecting to runtime…' / 'booting 48%' for 55 minutes over a fully conversational instance
+- **Detection:** K2 probe split: startup latch + independent liveness/readiness verdicts; readiness_coherence daily-driver probe
+- **Mitigation:** Post-latch presentation is 'degraded' (runtime_degraded, progress 100) — 'booting' after first readiness is structurally impossible; conversation_operational connects the chat surface on critical-probes-pass
+- **Detection modules:** `core.runtime.health_contract`
+- **Mitigation modules:** `core.health.boot_status`
+- **Recorded occurrences:** 2026-07-06 55min 'booting 48%' live; 2026-07-08 phi-storm liveness flap
+
+## FM-LOOP-001 — Event-loop stall from synchronous I/O on the loop (fsync, per-record SQLite)
+
+- **Subsystem:** logging/persistence on the event loop
+- **Severity / blast radius:** critical / organism
+- **Cause:** Sync writes inside async def: root-logger file sink, per-record SQLite log handler connect+fsync, goal snapshot query per turn
+- **Effect:** 4-6s loop stalls; one 20-minute freeze from an on-loop fsync; liveness flaps cascade from the lag
+- **Detection:** Stall watchdog thread dumps (data/error_logs/stalls/); async-write-lane static ratchet fails NEW sync writes at build time
+- **Mitigation:** QueueListener logging; batched WAL log writer thread; snapshot caches; file_write_gateway *_async lanes
+- **Detection modules:** `core.resilience.stall_watchdog`
+- **Mitigation modules:** `core.runtime.file_write_gateway`, `core.runtime.atomic_writer`
+- **Recorded occurrences:** 2026-07-06 four distinct live 5-6s stalls (a17a1b56); 20-minute fsync freeze (pre-July)
+
+## FM-LOOP-002 — Loop wedge from unbounded awaits
+
+- **Subsystem:** core/mind_tick.py and long-running loops
+- **Severity / blast radius:** critical / organism
+- **Cause:** Rhythm-loop awaits (state read, tier recovery) had no timeout; cortex recovery can probe workers for minutes; the loop wedges, frees, re-wedges
+- **Effect:** mind_tick visibly dead for 2 hours; ~13GB RAM oscillations; repair machinery unreachable from the wedged loop
+- **Detection:** rhythm_stale receipts name the wedged stage; liveness_repair_unreachable is no longer silent; 12 recorded loop-wedge crash dumps fingerprint the class
+- **Mitigation:** Both bare awaits bounded (30s/45s) with named tick_stage_timeout degradation; A1 bounded-await static ratchet freezes the class
+- **Detection modules:** `core.mind_tick`
+- **Mitigation modules:** `core.mind_tick`
+- **Recorded occurrences:** 2026-07-07 mind_tick 2-hour death (20fdb6c3)
+
+## FM-LOOP-003 — Hot-path file I/O on every Will decision (8.3s loop lag)
+
+- **Subsystem:** core/runtime service registration hot path
+- **Severity / blast radius:** major / organism
+- **Cause:** ServiceDescriptor caller determination ran traceback.extract_stack (linecache file reads) + Path.resolve() on the loop for every aura_now re-registration
+- **Effect:** Recurring multi-second loop lags; boot stuck at 48% during preflight; the dominant recorded lag source
+- **Detection:** SIGUSR1 main-thread sampling caught it live; stall dumps
+- **Mitigation:** sys._getframe walk + string slicing + cache (zero I/O, provably filesystem-free contract test); register_instance hot-path upsert
+- **Detection modules:** `core.resilience.stall_watchdog`
+- **Mitigation modules:** `core.runtime.service_registry`
+- **Recorded occurrences:** 2026-07-09 caught live via SIGUSR1 (e422e5de)
+
+## FM-PHI-001 — Pool-child death cascades into a fail-closed CRITICAL storm on thread fallback
+
+- **Subsystem:** hierarchical phi ProcessPool
+- **Severity / blast radius:** critical / organism
+- **Cause:** A dead pool child demoted compute onto threads (the GIL-bound lag source the pool exists to avoid) while every ~28s cycle recorded CRITICAL
+- **Effect:** SLO error budget 20x burn; loop-lag spikes flip liveness; GUI 'Connecting to runtime…' over a live mind
+- **Detection:** Pool-rebuild telemetry (rebuild count per process lifetime)
+- **Mitigation:** Recovery REBUILDS process isolation first (budget 3/lifetime, telemetry not incident); only a persistently-breaking host demotes to threads ONCE with one degradation record
+- **Detection modules:** `core.consciousness.hierarchical_phi`
+- **Mitigation modules:** `core.consciousness.hierarchical_phi`
+- **Recorded occurrences:** 2026-07-08 live phi-pool storm caught mid-flight (a5e05466)
+
+## FM-MEM-001 — Linear memory growth ~242MB/h under sustained conversation
+
+- **Subsystem:** whole-process RSS
+- **Severity / blast radius:** major / host
+- **Cause:** UNRESOLVED: H1 real leak vs H2 proof-load-defers-reclamation; tracemalloc instrumentation landed but the discriminating soak has not run
+- **Effect:** Multi-hour sessions drift toward pressure eviction; 4h soak FAILs memory while passing lag/queue/boot
+- **Detection:** Memory watchdog + sentinel ring + tombstones; soak memory trend milestones
+- **Mitigation:** GAP
+- **Detection modules:** `core.resilience.memory_watchdog`
+- **Recorded occurrences:** 2026-07-07 4h soak memory FAIL
+- **Notes:** Blocks A4/K3 fine-tuning. Needs the app-down soak or live RSS trend to discriminate H1 vs H2 — scheduled as the final soak's secondary question.
+
+## FM-FCL-001 — Fail-closed escalation storm: expected backpressure recorded as CRITICAL
+
+- **Subsystem:** core/runtime/errors.py + fail-closed modules (core/config.py list)
+- **Severity / blast radius:** critical / organism
+- **Cause:** RAM-admission warmup deferrals recorded warning+ degradations on a fail-closed module; escalation raised CRITICAL SERVICE FAILURE out of the handler; policy then disabled the cloud lane
+- **Effect:** The 210s-503 anatomy: one deferral cascades into protected-lane failure and user-visible 503s
+- **Detection:** SLO error-events budget burn; degradation classifier severity histogram
+- **Mitigation:** Backpressure classified info-level (persistent/total conditions only become degradations); cloud-SDK error tuple resolved before try; A4 escalation-rate cap
+- **Detection modules:** `core.runtime.telemetry_sli`
+- **Mitigation modules:** `core.runtime.errors`
+- **Recorded occurrences:** 2026-07-08 ac5a222e live anatomy
+
+## FM-CHAT-001 — Raw HTTP 503 delivered to a real user
+
+- **Subsystem:** api chat route + fail-closed reply paths
+- **Severity / blast radius:** major / turn
+- **Cause:** Fail-closed reply and memory-guard paths returned transport-level 503 instead of an honest in-band body
+- **Effect:** The desktop shell drops to 'Connecting to runtime…' mid-conversation
+- **Detection:** Endurance-probe turn classification (503 vs honest body)
+- **Mitigation:** 200-with-honest-body for real users; benchmarks keep 503 via X-Aura-Benchmark (foreground_busy precedent)
+- **Recorded occurrences:** 2026-07-08 nightcap turns 24-25 (unswept path)
+- **Notes:** Sweep of remaining unconditional-503 producers on /api/chat is remainder item (10); verify during this pass's C-phase.
+
+## FM-QUAL-001 — Quality-gate exhaustion loop delivers nothing
+
+- **Subsystem:** response quality gates
+- **Severity / blast radius:** major / turn
+- **Cause:** Drafts repeatedly failing surface gates (self-claim evidence boundary, requested-phrase) burned all retries and returned empty
+- **Effect:** 56s turns ending in empty_cognitive_engine_reply; user sees silence
+- **Detection:** Incident narrator episodes (it diagnosed this class live)
+- **Mitigation:** Exhaustion salvage: deliver the best honest draft (self-claim guard self-heals via evidence-boundary suffix; leaks stay fail-closed); surface-gate retry wall (AURA_SURFACE_RETRY_WALL_S)
+- **Detection modules:** `core.observability.incident_narrator`
+- **Recorded occurrences:** 2026-07-07 consciousness-question loop caught by narrator (70695ff0)
+
+## FM-DISP-001 — Trigger overbreadth hijacks conversation
+
+- **Subsystem:** skill/action dispatch triggers
+- **Severity / blast radius:** major / turn
+- **Cause:** Normalizer mangling ('really'→'recall') and all-optional-tail regexes ('paint (?:me )?(?:an? )?') routed casual words to heavy skills
+- **Effect:** Casual sentences dispatched memory_ops/diffusion; one crashed CRITICAL (generic dispatch passes query, ImageGenInput demands prompt)
+- **Detection:** 41-sentence benign + 8-positive permanent ratchet test
+- **Mitigation:** Normalizer and regex fixes at the root; the ratchet freezes the class
+- **Recorded occurrences:** 2026-07-08 live hijacks (fc273e37, c7b7f510)
+
+## FM-WORK-001 — Zero-token generation (immediate EOS) from stale KV cache
+
+- **Subsystem:** mlx_worker KV/prompt cache
+- **Severity / blast radius:** minor / turn
+- **Cause:** Cached KV disagreeing with a fresh prompt yields EOS on the first step
+- **Effect:** Empty generation; retry needed; boot-window warnings
+- **Detection:** token_count telemetry (tokens actually emitted)
+- **Mitigation:** Worker self-heals by nuking stale prompt-cache KV + Metal cache
+- **Recorded occurrences:** 2026-07-08 boot-window occurrences investigated, benign
+- **Notes:** Self-healing; only the FREQUENCY under load is worth watching.
+
+## Open gaps (the work queue)
+
+- **FM-MEM-001** (mitigation gap): Linear memory growth ~242MB/h under sustained conversation
