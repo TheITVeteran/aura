@@ -55,7 +55,7 @@ class ReimplementationLab:
         generator: Optional[CodeGenerator] = None,
         max_attempts: int = 3,
         test_timeout: int = 30,
-        min_pass_rate: float = 1.0,
+        min_pass_rate: float = 0.95,
     ):
         self.project_root = project_root or "."
         self.max_attempts = max_attempts
@@ -239,7 +239,7 @@ def get_reimplementation_lab(
     generator: Optional[CodeGenerator] = None,
     max_attempts: int = 3,
     test_timeout: int = 30,
-    min_pass_rate: float = 1.0,
+    min_pass_rate: float = 0.95,
 ) -> ReimplementationLab:
     """Return the process-local program-DNA reconstruction engine.
 

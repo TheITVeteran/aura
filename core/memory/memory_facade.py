@@ -1174,7 +1174,32 @@ class MemoryFacade:
         )
         for item in verified_results:
             item.pop("_retrieval_order", None)
-        return verified_results[:limit]
+
+        delivered = verified_results[:limit]
+        # Conceptual gravitation feed: memories surfaced TOGETHER in one
+        # retrieval co-occurred in the same cognitive moment — that is the
+        # co-access event the gravitation engine consolidates on during dream
+        # cycles. (July 2026 review: the engine existed with no feeder and no
+        # consolidation caller — it collected nothing and nudged never.)
+        try:
+            if len(delivered) >= 2:
+                from core.runtime.service_access import optional_service
+
+                gravitation = optional_service("conceptual_gravitation", default=None)
+                if gravitation is not None:
+                    for item in delivered:
+                        memory_id = str(item.get("id") or "").strip()
+                        if memory_id:
+                            gravitation.record_recall(memory_id)
+                    gravitation.end_turn()
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "memory_facade",
+                exc,
+                action="search returned without gravitation co-access feed",
+                severity="debug",
+            )
+        return delivered
 
     def search_sync(
         self,

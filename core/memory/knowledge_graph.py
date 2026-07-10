@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -146,6 +147,45 @@ class PersistentKnowledgeGraph:
                 id TEXT PRIMARY KEY, content TEXT, type TEXT, source TEXT,
                 confidence REAL, created_at REAL, last_accessed REAL,
                 access_count INTEGER, metadata TEXT)""")
+
+            # FTS5 index over knowledge content (July 2026 review: LIKE search
+            # here vs FTS5 in LocalCorpus was an inconsistency AND a relevance
+            # gap — LIKE has no ranking and no tokenization). External-content
+            # table + triggers keep it in sync; existing rows are backfilled
+            # once. search_knowledge() falls back to LIKE if FTS5 is missing.
+            try:
+                fts_existed = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='knowledge_fts'"
+                ).fetchone() is not None
+                conn.execute("""CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts
+                    USING fts5(content, content='knowledge', content_rowid='rowid')""")
+                conn.execute("""CREATE TRIGGER IF NOT EXISTS knowledge_fts_ai
+                    AFTER INSERT ON knowledge BEGIN
+                        INSERT INTO knowledge_fts(rowid, content)
+                        VALUES (new.rowid, new.content);
+                    END""")
+                conn.execute("""CREATE TRIGGER IF NOT EXISTS knowledge_fts_ad
+                    AFTER DELETE ON knowledge BEGIN
+                        INSERT INTO knowledge_fts(knowledge_fts, rowid, content)
+                        VALUES ('delete', old.rowid, old.content);
+                    END""")
+                conn.execute("""CREATE TRIGGER IF NOT EXISTS knowledge_fts_au
+                    AFTER UPDATE OF content ON knowledge BEGIN
+                        INSERT INTO knowledge_fts(knowledge_fts, rowid, content)
+                        VALUES ('delete', old.rowid, old.content);
+                        INSERT INTO knowledge_fts(rowid, content)
+                        VALUES (new.rowid, new.content);
+                    END""")
+                # One-time backfill for databases created before the index.
+                # count(*) on an external-content FTS table delegates to the
+                # content table, so an empty index is undetectable that way —
+                # detect first creation and use the documented 'rebuild'.
+                if not fts_existed:
+                    conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
+                self._fts_enabled = True
+            except sqlite3.OperationalError as exc:
+                self._fts_enabled = False
+                logger.warning("KnowledgeGraph FTS5 unavailable; LIKE fallback active: %s", exc)
             
             conn.execute("""CREATE TABLE IF NOT EXISTS relationships (
                 from_id TEXT, to_id TEXT, relation_type TEXT,
@@ -253,12 +293,33 @@ class PersistentKnowledgeGraph:
                 d["metadata"] = {}
             return d
     
+    @staticmethod
+    def _fts_query(query: str) -> str:
+        """Sanitize free text into an FTS5 AND-of-terms query."""
+        terms = [t for t in re.findall(r"[\w']+", query or "") if t]
+        return " ".join(f'"{t}"' for t in terms)
+
     def search_knowledge(self, query: str, type: Optional[str] = None, limit: int = 10) -> List[Dict]:
-        """Search knowledge"""
+        """Search knowledge — FTS5 (bm25-ranked, confidence tie-break) with a
+        LIKE fallback when FTS5 is unavailable or the query has no tokens."""
+        fts_query = self._fts_query(query) if getattr(self, "_fts_enabled", False) else ""
         with self._get_conn() as conn:
             conn.row_factory = sqlite3.Row
             c = conn.cursor()
-            if type:
+            if fts_query:
+                if type:
+                    c.execute("""SELECT k.* FROM knowledge_fts f
+                                JOIN knowledge k ON k.rowid = f.rowid
+                                WHERE knowledge_fts MATCH ? AND k.type = ?
+                                ORDER BY bm25(knowledge_fts), k.confidence DESC LIMIT ?""",
+                             (fts_query, type, limit))
+                else:
+                    c.execute("""SELECT k.* FROM knowledge_fts f
+                                JOIN knowledge k ON k.rowid = f.rowid
+                                WHERE knowledge_fts MATCH ?
+                                ORDER BY bm25(knowledge_fts), k.confidence DESC LIMIT ?""",
+                             (fts_query, limit))
+            elif type:
                 c.execute("""SELECT * FROM knowledge WHERE type = ? AND content LIKE ?
                             ORDER BY confidence DESC LIMIT ?""",
                          (type, f"%{query}%", limit))

@@ -124,7 +124,19 @@ class HippocampalIndex:
     # ---- binding ------------------------------------------------------------
 
     def bind(self, episode_id: str, cues: Iterable[str]) -> int:
-        """Bind an episode's engram to its cues. Returns number of cues stored."""
+        """Bind an episode's engram to its cues in a SINGLE exposure.
+
+        This is Aura's one-shot episodic mechanism (July 2026 review asked
+        whether a separate ``one_shot.py`` was needed — it is not; this is the
+        one-shot). One presentation writes a durable associative index binding
+        the episode to its salient cues; no repetition, no gradient step, no
+        training run. Later, a PARTIAL cue set retrieves the whole episode via
+        ``pattern_complete`` — CA3-style pattern completion. The vector store
+        gives graded similarity; this gives sparse, immediate, cue-triggered
+        recall of a specific past moment from one encounter with it.
+
+        Returns the number of cues stored.
+        """
         rows = [(episode_id, c) for c in dict.fromkeys(cues) if c]
         if not rows:
             return 0

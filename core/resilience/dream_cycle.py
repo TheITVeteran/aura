@@ -60,6 +60,10 @@ class DreamCycle:
             record_degradation('dream_cycle', exc)
             logger.debug("Dream cycle runtime-mode check skipped: %s", exc)
 
+        # Dream-phase memory consolidation runs whether or not the DLQ has
+        # anything — the DLQ replay below is only one of the dream's jobs.
+        await self._consolidate_gravitation()
+
         if not self.dlq_path.exists():
             return
 
@@ -100,6 +104,32 @@ class DreamCycle:
                 msg = f"Re-processed: {msg}"
             self.orchestrator.enqueue_message(msg)
             await asyncio.sleep(0.1) # Small stagger
+
+    async def _consolidate_gravitation(self):
+        """Nudge co-recalled memories closer during the dream pass.
+
+        The gravitation engine collects co-access events all day (fed by
+        MemoryFacade.search); navigating_graph provides the ndarray embedding
+        store its nudges operate on. July 2026 review finding: consolidate()
+        previously had NO caller — the engine collected forever and nudged
+        never. This is the missing half of the loop.
+        """
+        try:
+            from core.runtime.service_access import optional_service
+
+            gravitation = optional_service("conceptual_gravitation", default=None)
+            graph = optional_service("navigating_graph", default=None)
+            if gravitation is None or graph is None:
+                return
+            stats = await asyncio.to_thread(gravitation.consolidate, graph)
+            if stats and stats.get("nudged"):
+                logger.info("🌌 Conceptual gravitation consolidated: %s", stats)
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "dream_cycle",
+                exc,
+                action="dream pass completed without gravitation consolidation",
+            )
 
     async def process_dlq_async(self):
         """Scheduler-facing DLQ recovery entrypoint.
