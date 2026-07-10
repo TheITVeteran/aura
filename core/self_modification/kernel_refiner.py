@@ -22,7 +22,7 @@ class KernelRefiner:
     def __init__(self, cognitive_engine, code_base_path: str = "."):
         self.brain = cognitive_engine
         self.code_base = Path(code_base_path)
-        self.kernel_path = self.code_base / "core" / "cognitive_kernel.py"
+        self.kernel_path = self.code_base / "core" / "cognition" / "cognitive_kernel.py"
         self._last_audit_time = 0
         self._content_cache = None
         self._cache_hash = None

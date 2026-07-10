@@ -22,6 +22,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # set when they are moved/killed; nothing enters without deliberate review.
 ALLOWED_TOP_LEVEL = frozenset({
     "__init__",
+    # contract-pinned package shims (tests/test_forensic_audit_regressions.py
+    # requires these exact top-level re-export files; each is <25 lines and
+    # only forwards to its package — they are doors, not residents)
+    "goals", "orchestrator_boot",
     # spine
     "container", "config", "service_names", "exceptions", "runtime",
     "event_bus", "will", "governance_context", "constitution",

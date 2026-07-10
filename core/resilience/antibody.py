@@ -26,7 +26,7 @@ class Antibody:
         self.immune = immune_system
         self.watch_list = [
             Path("core/values/prime_directives.py"),
-            Path("core/immune_system.py"),
+            Path("core/security/immune_system.py"),
             Path(".env")
         ]
         self.baseline_stats = self._get_stats()

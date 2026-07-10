@@ -2833,9 +2833,9 @@ def test_long_boot_locks_are_named_and_not_force_released():
 
 def test_runtime_boot_noise_regressions_are_closed():
     root = Path(__file__).resolve().parents[1]
-    audit_source = (root / "core" / "subsystem_audit.py").read_text(encoding="utf-8")
+    audit_source = (root / "core" / "ops" / "subsystem_audit.py").read_text(encoding="utf-8")
     dream_cycle_source = (root / "core" / "resilience" / "dream_cycle.py").read_text(encoding="utf-8")
-    dreamer_source = (root / "core" / "dreamer_v2.py").read_text(encoding="utf-8")
+    dreamer_source = (root / "core" / "sleep" / "dreamer_v2.py").read_text(encoding="utf-8")
     container_source = (root / "core" / "container.py").read_text(encoding="utf-8")
     shutdown_source = (root / "core" / "orchestrator" / "handlers" / "shutdown.py").read_text(encoding="utf-8")
 
