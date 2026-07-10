@@ -81,11 +81,20 @@ signature — only the intact, integrated, recurrent, critical, igniting system 
 ## The live activity source
 
 `activity.py` builds the spatiotemporal matrix (subsystem × time) from the live
-`ConsequenceBus` stream — the organism's own consequential actions binned over
-time. On a running instance with enough traffic, `run_live()` scores the real
-mind and corroborates integration with the Ghost's system-Φ (`core/ghost/`) over
-the same stream. With a thin stream it reports `insufficient_data` rather than
-fabricating a signal.
+streams. `run_live()` uses `from_live_streams()`, which merges two real signals
+into one channel space:
+
+- the **ConsequenceBus** stream — the organism's consequential actions, binned
+  over time (`bus:<subsystem>` channels);
+- the **global workspace broadcast history** — each competition win is an
+  ignition event attributed to the winning subsystem, weighted by its priority
+  (`gw:<subsystem>` channels).
+
+Channels are namespaced per stream so a subsystem's actions and its workspace
+wins stay two genuinely different signals, and each stream is fault-isolated (a
+dead workspace never breaks the bus stream). `run_live()` also corroborates
+integration with the Ghost's system-Φ (`core/ghost/`) over the same stream. With
+thin data it reports `insufficient_data` rather than fabricating a signal.
 
 ## Honest boundary
 
