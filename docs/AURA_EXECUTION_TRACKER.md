@@ -9575,3 +9575,38 @@ Remaining work after this checkpoint:
 - Reconcile `OrganSupervisor` and `SupervisionTree` behind the runtime control
   plane, then expose one operator status surface for desired state, blockers,
   lease owners, pressure, restart budgets, and open circuits.
+
+## Checkpoint 2026-07-10-21: Post-Rebase Reliability Ratchet Integration
+
+Scope:
+
+- Rebased both runtime-control-plane commits over the typed flag layer,
+  bounded-await ratchet, typed runtime conditions, formal degradation ladder,
+  escalation-rate cap, and model-lane disruption budget now on `main`.
+- Verified the overlapping MLX and lane-reconciler changes composed cleanly:
+  disruption-budget and typed-condition behavior remain intact beneath the
+  canonical admission/lifecycle ownership added by this pass.
+- Declared foreground/background model-load admission timeouts through
+  `core.runtime.flags`; both are typed, discoverable in `flag_report()`, support
+  persisted settings and environment overrides, and fall back safely on
+  malformed values.
+- Confirmed the new model-load, lifecycle, and release waits introduce no new
+  wedge-capable unbounded-await sites. No allowlist entry or ratchet expansion
+  was used.
+
+Verification:
+
+- Typed flags, raw-read ratchet, bounded-await ratchet, typed conditions,
+  escalation cap, degradation ladder, lane/admission, and inference integration
+  subset -> `233 passed in 30.06s`.
+- Full combined replay across all upstream and local reliability milestones ->
+  `813 passed in 52.75s`.
+- `make enterprise-gate` -> passed with no baseline regression.
+- `make production-gate` -> passed; all `37` readiness checks green.
+
+Remaining work after this checkpoint:
+
+- Publish the rebased commits directly to `main`, then continue with durable
+  admission-receipt aggregation/compaction and unified process supervision.
+- Add a single operator-facing control-plane status/condition surface and use
+  it in health, diagnostics, and incident narration.

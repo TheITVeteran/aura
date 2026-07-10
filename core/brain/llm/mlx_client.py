@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.concurrency import run_io_bound
@@ -36,6 +37,21 @@ from .chat_format import format_chatml_messages, format_chatml_prompt
 from .mlx_worker import _mlx_worker_loop
 
 logger = logging.getLogger("LLM.MLX")
+
+_MODEL_LOAD_FOREGROUND_ADMISSION_TIMEOUT_FLAG = declare(
+    "AURA_FOREGROUND_MODEL_LOAD_ADMISSION_TIMEOUT_S",
+    kind=FlagKind.FLOAT,
+    default=30.0,
+    description="Maximum foreground wait for the canonical model-load lease",
+    owner="core.brain.llm.mlx_client",
+)
+_MODEL_LOAD_BACKGROUND_ADMISSION_TIMEOUT_FLAG = declare(
+    "AURA_BACKGROUND_MODEL_LOAD_ADMISSION_TIMEOUT_S",
+    kind=FlagKind.FLOAT,
+    default=0.0,
+    description="Maximum background wait for the canonical model-load lease",
+    owner="core.brain.llm.mlx_client",
+)
 
 
 def _model_path_is_deep_solver(model_path: str | None) -> bool:
@@ -419,16 +435,12 @@ class _ModelLoadAdmissionDenied(RuntimeError):
 
 
 def _model_load_admission_timeout_s(*, foreground_request: bool) -> float:
-    env_name = (
-        "AURA_FOREGROUND_MODEL_LOAD_ADMISSION_TIMEOUT_S"
+    flag = (
+        _MODEL_LOAD_FOREGROUND_ADMISSION_TIMEOUT_FLAG
         if foreground_request
-        else "AURA_BACKGROUND_MODEL_LOAD_ADMISSION_TIMEOUT_S"
+        else _MODEL_LOAD_BACKGROUND_ADMISSION_TIMEOUT_FLAG
     )
-    default = 30.0 if foreground_request else 0.0
-    try:
-        return max(0.0, float(os.environ.get(env_name, str(default)) or default))
-    except (TypeError, ValueError):
-        return default
+    return max(0.0, float(flag.value()))
 
 
 @contextlib.asynccontextmanager

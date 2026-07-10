@@ -198,6 +198,15 @@ class TestSpawnSeam:
         def is_alive(self):
             return self._alive
 
+    def test_model_load_admission_timeouts_use_typed_flags(self, monkeypatch):
+        from core.brain.llm import mlx_client as mc
+
+        monkeypatch.setenv("AURA_FOREGROUND_MODEL_LOAD_ADMISSION_TIMEOUT_S", "12.5")
+        monkeypatch.setenv("AURA_BACKGROUND_MODEL_LOAD_ADMISSION_TIMEOUT_S", "invalid")
+
+        assert mc._model_load_admission_timeout_s(foreground_request=True) == 12.5
+        assert mc._model_load_admission_timeout_s(foreground_request=False) == 0.0
+
     def test_observed_lanes_exclude_self_and_dead(self, monkeypatch, budget_46):
         from core.brain.llm import mlx_client as mc
 
