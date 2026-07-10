@@ -489,7 +489,7 @@ class BootAutonomyMixin:
 
         # SelfDiagnosisTool — lets Aura introspect her own capabilities
         try:
-            from core.skills.skill_execution_diagnostics import SelfDiagnosisTool
+            from core.coordinators.skill_execution_diagnostics import SelfDiagnosisTool
 
             capability_engine = ServiceContainer.get("capability_engine", default=None)
             if capability_engine:

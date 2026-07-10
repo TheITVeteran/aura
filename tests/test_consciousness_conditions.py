@@ -79,7 +79,9 @@ import pytest
 # ---------------------------------------------------------------------------
 # Path setup -- ensure Aura root is importable
 # ---------------------------------------------------------------------------
-AURA_ROOT = Path.home() / "Desktop" / "aura"
+# The suite must grade THIS checkout — a hardcoded ~/Desktop/aura root once
+# made every existence/ablation assertion validate a stale copy of the repo.
+AURA_ROOT = Path(__file__).resolve().parents[1]
 if str(AURA_ROOT) not in sys.path:
     sys.path.insert(0, str(AURA_ROOT))
 
