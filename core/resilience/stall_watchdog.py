@@ -41,6 +41,20 @@ _STALL_WATCHDOG_ERRORS = (
 )
 
 
+def _forensics_root() -> Path:
+    """Where stall/wedge evidence lands.
+
+    Live convention: repo-relative data/error_logs (crash_triage, the
+    narrator, and operators all read there). Test runs set AURA_LOG_DIR —
+    honoring it keeps hermetic runs from salting the real forensic record
+    (58 test-driver dumps polluted a triage ranking on 2026-07-10).
+    """
+    override = str(os.environ.get("AURA_LOG_DIR", "") or "").strip()
+    if override:
+        return Path(override) / "error_logs"
+    return Path("data/error_logs")
+
+
 def _record_watchdog_degradation(
     error: BaseException,
     *,
@@ -214,7 +228,7 @@ class StallWatchdog(threading.Thread):
         # Drain the historical dump backlog at startup (budgeted): a healthy
         # instance that never stalls again must still shed old dumps, and the
         # per-stall batch alone would take ~90 boots to clear a storm backlog.
-        self._drain_stall_dump_backlog(Path("data/error_logs/stalls"))
+        self._drain_stall_dump_backlog(_forensics_root() / "stalls")
 
         while not self._stop_event.is_set():
             # Schedule a heartbeat on the loop
@@ -429,7 +443,7 @@ class StallWatchdog(threading.Thread):
         try:
             import faulthandler
 
-            crash_dir = Path("data/error_logs/crash")
+            crash_dir = _forensics_root() / "crash"
             crash_dir.mkdir(parents=True, exist_ok=True)
             with open(crash_dir / "loop_wedge_stacks.log", "a") as fh:
                 fh.write(
@@ -595,7 +609,7 @@ class StallWatchdog(threading.Thread):
         logger.error("🚨 [WATCHDOG] EVENT LOOP STALL DETECTED! (Elapsed: %.1fs)", elapsed)
 
         # Dump tracebacks of all threads
-        dump_dir = Path("data/error_logs/stalls")
+        dump_dir = _forensics_root() / "stalls"
         dump_dir.mkdir(parents=True, exist_ok=True)
         self._prune_stall_dumps(dump_dir)
         dump_file = dump_dir / f"stall_{int(time.time())}.txt"
