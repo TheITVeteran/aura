@@ -585,6 +585,69 @@ async def test_auto_memory_ops_expectation_rejects_shallow_core_append(monkeypat
         reset_receipt_store()
 
 
+@pytest.mark.asyncio
+async def test_auto_web_search_expectation_rejects_sourceless_research(monkeypatch, tmp_path):
+    from core.runtime.receipts import get_receipt_store, reset_receipt_store
+
+    reset_receipt_store()
+    get_receipt_store(tmp_path / "receipts")
+    fault_records = []
+
+    class FaultRegistryStub:
+        def record_fault(self, fault_id, subsystem, **kwargs):
+            fault_records.append((fault_id, subsystem, kwargs))
+
+    monkeypatch.setattr(
+        "core.resilience.fault_taxonomy.get_fault_registry",
+        lambda: FaultRegistryStub(),
+    )
+
+    engine = _engine_with_skill("web_search")
+
+    class ShallowWebSearchSkill:
+        async def safe_execute(self, params, context):
+            return {"ok": True, "summary": "Recent research says yes."}
+
+    try:
+        result = await engine._execute_with_retry(
+            ShallowWebSearchSkill(),
+            "web_search",
+            {"query": "latest research on Europa ocean chemistry"},
+            {"origin": "user"},
+        )
+
+        assert result["ok"] is False
+        assert result["status"] == "success_unverified"
+        assert result["expectation_verdict"]["missing_evidence"] == ["sources"]
+        assert result["expectation_verdict"]["next_step"] == "rerun_web_research_with_sources"
+        assert result["expectation_receipt_id"]
+        assert any(
+            fault_id == "PASSF-ACTION-SHALLOW-SUCCESS"
+            for fault_id, _subsystem, _kwargs in fault_records
+        )
+    finally:
+        reset_receipt_store()
+
+
+@pytest.mark.asyncio
+async def test_auto_web_search_expectation_ignores_non_source_lookup():
+    engine = _engine_with_skill("web_search")
+
+    class SimpleWebSearchSkill:
+        async def safe_execute(self, params, context):
+            return {"ok": True, "summary": "Four."}
+
+    result = await engine._execute_with_retry(
+        SimpleWebSearchSkill(),
+        "web_search",
+        {"query": "what is two plus two"},
+        {"origin": "user"},
+    )
+
+    assert result["ok"] is True
+    assert "expectation_verdict" not in result
+
+
 def test_auto_refactor_scan_is_read_only_not_privileged_mutation():
     engine = _engine_with_skill("auto_refactor")
     meta = engine.skills["auto_refactor"]

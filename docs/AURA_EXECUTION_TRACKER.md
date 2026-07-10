@@ -8919,3 +8919,58 @@ Remaining work after this checkpoint:
 - Add automatic web research expectations requiring sources/citations for
   research-shaped web tasks.
 - Add planner-side use of recent expectation receipts.
+
+## Checkpoint 2026-07-09-14: Source-Backed Web Research Expectations
+
+Scope:
+
+- Normalized `web_search` successful results so source-bearing responses expose
+  a stable `sources` field even when the backend returned `citations`,
+  `chunks`, `results`, or a single `source`.
+- Deep research normalization now also carries `sources` alongside
+  `citations`.
+- Added central automatic `ActionExpectation` generation for `web_search`,
+  `free_search`, and `grounded_search` when the query is source/research/current
+  /news shaped, or when `deep` / `requires_sources` is set.
+- Web research expectations require:
+  - non-empty `sources`
+  - non-empty `summary`
+- The default intentionally ignores simple non-source lookups so lightweight
+  read-only searches are not over-constrained.
+- Added regressions proving a sourceless "latest research" result is downgraded
+  to `success_unverified`, while a simple non-source lookup is left alone.
+
+Verification:
+
+- `python -m pytest tests/test_capability_engine_policy_regressions.py::test_auto_web_search_expectation_rejects_sourceless_research tests/test_capability_engine_policy_regressions.py::test_auto_web_search_expectation_ignores_non_source_lookup -q`
+  -> `2 passed`.
+- `python -m pytest tests/test_capability_engine_policy_regressions.py tests/test_skill_surface_contracts.py -q`
+  -> `125 passed`.
+- `python -m pytest tests/test_response_contract.py::test_response_contract_requires_search_for_research_about_queries tests/test_desktop_task_skill.py::test_desktop_task_collects_research_before_document_composition tests/test_desktop_task_skill.py::test_collect_research_context_uses_shallow_search_under_memory_pressure -q`
+  -> `3 passed`.
+- `python -m py_compile core/skills/web_search.py core/capability_engine.py tests/test_capability_engine_policy_regressions.py`
+  -> passed.
+- `python -m ruff check --select F,E9 core/skills/web_search.py core/capability_engine.py tests/test_capability_engine_policy_regressions.py`
+  -> passed.
+- `git diff --check`
+  -> passed.
+- `make production-gate`
+  -> passed; `/tmp/aura_production_readiness.json` has `passed=true` and
+  `37` checks.
+- `make enterprise-gate`
+  -> passed; `/tmp/aura_enterprise_gate.json` has `counts={}` and
+  `high_or_critical_count=0`.
+
+Current closeout estimate:
+
+- Automatic expectation enforcement now covers desktop tasks, mutating file
+  operations, core-memory block mutations, and source-shaped web research.
+- Remaining expectation expansion should move into archival memory receipts,
+  live skill API boundaries, and autonomous overt actions.
+
+Remaining work after this checkpoint:
+
+- Stabilize archival memory insert receipt shape before automatic archival
+  enforcement.
+- Add planner-side use of recent expectation receipts.
+- Start the runtime control plane/resource admission workstream.

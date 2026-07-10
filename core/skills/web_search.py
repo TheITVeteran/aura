@@ -93,6 +93,7 @@ class EnhancedWebSearchSkill(BaseSkill):
             "summary": summary,
             "facts": list(result.get("facts") or []),
             "confidence": float(result.get("confidence", 0.82) or 0.82),
+            "sources": citations,
             "citations": citations,
             "source": citations[0]["url"] if citations else "",
             "mode": "deep",
@@ -266,6 +267,20 @@ class EnhancedWebSearchSkill(BaseSkill):
                 )
                 result = offline
         result.setdefault("summary", result.get("answer") or result.get("message") or "")
+        if result.get("ok"):
+            result.setdefault(
+                "sources",
+                result.get("citations")
+                or result.get("chunks")
+                or result.get("results")
+                or ([] if not result.get("source") else [{"url": result.get("source")}]),
+            )
+            if result.get("sources"):
+                criteria_results = result.get("criteria_results")
+                if not isinstance(criteria_results, dict):
+                    criteria_results = {}
+                criteria_results["sources gathered"] = True
+                result["criteria_results"] = criteria_results
         try:
             from core.advanced_cognition import ExternalEvidenceDeliberator
 

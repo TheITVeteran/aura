@@ -4415,6 +4415,24 @@ class CapabilityEngine(AuraBaseModule):
                 allow_partial=False,
             )
 
+        if normalized_skill in {"web_search", "free_search", "grounded_search"}:
+            if not cls._web_query_requires_sources(params, context):
+                return None
+            query = str(
+                (params or {}).get("query")
+                or (params or {}).get("q")
+                or (context or {}).get("objective")
+                or (context or {}).get("message")
+                or normalized_skill
+            ).strip()
+            return expectation_cls(
+                objective=f"source-backed web research for {query[:160] or normalized_skill}",
+                acceptance_criteria=[],
+                required_evidence=["sources", "summary"],
+                repair_hint="rerun_web_research_with_sources",
+                allow_partial=True,
+            )
+
         if normalized_skill != "file_operation":
             return None
 
@@ -4442,6 +4460,38 @@ class CapabilityEngine(AuraBaseModule):
             repair_hint=f"verify_file_operation_{action}_effect",
             allow_partial=False,
         )
+
+    @classmethod
+    def _web_query_requires_sources(
+        cls,
+        params: dict[str, Any],
+        context: dict[str, Any],
+    ) -> bool:
+        if cls._bool_value((params or {}).get("deep"), default=False):
+            return True
+        if cls._bool_value((context or {}).get("requires_sources"), default=False):
+            return True
+        if cls._bool_value((params or {}).get("requires_sources"), default=False):
+            return True
+        query = str(
+            (params or {}).get("query")
+            or (params or {}).get("q")
+            or (context or {}).get("objective")
+            or (context or {}).get("message")
+            or ""
+        ).casefold()
+        source_markers = (
+            "article",
+            "citation",
+            "cite",
+            "current",
+            "latest",
+            "news",
+            "research",
+            "source",
+            "today",
+        )
+        return any(marker in query for marker in source_markers)
 
     @classmethod
     def _apply_action_expectation_result(
