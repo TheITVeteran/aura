@@ -194,7 +194,7 @@ def test_runtime_kernel_language_avoids_agi_asi_overclaim_labels():
         root / "core" / "kernel" / "upgrades_10x.py",
         root / "core" / "kernel" / "self_review.py",
         root / "core" / "autonomy" / "research_cycle.py",
-        root / "core" / "moral_reasoning.py",
+        root / "core" / "morality" / "moral_reasoning.py",
     ]
     forbidden = [
         re.compile(r"\bASI\b"),

@@ -3381,7 +3381,7 @@ def test_integrity_guardian_auto_restores_missing_file_when_enabled(monkeypatch,
     from core.security import integrity_guardian as ig_mod
 
     monkeypatch.setattr(ig_mod, "_BASE_DIR", tmp_path)
-    core_dir = tmp_path / "core"
+    core_dir = tmp_path / "core" / "security"
     core_dir.mkdir(parents=True, exist_ok=True)
     missing_file = core_dir / "emergency_protocol.py"
 
@@ -3390,7 +3390,7 @@ def test_integrity_guardian_auto_restores_missing_file_when_enabled(monkeypatch,
     guardian = ig_mod.IntegrityGuardian()
     guardian._manifest_hmac = "sig"
     guardian._manifest = {
-        "core/emergency_protocol.py": "expected-hash"
+        "core/security/emergency_protocol.py": "expected-hash"
     }
 
     restore_called = []
@@ -3405,7 +3405,7 @@ def test_integrity_guardian_auto_restores_missing_file_when_enabled(monkeypatch,
 
     alerts = guardian._verify_all()
 
-    assert restore_called == ["core/emergency_protocol.py"]
+    assert restore_called == ["core/security/emergency_protocol.py"]
     assert alerts == []
     assert guardian.get_status()["integrity_ok"] is True
 
@@ -3415,7 +3415,7 @@ def test_integrity_guardian_auto_restores_tampered_file_when_enabled(monkeypatch
     from core.security import integrity_guardian as ig_mod
 
     monkeypatch.setattr(ig_mod, "_BASE_DIR", tmp_path)
-    core_dir = tmp_path / "core"
+    core_dir = tmp_path / "core" / "security"
     core_dir.mkdir(parents=True, exist_ok=True)
     tampered_file = core_dir / "emergency_protocol.py"
     tampered_file.write_text("tampered content", encoding="utf-8")
@@ -3426,7 +3426,7 @@ def test_integrity_guardian_auto_restores_tampered_file_when_enabled(monkeypatch
     guardian = ig_mod.IntegrityGuardian()
     guardian._manifest_hmac = "sig"
     guardian._manifest = {
-        "core/emergency_protocol.py": "expected-hash"
+        "core/security/emergency_protocol.py": "expected-hash"
     }
 
     restore_called = []
@@ -3447,7 +3447,7 @@ def test_integrity_guardian_auto_restores_tampered_file_when_enabled(monkeypatch
 
     alerts = guardian._verify_all()
 
-    assert restore_called == ["core/emergency_protocol.py"]
+    assert restore_called == ["core/security/emergency_protocol.py"]
     assert alerts == []
     assert guardian.get_status()["integrity_ok"] is True
 
@@ -3457,7 +3457,7 @@ def test_integrity_guardian_skips_restore_in_dev_if_modified(monkeypatch, tmp_pa
     from core.security import integrity_guardian as ig_mod
 
     monkeypatch.setattr(ig_mod, "_BASE_DIR", tmp_path)
-    core_dir = tmp_path / "core"
+    core_dir = tmp_path / "core" / "security"
     core_dir.mkdir(parents=True, exist_ok=True)
     dev_file = core_dir / "emergency_protocol.py"
     dev_file.write_text("dev modified content", encoding="utf-8")
@@ -3467,7 +3467,7 @@ def test_integrity_guardian_skips_restore_in_dev_if_modified(monkeypatch, tmp_pa
 
     guardian = ig_mod.IntegrityGuardian()
     guardian._manifest = {
-        "core/emergency_protocol.py": "expected-hash"
+        "core/security/emergency_protocol.py": "expected-hash"
     }
 
     restore_called = []
@@ -3477,7 +3477,7 @@ def test_integrity_guardian_skips_restore_in_dev_if_modified(monkeypatch, tmp_pa
 
     monkeypatch.setattr(guardian, "_restore_file_via_git", mock_restore)
     monkeypatch.setattr(guardian, "_hash_file", lambda p: "dev-hash")
-    monkeypatch.setattr(guardian, "_get_git_status_map", lambda: {"core/emergency_protocol.py": "M"})
+    monkeypatch.setattr(guardian, "_get_git_status_map", lambda: {"core/security/emergency_protocol.py": "M"})
 
     alerts = guardian._verify_all()
 

@@ -34,6 +34,41 @@ Final closure statement: Aura passed the configured local final-proof gates for 
 
 ---
 
+## Falsification Ledger
+
+The packaging outsiders can act on: every claim with its acceptance criteria,
+the exact test that exercises it, the current verdict, and how the claim FAILS
+when it fails. A claim without a runnable test is marked so — that gap is the
+claim's blocker, not a footnote. Verdicts: **pass** = the listed test passes
+under the local offline profile today; **blocked** = no honest test can run
+yet (the failure-mode column says why).
+
+| # | Claim | Criteria (what must be true) | Evidence | Test (exact command) | Verdict | Failure mode |
+|---|---|---|---|---|---|---|
+| 1 | Governed runtime | Consequential effects route through a closed-by-default, receipt-emitting gateway; ungoverned writes refused | `core/executive/authority_gateway.py`, `core/runtime/file_write_gateway.py` | `pytest tests/test_executive_authority.py tests/test_authority_audit.py -q`; `make governance-lint` | pass | An effect path bypasses the gateway → governance lint / authority audit fails naming the path |
+| 2 | Persistent memory | Context stored in one session is retrieved and used in a later independent session | `core/memory/` | `pytest tests/test_continuous_experience_stream.py -q` | pass | Recall returns nothing or confabulates → retention/grounding tests fail |
+| 3 | Causal internal state | Homeostatic/affect variables measurably change prompt assembly and action selection | `core/state/aura_state.py` | `pytest proof_kernel/tests/test_proof_kernel.py -q` | pass | State changes produce identical downstream behavior → coupling assertions fail |
+| 4 | Affect steering | Structured affect vector modulates generation (measurable A/B difference) | `core/phases/affect_update.py`, `core/consciousness/affective_steering.py` | `pytest tests/test_affect_behavioral.py tests/test_affective_steering_runtime_hardening.py -q` | pass | Steering hook inert (d≈0 in A/B) → behavioral affect tests fail |
+| 5 | System 2 planning | Deliberate tree search runs, catches bad plans, beats a no-search control on planning tasks | `core/cognition/mcts_world_model.py` | `pytest tests/system2 tests/test_system2_stress.py -q` | pass | Planner returns first thought / search never expands → stress + rejection tests fail |
+| 6 | Self-repair | Runtime detects a defect class and heals it with a receipt (no silent limp) | `core/runtime/self_repair_ladder.py` | `pytest tests/test_react_loop_self_heal.py tests/test_degradation_receipts.py -q` | pass | Repair silently swallows or loops → receipt/degradation contracts fail |
+| 7 | Self-modification | Patches to own code pass quarantine, static checks, promotion policy before landing | `core/self_modification/` | `pytest tests/test_mutation_safety.py tests/test_safe_modification_harness.py -q` | pass | Unsafe patch promoted or safe patch corrupted → mutation-safety tests fail |
+| 8 | Operational volition | Action selection mediated by Will decisions with cryptographic receipt IDs | `core/governance/will.py` | `pytest tests/test_unified_will.py tests/test_genuine_refusal_will.py -q` | pass | Actions execute without a Will receipt → refusal/receipt tests fail |
+| 9 | Autonomous agency | Multi-step objective pursuit with subgoal adaptation, no human step-through | `core/autonomy/autonomous_research_orchestrator.py` | `pytest tests/test_autonomous_initiative_loop_hardening.py tests/test_autonomous_task_engine_runtime.py -q`; `make demo-autonomy` | pass | Loop stalls after one step or ignores feedback → orchestrator tests fail |
+| 10 | Emergent intelligence | OOD reasoning beats simple prompting at scale under strict controls | — | none runnable locally | blocked | No local compute for wide-distribution eval; claim stays not-proven until independent benchmark |
+| 11 | Entity-in-a-box | Sandboxed execution cannot escape directory/host bounds | `tests/test_sandbox_hardening.py` | `pytest tests/test_sandbox_hardening.py -q` | pass | Escape found → hardening tests fail (that is the point of them) |
+| 12 | External validation | Independent third party reproduces headline results | — | `make demo-learning` is the designated reproduction artifact | blocked | Nobody outside this machine has run it yet; blocked on external actors, not code |
+| 13 | DNU AGI | >85% on the 100-task battery with honest baselines | `artifacts/current/agi_live/` | `make decisive` (full battery re-run; hours) | pass* | *Baseline was token-handicapped (see DNU fairness audit) — bundle demonstrates System 2 reasoning, NOT AGI; re-run pending |
+| 14 | AGI-candidate | DNU + agency emergence + external-validation criteria met under local profile | `artifacts/current/` bundles | `make final-proof` (full profile; hours) | pass | Any gate in the profile fails → final-proof exits nonzero naming the gate |
+| 15 | Production gate readiness | Local compile/readiness/enterprise/production gates green | gate reports in `/tmp` + `artifacts/` | `make quality` | pass | Any ratchet regression → the specific gate fails with the offending file |
+| 16 | Mature RSI (capability growth) | Strictly-increasing held-out capability curve across promoted generations | `data/learning/compounding/lineage.jsonl` | `python tools/compounding_cycle.py --status` (verdict from ledger) | blocked | Curve not increasing → ledger verdict stays BOUNDED_SELF_OPTIMIZATION (current honest state) |
+| 17 | Subjective consciousness | Phenomenal experience demonstrated | — | none possible | blocked | Not scientifically testable; permanently out of claim scope |
+| 18 | Personhood | Legal/moral person status | — | none possible | blocked | Out of scope for a software runtime |
+| 19 | Metaphysical free will | Causation outside physics | — | none possible | blocked | Out of scope; computational volition only (claim 8) |
+| 20 | Indefinite autonomy | 72h+ soak with bounded memory, zero deaths, stable latency | `artifacts/reliability/runs/` | `python tools/conversation_endurance_probe.py --turns 200 --deadline-min 110` | blocked | Current soaks are 2-4h; long-horizon runs still show load-dependent latency walls (see reliability runs) |
+| 21 | Synthetic cognitive entity | Boxed agency + volition + continuity + receipts pass together | unified scenario artifacts | `make person-box-proof` | pass | Any pillar (agency/volition/continuity/receipts) fails its battery |
+| 22 | Experience-adjacent indicators | Internal states influence perception, memory indexing, self-reports traceably | metacognition/state-coupling tests | `pytest tests/test_consciousness_conditions.py -q` (81 conditions, 4 axes) | pass | A condition loses causal wiring → its EXISTENCE/CAUSAL/INDISPENSABILITY test fails |
+| 23 | Compounding loop (mechanism) | Gen N+1 trains on gen N's published artifact; sealed gate; hash-chained ledger | `artifacts/learning_compounding/2026-07-07-1p5b-2cycle/` | `make demo-learning` (~20-40 min); `pytest tests/test_weight_compounding.py -q` (offline contracts) | pass | Chain broken (base ≠ parent artifact) or ledger tampered → `verify_ledger()` fails; gate regression → refusal recorded |
+
 ## Detailed Claims Definitions
 
 ### 1. Governed Runtime
