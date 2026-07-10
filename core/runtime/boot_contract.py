@@ -120,6 +120,13 @@ BOOT_SERVICE_REQUIREMENTS: tuple[BootServiceRequirement, ...] = (
         failure_policy="degrade_with_receipt",
         evidence_tokens=("class LaneReconciler", "class CrashLoopBreaker"),
     ),
+    BootServiceRequirement(
+        name="actor_supervision",
+        owner_file="core/supervisor/tree.py",
+        required_for="canonical actor process lifecycle and restart policy",
+        failure_policy="fail-closed",
+        evidence_tokens=("class SupervisionTree", "def get_tree"),
+    ),
 )
 
 CANONICAL_PROOF_ARTIFACT_DIRS: tuple[str, ...] = (

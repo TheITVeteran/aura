@@ -351,6 +351,60 @@ FMEA_REGISTRY: tuple[FailureMode, ...] = (
         occurrences=("2026-07-08 boot-window occurrences investigated, benign",),
         notes="Self-healing; only the FREQUENCY under load is worth watching.",
     ),
+    FailureMode(
+        id="FM-SUP-001",
+        subsystem="core/supervisor/tree.py + core/runtime/organ_supervisor.py",
+        mode="Duplicate process supervisors restart or stop the same runtime independently",
+        cause="Launcher, orchestrator, actor tree, and command-organ watchdogs each carried "
+        "their own singleton and restart budget, allowing ownership and circuit state to diverge",
+        effect="Duplicate children, conflicting restart loops, lost IPC rebinding, or shutdown "
+        "that reports complete while another supervisor keeps a child alive",
+        blast_radius=BlastRadius.ORGANISM,
+        severity=Severity.CRITICAL,
+        detection="Operator control-plane report names one actor monitor, desired/observed child "
+        "state, open circuits, and duplicate live-contract registration",
+        mitigation="aura_main and orchestrator resolve one SupervisionTree singleton; the tree is "
+        "a managed control-plane service; command organs delegate retries/backoff/circuits to "
+        "RuntimeControlPlane and retain transport only",
+        detection_modules=(
+            "core.runtime.operator_control_plane",
+            "core.runtime.control_plane",
+        ),
+        mitigation_modules=(
+            "core.supervisor.tree",
+            "core.runtime.organ_supervisor",
+            "core.runtime.control_plane",
+        ),
+        notes="Structurally reachable in the pre-unification call graph: aura_main constructed a "
+        "separate SupervisionTree while OrganSupervisor owned an independent watchdog.",
+    ),
+    FailureMode(
+        id="FM-AUD-001",
+        subsystem="core/runtime/receipts.py + resource admission audit",
+        mode="High-frequency admission decisions exhaust filesystem inodes and process memory",
+        cause="Every pressure deferral used one durable JSON file and stayed in the in-memory "
+        "receipt index, even when the same state repeated indefinitely",
+        effect="Long-running hosts accumulate unbounded files and index entries; diagnostics and "
+        "restart reload become progressively slower until auditability harms availability",
+        blast_radius=BlastRadius.HOST,
+        severity=Severity.MAJOR,
+        detection="Receipt storage stats expose hot-index limits, ledger availability, persistent "
+        "counts, and admission coalescing counters in the operator report",
+        mitigation="Every receipt kind uses bounded immutable hot snapshots with durable cold "
+        "lookup; high-volume admission receipts use one WAL-backed ledger, and unchanged "
+        "unaudited denials persist on transition and periodic heartbeat while audited requests "
+        "remain one receipt per attempt",
+        detection_modules=(
+            "core.runtime.receipts",
+            "core.runtime.operator_control_plane",
+        ),
+        mitigation_modules=(
+            "core.runtime.receipts",
+            "core.runtime.control_plane",
+        ),
+        notes="Structural long-run analysis from Pass F; no finite soak can prove unbounded "
+        "per-event file creation safe over indefinite daily operation.",
+    ),
 )
 
 

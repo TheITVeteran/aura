@@ -5274,6 +5274,7 @@ def test_service_manifest_lists_all_critical_runtime_roles():
         "resource_admission",
         "lane_admission",
         "lane_reconciler",
+        "actor_supervision",
         "shutdown_coordinator",
         "agent_workspace",
     }
@@ -5871,6 +5872,51 @@ def test_supervision_tree_record_activity_unknown_actor_is_noop():
 
     tree = SupervisionTree()
     tree.record_activity("ghost")  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_supervision_tree_start_is_single_monitor_and_control_plane_managed(
+    monkeypatch,
+):
+    import core.supervisor.tree as tree_module
+    from core.runtime.control_plane import (
+        get_runtime_control_plane,
+        reset_runtime_control_plane,
+    )
+    from core.supervisor.tree import SupervisionTree
+
+    monkeypatch.setattr(tree_module.multiprocessing, "active_children", lambda: [])
+    reset_runtime_control_plane()
+    tree = SupervisionTree()
+    try:
+        await tree.start()
+        first_task = tree._monitor_task
+        await tree.start()
+
+        assert tree._monitor_task is first_task
+        assert tree.is_alive() is True
+        status = get_runtime_control_plane().service_status()["actor_supervision"]
+        assert status["observed_state"] == "ready"
+        assert status["critical"] is True
+    finally:
+        await tree.stop()
+        reset_runtime_control_plane()
+
+
+def test_supervision_tree_rejects_conflicting_duplicate_actor_contract():
+    from core.supervisor.tree import ActorSpec, SupervisionTree
+
+    def first(*_args):
+        return None
+
+    def second(*_args):
+        return None
+
+    tree = SupervisionTree()
+    tree.add_actor(ActorSpec(name="worker", entry_point=first))
+    tree.add_actor(ActorSpec(name="worker", entry_point=first))
+    with pytest.raises(ValueError, match="conflicting"):
+        tree.add_actor(ActorSpec(name="worker", entry_point=second))
 
 
 # ==========================================================================
@@ -7495,7 +7541,7 @@ async def test_concrete_state_gateway_governance_failure_blocks_mutation(tmp_pat
         await gw.mutate(StateMutationRequest(key="k", new_value=1, cause="x"))
 
 
-def test_universal_receipt_types_importable():
+def test_universal_receipt_types_importable(tmp_path):
     from core.runtime.receipts import (
         ToolExecutionReceipt,
         get_receipt_store,
@@ -7503,10 +7549,12 @@ def test_universal_receipt_types_importable():
     )
 
     reset_receipt_store()
-    store = get_receipt_store()
+    store = get_receipt_store(tmp_path / "receipts")
     rec = ToolExecutionReceipt(receipt_id="t1", cause="test", tool="x", status="success_unverified")
     store.emit(rec)
-    assert store.get("t1") is rec
+    loaded = store.get("t1")
+    assert loaded is not rec
+    assert loaded.to_dict() == rec.to_dict()
     assert store.coverage_stats()["tool_execution"] == 1
     reset_receipt_store()
 

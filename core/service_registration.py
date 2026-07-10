@@ -99,6 +99,11 @@ def register_all_services(is_proxy: bool = False):
 
         return get_lane_reconciler()
 
+    def create_actor_supervision():
+        from core.supervisor.tree import get_tree
+
+        return get_tree()
+
     container.register(
         'runtime_control_plane',
         create_runtime_control_plane,
@@ -163,6 +168,17 @@ def register_all_services(is_proxy: bool = False):
         registered_by='register_all_services',
         required_for='model-lane desired-state and crash-loop convergence',
         failure_policy='degrade_with_receipt',
+    )
+    container.register(
+        'actor_supervision',
+        create_actor_supervision,
+        lifetime=ServiceLifetime.SINGLETON,
+        required=True,
+        dependencies=['runtime_control_plane'],
+        owner='core/supervisor/tree.py',
+        registered_by='register_all_services',
+        required_for='canonical actor process lifecycle and restart policy',
+        failure_policy='fail-closed',
     )
 
     # Critique-closure services: adaptive mood, mesh cognition, emergent goals,

@@ -1,49 +1,107 @@
-from core.runtime.errors import record_degradation
-import multiprocessing
-import multiprocessing.connection
-import time
+"""Canonical multiprocessing actor transport beneath runtime desired state."""
+
+from __future__ import annotations
+
+import asyncio
 import logging
-import signal
+import multiprocessing
 import os
-import sys
 import threading
-from typing import Dict, Any, Callable, Optional, List
+import time
 from dataclasses import dataclass, field
+from typing import Any, Callable, ClassVar, Protocol, cast
+
 from core.bus.pipe_control import send_supervisor_stop
+from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
 from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Supervisor")
 
+_ACTOR_SHUTDOWN_GRACE_FLAG = declare(
+    "AURA_ACTOR_SHUTDOWN_GRACE_S",
+    kind=FlagKind.FLOAT,
+    default=2.0,
+    description="Cooperative stop grace for supervised actor processes",
+    owner="core.supervisor.tree",
+)
+_ACTOR_FINAL_SWEEP_GRACE_FLAG = declare(
+    "AURA_ACTOR_FINAL_SWEEP_GRACE_S",
+    kind=FlagKind.FLOAT,
+    default=0.75,
+    description="Final join grace before terminating orphan actor children",
+    owner="core.supervisor.tree",
+)
+
+SERVICE_NAME = "actor_supervision"
+
 
 def _shutdown_requested() -> bool:
-    return is_shutdown_requested()
+    return bool(is_shutdown_requested())
+
+
+class _ProcessHandle(Protocol):
+    pid: int | None
+    exitcode: int | None
+    name: str
+
+    def start(self) -> None: ...
+
+    def is_alive(self) -> bool: ...
+
+    def join(self, timeout: float | None = None) -> None: ...
+
+    def terminate(self) -> None: ...
+
+    def kill(self) -> None: ...
+
+    def close(self) -> None: ...
+
 
 @dataclass
 class ActorSpec:
     name: str
-    entry_point: Optional[Callable] = None
-    target: Optional[Callable] = None  # Alias for entry_point to match Orchestrator usage
-    args: tuple = field(default_factory=tuple)
-    restart_policy: str = "always" # always, transient, never
+    entry_point: Callable[..., Any] | None = None
+    target: Callable[..., Any] | None = None
+    args: tuple[Any, ...] = field(default_factory=tuple)
+    restart_policy: str = "always"  # always, transient, never
     max_restarts: int = 3
-    restart_delay: float = 1.0 # Base delay
-    backoff_factor: float = 2.0 # Exponential backoff factor
-    window_seconds: int = 60 # Period to track consecutive failures
-    health_timeout: float = 30.0 # PIPELINE HARDENING: Generous timeout to prevent false kills
-    grace_period: float = 45.0 # PIPELINE HARDENING: Long grace for model loading on M5
+    restart_delay: float = 1.0
+    backoff_factor: float = 2.0
+    window_seconds: int = 60
+    health_timeout: float = 30.0
+    grace_period: float = 45.0
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.target and not self.entry_point:
             self.entry_point = self.target
         if not self.entry_point:
             raise ValueError("ActorSpec requires either entry_point or target")
+        self.restart_policy = str(self.restart_policy or "").strip().lower()
+        if self.restart_policy not in {"always", "transient", "never"}:
+            raise ValueError(
+                "restart_policy must be one of: always, transient, never"
+            )
+        if self.max_restarts < 0:
+            raise ValueError("max_restarts must be non-negative")
+        if self.restart_delay < 0:
+            raise ValueError("restart_delay must be non-negative")
+        if self.backoff_factor < 1.0:
+            raise ValueError("backoff_factor must be at least 1")
+        if self.window_seconds <= 0:
+            raise ValueError("window_seconds must be positive")
+        if self.health_timeout <= 0:
+            raise ValueError("health_timeout must be positive")
+        if self.grace_period < 0:
+            raise ValueError("grace_period must be non-negative")
 
 class ActorHealthGate:
     """
     ZENITH LOCKDOWN: Health gating for actors.
     Provides grace periods and miss thresholds for heartbeats.
     """
-    def __init__(self, grace_period: float = 15.0, timeout: float = 10.0):
+    def __init__(self, grace_period: float = 15.0, timeout: float = 10.0) -> None:
         self.start_time = time.monotonic()
         self.last_heartbeat = time.monotonic()
         self.grace_period = grace_period
@@ -52,7 +110,7 @@ class ActorHealthGate:
         self.max_misses = 3
         self._last_miss_window = -1
 
-    def record_heartbeat(self):
+    def record_heartbeat(self) -> None:
         self.last_heartbeat = time.monotonic()
         self.miss_count = 0
         self._last_miss_window = -1
@@ -78,36 +136,61 @@ class ActorHealthGate:
 @dataclass
 class ManagedActor:
     spec: ActorSpec
-    process: Optional[multiprocessing.Process] = None
-    pipe: Optional[Any] = None
+    process: _ProcessHandle | None = None
+    pipe: Any | None = None
     restarts: int = 0
     consecutive_failures: int = 0
     last_restart: float = 0.0
     next_restart_time: float = 0.0
     is_circuit_broken: bool = False
-    health_gate: Optional[ActorHealthGate] = None
+    health_gate: ActorHealthGate | None = None
     monitor_health: bool = False
+    desired_running: bool = False
+    last_exit_code: int | None = None
+    last_error: str = ""
+    last_failure_at: float = 0.0
 
 class SupervisionTree:
     """
     The 'Immune System' of Aura.
     Hierarchical supervisor for sovereign processes.
     """
-    def __init__(self):
-        self._actors: Dict[str, ManagedActor] = {}
+    _active_lock: ClassVar[threading.Lock] = threading.Lock()
+    _active_instance: ClassVar[SupervisionTree | None] = None
+
+    def __init__(self) -> None:
+        self._actors: dict[str, ManagedActor] = {}
         self._is_running = False
         self._shutting_down = False
-        self._restart_callback: Optional[Callable[[str, Any], None]] = None
+        self._restart_callback: Callable[[str, Any], None] | None = None
         self._lock = threading.RLock()
+        self._spawn_lock = threading.RLock()
+        self._monitor_task: asyncio.Task[Any] | None = None
 
-    def set_restart_callback(self, callback: Callable[[str, Any], None]):
+    def set_restart_callback(self, callback: Callable[[str, Any], None]) -> None:
         """Set a callback for when an actor is restarted with a new pipe."""
         with self._lock:
             self._restart_callback = callback
 
-    def add_actor(self, spec: ActorSpec):
+    def add_actor(self, spec: ActorSpec) -> None:
         """Register a new actor spec."""
         with self._lock:
+            existing = self._actors.get(spec.name)
+            if existing is not None:
+                same_contract = (
+                    existing.spec.entry_point is spec.entry_point
+                    and existing.spec.args == spec.args
+                    and existing.spec.restart_policy == spec.restart_policy
+                )
+                if same_contract:
+                    return
+                if existing.process is not None and self._process_is_alive(existing.process):
+                    raise RuntimeError(
+                        f"cannot replace live supervised actor contract: {spec.name}"
+                    )
+                raise ValueError(
+                    f"conflicting supervised actor registration: {spec.name}"
+                )
             self._actors[spec.name] = ManagedActor(spec=spec)
         logger.info("🛡️ Actor Registered for Supervision: %s", spec.name)
 
@@ -116,7 +199,7 @@ class SupervisionTree:
             actor = self._actors.get(name)
         return bool(actor and actor.process and actor.process.is_alive())
 
-    def get_actor_pipe(self, name: str):
+    def get_actor_pipe(self, name: str) -> Any | None:
         with self._lock:
             actor = self._actors.get(name)
         return actor.pipe if actor else None
@@ -139,12 +222,12 @@ class SupervisionTree:
     def _send_actor_stop(self, pipe: Any, name: str) -> bool:
         """Best-effort cooperative actor stop over the existing pipe transport."""
         try:
-            return send_supervisor_stop(pipe, name)
+            return bool(send_supervisor_stop(pipe, name))
         except (BrokenPipeError, EOFError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.debug("Cooperative actor stop send failed for %s: %s", name, exc)
             return False
 
-    def _process_is_alive(self, process: multiprocessing.Process) -> bool:
+    def _process_is_alive(self, process: _ProcessHandle) -> bool:
         if getattr(process, "exitcode", None) is not None:
             return False
         try:
@@ -161,12 +244,12 @@ class SupervisionTree:
             proc = psutil.Process(pid)
             if proc.status() == psutil.STATUS_ZOMBIE:
                 return False
-            return proc.is_running()
+            return bool(proc.is_running())
         except ImportError:
             pass
-        except (psutil.NoSuchProcess, ProcessLookupError):  # type: ignore[name-defined]
+        except (psutil.NoSuchProcess, ProcessLookupError):
             return False
-        except (psutil.Error, RuntimeError, AttributeError, TypeError, ValueError):  # type: ignore[name-defined]
+        except (psutil.Error, RuntimeError, AttributeError, TypeError, ValueError):
             return True
         try:
             os.kill(pid, 0)
@@ -176,7 +259,7 @@ class SupervisionTree:
         except PermissionError:
             return True
 
-    def record_activity(self, name: str):
+    def record_activity(self, name: str) -> None:
         """Mark an actor as alive without directly reading from its IPC pipe."""
         with self._lock:
             actor = self._actors.get(name)
@@ -190,51 +273,90 @@ class SupervisionTree:
             actor.monitor_health = True
             actor.health_gate.record_heartbeat()
 
-    def start_actor(self, name: str):
-        """Spin up a specific actor. Idempotent: returns existing pipe if already running."""
-        if self._shutting_down or _shutdown_requested():
-            logger.info("🛑 Not starting Actor %s: runtime is shutting down.", name)
-            return None
-        with self._lock:
-            actor = self._actors.get(name)
-            if not actor:
-                raise ValueError(f"Unknown actor: {name}")
+    def start_actor(self, name: str) -> Any | None:
+        """Spin up one actor and fold launch failures into bounded recovery."""
+        with self._spawn_lock:
+            if self._shutting_down or _shutdown_requested():
+                logger.info("🛑 Not starting Actor %s: runtime is shutting down.", name)
+                return None
+            with self._lock:
+                actor = self._actors.get(name)
+                if not actor:
+                    raise ValueError(f"Unknown actor: {name}")
 
-            # If already running, just return existing pipe
-            if actor.process and actor.process.is_alive():
-                logger.debug("🛡️ start_actor: %s is already alive (PID: %s). Returning existing pipe.", name, actor.process.pid)
-                return actor.pipe
+                actor.desired_running = True
+                if actor.process and self._process_is_alive(actor.process):
+                    logger.debug(
+                        "🛡️ start_actor: %s is already alive (PID: %s). Returning existing pipe.",
+                        name,
+                        actor.process.pid,
+                    )
+                    return actor.pipe
 
-        import multiprocessing
-        ctx = multiprocessing.get_context("spawn")
-        parent_read, child_write = ctx.Pipe(duplex=False)
-        child_read, parent_write = ctx.Pipe(duplex=False)
-        parent_pipe = (parent_read, parent_write)
-        child_pipe = (child_read, child_write)
-        
-        proc = ctx.Process(
-            target=actor.spec.entry_point,
-            args=(*actor.spec.args, child_pipe),
-            name=f"AuraActor:{name}",
-            daemon=True
-        )
-        
-        proc.start()
-        # PIPELINE HARDENING: Removed time.sleep(1.5) that was blocking the
-        # event loop on every actor spawn. The OS handles memory without this.
-        with self._lock:
-            actor.process = proc
-            actor.pipe = parent_pipe
-            actor.last_restart = time.time()
-            actor.is_circuit_broken = False
-            actor.health_gate = ActorHealthGate(
-                grace_period=actor.spec.grace_period,
-                timeout=actor.spec.health_timeout,
-            )
-            actor.health_gate.record_heartbeat()
+            parent_pipe: tuple[Any, Any] | None = None
+            child_pipe: tuple[Any, Any] | None = None
+            proc: _ProcessHandle | None = None
+            try:
+                ctx = multiprocessing.get_context("spawn")
+                parent_read, child_write = ctx.Pipe(duplex=False)
+                child_read, parent_write = ctx.Pipe(duplex=False)
+                parent_pipe = (parent_read, parent_write)
+                child_pipe = (child_read, child_write)
+                proc = cast(
+                    _ProcessHandle,
+                    ctx.Process(
+                        target=actor.spec.entry_point,
+                        args=(*actor.spec.args, child_pipe),
+                        name=f"AuraActor:{name}",
+                        daemon=True,
+                    ),
+                )
+                proc.start()
+            except (
+                AssertionError,
+                AttributeError,
+                OSError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                self._close_pipe(parent_pipe)
+                self._close_pipe(child_pipe)
+                if proc is not None:
+                    try:
+                        proc.close()
+                    except (AttributeError, RuntimeError, TypeError, ValueError):
+                        pass
+                record_degradation(
+                    "tree",
+                    exc,
+                    severity="error",
+                    action="actor launch failed; scheduled bounded supervisor retry",
+                    extra={"actor": name},
+                )
+                self._handle_failure(name, error=exc)
+                self._publish_conditions()
+                return None
 
-        logger.info("🚀 Actor Started: %s (PID: %s)", name, proc.pid)
-        return parent_pipe
+            # The child endpoints must not remain open in the parent process;
+            # otherwise EOF-based actor shutdown can remain permanently masked.
+            self._close_pipe(child_pipe)
+            if proc is None:
+                raise RuntimeError(f"actor process construction returned no handle: {name}")
+            with self._lock:
+                actor.process = proc
+                actor.pipe = parent_pipe
+                actor.last_restart = time.time()
+                actor.last_exit_code = None
+                actor.is_circuit_broken = False
+                actor.health_gate = ActorHealthGate(
+                    grace_period=actor.spec.grace_period,
+                    timeout=actor.spec.health_timeout,
+                )
+                actor.health_gate.record_heartbeat()
+
+            logger.info("🚀 Actor Started: %s (PID: %s)", name, proc.pid)
+            return parent_pipe
 
     def stop_actor(
         self,
@@ -243,7 +365,8 @@ class SupervisionTree:
         graceful_timeout: float = 0.0,
         terminate_timeout: float = 1.0,
         kill_timeout: float = 1.0,
-    ):
+        preserve_desired: bool = False,
+    ) -> None:
         """Stop an actor and reap its process handle before shutdown returns.
 
         The caller can first give a cooperative bus-level ``stop`` handler time
@@ -253,6 +376,8 @@ class SupervisionTree:
         """
         with self._lock:
             actor = self._actors.get(name)
+            if actor is not None and not preserve_desired:
+                actor.desired_running = False
         if actor and actor.process:
             logger.info("🛑 Stopping Actor: %s", name)
             process = actor.process
@@ -309,50 +434,157 @@ class SupervisionTree:
                     actor.process = None
                     actor.pipe = None
 
-    async def start(self):
-        """Async entry point for Orchestrator bootstrap."""
-        self._is_running = True
-        self._shutting_down = False
-        logger.info("🛡️ Supervision Tree initialized (Async).")
-
-    async def stop(self):
-        """Async lifecycle stop."""
-        self.stop_all()
-
-    async def wait_forever(self):
-        """Main supervision loop (non-blocking async)."""
-        import asyncio
-        self._is_running = True
-        self._shutting_down = _shutdown_requested()
-        logger.info("🛡️ Supervision Tree ACTIVE (Async). Monitoring actors...")
-        
+    async def start(self) -> None:
+        """Start one background monitor and restore desired actor processes."""
+        with self._active_lock:
+            active = self._active_instance
+            if active is self and self._is_running:
+                return
+            if active is not None and active is not self:
+                raise RuntimeError(
+                    "another SupervisionTree already owns the actor monitor"
+                )
+            self.__class__._active_instance = self
+            self._is_running = True
+            self._shutting_down = False
+        with self._lock:
+            desired = [
+                name
+                for name, actor in self._actors.items()
+                if actor.desired_running
+                and (actor.process is None or not self._process_is_alive(actor.process))
+            ]
+        for name in desired:
+            self.start_actor(name)
+        monitor = self._monitor_loop()
         try:
-            while self._is_running:
-                if _shutdown_requested():
-                    self.stop_all()
-                    break
+            self._monitor_task = get_task_tracker().create_task(
+                monitor,
+                name="ActorSupervisionMonitor",
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            monitor.close()
+            self._is_running = False
+            with self._active_lock:
+                if self._active_instance is self:
+                    self.__class__._active_instance = None
+            raise
+        self._register_with_control_plane()
+        self._publish_conditions()
+        logger.info("🛡️ Supervision Tree initialized with one managed monitor.")
+
+    async def stop(self) -> None:
+        """Stop the monitor and actors while preserving desired state for restart."""
+        self._is_running = False
+        self._shutting_down = True
+        task, self._monitor_task = self._monitor_task, None
+        if task is not None:
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except (asyncio.CancelledError, TimeoutError):
+                pass
+        try:
+            await asyncio.to_thread(self.stop_all, preserve_desired=True)
+            self._publish_conditions()
+        finally:
+            with self._active_lock:
+                if self._active_instance is self:
+                    self.__class__._active_instance = None
+
+    async def _monitor_loop(self) -> None:
+        logger.info("🛡️ Supervision Tree ACTIVE. Monitoring actors...")
+        try:
+            while self._is_running and not _shutdown_requested():
                 self._poll_health()
                 await asyncio.sleep(1.0)
         except asyncio.CancelledError:
-            self.stop_all()
+            raise
+        finally:
+            if _shutdown_requested():
+                self._shutting_down = True
+            self._is_running = False
 
-    def run_forever(self):
-        """Main supervision loop (blocking)."""
-        self._is_running = True
-        self._shutting_down = _shutdown_requested()
-        logger.info("🛡️ Supervision Tree ACTIVE. Monitoring actors...")
-        
+    async def wait_forever(self) -> None:
+        """Wait for the managed monitor to stop without starting a second loop."""
+        await self.start()
         try:
-            while self._is_running:
-                if _shutdown_requested():
-                    self.stop_all()
-                    break
-                self._poll_health()
-                time.sleep(1.0)
-        except KeyboardInterrupt:
-            self.stop_all()
+            while self.is_alive() and not _shutdown_requested():
+                await asyncio.sleep(0.25)
+        except asyncio.CancelledError:
+            raise
+        if _shutdown_requested() and self.is_alive():
+            await self.stop()
 
-    def _poll_health(self):
+    def _register_with_control_plane(self) -> None:
+        try:
+            from core.runtime.control_plane import (
+                DesiredServiceSpec,
+                WorkClass,
+                get_runtime_control_plane,
+            )
+            from core.runtime.service_registry import register_runtime_service
+
+            plane = get_runtime_control_plane()
+            if not plane.has_service(SERVICE_NAME):
+                plane.register_service(
+                    DesiredServiceSpec(
+                        name=SERVICE_NAME,
+                        critical=True,
+                        restart_limit=3,
+                        restart_window_s=300.0,
+                        backoff_initial_s=1.0,
+                        backoff_max_s=30.0,
+                        admission_class=WorkClass.SERVICE_START,
+                        metadata={"domain": "multiprocessing_actors"},
+                    ),
+                    start=self.start,
+                    stop=self.stop,
+                    probe=self.is_alive,
+                    adopt_running=True,
+                )
+            register_runtime_service(
+                SERVICE_NAME,
+                self,
+                required=True,
+                owner="core/supervisor/tree.py",
+                registered_by="SupervisionTree.start",
+                required_for="canonical actor process lifecycle and restart policy",
+                failure_policy="fail-closed",
+            )
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "tree",
+                exc,
+                severity="error",
+                action="actor supervision started but control-plane adoption failed",
+            )
+
+    def is_alive(self) -> bool:
+        task = self._monitor_task
+        return bool(self._is_running and task is not None and not task.done())
+
+    def is_ready(self) -> bool:
+        return self.is_alive()
+
+    def run_forever(self) -> None:
+        """Blocking compatibility entry point over the managed async monitor."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError("run_forever cannot block an active event loop")
+
+        async def run_managed() -> None:
+            try:
+                await self.wait_forever()
+            finally:
+                await self.stop()
+
+        asyncio.run(run_managed())
+
+    def _poll_health(self) -> None:
         """Check all actors and restart if needed."""
         if self._shutting_down or _shutdown_requested():
             self._shutting_down = True
@@ -365,23 +597,30 @@ class SupervisionTree:
             if actor.is_circuit_broken:
                 continue
 
-            if actor.process and not actor.process.is_alive():
+            if actor.process and not self._process_is_alive(actor.process):
                 exit_code = actor.process.exitcode
                 logger.warning("⚠️ Actor CRASHED: %s (Exit Code: %s)", name, exit_code)
-                self._handle_failure(name)
+                self._handle_failure(name, exit_code=exit_code)
             
             elif actor.process and actor.health_gate and actor.monitor_health:
                 if not actor.health_gate.is_healthy():
                     logger.error("🚨 Actor STALLED (Liveness Failure): %s", name)
-                    self.stop_actor(name)
-                    self._handle_failure(name)
+                    self.stop_actor(name, preserve_desired=True)
+                    self._handle_failure(name, error="actor heartbeat timeout")
             
             elif actor.process is None and actor.next_restart_time > 0 and now >= actor.next_restart_time:
                 logger.info("♻️ Restarting Actor %s after backoff...", name)
                 actor.next_restart_time = 0 # Reset
                 self._restart_actor(name)
+        self._publish_conditions()
 
-    def _handle_failure(self, name: str):
+    def _handle_failure(
+        self,
+        name: str,
+        *,
+        exit_code: int | None = None,
+        error: BaseException | str | None = None,
+    ) -> None:
         """Apply restart policy with circuit breaker and backoff."""
         with self._lock:
             actor = self._actors[name]
@@ -391,38 +630,61 @@ class SupervisionTree:
             actor.process = None
             actor.pipe = None
 
+            now = time.time()
+            actor.last_exit_code = exit_code
+            actor.last_failure_at = now
+            if error is not None:
+                actor.last_error = str(error)[:1000]
+            elif exit_code not in (None, 0):
+                actor.last_error = f"actor process exited with code {exit_code}"
+
             if self._shutting_down or _shutdown_requested():
+                actor.next_restart_time = 0.0
+                return
+            policy = str(actor.spec.restart_policy or "always").strip().lower()
+            if policy == "never" or (policy == "transient" and exit_code == 0):
+                actor.desired_running = False
                 actor.next_restart_time = 0.0
                 return
 
             # 1. Update Failure Tracking
-            now = time.time()
             if now - actor.last_restart < actor.spec.window_seconds:
-                 actor.consecutive_failures += 1
+                actor.consecutive_failures += 1
             else:
-                 actor.consecutive_failures = 1 # Reset window
-             
+                actor.consecutive_failures = 1
+
             if actor.consecutive_failures > actor.spec.max_restarts:
                 logger.error("🛑 CIRCUIT BROKEN: Actor %s failed too many times in window.", name)
                 actor.is_circuit_broken = True
+                actor.next_restart_time = 0.0
                 return
 
             # 2. Calculate Exponential Backoff
-            delay = actor.spec.restart_delay * (actor.spec.backoff_factor ** (actor.consecutive_failures - 1))
-            delay = min(delay, 60.0) # Cap at 1 minute
+            delay = actor.spec.restart_delay * (
+                actor.spec.backoff_factor ** (actor.consecutive_failures - 1)
+            )
+            delay = min(delay, 60.0)
 
             actor.next_restart_time = now + delay
             attempt = actor.consecutive_failures
             max_restarts = actor.spec.max_restarts
-        logger.info("⏳ Scheduling Restart for %s (Attempt %s/%s) in %ss...", name, attempt, max_restarts, f"{delay:.1f}")
+        logger.info(
+            "⏳ Scheduling Restart for %s (Attempt %s/%s) in %ss...",
+            name,
+            attempt,
+            max_restarts,
+            f"{delay:.1f}",
+        )
 
-    def _restart_actor(self, name: str):
+    def _restart_actor(self, name: str) -> None:
         """Internal helper to start actor and trigger callback."""
         if self._shutting_down or _shutdown_requested():
             self._shutting_down = True
             return
         new_pipe = self.start_actor(name)
         with self._lock:
+            if new_pipe and name in self._actors:
+                self._actors[name].restarts += 1
             callback = self._restart_callback
         if callback and new_pipe:
             try:
@@ -437,24 +699,22 @@ class SupervisionTree:
                 )
                 logger.error("❌ Restart callback failed for %s: %s", name, e)
 
-    def stop_all(self):
+    def stop_all(self, *, preserve_desired: bool = False) -> None:
         """Kill everything."""
         self._shutting_down = True
         self._is_running = False
-        try:
-            graceful_timeout = float(os.getenv("AURA_ACTOR_SHUTDOWN_GRACE_S", "2.0"))
-        except (TypeError, ValueError):
-            graceful_timeout = 2.0
+        graceful_timeout = float(_ACTOR_SHUTDOWN_GRACE_FLAG.value())
         graceful_timeout = min(10.0, max(0.0, graceful_timeout))
-        try:
-            final_sweep_grace = float(os.getenv("AURA_ACTOR_FINAL_SWEEP_GRACE_S", "0.75"))
-        except (TypeError, ValueError):
-            final_sweep_grace = 0.75
+        final_sweep_grace = float(_ACTOR_FINAL_SWEEP_GRACE_FLAG.value())
         final_sweep_grace = min(2.0, max(0.0, final_sweep_grace))
         with self._lock:
             actor_names = list(self._actors.keys())
         for name in actor_names:
-            self.stop_actor(name, graceful_timeout=graceful_timeout)
+            self.stop_actor(
+                name,
+                graceful_timeout=graceful_timeout,
+                preserve_desired=preserve_desired,
+            )
         # Ensure all multiprocess children are reaped (ORPHAN-04)
         import multiprocessing
         for p in multiprocessing.active_children():
@@ -479,12 +739,98 @@ class SupervisionTree:
                     p.join(timeout=0.2)
         logger.info("🛡️ Supervision Tree Shutdown Complete.")
 
-_tree_instance: Optional[SupervisionTree] = None
+    def get_status(self) -> dict[str, Any]:
+        with self._lock:
+            actors = {
+                name: {
+                    "desired_running": actor.desired_running,
+                    "alive": bool(
+                        actor.process is not None
+                        and self._process_is_alive(actor.process)
+                    ),
+                    "pid": getattr(actor.process, "pid", None),
+                    "exitcode": getattr(actor.process, "exitcode", None),
+                    "restart_policy": actor.spec.restart_policy,
+                    "restarts": actor.restarts,
+                    "consecutive_failures": actor.consecutive_failures,
+                    "last_restart": actor.last_restart,
+                    "next_restart_time": actor.next_restart_time,
+                    "circuit_open": actor.is_circuit_broken,
+                    "last_exit_code": actor.last_exit_code,
+                    "last_error": actor.last_error,
+                    "last_failure_at": actor.last_failure_at,
+                    "health_monitored": actor.monitor_health,
+                    "last_heartbeat_monotonic": (
+                        actor.health_gate.last_heartbeat
+                        if actor.health_gate is not None
+                        else 0.0
+                    ),
+                }
+                for name, actor in sorted(self._actors.items())
+            }
+        return {
+            "alive": self.is_alive(),
+            "ready": self.is_ready(),
+            "running": self._is_running,
+            "shutting_down": self._shutting_down,
+            "monitor_task_active": bool(
+                self._monitor_task is not None and not self._monitor_task.done()
+            ),
+            "actors": actors,
+            "summary": {
+                "registered": len(actors),
+                "desired_running": sum(
+                    bool(actor["desired_running"]) for actor in actors.values()
+                ),
+                "alive": sum(bool(actor["alive"]) for actor in actors.values()),
+                "open_circuits": sum(
+                    bool(actor["circuit_open"]) for actor in actors.values()
+                ),
+            },
+        }
+
+    def _publish_conditions(self) -> None:
+        try:
+            from core.runtime.conditions import (
+                ConditionType,
+                get_component_conditions,
+            )
+
+            status = self.get_status()
+            summary = status["summary"]
+            open_circuits = int(summary["open_circuits"])
+            progressing = int(summary["desired_running"]) > int(summary["alive"])
+            conditions = get_component_conditions(SERVICE_NAME)
+            conditions.set(
+                ConditionType.READY,
+                self.is_ready(),
+                reason="MonitorRunning" if self.is_ready() else "MonitorStopped",
+                message=f"actors_alive={summary['alive']}/{summary['desired_running']}",
+            )
+            conditions.set(
+                ConditionType.PROGRESSING,
+                progressing and not open_circuits,
+                reason="ActorRestartPending" if progressing else "ActorsConverged",
+                message=f"desired={summary['desired_running']} alive={summary['alive']}",
+            )
+            conditions.set(
+                ConditionType.DEGRADED,
+                open_circuits > 0,
+                reason="ActorCircuitOpen" if open_circuits else "NoOpenCircuits",
+                message=f"open_circuits={open_circuits}",
+            )
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            return
+
+_tree_instance: SupervisionTree | None = None
+_tree_instance_lock = threading.Lock()
 
 def get_tree() -> SupervisionTree:
     global _tree_instance
     if _tree_instance is None:
-        _tree_instance = SupervisionTree()
+        with _tree_instance_lock:
+            if _tree_instance is None:
+                _tree_instance = SupervisionTree()
     return _tree_instance
 
 
@@ -492,5 +838,10 @@ def reset_tree() -> None:
     """Reset the process supervisor singleton to a clean state."""
     global _tree_instance
     if _tree_instance is not None:
+        if _tree_instance.is_alive():
+            raise RuntimeError("stop the live actor supervisor before resetting it")
         _tree_instance.stop_all()
+        with SupervisionTree._active_lock:
+            if SupervisionTree._active_instance is _tree_instance:
+                SupervisionTree._active_instance = None
     _tree_instance = None

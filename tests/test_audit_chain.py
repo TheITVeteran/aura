@@ -99,7 +99,9 @@ def test_receipt_store_surfaces_chain_append_failure(tmp_path, monkeypatch):
     result = store.verify_chain()
     reasons = [problem["reason"] for problem in result["problems"]]
 
-    assert store.get(receipt.receipt_id) is receipt
+    loaded = store.get(receipt.receipt_id)
+    assert loaded is not receipt
+    assert loaded.to_dict() == receipt.to_dict()
     assert append_attempts
     assert (tmp_path / "receipts" / "turn" / "turn-chain-gap.json").exists()
     assert result["ok"] is False

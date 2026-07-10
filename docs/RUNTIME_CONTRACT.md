@@ -21,6 +21,7 @@ Contract version: `runtime-health-v1`
 | Resource Admission | `resource_admission` | `is_ready` | Pressure-aware lease authority for inference, evolution, model loading, and managed startup. |
 | Lane Admission | `lane_admission` | `is_ready` | Declared model-memory envelope. Without it, concurrent lane warmups can over-commit the host. |
 | Lane Reconciler | `lane_reconciler` | `is_ready` | Managed cortex convergence and crash-loop backoff. Without it, model-serving recovery can thrash indefinitely. |
+| Actor Supervision | `actor_supervision` | `is_ready` | Canonical multiprocessing actor monitor. Without it, crashed or stalled actors are not converged safely. |
 | Unified Will | `unified_will` | `is_alive` | Single locus of authority for consequential decisions. |
 | Authority Gateway | `authority_gateway` | `is_ready` | Governance gateway for tools, external I/O, memory writes, state changes, and self-modification. |
 | Capability Engine | `capability_engine` | `is_ready` | Capability-token and skill governance layer. Without it, tool execution cannot be considered healthy. |
@@ -68,5 +69,5 @@ Boot readiness additionally requires at least one passing probe from each group:
 - **kernel**: `kernel_interface`
 - **inference**: `inference_gate`, `llm_router`, `lane_admission`, `lane_reconciler`
 - **memory**: `state_repository`, `memory_facade`, `memory_write_gateway`, `unified_memory_pressure`, `external_memory_sentinel`
-- **scheduler**: `scheduler`, `runtime_control_plane`, `resource_admission`
+- **scheduler**: `scheduler`, `runtime_control_plane`, `resource_admission`, `actor_supervision`
 - **tool_governance**: `unified_will`, `authority_gateway`, `capability_engine`

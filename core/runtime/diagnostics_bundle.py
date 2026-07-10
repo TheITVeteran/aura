@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import datetime
 import hashlib
-import heapq
 import io
 import json
 import logging
@@ -278,43 +277,38 @@ def collect_research_core() -> dict[str, Any]:
         return {"available": False, "_collector_error": f"{type(e).__name__}: {e}"}
 
 
+def collect_control_plane() -> dict[str, Any]:
+    try:
+        from core.runtime.operator_control_plane import (
+            collect_runtime_control_plane_status,
+        )
+
+        return collect_runtime_control_plane_status()
+    except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
+        logger.debug("Failed to collect runtime control plane: %s", e)
+        return {"available": False, "_collector_error": f"{type(e).__name__}: {e}"}
+
+
 def collect_recent_receipts(per_kind_limit: int = 20) -> dict[str, Any]:
     try:
         from core.runtime.receipts import _RECEIPT_CLASSES, get_receipt_store
 
         store = get_receipt_store()
         kinds: dict[str, list[dict[str, Any]]] = {}
-        counts: dict[str, int] = {kind: 0 for kind in _RECEIPT_CLASSES}
+        counts = store.coverage_stats()
         for kind in _RECEIPT_CLASSES:
-            kind_dir = store.root / kind
-            if not kind_dir.exists():
-                kinds[kind] = []
-                continue
-            files = []
-            for path in kind_dir.glob("*.json"):
-                try:
-                    stat = path.stat()
-                except OSError:
-                    continue
-                counts[kind] += 1
-                files.append((stat.st_mtime, path))
-            recent_files = heapq.nlargest(max(0, int(per_kind_limit)), files, key=lambda item: item[0])
-            recent_payloads: list[dict[str, Any]] = []
-            for _mtime, path in sorted(recent_files, key=lambda item: item[0]):
-                try:
-                    from core.runtime.atomic_writer import read_json_envelope
-
-                    env = read_json_envelope(path)
-                    payload = env.get("payload") if isinstance(env, dict) else None
-                    if isinstance(payload, dict):
-                        payload = dict(payload)
-                        payload.setdefault("kind", kind)
-                        recent_payloads.append(redact_value(payload))
-                except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:
-                    logger.debug("Failed to read receipt at %s: %s", path, e)
-                    continue
-            kinds[kind] = recent_payloads
-        return {"counts": counts, "recent": kinds}
+            kinds[kind] = [
+                redact_value(receipt.to_dict())
+                for receipt in store.query_recent_persisted(
+                    kind,
+                    limit=max(0, int(per_kind_limit)),
+                )
+            ]
+        return {
+            "counts": counts,
+            "recent": kinds,
+            "storage": store.storage_stats(),
+        }
     except _DIAGNOSTICS_RECOVERABLE_ERRORS as e:  # noqa: BLE001
         logger.debug("Failed to collect recent receipts: %s", e)
         return {"_collector_error": f"{type(e).__name__}: {e}"}
@@ -549,6 +543,7 @@ def build_bundle(
     _step("models", collect_models, bundle_dir / "models.json")
     _step("memory", collect_memory, bundle_dir / "memory.json")
     _step("gateway", collect_gateway, bundle_dir / "gateway.json")
+    _step("control_plane", collect_control_plane, bundle_dir / "control_plane.json")
     _step("receipts", collect_recent_receipts, bundle_dir / "receipts.json")
     _step("research_core", collect_research_core, bundle_dir / "research_core.json")
 

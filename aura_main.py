@@ -431,8 +431,9 @@ _supervisor_tree: Any | None = None
 def get_supervisor_tree() -> Any:
     global _supervisor_tree
     if _supervisor_tree is None:
-        from core.supervisor.tree import SupervisionTree
-        _supervisor_tree = SupervisionTree()
+        from core.supervisor.tree import get_tree
+
+        _supervisor_tree = get_tree()
     return _supervisor_tree
 
 # ---------------------------------------------------------------------------
@@ -747,8 +748,8 @@ async def bootstrap_aura(orchestrator: Any):
 
     # Apply Consciousness, Response, and SafeMode Genesis Patches
     try:
-        from core.conversation.apply_response_patches import apply_response_patches
         from core.consciousness.apply_patches import apply_consciousness_patches
+        from core.conversation.apply_response_patches import apply_response_patches
         from core.runtime.safe_mode import apply_orchestrator_patches
 
         apply_consciousness_patches(orchestrator)

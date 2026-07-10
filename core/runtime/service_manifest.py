@@ -161,6 +161,12 @@ SERVICE_MANIFEST: dict[str, ServiceRole] = {
         critical=True,
         canonical_owner="lane_reconciler",
     ),
+    "actor_supervision": ServiceRole(
+        name="actor_supervision",
+        description="Canonical multiprocessing actor lifecycle and restart owner",
+        critical=True,
+        canonical_owner="actor_supervision",
+    ),
     "shutdown_coordinator": ServiceRole(
         name="shutdown_coordinator",
         description="Single ShutdownCoordinator owning teardown ordering",

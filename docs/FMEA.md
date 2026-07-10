@@ -4,7 +4,7 @@
 > (`make fmea-doc`). Do not edit by hand — a drift test regenerates
 > and compares this file on every suite run.
 
-Registry version: `1.0` — 16 modes (2 catastrophic, 8 critical, 5 major, 1 minor); 1 open mitigation gap(s), 0 open detection gap(s).
+Registry version: `1.0` — 18 modes (2 catastrophic, 9 critical, 6 major, 1 minor); 1 open mitigation gap(s), 0 open detection gap(s).
 
 Every entry is REAL: it either occurred live (occurrences cite when)
 or is a structurally-reachable state found by analysis. Gaps are
@@ -197,6 +197,30 @@ explicit and pinned by an allowlist test that only shrinks.
 - **Mitigation:** Worker self-heals by nuking stale prompt-cache KV + Metal cache
 - **Recorded occurrences:** 2026-07-08 boot-window occurrences investigated, benign
 - **Notes:** Self-healing; only the FREQUENCY under load is worth watching.
+
+## FM-SUP-001 — Duplicate process supervisors restart or stop the same runtime independently
+
+- **Subsystem:** core/supervisor/tree.py + core/runtime/organ_supervisor.py
+- **Severity / blast radius:** critical / organism
+- **Cause:** Launcher, orchestrator, actor tree, and command-organ watchdogs each carried their own singleton and restart budget, allowing ownership and circuit state to diverge
+- **Effect:** Duplicate children, conflicting restart loops, lost IPC rebinding, or shutdown that reports complete while another supervisor keeps a child alive
+- **Detection:** Operator control-plane report names one actor monitor, desired/observed child state, open circuits, and duplicate live-contract registration
+- **Mitigation:** aura_main and orchestrator resolve one SupervisionTree singleton; the tree is a managed control-plane service; command organs delegate retries/backoff/circuits to RuntimeControlPlane and retain transport only
+- **Detection modules:** `core.runtime.operator_control_plane`, `core.runtime.control_plane`
+- **Mitigation modules:** `core.supervisor.tree`, `core.runtime.organ_supervisor`, `core.runtime.control_plane`
+- **Notes:** Structurally reachable in the pre-unification call graph: aura_main constructed a separate SupervisionTree while OrganSupervisor owned an independent watchdog.
+
+## FM-AUD-001 — High-frequency admission decisions exhaust filesystem inodes and process memory
+
+- **Subsystem:** core/runtime/receipts.py + resource admission audit
+- **Severity / blast radius:** major / host
+- **Cause:** Every pressure deferral used one durable JSON file and stayed in the in-memory receipt index, even when the same state repeated indefinitely
+- **Effect:** Long-running hosts accumulate unbounded files and index entries; diagnostics and restart reload become progressively slower until auditability harms availability
+- **Detection:** Receipt storage stats expose hot-index limits, ledger availability, persistent counts, and admission coalescing counters in the operator report
+- **Mitigation:** Every receipt kind uses bounded immutable hot snapshots with durable cold lookup; high-volume admission receipts use one WAL-backed ledger, and unchanged unaudited denials persist on transition and periodic heartbeat while audited requests remain one receipt per attempt
+- **Detection modules:** `core.runtime.receipts`, `core.runtime.operator_control_plane`
+- **Mitigation modules:** `core.runtime.receipts`, `core.runtime.control_plane`
+- **Notes:** Structural long-run analysis from Pass F; no finite soak can prove unbounded per-event file creation safe over indefinite daily operation.
 
 ## Open gaps (the work queue)
 

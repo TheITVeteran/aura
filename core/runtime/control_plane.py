@@ -26,8 +26,20 @@ from enum import IntEnum, StrEnum
 from typing import Any, Awaitable, Callable, Mapping
 
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
 
 logger = logging.getLogger("Aura.RuntimeControlPlane")
+
+_ADMISSION_RECEIPT_HEARTBEAT_FLAG = declare(
+    "AURA_ADMISSION_RECEIPT_HEARTBEAT_S",
+    kind=FlagKind.FLOAT,
+    default=3600.0,
+    description=(
+        "Maximum interval between durable receipts for an unchanged unaudited "
+        "admission denial; 0 disables coalescing"
+    ),
+    owner="core.runtime.control_plane",
+)
 
 
 class WorkClass(StrEnum):
@@ -170,6 +182,7 @@ class AdmissionDecision:
     blocking_lease_ids: tuple[str, ...] = ()
     pressure: PressureSnapshot = field(default_factory=PressureSnapshot)
     replayed: bool = False
+    receipt_replayed: bool = False
 
     @property
     def admitted(self) -> bool:
@@ -186,6 +199,7 @@ class AdmissionDecision:
             "blocking_lease_ids": list(self.blocking_lease_ids),
             "pressure": self.pressure.to_dict(),
             "replayed": self.replayed,
+            "receipt_replayed": self.receipt_replayed,
         }
 
 
@@ -204,6 +218,15 @@ class _LeaseRecord:
 class _Waiter:
     sequence: int
     request: AdmissionRequest
+    enqueued_at: float = field(default_factory=time.time)
+
+
+@dataclass
+class _ReceiptState:
+    fingerprint: tuple[str, str]
+    receipt_id: str
+    emitted_at: float
+    coalesced_count: int = 0
 
 
 PressureProvider = Callable[[], PressureSnapshot | Mapping[str, Any]]
@@ -272,6 +295,7 @@ class ResourceAdmissionController:
         self._poll_interval_s = min(1.0, max(0.01, float(poll_interval_s)))
         self._receipt_store = receipt_store
         self._lock = threading.RLock()
+        self._receipt_lock = threading.RLock()
         self._last_pressure: PressureSnapshot | None = None
         self._last_pressure_at = 0.0
         self._pressure_cache_s = 0.5
@@ -285,6 +309,9 @@ class ResourceAdmissionController:
         self._timed_out = 0
         self._preemptions = 0
         self._expired = 0
+        self._receipt_states: dict[tuple[str, str, str], _ReceiptState] = {}
+        self._receipt_state_limit = max(64, int(history_limit))
+        self._receipt_coalesced = 0
 
     def pressure_snapshot(self) -> PressureSnapshot:
         now = time.monotonic()
@@ -313,7 +340,55 @@ class ResourceAdmissionController:
         with self._lock:
             self._last_pressure = snapshot
             self._last_pressure_at = time.monotonic()
+        self._publish_pressure_conditions(snapshot)
         return snapshot
+
+    @staticmethod
+    def _publish_pressure_conditions(snapshot: PressureSnapshot) -> None:
+        try:
+            from core.runtime.conditions import (
+                ConditionType,
+                get_component_conditions,
+            )
+
+            conditions = get_component_conditions("resource_admission")
+            unavailable = "pressure_provider_unavailable" in snapshot.red_zones
+            ready = not snapshot.shutdown_requested and not unavailable
+            conditions.set(
+                ConditionType.READY,
+                ready,
+                reason=(
+                    "ShutdownRequested"
+                    if snapshot.shutdown_requested
+                    else "PressureProviderUnavailable"
+                    if unavailable
+                    else "PressureObserved"
+                ),
+                message=(
+                    f"memory={snapshot.memory_percent:.1f}% "
+                    f"thermal={snapshot.thermal_level} lag={snapshot.loop_lag_s:.3f}s"
+                ),
+            )
+            degraded = bool(
+                snapshot.red_zones
+                or snapshot.suspended_capabilities
+                or snapshot.memory_percent
+                >= ResourceAdmissionController.MEMORY_CRITICAL_PERCENT
+                or snapshot.thermal_level
+                >= ResourceAdmissionController.THERMAL_CRITICAL_LEVEL
+            )
+            conditions.set(
+                ConditionType.DEGRADED,
+                degraded,
+                reason="ResourcePressure" if degraded else "WithinEnvelope",
+                message=(
+                    f"red_zones={','.join(snapshot.red_zones) or 'none'}; "
+                    "suspended="
+                    f"{','.join(snapshot.suspended_capabilities) or 'none'}"
+                ),
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return
 
     async def pressure_snapshot_async(self) -> PressureSnapshot:
         with self._lock:
@@ -469,6 +544,24 @@ class ResourceAdmissionController:
             }
         )
 
+    @staticmethod
+    def _receipt_state_key(request: AdmissionRequest) -> tuple[str, str, str]:
+        return (request.owner, request.work_class.value, request.lane)
+
+    @staticmethod
+    def _receipt_reason_class(reason: str) -> str:
+        normalized = str(reason or "unknown")
+        for prefix in (
+            "critical_memory_pressure_",
+            "moderate_memory_pressure_",
+            "critical_thermal_pressure_",
+            "serious_thermal_pressure_",
+            "event_loop_lag_",
+        ):
+            if normalized.startswith(prefix):
+                return prefix.rstrip("_")
+        return normalized
+
     def _emit_receipt(
         self,
         request: AdmissionRequest,
@@ -479,44 +572,108 @@ class ResourceAdmissionController:
         lease_id: str = "",
         blocking_lease_ids: tuple[str, ...] = (),
         force: bool = False,
-    ) -> str:
+    ) -> tuple[str, bool]:
+        state_key = self._receipt_state_key(request)
         if not (request.receipt_required or force):
-            return ""
-        try:
-            from core.runtime.receipts import (
-                ResourceAdmissionReceipt,
-                get_receipt_store,
-            )
+            if outcome == AdmissionOutcome.ADMITTED:
+                with self._receipt_lock:
+                    self._receipt_states.pop(state_key, None)
+            return "", False
 
-            store = self._receipt_store or get_receipt_store()
-            receipt = store.emit(
-                ResourceAdmissionReceipt(
-                    cause=f"{request.owner}:{request.work_class.value}",
-                    request_id=request.request_id,
-                    owner=request.owner,
-                    work_class=request.work_class.value,
-                    lane=request.lane,
-                    priority=int(request.priority),
-                    decision=outcome.value,
-                    reason=reason,
-                    lease_id=lease_id,
-                    pressure=pressure.to_dict(),
-                    metadata={
-                        **dict(request.metadata),
-                        "blocking_lease_ids": list(blocking_lease_ids),
-                    },
+        coalescible = (
+            not request.receipt_required
+            and outcome
+            in {
+                AdmissionOutcome.DEFERRED,
+                AdmissionOutcome.REJECTED,
+                AdmissionOutcome.TIMED_OUT,
+            }
+        )
+        fingerprint = (outcome.value, self._receipt_reason_class(reason))
+        heartbeat_s = max(0.0, float(_ADMISSION_RECEIPT_HEARTBEAT_FLAG.value()))
+        now = time.time()
+
+        with self._receipt_lock:
+            prior = self._receipt_states.get(state_key)
+            if (
+                coalescible
+                and heartbeat_s > 0.0
+                and prior is not None
+                and prior.fingerprint == fingerprint
+                and now - prior.emitted_at < heartbeat_s
+            ):
+                prior.coalesced_count += 1
+                self._receipt_coalesced += 1
+                return prior.receipt_id, True
+
+            try:
+                from core.runtime.receipts import (
+                    ResourceAdmissionReceipt,
+                    get_receipt_store,
                 )
-            )
-            return str(receipt.receipt_id)
-        except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation(
-                "runtime_control_plane",
-                exc,
-                severity="warning",
-                action="resource admission decision remained in bounded memory but durable receipt failed",
-                receipt_required=False,
-            )
-            return ""
+
+                metadata = {
+                    **dict(request.metadata),
+                    "blocking_lease_ids": list(blocking_lease_ids),
+                }
+                if prior is not None and prior.coalesced_count:
+                    metadata.update(
+                        {
+                            "coalesced_since_prior": prior.coalesced_count,
+                            "prior_receipt_id": prior.receipt_id,
+                        }
+                    )
+                store = self._receipt_store or get_receipt_store()
+                receipt = store.emit(
+                    ResourceAdmissionReceipt(
+                        cause=f"{request.owner}:{request.work_class.value}",
+                        request_id=request.request_id,
+                        owner=request.owner,
+                        work_class=request.work_class.value,
+                        lane=request.lane,
+                        priority=int(request.priority),
+                        decision=outcome.value,
+                        reason=reason,
+                        lease_id=lease_id,
+                        pressure=pressure.to_dict(),
+                        metadata=metadata,
+                    )
+                )
+                receipt_id = str(receipt.receipt_id)
+                if coalescible:
+                    self._receipt_states[state_key] = _ReceiptState(
+                        fingerprint=fingerprint,
+                        receipt_id=receipt_id,
+                        emitted_at=now,
+                    )
+                    while len(self._receipt_states) > self._receipt_state_limit:
+                        oldest_key = min(
+                            self._receipt_states,
+                            key=lambda key: self._receipt_states[key].emitted_at,
+                        )
+                        self._receipt_states.pop(oldest_key, None)
+                elif outcome == AdmissionOutcome.ADMITTED:
+                    self._receipt_states.pop(state_key, None)
+                return receipt_id, False
+            except (
+                ImportError,
+                OSError,
+                RuntimeError,
+                AttributeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                record_degradation(
+                    "runtime_control_plane",
+                    exc,
+                    severity="warning",
+                    action=(
+                        "resource admission decision remained in bounded memory "
+                        "but durable receipt failed"
+                    ),
+                    receipt_required=False,
+                )
+                return "", False
 
     async def _emit_receipt_async(
         self,
@@ -528,9 +685,12 @@ class ResourceAdmissionController:
         lease_id: str = "",
         blocking_lease_ids: tuple[str, ...] = (),
         force: bool = False,
-    ) -> str:
+    ) -> tuple[str, bool]:
         if not (request.receipt_required or force):
-            return ""
+            if outcome == AdmissionOutcome.ADMITTED:
+                with self._receipt_lock:
+                    self._receipt_states.pop(self._receipt_state_key(request), None)
+            return "", False
         return await asyncio.to_thread(
             self._emit_receipt,
             request,
@@ -627,7 +787,7 @@ class ResourceAdmissionController:
                                 self._preemptions += 1
 
                 if admitted_lease_id:
-                    receipt_id = await self._emit_receipt_async(
+                    receipt_id, receipt_replayed = await self._emit_receipt_async(
                         request,
                         AdmissionOutcome.ADMITTED,
                         "capacity_available",
@@ -641,6 +801,7 @@ class ResourceAdmissionController:
                         decided_at=time.time(),
                         lease_id=admitted_lease_id,
                         receipt_id=receipt_id,
+                        receipt_replayed=receipt_replayed,
                         pressure=pressure,
                     )
 
@@ -692,7 +853,7 @@ class ResourceAdmissionController:
                         reason,
                         blocking_lease_ids=blocking_ids,
                     )
-                receipt_id = await self._emit_receipt_async(
+                receipt_id, receipt_replayed = await self._emit_receipt_async(
                     request,
                     outcome,
                     reason,
@@ -706,6 +867,7 @@ class ResourceAdmissionController:
                     reason=reason,
                     decided_at=time.time(),
                     receipt_id=receipt_id,
+                    receipt_replayed=receipt_replayed,
                     blocking_lease_ids=blocking_ids,
                     pressure=pressure,
                 )
@@ -734,7 +896,7 @@ class ResourceAdmissionController:
                 reason,
                 lease_id=lease.lease_id,
             )
-        receipt_id = await self._emit_receipt_async(
+        receipt_id, receipt_replayed = await self._emit_receipt_async(
             lease.request,
             outcome,
             reason,
@@ -749,6 +911,7 @@ class ResourceAdmissionController:
             decided_at=time.time(),
             lease_id=lease.lease_id,
             receipt_id=receipt_id,
+            receipt_replayed=receipt_replayed,
             pressure=pressure,
         )
 
@@ -813,6 +976,10 @@ class ResourceAdmissionController:
 
     def status(self) -> dict[str, Any]:
         pressure = self.pressure_snapshot()
+        now_monotonic = time.monotonic()
+        with self._receipt_lock:
+            receipt_state_count = len(self._receipt_states)
+            receipt_coalesced = self._receipt_coalesced
         with self._lock:
             self._expire_leases_locked(time.monotonic())
             leases = [
@@ -825,6 +992,7 @@ class ResourceAdmissionController:
                     "priority": int(lease.request.priority),
                     "admitted_at": lease.admitted_at,
                     "expires_at_monotonic": lease.expires_at,
+                    "ttl_remaining_s": max(0.0, lease.expires_at - now_monotonic),
                     "preempt_requested": lease.preempt_requested,
                     "preempt_reason": lease.preempt_reason,
                 }
@@ -838,6 +1006,9 @@ class ResourceAdmissionController:
                     "lane": waiter.request.lane,
                     "priority": int(waiter.request.priority),
                     "sequence": waiter.sequence,
+                    "enqueued_at": waiter.enqueued_at,
+                    "wait_s": max(0.0, time.time() - waiter.enqueued_at),
+                    "timeout_s": float(waiter.request.timeout_s),
                 }
                 for waiter in sorted(self._waiters.values(), key=lambda item: item.sequence)
             ]
@@ -854,7 +1025,9 @@ class ResourceAdmissionController:
                     "timed_out": self._timed_out,
                     "preemptions": self._preemptions,
                     "expired": self._expired,
+                    "receipt_coalesced": receipt_coalesced,
                 },
+                "receipt_state_count": receipt_state_count,
             }
 
 
@@ -964,9 +1137,17 @@ class RuntimeControlPlane:
                 observed_state=(
                     ObservedServiceState.READY
                     if adopt_running
+                    else ObservedServiceState.STOPPED
+                    if spec.desired_state == DesiredServiceState.STOPPED
                     else ObservedServiceState.UNKNOWN
                 ),
-                reason="adopted_running" if adopt_running else "registered",
+                reason=(
+                    "adopted_running"
+                    if adopt_running
+                    else "registered_stopped"
+                    if spec.desired_state == DesiredServiceState.STOPPED
+                    else "registered"
+                ),
             )
             self._services[spec.name] = _ServiceBinding(
                 spec=spec,
@@ -1052,6 +1233,17 @@ class RuntimeControlPlane:
         observation = binding.observation
         cutoff = now - binding.spec.restart_window_s
         observation.restart_times = [stamp for stamp in observation.restart_times if stamp >= cutoff]
+        if (
+            observation.generation == 0
+            and not observation.restart_times
+            and observation.observed_state
+            in {
+                ObservedServiceState.UNKNOWN,
+                ObservedServiceState.STOPPED,
+                ObservedServiceState.BLOCKED,
+            }
+        ):
+            return True
         return len(observation.restart_times) < binding.spec.restart_limit
 
     def _schedule_restart(
@@ -1144,12 +1336,32 @@ class RuntimeControlPlane:
             if not await self._probe(binding):
                 raise RuntimeError("service start returned without passing liveness probe")
         except (OSError, RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
-            self._schedule_restart(
-                binding,
-                reason="start_failed",
-                error=str(exc),
+            start_error = str(exc)
+            actions.append(
+                {
+                    "service": binding.spec.name,
+                    "action": "start",
+                    "ok": False,
+                    "error": start_error,
+                }
             )
-            actions.append({"service": binding.spec.name, "action": "start", "ok": False, "error": str(exc)})
+            cleaned = await self._stop_binding(binding, actions)
+            if cleaned:
+                self._schedule_restart(
+                    binding,
+                    reason="start_failed",
+                    error=start_error,
+                )
+            else:
+                cleanup_error = observation.last_error
+                self._transition(
+                    observation,
+                    ObservedServiceState.FAILED,
+                    "start_cleanup_failed",
+                    error=(
+                        f"start failed: {start_error}; cleanup failed: {cleanup_error}"
+                    ),
+                )
         else:
             observation.generation += 1
             observation.next_retry_at = 0.0
@@ -1235,18 +1447,27 @@ class RuntimeControlPlane:
                     if not binding.spec.restart_on_unhealthy:
                         self._transition(observation, ObservedServiceState.DEGRADED, "probe_failed")
                         continue
+                    probe_error = observation.last_error or "liveness probe returned false"
                     restart_state = self._schedule_restart(
                         binding,
                         reason="probe_failed",
-                        error=observation.last_error,
+                        error=probe_error,
                     )
                     stopped = await self._stop_binding(binding, actions)
                     if not stopped:
                         continue
-                    self._transition(observation, restart_state, "probe_failed")
+                    self._transition(
+                        observation,
+                        restart_state,
+                        "probe_failed",
+                        error=probe_error,
+                    )
 
                 now = time.time()
-                if observation.observed_state == ObservedServiceState.CIRCUIT_OPEN:
+                if observation.observed_state in {
+                    ObservedServiceState.CIRCUIT_OPEN,
+                    ObservedServiceState.FAILED,
+                }:
                     continue
                 if observation.next_retry_at > now:
                     self._transition(observation, ObservedServiceState.BACKING_OFF, "restart_backoff")
@@ -1285,9 +1506,54 @@ class RuntimeControlPlane:
                 "admission": self.admission.status(),
             }
             self._last_report = report
+            self._publish_conditions(report)
             return report
         finally:
             self._reconcile_lock.release()
+
+    @staticmethod
+    def _publish_conditions(report: Mapping[str, Any]) -> None:
+        try:
+            from core.runtime.conditions import (
+                ConditionType,
+                get_component_conditions,
+            )
+
+            services = report.get("services")
+            service_map = services if isinstance(services, Mapping) else {}
+            circuits = sorted(
+                str(name)
+                for name, status in service_map.items()
+                if isinstance(status, Mapping)
+                and status.get("observed_state")
+                in {
+                    ObservedServiceState.CIRCUIT_OPEN.value,
+                    ObservedServiceState.FAILED.value,
+                }
+            )
+            conditions = get_component_conditions("runtime_control_plane")
+            critical_ready = bool(report.get("critical_ready", False))
+            converged = bool(report.get("converged", False))
+            conditions.set(
+                ConditionType.READY,
+                critical_ready,
+                reason="CriticalServicesReady" if critical_ready else "CriticalServiceBlocked",
+                message=f"managed_services={len(service_map)}",
+            )
+            conditions.set(
+                ConditionType.PROGRESSING,
+                not converged and not circuits,
+                reason="Reconciling" if not converged and not circuits else "SteadyState",
+                message=f"actions={len(report.get('actions') or [])}",
+            )
+            conditions.set(
+                ConditionType.DEGRADED,
+                bool(circuits),
+                reason="CircuitOpen" if circuits else "NoOpenCircuits",
+                message=",".join(circuits),
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return
 
     def service_status(self) -> dict[str, dict[str, Any]]:
         with self._lock:

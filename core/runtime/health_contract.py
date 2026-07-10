@@ -42,7 +42,12 @@ REQUIRED_HEALTH_PROBE_GROUPS: dict[str, tuple[str, ...]] = {
         "unified_memory_pressure",
         "external_memory_sentinel",
     ),
-    "scheduler": ("scheduler", "runtime_control_plane", "resource_admission"),
+    "scheduler": (
+        "scheduler",
+        "runtime_control_plane",
+        "resource_admission",
+        "actor_supervision",
+    ),
     "tool_governance": ("unified_will", "authority_gateway", "capability_engine"),
 }
 
@@ -147,6 +152,13 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "lane_reconciler",
         ServiceTier.CRITICAL,
         "Managed cortex convergence and crash-loop backoff. Without it, model-serving recovery can thrash indefinitely.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Actor Supervision",
+        "actor_supervision",
+        ServiceTier.CRITICAL,
+        "Canonical multiprocessing actor monitor. Without it, crashed or stalled actors are not converged safely.",
         liveness_check="is_ready",
     ),
     ServiceRequirement(

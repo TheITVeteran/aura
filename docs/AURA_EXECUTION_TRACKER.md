@@ -391,7 +391,7 @@ negative controls, replayable evidence, and an honest live path.
    - Validate multi-day survival only after bounded lifecycle and resource tests
      show no task leaks, queue growth, memory doom loops, or false health.
 
-11. **Canonical ownership, consolidation, and dependency boundaries** `[OPEN]`
+11. **Canonical ownership, consolidation, and dependency boundaries** `[IN PROGRESS]`
    - Inventory duplicate planners, memory writers, state stores, model routers,
      action executors, proof paths, self-repair paths, and inner-state owners.
    - Name one canonical owner and typed interface for each capability, migrate
@@ -402,7 +402,7 @@ negative controls, replayable evidence, and an honest live path.
    - Generate and gate a dependency graph for Will, authority, memory, state,
      model serving, tools, patching, external I/O, and UI/runtime boundaries.
 
-12. **Failure prevention and degradation-policy audit** `[OPEN]`
+12. **Failure prevention and degradation-policy audit** `[IN PROGRESS]`
    - Classify every broad exception handler and `record_degradation()` call as
      fail-closed, retry, circuit-break, isolate, compensate, or explicitly safe
      degradation; generic "log and limp on" is not an accepted policy.
@@ -413,7 +413,7 @@ negative controls, replayable evidence, and an honest live path.
    - Ratchet broad catches and silent fallback counts downward without removing
      necessary containment.
 
-13. **Boot, health, resource, and longevity contract** `[OPEN]`
+13. **Boot, health, resource, and longevity contract** `[IN PROGRESS]`
    - Complete the desired-state runtime reconciler and unified resource
      admission scheduler for model, memory, thermal, learner, autonomy, desktop,
      scheduler, governance, and neural-stream lanes.
@@ -9610,3 +9610,93 @@ Remaining work after this checkpoint:
   admission-receipt aggregation/compaction and unified process supervision.
 - Add a single operator-facing control-plane status/condition surface and use
   it in health, diagnostics, and incident narration.
+
+## Checkpoint 2026-07-10-22: Bounded Audit Storage and Unified Process Supervision
+
+Scope:
+
+- Replaced per-event admission JSON files with a WAL-backed SQLite ledger while
+  retaining schema-versioned envelope files for ordinary receipt kinds. Every
+  receipt kind now has a typed, per-kind hot-index bound, durable cold lookup,
+  bounded restart reload, accurate persisted coverage, and immutable snapshot
+  semantics so caller mutation cannot alter an emitted in-memory record.
+- Made receipt IDs append-only: exact replay is idempotent and does not append a
+  second chain entry, while body or kind mutation under an existing ID is
+  rejected. Receipt roots/ledger files receive restrictive permissions and
+  close now flushes and closes the audit chain as well as SQLite.
+- Added runtime SQLite failure fallback to durable envelope storage. Audit-chain
+  verification now inventories all persisted envelope and ledger IDs, so a cold
+  body that never reached the chain remains detectable after hot-index eviction
+  or process restart. Direct ledger-body tampering remains hash-detectable.
+- Added state-transition/heartbeat aggregation for repeated unaudited admission
+  denials, preserving every explicitly audited request. Admission status now
+  exposes coalescing counts, waiter age/deadline, active lease TTL, pressure,
+  blockers, and ownership without unbounded history growth.
+- Hardened desired-state convergence after manual review found gaps not covered
+  by the first green replay: an unverified or partially failed start is stopped
+  before retry; cleanup failure becomes a terminal visible state; failed stops
+  cannot fall through into duplicate starts; probe failure evidence survives
+  cleanup; and a zero-retry policy still permits one initial start attempt.
+- Consolidated multiprocessing actors behind one `SupervisionTree` singleton.
+  `aura_main`, the container, boot/health contracts, service manifest, and
+  runtime registry resolve the same critical owner. Concurrent live monitors
+  are rejected, monitor-task ownership failure releases the singleton claim,
+  and the old blocking runner now delegates to the managed async lifecycle.
+- Made actor launch failure a bounded observable recovery event: every pipe end
+  is closed, failure/backoff/circuit state is inspectable, the monitor survives,
+  parent-held child pipe endpoints no longer suppress EOF, and conflicting actor
+  contracts are rejected instead of silently replaced.
+- Converted `OrganSupervisor` into transport beneath `RuntimeControlPlane`.
+  Command organs are stopped-by-default desired services; restart budgets,
+  backoff, dependency state, and circuits have one owner. Launch uses the
+  subprocess gateway with drained-output risk removed, stale socket deletion is
+  governed, framed IPC is size/deadline bounded, and stream close no longer has
+  an unbounded await. This retired one bounded-await allowlist entry (`69 -> 68`).
+- Added one operator schema consumed by diagnostics JSON/bundles, the reliability
+  API, and `operator_cli control-plane`. It composes desired/observed services,
+  dependencies, blockers with remediation, active leases/waiters, pressure,
+  typed conditions/flags, adapter status, receipt-storage health, and FMEA.
+- Added FMEA entries for duplicate supervisor ownership and receipt inode/memory
+  growth, then regenerated `docs/FMEA.md` and `docs/RUNTIME_CONTRACT.md` from
+  executable registries.
+
+Verification:
+
+- Final expanded inventory collected `996` tests and passed in four bounded
+  shards: `270 passed in 30.71s`, `286 passed in 37.08s`, `334 passed in
+  11.12s`, and `106 passed in 4.07s`. The inventory covers receipts/audit chain,
+  admission/control plane, operator surface, actor/organ supervision, resource
+  arbitration, lanes/inference/MLX, boot/health/FMEA/retrieval/ratchets, the
+  server runtime contract, and live runtime edge regressions.
+- An earlier monolithic `971`-test invocation was terminated by `SIGKILL` after
+  the command runner's approximately one-minute boundary with no test failure
+  emitted. It is not counted as evidence; the complete collected inventory was
+  rerun and passed through the four completed shards above.
+- Focused strict mypy over `receipts.py`, `control_plane.py`,
+  `operator_control_plane.py`, `organ_supervisor.py`, and `supervisor/tree.py`
+  -> success with no issues.
+- Py-compile and Ruff `F,E9,I` across the touched source/test surface, Ruff
+  `F,E9` for the large pre-existing server module, generated-doc drift checks,
+  and `git diff --check` -> passed.
+- `make enterprise-gate` -> passed with no baseline regression.
+- `make production-gate` -> passed; all `37` readiness checks green.
+
+Remaining work after this checkpoint:
+
+- Continue declarative lifecycle migration for scheduler, memory, tool
+  governance, desktop bridge, background autonomy, and neural-stream owners;
+  the control-plane foundation is real but does not yet own every critical
+  runtime domain named in the Pass F acceptance criteria.
+- Audit the remaining process-management/restart implementations and prove they
+  are domain transports or adapters rather than competing policy owners. Add
+  explicit operator reset/acknowledgement controls for failed services without
+  allowing an unsafe reset to create duplicate live instances.
+- Add ledger backup/migration/integrity-check operations and bounded maintenance
+  scheduling. Durable growth is now file-count and memory bounded, but long-term
+  byte retention and disaster recovery still require an operator policy.
+- Move next into the canonical authority/effect spine and deep action execution:
+  inventory bypasses and duplicate owners, migrate external/internal effects in
+  dependency order, add architecture ratchets, and then replay conversation,
+  computer-use, coding/self-repair, and long-horizon workflows through that spine.
+- Keep clean-machine, multi-hour, and 24-72 hour soak work at the final stage,
+  after the remaining bounded and live proof ladders are green.

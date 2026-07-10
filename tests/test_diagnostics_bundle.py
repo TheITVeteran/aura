@@ -91,6 +91,7 @@ def test_bundle_produces_tarball_with_required_files(tmp_path: Path):
         "models",
         "memory",
         "gateway",
+        "control_plane",
         "receipts",
     }
     found = set()

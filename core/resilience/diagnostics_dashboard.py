@@ -119,6 +119,26 @@ def collect_reliability_diagnostics() -> dict[str, Any]:
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
         diagnostics["subsystems"]["lifecycle"] = {"error": str(exc)}
 
+    # 9. Canonical lifecycle/resource control plane
+    try:
+        from core.runtime.operator_control_plane import (
+            collect_runtime_control_plane_status,
+        )
+
+        diagnostics["subsystems"]["runtime_control_plane"] = (
+            collect_runtime_control_plane_status()
+        )
+    except (
+        ImportError,
+        AttributeError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+        KeyError,
+        OSError,
+    ) as exc:
+        diagnostics["subsystems"]["runtime_control_plane"] = {"error": str(exc)}
+
     # Summary
     subsystems = diagnostics["subsystems"]
     errors = sum(1 for v in subsystems.values() if isinstance(v, dict) and "error" in v)
@@ -241,6 +261,27 @@ def create_diagnostics_router() -> Any:
             payload = await asyncio.to_thread(_collect)
             return JSONResponse(content=payload)
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
+            return JSONResponse(content={"error": str(exc)}, status_code=500)
+
+    @router.get("/reliability/control-plane")
+    async def control_plane_report() -> JSONResponse:
+        """Desired state, resource leases, conditions, circuits, and blockers."""
+        try:
+            from core.runtime.operator_control_plane import (
+                collect_runtime_control_plane_status,
+            )
+
+            payload = await asyncio.to_thread(collect_runtime_control_plane_status)
+            return JSONResponse(content=payload)
+        except (
+            ImportError,
+            AttributeError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+            KeyError,
+            OSError,
+        ) as exc:
             return JSONResponse(content={"error": str(exc)}, status_code=500)
 
     return router

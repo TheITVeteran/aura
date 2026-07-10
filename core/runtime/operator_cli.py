@@ -11,9 +11,6 @@ The CLI intentionally does not import the full orchestrator at module
 import time; commands fetch what they need on demand.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-
 
 import argparse
 import asyncio
@@ -23,6 +20,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from core.runtime.errors import record_degradation
 
 COMMAND_HANDLERS: Dict[str, Callable[[argparse.Namespace], Dict[str, Any]]] = {}
 
@@ -207,6 +205,23 @@ def cmd_verify_memory(args: argparse.Namespace) -> Dict[str, Any]:
     return {"command": "verify-memory", "ok": True, "coverage": store.coverage_stats()}
 
 
+@register("control-plane")
+def cmd_control_plane(args: argparse.Namespace) -> Dict[str, Any]:
+    """Inspect desired state, resource leases, blockers, and open circuits."""
+
+    del args
+    from core.runtime.operator_control_plane import (
+        collect_runtime_control_plane_status,
+    )
+
+    report = collect_runtime_control_plane_status()
+    return {
+        "command": "control-plane",
+        "ok": bool(report.get("ready", False)),
+        "report": report,
+    }
+
+
 @register("rebuild-index")
 def cmd_rebuild_index(args: argparse.Namespace) -> Dict[str, Any]:
     from core.runtime.vector_index import rebuild_vector_index
@@ -275,6 +290,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_migrate.add_argument("--dry-run", action="store_true")
     sub.add_parser("verify-state")
     sub.add_parser("verify-memory")
+    sub.add_parser("control-plane")
     p_rebuild = sub.add_parser("rebuild-index")
     p_rebuild.add_argument("--source", required=False, default=None)
     sub.add_parser("chaos")

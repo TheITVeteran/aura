@@ -1,63 +1,73 @@
-"""core/runtime/organ_supervisor.py
+"""Command-organ transport managed by the canonical runtime control plane.
 
-Multiprocess Organ Supervisor (Chromium-style)
-================================================
-Decouples Aura's "organs" — MLX worker, motor cortex, voice engine,
-phi_core compute — into separate OS-level processes. The supervisor
-restarts a crashed organ silently without bringing down the parent
-process; one organ's segfault does not flinch the kernel.
-
-The supervisor offers:
-
-  * register_organ(name, cmd, *, restart_policy)
-  * start_all() / stop_all()
-  * health() — per-organ liveness, age, last restart, restart count
-  * watchdog_loop() — restarts unhealthy organs subject to the
-                      restart policy (max_restarts_per_window, window_s)
-  * ipc_call(organ_name, payload, timeout_s) — request/response over a
-    framed pipe to the organ's controller entry point
-
-Organs are launched with stdin/stdout closed; they communicate over a
-unix domain socket created by the supervisor at boot in the process temp
-directory as ``aura-<pid>-<organ>.sock``. The protocol is JSON-lines with a
-length prefix.
-
-This module provides the *supervisor* and the *health/restart* layer.
-The organ-side controller entry point opens its socket, accepts requests,
-and dispatches to the local handler; each organ ships its own controller
-(e.g. ``core/brain/llm/mlx_controller.py``).
+``OrganSupervisor`` is retained as the public registration and IPC facade, but
+it no longer owns a watchdog or restart policy. Each command organ becomes a
+``RuntimeControlPlane`` desired-state service; this module owns only subprocess
+launch/stop mechanics and bounded framed Unix-socket I/O.
 """
+
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
+import re
 import signal
 import struct
 import subprocess
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.governance_context import local_internal_governed_scope
+from core.runtime.control_plane import (
+    DesiredServiceSpec,
+    DesiredServiceState,
+    ObservedServiceState,
+    RuntimeControlPlane,
+    WorkClass,
+    get_runtime_control_plane,
+)
 from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.flags import FlagKind, declare
+from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.subprocess_gateway import get_subprocess_gateway
-from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.OrganSupervisor")
 
-
 _SOCK_DIR = Path("/tmp")
+_VALID_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_IPC_MAX_BYTES_FLAG = declare(
+    "AURA_ORGAN_IPC_MAX_BYTES",
+    kind=FlagKind.INT,
+    default=16 * 1024 * 1024,
+    description="Maximum framed request or response size for command-organ IPC",
+    owner="core.runtime.organ_supervisor",
+)
 
 
-@dataclass
+@dataclass(frozen=True)
 class RestartPolicy:
     max_restarts: int = 5
     window_s: float = 60.0
     backoff_initial_s: float = 0.5
     backoff_factor: float = 2.0
     backoff_max_s: float = 30.0
+
+    def __post_init__(self) -> None:
+        if self.max_restarts < 0:
+            raise ValueError("max_restarts must be non-negative")
+        if self.window_s <= 0:
+            raise ValueError("window_s must be positive")
+        if self.backoff_initial_s < 0 or self.backoff_max_s < 0:
+            raise ValueError("restart backoff values must be non-negative")
+        if self.backoff_factor < 1.0:
+            raise ValueError("backoff_factor must be at least 1")
 
 
 @dataclass
@@ -68,10 +78,11 @@ class OrganRecord:
     env: dict[str, str] = field(default_factory=dict)
     proc: asyncio.subprocess.Process | None = None
     started_at: float = 0.0
-    last_restart_at: float = 0.0
-    restart_count_window: list[float] = field(default_factory=list)
+    last_stopped_at: float = 0.0
     sock_path: str = ""
+    service_name: str = ""
     policy: RestartPolicy = field(default_factory=RestartPolicy)
+    critical: bool = False
     stop_requested: bool = False
 
     def is_alive(self) -> bool:
@@ -79,10 +90,16 @@ class OrganRecord:
 
 
 class OrganSupervisor:
-    def __init__(self) -> None:
+    """Register command organs as desired-state services and provide IPC."""
+
+    def __init__(self, *, control_plane: RuntimeControlPlane | None = None) -> None:
         self._organs: dict[str, OrganRecord] = {}
-        self._watchdog_task: asyncio.Task | None = None
-        self._running = False
+        self._control_plane = control_plane or get_runtime_control_plane()
+        self._last_report: dict[str, Any] = {}
+
+    @staticmethod
+    def _service_name(name: str) -> str:
+        return f"organ:{name}"
 
     def register_organ(
         self,
@@ -92,115 +109,177 @@ class OrganSupervisor:
         cwd: str | None = None,
         env: dict[str, str] | None = None,
         policy: RestartPolicy | None = None,
+        critical: bool = False,
     ) -> None:
-        sock = _SOCK_DIR / f"aura-{os.getpid()}-{name}.sock"
-        if sock.exists():
+        normalized = str(name or "").strip()
+        if not _VALID_NAME.fullmatch(normalized):
+            raise ValueError(
+                "organ name must be 1-64 characters of letters, digits, dot, dash, or underscore"
+            )
+        command = [str(part) for part in cmd if str(part)]
+        if not command:
+            raise ValueError("organ command must be non-empty")
+        if normalized in self._organs:
+            raise ValueError(f"organ already registered: {normalized}")
+
+        sock = _SOCK_DIR / f"aura-{os.getpid()}-{normalized}.sock"
+        if sock.exists() or sock.is_symlink():
             try:
-                sock.unlink()
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                pass  # no-op: intentional
+                with local_internal_governed_scope(
+                    "runtime.organ_supervisor.stale_socket",
+                    domain="file_write",
+                ):
+                    get_file_write_gateway().delete_file(
+                        sock,
+                        source="runtime.organ_supervisor.stale_socket",
+                    )
+            except OSError as exc:
+                raise RuntimeError(
+                    f"cannot clear stale organ socket for {normalized}: {sock}"
+                ) from exc
+        effective_policy = policy or RestartPolicy()
+        service_name = self._service_name(normalized)
         record = OrganRecord(
-            name=name,
-            cmd=list(cmd),
-            cwd=cwd,
-            env=dict(env or {}),
+            name=normalized,
+            cmd=command,
+            cwd=str(cwd) if cwd is not None else None,
+            env={str(key): str(value) for key, value in dict(env or {}).items()},
             sock_path=str(sock),
-            policy=policy or RestartPolicy(),
+            service_name=service_name,
+            policy=effective_policy,
+            critical=bool(critical),
         )
-        self._organs[name] = record
+        self._organs[normalized] = record
 
-    async def start_all(self) -> None:
-        for record in self._organs.values():
+        async def start_registered_organ() -> None:
             await self._start_organ(record)
-        self._running = True
-        self._watchdog_task = get_task_tracker().create_task(self._watchdog(), name="OrganSupervisorWatchdog")
 
-    async def stop_all(self) -> None:
-        self._running = False
-        if self._watchdog_task is not None:
-            self._watchdog_task.cancel()
-            try:
-                await self._watchdog_task
-            except asyncio.CancelledError:
-                pass  # no-op: intentional
-            self._watchdog_task = None
+        async def stop_registered_organ() -> None:
+            await self._stop_organ(record)
+
+        self._control_plane.register_service(
+            DesiredServiceSpec(
+                name=service_name,
+                critical=record.critical,
+                desired_state=DesiredServiceState.STOPPED,
+                start_timeout_s=15.0,
+                stop_timeout_s=10.0,
+                restart_limit=effective_policy.max_restarts,
+                restart_window_s=effective_policy.window_s,
+                backoff_initial_s=effective_policy.backoff_initial_s,
+                backoff_factor=effective_policy.backoff_factor,
+                backoff_max_s=effective_policy.backoff_max_s,
+                admission_class=WorkClass.SERVICE_START,
+                metadata={"domain": "command_organ", "organ": normalized},
+            ),
+            start=start_registered_organ,
+            stop=stop_registered_organ,
+            probe=record.is_alive,
+        )
+
+    async def start_all(self) -> dict[str, Any]:
+        for record in self._organs.values():
+            record.stop_requested = False
+            self._control_plane.set_desired_state(
+                record.service_name,
+                DesiredServiceState.RUNNING,
+            )
+        report = await self._control_plane.reconcile_once()
+        self._last_report = report
+        critical_failures = [
+            record.name
+            for record in self._organs.values()
+            if record.critical
+            and report.get("services", {})
+            .get(record.service_name, {})
+            .get("observed_state")
+            != ObservedServiceState.READY.value
+        ]
+        if critical_failures:
+            raise RuntimeError(
+                "critical command organs failed desired-state convergence: "
+                + ",".join(sorted(critical_failures))
+            )
+        return report
+
+    async def stop_all(self) -> dict[str, Any]:
         for record in self._organs.values():
             record.stop_requested = True
-            if record.is_alive():
-                try:
-                    record.proc.send_signal(signal.SIGTERM)  # type: ignore[union-attr]
-                    try:
-                        await asyncio.wait_for(record.proc.wait(), timeout=5.0)  # type: ignore[union-attr]
-                    except TimeoutError:
-                        record.proc.kill()  # type: ignore[union-attr]
-                except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
-                    record_degradation(
-                        "organ_supervisor",
-                        exc,
-                        severity="warning",
-                        action="continued organ shutdown after one organ stop failed",
-                        extra={"organ": record.name},
-                    )
-                    logger.debug("organ stop %s failed: %s", record.name, exc)
+            self._control_plane.set_desired_state(
+                record.service_name,
+                DesiredServiceState.STOPPED,
+            )
+        report = await self._control_plane.reconcile_once()
+        self._last_report = report
+        return report
+
+    async def start(self) -> None:
+        await self.start_all()
+
+    async def stop(self) -> None:
+        await self.stop_all()
 
     async def _start_organ(self, record: OrganRecord) -> None:
-        env = os.environ.copy()
-        env.update(record.env)
-        env["AURA_ORGAN_SOCK"] = record.sock_path
-        env["AURA_ORGAN_NAME"] = record.name
+        if record.is_alive():
+            return
+        if is_shutdown_requested():
+            raise RuntimeError(f"runtime shutdown blocks organ start: {record.name}")
+        child_env = os.environ.copy()
+        child_env.update(record.env)
+        child_env["AURA_ORGAN_SOCK"] = record.sock_path
+        child_env["AURA_ORGAN_NAME"] = record.name
+        record.stop_requested = False
         try:
             record.proc = await get_subprocess_gateway().spawn_async(
                 record.cmd,
                 cwd=record.cwd,
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+                env=child_env,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
                 stdin=asyncio.subprocess.DEVNULL,
                 source="environment_action:organ_supervisor.launch",
             )
             record.started_at = time.time()
-            logger.info("🩻 organ '%s' launched (pid=%s)", record.name, record.proc.pid)
-        except (subprocess.SubprocessError, OSError) as exc:
+            logger.info(
+                "Organ %s launched under desired state (pid=%s)",
+                record.name,
+                record.proc.pid,
+            )
+        except (subprocess.SubprocessError, OSError, RuntimeError) as exc:
             record.proc = None
             record_degradation(
                 "organ_supervisor",
                 exc,
                 severity="warning",
-                action="left organ down for watchdog restart after launch failed",
+                action="command-organ launch failed; control plane owns bounded retry",
                 extra={"organ": record.name, "cmd": record.cmd[:3]},
             )
-            logger.warning("organ '%s' failed to launch: %s", record.name, exc)
+            raise
 
-    async def _watchdog(self) -> None:
-        while self._running:
-            for record in list(self._organs.values()):
-                if record.stop_requested:
-                    continue
-                if not record.is_alive():
-                    await self._restart(record)
-            await asyncio.sleep(2.0)
-
-    async def _restart(self, record: OrganRecord) -> None:
-        now = time.time()
-        # prune window
-        record.restart_count_window = [t for t in record.restart_count_window if (now - t) <= record.policy.window_s]
-        if len(record.restart_count_window) >= record.policy.max_restarts:
-            logger.error(
-                "💀 organ '%s' exceeded restart budget (%d in %ss); leaving down",
-                record.name,
-                record.policy.max_restarts,
-                record.policy.window_s,
-            )
+    async def _stop_organ(self, record: OrganRecord) -> None:
+        record.stop_requested = True
+        process = record.proc
+        if process is None:
             return
-        # backoff
-        n = len(record.restart_count_window)
-        delay = min(record.policy.backoff_max_s, record.policy.backoff_initial_s * (record.policy.backoff_factor ** n))
-        await asyncio.sleep(delay)
-        record.restart_count_window.append(now)
-        record.last_restart_at = now
-        await self._start_organ(record)
-
-    # ─── IPC ─────────────────────────────────────────────────────────────
+        try:
+            if process.returncode is None:
+                process.send_signal(signal.SIGTERM)
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5.0)
+                except TimeoutError:
+                    process.kill()
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+        except (ProcessLookupError, RuntimeError, AttributeError, OSError) as exc:
+            record_degradation(
+                "organ_supervisor",
+                exc,
+                severity="warning",
+                action="continued command-organ stop after process teardown error",
+                extra={"organ": record.name},
+            )
+        finally:
+            record.proc = None
+            record.last_stopped_at = time.time()
 
     async def ipc_call(
         self,
@@ -209,50 +288,139 @@ class OrganSupervisor:
         *,
         timeout_s: float = 8.0,
     ) -> dict[str, Any]:
-        record = self._organs.get(organ_name)
-        if record is None or not record.sock_path:
+        record = self._organs.get(str(organ_name))
+        if record is None:
             raise KeyError(organ_name)
-        body = json.dumps(payload).encode("utf-8")
+        if not record.is_alive():
+            raise RuntimeError(f"organ is not ready: {organ_name}")
+        if timeout_s <= 0:
+            raise ValueError("timeout_s must be positive")
+        body = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+        max_bytes = max(1024, int(_IPC_MAX_BYTES_FLAG.value()))
+        if len(body) > max_bytes:
+            raise ValueError(
+                f"organ request exceeds frame limit: {len(body)} > {max_bytes}"
+            )
         header = struct.pack(">I", len(body))
-        async def _do():
-            reader, writer = await asyncio.open_unix_connection(record.sock_path)
-            writer.write(header + body)
-            await writer.drain()
-            n_bytes = await reader.readexactly(4)
-            n = struct.unpack(">I", n_bytes)[0]
-            data = await reader.readexactly(n)
-            writer.close()
-            try:
-                await writer.wait_closed()
-            except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError):
-                pass  # no-op: intentional
-            return json.loads(data.decode("utf-8"))
-        return await asyncio.wait_for(_do(), timeout=timeout_s)
 
-    # ─── introspection ──────────────────────────────────────────────────
+        async def _do() -> dict[str, Any]:
+            reader, writer = await asyncio.open_unix_connection(record.sock_path)
+            try:
+                writer.write(header + body)
+                await writer.drain()
+                response_header = await reader.readexactly(4)
+                response_size = struct.unpack(">I", response_header)[0]
+                if response_size > max_bytes:
+                    raise ValueError(
+                        f"organ response exceeds frame limit: {response_size} > {max_bytes}"
+                    )
+                data = await reader.readexactly(response_size)
+            finally:
+                writer.close()
+                try:
+                    await asyncio.wait_for(
+                        writer.wait_closed(),
+                        timeout=min(1.0, float(timeout_s)),
+                    )
+                except (RuntimeError, TimeoutError, AttributeError):
+                    pass
+            decoded = json.loads(data.decode("utf-8"))
+            if not isinstance(decoded, dict):
+                raise ValueError("organ response must be a JSON object")
+            return decoded
+
+        return await asyncio.wait_for(_do(), timeout=float(timeout_s))
 
     def health(self) -> dict[str, Any]:
-        out = {}
-        for name, r in self._organs.items():
-            out[name] = {
-                "alive": r.is_alive(),
-                "pid": r.proc.pid if r.proc else None,
-                "started_at": r.started_at,
-                "restarts_in_window": len(r.restart_count_window),
-                "policy": asdict(r.policy),
-                "sock": r.sock_path,
+        plane_status = self._control_plane.service_status()
+        return {
+            name: {
+                "alive": record.is_alive(),
+                "pid": record.proc.pid if record.proc else None,
+                "started_at": record.started_at,
+                "last_stopped_at": record.last_stopped_at,
+                "critical": record.critical,
+                "desired_state": plane_status.get(record.service_name, {}).get(
+                    "desired_state",
+                    DesiredServiceState.STOPPED.value,
+                ),
+                "observed_state": plane_status.get(record.service_name, {}).get(
+                    "observed_state",
+                    ObservedServiceState.UNKNOWN.value,
+                ),
+                "reason": plane_status.get(record.service_name, {}).get("reason", ""),
+                "restart_attempts_in_window": len(
+                    plane_status.get(record.service_name, {}).get("restart_times", [])
+                ),
+                "next_retry_at": plane_status.get(record.service_name, {}).get(
+                    "next_retry_at",
+                    0.0,
+                ),
+                "policy": asdict(record.policy),
+                "sock": record.sock_path,
             }
-        return out
+            for name, record in sorted(self._organs.items())
+        }
+
+    def is_alive(self) -> bool:
+        return self._control_plane.is_alive()
+
+    def is_ready(self) -> bool:
+        return all(
+            status["desired_state"] == DesiredServiceState.STOPPED.value
+            or status["observed_state"] == ObservedServiceState.READY.value
+            for status in self.health().values()
+        )
+
+    def get_status(self) -> dict[str, Any]:
+        organs = self.health()
+        return {
+            "alive": self.is_alive(),
+            "ready": self.is_ready(),
+            "organs": organs,
+            "summary": {
+                "registered": len(organs),
+                "running": sum(bool(status["alive"]) for status in organs.values()),
+                "open_circuits": sum(
+                    status["observed_state"] == ObservedServiceState.CIRCUIT_OPEN.value
+                    for status in organs.values()
+                ),
+            },
+            "last_report_digest": (
+                hashlib.sha256(
+                    json.dumps(self._last_report, sort_keys=True, default=str).encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+                if self._last_report
+                else ""
+            ),
+        }
 
 
 _SUPERVISOR: OrganSupervisor | None = None
+_SUPERVISOR_LOCK = threading.Lock()
 
 
 def get_supervisor() -> OrganSupervisor:
     global _SUPERVISOR
     if _SUPERVISOR is None:
-        _SUPERVISOR = OrganSupervisor()
+        with _SUPERVISOR_LOCK:
+            if _SUPERVISOR is None:
+                _SUPERVISOR = OrganSupervisor()
     return _SUPERVISOR
 
 
-__all__ = ["OrganSupervisor", "OrganRecord", "RestartPolicy", "get_supervisor"]
+def reset_supervisor() -> None:
+    global _SUPERVISOR
+    with _SUPERVISOR_LOCK:
+        _SUPERVISOR = None
+
+
+__all__ = [
+    "OrganRecord",
+    "OrganSupervisor",
+    "RestartPolicy",
+    "get_supervisor",
+    "reset_supervisor",
+]

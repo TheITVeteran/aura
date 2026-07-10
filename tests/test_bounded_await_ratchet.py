@@ -40,7 +40,7 @@ _STREAM_READS = {"readexactly", "readline", "readuntil"}
 _BOUNDING_WRAPPERS = {"wait_for"}
 _BOUNDING_CONTEXTS = {"timeout", "timeout_at", "move_on_after", "fail_after"}
 
-# (file, async function, callee) — historical debt frozen 2026-07-09 (69
+# (file, async function, callee) — historical debt frozen 2026-07-09 (68
 # sites). ONLY shrinks: fix a site, delete its entry. Never add for new code.
 ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
     {
@@ -95,7 +95,6 @@ ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
         ("core/resource/rate_limiter.py", "limit_rate", "acquire"),
         ("core/runtime/organ_supervisor.py", "_do", "drain"),
         ("core/runtime/organ_supervisor.py", "_do", "readexactly"),
-        ("core/runtime/organ_supervisor.py", "_do", "wait_closed"),
         ("core/sandbox/bash_daemon.py", "_read_until_delimiter", "readline"),
         ("core/sandbox/bash_daemon.py", "_start", "drain"),
         ("core/sandbox/bash_daemon.py", "execute", "drain"),

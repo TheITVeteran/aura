@@ -1,4 +1,3 @@
-
 """Universal receipt types and durable receipt store.
 
 The audit insists every consequential action emits a receipt and that the
@@ -9,18 +8,31 @@ durable, schema-versioned, and queryable.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
+import sqlite3
 import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 
 from core.runtime.atomic_writer import atomic_write_json, read_json_envelope
 from core.runtime.audit_chain import AuditChain
+from core.runtime.flags import FlagKind, declare
 
 logger = logging.getLogger("core.runtime.receipts")
+
+_HIGH_VOLUME_RECEIPT_KINDS = frozenset({"resource_admission"})
+_HOT_INDEX_LIMIT_FLAG = declare(
+    "AURA_RECEIPT_HOT_INDEX_LIMIT",
+    kind=FlagKind.INT,
+    default=2048,
+    description="Maximum receipts retained per kind in the process hot index",
+    owner="core.runtime.receipts",
+)
 
 
 def _new_id(prefix: str) -> str:
@@ -213,32 +225,28 @@ AnyReceipt = Union[
 class ReceiptStore:
     """Durable receipt store backed by the canonical AtomicWriter.
 
-    Every receipt is written as a single schema-versioned JSON envelope
-    in ``root/<kind>/<receipt_id>.json``. The store also maintains an
-    in-memory index for fast querying within a process; on cold restart
-    the index can be rebuilt from disk.
+    Ordinary receipts are written as schema-versioned JSON envelopes in
+    ``root/<kind>/<receipt_id>.json``. High-volume operational receipts use a
+    WAL-backed SQLite ledger so long-running runtimes do not create an unbounded
+    inode count. Both formats feed the same tamper-evident audit chain and API.
     """
 
     SCHEMA_VERSION = 1
 
     def __init__(self, root: Optional[Path] = None):
         self.root = Path(root) if root is not None else (Path.home() / ".aura" / "receipts")
-        # Schedule durable dir creation through the storage gateway when it
-        # is available (production runtime); fall back to a synchronous
-        # mkdir so unit tests and bootstrap paths still work.  The mkdir
-        # is idempotent and load-bearing for the audit chain sidecar.
-        try:
-            get_task_tracker().create_task(  # type: ignore[name-defined]
-                get_storage_gateway().create_dir(  # type: ignore[name-defined]
-                    self.root, cause='ReceiptStore.__init__'
-                )
-            )
-        except NameError as _exc:
-            logger.debug("Suppressed %s in core.runtime.receipts: %s", type(_exc).__name__, _exc)
         self.root.mkdir(parents=True, exist_ok=True)
+        try:
+            self.root.chmod(0o700)
+        except OSError as exc:
+            logger.debug("Could not restrict receipt root permissions: %s", exc)
         self._lock = threading.RLock()
         self._index: Dict[str, AnyReceipt] = {}
         self._chain_append_errors: List[Dict[str, Any]] = []
+        self._ledger_path = self.root / "_high_volume_receipts.sqlite3"
+        self._ledger: sqlite3.Connection | None = None
+        self._ledger_pid = 0
+        self._ledger_available = self._initialize_high_volume_ledger()
         # Tamper-evident chain lives at root/_chain.jsonl. Sidecar; do not
         # break existing callers if the chain file cannot be initialised.
         self._chain: Optional[AuditChain] = None
@@ -247,20 +255,202 @@ class ReceiptStore:
         except (RuntimeError, AttributeError, TypeError, ValueError):
             self._chain = None
 
+    @property
+    def hot_index_limit(self) -> int:
+        return max(64, int(_HOT_INDEX_LIMIT_FLAG.value()))
+
+    def _ledger_connection_locked(self) -> sqlite3.Connection:
+        current_pid = os.getpid()
+        if self._ledger is not None and self._ledger_pid == current_pid:
+            return self._ledger
+        if self._ledger is not None:
+            try:
+                self._ledger.close()
+            except sqlite3.Error:
+                pass
+        connection = sqlite3.connect(
+            self._ledger_path,
+            timeout=5.0,
+            check_same_thread=False,
+        )
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA busy_timeout=5000")
+        self._ledger = connection
+        self._ledger_pid = current_pid
+        return connection
+
+    def _initialize_high_volume_ledger(self) -> bool:
+        try:
+            with self._lock:
+                connection = self._ledger_connection_locked()
+                connection.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS receipt_ledger (
+                        receipt_id TEXT PRIMARY KEY,
+                        kind TEXT NOT NULL,
+                        created_at REAL NOT NULL,
+                        body_json TEXT NOT NULL
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_receipt_ledger_kind_created
+                    ON receipt_ledger(kind, created_at DESC)
+                    """
+                )
+                connection.commit()
+                try:
+                    self._ledger_path.chmod(0o600)
+                except OSError as exc:
+                    logger.debug("Could not restrict receipt ledger permissions: %s", exc)
+            return True
+        except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
+            if self._ledger is not None:
+                try:
+                    self._ledger.close()
+                except sqlite3.Error:
+                    pass
+                self._ledger = None
+                self._ledger_pid = 0
+            logger.error(
+                "High-volume receipt ledger unavailable; falling back to envelope files: %s",
+                exc,
+            )
+            return False
+
+    def _ledger_put_locked(self, body: Dict[str, Any]) -> None:
+        connection = self._ledger_connection_locked()
+        receipt_id = str(body.get("receipt_id") or "")
+        kind = str(body.get("kind") or "")
+        body_json = json.dumps(
+            body,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        try:
+            connection.execute(
+                """
+                INSERT INTO receipt_ledger(receipt_id, kind, created_at, body_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    receipt_id,
+                    kind,
+                    float(body.get("created_at") or 0.0),
+                    body_json,
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            row = connection.execute(
+                "SELECT kind, body_json FROM receipt_ledger WHERE receipt_id = ?",
+                (receipt_id,),
+            ).fetchone()
+            if row is None or str(row[0]) != kind or str(row[1]) != body_json:
+                raise ValueError(f"receipt id is immutable and already exists: {receipt_id}") from exc
+        connection.commit()
+
+    def _ledger_body_locked(self, receipt_id: str, kind: str) -> Optional[Dict[str, Any]]:
+        if not self._ledger_available:
+            return None
+        try:
+            row = self._ledger_connection_locked().execute(
+                "SELECT body_json FROM receipt_ledger WHERE receipt_id = ? AND kind = ?",
+                (str(receipt_id), str(kind)),
+            ).fetchone()
+        except sqlite3.Error:
+            return None
+        if row is None:
+            return None
+        try:
+            body = json.loads(str(row[0]))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
+        return body if isinstance(body, dict) else None
+
+    @staticmethod
+    def _receipt_from_body(kind: str, body: Dict[str, Any]) -> AnyReceipt | None:
+        cls = _RECEIPT_CLASSES.get(kind)
+        if cls is None:
+            return None
+        payload = dict(body)
+        payload.pop("kind", None)
+        try:
+            receipt = cls(**payload)
+        except TypeError:
+            return None
+        receipt.kind = kind
+        return cast(AnyReceipt, receipt)
+
+    @classmethod
+    def _receipt_snapshot(cls, receipt: AnyReceipt) -> AnyReceipt:
+        snapshot = cls._receipt_from_body(receipt.kind, receipt.to_dict())
+        if snapshot is None:
+            raise ValueError(f"receipt cannot be reconstructed: {receipt.kind}")
+        return snapshot
+
+    def _prune_hot_index_locked(self, kind: str) -> None:
+        receipts = sorted(
+            (
+                receipt
+                for receipt in self._index.values()
+                if receipt.kind == kind
+            ),
+            key=lambda receipt: float(getattr(receipt, "created_at", 0.0) or 0.0),
+            reverse=True,
+        )
+        for receipt in receipts[self.hot_index_limit :]:
+            self._index.pop(receipt.receipt_id, None)
+
     def emit(self, receipt: AnyReceipt) -> AnyReceipt:
         if not getattr(receipt, "receipt_id", None):
             receipt.receipt_id = _new_id(receipt.kind)
-        path = self.root / receipt.kind / f"{receipt.receipt_id}.json"
         body = receipt.to_dict()
-        atomic_write_json(
-            path,
-            body,
-            schema_version=self.SCHEMA_VERSION,
-            schema_name=f"receipt_{receipt.kind}",
-            indent=None,
-        )
         with self._lock:
-            self._index[receipt.receipt_id] = receipt
+            existing = self.get(receipt.receipt_id)
+            if existing is not None:
+                if existing.kind != receipt.kind or existing.to_dict() != body:
+                    raise ValueError(
+                        f"receipt id is immutable and already exists: {receipt.receipt_id}"
+                    )
+                return self._receipt_snapshot(existing)
+            if receipt.kind in _HIGH_VOLUME_RECEIPT_KINDS and self._ledger_available:
+                try:
+                    self._ledger_put_locked(body)
+                except (OSError, sqlite3.Error) as exc:
+                    logger.error(
+                        "High-volume receipt ledger write failed; using durable envelope fallback: %s",
+                        exc,
+                    )
+                    if self._ledger is not None:
+                        try:
+                            self._ledger.close()
+                        except sqlite3.Error:
+                            pass
+                    self._ledger = None
+                    self._ledger_pid = 0
+                    self._ledger_available = False
+                    path = self.root / receipt.kind / f"{receipt.receipt_id}.json"
+                    atomic_write_json(
+                        path,
+                        body,
+                        schema_version=self.SCHEMA_VERSION,
+                        schema_name=f"receipt_{receipt.kind}",
+                        indent=None,
+                    )
+            else:
+                path = self.root / receipt.kind / f"{receipt.receipt_id}.json"
+                atomic_write_json(
+                    path,
+                    body,
+                    schema_version=self.SCHEMA_VERSION,
+                    schema_name=f"receipt_{receipt.kind}",
+                    indent=None,
+                )
+            self._index[receipt.receipt_id] = self._receipt_snapshot(receipt)
+            self._prune_hot_index_locked(receipt.kind)
         # Append to tamper-evident chain after the receipt is durable on
         # disk so verifiers always find a body to re-hash.
         if self._chain is not None:
@@ -302,13 +492,56 @@ class ReceiptStore:
 
     def get(self, receipt_id: str) -> Optional[AnyReceipt]:
         with self._lock:
-            return self._index.get(receipt_id)
+            cached = self._index.get(receipt_id)
+            if cached is not None:
+                return self._receipt_snapshot(cached)
+            for kind in _RECEIPT_CLASSES:
+                path = self.root / kind / f"{receipt_id}.json"
+                if not path.exists():
+                    continue
+                try:
+                    envelope = read_json_envelope(path)
+                except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+                    continue
+                body = envelope.get("payload") if isinstance(envelope, dict) else None
+                if not isinstance(body, dict):
+                    continue
+                receipt = self._receipt_from_body(kind, body)
+                if receipt is not None:
+                    self._index[receipt.receipt_id] = receipt
+                    self._prune_hot_index_locked(kind)
+                    return self._receipt_snapshot(receipt)
+            if not self._ledger_available:
+                return None
+            try:
+                row = self._ledger_connection_locked().execute(
+                    "SELECT kind, body_json FROM receipt_ledger WHERE receipt_id = ?",
+                    (str(receipt_id),),
+                ).fetchone()
+            except sqlite3.Error:
+                return None
+            if row is None:
+                return None
+            try:
+                body = json.loads(str(row[1]))
+            except (json.JSONDecodeError, TypeError, ValueError):
+                return None
+            receipt = self._receipt_from_body(str(row[0]), body)
+            if receipt is not None:
+                self._index[receipt.receipt_id] = receipt
+                self._prune_hot_index_locked(receipt.kind)
+                return self._receipt_snapshot(receipt)
+            return None
 
     def query_by_kind(self, kind: str) -> List[AnyReceipt]:
         if kind not in _RECEIPT_CLASSES:
             raise ValueError(f"unknown receipt kind '{kind}'")
         with self._lock:
-            return [r for r in self._index.values() if r.kind == kind]
+            return [
+                self._receipt_snapshot(receipt)
+                for receipt in self._index.values()
+                if receipt.kind == kind
+            ]
 
     def query_recent(
         self,
@@ -318,7 +551,7 @@ class ReceiptStore:
     ) -> List[AnyReceipt]:
         """Return the newest receipts across one or more kinds."""
         with self._lock:
-            receipts = list(self._index.values())
+            receipts = [self._receipt_snapshot(receipt) for receipt in self._index.values()]
 
         if kinds:
             allowed = {str(kind or "").strip() for kind in kinds if str(kind or "").strip()}
@@ -329,51 +562,203 @@ class ReceiptStore:
             return []
         return receipts[-limit:]
 
+    def query_recent_persisted(self, kind: str, *, limit: int = 20) -> List[AnyReceipt]:
+        """Read newest receipts of one kind across hot, ledger, and envelope storage."""
+
+        if kind not in _RECEIPT_CLASSES:
+            raise ValueError(f"unknown receipt kind '{kind}'")
+        if limit <= 0:
+            return []
+        with self._lock:
+            by_id = {
+                receipt.receipt_id: receipt
+                for receipt in self._index.values()
+                if receipt.kind == kind
+            }
+            if kind in _HIGH_VOLUME_RECEIPT_KINDS and self._ledger_available:
+                try:
+                    rows = self._ledger_connection_locked().execute(
+                        """
+                        SELECT body_json FROM receipt_ledger
+                        WHERE kind = ? ORDER BY created_at DESC LIMIT ?
+                        """,
+                        (kind, int(limit)),
+                    ).fetchall()
+                except sqlite3.Error:
+                    rows = []
+                for row in rows:
+                    try:
+                        body = json.loads(str(row[0]))
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        continue
+                    receipt = self._receipt_from_body(kind, body)
+                    if receipt is not None:
+                        by_id[receipt.receipt_id] = receipt
+
+            kind_dir = self.root / kind
+            if kind_dir.exists():
+                files: list[tuple[float, Path]] = []
+                for path in kind_dir.glob("*.json"):
+                    try:
+                        files.append((path.stat().st_mtime, path))
+                    except OSError:
+                        continue
+                for _mtime, path in sorted(files, reverse=True)[: int(limit)]:
+                    try:
+                        envelope = read_json_envelope(path)
+                    except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+                        continue
+                    body = envelope.get("payload") if isinstance(envelope, dict) else None
+                    if not isinstance(body, dict):
+                        continue
+                    receipt = self._receipt_from_body(kind, body)
+                    if receipt is not None:
+                        by_id[receipt.receipt_id] = receipt
+
+            receipts = sorted(
+                by_id.values(),
+                key=lambda receipt: float(getattr(receipt, "created_at", 0.0) or 0.0),
+            )
+            return receipts[-int(limit) :]
+
     def reload_from_disk(self) -> int:
-        """Rebuild the in-memory index from disk. Returns count loaded."""
+        """Rebuild the bounded hot index from durable receipt storage."""
         count = 0
         with self._lock:
             self._index.clear()
             for kind, cls in _RECEIPT_CLASSES.items():
                 kind_dir = self.root / kind
-                if not kind_dir.exists():
-                    continue
-                for jf in kind_dir.glob("*.json"):
-                    try:
-                        env = read_json_envelope(jf)
-                        payload = env.get("payload") or {}
-                        # Strip kind from payload to avoid passing twice.
-                        payload.pop("kind", None)
-                        receipt = cls(**payload)
-                        receipt.kind = kind
-                        self._index[receipt.receipt_id] = receipt
-                        count += 1
-                    except (OSError, ConnectionError, TimeoutError):
-                        continue
+                if kind_dir.exists():
+                    files: list[tuple[float, Path]] = []
+                    for path in kind_dir.glob("*.json"):
+                        try:
+                            files.append((path.stat().st_mtime, path))
+                        except OSError:
+                            continue
+                    for _mtime, jf in sorted(files, reverse=True)[: self.hot_index_limit]:
+                        try:
+                            env = read_json_envelope(jf)
+                            payload = dict(env.get("payload") or {})
+                            # Strip kind from payload to avoid passing twice.
+                            payload.pop("kind", None)
+                            receipt = cls(**payload)
+                            receipt.kind = kind
+                            self._index[receipt.receipt_id] = receipt
+                        except (OSError, ConnectionError, TimeoutError):
+                            continue
+                if kind in _HIGH_VOLUME_RECEIPT_KINDS and self._ledger_available:
+                    rows = self._ledger_connection_locked().execute(
+                        """
+                        SELECT body_json FROM receipt_ledger
+                        WHERE kind = ? ORDER BY created_at DESC LIMIT ?
+                        """,
+                        (kind, self.hot_index_limit),
+                    ).fetchall()
+                    for row in reversed(rows):
+                        try:
+                            body = json.loads(str(row[0]))
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            continue
+                        receipt = self._receipt_from_body(kind, body)
+                        if receipt is not None:
+                            self._index[receipt.receipt_id] = receipt
+                self._prune_hot_index_locked(kind)
+            count = len(self._index)
         return count
 
     def coverage_stats(self) -> Dict[str, int]:
         with self._lock:
             stats: Dict[str, int] = {kind: 0 for kind in _RECEIPT_CLASSES}
-            for r in self._index.values():
-                stats[r.kind] = stats.get(r.kind, 0) + 1
+            for kind in _RECEIPT_CLASSES:
+                kind_dir = self.root / kind
+                if kind_dir.exists():
+                    stats[kind] = sum(1 for _ in kind_dir.glob("*.json"))
+            if self._ledger_available:
+                rows = self._ledger_connection_locked().execute(
+                    "SELECT kind, COUNT(*) FROM receipt_ledger GROUP BY kind"
+                ).fetchall()
+                for kind, count in rows:
+                    ledger_kind = str(kind)
+                    stats[ledger_kind] = stats.get(ledger_kind, 0) + int(count)
             return stats
+
+    def _persisted_receipt_kinds_locked(self) -> Dict[str, str]:
+        persisted: Dict[str, str] = {}
+        for kind in _RECEIPT_CLASSES:
+            kind_dir = self.root / kind
+            if not kind_dir.exists():
+                continue
+            for path in kind_dir.glob("*.json"):
+                persisted[path.stem] = kind
+        if self._ledger_available:
+            try:
+                rows = self._ledger_connection_locked().execute(
+                    "SELECT receipt_id, kind FROM receipt_ledger"
+                ).fetchall()
+            except sqlite3.Error:
+                rows = []
+            for receipt_id, kind in rows:
+                persisted[str(receipt_id)] = str(kind)
+        return persisted
 
     def _load_body_from_disk(self, receipt_id: str, kind: str) -> Optional[Dict[str, Any]]:
         """Re-read a receipt body from disk for chain verification."""
         path = self.root / kind / f"{receipt_id}.json"
-        if not path.exists():
-            return None
-        try:
-            env = read_json_envelope(path)
-        except (RuntimeError, AttributeError, TypeError, ValueError):
-            return None
-        payload = env.get("payload") if isinstance(env, dict) else None
-        if not isinstance(payload, dict):
-            return None
-        # Re-attach kind so the body matches what was hashed at emit-time.
-        payload.setdefault("kind", kind)
-        return payload
+        if path.exists():
+            try:
+                env = read_json_envelope(path)
+            except (RuntimeError, AttributeError, TypeError, ValueError):
+                return None
+            payload = env.get("payload") if isinstance(env, dict) else None
+            if not isinstance(payload, dict):
+                return None
+            payload.setdefault("kind", kind)
+            return payload
+        with self._lock:
+            return self._ledger_body_locked(receipt_id, kind)
+
+    def storage_stats(self) -> Dict[str, Any]:
+        """Return hot/cold receipt storage counts for health and diagnostics."""
+
+        with self._lock:
+            hot_by_kind: Dict[str, int] = {}
+            for receipt in self._index.values():
+                hot_by_kind[receipt.kind] = hot_by_kind.get(receipt.kind, 0) + 1
+            ledger_by_kind: Dict[str, int] = {}
+            if self._ledger_available:
+                for kind, count in self._ledger_connection_locked().execute(
+                    "SELECT kind, COUNT(*) FROM receipt_ledger GROUP BY kind"
+                ).fetchall():
+                    ledger_by_kind[str(kind)] = int(count)
+            envelope_by_kind = {
+                kind: sum(1 for _ in (self.root / kind).glob("*.json"))
+                for kind in _RECEIPT_CLASSES
+                if (self.root / kind).exists()
+            }
+            return {
+                "hot_index_limit": self.hot_index_limit,
+                "hot_index_total": len(self._index),
+                "hot_by_kind": hot_by_kind,
+                "high_volume_ledger_available": self._ledger_available,
+                "ledger_path": str(self._ledger_path),
+                "ledger_by_kind": ledger_by_kind,
+                "envelope_by_kind": envelope_by_kind,
+                "persisted_total": sum(ledger_by_kind.values())
+                + sum(envelope_by_kind.values()),
+            }
+
+    def close(self) -> None:
+        with self._lock:
+            if self._ledger is not None:
+                self._ledger.close()
+                self._ledger = None
+                self._ledger_pid = 0
+            if self._chain is not None:
+                try:
+                    self._chain.flush()
+                except OSError as exc:
+                    logger.warning("Could not flush receipt audit chain during close: %s", exc)
+                self._chain.close()
 
     def verify_chain(self) -> Dict[str, Any]:
         """Verify the tamper-evident chain.
@@ -391,16 +776,15 @@ class ReceiptStore:
         entries = self._chain.entries()
         chained_ids = {entry.receipt_id for entry in entries}
         with self._lock:
-            indexed_ids = set(self._index)
+            persisted = self._persisted_receipt_kinds_locked()
             append_errors = list(self._chain_append_errors)
-        missing_from_chain = sorted(indexed_ids - chained_ids)
+        missing_from_chain = sorted(set(persisted) - chained_ids)
         for receipt_id in missing_from_chain:
-            receipt = self.get(receipt_id)
             problems.append(
                 {
                     "reason": "receipt missing from audit chain",
                     "receipt_id": receipt_id,
-                    "kind": getattr(receipt, "kind", "unknown"),
+                    "kind": persisted.get(receipt_id, "unknown"),
                 }
             )
         for error in append_errors:
@@ -419,7 +803,7 @@ class ReceiptStore:
         """Export the chain (chain.jsonl + MANIFEST.txt) to ``dest_dir``."""
         if self._chain is None:
             raise RuntimeError("chain not initialised")
-        return self._chain.export(dest_dir)
+        return cast(Dict[str, Any], self._chain.export(dest_dir))
 
 
 _global_store: Optional[ReceiptStore] = None
@@ -437,4 +821,6 @@ def get_receipt_store(root: Optional[Path] = None) -> ReceiptStore:
 def reset_receipt_store() -> None:
     global _global_store
     with _singleton_lock:
+        if _global_store is not None:
+            _global_store.close()
         _global_store = None

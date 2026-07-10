@@ -56,6 +56,121 @@ async def test_background_admission_fails_closed_under_memory_pressure(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_repeated_unaudited_denials_coalesce_until_state_changes(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("AURA_ADMISSION_RECEIPT_HEARTBEAT_S", "3600")
+    pressure = {"memory": 94.0}
+    store = ReceiptStore(tmp_path / "receipts")
+    controller = ResourceAdmissionController(
+        pressure_provider=lambda: PressureSnapshot(memory_percent=pressure["memory"]),
+        receipt_store=store,
+    )
+    controller._pressure_cache_s = 0.0
+
+    def request() -> AdmissionRequest:
+        return AdmissionRequest(
+            owner="autonomy.research",
+            work_class=WorkClass.BACKGROUND,
+            priority=AdmissionPriority.BACKGROUND,
+            timeout_s=0,
+        )
+
+    first = await controller.acquire(request())
+    pressure["memory"] = 94.7
+    second = await controller.acquire(request())
+
+    assert second.receipt_id == first.receipt_id
+    assert second.receipt_replayed is True
+    assert store.coverage_stats()["resource_admission"] == 1
+    assert controller.status()["counters"]["receipt_coalesced"] == 1
+
+    pressure["memory"] = 40.0
+    recovered = await controller.acquire(request())
+    assert recovered.admitted is True
+    await controller.release(recovered.lease_id)
+
+    pressure["memory"] = 95.0
+    regressed = await controller.acquire(request())
+    assert regressed.receipt_id != first.receipt_id
+    assert regressed.receipt_replayed is False
+    assert store.coverage_stats()["resource_admission"] == 2
+
+
+@pytest.mark.asyncio
+async def test_audited_denials_are_never_coalesced(monkeypatch, tmp_path):
+    monkeypatch.setenv("AURA_ADMISSION_RECEIPT_HEARTBEAT_S", "3600")
+    store = ReceiptStore(tmp_path / "receipts")
+    controller = ResourceAdmissionController(
+        pressure_provider=lambda: PressureSnapshot(memory_percent=94.0),
+        receipt_store=store,
+    )
+
+    def request() -> AdmissionRequest:
+        return AdmissionRequest(
+            owner="mlx.model_load:cortex",
+            work_class=WorkClass.MODEL_LOAD,
+            lane="cortex",
+            priority=AdmissionPriority.FOREGROUND,
+            timeout_s=0,
+            receipt_required=True,
+        )
+
+    first = await controller.acquire(request())
+    second = await controller.acquire(request())
+
+    assert first.receipt_id != second.receipt_id
+    assert first.receipt_replayed is False
+    assert second.receipt_replayed is False
+    assert store.coverage_stats()["resource_admission"] == 2
+
+
+@pytest.mark.asyncio
+async def test_zero_receipt_heartbeat_disables_coalescing(monkeypatch, tmp_path):
+    monkeypatch.setenv("AURA_ADMISSION_RECEIPT_HEARTBEAT_S", "0")
+    store = ReceiptStore(tmp_path / "receipts")
+    controller = ResourceAdmissionController(
+        pressure_provider=lambda: PressureSnapshot(memory_percent=94.0),
+        receipt_store=store,
+    )
+    request = lambda: AdmissionRequest(
+        owner="maintenance",
+        work_class=WorkClass.BACKGROUND,
+        priority=AdmissionPriority.BACKGROUND,
+        timeout_s=0,
+    )
+
+    first = await controller.acquire(request())
+    second = await controller.acquire(request())
+
+    assert first.receipt_id != second.receipt_id
+    assert store.coverage_stats()["resource_admission"] == 2
+
+
+@pytest.mark.asyncio
+async def test_receipt_coalescing_state_is_bounded(monkeypatch, tmp_path):
+    monkeypatch.setenv("AURA_ADMISSION_RECEIPT_HEARTBEAT_S", "3600")
+    controller = ResourceAdmissionController(
+        pressure_provider=lambda: PressureSnapshot(memory_percent=94.0),
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        history_limit=16,
+    )
+
+    for index in range(70):
+        await controller.acquire(
+            AdmissionRequest(
+                owner=f"background-owner-{index}",
+                work_class=WorkClass.BACKGROUND,
+                priority=AdmissionPriority.BACKGROUND,
+                timeout_s=0,
+            )
+        )
+
+    assert controller.status()["receipt_state_count"] == 64
+
+
+@pytest.mark.asyncio
 async def test_foreground_inference_remains_admissible_under_moderate_pressure():
     controller = ResourceAdmissionController(
         pressure_provider=lambda: PressureSnapshot(memory_percent=87.0),
@@ -439,6 +554,24 @@ def test_reconciler_rejects_dependency_cycles():
     assert "two" not in plane.service_status()
 
 
+def test_stopped_desired_service_registers_as_converged_stopped():
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    plane.register_service(
+        DesiredServiceSpec(
+            name="dormant",
+            desired_state=DesiredServiceState.STOPPED,
+        ),
+        start=lambda: pytest.fail("stopped service must not start"),
+        stop=lambda: pytest.fail("never-started service must not stop"),
+        probe=lambda: False,
+    )
+
+    assert plane.service_status()["dormant"]["observed_state"] == "stopped"
+    assert plane.service_status()["dormant"]["reason"] == "registered_stopped"
+
+
 @pytest.mark.asyncio
 async def test_reconciler_opens_circuit_after_bounded_start_failures():
     plane = RuntimeControlPlane(
@@ -555,6 +688,102 @@ async def test_failed_stop_prevents_duplicate_restart():
     assert starts == 0
     assert report["services"]["wedged"]["observed_state"] == "failed"
     assert report["services"]["wedged"]["reason"] == "stop_failed"
+
+    second = await plane.reconcile_once()
+    assert starts == 0
+    assert second["services"]["wedged"]["observed_state"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_unverified_start_is_stopped_before_retry_is_scheduled():
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    running = False
+    starts = 0
+    stops = 0
+
+    async def start() -> None:
+        nonlocal running, starts
+        starts += 1
+        running = True
+
+    async def stop() -> None:
+        nonlocal running, stops
+        stops += 1
+        running = False
+
+    plane.register_service(
+        DesiredServiceSpec(name="unverified", restart_limit=2),
+        start=start,
+        stop=stop,
+        probe=lambda: False,
+    )
+
+    report = await plane.reconcile_once()
+
+    assert starts == 1
+    assert stops == 1
+    assert running is False
+    assert report["services"]["unverified"]["observed_state"] == "backing_off"
+    assert report["services"]["unverified"]["reason"] == "start_failed"
+    assert "without passing liveness probe" in report["services"]["unverified"]["last_error"]
+
+
+@pytest.mark.asyncio
+async def test_failed_start_cleanup_blocks_duplicate_start():
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    starts = 0
+
+    async def start() -> None:
+        nonlocal starts
+        starts += 1
+        raise RuntimeError("partial launch")
+
+    async def stop() -> None:
+        raise RuntimeError("cannot prove partial instance stopped")
+
+    plane.register_service(
+        DesiredServiceSpec(name="partial", restart_limit=3),
+        start=start,
+        stop=stop,
+        probe=lambda: False,
+    )
+
+    first = await plane.reconcile_once()
+    second = await plane.reconcile_once()
+
+    assert starts == 1
+    assert first["services"]["partial"]["observed_state"] == "failed"
+    assert second["services"]["partial"]["reason"] == "start_cleanup_failed"
+    assert "partial launch" in second["services"]["partial"]["last_error"]
+    assert "cannot prove partial instance stopped" in second["services"]["partial"]["last_error"]
+
+
+@pytest.mark.asyncio
+async def test_zero_restart_budget_still_permits_initial_start():
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    starts = 0
+
+    async def start() -> None:
+        nonlocal starts
+        starts += 1
+
+    plane.register_service(
+        DesiredServiceSpec(name="one_shot", restart_limit=0),
+        start=start,
+        stop=lambda: None,
+        probe=lambda: True,
+    )
+
+    report = await plane.reconcile_once()
+
+    assert starts == 1
+    assert report["services"]["one_shot"]["observed_state"] == "ready"
 
 
 @pytest.mark.asyncio
