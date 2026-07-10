@@ -30,7 +30,7 @@ def _isolate_process_global_forensics(monkeypatch):
     from core.health.degraded_events import clear_degraded_events
 
     clear_degraded_events()
-    monkeypatch.setattr("core.logging_config.get_dropped_log_count", lambda: 0)
+    monkeypatch.setattr("core.observability.logging_config.get_dropped_log_count", lambda: 0)
     yield
     clear_degraded_events()
 

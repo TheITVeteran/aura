@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.planner import ExecutionPlan, Planner, ToolCall
+from core.planning.planner import ExecutionPlan, Planner, ToolCall
 from core.runtime.expectation_feedback import (
     expectation_feedback_fingerprint,
     format_expectation_repair_guidance,
