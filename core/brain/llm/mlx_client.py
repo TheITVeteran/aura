@@ -324,6 +324,39 @@ def _observed_active_lanes(exclude_client: Any = None) -> list["ActiveLane"]:
     return lanes
 
 
+def _note_lane_worker_death(client: Any, reason: str) -> None:
+    """Report a worker death to the crash-loop breaker (roadmap K4).
+
+    Lifetime is measured from the spawn timestamp; the breaker itself
+    decides whether the death counts (young + non-deliberate). Never
+    throws — death accounting must not break a recovery path.
+    """
+    try:
+        started = float(getattr(client, "_process_started_at", 0.0) or 0.0)
+        if started <= 0.0:
+            return
+        from core.runtime.lane_reconciler import get_crash_loop_breaker
+
+        get_crash_loop_breaker().note_death(
+            _real_model_path(client.model_path),
+            lifetime_s=max(0.0, time.time() - started),
+            reason=reason,
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Crash-loop death report skipped: %s", exc)
+
+
+def _crash_loop_blocks_worker_spawn(client: Any) -> str | None:
+    """Consult the K4 crash-loop breaker before a (re)spawn. Never throws."""
+    try:
+        from core.runtime.lane_reconciler import get_crash_loop_breaker
+
+        return get_crash_loop_breaker().blocked(_real_model_path(client.model_path))
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("Crash-loop consult unavailable (spawn proceeds): %s", exc)
+        return None
+
+
 def _lane_admission_blocks_worker_spawn(client: Any) -> str | None:
     """Consult the declarative lane-admission controller for this spawn.
 
@@ -2633,6 +2666,10 @@ class MLXLocalClient:
                 "🛑 [MLX] Killing worker immediately for forced abort before lifecycle lock cleanup (%s).",
                 reason,
             )
+            _note_lane_worker_death(self, reason)
+            # Consume the lifetime anchor so no later seam double-counts
+            # this death (reboot_worker / the self-died respawn branch).
+            self._process_started_at = 0.0
             self._kill_and_join_blocking(process)
             killed_process_before_lock = True
 
@@ -2666,6 +2703,8 @@ class MLXLocalClient:
                 and process.is_alive()
                 and not killed_process_before_lock
             ):
+                _note_lane_worker_death(self, reason)
+                self._process_started_at = 0.0
                 self._kill_and_join_blocking(process)
 
             self._replace_ipc_queues()
@@ -3095,6 +3134,26 @@ class MLXLocalClient:
                 os.path.basename(self.model_path),
             )
             return False
+        # K4 crash-loop backoff: a lane whose workers keep dying young must
+        # not respawn on demand. Refuse fast with a named reason — the
+        # escalation ladder answers while the backoff drains. A healthy
+        # worker passing through is never disturbed.
+        if not (self._process and self._process.is_alive() and self._init_done):
+            crash_blocked = _crash_loop_blocks_worker_spawn(self)
+            if crash_blocked:
+                self._set_lane_state("recovering", crash_blocked)
+                self._record_degraded_event(
+                    "crash_loop_backoff",
+                    detail=f"{os.path.basename(self.model_path)}:{crash_blocked}",
+                    severity="warning",
+                    foreground_request=foreground_request,
+                )
+                logger.warning(
+                    "⛔ [MLX] Respawn refused for %s: %s",
+                    os.path.basename(self.model_path),
+                    crash_blocked,
+                )
+                return False
         should_wait_init = False
         init_future: SharedFuture | None = None
 
@@ -3342,6 +3401,13 @@ class MLXLocalClient:
                     self._set_lane_state("handshaking")
                     should_wait_init = True
             elif not self._process or not self._process.is_alive():
+                if self._process is not None:
+                    # The worker died on its own (OS OOM kill, segfault): no
+                    # kill path saw it, so account for it here — then drop
+                    # the dead handle so the death is counted exactly once.
+                    _note_lane_worker_death(self, "process_died_unexpectedly")
+                    self._process = None
+                    self._process_started_at = 0.0
                 # [BUG FIX] Exponential backoff on repeated spawn failures.
                 # Without this, [Errno 5] I/O errors cause a tight 2-3s retry
                 # loop that leaks FDs and shared memory for hours.
@@ -4885,6 +4951,10 @@ class MLXLocalClient:
                 os.path.basename(self.model_path),
             )
         try:
+            if self._process is not None:
+                # K4 accounting: the breaker classifies this death by reason
+                # (deliberate yields never count; young crashes do).
+                _note_lane_worker_death(self, reason)
             if self._process and self._process.is_alive():
                 await asyncio.get_running_loop().run_in_executor(
                     None, self._kill_and_join_blocking, self._process

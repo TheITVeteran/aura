@@ -323,6 +323,20 @@ def _reset_startup_latch_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _reset_crash_loop_breaker_between_tests():
+    """Order-independence for the K4 crash-loop breaker.
+
+    Worker-lifecycle tests kill fake workers repeatedly; the process-global
+    breaker would trip and refuse spawns in unrelated later tests.
+    """
+    from core.runtime.lane_reconciler import get_crash_loop_breaker
+
+    get_crash_loop_breaker().reset_for_test()
+    yield
+    get_crash_loop_breaker().reset_for_test()
+
+
+@pytest.fixture(autouse=True)
 def _service_registry_state_guard():
     """Order-independence for the low-level runtime service registry.
 

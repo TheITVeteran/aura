@@ -285,6 +285,32 @@ class BootResilienceMixin:
             )
             logger.error("Failed to initialize Sovereign Watchdog: %s", e)
 
+        # Lane reconciler (roadmap K1): the control loop that converges the
+        # model-serving lane onto its desired state — primary cortex warm,
+        # joint lane footprints within the host budget — with the K4
+        # crash-loop breaker deciding when healing must back off instead.
+        try:
+            from core.runtime.lane_reconciler import (
+                SERVICE_NAME as LANE_RECONCILER_SERVICE,
+            )
+            from core.runtime.lane_reconciler import get_lane_reconciler
+
+            reconciler = get_lane_reconciler()
+            await reconciler.start()
+            ServiceContainer.register_instance(LANE_RECONCILER_SERVICE, reconciler)
+            logger.info(
+                "🔁 Lane reconciler online (interval %.0fs, %s)",
+                reconciler.interval_s(),
+                "enabled" if reconciler.enabled() else "DISABLED via AURA_LANE_RECONCILER",
+            )
+        except (ImportError, AttributeError, RuntimeError) as e:
+            _record_boot_resilience_degradation(
+                e,
+                action="continued boot without the lane reconciler control loop",
+                severity="error",
+            )
+            logger.error("Failed to initialize lane reconciler: %s", e)
+
         logger.info("🛡️  Resilience Foundation mapped (Integrations deferred to _integrate_systems)")
 
     async def _init_meta_optimization(self):
