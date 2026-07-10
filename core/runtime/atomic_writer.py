@@ -16,12 +16,15 @@ This module exposes:
 - atomic_write_text(path, text)
 - atomic_append_text(path, text)
 - atomic_write_json(path, obj, schema_version)
+- durable_replace(source, target)
+- durable_unlink(path)
 
 with explicit schema-version envelopes so loaders can detect ancient
 records and refuse rather than silently misread.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
@@ -62,6 +65,16 @@ def _fsync_dir(directory: Path) -> None:
         _fsync_file(dir_fd)
     finally:
         os.close(dir_fd)
+
+
+def ensure_private_directory(path: PathLike) -> Path:
+    """Create a durability directory and restrict it to the current user."""
+
+    directory = Path(path)
+    directory.mkdir(parents=True, exist_ok=True)
+    directory.chmod(0o700)
+    _fsync_dir(directory.parent)
+    return directory
 
 
 def atomic_write_bytes(path: PathLike, payload: bytes, *, durable: bool = True) -> None:
@@ -141,6 +154,7 @@ def atomic_append_text(path: PathLike, text: str, *, encoding: str = "utf-8") ->
         except OSError as exc:
             raise AtomicWriteError(f"cannot open append target: {target}") from exc
         try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
             payload = text.encode(encoding)
             written = 0
             while written < len(payload):
@@ -149,6 +163,10 @@ def atomic_append_text(path: PathLike, text: str, *, encoding: str = "utf-8") ->
         except OSError as exc:
             raise AtomicWriteError(f"cannot append to target: {target}") from exc
         finally:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass
             os.close(fd)
         _fsync_dir(target.parent)
 
@@ -195,6 +213,47 @@ async def async_atomic_write_json(
         schema_name=schema_name,
         indent=indent,
     )
+
+
+def durable_replace(source: PathLike, target: PathLike) -> None:
+    """Atomically move ``source`` over ``target`` and fsync both directories."""
+
+    source_path = Path(source)
+    target_path = Path(target)
+    if not os.path.lexists(source_path):
+        raise FileNotFoundError(f"durable replace source does not exist: {source_path}")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(source_path, target_path)
+    _fsync_dir(source_path.parent)
+    if target_path.parent != source_path.parent:
+        _fsync_dir(target_path.parent)
+
+
+async def async_durable_replace(source: PathLike, target: PathLike) -> None:
+    import asyncio
+
+    await asyncio.to_thread(durable_replace, source, target)
+
+
+def durable_unlink(path: PathLike, *, missing_ok: bool = False) -> bool:
+    """Delete a file/symlink and fsync its parent directory."""
+
+    target = Path(path)
+    if not os.path.lexists(target):
+        if missing_ok:
+            return False
+        raise FileNotFoundError(target)
+    if target.is_dir() and not target.is_symlink():
+        raise IsADirectoryError(target)
+    os.unlink(target)
+    _fsync_dir(target.parent)
+    return True
+
+
+async def async_durable_unlink(path: PathLike, *, missing_ok: bool = False) -> bool:
+    import asyncio
+
+    return await asyncio.to_thread(durable_unlink, path, missing_ok=missing_ok)
 
 
 def read_json_envelope(path: PathLike) -> dict[str, Any]:

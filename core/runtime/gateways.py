@@ -12,17 +12,16 @@ the existing implementations all at once.
 """
 from __future__ import annotations
 
-
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any
 
 
 @dataclass
 class MemoryWriteRequest:
     content: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    receipt_id: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    receipt_id: str | None = None
     cause: str = "unspecified"
 
 
@@ -50,8 +49,9 @@ class MemoryWriteGateway(ABC):
 class StateMutationRequest:
     key: str
     new_value: Any
-    receipt_id: Optional[str] = None
+    receipt_id: str | None = None
     cause: str = "unspecified"
+    domain: str = "world_state"
 
 
 @dataclass
@@ -70,9 +70,16 @@ class StateGateway(ABC):
         ...
 
     @abstractmethod
-    async def read(self, key: str, default: Any = None) -> Any:
+    async def read(
+        self,
+        key: str,
+        default: Any = None,
+        *,
+        domain: str = "world_state",
+        fresh: bool = False,
+    ) -> Any:
         ...
 
     @abstractmethod
-    async def snapshot(self) -> Dict[str, Any]:
+    async def snapshot(self, *, domain: str = "world_state") -> dict[str, Any]:
         ...

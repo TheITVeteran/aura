@@ -4,22 +4,50 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import tempfile
 from pathlib import Path
 
 
-def test_welfare_transaction_and_executor_coverage():
-    """Assert that consequential/effectful production modules utilize WelfareTransaction or ActionExecutor."""
+def _call_name(node: ast.AST) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        base = _call_name(node.value)
+        return f"{base}.{node.attr}" if base else node.attr
+    return ""
+
+
+def _entrypoint_reaches_transaction(tree: ast.AST) -> bool:
+    calls_by_function: dict[str, set[str]] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        calls_by_function.setdefault(node.name, set()).update(
+            _call_name(child.func)
+            for child in ast.walk(node)
+            if isinstance(child, ast.Call)
+        )
+
+    pending = ["execute"]
+    visited: set[str] = set()
+    while pending:
+        function_name = pending.pop()
+        if function_name in visited:
+            continue
+        visited.add(function_name)
+        for call in calls_by_function.get(function_name, set()):
+            if call.endswith(("ActionExecutor.execute", "WelfareTransaction.begin")):
+                return True
+            local_name = call.rsplit(".", 1)[-1]
+            if local_name in calls_by_function and local_name not in visited:
+                pending.append(local_name)
+    return False
+
+
+def test_welfare_transaction_and_executor_coverage() -> None:
+    """Consequential skill entry points must reach a real transaction call."""
     root = Path(__file__).resolve().parent.parent.parent
     skills_dir = root / "core" / "skills"
-    
-    # We collect files that are expected to perform real tool/OS effects
-    effect_files = []
-    if skills_dir.exists():
-        effect_files = [f for f in skills_dir.rglob("*.py") if f.name != "__init__.py"]
-
-    assert len(effect_files) > 0, "No skill files found to check for coverage"
-
-    # Exact list of consequential executor modules that perform raw external effects
     consequential_executors = {
         "computer_use.py",
         "code_repl.py",
@@ -31,24 +59,17 @@ def test_welfare_transaction_and_executor_coverage():
         "memory_ops.py",
         "self_repair.py",
     }
+    found_files = {file_path.name: file_path for file_path in skills_dir.rglob("*.py")}
+    missing = consequential_executors - found_files.keys()
+    assert not missing, f"Could not find consequential executor files: {sorted(missing)}"
 
-    found_files = []
-    for file_path in effect_files:
-        if file_path.name in consequential_executors:
-            found_files.append(file_path)
-
-    assert len(found_files) == len(consequential_executors), "Could not find all consequential executor files"
-
-    for file_path in found_files:
+    for filename in sorted(consequential_executors):
+        file_path = found_files[filename]
         content = file_path.read_text(encoding="utf-8")
-        
-        # Check if the file imports or calls WelfareTransaction or ActionExecutor
-        has_transaction = "WelfareTransaction" in content
-        has_executor = "ActionExecutor" in content
-
-        assert has_transaction or has_executor, (
-            f"Consequential executor module {file_path.name} does not import "
-            "or use WelfareTransaction or ActionExecutor to wrap executions."
+        tree = ast.parse(content, filename=str(file_path))
+        assert _entrypoint_reaches_transaction(tree), (
+            f"Consequential executor module {filename} has no transaction call reachable "
+            "from execute()."
         )
 
 
@@ -57,7 +78,6 @@ def test_action_executor_lifecycle():
     async def scenario() -> None:
         from core.runtime.action_executor import ActionExecutor
         from core.runtime.post_action_receipt import get_post_action_receipt_store
-        import tempfile
 
         with tempfile.NamedTemporaryFile(suffix=".txt", delete=True) as tmp:
             params = {"path": tmp.name, "text": "test_welfare_lifecycle"}

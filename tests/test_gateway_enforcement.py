@@ -118,6 +118,7 @@ async def test_state_mutation_produces_receipt(tmp_root, approve_all):
     assert receipt.key == "test/value"
     assert receipt.new_value == 42
     assert receipt.old_value is None  # first write
+    assert receipt.receipt_id.startswith("statemut-")
 
 
 @pytest.mark.asyncio
@@ -147,6 +148,64 @@ async def test_state_snapshot(tmp_root, approve_all):
     snap = await gw.snapshot()
     assert snap["a"] == 1
     assert snap["b"] == 2
+
+
+@pytest.mark.asyncio
+async def test_state_domains_do_not_alias_same_key(tmp_root, approve_all):
+    from core.state.state_gateway import ConcreteStateGateway
+
+    gw = ConcreteStateGateway(root=tmp_root / "state_domains", governance_decide=approve_all)
+    await gw.mutate(
+        StateMutationRequest(
+            key="mode",
+            new_value="focused",
+            cause="test",
+            domain="cognition",
+        )
+    )
+    await gw.mutate(
+        StateMutationRequest(
+            key="mode",
+            new_value="resting",
+            cause="test",
+            domain="body",
+        )
+    )
+
+    assert await gw.read("mode", domain="cognition", fresh=True) == "focused"
+    assert await gw.read("mode", domain="body", fresh=True) == "resting"
+    assert await gw.snapshot(domain="cognition") == {"mode": "focused"}
+    assert await gw.snapshot(domain="body") == {"mode": "resting"}
+
+
+@pytest.mark.asyncio
+async def test_state_receipt_failure_rolls_back_durable_and_cached_value(
+    tmp_root,
+    approve_all,
+    monkeypatch,
+):
+    import core.state.state_gateway as state_module
+
+    gw = state_module.ConcreteStateGateway(
+        root=tmp_root / "state_rollback",
+        governance_decide=approve_all,
+    )
+    await gw.mutate(
+        StateMutationRequest(key="mode", new_value="before", cause="test")
+    )
+
+    class FailingReceiptStore:
+        def emit(self, _receipt):
+            raise OSError("receipt disk unavailable")
+
+    monkeypatch.setattr(state_module, "get_receipt_store", lambda: FailingReceiptStore())
+    with pytest.raises(RuntimeError, match="receipt_failed_rolled_back"):
+        await gw.mutate(
+            StateMutationRequest(key="mode", new_value="after", cause="test")
+        )
+
+    assert await gw.read("mode", fresh=True) == "before"
+    assert await gw.snapshot() == {"mode": "before"}
 
 
 @pytest.mark.asyncio

@@ -402,7 +402,11 @@ class PhantomBrowser:
             logger.error("Navigation failed: %s", e)
             return False
 
-    async def click(self, selector: str = None, text_match: str = None) -> bool:
+    async def click(
+        self,
+        selector: str | None = None,
+        text_match: str | None = None,
+    ) -> bool:
         """Human-like click on an element with enhanced robustness."""
         try:
             element = None
@@ -465,9 +469,10 @@ class PhantomBrowser:
     async def type(self, selector: str, text: str) -> bool:
         """Human-like typing"""
         try:
-            await self.click(selector) # Focus first
+            if not await self.click(selector):
+                return False
             
-            logger.info("⌨️ Typing: '%s'", text)
+            logger.info("Typing %d characters into selector %s", len(text), selector)
             for char in text:
                 await self.page.keyboard.type(char)
                 # Random typing delay between keystrokes
@@ -480,7 +485,7 @@ class PhantomBrowser:
             logger.error("Typing failed: %s", e)
             return False
 
-    async def scroll(self, direction: str = "down", amount: int = 500):
+    async def scroll(self, direction: str = "down", amount: int = 500) -> bool:
         """Scroll the page in a human-like manner."""
         try:
             steps = 5
@@ -492,9 +497,11 @@ class PhantomBrowser:
                     await self.page.mouse.wheel(0, -step_amount)
                 await asyncio.sleep(random.uniform(0.1, 0.3))
             await self._human_delay(0.5, 1.0)
+            return True
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('phantom_browser', e)
             logger.error("Scroll failed: %s", e)
+            return False
 
     async def read_content(self) -> str:
         """Extract page content by scoring likely article/content containers."""

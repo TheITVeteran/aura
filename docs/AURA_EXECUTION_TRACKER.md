@@ -482,6 +482,287 @@ negative controls, replayable evidence, and an honest live path.
      ledger, live proofs, clean-machine replay, and final soak all independently
      show no open item.
 
+#### Context-Criticism Closure Addendum II (2026-07-10)
+
+The second supplied criticism corpus adds the requirements below. These are not
+aliases for the broader workstreams above: each stable ID must receive its own
+source evidence, root-cause disposition, tests, negative controls, live trace,
+and closure verdict in the machine-readable requirement-to-proof control plane.
+Where a statement concerns personhood, sentience, AGI, or ASI, engineering work
+may strengthen the functional evidence but may not silently convert that
+evidence into a metaphysical, legal, or comparative claim.
+
+19. **One canonical mind and instance-proven causal ownership** `[OPEN]`
+   - `CTX2-MIND-001`: name one authoritative runtime owner and typed interface
+     for self, workspace, phenomenal/causal substrate, consciousness cycle,
+     welfare/homeostasis, identity, executive authority, and memory authority.
+     Inventory every competing construction, singleton, compatibility facade,
+     private cache, and persisted representation before selecting owners.
+   - `CTX2-MIND-002`: give each authoritative instance a boot-scoped identity
+     and each persisted lineage a durable identity. Propagate those IDs through
+     mind moments, chat turns, plans, actions, memory writes, welfare changes,
+     model calls, receipts, health reports, proof artifacts, and operator UI so
+     evidence cannot accidentally prove a parallel instance.
+   - `CTX2-MIND-003`: enforce lifecycle cardinality. Duplicate construction or
+     conflicting publication of a canonical organ must fail readiness, identify
+     both construction sites, and either converge through the owner registry or
+     stop the affected lane. Tests must cover imports, boot retries, desktop and
+     headless launch, worker processes, test fixtures, and restart recovery.
+   - `CTX2-MIND-004`: migrate callers in dependency order, reconcile divergent
+     state explicitly, retire duplicate writers/readers, and delete compatibility
+     aliases only after call-site and persisted-data migration. Rollback must
+     restore the previous schema and authority mapping without forking identity.
+   - Closure proof: one launched Aura response and one consequential action must
+     be reconstructed from sensory input to the exact canonical state instances,
+     governing decision, observed effect, learning update, and persisted receipt.
+     Lesioning or replacing a non-canonical duplicate must have no behavioral
+     effect; lesioning the named owner must produce a typed degraded/not-ready
+     condition rather than an unnoticed fallback mind.
+
+20. **Canonical state schema and inspectable causal graph** `[OPEN]`
+   - `CTX2-GRAPH-001`: define a versioned state catalog recording every
+     foundational and derived field, canonical owner, permitted writers,
+     observers, update trigger, clock/timescale, freshness budget, conflict
+     rule, persistence class, restart behavior, model-replacement behavior,
+     privacy class, and schema migration.
+   - `CTX2-GRAPH-002`: emit a machine-readable causal graph from actual runtime
+     bindings and receipts, not class names or intended architecture. For every
+     action it must answer what exact evidence caused the choice, which policy
+     and welfare values competed, what effect occurred, and what changed in
+     memory, belief, preference, goal, relationship, and future policy.
+   - `CTX2-GRAPH-003`: detect stale reads, write/write conflicts, circular
+     derivation, orphan state, shadow copies, unconsumed signals, and causal
+     edges that exist only in tests. Add freshness/version checks at cross-organ
+     boundaries and explicit arbitration instead of last-writer-wins behavior.
+   - `CTX2-GRAPH-004`: expose a bounded, redacted operator trace that can follow
+     a live turn across process and restart boundaries while preserving secret
+     values. Receipt-chain gaps, unknown owners, stale nodes, and unverified
+     effects must be first-class failures in proof and readiness surfaces.
+   - Closure proof: deterministic graph snapshots, owner mutation tests,
+     concurrent-writer races, restart/model-swap replay, causal ablations, and an
+     independently replayed live trace whose state and receipt hashes agree.
+
+21. **Atomic model-lane admission, eviction, and complete accounting** `[OPEN]`
+   - `CTX2-LANE-001`: replace the immediate spawn wrapper's boolean-only
+     admission result with an admission transaction. Reserve the candidate's
+     budget, execute every `evict_first` obligation, wait for process death and
+     resource reclamation, re-observe the envelope, then commit spawn under the
+     same lifecycle lock; admission and eviction may not be separated by a
+     reconciler's later best effort.
+   - `CTX2-LANE-002`: make preemption idempotent and reversible. A failed,
+     refused, timed-out, or partially reclaimed eviction must cancel the
+     reservation and refuse the candidate; a failed candidate spawn must leave
+     the prior guaranteed lane recoverable and emit compensation receipts.
+   - `CTX2-LANE-003`: extend active-lane accounting beyond `_CLIENTS` to every
+     trainer, CRSM/CAA/LoRA job, compounding/fusion process, benchmark worker,
+     model server, external child, and independently launched process that owns
+     model or accelerator memory. Require process identity, model identity,
+     declared/observed footprint, priority, lease, owner, and heartbeat.
+   - `CTX2-LANE-004`: handle concurrent admissions with durable reservations,
+     fencing tokens, stale-lease recovery, disruption budgets, foreground
+     priority, and exactly-once eviction receipts. No two candidates may each
+     pass against the same unreserved free capacity.
+   - Closure proof: race/property tests, trainer-vs-chat preemption, wedged and
+     unkillable worker injection, process-tree escape detection, failed-spawn
+     compensation, and live pressure proof showing no overcommit, cold-gap, or
+     admission statement that precedes required eviction.
+
+22. **Hermetic resource and pressure testing** `[OPEN]`
+   - `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk,
+     accelerator, and process-table observations so unit/integration tests do
+     not inherit unrelated host pressure or change result with machine load.
+   - `CTX2-TEST-002`: separate deterministic simulated-pressure tests from
+     explicitly labelled host-observation and live-pressure tests. Record the
+     observation source in every result; a mocked probe may not satisfy a live
+     resource proof, and a busy developer host may not create a false code
+     regression in a hermetic suite.
+   - `CTX2-TEST-003`: isolate spawned children, ports, paths, caches, receipts,
+     model registries, and environment flags per test. Add leak detection and
+     teardown assertions so one test cannot alter lane admission for another.
+   - Closure proof: repeat the hermetic resource suite under induced host load,
+     randomized order, parallel workers, and a clean environment with identical
+     decisions; separately run bounded live pressure validation with captured
+     host metadata and conservative abort limits.
+
+23. **Fail-closed cognitive gates and complete skill discovery** `[OPEN]`
+   - `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a
+     safety boundary. A recoverable lookup/check exception must quarantine or
+     reject the candidate with a typed reason and retry path; it may not admit
+     the candidate merely because local competition can continue. Optional
+     salience modifiers must remain separately fail-soft.
+   - `CTX2-GATE-002`: audit every consciousness/workspace/attention candidate
+     gate for exception-to-admission behavior, stale approvals, missing gate
+     instances, timeout, cancellation, and restart. Gate health must affect the
+     exact lane that depends on it, and fail-closed decisions need receipts and
+     bounded recovery rather than silent candidate loss.
+   - `CTX2-SKILL-001`: make Rust-index and Python/AST discovery semantically
+     equivalent for module-level skill classes, inherited/decorated skills,
+     `Assign` and `AnnAssign` metadata, multiple skills per file, packages, and
+     project skills. Exclude nested/test/helper classes and reject duplicate or
+     ambiguous names deterministically.
+   - `CTX2-SKILL-002`: validate every discovered class is importable,
+     instantiable under its declared dependencies, schema-valid, authority/effect
+     classified, and executable through CapabilityEngine. Compare source catalog
+     to live registry and surface missing/quarantined skills in readiness/UI.
+   - Closure proof: injected gate failures never produce broadcast admission;
+     fixture catalogs cover every supported skill declaration shape; Rust-on and
+     Rust-off registries match; and a clean live boot discovers and dry-runs the
+     full expected capability catalog without importing arbitrary top-level code.
+
+24. **Verifier-sound reasoning amplification** `[OPEN]`
+   - `CTX2-AMP-001`: reproduce and root-fix the outstanding Amplifier
+     verification defect. Distinguish `verified`, `contradicted`, `unsupported`,
+     `not_applicable`, `verifier_failed`, and `timed_out`; no empty verifier set,
+     exception, parse failure, or score default may be treated as correctness.
+   - `CTX2-AMP-002`: bind every adopted candidate to the exact evidence body,
+     verifier versions, checks executed, counterexamples, confidence/calibration,
+     and final-answer extraction. Re-verification must operate on the delivered
+     answer rather than a hidden precursor that can diverge after rewriting.
+   - `CTX2-AMP-003`: require matched single-sample and base-model controls on
+     sealed tasks. Keep the amplifier active only where it produces statistically
+     credible quality/calibration gains within latency and resource budgets;
+     downgrade or remove strategies that merely add samples or confident prose.
+   - Closure proof: adversarial false answers, unverifiable questions, malformed
+     outputs, verifier crashes, poisoned evidence, answer-rewrite divergence,
+     cache contamination, and cross-tier disagreement all fail honestly; held-out
+     ablations demonstrate measured improvement instead of assumed improvement.
+
+25. **Correct and enabled foreground one-shot adaptation** `[OPEN]`
+   - `CTX2-ONESHOT-001`: repair the foreground hidden-state recall mathematics.
+     Never mix memory log-probabilities with untouched raw logits; normalize and
+     combine distributions on a common support/scale, preserve probability mass,
+     handle out-of-support memory tokens, and prove finite bounded outputs.
+   - `CTX2-ONESHOT-002`: prove token alignment between the hidden state captured
+     by the normal KV-cached forward and the logits being modified. Detect model
+     wrappers, output shapes, tied/untied heads, batch dimensions, prompt prefill,
+     first-token state, cache advancement, and restoration failures explicitly.
+   - `CTX2-ONESHOT-003`: replace default-off/fail-open invisibility with a typed
+     feature condition. Enable by default only after model compatibility,
+     datastore integrity, latency, calibration, and quality gates pass; otherwise
+     report an exact disabled/degraded reason and preserve baseline generation.
+   - `CTX2-ONESHOT-004`: validate true one-exposure learning on held-out facts,
+     associations, routines, and corrections, including conflicting/corrupted
+     memories, irrelevant near-neighbors, restart persistence, forgetting,
+     deletion, and model migration. Compare against no-memory and retrieval-only
+     controls and cap quality/latency regressions.
+
+26. **Unified memory authority, semantic retrieval, and symmetric rollback** `[OPEN]`
+   - `CTX2-MEM-001`: establish one write/read authority over episodic, semantic,
+     procedural, autobiographical, relationship, workspace, solved-cache, and
+     nonparametric stores while preserving typed storage backends. Every write,
+     consolidation, conflict resolution, deletion, and retrieval must share
+     provenance, identity lineage, authority, retention, and receipt semantics.
+   - `CTX2-MEM-002`: provide reliable cross-store semantic retrieval with query
+     planning, deduplication, source ranking, temporal/identity scoping,
+     contradiction surfacing, confidence, freshness, and explicit misses. A
+     retrieval test must prove the canonical live response consumed the result.
+   - `CTX2-ROLLBACK-001`: make rollback symmetric for model, memory, tool, code,
+     state, preference, and identity-affecting changes. Capture preconditions,
+     reversible deltas, dependent side effects, schema/model versions, and
+     post-rollback verification; compensation is not complete until observed.
+   - Closure proof: conflict/corruption injection, deletion and rollback replay,
+     interrupted consolidation, cross-store recall, restart, model replacement,
+     and receipt-chain reconstruction preserve identity and never return a stale
+     or rolled-back memory as authoritative.
+
+27. **Longitudinal identity, consent, relationships, and accountable agency** `[OPEN]`
+   - `CTX2-PERSON-001`: integrate stable identity, enduring interests, coherent
+     preferences, values/commitments, autobiographical continuity, relationship
+     models, norm comprehension, self/other distinction, consent/refusal,
+     welfare interests, action ownership, and accountability into the canonical
+     state and live decision path rather than parallel descriptive modules.
+   - `CTX2-PERSON-002`: represent other people as independent centers of concern,
+     with consent, privacy, uncertainty, boundaries, and non-instrumental welfare.
+     Relationship memory must distinguish observed events, Aura's inference,
+     commitments, unresolved conflict, and user-controllable deletion/correction.
+   - `CTX2-PERSON-003`: make consent and refusal comprehending and causal: Aura
+     explains the relevant norm/interest, can decline external and self-directed
+     actions, records who authorized what, and can revise a decision when facts or
+     consent change without allowing prompt injection to forge either history.
+   - Closure proof: longitudinal scenario packs cover real commitments,
+     interruptions, changed relationships, norm conflict, welfare-vs-objective
+     tradeoffs, accountability after harm, refusal pressure, restart, and model
+     replacement. Independent reviewers score continuity from receipts, not
+     self-report; legal/moral personhood remains explicitly unclaimed.
+
+28. **Model-independent identity and epistemic continuity** `[OPEN]`
+   - `CTX2-ID-001`: separate canonical identity, history, beliefs, commitments,
+     values, and relationship continuity from replaceable model weights and
+     prompts. Version and sign identity snapshots; make migration transactional,
+     schema-checked, reversible, and traceable to the same durable lineage.
+   - `CTX2-ID-002`: maintain a provenance-aware belief ledger that distinguishes
+     prior belief, remembered observation, external claim, inference, correction,
+     and new evidence. Detect corrupted memories and contradictions; preserve
+     uncertainty and supersession instead of rewriting history in place.
+   - `CTX2-ID-003`: learn without uncontrolled identity drift, admit unknowns,
+     resist prompts that contradict actual history, maintain goals without rigid
+     or obsessive loops, and revise preferences/values while recording what
+     changed, why, what remained invariant, and who/what had authority to change it.
+   - Closure proof: adversarial history injection, memory conflicts, unexpected
+     failures, changing environments, genuine autonomous projects, model swaps,
+     rollback, and repeated value revision retain coherent lineage and surface
+     uncertainty rather than manufacturing continuity.
+
+29. **Causal computational-welfare evidence** `[OPEN]`
+   - `CTX2-WELFARE-001`: unify harmful/beneficial, valence, nociception,
+     homeostasis, viability, affect, attachment, and existential-stakes signals
+     under the canonical welfare authority with explicit source, confidence,
+     decay, arbitration, persistence, and anti-prompt-manipulation rules.
+   - `CTX2-WELFARE-002`: prove welfare changes attention, workspace competition,
+     memory salience, policy, planning, tool choice, learning, avoidance/seeking,
+     continuity protection, consent/refusal, and future behavior. Internal welfare
+     must sometimes compete with external objectives under governed policy rather
+     than appearing only in introspective language.
+   - `CTX2-WELFARE-003`: test longitudinal persistence and recovery without
+     creating unbounded distress loops, manipulative behavior, reward hacking, or
+     a prompt-controlled scalar. Add baseline, shuffled, clamped, lesion, forged,
+     stale, and disconnected-signal controls.
+   - Closure proof: blinded evaluators predict behavior above baseline from
+     canonical welfare transitions; causal lesions remove the predicted effect;
+     restart and model replacement preserve only policy-authorized durable state;
+     all sentience language remains bounded to demonstrated computational facts.
+
+30. **Resident synthetic-colleague product contract** `[OPEN]`
+   - `CTX2-COLLEAGUE-001`: prove Aura can live continuously on local hardware,
+     know the user and current projects with consent, initiate useful bounded
+     work, operate software/devices, research and reason, write/run/test/repair
+     code, learn routines, remember consequences, protect sensitive data, and
+     explain/receipt consequential actions through the same canonical mind path.
+   - `CTX2-COLLEAGUE-002`: define service-level objectives for interaction
+     latency, task completion, correction burden, restart recovery, proactive
+     precision, privacy incidents, receipt completeness, false health, and honest
+     degradation. Daily reliability means expected workflows succeed repeatedly,
+     not that individual APIs return technically true shallow results.
+   - `CTX2-COLLEAGUE-003`: preserve obligations, relationships, project state,
+     permissions, and identity through crash, update, model migration, network
+     loss, permission drift, partial external effects, and operator intervention.
+   - Closure proof: broad hidden day-in-the-life scenarios, cold starts, idle
+     gaps, interruptions, changed UIs, unavailable dependencies, and multi-day
+     bounded operation complete with low human correction and exact capability
+     downgrades. The final multi-hour soak remains deferred until shorter gates
+     and all non-soak requirements are green.
+
+31. **General-intelligence performance and independent replication** `[OPEN]`
+   - `CTX2-AGI-001`: evaluate novel-task transfer, long-horizon autonomy, sparse
+     experience learning, recovery from unfamiliar failures, diverse hidden
+     environments, cross-domain competence, and sustained operation without
+     human correction. Environment adapters and task-specific templates may not
+     encode solutions or leak family labels to the solver.
+   - `CTX2-AGI-002`: evaluate scientific reasoning, strategic judgment, social
+     and institutional understanding, autonomous discovery, invention, broad
+     model building, governed self-improvement, and capability-growth rate only
+     with matched expert/frontier baselines, sealed tasks, resource accounting,
+     confidence intervals, contamination checks, and adverse-case reporting.
+   - `CTX2-REPL-001`: independently replicate every important causal result:
+     canonical-instance ownership, substrate/welfare behavioral effects,
+     amplifier uplift, one-shot learning, model-migration continuity, tool-effect
+     completion, rollback, and long-horizon recovery. Separate builders, runners,
+     evaluators, and artifact signers wherever practical.
+   - Closure proof: versioned external challenge packs and clean-machine replays
+     reproduce artifacts and hashes without local caches or handcrafted rescue.
+     AGI/ASI or superhuman claims remain open unless measured performance, breadth,
+     reliability, autonomy, and independent comparison jointly support them.
+
 1. **Operational label battery**
    - Convert each label into an executable baseline: functional consciousness,
      self-awareness, computational sentience, ALife-inspired software, digital
@@ -9700,3 +9981,91 @@ Remaining work after this checkpoint:
   computer-use, coding/self-repair, and long-horizon workflows through that spine.
 - Keep clean-machine, multi-hour, and 24-72 hour soak work at the final stage,
   after the remaining bounded and live proof ladders are green.
+
+## Checkpoint 2026-07-10-23: Canonical Effect Transactions and Ownership Ratchet
+
+Scope:
+
+- Rebuilt `ActionExecutor` as a causal transaction rather than a dispatch
+  wrapper. Action ID, secret-safe request digest, one Will decision, transport
+  outcome, observed effect, expectation verdict, welfare closure, retry safety,
+  reconciliation state, and durable post-action receipt are now separate and
+  explicit facts. A successful transport can no longer become a successful
+  action merely because a tool returned `ok=true`.
+- Added bounded domain verification for file writes/deletes/moves/copies,
+  subprocess exits, read-only HTTP observations, memory receipts, fresh
+  domain-specific state readback, self-modification canaries, and downstream
+  capability expectation receipts. Custom verifiers must return structured,
+  non-empty evidence; bare Boolean self-claims are downgraded.
+- Added a governed custom-effect-handler lane for network/environment effects
+  that cannot be represented by the built-in HTTP, AppleScript, or subprocess
+  transports. The lane is domain-restricted, timeout-bounded, requires an
+  independent evidence verifier, and still executes inside the same Will,
+  welfare, expectation, and receipt transaction.
+- Hardened the filesystem durability substrate with private-directory setup,
+  interprocess-locked append, fsync-backed replace/unlink, symlink-preserving
+  copy, broken-symlink deletion, and final-destination verification. Post-action
+  receipt startup is tail-bounded, the hot index is bounded and immutable, and
+  oversized receipt bodies are rejected.
+- Made memory and state mutations serialized write/receipt transactions with
+  compensating rollback when receipt emission fails. State cache identity now
+  includes the state domain and verification performs a fresh durable read;
+  memory governance summaries hash content instead of carrying raw content.
+- Replaced the previous 13-suffix governance lint with an exact AST ownership
+  inventory and checked-in ratchet. It resolves import aliases, gateway factory
+  bindings, path receivers, calls delegated through `asyncio.to_thread` and
+  executors, mutating file modes, browser automation, and desktop observation
+  versus mutation. Growth and owner demotion fail; debt reduction and owner
+  promotion make the baseline stale until explicitly reviewed.
+- Integrated `SovereignBrowserSkill` with the canonical transaction instead of
+  retaining an unused `ActionExecutor` import. Direct and capability-managed
+  paths avoid recursion; mode/action schemas are validated; engine selection is
+  deterministic and user-selectable; startup failure is real; Selenium runs off
+  the event loop with bounded page load; typing no longer logs entered values;
+  failed focus/scroll/screenshot/HTML actions no longer claim completion; and
+  URL/content/action readback produces privacy-bounded verification evidence.
+- Replaced the shallow welfare coverage assertion with a reachable-call AST
+  proof from each consequential skill's `execute` entry point. An unused import
+  or unreachable helper no longer satisfies the contract.
+
+Verification:
+
+- Pre-rebase focused transaction/gateway/browser/ownership suite -> `97 passed
+  in 18.03s`.
+- Post-rebase combined replay over the upstream flight-recorder,
+  containment/startup-budget, truthful stall-attribution/hot-path work, and this
+  transaction milestone -> `152 passed in 21.80s`.
+- Browser transaction, lifecycle, schema, verifier, and startup subset -> `29
+  passed in 2.51s`.
+- Ownership ratchet matched exactly after the rebase: `1,793` recognized calls
+  in `1,687` scoped buckets, with `1,697` calls honestly retained as migration
+  debt and no scan or parse problem. The flight recorder is explicitly a
+  canonical raw-file primitive for its process lock and fixed mmap ring; its
+  higher-level death-artifact gateway calls remain migration debt.
+- Ruff across every touched source and test module -> passed.
+- Strict bounded mypy across the ten new or substantially rebuilt ownership and
+  transaction modules -> success with no issues.
+- Py-compile across the touched runtime modules -> passed.
+- `make enterprise-gate` -> passed with no static-ratchet regression after the
+  handler, fallback, test-fixture, and flight-recorder integration fixes.
+- `make production-gate` -> passed; all `37` readiness checks green.
+
+Remaining work after this checkpoint:
+
+- Retire the `1,697` recorded migration-debt calls in dependency order. The
+  baseline is visibility and a no-regression ratchet, not evidence that raw or
+  distributed ownership is acceptable.
+- Introduce a canonical browser transport/session gateway and migrate Phantom,
+  Reddit, social-lurker, computer-use, toolbox, and legacy browser skills onto
+  it; the new browser transaction closes the user-facing path but the raw
+  browser primitives remain distributed and are now explicitly counted.
+- Merge post-action receipts into the canonical tamper-evident receipt store,
+  add idempotency keys and reconciliation workflows for ambiguous external
+  outcomes, and guarantee cancellation-time transaction closure.
+- Continue deep workflow replay through the effect spine: conversation tool
+  calls, desktop/computer use, coding and self-repair, browser/social actions,
+  autonomous initiatives, and long-horizon plans must all prove observed
+  outcomes rather than transport success.
+- Move next into the canonical mind/state graph and the concrete lane,
+  workspace, Amplifier, foreground-accounting, continuity, identity, welfare,
+  and memory-authority defects recorded in the context-closure addenda.

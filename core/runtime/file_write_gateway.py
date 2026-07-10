@@ -186,8 +186,11 @@ class FileWriteGateway:
             )
 
         def _delete() -> bool:
-            if not target.exists():
+            if not os.path.lexists(target):
                 return False
+            if target.is_symlink():
+                target.unlink()
+                return True
             if target.is_dir():
                 if not recursive:
                     raise IsADirectoryError(
@@ -221,7 +224,7 @@ class FileWriteGateway:
             )
 
         def _move() -> str:
-            if not src.exists():
+            if not os.path.lexists(src):
                 raise FileNotFoundError(f"move source does not exist: {src}")
             import shutil
 
@@ -248,13 +251,13 @@ class FileWriteGateway:
             )
 
         def _copy() -> str:
-            if not src.exists():
+            if not os.path.lexists(src):
                 raise FileNotFoundError(f"copy source does not exist: {src}")
             import shutil
 
             if src.is_dir():
-                return str(shutil.copytree(str(src), str(dst)))
-            return str(shutil.copy2(str(src), str(dst)))
+                return str(shutil.copytree(str(src), str(dst), symlinks=True))
+            return str(shutil.copy2(str(src), str(dst), follow_symlinks=False))
 
         import asyncio
 
@@ -311,6 +314,33 @@ class FileWriteGateway:
                 allowed_domains=self._allowed_domains,
             )
         atomic_write_json(
+            target,
+            obj,
+            schema_version=schema_version,
+            schema_name=schema_name,
+            indent=indent,
+        )
+
+    async def write_json_async(
+        self,
+        path: PathLike,
+        obj: Any,
+        *,
+        schema_version: int,
+        schema_name: str | None = None,
+        indent: int | None = 2,
+        source: str = "unknown",
+    ) -> None:
+        target = _coerce_target(path)
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.write_json:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        from core.runtime.atomic_writer import async_atomic_write_json
+
+        await async_atomic_write_json(
             target,
             obj,
             schema_version=schema_version,

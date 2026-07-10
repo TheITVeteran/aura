@@ -4,10 +4,11 @@ All desktop/computer-use actions should flow through this module to ensure corre
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import subprocess
-from typing import Any, Optional
+from typing import Any
 
 from core.governance_context import (
     governance_runtime_active,
@@ -98,6 +99,20 @@ class DesktopActionGateway:
                 "exit_code": -2,
             }
 
+    async def run_applescript_async(
+        self,
+        script: str,
+        *,
+        source: str = "unknown",
+        timeout: float = 15.0,  # noqa: ASYNC109 - public gateway contract
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(
+            self.run_applescript,
+            script,
+            source=source,
+            timeout=timeout,
+        )
+
 
 def _coerce_script(script: str) -> str:
     if not isinstance(script, str):
@@ -120,7 +135,7 @@ def _coerce_timeout(timeout: float) -> float:
     return min(timeout_s, 120.0)
 
 
-_gateway: Optional[DesktopActionGateway] = None
+_gateway: DesktopActionGateway | None = None
 
 
 def get_desktop_action_gateway() -> DesktopActionGateway:
