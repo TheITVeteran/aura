@@ -27,6 +27,7 @@ _USER_FACING_TOOL_ORIGINS = {
     "api",
     "admin",
     "desktop",
+    "desktop_ui",
     "desktop-ui",
     "voice",
     "gui",
@@ -36,6 +37,7 @@ _USER_FACING_TOOL_ORIGINS = {
     "external",
     "frontend",
     "native-shell",
+    "native_shell",
     "ui",
 }
 _READ_ONLY_WEB_TOOLS = {
@@ -193,6 +195,37 @@ class ToolExecutionMixin:
             return False
         return not any(marker in text for marker in _UNSAFE_AUTONOMOUS_WEB_TOOL_MARKERS)
 
+    @classmethod
+    def _derive_scoped_authority(
+        cls,
+        *,
+        tool_name: Any,
+        origin: Any,
+        governance_context: dict[str, Any],
+        user_authorized: bool,
+        safe_autonomous_web: bool,
+    ) -> str:
+        existing = str(governance_context.get("scoped_authority") or "").strip()
+        if existing:
+            return existing
+
+        normalized_tool = str(tool_name or "tool").strip().lower() or "tool"
+        normalized_origin = cls._coerce_tool_origin(origin) or "unknown"
+
+        if user_authorized:
+            route = str(
+                governance_context.get("route")
+                or governance_context.get("governance_route")
+                or normalized_origin
+            ).strip()
+            route = route.replace(" ", "_") or normalized_origin
+            return f"foreground_user_requested:{route}:{normalized_tool}"
+
+        if safe_autonomous_web:
+            return f"autonomous_read_only_web:{normalized_origin}:{normalized_tool}"
+
+        return ""
+
     async def run_browser_task(self, url: str, task: str) -> Any:
         """Formalized browser task execution via skill router.
         Browser work goes through the same governed tool path as every other skill.
@@ -299,6 +332,15 @@ class ToolExecutionMixin:
                 or ""
             ).strip().lower() in {"1", "true", "yes"}
         )
+        scoped_authority = self._derive_scoped_authority(
+            tool_name=tool_name,
+            origin=_origin,
+            governance_context=governance_context,
+            user_authorized=user_authorized,
+            safe_autonomous_web=_safe_autonomous_web,
+        )
+        if scoped_authority:
+            governance_context["scoped_authority"] = scoped_authority
 
         # ── EDI PROGRESSIVE AUTONOMY GATE ────────────────────────────────
         edi = ServiceContainer.get("edi", default=None)
@@ -800,7 +842,7 @@ class ToolExecutionMixin:
             # WIRE-01: Affect State Update
             # Redundant local import removed
             affect_mgr = ServiceContainer.get("affect_engine", default=None)
-            if affect_mgr:
+            if affect_mgr and hasattr(affect_mgr, "apply_stimulus"):
                 stimulus = "error" if not success else "intrigue"
                 intensity = 15.0 if not success else 5.0
                 self._fire_and_forget(

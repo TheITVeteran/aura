@@ -604,6 +604,25 @@ def _runtime_shutdown_requested() -> bool:
     return is_shutdown_requested()
 
 
+def _shutdown_blocks_model_work(model_path: str, *, action: str) -> bool:
+    """Return true when shutdown has latched and model work must not start.
+
+    This guard intentionally lives at the MLX boundary, not only in callers:
+    recovery, prewarm, health, and chat paths all converge here. Once the
+    process-wide shutdown latch is set, no worker spawn, warmup, or recovery
+    admission may create new model work.
+    """
+
+    if not _runtime_shutdown_requested():
+        return False
+    logger.info(
+        "🛑 [MLX] %s skipped for %s: runtime shutdown is latched.",
+        action,
+        os.path.basename(str(model_path or "")) or "unknown-model",
+    )
+    return True
+
+
 def _real_model_path(value: Any) -> str:
     return os.path.realpath(str(value))
 
@@ -2885,6 +2904,8 @@ class MLXLocalClient:
 
     def _spawn_worker_blocking(self) -> mp.Process:
         """Isolated spawn logic for the MLX worker, run in a background thread."""
+        if _shutdown_blocks_model_work(self.model_path, action="worker spawn"):
+            raise RuntimeError("runtime_shutdown")
         # [STABILITY v60] Reclaim the old/orphan worker BEFORE the memory
         # admission check. A recycle (or crash respawn) replaces a worker that
         # is still resident; killing it below frees its ~20GB. Running the
@@ -3050,6 +3071,8 @@ class MLXLocalClient:
                 logger.info("🔓 [MLX] Released process-level spawn lock.")
 
     async def _spawn_worker(self) -> mp.Process:
+        if _shutdown_blocks_model_work(self.model_path, action="async worker spawn"):
+            raise RuntimeError("runtime_shutdown")
         return await asyncio.get_running_loop().run_in_executor(None, self._spawn_worker_blocking)
 
     async def _response_listener_loop(self):
@@ -3201,11 +3224,7 @@ class MLXLocalClient:
         [OOM FIX] Acquires a global semaphore so only ONE model loads at a time.
         This prevents the 32B + 7B from loading simultaneously and crashing Metal.
         """
-        if _runtime_shutdown_requested():
-            logger.info(
-                "🛑 [MLX] Worker start/recovery skipped for %s: runtime is shutting down.",
-                os.path.basename(self.model_path),
-            )
+        if _shutdown_blocks_model_work(self.model_path, action="worker start/recovery"):
             return False
         if request_is_background and _foreground_owner_active():
             logger.info(
@@ -3305,11 +3324,7 @@ class MLXLocalClient:
         skip_swap_cooldown: bool = False,
     ) -> bool:
         """Inner implementation — called while holding the global spawn gate."""
-        if _runtime_shutdown_requested():
-            logger.info(
-                "🛑 [MLX] Worker spawn skipped for %s: runtime is shutting down.",
-                os.path.basename(self.model_path),
-            )
+        if _shutdown_blocks_model_work(self.model_path, action="worker spawn"):
             return False
         # K4 crash-loop backoff: a lane whose workers keep dying young must
         # not respawn on demand. Refuse fast with a named reason — the
@@ -4946,6 +4961,7 @@ class MLXLocalClient:
                             repetition_penalty=1.0,
                             health_probe=True,
                             disable_prompt_cache=True,
+                            clear_prompt_cache=True,
                         ),
                         timeout=min(max(10.0, warmup_timeout), 60.0),
                     )
@@ -4997,6 +5013,11 @@ class MLXLocalClient:
         skip_swap_cooldown: bool = False,
     ) -> bool:
         """Boot the worker and prove the visible conversation path is ready."""
+        if _shutdown_blocks_model_work(self.model_path, action="warmup"):
+            self._warmup_in_flight = False
+            if self._lane_state not in {"failed", "cold"}:
+                self._set_lane_state("cold", "runtime_shutdown")
+            return False
         if foreground_request is None:
             foreground_request = self._is_primary_or_deep_lane()
         else:
@@ -5081,11 +5102,7 @@ class MLXLocalClient:
                     return False
                 return True
 
-            if _runtime_shutdown_requested():
-                logger.info(
-                    "🛑 [MLX] Warmup skipped for %s: runtime is shutting down.",
-                    os.path.basename(self.model_path),
-                )
+            if _shutdown_blocks_model_work(self.model_path, action="background warmup"):
                 return False
 
             alive = await self._ensure_worker_alive(
@@ -5097,6 +5114,13 @@ class MLXLocalClient:
                 if self._lane_state != "failed":
                     self._set_lane_state("recovering", "warmup_deferred")
                 logger.info("⏸️ [MLX] Warmup deferred for %s.", os.path.basename(self.model_path))
+                return False
+            if request_is_background and _foreground_owner_active():
+                logger.info(
+                    "⏸️ [MLX] Background warmup precompile deferred for %s while foreground lane is owned by %s.",
+                    os.path.basename(self.model_path),
+                    _FOREGROUND_OWNER_NAME or "foreground",
+                )
                 return False
 
             try:

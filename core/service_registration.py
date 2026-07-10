@@ -622,7 +622,7 @@ def _finalize_wiring(container):
         mycelial = container.get("mycelial_network")
         if mycelial:
             # Link major layers
-            from .meta_cognition import MetaEvolutionEngine
+            from core.cognition.meta_cognition import MetaEvolutionEngine
             from .runtime.desktop_boot_safety import inprocess_mlx_metal_enabled
             mycelial.link_layer("meta_cognition", MetaEvolutionEngine)
             

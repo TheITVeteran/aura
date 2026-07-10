@@ -10323,3 +10323,83 @@ Remaining work after this checkpoint:
   memory/rollback, identity/welfare, colleague, and independent-proof workstreams.
 - Do not begin the multi-hour or 24-72 hour soak until these shorter bounded and
   live requirements are green.
+
+## Checkpoint 2026-07-10-27: Signal-Safe Shutdown Latch And Clean Live Proof
+
+Scope:
+
+- Closed `CTX2-SHUTDOWN-001..003` for the bounded live-runtime path. Runtime
+  shutdown is now a process-wide no-new-work latch for the MLX worker lifecycle,
+  inference recovery/prewarm, lane reconciliation, and governed subprocess
+  starts. After shutdown is requested, worker spawn, warmup, recovery, background
+  prewarm, lane reconciliation, and effectful subprocess launch refuse before
+  they can recreate runtime work.
+- Preserved read-only/offline proof tooling during shutdown so external
+  validators can still inspect the stopped runtime without mutating it.
+- Fixed a proof-harness false positive where shell commands mentioning
+  `aura_main.py --desktop` were treated as live Aura runtimes. The harness now
+  classifies actual Python Aura processes by executable/script arguments.
+- Fixed the boot-time service-registration import drift for the meta-cognition
+  layer and the invalid `SensoryGate` supervisor restart policy that generated a
+  startup traceback.
+- Hardened Cortex visible-readiness warmup: health probes now clear/bypass
+  prompt cache, and background warmup precompile yields while the foreground
+  lane is owned instead of competing with user-visible readiness and recording
+  false degradation.
+- Fixed the live-tool scoped-authority gap behind
+  `denied_by_default: tool_execution requires scoped authority in context`.
+  `desktop-ui` now normalizes as a user-facing origin, foreground user-requested
+  tools derive a `foreground_user_requested:*` scope before Will evaluation, and
+  safe autonomous read-only web research derives an
+  `autonomous_read_only_web:*` scope. Unsafe autonomous web requests remain
+  unscoped and fail closed.
+
+Verification:
+
+- Focused shutdown/readiness/proof-harness regressions -> `9 passed in 0.92s`.
+- Broader touched contract suite ->
+  `79 passed in 5.95s`:
+  `tests/test_mlx_runtime_contract.py`,
+  selected `tests/test_mlx_client_resilience.py`, `tests/test_lane_reconciler.py`,
+  `tests/test_subprocess_gateway_contract.py`, the new boot-runtime
+  shutdown/proof-harness contracts, and live tool scoped-authority regressions.
+- Ruff (`--select F,E9`) over the touched runtime, worker, proof, service,
+  orchestrator, and test files -> passed.
+- Py-compile over the touched runtime, worker, proof, service, orchestrator, and
+  test files -> passed.
+- First live proof before the readiness-cache/service fixes produced useful
+  negative evidence: shutdown itself was clean (`--stop rc=0`, graceful, no
+  orphans, port free in `38.4s/90s`), but conversation readiness wedged on
+  `warmup_readiness_no_text` and stream scan reported boot defects.
+- Final bounded live desktop proof passed:
+  `AURA_MLX_MEMORY_LIMIT_GB=26 AURA_PROCESS_RSS_LIMIT_GB=32
+  AURA_LIVE_PROOF_SHUTDOWN_MAX_S=90 .venv/bin/python
+  tools/live_boot_proof.py --mode desktop --port 8034 --conversation-soak-turns
+  1 --skip-desktop-action --boot-timeout 420 --out-dir
+  artifacts/current/shutdown_latch_checkpoint_20260710_retry3`
+  - boot health green after `22s`, peak RSS about `20.6GB`;
+  - live desktop chat capability inventory and identity returned through the
+    CognitiveEngine path;
+  - continuity set/recall passed (`amber-*` codeword recalled);
+  - `1/1` conversation soak turn passed;
+  - semantic, imagination, timescale, ambient, and autonomic organs processed
+    live turns;
+  - shutdown passed with `--stop rc=0`, `graceful=True`, `orphans=none`,
+    `port_free=True`, duration `37.5s/90s`;
+  - runtime stream scan found no failure markers.
+  Verdict:
+  `artifacts/current/shutdown_latch_checkpoint_20260710_retry3/live_proof_20260710_142842_verdict.json`.
+
+Remaining work after this checkpoint:
+
+- Continue with atomic lane reservations, synchronous required eviction,
+  complete trainer/process accounting, compensation, and exactly-once receipts
+  (`CTX2-LANE-001..004`).
+- Continue retiring the `1,693` ownership-migration debt calls through the
+  canonical effect spine. The exact baseline remains a ratchet, not acceptance of
+  distributed ownership.
+- Continue the canonical mind/state graph, verifier/amplifier, one-shot,
+  memory/rollback, identity/welfare, colleague, independent-proof, Program DNA,
+  RSI/immune auto-repair, and visible web-interlocutor proof workstreams.
+- Keep the final multi-hour/24-72 hour soak deferred until the shorter bounded
+  and visible live requirements are green.

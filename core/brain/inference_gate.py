@@ -1851,6 +1851,8 @@ class InferenceGate:
 
     async def ensure_foreground_ready(self, timeout: float | None = None) -> dict[str, Any]:  # noqa: ASYNC109
         """Ensure the 32B conversation lane has actually attempted warmup for this turn."""
+        if is_shutdown_requested():
+            raise RuntimeError("runtime_shutdown")
         timeout = max(15.0, float(timeout or 90.0))
         lane = self.get_conversation_status()
         if self._lane_can_attempt_visible_conversation_turn(lane):
@@ -1896,6 +1898,8 @@ class InferenceGate:
                             )
                         raise RuntimeError(f"foreground_warmup_deferred:{warmup_deferral}")
                     self._extend_startup_quiet_window(20.0)
+                    if is_shutdown_requested():
+                        raise RuntimeError("runtime_shutdown")
                     self._prewarm_task = get_task_tracker().create_task(
                         self._mlx_client.warmup(),
                         name="InferenceGate.ensure_foreground_ready",
@@ -1983,6 +1987,9 @@ class InferenceGate:
         never gets a chance to respawn because background requests are locked to
         tertiary tier.  Rate-limited to one attempt per 3s.
         """
+        if is_shutdown_requested():
+            logger.debug("Primary cortex recovery skipped: runtime shutdown requested.")
+            return
         if not self._mlx_client:
             return
         if proof_run_active(origin="cortex_recovery") and proof_model_tier() != "primary":
@@ -2069,6 +2076,9 @@ class InferenceGate:
             return
 
         async def _background_recover():
+            if is_shutdown_requested():
+                self._cortex_recovery_in_progress = False
+                return
             self._cortex_recovery_in_progress = True
             self._cortex_recovery_attempts += 1
 
@@ -2094,6 +2104,9 @@ class InferenceGate:
                 warmup_deferral = self._cortex_warmup_deferral_reason("recovery")
                 if warmup_deferral:
                     self._log_cortex_warmup_deferral(warmup_deferral, context="recovery")
+                    return
+                if is_shutdown_requested():
+                    logger.debug("Primary cortex recovery stopped before warmup: runtime shutdown requested.")
                     return
                 if cold_start_recovery:
                     logger.info(
@@ -2165,6 +2178,9 @@ class InferenceGate:
         # Reserve recovery ownership before scheduling. Without this reservation,
         # the foreground caller can observe ``False`` immediately after this method
         # returns and start a second inline warmup before the task gets CPU time.
+        if is_shutdown_requested():
+            logger.debug("Primary cortex recovery task not scheduled: runtime shutdown requested.")
+            return
         self._cortex_recovery_in_progress = True
         recovery_coro = _background_recover()
         try:
@@ -2198,6 +2214,9 @@ class InferenceGate:
         Delegates to _ensure_cortex_recovery() which has proper rate-limiting,
         warm-up sequencing, and retry budgets.
         """
+        if is_shutdown_requested():
+            logger.debug("_respawn_cortex_if_needed skipped: runtime shutdown requested.")
+            return
         if (
             self._mlx_client
             and hasattr(self._mlx_client, "is_alive")
@@ -2215,6 +2234,8 @@ class InferenceGate:
 
         Returns a dict of {tier: status} for monitoring.
         """
+        if is_shutdown_requested():
+            return {"cortex": "shutdown"}
         statuses = {}
 
         # Primary cortex

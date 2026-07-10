@@ -101,6 +101,7 @@ def _job_requires_prompt_cache_bypass(job: dict[str, Any]) -> bool:
 
     return bool(
         job.get("clean_user_surface_contract", False)
+        or job.get("health_probe", False)
         or job.get("strict_answer_contract", False)
         or job.get("strict_value_contract", False)
         or job.get("proof_evaluation_contract", False)

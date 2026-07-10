@@ -7,6 +7,8 @@ import types
 
 import pytest
 
+from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
+
 
 def test_setup_worker_env_not_called_at_import():
     """_setup_worker_env must NOT run when the module is imported.
@@ -99,6 +101,12 @@ def test_mlx_runtime_probe_subprocess_is_bounded_and_reviewed():
     assert "shell=True" not in source
 
 
+def test_worker_health_probe_bypasses_prompt_cache():
+    from core.brain.llm import mlx_worker
+
+    assert mlx_worker._job_requires_prompt_cache_bypass({"health_probe": True}) is True
+
+
 def test_record_mlx_degradation_preserves_action_and_severity():
     from core.brain.llm.mlx_client import _record_mlx_degradation
     from core.runtime.errors import get_degradation_tracker
@@ -116,6 +124,51 @@ def test_record_mlx_degradation_preserves_action_and_severity():
     assert recent
     assert recent[0].severity == "error"
     assert recent[0].action == "marked lane failed and applied spawn backoff"
+
+
+@pytest.mark.asyncio
+async def test_mlx_warmup_refuses_before_worker_recovery_after_shutdown(monkeypatch):
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    clear_shutdown_request()
+    client = MLXLocalClient("/models/Aura-32B-test")
+    calls: list[str] = []
+
+    async def _should_not_recover(*_args, **_kwargs):
+        calls.append("recover")
+        return True
+
+    monkeypatch.setattr(client, "_ensure_worker_alive", _should_not_recover)
+
+    try:
+        request_shutdown("unit-test")
+        assert await client.warmup(foreground_request=False) is False
+    finally:
+        clear_shutdown_request()
+
+    assert calls == []
+    assert client._warmup_attempted is False
+    assert client._warmup_in_flight is False
+
+
+def test_mlx_worker_spawn_refuses_before_orphan_scan_after_shutdown(monkeypatch):
+    from core.brain.llm import mlx_client
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    clear_shutdown_request()
+    client = MLXLocalClient("/models/Aura-32B-test")
+
+    def _should_not_scan(*_args, **_kwargs):
+        raise AssertionError("shutdown latch must stop spawn before process scans")
+
+    monkeypatch.setattr(mlx_client.psutil, "process_iter", _should_not_scan)
+
+    try:
+        request_shutdown("unit-test")
+        with pytest.raises(RuntimeError, match="runtime_shutdown"):
+            client._spawn_worker_blocking()
+    finally:
+        clear_shutdown_request()
 
 
 @pytest.mark.asyncio

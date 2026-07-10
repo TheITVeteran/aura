@@ -2316,7 +2316,7 @@ class RobustOrchestrator(
 
             # 2. Register Actor with Supervisor Tree
             spec = ActorSpec(
-                name="SensoryGate", target=start_sensory_gate, args=(), restart_policy="one_for_one"
+                name="SensoryGate", target=start_sensory_gate, args=(), restart_policy="transient"
             )
 
             if self.supervisor:

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from core.runtime import subprocess_gateway
+from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -59,6 +60,43 @@ def test_read_only_run_allows_named_source(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert result.returncode == 0
     assert result.stdout.strip() == "named"
+
+
+def test_shutdown_latch_blocks_effectful_subprocess_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    clear_shutdown_request()
+    try:
+        request_shutdown("unit-test")
+        with pytest.raises(subprocess_gateway.GovernanceViolation, match="runtime shutdown"):
+            subprocess_gateway.SubprocessGateway().run(
+                [sys.executable, "-c", "print('must-not-run')"],
+                timeout=5,
+                source="test.subprocess_gateway.shutdown_effectful_run",
+            )
+    finally:
+        clear_shutdown_request()
+
+
+def test_shutdown_latch_allows_read_only_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    clear_shutdown_request()
+    try:
+        request_shutdown("unit-test")
+        result = subprocess_gateway.SubprocessGateway().run(
+            [sys.executable, "-c", "print('probe-ok')"],
+            timeout=5,
+            read_only=True,
+            source="test.subprocess_gateway.shutdown_read_only_probe",
+        )
+    finally:
+        clear_shutdown_request()
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "probe-ok"
 
 
 def test_read_only_spawn_async_requires_attributable_source(

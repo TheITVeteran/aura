@@ -1206,6 +1206,7 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         readiness_kwargs = probe.await_args_list[1].kwargs
         self.assertTrue(readiness_kwargs["health_probe"])
         self.assertTrue(readiness_kwargs["disable_prompt_cache"])
+        self.assertTrue(readiness_kwargs["clear_prompt_cache"])
         self.assertEqual(readiness_kwargs["max_tokens"], 16)
 
     async def test_warmup_returns_false_when_worker_start_is_deferred(self):
@@ -1216,6 +1217,20 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(result)
         self.assertEqual(client.get_lane_status()["state"], "recovering")
+
+    async def test_background_warmup_yields_before_precompile_when_foreground_owned(self):
+        from core.brain.llm import mlx_client as mlx_client_module
+
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        precompile = AsyncCallProbe(return_value=None)
+
+        with ReplaceAttr(client, "_ensure_worker_alive", AsyncCallProbe(return_value=True)):
+            with ReplaceAttr(client, "_run_warmup_precompile", precompile):
+                with ReplaceAttr(mlx_client_module, "_FOREGROUND_OWNER_NAME", "warmup:foreground"):
+                    result = await client.warmup(foreground_request=False)
+
+        self.assertFalse(result)
+        self.assertEqual(precompile.await_args_list, [])
 
     async def test_warmup_returns_true_only_after_visible_readiness(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)

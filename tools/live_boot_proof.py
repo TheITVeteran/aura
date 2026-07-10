@@ -414,6 +414,31 @@ class LiveProof:
         except httpx.HTTPError:
             return False
 
+    @staticmethod
+    def _is_aura_main_process(cmdline: list[str]) -> bool:
+        if not cmdline:
+            return False
+        args = [str(part or "") for part in cmdline]
+        executable = Path(args[0]).name.lower()
+        if "python" not in executable:
+            return False
+        for arg in args[1:]:
+            if Path(arg).name == "aura_main.py":
+                return True
+        return False
+
+    @classmethod
+    def _running_aura_main_pids(cls) -> list[int]:
+        pids: list[int] = []
+        for proc in psutil.process_iter(["cmdline"]):
+            try:
+                cmdline = list(proc.info.get("cmdline") or [])
+            except psutil.Error:
+                continue
+            if cls._is_aura_main_process(cmdline):
+                pids.append(proc.pid)
+        return pids
+
     def boot(self) -> bool:
         if self.port_in_use():
             return self.record(
@@ -423,11 +448,7 @@ class LiveProof:
                 f"fight an existing instance; stop it first "
                 f"(python aura_main.py --stop)",
             )
-        existing = [
-            p.pid
-            for p in psutil.process_iter(["cmdline"])
-            if "aura_main.py" in " ".join(p.info.get("cmdline") or [])
-        ]
+        existing = self._running_aura_main_pids()
         if existing:
             return self.record(
                 "preflight_process",

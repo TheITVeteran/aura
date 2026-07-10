@@ -20,6 +20,7 @@ from core.runtime.lane_reconciler import (
     get_crash_loop_breaker,
     get_lane_reconciler,
 )
+from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
 
 pytestmark = pytest.mark.unit
 
@@ -335,6 +336,28 @@ class TestLaneReconciler:
         await rec.stop()
         assert rec.is_alive() is False
         assert rec.is_ready() is False
+
+    @pytest.mark.asyncio
+    async def test_shutdown_latch_prevents_start_and_reconcile_work(self):
+        calls = []
+
+        async def spawn():
+            calls.append("spawn")
+            return True
+
+        rec = _reconciler(primary_alive=lambda: False, spawn_primary=spawn)
+        clear_shutdown_request()
+        try:
+            request_shutdown("unit-test")
+            await rec.start()
+            assert rec.is_alive() is False
+            actions = await rec.reconcile_once()
+        finally:
+            clear_shutdown_request()
+
+        assert calls == []
+        assert actions[0]["action"] == "skipped"
+        assert actions[0]["detail"] == "runtime_shutdown"
 
     def test_kill_switch(self, monkeypatch):
         monkeypatch.setenv("AURA_LANE_RECONCILER", "0")

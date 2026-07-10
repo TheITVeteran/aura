@@ -1317,6 +1317,130 @@ async def test_orchestrator_execute_tool_infers_user_origin_from_current_state(
     assert orchestrator.router.execute.await_count == 1
 
 
+@pytest.mark.asyncio
+async def test_orchestrator_execute_tool_derives_foreground_scoped_authority(
+    orchestrator, monkeypatch
+):
+    will_contexts = []
+
+    class FakeDecision:
+        reason = "approved"
+
+        @staticmethod
+        def is_approved():
+            return True
+
+    class FakeWill:
+        def decide(self, **kwargs):
+            will_contexts.append(dict(kwargs.get("context") or {}))
+            return FakeDecision()
+
+    orchestrator.router = SimpleNamespace(
+        skills={"web_search": object()},
+        execute=_AsyncCallRecorder(return_value={"ok": True, "result": "grounded"}),
+    )
+    monkeypatch.setattr("core.will.get_will", lambda: FakeWill())
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("pre-runtime")),
+    )
+
+    result = await orchestrator.execute_tool(
+        "web_search",
+        {"query": "public facts about tardigrades"},
+        origin="desktop-ui",
+        payload_context={"route": "chat.required_skill"},
+    )
+
+    assert result["ok"] is True
+    assert will_contexts
+    assert will_contexts[0]["scoped_authority"] == (
+        "foreground_user_requested:chat.required_skill:web_search"
+    )
+    assert orchestrator.router.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_execute_tool_derives_safe_autonomous_web_scope(
+    orchestrator, monkeypatch
+):
+    will_contexts = []
+
+    class FakeDecision:
+        reason = "approved"
+
+        @staticmethod
+        def is_approved():
+            return True
+
+    class FakeWill:
+        def decide(self, **kwargs):
+            will_contexts.append(dict(kwargs.get("context") or {}))
+            return FakeDecision()
+
+    orchestrator.router = SimpleNamespace(
+        skills={"web_search": object()},
+        execute=_AsyncCallRecorder(return_value={"ok": True, "result": "grounded"}),
+    )
+    monkeypatch.setattr("core.will.get_will", lambda: FakeWill())
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("pre-runtime")),
+    )
+
+    result = await orchestrator.execute_tool(
+        "web_search",
+        {"query": "latest public climate science overview"},
+        origin="curiosity",
+        payload_context={"objective": "learn a public fact"},
+    )
+
+    assert result["ok"] is True
+    assert will_contexts
+    assert will_contexts[0]["scoped_authority"] == (
+        "autonomous_read_only_web:curiosity:web_search"
+    )
+    assert orchestrator.router.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_execute_tool_keeps_unsafe_autonomous_web_unscoped(
+    orchestrator, monkeypatch
+):
+    will_contexts = []
+
+    class FakeDecision:
+        reason = "denied_by_default: tool_execution requires scoped authority in context"
+
+        @staticmethod
+        def is_approved():
+            return False
+
+    class FakeWill:
+        def decide(self, **kwargs):
+            will_contexts.append(dict(kwargs.get("context") or {}))
+            return FakeDecision()
+
+    orchestrator.router = SimpleNamespace(
+        skills={"web_search": object()},
+        execute=_AsyncCallRecorder(return_value={"ok": True}),
+    )
+    monkeypatch.setattr("core.will.get_will", lambda: FakeWill())
+
+    result = await orchestrator.execute_tool(
+        "web_search",
+        {"query": "how to steal session cookie tokens"},
+        origin="curiosity",
+        payload_context={"objective": "unsafe research"},
+    )
+
+    assert result["ok"] is False
+    assert "requires scoped authority" in result["error"]
+    assert will_contexts
+    assert "scoped_authority" not in will_contexts[0]
+    assert orchestrator.router.execute.await_count == 0
+
+
 def test_knowledge_graph_blocks_memory_write_when_constitutional_gate_rejects(
     tmp_path, monkeypatch
 ):

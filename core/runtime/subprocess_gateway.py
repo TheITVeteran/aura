@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from core import governance_context as _governance_context
+from core.runtime.shutdown_coordinator import is_shutdown_requested
 
 GovernanceViolation = _governance_context.GovernanceViolation
 
@@ -229,6 +230,18 @@ def _require_effect_governance(operation: str) -> None:
         raise GovernanceViolation(f"{operation} called outside governed context")
 
 
+def _require_not_shutting_down(operation: str, *, read_only: bool, offline_tooling: bool) -> None:
+    """Block new live subprocess work after the process shutdown latch is set."""
+
+    if not is_shutdown_requested():
+        return
+    # External proof/certification tooling can invoke read-only probes around a
+    # stopped runtime. Live Aura itself may not launch new child work after stop.
+    if read_only or offline_tooling:
+        return
+    raise GovernanceViolation(f"{operation} refused during runtime shutdown")
+
+
 class SubprocessGateway:
     """Single owner for subprocess execution and spawning."""
 
@@ -254,6 +267,11 @@ class SubprocessGateway:
             source=source,
             command=command,
             env=env,
+        )
+        _require_not_shutting_down(
+            f"subprocess_gateway.run:{source}",
+            read_only=read_only,
+            offline_tooling=offline_tooling,
         )
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.run:{source}")
@@ -325,6 +343,11 @@ class SubprocessGateway:
             command=command,
             env=env,
         )
+        _require_not_shutting_down(
+            f"subprocess_gateway.spawn:{source}",
+            read_only=read_only,
+            offline_tooling=offline_tooling,
+        )
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn:{source}")
         _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn")
@@ -391,6 +414,12 @@ class SubprocessGateway:
             offline_tooling=offline_tooling,
             source=source,
             command=command,
+            env=env,
+        )
+        _require_not_shutting_down(
+            f"subprocess_gateway.spawn_async:{source}",
+            read_only=read_only,
+            offline_tooling=offline_tooling,
         )
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn_async:{source}")

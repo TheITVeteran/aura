@@ -43,6 +43,7 @@ from typing import Any, Awaitable, Callable
 
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
+from core.runtime.shutdown_coordinator import is_shutdown_requested
 
 logger = logging.getLogger("Aura.LaneReconciler")
 
@@ -424,6 +425,9 @@ class LaneReconciler:
     async def start(self) -> None:
         if self._running:
             return
+        if is_shutdown_requested():
+            logger.info("LaneReconciler start skipped: runtime shutdown requested.")
+            return
         self._running = True
         from core.utils.task_tracker import get_task_tracker
 
@@ -443,6 +447,9 @@ class LaneReconciler:
 
     async def _run_loop(self) -> None:
         while self._running:
+            if is_shutdown_requested():
+                self._running = False
+                return
             try:
                 if self.enabled():
                     await self.reconcile_once()
@@ -464,6 +471,8 @@ class LaneReconciler:
 
         Single-flight: overlapping calls (loop + manual) collapse to one.
         """
+        if is_shutdown_requested():
+            return [self._note("skipped", detail="runtime_shutdown")]
         if self._reconcile_inflight:
             return [self._note("skipped", detail="reconcile_already_inflight")]
         self._reconcile_inflight = True

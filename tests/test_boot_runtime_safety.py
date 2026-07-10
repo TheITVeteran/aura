@@ -730,6 +730,40 @@ def test_live_boot_proof_supports_stable_output_directory():
     assert "LATEST_VERDICT.json" in source
 
 
+def test_live_boot_proof_preflight_ignores_shell_mentions_of_aura_main():
+    from tools.live_boot_proof import LiveProof
+
+    shell_probe = [
+        "/bin/zsh",
+        "-c",
+        "pgrep -fl \"aura_main.py --desktop\" | head -2",
+    ]
+    actual_runtime = [
+        "/opt/homebrew/bin/python3.12",
+        "aura_main.py",
+        "--desktop",
+        "--port",
+        "8034",
+    ]
+
+    assert LiveProof._is_aura_main_process(shell_probe) is False
+    assert LiveProof._is_aura_main_process(actual_runtime) is True
+
+
+def test_service_registration_uses_canonical_meta_cognition_import():
+    source = (PROJECT_ROOT / "core/service_registration.py").read_text()
+
+    assert "from core.cognition.meta_cognition import MetaEvolutionEngine" in source
+    assert "from .meta_cognition import MetaEvolutionEngine" not in source
+
+
+def test_sensory_gate_actor_uses_supported_restart_policy():
+    source = (PROJECT_ROOT / "core/orchestrator/main.py").read_text()
+
+    assert 'name="SensoryGate", target=start_sensory_gate, args=(), restart_policy="transient"' in source
+    assert 'restart_policy="one_for_one"' not in source
+
+
 def test_compute_mlx_cache_limit_defaults_to_standard_ratio_when_not_safe(monkeypatch):
     monkeypatch.delenv("AURA_SAFE_BOOT_DESKTOP", raising=False)
     monkeypatch.delenv("AURA_LAUNCHED_FROM_APP", raising=False)
