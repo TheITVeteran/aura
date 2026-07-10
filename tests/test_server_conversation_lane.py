@@ -9809,7 +9809,9 @@ async def test_api_chat_regenerate_desktop_requires_cognitive_engine(monkeypatch
         None,
     )
 
-    assert response.status_code == 503
+    # In-band fail-closed: the desktop renders the body; a raw 5xx shows as
+    # silence over a live mind. The honest refusal IS the contract.
+    assert response.status_code == 200
     assert b"desktop_cognitive_engine_unavailable" in response.body
     assert kernel_calls == []
     assert orchestrator_calls == []
@@ -9984,7 +9986,9 @@ async def test_api_chat_regenerate_desktop_rejects_bounded_repair_without_full_m
     )
 
     payload = json.loads(response.body)
-    assert response.status_code == 503
+    # In-band fail-closed for the desktop surface (raw 5xx renders as
+    # silence); the body fields below carry the actual refusal contract.
+    assert response.status_code == 200
     assert payload["status"] == "desktop_cognitive_engine_unavailable"
     assert payload["reason"] == "desktop_cognitive_engine_required_no_reply"
     assert payload["live_turn_contract"]["full_mind_path"] is False
@@ -11030,9 +11034,59 @@ async def test_api_chat_returns_structured_timeout_when_kernel_times_out(monkeyp
         None,
     )
 
-    assert response.status_code == 503
+    # No benchmark header = a real user: the structured timeout arrives
+    # in-band (200) so the UI shows the honest text instead of silence.
+    # Benchmarks keep true 503/504 via X-Aura-Benchmark.
+    assert response.status_code == 200
     assert b"took too long to finish cleanly" in response.body
     assert b"\"status\":\"timeout\"" in response.body
+
+
+@pytest.mark.asyncio
+async def test_api_chat_kernel_timeout_keeps_true_status_for_benchmarks(monkeypatch):
+    """The other half of the in-band split: probes and soaks declare
+    themselves with X-Aura-Benchmark and must keep the true 503 (lane was
+    ready) so endurance verdicts stay honest."""
+    from interface import server as server_module
+
+    class _FakeKernelInterface:
+        def is_ready(self):
+            return True
+
+        async def process(self, *_args, **_kwargs):
+            message = "foreground timeout"
+            raise TimeoutError(message)
+
+    monkeypatch.setattr(server_module, "_notify_user_spoke", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        server_module,
+        "_collect_conversation_lane_status",
+        lambda: {
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "desired_endpoint": "Cortex",
+            "foreground_endpoint": "Cortex",
+            "background_endpoint": "Brainstem",
+        },
+    )
+
+    from core.kernel.kernel_interface import KernelInterface
+
+    monkeypatch.setattr(KernelInterface, "get_instance", staticmethod(lambda: _FakeKernelInterface()))
+
+    response = await server_module.api_chat(
+        server_module.ChatRequest(message="With me?"),
+        SimpleNamespace(headers={"X-Aura-Benchmark": "true"}),
+        None,
+        None,
+    )
+
+    assert response.status_code == 503
+    payload = json.loads(response.body)
+    # The benchmark lane keeps its own named timeout status — the point of
+    # this pin is that benchmarks NEVER receive the in-band 200 softening.
+    assert payload["status"] == "benchmark_kernel_timeout"
 
 
 @pytest.mark.asyncio

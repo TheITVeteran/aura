@@ -14329,7 +14329,10 @@ async def api_chat_regenerate(
                     ),
                     "regenerated": False,
                 },
-                status_code=503,
+                # Regenerate is a desktop-user surface with no benchmark
+                # concept: the honest fail-closed text must arrive in-band,
+                # never as a raw 503 the UI renders as silence.
+                status_code=200,
             )
 
         if not reply_text and ki.is_ready():
@@ -14347,7 +14350,18 @@ async def api_chat_regenerate(
         if not reply_text:
             orch = ServiceContainer.get("orchestrator", default=None)
             if not orch:
-                return JSONResponse({"error": "offline", "message": "Cognitive engine offline."}, status_code=503)
+                return JSONResponse(
+                    {
+                        "response": (
+                            "My cognitive engine is offline right now, so I can't "
+                            "regenerate that reply. The previous answer stays as-is."
+                        ),
+                        "status": "offline",
+                        "error": "offline",
+                        "regenerated": False,
+                    },
+                    status_code=200,
+                )
             reply_text = await orch.process_user_input_priority(user_msg, origin="user", timeout_sec=foreground_timeout)
 
         reply_text = await _stabilize_user_facing_reply(
@@ -16752,7 +16766,11 @@ async def api_chat(
             # Tiered response: 503 (recoverable/retry) when cortex was ready,
             # 504 (hard timeout) only when the lane itself was broken.
             was_ready = bool(lane.get("conversation_ready", False)) or str(lane.get("state", "")).lower() in {"ready", "warming", "recovering"}
-            status_code = 503 if was_ready else 504
+            # Real users get the honest timeout text in-band (a raw 5xx made
+            # the desktop show 'no response' over a live mind — the nightcap
+            # soak caught two turns leaking through this exact path);
+            # benchmarks keep true status codes via X-Aura-Benchmark.
+            status_code = (503 if was_ready else 504) if is_benchmark else 200
             timeout_reply = _conversation_lane_user_message(lane, timed_out=True)
             if pending_exchange_id:
                 await _complete_logged_exchange(
