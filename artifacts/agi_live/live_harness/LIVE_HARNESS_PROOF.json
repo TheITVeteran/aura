@@ -1,0 +1,56 @@
+{
+  "acceptance_results": {
+    "skill_execution": {
+      "expectation_receipt_id": "tool_execution-b70df0c4-a258-41c8-b2b6-69dfa99a9d40",
+      "verdict": {
+        "missing_criteria": [],
+        "missing_evidence": [],
+        "next_step": "",
+        "passed": true,
+        "present_evidence": [
+          "time",
+          "readable"
+        ],
+        "receipt_id": "tool_execution-b70df0c4-a258-41c8-b2b6-69dfa99a9d40",
+        "satisfied_criteria": [],
+        "status": "success_verified"
+      }
+    }
+  },
+  "all_negative_passed": true,
+  "all_positive_passed": true,
+  "negative_controls": {
+    "canary_leak_detected": true,
+    "disabled_will_fail_closed": true,
+    "fake_projected_score_rejected": true,
+    "forged_receipt_rejected": true,
+    "missing_effect_proof_rejected": true,
+    "mock_service_detected": true
+  },
+  "passed": true,
+  "positive_controls": {
+    "agency_goal_lifecycle": true,
+    "skill_execution": true,
+    "source_identity_certification_eligible": true,
+    "volition_cooldown_dedup": true,
+    "will_boot_and_decide": true,
+    "will_gate_routing": true,
+    "will_receipt_verification": true
+  },
+  "system_info": {
+    "commit_sha": "f1bc934b397c7e715cf982274e0e3b3ef9642baa",
+    "platform": "macOS-26.4.1-arm64-arm-64bit",
+    "python_version": "3.12.13 (main, Mar  3 2026, 12:39:30) [Clang 17.0.0 (clang-1700.6.3.2)]",
+    "run_id": "61cc87c8-104b-4276-80f8-bede90e1b044",
+    "source_identity": {
+      "certification_eligible": true,
+      "commit_sha": "f1bc934b397c7e715cf982274e0e3b3ef9642baa",
+      "dirty_fingerprint": "",
+      "mode": "git_clean",
+      "snapshot_file_count": 0,
+      "snapshot_sha256": "",
+      "worktree_clean": true
+    },
+    "timestamp": 1783656799.442786
+  }
+}

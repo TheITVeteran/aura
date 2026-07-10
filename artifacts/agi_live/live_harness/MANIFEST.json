@@ -1,0 +1,23 @@
+{
+  "commit_sha": "f1bc934b397c7e715cf982274e0e3b3ef9642baa",
+  "files": {
+    "LIVE_HARNESS_PROOF.json": {
+      "path": "artifacts/agi_live/live_harness/LIVE_HARNESS_PROOF.json",
+      "sha256": "d90d22692ce65fb131e759e17e2ae9e53cc58ff059d4504c4b84cb62ab24e515"
+    },
+    "LIVE_HARNESS_PROOF.md": {
+      "path": "artifacts/agi_live/live_harness/LIVE_HARNESS_PROOF.md",
+      "sha256": "7ba8d6ffae209b25c7451c422d2bd70aec714d00b565185c36ca4dbd60b77a0d"
+    }
+  },
+  "run_id": "61cc87c8-104b-4276-80f8-bede90e1b044",
+  "source_identity": {
+    "certification_eligible": true,
+    "commit_sha": "f1bc934b397c7e715cf982274e0e3b3ef9642baa",
+    "dirty_fingerprint": "",
+    "mode": "git_clean",
+    "snapshot_file_count": 0,
+    "snapshot_sha256": "",
+    "worktree_clean": true
+  }
+}

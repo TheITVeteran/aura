@@ -9380,3 +9380,45 @@ Remaining work after this checkpoint:
 - Run and promote the clean-source live harness proof for the published main
   revision; diagnostic dirty-tree output is not certification evidence.
 - Begin the desired-state runtime control plane and resource-admission work.
+
+## Checkpoint 2026-07-09-18: Clean-Source Live Harness Proof
+
+Scope:
+
+- Executed the live harness only after both implementation checkpoints were
+  published to `main` and `git status --porcelain` was empty.
+- Promoted the latest proof into the harness-owned
+  `artifacts/agi_live/live_harness/` namespace; the per-run evidence remains in
+  the ignored replay directory and the canonical DNU manifest remains intact.
+
+Verification:
+
+- Command: `python tools/agi/run_live_harness_proof.py`.
+- Exit code: `0`; overall verdict: `PASSED`.
+- Source identity:
+  - mode: `git_clean`
+  - worktree clean: `true`
+  - certification eligible: `true`
+  - commit: `f1bc934b397c7e715cf982274e0e3b3ef9642baa`
+  - run ID: `61cc87c8-104b-4276-80f8-bede90e1b044`
+- Positive controls: `7/7` passed, covering source identity, Will boot/decision,
+  authority routing, signed receipt verification, agency goal lifecycle,
+  volition deduplication, and real clock skill execution.
+- Negative controls: `6/6` passed, covering disabled-Will fail-closed behavior,
+  forged receipts, missing effect proof, canary leakage, fake benchmark claims,
+  and mock-service contamination.
+- Clock execution passed the shared action expectation and emitted expectation
+  receipt `tool_execution-b70df0c4-a258-41c8-b2b6-69dfa99a9d40`.
+- Promoted artifact hashes:
+  - `LIVE_HARNESS_PROOF.json`:
+    `d90d22692ce65fb131e759e17e2ae9e53cc58ff059d4504c4b84cb62ab24e515`
+  - `LIVE_HARNESS_PROOF.md`:
+    `7ba8d6ffae209b25c7451c422d2bd70aec714d00b565185c36ca4dbd60b77a0d`
+- The promoted `MANIFEST.json` independently records both hashes, source
+  identity, revision, and run ID.
+
+Remaining work after this checkpoint:
+
+- Build the desired-state runtime reconciler and unified resource-admission
+  control plane. The live harness closes this proof boundary, not the broader
+  Context-Criticism Closure Matrix.
