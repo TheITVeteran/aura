@@ -405,6 +405,32 @@ FMEA_REGISTRY: tuple[FailureMode, ...] = (
         notes="Structural long-run analysis from Pass F; no finite soak can prove unbounded "
         "per-event file creation safe over indefinite daily operation.",
     ),
+    # ── Forensics coverage ─────────────────────────────────────────
+    FailureMode(
+        id="FM-FORENSICS-001",
+        subsystem="whole-process death forensics",
+        mode="Hard death (SIGKILL / OOM-kill) leaves no record of the final moments",
+        cause="faulthandler and every in-process hook are uncatchable on SIGKILL; the "
+        "continuity record is written BEFORE the death, so its shutdown reason is stale "
+        "optimism; post-mortem analysis reconstructs from inference, not evidence",
+        effect="Endurance OOMs and launcher kills were diagnosed from syslogs and memory "
+        "sentinel side-channels; what the mind was doing in its final seconds was "
+        "unknowable (2026-07-03 kernel-down, 2026-07-06 duplicate-runtime cascade)",
+        blast_radius=BlastRadius.ORGANISM,
+        severity=Severity.MAJOR,
+        detection="A5 flight recorder: absent clean-shutdown marker in the mmap ring = hard "
+        "death, detected at next boot with the last recorded mind-moments",
+        mitigation="Kernel-owned MAP_SHARED pages survive any process death; per-tick frames "
+        "(stage, RSS, conditions, failures) extracted into a governed death report consumed "
+        "by the incident narrator and the continuity waking sequence",
+        detection_modules=("core.runtime.flight_recorder",),
+        mitigation_modules=("core.runtime.flight_recorder", "core.observability.incident_narrator"),
+        occurrences=(
+            "2026-07-03 endurance OOM 35GB (no relaunch, no final-moment record)",
+            "2026-07-06 duplicate-runtime cascade (diagnosed from side-channels)",
+        ),
+        notes="The ring is written by the death itself; only whole-machine loss can erase it.",
+    ),
 )
 
 

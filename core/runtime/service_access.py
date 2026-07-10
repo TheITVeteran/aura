@@ -66,6 +66,11 @@ def resolve_task_engine(*, default: Any = None) -> Any:
     return optional_service("task_engine", default=default)
 
 
+def resolve_source_body(*, default: Any = None) -> Any:
+    """The source-body proprioception organ (boot-over-boot code deltas)."""
+    return optional_service("source_body", default=default)
+
+
 def resolve_canonical_self_engine(*, default: Any = None, autocreate: bool = True) -> Any:
     engine = optional_service("canonical_self_engine", default=None)
     if engine is not None:

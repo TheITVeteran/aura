@@ -522,9 +522,9 @@ class ContextAssembler:
 
         goal_execution_block = ""
         try:
-            from core.container import ServiceContainer
+            from core.runtime.service_access import resolve_goal_engine
 
-            goal_engine = ServiceContainer.get("goal_engine", default=None)
+            goal_engine = resolve_goal_engine()
             if goal_engine and hasattr(goal_engine, "get_context_block"):
                 goal_execution_block = f"{goal_engine.get_context_block(limit=3)}\n\n"
                 # Hard cap: prevent goal context from eating the prompt budget
@@ -1280,8 +1280,9 @@ class ContextAssembler:
         # (boot-over-boot diffs, live edits in flight). Cached state only —
         # somatic_change_lines never shells out on the prompt path.
         try:
-            from core.container import ServiceContainer
-            source_body = ServiceContainer.get("source_body", default=None)
+            from core.runtime.service_access import resolve_source_body
+
+            source_body = resolve_source_body()
             if source_body is not None:
                 body_lines.extend(source_body.somatic_change_lines())
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _sb_exc:
@@ -1330,9 +1331,9 @@ class ContextAssembler:
         # Add directives or active goals
         goal_text = ""
         try:
-            from core.container import ServiceContainer
+            from core.runtime.service_access import resolve_goal_engine
 
-            goal_engine = ServiceContainer.get("goal_engine", default=None)
+            goal_engine = resolve_goal_engine()
             if goal_engine and hasattr(goal_engine, "get_context_block"):
                 goal_text = "\n" + str(goal_engine.get_context_block(limit=4) or "").strip()
         except (ImportError, AttributeError, RuntimeError) as e:

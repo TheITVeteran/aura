@@ -1559,6 +1559,20 @@ class MindTick:
                 # prevent the "mean tick too slow" stability guardian alert.
                 interval = sleep_time_override or TICK_INTERVALS.get(self.mode, 2.0)
                 elapsed = asyncio.get_running_loop().time() - start_time
+                # Black-box flight recorder (roadmap A5): one mind-moment per
+                # tick, degraded ticks included — the ring is what survives a
+                # hard death. A single bounded memcpy; never blocks the loop.
+                try:
+                    from core.runtime.flight_recorder import record_mind_moment
+                    record_mind_moment(
+                        tick=self._tick_count,
+                        stage=str(self._active_tick_stage or ""),
+                        mode=getattr(self.mode, "value", str(self.mode)),
+                        tick_duration_ms=elapsed * 1000.0,
+                        consecutive_failures=self._consecutive_loop_failures,
+                    )
+                except _MIND_BOUNDARY_ERRORS as exc:
+                    _record_mind_degradation(exc)
                 if elapsed > 5.0:
                     # Tick was slow — add proportional backoff
                     interval = max(interval, elapsed * 0.5)

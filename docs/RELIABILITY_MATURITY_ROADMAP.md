@@ -18,7 +18,7 @@ try/except." It is **declarative desired-state + control loops that converge**,
 - Health/liveness: `core/runtime/{health_contract,liveness,boot_probes,flagship_readiness,concurrency_health}.py`, `core/health/*`, generated `docs/RUNTIME_CONTRACT.md`.
 - Recovery: `core/runtime/self_repair_ladder.py`, the cortex→cloud→reflex degradation ladder, the watchdog dead-man clock.
 - Backpressure/circuits: `core/runtime/backpressure.py`, `core/resilience/circuit_breaker*.py`, `core/utils/token_budget.py`.
-- Forensics: `make triage` / `tools/crash_triage.py` (fingerprinted incident classes), the incident narrator, `data/error_logs/{crash,stalls,memory}/`.
+- Forensics: `make triage` / `tools/crash_triage.py` (fingerprinted incident classes), the incident narrator, `data/error_logs/{crash,stalls,memory}/`, and the A5 black-box flight recorder (`core/runtime/flight_recorder.py`, `docs/FLIGHT_RECORDER.md`).
 - SLOs: `docs/SLO.md`, `core/runtime/telemetry_sli.py`.
 - The async-write-lane ratchet (`tests/test_async_write_lane_ratchet.py`) — the model for turning a whole class of bugs into a static gate.
 
@@ -101,9 +101,11 @@ ordering and per-rung SLAs.
 never admit a model that would exceed the memory envelope (→ K3); never let SLO
 error-budget exhaustion cascade into a fail-closed storm (cap escalation rate).
 
-**A5. Black-box flight recorder.** Formalize an always-on bounded ring of the
-last N mind-moments + subsystem conditions, dumped on any hard fault (builds on
-the incident narrator + `data/error_logs/`).
+**A5. Black-box flight recorder.** LANDED 2026-07-10 — `core/runtime/flight_recorder.py`:
+an always-on mmap ring of per-tick mind-moments + K6 conditions that survives
+SIGKILL/OOM-kill; unclean shutdowns become governed death reports consumed by
+the incident narrator and the continuity waking sequence (`docs/FLIGHT_RECORDER.md`,
+FM-FORENSICS-001).
 
 ---
 

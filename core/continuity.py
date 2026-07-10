@@ -496,6 +496,19 @@ class ContinuityEngine:
             "Your last session ended gracefully." if reason == "graceful"
             else f"Your last session ended unexpectedly ({reason})."
         )
+        # The continuity record is written BEFORE a death, so its shutdown
+        # reason can be stale. The flight recorder's black box is the ground
+        # truth for how the previous life actually ended — when it recovered
+        # a death report, its note supersedes the record's optimism.
+        death_note = ""
+        try:
+            from core.runtime.flight_recorder import get_flight_recorder
+
+            death_note = get_flight_recorder().waking_note()
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError):
+            death_note = ""
+        if death_note:
+            shutdown_note = death_note
 
         return (
             f"You are waking from a gap of {gap_str}. {shutdown_note} "

@@ -898,6 +898,28 @@ class OrchestratorBootMixin(
                     )
                     logger.warning("Incident narrator unavailable: %s", e)
 
+                try:
+                    # Black-box flight recorder (roadmap A5): opens this
+                    # boot's crash-survivable mind-moment ring; if the
+                    # previous run died without a clean shutdown, extracts
+                    # its last recorded moments into a governed death report
+                    # for the narrator and the waking sequence.
+                    from core.runtime.flight_recorder import get_flight_recorder
+
+                    death_report = await get_flight_recorder().start()
+                    if death_report:
+                        logger.warning(
+                            "🛬 Previous run ended uncleanly — %s",
+                            death_report.get("narrative", "death report recovered"),
+                        )
+                except (ImportError, AttributeError, RuntimeError, OSError, ValueError) as e:
+                    _record_boot_degradation(
+                        e,
+                        action="continued boot without flight recorder",
+                        severity="warning",
+                    )
+                    logger.warning("Flight recorder unavailable: %s", e)
+
                 self.hotfix_engine = HotfixEngine(self)
                 ServiceContainer.register_instance("hotfix_engine", self.hotfix_engine)
 

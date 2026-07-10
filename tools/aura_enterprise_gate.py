@@ -89,6 +89,10 @@ ALLOW_SUBPROCESS = {
     # Operator/CI drivers that orchestrate child processes by design:
     "tools/run_test_chunks.py",
     "tests/test_architecture_quality_gate.py",
+    # Flight-recorder SIGKILL proof: crash-survivability can only be proven
+    # by really killing a separate child process mid-write and reading the
+    # ring it left behind — an in-process simulation would prove nothing.
+    "tests/test_flight_recorder.py",
     "tools/live_boot_proof.py",
     "tools/build_release_manifest.py",
     "tools/run_proof_step.py",

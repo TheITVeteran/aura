@@ -21,7 +21,7 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Exact occurrence count at ratchet introduction (July 8, 2026). ONLY goes down.
-RAW_GET_BUDGET = 1716
+RAW_GET_BUDGET = 1714
 
 # The facade itself is the one sanctioned wrapper around the container.
 FACADE = REPO_ROOT / "core" / "runtime" / "service_access.py"

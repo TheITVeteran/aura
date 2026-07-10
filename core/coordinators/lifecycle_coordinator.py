@@ -340,6 +340,21 @@ class LifecycleCoordinator:
             )
             logger.debug("Continuity save failed: %s", e)
 
+        # Stamp the flight ring so the next boot knows this exit was chosen,
+        # not a death — without this marker the recorder reports a hard death.
+        try:
+            from core.runtime.flight_recorder import get_flight_recorder
+            if get_flight_recorder().mark_clean_shutdown("graceful"):
+                logger.info("✓ Flight ring marked clean")
+        except (ImportError, AttributeError, RuntimeError, OSError) as e:
+            _record_lifecycle_degradation(
+                e,
+                severity="warning",
+                action="continued graceful shutdown without clean flight-ring marker",
+                extra={"phase": "shutdown_flight_ring_marker"},
+            )
+            logger.debug("Flight ring clean marker failed: %s", e)
+
         # Persist epistemic state (knowledge graph, gaps)
         try:
             from core.epistemics.epistemic_tracker import get_epistemic_tracker

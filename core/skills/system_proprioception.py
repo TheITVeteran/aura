@@ -123,7 +123,9 @@ class SystemProprioceptionSkill(BaseSkill):
         """Grounded account of changes to Aura's own source, from the
         source-body organ's ledger — never from model recall."""
         try:
-            source_body = ServiceContainer.get("source_body", default=None)
+            from core.runtime.service_access import resolve_source_body
+
+            source_body = resolve_source_body()
             if source_body is None:
                 return None
             delta = source_body.last_boot_delta()

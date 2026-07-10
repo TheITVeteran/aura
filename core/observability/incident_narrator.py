@@ -145,6 +145,7 @@ class IncidentNarrator:
             self._collect_boot_profile,
             self._collect_incident_manager,
             self._collect_log_transport,
+            self._collect_flight_recorder,
         ):
             try:
                 items.extend(collector(cutoff))
@@ -342,6 +343,50 @@ class IncidentNarrator:
             )
         return items
 
+    def _collect_flight_recorder(self, cutoff: float) -> list[EvidenceItem]:
+        """Death reports extracted from the black-box flight ring — the
+        ground truth for hard deaths (SIGKILL, OOM-kill, segfault)."""
+        flight_dir = self._error_log_root / "flight"
+        if not flight_dir.is_dir():
+            return []
+        items: list[EvidenceItem] = []
+        for path in sorted(flight_dir.glob("death_*.json"))[-10:]:
+            try:
+                report = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(report, dict):
+                continue
+            at = float(report.get("died_at") or report.get("generated_at") or 0.0)
+            if at < cutoff:
+                continue
+            items.append(
+                EvidenceItem(
+                    at=at,
+                    source="flight_recorder",
+                    kind="unclean_shutdown",
+                    severity="critical",
+                    summary=str(
+                        report.get("narrative")
+                        or "The previous run ended without a clean shutdown."
+                    ),
+                    receipt=str(path),
+                    detail={
+                        key: report.get(key)
+                        for key in (
+                            "previous_boot_id",
+                            "uptime_s",
+                            "final_tick",
+                            "final_stage",
+                            "final_rss_mb",
+                            "rss_delta_final_minute_mb",
+                            "frames_recovered",
+                        )
+                    },
+                )
+            )
+        return items
+
     @staticmethod
     def _collect_log_transport(cutoff: float) -> list[EvidenceItem]:
         """Dropped-log pressure from the non-blocking transport."""
@@ -424,6 +469,8 @@ class IncidentNarrator:
     def _headline_for(cluster: list[EvidenceItem]) -> str:
         kinds = [item.kind for item in cluster]
         when = time.strftime("%H:%M", time.localtime(cluster[0].at))
+        if "unclean_shutdown" in kinds:
+            return f"{when} — a hard death: the runtime went down without a clean shutdown."
         if "process_exit" in kinds:
             return f"{when} — the main process went down and came back."
         if "event_loop_stall" in kinds:
@@ -466,6 +513,12 @@ class IncidentNarrator:
             return (
                 "a stalled generation escalated to a worker recycle; requests during the "
                 "model reload window were the visible casualties."
+            )
+        if "unclean_shutdown" in kinds:
+            return (
+                "the black-box flight ring carried no clean-shutdown marker — the "
+                "process was killed or crashed rather than stopping itself; its final "
+                "recorded moments are preserved in the death report."
             )
         if "process_exit" in kinds and "process_start" in kinds:
             return "the process exited and the supervisor brought a fresh one up."

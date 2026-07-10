@@ -4,7 +4,7 @@
 > (`make fmea-doc`). Do not edit by hand — a drift test regenerates
 > and compares this file on every suite run.
 
-Registry version: `1.0` — 18 modes (2 catastrophic, 9 critical, 6 major, 1 minor); 1 open mitigation gap(s), 0 open detection gap(s).
+Registry version: `1.0` — 19 modes (2 catastrophic, 9 critical, 7 major, 1 minor); 1 open mitigation gap(s), 0 open detection gap(s).
 
 Every entry is REAL: it either occurred live (occurrences cite when)
 or is a structurally-reachable state found by analysis. Gaps are
@@ -221,6 +221,19 @@ explicit and pinned by an allowlist test that only shrinks.
 - **Detection modules:** `core.runtime.receipts`, `core.runtime.operator_control_plane`
 - **Mitigation modules:** `core.runtime.receipts`, `core.runtime.control_plane`
 - **Notes:** Structural long-run analysis from Pass F; no finite soak can prove unbounded per-event file creation safe over indefinite daily operation.
+
+## FM-FORENSICS-001 — Hard death (SIGKILL / OOM-kill) leaves no record of the final moments
+
+- **Subsystem:** whole-process death forensics
+- **Severity / blast radius:** major / organism
+- **Cause:** faulthandler and every in-process hook are uncatchable on SIGKILL; the continuity record is written BEFORE the death, so its shutdown reason is stale optimism; post-mortem analysis reconstructs from inference, not evidence
+- **Effect:** Endurance OOMs and launcher kills were diagnosed from syslogs and memory sentinel side-channels; what the mind was doing in its final seconds was unknowable (2026-07-03 kernel-down, 2026-07-06 duplicate-runtime cascade)
+- **Detection:** A5 flight recorder: absent clean-shutdown marker in the mmap ring = hard death, detected at next boot with the last recorded mind-moments
+- **Mitigation:** Kernel-owned MAP_SHARED pages survive any process death; per-tick frames (stage, RSS, conditions, failures) extracted into a governed death report consumed by the incident narrator and the continuity waking sequence
+- **Detection modules:** `core.runtime.flight_recorder`
+- **Mitigation modules:** `core.runtime.flight_recorder`, `core.observability.incident_narrator`
+- **Recorded occurrences:** 2026-07-03 endurance OOM 35GB (no relaunch, no final-moment record); 2026-07-06 duplicate-runtime cascade (diagnosed from side-channels)
+- **Notes:** The ring is written by the death itself; only whole-machine loss can erase it.
 
 ## Open gaps (the work queue)
 
