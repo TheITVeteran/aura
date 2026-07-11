@@ -1358,6 +1358,11 @@ async def test_orchestrator_execute_tool_derives_foreground_scoped_authority(
         "foreground_user_requested:chat.required_skill:web_search"
     )
     assert orchestrator.router.execute.await_count == 1
+    execution_context = orchestrator.router.execute.await_args.args[2]
+    assert execution_context["orchestrator"] is orchestrator
+    assert execution_context["scoped_authority"] == (
+        "foreground_user_requested:chat.required_skill:web_search"
+    )
 
 
 @pytest.mark.asyncio

@@ -15,12 +15,14 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
-from typing import Any, Callable, Optional
+from typing import Any
 
 from core.container import ServiceContainer
 from core.health.degraded_events import record_degraded_event
@@ -35,6 +37,23 @@ SAFE_AUTONOMOUS_SKILLS = (
     "file_operation",
     "clock",
     "evolution_status",
+)
+
+_RETAINED_EVIDENCE_RE = re.compile(
+    r"\[\s*retained\s+memory\s+evidence\s*\].*$",
+    re.IGNORECASE | re.DOTALL,
+)
+_WEB_SEARCH_INTENT_PATTERNS = (
+    re.compile(
+        r"^\s*(?:please\s+)?(?:search|look\s+up|research|find)\s+"
+        r"(?:the\s+)?(?:web|internet|online)\s+(?:for|about)\s+(?P<query>.+)$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^\s*(?:please\s+)?(?:web|internet|online)\s+(?:search|research)\s+"
+        r"(?:for|about)\s+(?P<query>.+)$",
+        re.IGNORECASE,
+    ),
 )
 
 
@@ -61,9 +80,25 @@ class OvertActionResult:
     action_expectation: dict[str, Any] = field(default_factory=dict)
     expectation_verdict: dict[str, Any] = field(default_factory=dict)
     expectation_receipt_id: str = ""
+    selection_provenance: str = ""
+    selection_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class ActionSelection:
+    """Concrete, attributable action chosen from an initiative contract."""
+
+    skill: str = ""
+    params: dict[str, Any] = field(default_factory=dict)
+    provenance: str = ""
+    reason: str = ""
+
+    @property
+    def actionable(self) -> bool:
+        return bool(self.skill and not self.reason)
 
 
 def _json_digest(payload: Any) -> str:
@@ -85,9 +120,9 @@ class OvertActionLoop:
         capability_engine: Any = None,
         goal_engine: Any = None,
         synthesizer: Any = None,
-        state_provider: Optional[Callable[[], Any]] = None,
+        state_provider: Callable[[], Any] | None = None,
         receipt_store: Any = None,
-        interval_s: Optional[float] = None,
+        interval_s: float | None = None,
     ) -> None:
         self.orchestrator = orchestrator
         self.capability_engine = capability_engine
@@ -147,7 +182,21 @@ class OvertActionLoop:
             else:
                 will_receipt_id = str(getattr(synth_result, "will_receipt_id", "") or "")
 
-            action = await self._execute_initiative(initiative, will_receipt_id=will_receipt_id)
+            goal = self._goal_for_initiative(initiative)
+            selection = self._choose_skill_and_params(initiative, goal)
+            if not selection.actionable:
+                return self._record_initiative_skip(
+                    initiative,
+                    selection,
+                    will_receipt_id=will_receipt_id,
+                ).to_dict()
+
+            action = await self._execute_initiative(
+                initiative,
+                goal=goal,
+                selection=selection,
+                will_receipt_id=will_receipt_id,
+            )
             self._history.append(action)
             return action.to_dict()
 
@@ -161,13 +210,13 @@ class OvertActionLoop:
         )
         if reason == "no_user_anchor" and os.getenv("AURA_OVERT_ACTION_ALLOW_BOOT_ANCHOR", "1").strip().lower() not in {"0", "false", "off", "no"}:
             return ""
-        return reason
+        return str(reason or "")
 
     def _record_skip(self, reason: str) -> OvertActionResult:
         self._skips += 1
         now = time.time()
         result = OvertActionResult(
-            action_id="skip_" + hashlib.sha256(f"{now}:{reason}".encode("utf-8")).hexdigest()[:10],
+            action_id="skip_" + hashlib.sha256(f"{now}:{reason}".encode()).hexdigest()[:10],
             status="skipped",
             error=reason,
             started_at=now,
@@ -175,6 +224,28 @@ class OvertActionLoop:
             next_step_hint="wait_for_idle_window" if reason.startswith("background_policy") else "",
         )
         self._history.append(result)
+        return result
+
+    def _record_initiative_skip(
+        self,
+        initiative: dict[str, Any],
+        selection: ActionSelection,
+        *,
+        will_receipt_id: str,
+    ) -> OvertActionResult:
+        reason = selection.reason or "missing_action_contract"
+        result = self._record_skip(f"initiative_not_actionable:{reason}")
+        result.objective = _short_text(
+            initiative.get("goal") or initiative.get("objective"),
+            1000,
+        )
+        result.source = str(initiative.get("source") or "")
+        result.will_receipt_id = will_receipt_id
+        result.selection_provenance = selection.provenance
+        result.selection_reason = reason
+        result.next_step_hint = "require_structured_action_contract"
+        self._emit_selection_skip_receipt(result)
+        self._record_selection_skip_trace(result)
         return result
 
     def _orchestrator(self) -> Any:
@@ -247,14 +318,20 @@ class OvertActionLoop:
             record_degradation("overt_action_loop", exc)
             return ""
 
-    async def _execute_initiative(self, initiative: dict[str, Any], *, will_receipt_id: str) -> OvertActionResult:
+    async def _execute_initiative(
+        self,
+        initiative: dict[str, Any],
+        *,
+        goal: dict[str, Any],
+        selection: ActionSelection,
+        will_receipt_id: str,
+    ) -> OvertActionResult:
         started = time.time()
         self._last_started_at = started
         self._actions_started += 1
         objective = _short_text(initiative.get("goal") or initiative.get("objective"), 1000)
-        goal = self._goal_for_initiative(initiative)
-        skill, params = self._choose_skill_and_params(initiative, goal)
-        action_id = hashlib.sha256(f"{started}:{objective}:{skill}".encode("utf-8")).hexdigest()[:16]
+        skill, params = selection.skill, dict(selection.params)
+        action_id = hashlib.sha256(f"{started}:{objective}:{skill}".encode()).hexdigest()[:16]
         from core.actuators.actuator_registry import get_actuator_registry
 
         registry = get_actuator_registry()
@@ -276,6 +353,8 @@ class OvertActionLoop:
             started_at=started,
             goal_id=str(goal.get("id") or initiative.get("metadata", {}).get("goal_id") or ""),
             action_expectation=expectation.to_dict() if expectation is not None else {},
+            selection_provenance=selection.provenance,
+            selection_reason=selection.reason,
         )
         governance_context = {
             "origin": "overt_action_loop",
@@ -287,7 +366,14 @@ class OvertActionLoop:
             "priority": float(initiative.get("urgency", 0.7) or 0.7),
             "scoped_authority": f"overt_action_loop:{action_id}:{skill}",
             "authorization": "governed_autonomous_overt_action",
+            "action_selection": {
+                "provenance": selection.provenance,
+                "reason": selection.reason,
+            },
         }
+        orchestrator = self._orchestrator()
+        if orchestrator is not None:
+            governance_context["orchestrator"] = orchestrator
         if expectation is not None:
             governance_context["action_expectation"] = expectation.to_dict()
 
@@ -496,90 +582,218 @@ class OvertActionLoop:
                 record_degradation("overt_action_loop", exc)
         return {}
 
-    def _choose_skill_and_params(self, initiative: dict[str, Any], goal: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-        text = " ".join(
-            [
-                str(initiative.get("goal") or ""),
-                str(goal.get("objective") or ""),
-                str(goal.get("success_criteria") or ""),
-            ]
-        ).lower()
+    def _choose_skill_and_params(
+        self,
+        initiative: dict[str, Any],
+        goal: dict[str, Any],
+    ) -> ActionSelection:
         metadata = dict(initiative.get("metadata", {}) or {})
-        required = [
-            str(item)
-            for item in (
-                list(metadata.get("required_skills") or [])
-                + list(goal.get("required_skills") or [])
-                + list(goal.get("required_tools") or [])
-            )
-        ]
-        normalized_required = {self._normalize_skill_name(item) for item in required}
+        action_text = self._action_text(initiative, goal)
+        params = self._action_params(initiative, goal, metadata)
+        requested = self._explicit_action_names(initiative, goal, metadata)
 
-        # Check new actuators dynamically
         from core.actuators.actuator_registry import get_actuator_registry
-        registry = get_actuator_registry()
-        
-        mapping = {
-            "code_execution": ["code_execution", "run_code", "execute_code", "python"],
-            "web_search": ["web_search", "search", "lookup"],
-            "web_fetch": ["web_fetch", "fetch", "download"],
-            "git_operation": ["git_operation", "git", "clone", "commit", "checkout"],
-            "package_install": ["package_install", "pip", "install"],
-            "process_supervisor": ["process_supervisor", "process", "spawn", "background"],
-            "document_ingest": ["document_ingest", "doc_ingest", "ingest", "pdf", "html"]
-        }
-        
-        for actuator_name, aliases in mapping.items():
-            if registry.get_actuator(actuator_name) is not None:
-                if any(alias in normalized_required for alias in aliases) or any(alias in text for alias in aliases):
-                    params = dict(metadata.get("params") or goal.get("params") or initiative.get("params") or {})
-                    if actuator_name == "code_execution":
-                        if not isinstance(params.get("code"), str) or not params["code"].strip():
-                            continue
-                    elif actuator_name == "web_search":
-                        if "query" not in params:
-                            params["query"] = initiative.get("goal") or goal.get("objective") or ""
-                    elif actuator_name == "web_fetch":
-                        if not isinstance(params.get("url"), str) or not params["url"].strip():
-                            continue
-                    elif actuator_name == "git_operation":
-                        if "action" not in params:
-                            params["action"] = "status"
-                        if params.get("action") in {"branch", "commit", "checkout"} and not params.get("allow_mutation"):
-                            continue
-                        if params.get("action") == "clone" and not params.get("allow_external_clone"):
-                            continue
-                    elif actuator_name == "package_install":
-                        if not isinstance(params.get("package_name"), str) or not params["package_name"].strip():
-                            continue
-                        if not params.get("allow_install"):
-                            continue
-                    elif actuator_name == "process_supervisor":
-                        if "action" not in params:
-                            params["action"] = "list"
-                        if params.get("action") == "spawn" and (not params.get("command") or not params.get("allow_spawn")):
-                            continue
-                    elif actuator_name == "document_ingest":
-                        if not isinstance(params.get("path"), str) or not params["path"].strip():
-                            continue
-                    actuator = registry.get_actuator(actuator_name)
-                    if actuator is not None and not actuator.validate_params(params):
-                        continue
-                    return actuator_name, params
 
-        if "auto_refactor" in normalized_required or any(token in text for token in ("repair", "refactor", "architecture", "codebase", "bug")):
-            return "auto_refactor", {"path": ".", "run_tests": False}
-        if "proof" in text or "bundle" in text or "canonical" in text:
-            return "file_operation", {"action": "exists", "path": "artifacts/proof_bundle/latest/CANONICAL_PROOF_BUNDLE.json"}
-        if "sensor" in text or "camera" in text or "microphone" in text or "screen" in text:
-            return "file_operation", {"action": "exists", "path": "sensory_vision.json"}
-        if "evolution_status" in normalized_required or "evolution" in text:
-            return "evolution_status", {}
-        if "environment_info" in normalized_required or "environment" in text:
-            return "environment_info", {"detail": "basic"}
-        if "clock" in normalized_required or "time" in text:
-            return "clock", {}
-        return "system_proprioception", {"include_docstrings": False}
+        registry = get_actuator_registry()
+        aliases = {
+            "code_execution": {"code_execution", "run_code", "execute_code", "python"},
+            "web_search": {"web_search", "search", "lookup"},
+            "web_fetch": {"web_fetch", "fetch", "download"},
+            "git_operation": {"git_operation", "git", "clone", "commit", "checkout"},
+            "package_install": {"package_install", "pip", "install"},
+            "process_supervisor": {"process_supervisor", "process", "spawn", "background"},
+            "document_ingest": {"document_ingest", "doc_ingest", "ingest", "pdf", "html"},
+        }
+
+        invalid_reasons: list[str] = []
+        for requested_name in requested:
+            normalized = self._normalize_skill_name(requested_name)
+            canonical = next(
+                (
+                    skill_name
+                    for skill_name, skill_aliases in aliases.items()
+                    if normalized in skill_aliases
+                ),
+                normalized,
+            )
+            prepared, invalid_reason = self._prepare_explicit_action(
+                canonical,
+                params,
+                action_text=action_text,
+                registry=registry,
+            )
+            if prepared is not None:
+                return ActionSelection(
+                    skill=canonical,
+                    params=prepared,
+                    provenance=f"structured:{requested_name}",
+                )
+            invalid_reasons.append(f"{canonical}:{invalid_reason}")
+
+        if requested:
+            return ActionSelection(
+                provenance="structured",
+                reason="invalid_explicit_action:" + ",".join(invalid_reasons)[:240],
+            )
+
+        for pattern in _WEB_SEARCH_INTENT_PATTERNS:
+            match = pattern.fullmatch(action_text)
+            if match:
+                query = _short_text(match.group("query"), 500)
+                if query:
+                    return ActionSelection(
+                        skill="web_search",
+                        params={**params, "query": query},
+                        provenance="natural_language:explicit_web_search",
+                    )
+
+        lowered = action_text.casefold()
+        if re.fullmatch(
+            r"(?:run|perform|conduct)\s+(?:a\s+)?(?:system|runtime)\s+"
+            r"(?:self[- ]?)?(?:audit|inspection|health check)",
+            lowered,
+        ):
+            return ActionSelection(
+                skill="system_proprioception",
+                params={"include_docstrings": False},
+                provenance="natural_language:system_audit",
+            )
+        if re.fullmatch(
+            r"(?:check|inspect|report)\s+(?:the\s+)?(?:system\s+)?environment(?:\s+info)?",
+            lowered,
+        ):
+            return ActionSelection(
+                skill="environment_info",
+                params={"detail": "basic"},
+                provenance="natural_language:environment_status",
+            )
+        if re.fullmatch(
+            r"(?:check|report)\s+(?:the\s+)?(?:current\s+)?time",
+            lowered,
+        ):
+            return ActionSelection(
+                skill="clock",
+                provenance="natural_language:clock",
+            )
+
+        return ActionSelection(
+            provenance="unstructured",
+            reason="missing_structured_action_contract",
+        )
+
+    @staticmethod
+    def _action_text(initiative: dict[str, Any], goal: dict[str, Any]) -> str:
+        values = list(
+            dict.fromkeys(
+                str(value or "").strip()
+                for value in (
+                    initiative.get("goal") or initiative.get("objective"),
+                    goal.get("objective"),
+                    goal.get("success_criteria"),
+                )
+                if value and str(value).strip()
+            )
+        )
+        raw = " ".join(values)
+        without_evidence = _RETAINED_EVIDENCE_RE.sub("", raw)
+        return _short_text(without_evidence, 1200)
+
+    @staticmethod
+    def _action_params(
+        initiative: dict[str, Any],
+        goal: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        for candidate in (
+            metadata.get("params"),
+            goal.get("params"),
+            initiative.get("params"),
+        ):
+            if isinstance(candidate, dict):
+                return dict(candidate)
+        return {}
+
+    @staticmethod
+    def _explicit_action_names(
+        initiative: dict[str, Any],
+        goal: dict[str, Any],
+        metadata: dict[str, Any],
+    ) -> list[str]:
+        values: list[str] = []
+        for owner in (metadata, goal, initiative):
+            for key in ("required_skills", "required_tools"):
+                raw = owner.get(key)
+                if isinstance(raw, str):
+                    values.append(raw)
+                elif isinstance(raw, (list, tuple, set)):
+                    values.extend(str(item) for item in raw if str(item).strip())
+            for key in ("skill", "skill_name", "tool", "tool_name"):
+                raw = owner.get(key)
+                if isinstance(raw, str) and raw.strip():
+                    values.append(raw)
+        return list(dict.fromkeys(value.strip() for value in values if value.strip()))
+
+    @staticmethod
+    def _prepare_explicit_action(
+        skill: str,
+        params: dict[str, Any],
+        *,
+        action_text: str,
+        registry: Any,
+    ) -> tuple[dict[str, Any] | None, str]:
+        prepared = dict(params)
+        if skill == "code_execution":
+            if not isinstance(prepared.get("code"), str) or not prepared["code"].strip():
+                return None, "missing_code"
+        elif skill == "web_search":
+            prepared.setdefault("query", action_text)
+            if not isinstance(prepared.get("query"), str) or not prepared["query"].strip():
+                return None, "missing_query"
+        elif skill == "web_fetch":
+            if not isinstance(prepared.get("url"), str) or not prepared["url"].strip():
+                return None, "missing_url"
+        elif skill == "git_operation":
+            prepared.setdefault("action", "status")
+            if prepared.get("action") in {"branch", "commit", "checkout"} and not prepared.get(
+                "allow_mutation"
+            ):
+                return None, "mutation_not_authorized"
+            if prepared.get("action") == "clone" and not prepared.get("allow_external_clone"):
+                return None, "external_clone_not_authorized"
+        elif skill == "package_install":
+            if not isinstance(prepared.get("package_name"), str) or not prepared[
+                "package_name"
+            ].strip():
+                return None, "missing_package_name"
+            if not prepared.get("allow_install"):
+                return None, "install_not_authorized"
+        elif skill == "process_supervisor":
+            prepared.setdefault("action", "list")
+            if prepared.get("action") == "spawn" and (
+                not prepared.get("command") or not prepared.get("allow_spawn")
+            ):
+                return None, "spawn_not_authorized"
+        elif skill == "document_ingest":
+            if not isinstance(prepared.get("path"), str) or not prepared["path"].strip():
+                return None, "missing_path"
+        elif skill == "file_operation":
+            if not isinstance(prepared.get("action"), str) or not prepared["action"].strip():
+                return None, "missing_file_action"
+            if not isinstance(prepared.get("path"), str) or not prepared["path"].strip():
+                return None, "missing_path"
+        elif skill == "auto_refactor":
+            prepared = {"path": ".", "run_tests": False, **prepared}
+        elif skill == "system_proprioception":
+            prepared = {"include_docstrings": False, **prepared}
+        elif skill == "environment_info":
+            prepared = {"detail": "basic", **prepared}
+        elif skill not in SAFE_AUTONOMOUS_SKILLS:
+            return None, "unsupported_skill"
+
+        actuator = registry.get_actuator(skill)
+        if actuator is not None and not actuator.validate_params(prepared):
+            return None, "actuator_validation_failed"
+        return prepared, ""
 
     @staticmethod
     def _normalize_skill_name(value: str) -> str:
@@ -757,6 +971,68 @@ class OvertActionLoop:
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation("overt_action_loop", exc)
 
+    def _emit_selection_skip_receipt(self, result: OvertActionResult) -> None:
+        try:
+            store = self.receipt_store
+            if store is None:
+                from core.runtime.receipts import get_receipt_store
+
+                store = get_receipt_store()
+                self.receipt_store = store
+            from core.runtime.receipts import AutonomyReceipt
+
+            receipt = store.emit(
+                AutonomyReceipt(
+                    cause=result.objective,
+                    autonomy_level=3,
+                    proposed_action="not_executed:initiative_not_actionable",
+                    governance_receipt_id=result.will_receipt_id or None,
+                    budget_remaining=max(
+                        0.0,
+                        1.0 - min(1.0, self._consecutive_failures / 5.0),
+                    ),
+                    metadata={
+                        "action_id": result.action_id,
+                        "status": result.status,
+                        "selection_provenance": result.selection_provenance,
+                        "selection_reason": result.selection_reason,
+                        "next_step_hint": result.next_step_hint,
+                    },
+                )
+            )
+            result.autonomy_receipt_id = receipt.receipt_id
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation("overt_action_loop", exc)
+
+    @staticmethod
+    def _record_selection_skip_trace(result: OvertActionResult) -> None:
+        try:
+            from core.runtime.life_trace import get_life_trace
+
+            event = get_life_trace().record(
+                "action_skipped",
+                origin="overt_action_loop",
+                user_requested=False,
+                will_decision={"receipt_id": result.will_receipt_id},
+                action_taken={
+                    "action_id": result.action_id,
+                    "executed": False,
+                    "objective": result.objective,
+                },
+                result={
+                    "status": result.status,
+                    "reason": result.selection_reason,
+                    "selection_provenance": result.selection_provenance,
+                    "autonomy_receipt_id": result.autonomy_receipt_id,
+                },
+                future_policy_change={
+                    "next_step_hint": result.next_step_hint,
+                },
+            )
+            result.life_trace_id = event.event_id
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            record_degradation("overt_action_loop", exc)
+
     def _record_life_trace(self, result: OvertActionResult, raw_result: Any) -> None:
         try:
             from core.runtime.life_trace import get_life_trace
@@ -848,7 +1124,7 @@ class OvertActionLoop:
             )
 
 
-_instance: Optional[OvertActionLoop] = None
+_instance: OvertActionLoop | None = None
 
 
 def get_overt_action_loop() -> OvertActionLoop:

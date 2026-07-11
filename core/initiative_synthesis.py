@@ -31,8 +31,9 @@ Not:
     pathway C acts
 """
 from __future__ import annotations
-import inspect
+
 import hashlib
+import inspect
 import json
 import logging
 import random
@@ -40,10 +41,10 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any
 
-from core.container import ServiceContainer
 from core.autonomy.research_goal_filter import is_stale_or_prompt_scaffold_goal
+from core.container import ServiceContainer
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 
@@ -61,7 +62,7 @@ class Impulse:
     source: str                   # which subsystem generated it
     drive: str = ""               # which drive it serves (curiosity, social, etc.)
     urgency: float = 0.5          # 0-1
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
 
     @property
@@ -72,7 +73,7 @@ class Impulse:
 @dataclass
 class SynthesisResult:
     """The output of one synthesis cycle."""
-    winner: Optional[Dict[str, Any]]   # the initiative dict (or None)
+    winner: dict[str, Any] | None   # the initiative dict (or None)
     impulse_count: int                 # how many impulses competed
     winner_score: float = 0.0
     winner_source: str = ""
@@ -93,7 +94,7 @@ class UnresolvedTension:
     last_surfaced: float = 0.0        # when it was last offered as an impulse
     surface_count: int = 0            # how many times it has been surfaced
     resolved: bool = False
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def age_hours(self) -> float:
@@ -127,18 +128,18 @@ class InitiativeSynthesizer:
     _TENSION_RESURFACE_MAX = 3     # max tensions resurfaced per cycle
 
     def __init__(self) -> None:
-        self._impulse_queue: List[Impulse] = []
-        self._recent_fingerprints: Dict[str, float] = {}
-        self._synthesis_history: Deque[SynthesisResult] = deque(maxlen=self._MAX_HISTORY)
+        self._impulse_queue: list[Impulse] = []
+        self._recent_fingerprints: dict[str, float] = {}
+        self._synthesis_history: deque[SynthesisResult] = deque(maxlen=self._MAX_HISTORY)
         self._started = False
 
         # ── Unresolved Tension Tracking ──────────────────────────────
-        self._unresolved_tensions: List[UnresolvedTension] = []
-        self._tension_persistence_path: Optional[Path] = None
+        self._unresolved_tensions: list[UnresolvedTension] = []
+        self._tension_persistence_path: Path | None = None
 
         # ── Opportunity Detection ────────────────────────────────────
         self._last_opportunity_scan: float = 0.0
-        self._known_event_hashes: Deque[str] = deque(maxlen=200)
+        self._known_event_hashes: deque[str] = deque(maxlen=200)
 
     async def start(self) -> None:
         if self._started:
@@ -183,8 +184,14 @@ class InitiativeSynthesizer:
         self._impulse_queue.append(impulse)
         return True
 
-    def submit(self, content: str, source: str, urgency: float = 0.5,
-               drive: str = "", **metadata) -> bool:
+    def submit(
+        self,
+        content: str,
+        source: str,
+        urgency: float = 0.5,
+        drive: str = "",
+        **metadata: Any,
+    ) -> bool:
         """Convenience method for submitting an impulse."""
         if is_stale_or_prompt_scaffold_goal(content):
             logger.debug("Synth: quarantined stale/scaffold impulse from %s: %s", source, content[:80])
@@ -206,7 +213,7 @@ class InitiativeSynthesizer:
             motivation_engine = ServiceContainer.get("motivation_engine", default=None)
             # Prefer DriveEngine.get_imperative; fall back to MotivationEngine
             imperative = None
-            status = {}
+            status: dict[str, Any] = {}
             if drive_engine and hasattr(drive_engine, "get_imperative"):
                 imperative = await drive_engine.get_imperative()
                 if imperative:
@@ -312,10 +319,24 @@ class InitiativeSynthesizer:
                 if isinstance(init, dict):
                     goal = init.get("goal", "")
                     if goal:
+                        action_metadata = dict(init.get("metadata", {}) or {})
+                        for key in (
+                            "goal_id",
+                            "params",
+                            "required_skills",
+                            "required_tools",
+                            "skill",
+                            "skill_name",
+                            "tool",
+                            "tool_name",
+                        ):
+                            if key in init and key not in action_metadata:
+                                action_metadata[key] = init[key]
                         self.submit(
                             content=goal, source=init.get("source", "legacy"),
                             urgency=float(init.get("urgency", 0.5)),
                             drive=init.get("triggered_by", ""),
+                            **action_metadata,
                         )
         except (OSError, ConnectionError, TimeoutError) as e:
             record_degradation('initiative_synthesis', e)
@@ -498,7 +519,11 @@ class InitiativeSynthesizer:
                     opportunity_score, desc[:50],
                 )
 
-    def _score_opportunity_relevance(self, description: str, drive_vector: Dict[str, float]) -> float:
+    def _score_opportunity_relevance(
+        self,
+        description: str,
+        drive_vector: dict[str, float],
+    ) -> float:
         """Score how relevant an opportunity is to current drives."""
         desc_lower = description.lower()
         score = 0.3  # baseline
@@ -518,7 +543,7 @@ class InitiativeSynthesizer:
         return min(1.0, score)
 
     @staticmethod
-    def _estimate_opportunity_cost(event: Dict[str, Any]) -> float:
+    def _estimate_opportunity_cost(event: dict[str, Any]) -> float:
         """Estimate the cost of acting on an opportunity. 0=free, 1=expensive."""
         source = event.get("source", "")
         # System events are cheap to investigate; user events need more care
@@ -532,9 +557,14 @@ class InitiativeSynthesizer:
     # Unresolved Tension Tracking
     # ------------------------------------------------------------------
 
-    def record_tension(self, content: str, source: str = "conversation",
-                       category: str = "topic", urgency: float = 0.3,
-                       **metadata) -> None:
+    def record_tension(
+        self,
+        content: str,
+        source: str = "conversation",
+        category: str = "topic",
+        urgency: float = 0.3,
+        **metadata: Any,
+    ) -> None:
         """Record an unresolved tension for future resurfacing.
 
         Call this when:
@@ -580,7 +610,7 @@ class InitiativeSynthesizer:
                 return True
         return False
 
-    def get_tensions(self, include_resolved: bool = False) -> List[Dict[str, Any]]:
+    def get_tensions(self, include_resolved: bool = False) -> list[dict[str, Any]]:
         """Return current unresolved tensions for inspection."""
         return [
             {
@@ -640,7 +670,7 @@ class InitiativeSynthesizer:
             return self._tension_persistence_path
         try:
             from core.config import config
-            p = config.paths.data_dir / "unresolved_tensions.json"
+            p = Path(config.paths.data_dir) / "unresolved_tensions.json"
         except (ImportError, AttributeError, RuntimeError):
             p = Path.home() / ".aura" / "data" / "unresolved_tensions.json"
         self._tension_persistence_path = p
@@ -844,7 +874,7 @@ class InitiativeSynthesizer:
     # Status / Audit
     # ------------------------------------------------------------------
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         unresolved = [t for t in self._unresolved_tensions if not t.resolved]
         return {
             "pending_impulses": len(self._impulse_queue),
@@ -856,7 +886,7 @@ class InitiativeSynthesizer:
             "known_opportunities": len(self._known_event_hashes),
         }
 
-    def get_recent_syntheses(self, n: int = 10) -> List[Dict[str, Any]]:
+    def get_recent_syntheses(self, n: int = 10) -> list[dict[str, Any]]:
         return [
             {
                 "impulse_count": r.impulse_count,
@@ -875,7 +905,7 @@ class InitiativeSynthesizer:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_synth_instance: Optional[InitiativeSynthesizer] = None
+_synth_instance: InitiativeSynthesizer | None = None
 
 
 def get_initiative_synthesizer() -> InitiativeSynthesizer:

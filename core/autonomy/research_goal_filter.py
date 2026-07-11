@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 _RESEARCH_PREFIXES = (
     "research and learn something new about ",
     "research ",
@@ -22,6 +21,9 @@ _STALE_OR_RECEIPT_MARKERS = (
     "canonical computer-use gateway",
     "governed desktop actuators",
     "artifact references:",
+    "[retained memory evidence]",
+    "scope=retained_memory_evidence.v1",
+    "source=durable_memory_search",
 )
 
 _PROMPT_SCAFFOLD_MARKERS = (

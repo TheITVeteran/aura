@@ -101,6 +101,16 @@ def _record_tool_degradation(
 class ToolExecutionMixin:
     """Handles tool execution with constitutional gating, episodic recording, and tool learning."""
 
+    _current_objective: str
+    _emit_thought_stream: Any
+    _fire_and_forget: Any
+    hephaestus: Any
+    liquid_state: Any
+    router: Any
+    status: Any
+    stealth_mode: Any
+    swarm: Any
+
     @staticmethod
     def _normalize_tool_origin(origin: Any) -> str:
         return str(origin or "").strip().lower().replace("-", "_")
@@ -233,7 +243,12 @@ class ToolExecutionMixin:
         logger.info("🌐 Initiating Browser Task: %s @ %s", task, url)
         return await self.execute_tool("browser", {"url": url, "task": task})
 
-    async def execute_tool(self, tool_name: str, args: dict[str, Any], **kwargs) -> Any:
+    async def execute_tool(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        **kwargs: Any,
+    ) -> Any:
         """Execute a single tool with feedback reporting, episodic recording, and tool learning"""
         _start = time.time()
         _constitution = None
@@ -418,9 +433,10 @@ class ToolExecutionMixin:
                         return result
             _advocate = ServiceContainer.get("tron", default=None)
             if _advocate is not None:
-                payload_context = (
-                    kwargs.get("payload_context")
-                    if isinstance(kwargs.get("payload_context"), dict)
+                payload_context_value = kwargs.get("payload_context")
+                payload_context: dict[str, Any] = (
+                    dict(payload_context_value)
+                    if isinstance(payload_context_value, dict)
                     else {}
                 )
                 confirmed = bool(
@@ -717,11 +733,16 @@ class ToolExecutionMixin:
                     success=False,
                     error=f"Tool '{tool_name}' not found.",
                 )
-                _record_coding_tool_event(result, success=False, error=result["error"])
+                _record_coding_tool_event(
+                    result,
+                    success=False,
+                    error=str(result["error"]),
+                )
                 return result
 
             # 2. Contextual Awareness
             context = {
+                **governance_context,
                 "objective": self._current_objective,
                 "system": self.status.model_dump(),
                 "stealth": await self.stealth_mode.get_stealth_status()
@@ -733,6 +754,7 @@ class ToolExecutionMixin:
                 if hasattr(self, "liquid_state") and self.liquid_state
                 else {},
                 **kwargs,
+                "orchestrator": self,
             }
 
             # 2.5 Resistance Sandbox — emit prediction before execution
@@ -761,7 +783,7 @@ class ToolExecutionMixin:
             if not isinstance(result, dict):
                 result = {"ok": True, "output": result}
 
-            success = result.get("ok", False)
+            success = bool(result.get("ok", False))
             deferred = str(result.get("status", "") or "").lower() == "deferred"
             elapsed_ms = (time.time() - _start) * 1000
             if deferred:

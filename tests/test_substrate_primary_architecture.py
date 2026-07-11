@@ -180,7 +180,9 @@ async def test_overt_action_loop_executes_verifies_and_receipts(tmp_path):
 
     fake_engine = FakeEngine()
     receipt_store = ReceiptStore(tmp_path / "receipts")
+    orchestrator = SimpleNamespace(status=SimpleNamespace(state="running"))
     loop = OvertActionLoop(
+        orchestrator=orchestrator,
         capability_engine=fake_engine,
         synthesizer=FakeSynth(),
         receipt_store=receipt_store,
@@ -202,10 +204,154 @@ async def test_overt_action_loop_executes_verifies_and_receipts(tmp_path):
     assert context["authorization"] == "governed_autonomous_overt_action"
     assert context["scoped_authority"].startswith("overt_action_loop:")
     assert context["scoped_authority"].endswith(":environment_info")
+    assert context["orchestrator"] is orchestrator
+    assert context["action_selection"]["provenance"] == "structured:environment_info"
     assert context["action_expectation"]["required_evidence"] == ["result"]
     assert result["expectation_verdict"]["passed"] is True
     tool_receipt = receipt_store.get(result["tool_receipt_id"])
     assert tool_receipt.verification_evidence["expectation_verdict"]["passed"] is True
+
+
+@pytest.mark.asyncio
+async def test_overt_action_loop_quarantines_retained_memory_prose_instead_of_searching(
+    tmp_path,
+):
+    from core.runtime.overt_action_loop import OvertActionLoop
+    from core.runtime.receipts import ReceiptStore
+
+    objective = (
+        "Small thing to remember: Bryan's dog is named Biscuit. "
+        "[RETAINED MEMORY EVIDENCE] source=durable_memory_search confidence=0.98"
+    )
+
+    class FakeSynth:
+        async def start(self):
+            return None
+
+        async def synthesize(self, state):
+            return SimpleNamespace(
+                winner={"goal": objective, "source": "durable_memory", "urgency": 0.7},
+                will_receipt_id="will-memory-evidence",
+            )
+
+    class FakeEngine:
+        def __init__(self):
+            self.calls = []
+
+        async def execute(self, *args, **kwargs):
+            self.calls.append((args, kwargs))
+            return {"ok": True}
+
+    engine = FakeEngine()
+    loop = OvertActionLoop(
+        capability_engine=engine,
+        synthesizer=FakeSynth(),
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        state_provider=lambda: SimpleNamespace(
+            cognition=SimpleNamespace(pending_initiatives=[])
+        ),
+    )
+
+    result = await loop.run_once(force=True)
+
+    assert result["status"] == "skipped"
+    assert result["error"] == (
+        "initiative_not_actionable:missing_structured_action_contract"
+    )
+    assert result["selection_provenance"] == "unstructured"
+    assert result["next_step_hint"] == "require_structured_action_contract"
+    assert result["autonomy_receipt_id"].startswith("autonomy-")
+    receipt = loop.receipt_store.get(result["autonomy_receipt_id"])
+    assert receipt.metadata["status"] == "skipped"
+    assert receipt.metadata["selection_reason"] == "missing_structured_action_contract"
+    assert engine.calls == []
+    assert loop.status()["actions_started"] == 0
+
+
+def test_overt_action_selection_requires_explicit_web_intent_or_structured_skill(tmp_path):
+    from core.runtime.overt_action_loop import OvertActionLoop
+    from core.runtime.receipts import ReceiptStore
+
+    loop = OvertActionLoop(receipt_store=ReceiptStore(tmp_path / "receipts"))
+
+    natural = loop._choose_skill_and_params(
+        {"goal": "Search the web for current macOS release notes"},
+        {},
+    )
+    structured = loop._choose_skill_and_params(
+        {
+            "goal": "Recall the durable memory search result about Biscuit",
+            "metadata": {
+                "required_skills": ["web_search"],
+                "params": {"query": "current veterinary guidance"},
+            },
+        },
+        {},
+    )
+    incidental = loop._choose_skill_and_params(
+        {"goal": "Review source=durable_memory_search evidence about Biscuit"},
+        {},
+    )
+
+    assert natural.actionable is True
+    assert natural.skill == "web_search"
+    assert natural.params["query"] == "current macOS release notes"
+    assert natural.provenance == "natural_language:explicit_web_search"
+    assert structured.actionable is True
+    assert structured.skill == "web_search"
+    assert structured.params["query"] == "current veterinary guidance"
+    assert structured.provenance == "structured:web_search"
+    assert incidental.actionable is False
+    assert incidental.reason == "missing_structured_action_contract"
+
+
+@pytest.mark.asyncio
+async def test_initiative_synthesis_preserves_structured_pending_action_contract(
+    monkeypatch,
+):
+    from core.initiative_synthesis import InitiativeSynthesizer
+
+    synth = InitiativeSynthesizer()
+    state = SimpleNamespace(
+        cognition=SimpleNamespace(
+            pending_initiatives=[
+                {
+                    "goal": "Check current release status",
+                    "source": "operator_goal",
+                    "required_skills": ["web_search"],
+                    "params": {"query": "current Aura release status"},
+                }
+            ]
+        )
+    )
+    monkeypatch.setattr(
+        "core.initiative_synthesis.ServiceContainer.get",
+        lambda _name, default=None: default,
+    )
+
+    await synth._gather_system_impulses(state)
+
+    matching = [item for item in synth._impulse_queue if item.source == "operator_goal"]
+    assert len(matching) == 1
+    assert matching[0].metadata["required_skills"] == ["web_search"]
+    assert matching[0].metadata["params"] == {
+        "query": "current Aura release status"
+    }
+
+
+def test_initiative_synthesis_quarantines_retained_memory_evidence():
+    from core.initiative_synthesis import InitiativeSynthesizer
+
+    synth = InitiativeSynthesizer()
+
+    accepted = synth.submit(
+        "Remember Biscuit [RETAINED MEMORY EVIDENCE] "
+        "source=durable_memory_search confidence=0.98",
+        "conversation_memory",
+    )
+
+    assert accepted is False
+    assert synth._impulse_queue == []
 
 
 @pytest.mark.asyncio
