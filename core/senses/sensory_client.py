@@ -4,12 +4,14 @@ import asyncio
 import logging
 import multiprocessing as mp
 import os
+import queue
 import sys
 import threading
 from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.runtime.shutdown_execution import run_sync_shutdown_callable_blocking
 
 logger = logging.getLogger("core.senses.sensory_client")
 
@@ -70,6 +72,15 @@ class SensoryLocalClient:
                         close()
                     return False
                 process.start()
+            except RuntimeError:
+                if is_shutdown_requested():
+                    self._process = None
+                    self._close_queues()
+                    close = getattr(process, "close", None)
+                    if callable(close):
+                        close()
+                    return False
+                raise
             finally:
                 if previous_sidecar_flag is None:
                     os.environ.pop("AURA_MEDIA_SIDECAR_PROCESS", None)
@@ -115,15 +126,30 @@ class SensoryLocalClient:
     def _safe_close_queue(queue_obj: Any) -> None:
         if queue_obj is None:
             return
-        try:
+
+        def _close_and_join() -> None:
             close = getattr(queue_obj, "close", None)
             if callable(close):
                 close()
             join_thread = getattr(queue_obj, "join_thread", None)
             if callable(join_thread):
                 join_thread()
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+
+        try:
+            run_sync_shutdown_callable_blocking(
+                _close_and_join,
+                timeout_s=1.0,
+                name="sensory-queue-close",
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
             logger.debug("Suppressed queue close error in sensory client: %s", exc)
+        else:
+            try:
+                from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                get_runtime_hygiene().unregister_shutdown_resource(queue_obj)
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                pass
 
     def _close_queues(self) -> None:
         self._safe_close_queue(self._req_q)
@@ -136,6 +162,27 @@ class SensoryLocalClient:
         factory = ctx.Queue if ctx is not None and hasattr(ctx, "Queue") else mp.Queue
         self._req_q = factory()
         self._res_q = factory()
+        try:
+            from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+            hygiene = get_runtime_hygiene()
+            hygiene.register_shutdown_resource(
+                self._req_q,
+                kind="multiprocessing_queue",
+                name="sensory.request_queue",
+                source="core.senses.sensory_client",
+                timeout_s=1.0,
+            )
+            hygiene.register_shutdown_resource(
+                self._res_q,
+                kind="multiprocessing_queue",
+                name="sensory.response_queue",
+                source="core.senses.sensory_client",
+                timeout_s=1.0,
+            )
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            self._close_queues()
+            raise
 
     async def _send_command(  # noqa: ASYNC109 - timeout bounds blocking sidecar IPC.
         self,
@@ -182,7 +229,7 @@ class SensoryLocalClient:
                 else:
                     registry.update_task(task_id, status=TaskStatus.FAILED, error=res.get("msg"))
                     return False
-            except (OSError, ConnectionError, TimeoutError) as e:
+            except (OSError, ConnectionError, TimeoutError, queue.Empty) as e:
                 record_degradation('sensory_client', e)
                 logger.error("🛑 Sensory Client Command [%s] failed: %s", cmd, e)
                 registry.update_task(task_id, status=TaskStatus.FAILED, error=str(e))

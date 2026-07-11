@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import inspect
 import logging
 import multiprocessing as mp
 import os
@@ -10,11 +11,18 @@ import threading
 import time
 import tracemalloc
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
+from core.runtime.shutdown_execution import run_sync_shutdown_callable
+from core.utils.task_tracker import (
+    begin_shutdown_task_creation_scope,
+    end_shutdown_task_creation_scope,
+    get_task_tracker,
+    shutdown_resource_creation_allowed,
+)
 
 try:
     import psutil
@@ -187,6 +195,25 @@ class ProcessRecord:
         return max(0.0, current_time - self.created_at)
 
 
+@dataclass
+class ShutdownResourceRecord:
+    key: int
+    kind: str
+    name: str
+    source: str
+    resource: Any
+    closer: Callable[[], Any] | None
+    timeout_s: float
+    required: bool
+    blocking: bool
+    sequence: int
+    registered_at: float = field(default_factory=time.monotonic)
+    status: str = "registered"
+    duration_seconds: float | None = None
+    error: str | None = None
+    crossed_shutdown: bool = False
+
+
 class RuntimeHygieneManager:
     """Tracks tasks, threads, child processes, and memory growth across the runtime."""
 
@@ -196,6 +223,10 @@ class RuntimeHygieneManager:
         self._thread_refs: dict[int, threading.Thread] = {}
         self._process_records: dict[int, ProcessRecord] = {}
         self._process_refs: dict[int, Any] = {}
+        self._resource_records: dict[int, ShutdownResourceRecord] = {}
+        self._resource_sequence = 0
+        self._resource_lock = threading.RLock()
+        self._resource_admission_closed = False
         self._samples: deque[MemorySample] = deque(maxlen=36)
         self._task_tracker = get_task_tracker()
         self._last_gc_at = 0.0
@@ -221,6 +252,14 @@ class RuntimeHygieneManager:
             1.5,
             float(os.getenv("AURA_RUNTIME_HYGIENE_SHUTDOWN_TIMEOUT_S", "4.0") or 4.0),
         )
+        self.resource_shutdown_timeout_s = max(
+            0.5,
+            float(os.getenv("AURA_RUNTIME_RESOURCE_SHUTDOWN_TIMEOUT_S", "3.0") or 3.0),
+        )
+        self.task_shutdown_timeout_s = max(
+            0.5,
+            float(os.getenv("AURA_RUNTIME_TASK_SHUTDOWN_TIMEOUT_S", "3.0") or 3.0),
+        )
         self.tracemalloc_enabled = str(
             os.getenv("AURA_RUNTIME_HYGIENE_TRACEMALLOC", "0") or "0"
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -229,6 +268,10 @@ class RuntimeHygieneManager:
             int(os.getenv("AURA_RUNTIME_HYGIENE_TRACEMALLOC_FRAMES", "1") or 1),
         )
         self._tracemalloc_started_by_hygiene = False
+        self._stop_lock = asyncio.Lock()
+        self._shutdown_started = False
+        self._shutdown_complete = False
+        self._last_shutdown_report: dict[str, Any] | None = None
 
         self._original_thread_start = None
         self._original_popen_init = None
@@ -238,6 +281,13 @@ class RuntimeHygieneManager:
         self._proc = psutil.Process(os.getpid()) if _HAS_PSUTIL else None
 
     async def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
+        try:
+            from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+            if is_shutdown_requested():
+                raise RuntimeError("runtime_shutdown")
+        except ImportError:
+            pass
         if self._running:
             target_loop = loop
             if target_loop is not None:
@@ -255,12 +305,80 @@ class RuntimeHygieneManager:
         self._adopt_active_child_processes()
         self.capture_sample()
 
-    async def stop(self) -> None:
-        self._task_tracker.restore_loop_hygiene()
-        self._restore_patches()
+    async def stop(self) -> dict[str, Any]:
+        """Run one bounded final sweep and replay its evidence to later callers."""
+
+        async with self._stop_lock:
+            if self._shutdown_complete and self._last_shutdown_report is not None:
+                return dict(self._last_shutdown_report)
+            scope_token = begin_shutdown_task_creation_scope()
+            try:
+                return await self._execute_stop_sweep()
+            finally:
+                end_shutdown_task_creation_scope(scope_token)
+
+    async def _execute_stop_sweep(self) -> dict[str, Any]:
+        started = time.monotonic()
+        self._shutdown_started = True
+        self._running = False
         self._adopt_active_child_processes()
+        self._refresh_thread_records()
+        self._refresh_process_records()
+        before = {
+            "tasks": self._task_tracker.get_stats(),
+            "threads": self._thread_summary(),
+            "processes": self._process_summary(),
+            "resources": self._resource_summary(),
+            "native_resources": self._native_resource_summary(),
+        }
+
+        resource_report = await self._cleanup_shutdown_resources()
         await self._cleanup_child_processes()
         await self._join_non_daemon_threads()
+        try:
+            from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+            shutdown_latched = is_shutdown_requested()
+        except (ImportError, RuntimeError, AttributeError):
+            shutdown_latched = False
+        if shutdown_latched:
+            task_report = await self._task_tracker.shutdown(
+                timeout=self.task_shutdown_timeout_s
+            )
+        else:
+            task_report = {
+                "clean": True,
+                "skipped": True,
+                "reason": "runtime_shutdown_not_requested",
+                "remaining": 0,
+            }
+
+        self._task_tracker.restore_loop_hygiene()
+        self._restore_patches()
+        executor_report: dict[str, Any] = {
+            "attempted": False,
+            "clean": True,
+        }
+        if shutdown_latched:
+            executor_started = time.monotonic()
+            executor_report["attempted"] = True
+            try:
+                await asyncio.get_running_loop().shutdown_default_executor(
+                    timeout=2.0,
+                )
+            except (RuntimeError, TimeoutError, AttributeError) as exc:
+                executor_report.update(clean=False, error=repr(exc))
+                record_degradation(
+                    "runtime_hygiene_shutdown",
+                    exc,
+                    severity="degraded",
+                    action="recorded default executor shutdown failure",
+                    enforce_failure_policy=False,
+                )
+            executor_report["duration_seconds"] = round(
+                time.monotonic() - executor_started,
+                6,
+            )
         if self._tracemalloc_started_by_hygiene and tracemalloc.is_tracing():
             try:
                 tracemalloc.stop()
@@ -269,11 +387,54 @@ class RuntimeHygieneManager:
                 logger.debug("RuntimeHygiene: tracemalloc stop failed: %s", exc)
             finally:
                 self._tracemalloc_started_by_hygiene = False
-        self.capture_sample()
-        self._running = False
 
-    async def on_stop_async(self) -> None:
-        await self.stop()
+        self._adopt_active_child_processes()
+        self._refresh_thread_records()
+        self._refresh_process_records()
+        after = {
+            "tasks": self._task_tracker.get_stats(),
+            "threads": self._thread_summary(),
+            "processes": self._process_summary(),
+            "resources": self._resource_summary(),
+            "native_resources": self._native_resource_summary(),
+        }
+        blockers: list[str] = []
+        if task_report.get("clean") is not True:
+            blockers.append("tasks_remaining")
+        if executor_report.get("clean") is not True:
+            blockers.append("default_executor_remaining")
+        process_after = after["processes"]
+        if (
+            int(process_after.get("active_registered", 0) or 0) > 0
+            or int(process_after.get("rogue_child_processes", 0) or 0) > 0
+        ):
+            blockers.append("child_processes_remaining")
+        thread_after = after["threads"]
+        if int(thread_after.get("active", 0) or 0) > 0:
+            blockers.append("threads_remaining")
+        if resource_report.get("clean") is not True:
+            blockers.append("owned_resources_remaining")
+        native_after = after["native_resources"]
+        if int(native_after.get("connection_count", 0) or 0) > 0:
+            blockers.append("native_sockets_remaining")
+
+        self._last_shutdown_report = {
+            "clean": not blockers,
+            "blockers": blockers,
+            "started_at_unix": time.time() - (time.monotonic() - started),
+            "completed_at_unix": time.time(),
+            "duration_seconds": round(time.monotonic() - started, 6),
+            "before": before,
+            "after": after,
+            "task_sweep": task_report,
+            "resource_sweep": resource_report,
+            "default_executor_sweep": executor_report,
+        }
+        self._shutdown_complete = True
+        return dict(self._last_shutdown_report)
+
+    async def on_stop_async(self) -> dict[str, Any]:
+        return await self.stop()
 
     def cleanup(self) -> None:
         self._restore_patches()
@@ -283,8 +444,16 @@ class RuntimeHygieneManager:
         self._thread_refs.clear()
         self._process_records.clear()
         self._process_refs.clear()
+        with self._resource_lock:
+            self._resource_records.clear()
+            self._resource_sequence = 0
+            self._resource_admission_closed = False
         self._samples.clear()
         self._last_gc_at = 0.0
+        self._shutdown_started = False
+        self._shutdown_complete = False
+        self._last_shutdown_report = None
+        self._stop_lock = asyncio.Lock()
 
     def capture_sample(self) -> MemorySample:
         rss_bytes = 0
@@ -324,6 +493,7 @@ class RuntimeHygieneManager:
         stale_tasks = self._task_tracker.get_stale_tasks(self.stale_task_age_s)
         thread_summary = self._thread_summary()
         process_summary = self._process_summary()
+        resource_summary = self._resource_summary()
         memory_summary = self._memory_summary()
 
         repair_actions: list[str] = []
@@ -354,6 +524,7 @@ class RuntimeHygieneManager:
             },
             "threads": thread_summary,
             "processes": process_summary,
+            "resources": resource_summary,
             "memory": memory_summary,
             "latest_sample": {
                 "rss_mb": round(sample.rss_bytes / (1024 * 1024), 1),
@@ -368,7 +539,15 @@ class RuntimeHygieneManager:
     def get_status(self) -> dict[str, Any]:
         report = self.audit()
         report["running"] = self._running
+        report["shutdown_started"] = self._shutdown_started
+        report["shutdown_complete"] = self._shutdown_complete
+        report["shutdown_report"] = (
+            dict(self._last_shutdown_report) if self._last_shutdown_report is not None else None
+        )
         return report
+
+    def get_shutdown_report(self) -> dict[str, Any] | None:
+        return dict(self._last_shutdown_report) if self._last_shutdown_report is not None else None
 
     def _patch_asyncio_new_event_loop(self) -> None:
         if self._original_new_event_loop is not None:
@@ -396,8 +575,30 @@ class RuntimeHygieneManager:
         manager = self
 
         def _patched_start(thread: threading.Thread, *args, **kwargs):
+            cleanup_critical = shutdown_resource_creation_allowed()
+            if manager._shutdown_blocks_resource_start(
+                operation=f"thread.start:{thread.name}",
+                resource_kind="thread",
+            ):
+                raise RuntimeError("runtime_shutdown")
+            thread._aura_shutdown_critical = cleanup_critical
             manager._register_thread(thread, source="thread.start")
-            return manager._original_thread_start(thread, *args, **kwargs)
+            result = manager._original_thread_start(thread, *args, **kwargs)
+            if manager._runtime_shutdown_latched() and not cleanup_critical:
+                manager._record_creation_boundary(
+                    operation=f"thread.start:{thread.name}",
+                    resource_kind="thread",
+                    outcome="crossed",
+                    detail=f"ident={thread.ident}",
+                )
+                if not thread.is_alive():
+                    manager._record_creation_boundary(
+                        operation=f"thread.start:{thread.name}",
+                        resource_kind="thread",
+                        outcome="reaped",
+                        detail="target_exited_at_shutdown_boundary",
+                    )
+            return result
 
         threading.Thread.start = _patched_start
 
@@ -409,8 +610,32 @@ class RuntimeHygieneManager:
         manager = self
 
         def _patched_init(proc_self, *args, **kwargs):
+            cleanup_critical = shutdown_resource_creation_allowed()
+            command = kwargs.get("args") or (args[0] if args else "unknown")
+            if manager._shutdown_blocks_resource_start(
+                operation=f"subprocess.Popen:{str(command)[:160]}",
+                resource_kind="subprocess",
+            ):
+                proc_self._child_created = False
+                raise RuntimeError("runtime_shutdown")
             manager._original_popen_init(proc_self, *args, **kwargs)
             manager._register_subprocess(proc_self, args=args, kwargs=kwargs)
+            if manager._runtime_shutdown_latched() and not cleanup_critical:
+                operation = f"subprocess.Popen:{str(command)[:160]}"
+                manager._record_creation_boundary(
+                    operation=operation,
+                    resource_kind="subprocess",
+                    outcome="crossed",
+                    detail=f"pid={getattr(proc_self, 'pid', None)}",
+                )
+                reaped = manager._reap_crossed_subprocess(proc_self)
+                manager._record_creation_boundary(
+                    operation=operation,
+                    resource_kind="subprocess",
+                    outcome="reaped" if reaped else "survived",
+                    detail=f"pid={getattr(proc_self, 'pid', None)}",
+                )
+                raise RuntimeError("runtime_shutdown_after_subprocess_start")
 
         subprocess.Popen.__init__ = _patched_init
 
@@ -422,11 +647,116 @@ class RuntimeHygieneManager:
         manager = self
 
         def _patched_start(proc_self, *args, **kwargs):
+            cleanup_critical = shutdown_resource_creation_allowed()
+            if manager._shutdown_blocks_resource_start(
+                operation=f"multiprocessing.start:{getattr(proc_self, 'name', 'unknown')}",
+                resource_kind="multiprocessing",
+            ):
+                raise RuntimeError("runtime_shutdown")
             result = manager._original_mp_start(proc_self, *args, **kwargs)
             manager._register_multiprocessing_process(proc_self)
+            if manager._runtime_shutdown_latched() and not cleanup_critical:
+                operation = (
+                    f"multiprocessing.start:{getattr(proc_self, 'name', 'unknown')}"
+                )
+                manager._record_creation_boundary(
+                    operation=operation,
+                    resource_kind="multiprocessing",
+                    outcome="crossed",
+                    detail=f"pid={getattr(proc_self, 'pid', None)}",
+                )
+                reaped = manager._reap_crossed_multiprocessing(proc_self)
+                manager._record_creation_boundary(
+                    operation=operation,
+                    resource_kind="multiprocessing",
+                    outcome="reaped" if reaped else "survived",
+                    detail=f"pid={getattr(proc_self, 'pid', None)}",
+                )
+                raise RuntimeError("runtime_shutdown_after_multiprocessing_start")
             return result
 
         mp.process.BaseProcess.start = _patched_start
+
+    @staticmethod
+    def _shutdown_blocks_resource_start(
+        *,
+        operation: str,
+        resource_kind: str,
+    ) -> bool:
+        if shutdown_resource_creation_allowed():
+            return False
+        try:
+            from core.runtime.shutdown_coordinator import (
+                is_shutdown_requested,
+                record_shutdown_admission_event,
+            )
+
+            if not is_shutdown_requested():
+                return False
+            record_shutdown_admission_event(
+                operation,
+                resource_kind=resource_kind,
+                outcome="suppressed",
+                detail="runtime_hygiene_creation_patch",
+            )
+            return True
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _runtime_shutdown_latched() -> bool:
+        try:
+            from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+            return bool(is_shutdown_requested())
+        except (ImportError, RuntimeError, AttributeError):
+            return False
+
+    @staticmethod
+    def _record_creation_boundary(
+        *,
+        operation: str,
+        resource_kind: str,
+        outcome: str,
+        detail: str,
+    ) -> None:
+        try:
+            from core.runtime.shutdown_coordinator import record_shutdown_admission_event
+
+            record_shutdown_admission_event(
+                operation,
+                resource_kind=resource_kind,
+                outcome=outcome,
+                detail=detail,
+            )
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            return
+
+    @staticmethod
+    def _reap_crossed_subprocess(proc: Any) -> bool:
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=0.75)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=0.75)
+            return proc.poll() is not None
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+            return False
+
+    @staticmethod
+    def _reap_crossed_multiprocessing(proc: Any) -> bool:
+        try:
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=0.75)
+            if proc.is_alive():
+                proc.kill()
+                proc.join(timeout=0.75)
+            return not proc.is_alive()
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+            return False
 
     def _restore_patches(self) -> None:
         if self._original_thread_start is not None:
@@ -537,6 +867,17 @@ class RuntimeHygieneManager:
             record.started_at = time.monotonic()
             record.ident = threading.get_ident()
             try:
+                if (
+                    self._runtime_shutdown_latched()
+                    and not getattr(thread, "_aura_shutdown_critical", False)
+                ):
+                    self._record_creation_boundary(
+                        operation=f"thread.run:{thread.name}",
+                        resource_kind="thread",
+                        outcome="suppressed",
+                        detail="shutdown_latched_before_target_entry",
+                    )
+                    return None
                 return original_run(*args, **kwargs)
             except _THREAD_RUN_FAILURES as exc:
                 record.exception = f"{type(exc).__name__}: {exc}"
@@ -566,6 +907,190 @@ class RuntimeHygieneManager:
             pid=getattr(proc, "pid", None),
         )
         self._process_refs[key] = proc
+
+    def register_shutdown_resource(
+        self,
+        resource: Any,
+        *,
+        kind: str,
+        name: str,
+        source: str,
+        closer: Callable[[], Any] | None = None,
+        timeout_s: float = 0.75,
+        required: bool = True,
+        blocking: bool = False,
+    ) -> None:
+        """Register a non-process resource for reverse-order final cleanup."""
+
+        key = id(resource)
+        try:
+            from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+            crossed_shutdown = is_shutdown_requested()
+        except (ImportError, RuntimeError, AttributeError):
+            crossed_shutdown = False
+        crossed_shutdown = self._shutdown_started or crossed_shutdown
+        with self._resource_lock:
+            if self._shutdown_complete or self._resource_admission_closed:
+                self._record_resource_boundary(
+                    name,
+                    kind=kind,
+                    outcome="survived",
+                    detail="registered_after_final_sweep",
+                )
+                raise RuntimeError(f"resource registered after runtime final sweep: {name}")
+
+            existing = self._resource_records.get(key)
+            should_record_crossed = bool(
+                crossed_shutdown
+                and (existing is None or not existing.crossed_shutdown)
+            )
+            if existing is not None:
+                existing.kind = str(kind or existing.kind)
+                existing.name = str(name or existing.name)
+                existing.source = str(source or existing.source)
+                existing.closer = closer or existing.closer
+                existing.timeout_s = max(0.05, float(timeout_s))
+                existing.required = bool(required)
+                existing.blocking = bool(blocking)
+                existing.crossed_shutdown = (
+                    existing.crossed_shutdown or crossed_shutdown
+                )
+            else:
+                self._resource_sequence += 1
+                self._resource_records[key] = ShutdownResourceRecord(
+                    key=key,
+                    kind=str(kind or "resource"),
+                    name=str(name or type(resource).__name__),
+                    source=str(source or "unknown"),
+                    resource=resource,
+                    closer=closer,
+                    timeout_s=max(0.05, float(timeout_s)),
+                    required=bool(required),
+                    blocking=bool(blocking),
+                    sequence=self._resource_sequence,
+                    crossed_shutdown=crossed_shutdown,
+                )
+        if should_record_crossed:
+            self._record_resource_boundary(
+                name,
+                kind=kind,
+                outcome="crossed",
+                detail="registered_during_shutdown",
+            )
+
+    def unregister_shutdown_resource(self, resource: Any) -> None:
+        with self._resource_lock:
+            record = self._resource_records.pop(id(resource), None)
+        if record is not None and record.crossed_shutdown:
+            self._record_resource_boundary(
+                record.name,
+                kind=record.kind,
+                outcome="reaped",
+                detail="owner_completed_cleanup",
+            )
+
+    @staticmethod
+    def _record_resource_boundary(
+        name: str,
+        *,
+        kind: str,
+        outcome: str,
+        detail: str,
+    ) -> None:
+        try:
+            from core.runtime.shutdown_coordinator import record_shutdown_admission_event
+
+            record_shutdown_admission_event(
+                name,
+                resource_kind=kind,
+                outcome=outcome,
+                detail=detail,
+            )
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            return
+
+    def _resource_summary(self) -> dict[str, Any]:
+        with self._resource_lock:
+            records = list(self._resource_records.values())
+        active = [record for record in records if record.status not in {"completed", "released"}]
+        return {
+            "registered": len(records),
+            "active": len(active),
+            "required_active": sum(1 for record in active if record.required),
+            "by_kind": {
+                kind: sum(1 for record in active if record.kind == kind)
+                for kind in sorted({record.kind for record in active})
+            },
+            "sample": [
+                {
+                    "kind": record.kind,
+                    "name": record.name,
+                    "source": record.source,
+                    "status": record.status,
+                    "required": record.required,
+                    "error": record.error,
+                }
+                for record in active[:10]
+            ],
+        }
+
+    def _native_resource_summary(self) -> dict[str, Any]:
+        if self._proc is None:
+            return {
+                "available": False,
+                "open_file_count": 0,
+                "connection_count": 0,
+                "listening_socket_count": 0,
+                "open_files": [],
+                "connections": [],
+            }
+        try:
+            open_files = list(self._proc.open_files())
+        except _PROCESS_INTROSPECTION_ERRORS:
+            open_files = []
+        try:
+            connections = list(self._proc.net_connections(kind="all"))
+        except _PROCESS_INTROSPECTION_ERRORS:
+            connections = []
+        owned_connections = [
+            connection
+            for connection in connections
+            if int(getattr(connection, "fd", -1)) >= 0
+        ]
+
+        def _address(value: Any) -> object:
+            if not value:
+                return None
+            if hasattr(value, "ip") and hasattr(value, "port"):
+                return {"host": str(value.ip), "port": int(value.port)}
+            if isinstance(value, tuple) and len(value) >= 2:
+                return {"host": str(value[0]), "port": int(value[1])}
+            return str(value)
+
+        connection_samples = [
+            {
+                "fd": int(getattr(connection, "fd", -1)),
+                "family": str(getattr(connection, "family", "")),
+                "type": str(getattr(connection, "type", "")),
+                "status": str(getattr(connection, "status", "")),
+                "local": _address(getattr(connection, "laddr", None)),
+                "remote": _address(getattr(connection, "raddr", None)),
+            }
+            for connection in owned_connections[:20]
+        ]
+        return {
+            "available": True,
+            "open_file_count": len(open_files),
+            "connection_count": len(owned_connections),
+            "listening_socket_count": sum(
+                1
+                for connection in owned_connections
+                if str(getattr(connection, "status", "")).upper() == "LISTEN"
+            ),
+            "open_files": [str(getattr(item, "path", "")) for item in open_files[:20]],
+            "connections": connection_samples,
+        }
 
     def register_process_handle(
         self,
@@ -685,12 +1210,23 @@ class RuntimeHygieneManager:
         now = time.monotonic()
         active = 0
         active_non_daemon = 0
+        active_daemon = 0
         stale_non_daemon = 0
         sample: list[dict[str, Any]] = []
+        active_sample: list[dict[str, Any]] = []
         for record in list(self._thread_records.values()):
             if record.finished_at is not None:
                 continue
             active += 1
+            if len(active_sample) < 20:
+                active_sample.append(
+                    {
+                        "name": record.name,
+                        "daemon": record.daemon,
+                        "age_s": round(record.age_s(now), 1),
+                        "source": record.source,
+                    }
+                )
             if not record.daemon:
                 active_non_daemon += 1
                 if record.age_s(now) >= self.stale_thread_age_s:
@@ -702,11 +1238,15 @@ class RuntimeHygieneManager:
                             "source": record.source,
                         }
                     )
+            else:
+                active_daemon += 1
         return {
             "active": active,
             "active_non_daemon": active_non_daemon,
+            "active_daemon": active_daemon,
             "stale_non_daemon": stale_non_daemon,
             "sample": sample[:5],
+            "active_sample": active_sample,
         }
 
     def _process_summary(self) -> dict[str, Any]:
@@ -714,10 +1254,22 @@ class RuntimeHygieneManager:
         active_subprocesses = 0
         active_multiprocessing = 0
         active_registered_pids = set()
+        active_samples: list[dict[str, Any]] = []
         for record in list(self._process_records.values()):
             if record.finished_at is not None:
                 continue
             active_registered += 1
+            if len(active_samples) < 20:
+                active_samples.append(
+                    {
+                        "pid": record.pid,
+                        "kind": record.kind,
+                        "name": record.name,
+                        "source": record.source,
+                        "command": record.command,
+                        "age_s": round(record.age_s(), 1),
+                    }
+                )
             if getattr(record, "pid", None):
                 try:
                     active_registered_pids.add(int(record.pid))
@@ -815,6 +1367,7 @@ class RuntimeHygieneManager:
             "active_multiprocessing": max(0, active_multiprocessing),
             "owned_descendant_processes": max(0, owned_descendants),
             "rogue_child_processes": max(0, rogue_children),
+            "active_samples": active_samples,
             "rogue_samples": rogue_samples,
         }
 
@@ -944,6 +1497,169 @@ class RuntimeHygieneManager:
             logger.debug("RuntimeHygiene: child process scan failed: %s", exc)
             return 0
 
+    async def _invoke_resource_callable(
+        self,
+        callback: Callable[[], Any],
+        *,
+        timeout_s: float,
+    ) -> None:
+        started = time.monotonic()
+        if inspect.iscoroutinefunction(callback):
+            result = callback()
+        else:
+            result = await run_sync_shutdown_callable(
+                callback,
+                timeout_s=max(0.05, timeout_s),
+                name="runtime-resource-cleanup",
+            )
+        if inspect.isawaitable(result):
+            remaining = max(0.05, timeout_s - (time.monotonic() - started))
+            await asyncio.wait_for(result, timeout=remaining)
+
+    async def _close_shutdown_resource(
+        self,
+        record: ShutdownResourceRecord,
+        *,
+        timeout_s: float,
+    ) -> None:
+        started = time.monotonic()
+        record.status = "closing"
+        closer = record.closer
+        if closer is None:
+            for method_name in ("stop", "close", "cancel"):
+                candidate = getattr(record.resource, method_name, None)
+                if callable(candidate):
+                    closer = candidate
+                    break
+        try:
+            if closer is None:
+                raise RuntimeError(
+                    f"no zero-argument closer for {record.kind}:{record.name}"
+                )
+            await self._invoke_resource_callable(
+                closer,
+                timeout_s=timeout_s,
+            )
+            for followup_name in ("wait_closed", "join_thread"):
+                followup = getattr(record.resource, followup_name, None)
+                if not callable(followup):
+                    continue
+                remaining = timeout_s - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"resource cleanup budget exhausted before {followup_name}"
+                    )
+                await self._invoke_resource_callable(
+                    followup,
+                    timeout_s=remaining,
+                )
+        except asyncio.CancelledError:
+            record.status = "cancelled"
+            record.duration_seconds = round(time.monotonic() - started, 6)
+            raise
+        except Exception as exc:  # noqa: BLE001 - final resource teardown boundary
+            record.status = "failed"
+            record.error = repr(exc)
+            record.duration_seconds = round(time.monotonic() - started, 6)
+            record_degradation(
+                "runtime_hygiene_shutdown",
+                exc,
+                severity="degraded" if record.required else "warning",
+                action=f"recorded failed final cleanup for {record.kind}:{record.name}",
+                enforce_failure_policy=False,
+                extra={"source": record.source, "required": record.required},
+            )
+            return
+
+        record.status = "completed"
+        record.error = None
+        record.duration_seconds = round(time.monotonic() - started, 6)
+        if record.crossed_shutdown:
+            self._record_resource_boundary(
+                record.name,
+                kind=record.kind,
+                outcome="reaped",
+                detail="runtime_hygiene_final_sweep",
+            )
+
+    async def _cleanup_shutdown_resources(self) -> dict[str, Any]:
+        started = time.monotonic()
+        deadline = started + self.resource_shutdown_timeout_s
+        attempted: set[int] = set()
+
+        # Two bounded snapshots catch resources that crossed the shutdown latch
+        # while the first reverse-order pass was already running.
+        for _pass in range(2):
+            with self._resource_lock:
+                pending = sorted(
+                    (
+                        record
+                        for record in self._resource_records.values()
+                        if record.key not in attempted
+                        and record.status not in {"completed", "released"}
+                    ),
+                    key=lambda record: record.sequence,
+                    reverse=True,
+                )
+            if not pending:
+                break
+            for record in pending:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                attempted.add(record.key)
+                await self._close_shutdown_resource(
+                    record,
+                    timeout_s=min(record.timeout_s, remaining),
+                )
+
+        with self._resource_lock:
+            self._resource_admission_closed = True
+            all_records = list(self._resource_records.values())
+        residual = [
+            record
+            for record in all_records
+            if record.status not in {"completed", "released"}
+        ]
+        for record in residual:
+            if record.status == "registered":
+                record.status = "skipped"
+                record.error = "resource cleanup budget exhausted"
+            if record.crossed_shutdown:
+                self._record_resource_boundary(
+                    record.name,
+                    kind=record.kind,
+                    outcome="survived",
+                    detail=record.error or record.status,
+                )
+        required_residual = [record for record in residual if record.required]
+        return {
+            "clean": not required_residual,
+            "attempted": len(attempted),
+            "completed": sum(
+                1 for record in all_records if record.status == "completed"
+            ),
+            "residual": len(residual),
+            "required_residual": len(required_residual),
+            "duration_seconds": round(time.monotonic() - started, 6),
+            "resources": [
+                {
+                    "kind": record.kind,
+                    "name": record.name,
+                    "source": record.source,
+                    "required": record.required,
+                    "status": record.status,
+                    "duration_seconds": record.duration_seconds,
+                    "error": record.error,
+                }
+                for record in sorted(
+                    all_records,
+                    key=lambda item: item.sequence,
+                    reverse=True,
+                )
+            ],
+        }
+
     async def _cleanup_child_processes(self) -> None:
         async def _cleanup_one(proc: Any) -> None:
             if _is_python_resource_tracker_process(proc):
@@ -953,16 +1669,18 @@ class RuntimeHygieneManager:
                     if proc.poll() is None:
                         proc.terminate()
                         try:
-                            await asyncio.wait_for(
-                                asyncio.to_thread(proc.wait, self.process_shutdown_timeout_s),
-                                timeout=self.process_shutdown_timeout_s + 0.25,
+                            await run_sync_shutdown_callable(
+                                lambda: proc.wait(self.process_shutdown_timeout_s),
+                                timeout_s=self.process_shutdown_timeout_s + 0.25,
+                                name="subprocess-wait",
                             )
                         except (RuntimeError, TimeoutError, AttributeError, subprocess.TimeoutExpired):
                             proc.kill()
                             try:
-                                await asyncio.wait_for(
-                                    asyncio.to_thread(proc.wait, 0.2),
-                                    timeout=0.3,
+                                await run_sync_shutdown_callable(
+                                    lambda: proc.wait(0.2),
+                                    timeout_s=0.3,
+                                    name="subprocess-kill-wait",
                                 )
                             except (RuntimeError, TimeoutError, AttributeError, subprocess.TimeoutExpired) as exc:
                                 record_degradation(
@@ -979,14 +1697,19 @@ class RuntimeHygieneManager:
                 try:
                     if proc.is_alive():
                         proc.terminate()
-                        await asyncio.wait_for(
-                            asyncio.to_thread(proc.join, self.process_shutdown_timeout_s),
-                            timeout=self.process_shutdown_timeout_s + 0.25,
+                        await run_sync_shutdown_callable(
+                            lambda: proc.join(self.process_shutdown_timeout_s),
+                            timeout_s=self.process_shutdown_timeout_s + 0.25,
+                            name="multiprocessing-join",
                         )
                         if proc.is_alive():
                             proc.kill()
                             try:
-                                await asyncio.wait_for(asyncio.to_thread(proc.join, 0.2), timeout=0.3)
+                                await run_sync_shutdown_callable(
+                                    lambda: proc.join(0.2),
+                                    timeout_s=0.3,
+                                    name="multiprocessing-kill-join",
+                                )
                             except (RuntimeError, TimeoutError, AttributeError, TypeError, ValueError) as exc:
                                 record_degradation(
                                     "runtime_hygiene",
@@ -1003,17 +1726,19 @@ class RuntimeHygieneManager:
                     if proc.is_running():
                         proc.terminate()
                         try:
-                            await asyncio.wait_for(
-                                asyncio.to_thread(proc.wait, self.process_shutdown_timeout_s),
-                                timeout=self.process_shutdown_timeout_s + 0.25,
+                            await run_sync_shutdown_callable(
+                                lambda: proc.wait(self.process_shutdown_timeout_s),
+                                timeout_s=self.process_shutdown_timeout_s + 0.25,
+                                name="psutil-process-wait",
                             )
                         except (RuntimeError, TimeoutError, AttributeError, TypeError, ValueError):
                             if proc.is_running():
                                 proc.kill()
                                 try:
-                                    await asyncio.wait_for(
-                                        asyncio.to_thread(proc.wait, 0.2),
-                                        timeout=0.3,
+                                    await run_sync_shutdown_callable(
+                                        lambda: proc.wait(0.2),
+                                        timeout_s=0.3,
+                                        name="psutil-process-kill-wait",
                                     )
                                 except (RuntimeError, TimeoutError, AttributeError, TypeError, ValueError) as exc:
                                     record_degradation(
@@ -1077,7 +1802,14 @@ class RuntimeHygieneManager:
             )
 
         join_coros = [
-            asyncio.to_thread(self._join_thread_if_not_current, thread, self.thread_join_timeout_s)
+            run_sync_shutdown_callable(
+                lambda thread=thread: self._join_thread_if_not_current(
+                    thread,
+                    self.thread_join_timeout_s,
+                ),
+                timeout_s=self.thread_join_timeout_s + 0.2,
+                name=f"thread-join:{thread.name}",
+            )
             for thread in selected
         ]
         if not join_coros:

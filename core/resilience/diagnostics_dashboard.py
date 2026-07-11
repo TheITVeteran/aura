@@ -113,9 +113,7 @@ def collect_reliability_diagnostics() -> dict[str, Any]:
     # 8. Verified shutdown lifecycle
     try:
         from core.runtime.shutdown_coordinator import get_shutdown_coordinator
-        diagnostics["subsystems"]["lifecycle"] = {
-            "shutdown_state": get_shutdown_coordinator().lifecycle_state(),
-        }
+        diagnostics["subsystems"]["lifecycle"] = get_shutdown_coordinator().get_status()
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError, OSError) as exc:
         diagnostics["subsystems"]["lifecycle"] = {"error": str(exc)}
 

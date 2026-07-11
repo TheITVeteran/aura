@@ -112,6 +112,7 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             "core/runtime/atomic_writer.py",
             "core/runtime/file_write_gateway.py",
             "core/runtime/flight_recorder.py",
+            "core/runtime/shutdown_artifact_store.py",
         }
     ),
     "raw_desktop": frozenset({"core/runtime/desktop_action_gateway.py"}),
@@ -123,6 +124,7 @@ CANONICAL_PRIMITIVE_OWNERS: dict[str, frozenset[str]] = {
             "core/runtime/file_write_gateway.py",
             "core/runtime/post_action_receipt.py",
             "core/runtime/receipts.py",
+            "core/runtime/shutdown_artifact_store.py",
             "core/state/state_gateway.py",
         }
     ),

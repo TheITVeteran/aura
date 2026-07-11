@@ -13,6 +13,40 @@ from core.runtime.task_ownership import close_awaitable, create_owned_asyncio_ta
 logger = logging.getLogger(__name__)
 
 _SKIP_FACTORY_TRACK = contextvars.ContextVar("aura_skip_factory_track", default=False)
+_ALLOW_SHUTDOWN_TASK_CREATION = contextvars.ContextVar(
+    "aura_allow_shutdown_task_creation",
+    default=False,
+)
+_ALLOW_SHUTDOWN_RESOURCE_CREATION = contextvars.ContextVar(
+    "aura_allow_shutdown_resource_creation",
+    default=False,
+)
+
+
+def shutdown_task_creation_allowed() -> bool:
+    return bool(_ALLOW_SHUTDOWN_TASK_CREATION.get())
+
+
+def begin_shutdown_task_creation_scope() -> contextvars.Token[bool]:
+    return _ALLOW_SHUTDOWN_TASK_CREATION.set(True)
+
+
+def end_shutdown_task_creation_scope(token: contextvars.Token[bool]) -> None:
+    _ALLOW_SHUTDOWN_TASK_CREATION.reset(token)
+
+
+def shutdown_resource_creation_allowed() -> bool:
+    """Whether this exact call site may create a teardown worker/resource."""
+
+    return bool(_ALLOW_SHUTDOWN_RESOURCE_CREATION.get())
+
+
+def begin_shutdown_resource_creation_scope() -> contextvars.Token[bool]:
+    return _ALLOW_SHUTDOWN_RESOURCE_CREATION.set(True)
+
+
+def end_shutdown_resource_creation_scope(token: contextvars.Token[bool]) -> None:
+    _ALLOW_SHUTDOWN_RESOURCE_CREATION.reset(token)
 
 
 def _runtime_shutdown_requested() -> bool:
@@ -22,6 +56,25 @@ def _runtime_shutdown_requested() -> bool:
         return bool(is_shutdown_requested())
     except (ImportError, AttributeError, RuntimeError):
         return False
+
+
+def _record_shutdown_task_event(
+    *,
+    name: str | None,
+    source: str,
+    outcome: str,
+) -> None:
+    try:
+        from core.runtime.shutdown_coordinator import record_shutdown_admission_event
+
+        record_shutdown_admission_event(
+            name or "unnamed_task",
+            resource_kind="asyncio_task",
+            outcome=outcome,
+            detail=source,
+        )
+    except (ImportError, RuntimeError, TypeError, ValueError):
+        return
 
 
 def mark_task_protected(task: asyncio.Task[Any], *, owner: str = "task_tracker") -> asyncio.Task[Any]:
@@ -120,11 +173,22 @@ class TaskTracker:
         else:
             if _runtime_shutdown_requested() and not allow_during_shutdown:
                 return self._suppress_shutdown_start(coro_or_task, name=name, source="track")
+            token = (
+                begin_shutdown_task_creation_scope()
+                if allow_during_shutdown
+                else None
+            )
             try:
-                task = create_owned_asyncio_task(coro_or_task, name=name)
-            except RuntimeError:
-                close_awaitable(coro_or_task)
-                raise
+                try:
+                    task = create_owned_asyncio_task(coro_or_task, name=name)
+                except RuntimeError:
+                    close_awaitable(coro_or_task)
+                    raise
+            finally:
+                if token is not None:
+                    end_shutdown_task_creation_scope(token)
+        if allow_during_shutdown:
+            self._mark_shutdown_critical(task)
         self._total_tracked += 1
         self._attach(task, name=name, supervision="explicit", source="track")
         return task
@@ -169,12 +233,23 @@ class TaskTracker:
                 return await coro
 
         bounded_coro = _bounded()
+        token = (
+            begin_shutdown_task_creation_scope()
+            if allow_during_shutdown
+            else None
+        )
         try:
-            task = create_owned_asyncio_task(bounded_coro, name=name)
-        except RuntimeError:
-            close_awaitable(coro)
-            close_awaitable(bounded_coro)
-            raise
+            try:
+                task = create_owned_asyncio_task(bounded_coro, name=name)
+            except RuntimeError:
+                close_awaitable(coro)
+                close_awaitable(bounded_coro)
+                raise
+        finally:
+            if token is not None:
+                end_shutdown_task_creation_scope(token)
+        if allow_during_shutdown:
+            self._mark_shutdown_critical(task)
         self._total_tracked += 1
         self._attach(task, name=name, supervision="explicit", source="bounded_track")
         return task
@@ -190,6 +265,7 @@ class TaskTracker:
         """
         close_awaitable(awaitable)
         self._shutdown_suppressed_total += 1
+        _record_shutdown_task_event(name=name, source=source, outcome="suppressed")
 
         async def _shutdown_suppressed() -> None:
             return None
@@ -219,6 +295,17 @@ class TaskTracker:
         )
         return task
 
+    def _mark_shutdown_critical(self, task: asyncio.Task[Any]) -> None:
+        try:
+            task._aura_shutdown_critical = True
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("task_tracker", exc)
+            logger.debug(
+                "TaskTracker[%s]: failed to mark shutdown-critical task: %s",
+                self.name,
+                exc,
+            )
+
     def install_loop_hygiene(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         """Install a task factory so raw asyncio.create_task/loop.create_task calls are still observed."""
         target_loop = loop or asyncio.get_running_loop()
@@ -230,6 +317,26 @@ class TaskTracker:
         tracker = self
 
         def _factory(factory_loop, coro, **kwargs):
+            skip_factory_track = _SKIP_FACTORY_TRACK.get()
+            shutdown_suppressed = False
+            if (
+                not skip_factory_track
+                and _runtime_shutdown_requested()
+                and not shutdown_task_creation_allowed()
+            ):
+                close_awaitable(coro)
+                tracker._shutdown_suppressed_total += 1
+                _record_shutdown_task_event(
+                    name=str(kwargs.get("name") or "raw_asyncio_task"),
+                    source="loop_factory",
+                    outcome="suppressed",
+                )
+
+                async def _shutdown_suppressed() -> None:
+                    return None
+
+                coro = _shutdown_suppressed()
+                shutdown_suppressed = True
             if previous_factory is not None:
                 try:
                     task = previous_factory(factory_loop, coro, **kwargs)
@@ -242,7 +349,13 @@ class TaskTracker:
                         task = previous_factory(factory_loop, coro, **kwargs)
             else:
                 task = asyncio.Task(coro, loop=factory_loop, **kwargs)
-            if not _SKIP_FACTORY_TRACK.get():
+            if shutdown_suppressed:
+                try:
+                    task._aura_shutdown_suppressed = True
+                    task._aura_shutdown_suppressed_source = "loop_factory"
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    record_degradation("task_tracker", exc)
+            if not skip_factory_track:
                 try:
                     tracker.observe(task, source="loop_factory")
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
@@ -447,27 +560,49 @@ class TaskTracker:
         """Number of currently active (not done) tasks."""
         return len(self.tasks)
 
-    async def shutdown(self, timeout: float = 5.0):  # noqa: ASYNC109 - forwarded to asyncio.wait.
+    async def shutdown(self, timeout: float = 5.0) -> dict[str, Any]:  # noqa: ASYNC109
         """Cancel and wait for all tracked tasks.
 
         Tasks marked ``_aura_protected`` are cancelled after ordinary tracked
         work so shutdown can drain short-lived background jobs first. Protection
         never means "leave this task alive"; a clean runtime shutdown must not
         strand scheduler, substrate, or watchdog loops behind the caller.
+        Coordinator/finalizer tasks marked ``_aura_shutdown_critical`` are
+        excluded because cancelling the teardown owner would make cleanup lie
+        about completion.
         """
-        pending = {
+        started = time.monotonic()
+        current_task = asyncio.current_task()
+        all_pending = {
             task
             for task in self.tasks
-            if not task.done() and task is not asyncio.current_task()
+            if not task.done() and task is not current_task
         }
+        shutdown_critical = {
+            task for task in all_pending if getattr(task, "_aura_shutdown_critical", False)
+        }
+        pending = all_pending - shutdown_critical
         if not pending:
-            return
+            return {
+                "clean": True,
+                "requested": 0,
+                "cancelled": 0,
+                "remaining": 0,
+                "remaining_tasks": [],
+                "shutdown_critical_active": len(shutdown_critical),
+                "duration_seconds": round(time.monotonic() - started, 6),
+            }
 
         ordinary = {task for task in pending if not getattr(task, "_aura_protected", False)}
         protected = pending - ordinary
-        remaining: list[asyncio.Task[Any]] = []
+        deadline = time.monotonic() + max(0.0, float(timeout))
 
-        async def _cancel_group(group: set[asyncio.Task[Any]], label: str) -> None:
+        async def _cancel_group(
+            group: set[asyncio.Task[Any]],
+            label: str,
+            *,
+            budget_fraction: float,
+        ) -> None:
             if not group:
                 return
             logger.info(
@@ -477,23 +612,91 @@ class TaskTracker:
                 label,
             )
 
+            current_loop = asyncio.get_running_loop()
             for task in group:
-                task.cancel()
+                try:
+                    owner_loop = task.get_loop()
+                    if owner_loop is current_loop or not owner_loop.is_running():
+                        task.cancel()
+                    else:
+                        owner_loop.call_soon_threadsafe(task.cancel)
+                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    record_degradation("task_tracker", exc)
+                    logger.debug(
+                        "TaskTracker[%s]: failed to cancel %s task %s: %s",
+                        self.name,
+                        label,
+                        task.get_name(),
+                        exc,
+                    )
 
+            remaining_budget = max(0.0, deadline - time.monotonic())
+            group_budget = remaining_budget * budget_fraction
+            local_tasks = {task for task in group if task.get_loop() is current_loop}
             try:
-                await asyncio.wait(group, timeout=timeout)
+                if local_tasks and group_budget > 0:
+                    await asyncio.wait(local_tasks, timeout=group_budget)
+                foreign_deadline = min(deadline, time.monotonic() + group_budget)
+                foreign_tasks = [task for task in group if task.get_loop() is not current_loop]
+                if foreign_tasks and foreign_deadline > time.monotonic():
+                    foreign_completion = asyncio.Event()
+
+                    def _notify_foreign_completion(_task: asyncio.Task[Any]) -> None:
+                        current_loop.call_soon_threadsafe(foreign_completion.set)
+
+                    for task in foreign_tasks:
+                        task.add_done_callback(_notify_foreign_completion)
+                    try:
+                        while any(not task.done() for task in foreign_tasks):
+                            remaining = foreign_deadline - time.monotonic()
+                            if remaining <= 0:
+                                break
+                            foreign_completion.clear()
+                            if any(not task.done() for task in foreign_tasks):
+                                async with asyncio.timeout(remaining):
+                                    await foreign_completion.wait()
+                    finally:
+                        for task in foreign_tasks:
+                            task.remove_done_callback(_notify_foreign_completion)
             except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
                 record_degradation('task_tracker', e)
                 logger.error("Error during TaskTracker shutdown: %s", e)
-            remaining.extend(task for task in group if not task.done())
 
-        await _cancel_group(ordinary, "ordinary")
-        await _cancel_group(protected, "protected")
+        await _cancel_group(
+            ordinary,
+            "ordinary",
+            budget_fraction=0.6 if protected else 1.0,
+        )
+        await _cancel_group(protected, "protected", budget_fraction=1.0)
 
+        remaining = [task for task in pending if not task.done()]
         if remaining:
-            logger.warning("%d tasks still pending after timeout. Forcing abandonment.", len(remaining))
-        for task in remaining:
-            self.tasks.discard(task)
+            logger.warning("%d tasks still pending after bounded cancellation.", len(remaining))
+        remaining_tasks = []
+        for task in remaining[:20]:
+            record = self._records.get(id(task))
+            _record_shutdown_task_event(
+                name=record.name if record is not None else task.get_name(),
+                source=record.source if record is not None else "unknown",
+                outcome="survived",
+            )
+            remaining_tasks.append(
+                {
+                    "name": record.name if record is not None else task.get_name(),
+                    "source": record.source if record is not None else "unknown",
+                    "supervision": record.supervision if record is not None else "unknown",
+                    "loop_running": task.get_loop().is_running(),
+                }
+            )
+        return {
+            "clean": not remaining,
+            "requested": len(pending),
+            "cancelled": sum(1 for task in pending if task.cancelled()),
+            "remaining": len(remaining),
+            "remaining_tasks": remaining_tasks,
+            "shutdown_critical_active": len(shutdown_critical),
+            "duration_seconds": round(time.monotonic() - started, 6),
+        }
 
     def cleanup_old_records(self, max_age_s: float = 300.0):
         """Explicitly clean up task records older than max_age_s.
@@ -516,6 +719,7 @@ class TaskTracker:
     def get_stats(self) -> dict:
         explicit_active = 0
         implicit_active = 0
+        shutdown_critical_active = 0
         for task in list(self.tasks):
             record = self._records.get(id(task))
             if record is None:
@@ -524,6 +728,8 @@ class TaskTracker:
                 explicit_active += 1
             else:
                 implicit_active += 1
+            if getattr(task, "_aura_shutdown_critical", False):
+                shutdown_critical_active += 1
         stale_tasks = self.get_stale_tasks(min_age_s=300.0)
         return {
             "active": self.active_count,
@@ -532,6 +738,7 @@ class TaskTracker:
             "total_observed": self._total_observed,
             "explicit_active": explicit_active,
             "implicit_active": implicit_active,
+            "shutdown_critical_active": shutdown_critical_active,
             "completed_total": self._completed_total,
             "cancelled_total": self._cancelled_total,
             "failed_total": self._failed_total,
@@ -540,6 +747,44 @@ class TaskTracker:
             "stale_tasks": stale_tasks[:5],
             "recently_completed": list(self._recently_completed)[-5:],
         }
+
+    def get_active_task_snapshot(
+        self,
+        *,
+        exclude_current: bool = False,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Return bounded evidence for tasks still alive at a final boundary."""
+
+        current: asyncio.Task[Any] | None = None
+        if exclude_current:
+            try:
+                current = asyncio.current_task()
+            except RuntimeError:
+                current = None
+        active = [
+            task
+            for task in list(self.tasks)
+            if not task.done() and task is not current
+        ]
+        samples: list[dict[str, Any]] = []
+        for task in active[: max(0, int(limit))]:
+            record = self._records.get(id(task))
+            samples.append(
+                {
+                    "name": record.name if record is not None else task.get_name(),
+                    "source": record.source if record is not None else "unknown",
+                    "supervision": (
+                        record.supervision if record is not None else "unknown"
+                    ),
+                    "shutdown_critical": bool(
+                        getattr(task, "_aura_shutdown_critical", False)
+                    ),
+                    "protected": bool(getattr(task, "_aura_protected", False)),
+                    "loop_running": task.get_loop().is_running(),
+                }
+            )
+        return {"count": len(active), "tasks": samples}
 
 
 _task_tracker = TaskTracker(name="Global")

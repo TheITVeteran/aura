@@ -10,8 +10,18 @@ from functools import partial
 from typing import Any, ClassVar, cast
 
 from core.runtime.errors import record_degradation
-from core.runtime.shutdown_coordinator import get_shutdown_coordinator, request_shutdown
-from core.utils.task_tracker import get_task_tracker
+from core.runtime.shutdown_coordinator import (
+    ShutdownReport,
+    get_shutdown_coordinator,
+    publish_shutdown_verdict,
+    request_shutdown,
+)
+from core.runtime.shutdown_execution import run_sync_shutdown_callable
+from core.utils.task_tracker import (
+    begin_shutdown_task_creation_scope,
+    end_shutdown_task_creation_scope,
+    get_task_tracker,
+)
 
 logger = logging.getLogger("Aura.Shutdown")
 
@@ -89,6 +99,7 @@ class GracefulShutdown:
             await cls._shutdown_event.wait()
             return
 
+        shutdown_scope_token = begin_shutdown_task_creation_scope()
         cls._is_shutting_down = True
         cls._shutdown_owner_task = current_task
         reason = f"signal:{getattr(sig, 'name', sig)}" if sig else "graceful_shutdown"
@@ -96,6 +107,8 @@ class GracefulShutdown:
 
         prefix = f"Received signal {sig}: " if sig else ""
         logger.warning("Shutdown: %sinitiating graceful teardown", prefix)
+        coordinator_report: ShutdownReport | dict[str, object] | None = None
+        container_report: dict[str, object] | None = None
         try:
             compatibility_deadline = time.monotonic() + 8.0
             while cls._hooks:
@@ -114,9 +127,10 @@ class GracefulShutdown:
                     if inspect.iscoroutinefunction(hook):
                         result = hook()
                     else:
-                        result = await asyncio.wait_for(
-                            asyncio.to_thread(cast(Callable[[], Any], hook)),
-                            timeout=min(8.0, remaining),
+                        result = await run_sync_shutdown_callable(
+                            cast(Callable[[], Any], hook),
+                            timeout_s=min(8.0, remaining),
+                            name=f"compatibility:{getattr(hook, '__name__', 'hook')}",
                         )
                     if inspect.isawaitable(result):
                         remaining = max(0.05, compatibility_deadline - time.monotonic())
@@ -127,12 +141,12 @@ class GracefulShutdown:
                     logger.error("Shutdown compatibility hook failed: %s", exc)
 
             try:
-                report = await get_shutdown_coordinator().shutdown(timeout_per_phase=8.0)
-                if not report.clean:
+                coordinator_report = await get_shutdown_coordinator().shutdown()
+                if not coordinator_report.clean:
                     logger.warning(
                         "Shutdown coordinator completed with failures: phases=%s handlers=%s",
-                        report.failed_phases,
-                        sorted(report.handler_failures),
+                        coordinator_report.failed_phases,
+                        sorted(coordinator_report.handler_failures),
                     )
             except Exception as exc:  # noqa: BLE001 - final teardown boundary
                 record_degradation("graceful_shutdown", exc)
@@ -141,15 +155,41 @@ class GracefulShutdown:
             try:
                 from core.container import get_container
 
-                await get_container().shutdown()
+                container_result = await get_container().shutdown()
+                container_report = (
+                    dict(container_result)
+                    if isinstance(container_result, dict)
+                    else {"clean": True, "legacy_result": repr(container_result)}
+                )
             except Exception as exc:  # noqa: BLE001 - final teardown boundary
                 record_degradation("graceful_shutdown", exc)
                 logger.error("Container shutdown failed: %s", exc)
+
+            runtime_hygiene_report = None
+            try:
+                from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                runtime_hygiene_report = get_runtime_hygiene().get_shutdown_report()
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("graceful_shutdown", exc)
+                logger.error("Runtime hygiene shutdown report unavailable: %s", exc)
+            try:
+                publish_shutdown_verdict(
+                    coordinator_report=coordinator_report,
+                    container_report=container_report,
+                    runtime_hygiene_report=runtime_hygiene_report,
+                    stage="graceful_shutdown_complete",
+                    final=True,
+                )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation("graceful_shutdown", exc)
+                logger.error("Final shutdown verdict persistence failed: %s", exc)
 
             logger.info("All Aura core services terminated")
         finally:
             cls._shutdown_owner_task = None
             cls._shutdown_event.set()
+            end_shutdown_task_creation_scope(shutdown_scope_token)
 
     @classmethod
     async def wait_for_shutdown(cls) -> None:

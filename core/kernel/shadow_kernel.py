@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from core.runtime.dynamic_execution_gateway import get_dynamic_execution_gateway
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.security.ast_guard import DEFAULT_SAFE_MODULES, ASTGuard, SecurityViolation
 from core.state.aura_state import AuraState
 
@@ -276,6 +277,27 @@ class ShadowExecutionPhase(Phase):  # type: ignore[misc]
         if is_shutdown_requested():
             return False, "runtime_shutdown"
         result_queue: Any = multiprocessing.Queue()
+        try:
+            from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+            get_runtime_hygiene().register_shutdown_resource(
+                result_queue,
+                kind="multiprocessing_queue",
+                name="shadow_kernel.result_queue",
+                source="core.kernel.shadow_kernel",
+                timeout_s=1.0,
+            )
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            try:
+                result_queue.close()
+                await run_sync_shutdown_callable(
+                    result_queue.join_thread,
+                    timeout_s=1.0,
+                    name="shadow-result-queue-registration-failure",
+                )
+            except (AttributeError, OSError, RuntimeError, ValueError, TimeoutError):
+                pass
+            return False, "runtime_shutdown" if is_shutdown_requested() else "resource_owner_unavailable"
         process = None
         try:
             test_state = self.kernel.state
@@ -292,7 +314,12 @@ class ShadowExecutionPhase(Phase):  # type: ignore[misc]
             )
             if is_shutdown_requested():
                 return False, "runtime_shutdown"
-            process.start()
+            try:
+                process.start()
+            except RuntimeError:
+                if is_shutdown_requested():
+                    return False, "runtime_shutdown"
+                raise
             if is_shutdown_requested():
                 return False, "runtime_shutdown"
 
@@ -308,7 +335,11 @@ class ShadowExecutionPhase(Phase):  # type: ignore[misc]
                 logger.warning("Sandbox: Mutation validation timed out")
                 return False, "timeout"
 
-            process.join(timeout=2.0)
+            await run_sync_shutdown_callable(
+                lambda: process.join(timeout=2.0),
+                timeout_s=2.25,
+                name="shadow-process-result-join",
+            )
             try:
                 result = result_queue.get_nowait()
             except (OSError, ConnectionError, TimeoutError, queue.Empty) as exc:
@@ -326,12 +357,39 @@ class ShadowExecutionPhase(Phase):  # type: ignore[misc]
         finally:
             if process is not None and process.is_alive():
                 process.terminate()
-                process.join(timeout=1.0)
+                try:
+                    await run_sync_shutdown_callable(
+                        lambda: process.join(timeout=1.0),
+                        timeout_s=1.25,
+                        name="shadow-process-terminate-join",
+                    )
+                except TimeoutError:
+                    pass
                 if process.is_alive():
                     process.kill()
-                    process.join(timeout=1.0)
+                    try:
+                        await run_sync_shutdown_callable(
+                            lambda: process.join(timeout=1.0),
+                            timeout_s=1.25,
+                            name="shadow-process-kill-join",
+                        )
+                    except TimeoutError:
+                        pass
+            queue_cleanup_complete = False
             try:
                 result_queue.close()
-                result_queue.join_thread()
-            except (AttributeError, OSError, RuntimeError, ValueError):
+                await run_sync_shutdown_callable(
+                    result_queue.join_thread,
+                    timeout_s=1.0,
+                    name="shadow-result-queue-close",
+                )
+                queue_cleanup_complete = True
+            except (AttributeError, OSError, RuntimeError, ValueError, TimeoutError):
                 pass
+            if queue_cleanup_complete:
+                try:
+                    from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                    get_runtime_hygiene().unregister_shutdown_resource(result_queue)
+                except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                    pass

@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING
 
 from core.bus.actor_bus import BusDegraded
 from core.runtime.errors import record_degradation
+from core.runtime.shutdown_coordinator import request_shutdown
+from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.utils.exceptions import capture_and_log
+from core.utils.task_tracker import (
+    begin_shutdown_task_creation_scope,
+    end_shutdown_task_creation_scope,
+)
 
 if TYPE_CHECKING:
     from core.orchestrator.main import RobustOrchestrator
@@ -44,12 +50,15 @@ async def _gracefully_stop_actor_via_bus(
         stop_actor = getattr(supervisor, "stop_actor", None)
         if not callable(stop_actor):
             return False
-        await asyncio.to_thread(
-            stop_actor,
-            actor_name,
-            graceful_timeout=stop_budget_s,
-            terminate_timeout=3.0,
-            kill_timeout=2.0,
+        await run_sync_shutdown_callable(
+            lambda: stop_actor(
+                actor_name,
+                graceful_timeout=stop_budget_s,
+                terminate_timeout=3.0,
+                kill_timeout=2.0,
+            ),
+            timeout_s=stop_budget_s + 5.5,
+            name=f"actor-stop:{actor_name}",
         )
         return True
 
@@ -132,12 +141,15 @@ async def _gracefully_stop_actor_via_bus(
 
     stop_actor = getattr(supervisor, "stop_actor", None)
     if callable(stop_actor):
-        await asyncio.to_thread(
-            stop_actor,
-            actor_name,
-            graceful_timeout=stop_budget_s,
-            terminate_timeout=1.0,
-            kill_timeout=1.0,
+        await run_sync_shutdown_callable(
+            lambda: stop_actor(
+                actor_name,
+                graceful_timeout=stop_budget_s,
+                terminate_timeout=1.0,
+                kill_timeout=1.0,
+            ),
+            timeout_s=stop_budget_s + 2.5,
+            name=f"actor-force-stop:{actor_name}",
         )
         return True
     return False
@@ -147,6 +159,17 @@ async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:
     """Gracefully shut down all orchestrator subsystems in priority order."""
     if hasattr(orch, "status") and not orch.status.running:
         return
+
+    request_shutdown("orchestrator_shutdown")
+    shutdown_scope_token = begin_shutdown_task_creation_scope()
+    try:
+        await _orchestrator_shutdown_impl(orch)
+    finally:
+        end_shutdown_task_creation_scope(shutdown_scope_token)
+
+
+async def _orchestrator_shutdown_impl(orch: RobustOrchestrator) -> None:
+    """Execute teardown under task-only shutdown authority."""
 
     stack = inspect.stack()
     stack_str = "\n".join([f"  {s.filename}:{s.lineno} in {s.function}" for s in stack[:8]])
@@ -362,7 +385,11 @@ async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:
     if sensory and hasattr(sensory, "is_alive") and sensory.is_alive():
         logger.info("🛑 Terminating SensoryGate Actor...")
         sensory.terminate()
-        await asyncio.to_thread(sensory.join, 2.0)
+        await run_sync_shutdown_callable(
+            lambda: sensory.join(2.0),
+            timeout_s=2.5,
+            name="sensory-actor-join",
+        )
         if sensory.is_alive():
             sensory.kill()
 
@@ -398,10 +425,26 @@ async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:
     try:
         from core.container import ServiceContainer
 
-        await asyncio.wait_for(
-            ServiceContainer.shutdown(hook_timeout_s=1.5, total_timeout_s=12.0),
+        container_shutdown_report = await asyncio.wait_for(
+            ServiceContainer.shutdown(
+                hook_timeout_s=1.5,
+                total_timeout_s=12.0,
+                exclude={"runtime_hygiene"},
+            ),
             timeout=14.0,
         )
+        orch._container_shutdown_report = container_shutdown_report
+        if container_shutdown_report.get("clean") is not True:
+            error = RuntimeError(
+                "ServiceContainer shutdown completed with failures: "
+                f"{sorted(container_shutdown_report.get('failed_hooks', {}))[:10]}"
+            )
+            _record_shutdown_degradation(
+                error,
+                action="preserved degraded service-container shutdown evidence",
+                severity="degraded",
+            )
+            logger.error("%s", error)
     except TimeoutError:
         _record_shutdown_degradation(
             TimeoutError("ServiceContainer shutdown timed out"),

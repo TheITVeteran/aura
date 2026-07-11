@@ -253,6 +253,34 @@ def collect_runtime_control_plane_status(
         services=services,
         admission=admission,
     )
+    from core.runtime.shutdown_coordinator import get_shutdown_coordinator
+
+    shutdown = _collect(
+        "shutdown_coordinator",
+        get_shutdown_coordinator().get_status,
+        errors,
+        {"running": False, "request": {"requested": False}, "report": None},
+    )
+    shutdown_request = shutdown.get("request") if isinstance(shutdown, Mapping) else None
+    if (
+        isinstance(shutdown_request, Mapping)
+        and shutdown_request.get("requested") is True
+        and not any(
+            item.get("kind") == "runtime_shutdown"
+            and item.get("subject") == "shutdown_coordinator"
+            for item in blockers
+        )
+    ):
+        blockers.insert(
+            0,
+            {
+                "kind": "runtime_shutdown",
+                "severity": "critical",
+                "subject": "shutdown_coordinator",
+                "reason": "process-wide shutdown latch is set",
+                "remediation": "inspect current phase, active handlers, and remaining phase budget",
+            },
+        )
     critical_blockers = [item for item in blockers if item.get("severity") == "critical"]
     warning_blockers = [item for item in blockers if item.get("severity") == "warning"]
     ready = bool(control_map.get("ready", False)) and not critical_blockers
@@ -287,6 +315,7 @@ def collect_runtime_control_plane_status(
         "blockers": blockers,
         "services": dict(services),
         "admission": dict(admission),
+        "shutdown": shutdown,
         "conditions": conditions,
         "adapters": adapters,
         "reliability_flags": reliability_flags,

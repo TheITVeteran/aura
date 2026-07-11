@@ -32,9 +32,11 @@ import psutil
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.shutdown_coordinator import (
     is_shutdown_requested,
+    record_shutdown_admission_event,
     request_shutdown,
     shutdown_request_snapshot,
 )
+from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Kernel.ProcessManager")
@@ -196,6 +198,12 @@ class ManagedProcess:
     async def start(self) -> bool:
         """Start the process."""
         if is_shutdown_requested():
+            record_shutdown_admission_event(
+                f"process_manager.start:{self.config.name}",
+                resource_kind="multiprocessing",
+                outcome="suppressed",
+                detail="pre_factory",
+            )
             logger.info("Process %s start refused: runtime shutdown requested", self.config.name)
             with self._lock:
                 self.state = ProcessState.STOPPED
@@ -226,17 +234,35 @@ class ManagedProcess:
                 self.process = process
 
             if is_shutdown_requested():
+                record_shutdown_admission_event(
+                    f"process_manager.start:{self.config.name}",
+                    resource_kind="multiprocessing",
+                    outcome="suppressed",
+                    detail="pre_start",
+                )
                 with self._lock:
                     self.state = ProcessState.STOPPED
                 return False
 
             process.start()
             if is_shutdown_requested():
+                record_shutdown_admission_event(
+                    f"process_manager.start:{self.config.name}",
+                    resource_kind="multiprocessing",
+                    outcome="crossed",
+                    detail=f"pid={process.pid}",
+                )
                 logger.info(
                     "Process %s crossed the shutdown boundary during spawn; stopping it",
                     self.config.name,
                 )
-                await self.stop_async(force=True, timeout_s=1.0)
+                reaped = await self.stop_async(force=True, timeout_s=1.0)
+                record_shutdown_admission_event(
+                    f"process_manager.start:{self.config.name}",
+                    resource_kind="multiprocessing",
+                    outcome="reaped" if reaped else "survived",
+                    detail=f"pid={process.pid}",
+                )
                 return False
 
             start_time = time.monotonic()
@@ -277,6 +303,15 @@ class ManagedProcess:
             return False
 
         except _PROCESS_RECOVERABLE_ERRORS as exc:
+            if is_shutdown_requested():
+                with self._lock:
+                    self.state = ProcessState.STOPPED
+                logger.info(
+                    "Process %s start cancelled at shutdown boundary: %s",
+                    self.config.name,
+                    exc,
+                )
+                return False
             _record_process_degradation(
                 exc,
                 action="marked process failed after startup exception",
@@ -337,10 +372,20 @@ class ManagedProcess:
         """Stop health ownership and the child without blocking the event loop."""
 
         await self._stop_health_monitoring()
-        return await asyncio.to_thread(
-            self._stop_process_blocking,
-            force=force,
-            timeout_s=timeout_s,
+        return await run_sync_shutdown_callable(
+            lambda: self._stop_process_blocking(
+                force=force,
+                timeout_s=timeout_s,
+            ),
+            timeout_s=max(
+                0.1,
+                float(
+                    timeout_s
+                    if timeout_s is not None
+                    else self.config.shutdown_timeout + 2.0
+                ),
+            ),
+            name=f"managed-process:{self.config.name}",
         )
 
     def _stop_process_blocking(
@@ -986,9 +1031,10 @@ class ProcessManager:
         self.shutdown_event.set()
         if self._cleanup_complete.is_set():
             return dict(self._last_cleanup_summary)
-        return await asyncio.wait_for(
-            asyncio.to_thread(self.cleanup, timeout_s=self.cleanup_timeout_s),
-            timeout=self.cleanup_timeout_s + 1.0,
+        return await run_sync_shutdown_callable(
+            lambda: self.cleanup(timeout_s=self.cleanup_timeout_s),
+            timeout_s=self.cleanup_timeout_s + 1.0,
+            name="process-manager",
         )
 
     def cleanup(self, *, timeout_s: float | None = None) -> dict[str, Any]:

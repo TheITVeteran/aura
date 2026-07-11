@@ -10495,3 +10495,101 @@ Remaining shutdown work:
 - After those bounded requirements are green, continue `CTX2-LANE-001..004` and
   the remaining ownership migration. Do not start another final long soak until
   all shorter requirements are green.
+
+## Checkpoint 2026-07-10-29: Auditable Shutdown Verdict And Global Final Sweep
+
+Implemented in this checkpoint:
+
+- Extended `ShutdownCoordinator` from a phase runner into an operator-visible
+  shutdown control plane. Live status now names the current phase, active
+  handlers, per-handler state and duration, elapsed/remaining phase budget,
+  repeated requests, admission outcomes, and escalation history. Synchronous
+  handlers execute on bounded daemon teardown workers so a timed-out callback
+  degrades the verdict without pinning Python's default executor or process exit.
+- Added a process-wide bounded shutdown-admission ledger for suppressed,
+  crossed, reaped, survived, and explicitly allowed read-only work. Raw
+  `asyncio` tasks, threads, `subprocess.Popen`, and multiprocessing starts now
+  enforce the latch at their common creation boundaries. Effectful and live
+  process-handle creation remains forbidden; the only subprocess exception is a
+  bounded, attributable, read-only probe that completes before returning.
+- Split teardown-task authority from teardown-resource authority. Cleanup tasks
+  can use structured `wait_for`/gather children without granting their code a
+  general bypass to start threads or processes. The much narrower resource
+  capability exists only while the canonical bounded teardown worker itself is
+  being created.
+- Added generic reverse-order ownership for listeners, sockets, queues, and
+  other non-process resources, with required/optional classification, per-owner
+  and total budgets, two race-catching snapshots, closed final admission, and
+  explicit residual evidence. MLX text/vision queues, the sensory sidecar,
+  shadow validation, and the cognitive-daemon Unix listener now register and
+  unregister through that owner. Queue close/join is bounded and ownership is
+  released only after cleanup actually finishes.
+- Rebuilt `TaskTracker.shutdown()` as a total bounded ordinary/protected sweep
+  with cross-loop cancellation, surviving-task evidence, and preservation of
+  only active teardown owners. The final verdict takes a second live-task
+  snapshot after coordinator/container completion so an unrelated task cannot
+  hide behind the finalizer exemption.
+- Made `ServiceContainer.shutdown()` machine-reporting and replayable. It chooses
+  one canonical stop hook per service, runs sync hooks off-loop with hard
+  budgets, names every failure/skipped service, preserves failures across
+  repeated passes, and aggregates completed/deferred owners. Orchestrator
+  teardown now defers `runtime_hygiene`; only the root finalizer runs the final
+  task/thread/process/resource/socket sweep after API and later shutdown phases
+  have finished.
+- Added atomic `aura.shutdown_verdict.v1` evidence at
+  `~/.aura/run/shutdown_report.json` plus bounded per-process history. A final
+  clean verdict now requires clean coordinator, container, runtime-hygiene,
+  admission, and post-finalizer task evidence; missing evidence fails closed.
+- Kept shutdown forensics on the canonical effect spine instead of ratcheting in
+  new direct writes. `shutdown_artifact_store.py` is the narrow low-level owner
+  that remains available after ordinary governance teardown; daemon socket
+  cleanup now has one owner. The reviewed ownership baseline decreased from
+  `1,693` to `1,689` migration-debt calls.
+- Projected the complete shutdown state through diagnostics and the runtime
+  operator control plane. Container and runtime-hygiene failures survive
+  repeated cleanup calls instead of being erased by a later empty pass.
+- Closed indefinite owner waits in vision inference and sensory IPC. Vision
+  request queue admission and inference have explicit deadlines and pending-map
+  cleanup; a crashed/timed-out worker is stopped. Sensory `queue.Empty` now
+  finalizes its task receipt as failed instead of leaking a perpetual RUNNING
+  receipt.
+
+Verification on current `main` source (no model load):
+
+- Consolidated shutdown, graceful coordinator, runtime hygiene, task ownership,
+  subprocess, process manager, MLX, shadow kernel, builder, supervisor, health,
+  operator, and reliability contracts -> `315 passed in 19.54s`.
+- Full container suites -> `25 passed in 2.09s`; focused
+  container/enterprise shutdown slice -> `29 passed, 104 deselected in 2.80s`.
+- Focused shutdown/subprocess/process/operator contracts during development ->
+  `67 passed`; queue, MLX, shadow, process, and subprocess boundaries ->
+  `88 passed`; subprocess gateway including the installed global resource fence
+  -> `32 passed`.
+- Strict target-isolated MyPy (`--follow-imports=skip`) over `12` typed shutdown,
+  daemon, process, sidecar, gateway, shadow, orchestrator, and operator modules ->
+  no issues. Full Ruff over all non-legacy touched files, bounded
+  `F,E9,B904` Ruff over legacy `mlx_client.py`, py-compile, and diff whitespace
+  checks -> passed.
+- Governance ownership ratchet -> matched: `1,798` recognized calls in `1,691`
+  buckets, `1,689` calls remain migration debt; this checkpoint added no
+  unreviewed distributed-effect allowance.
+- A full-import MyPy traversal remains a separate repository-wide debt surface:
+  the current strict configuration traversed `890` imported files and reported
+  `9,050` pre-existing errors. This checkpoint does not mislabel that wider
+  semantic/type migration as closed.
+
+Remaining shutdown closure work:
+
+- Run the bounded current-tree live signal matrix now that the operator soak is
+  deferred: inject first and repeated SIGINT/SIGTERM during boot, model warmup,
+  lane recovery, foreground action, persistence, and active shutdown phases.
+  For each case verify the durable final artifact, process tree, listener/port,
+  singleton lock, completion receipts, and no post-latch worker resurrection.
+- Use those runs to finish the explicit non-process owner inventory for any live
+  listener, timer, native handle, file lock, or thread absent from the generic
+  registry/final sweep. A global fence and residual detector are not substitutes
+  for canonical owner registration.
+- Keep item 32 `IN PROGRESS` until the live matrix is green. Then continue atomic
+  lane reservations and eviction/accounting/receipt closure
+  (`CTX2-LANE-001..004`). The multi-hour and 24-72 hour final soaks remain
+  deferred until every shorter bounded/live gate is green.

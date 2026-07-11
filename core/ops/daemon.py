@@ -17,8 +17,10 @@ from typing import Any, cast
 from core.runtime.atomic_writer import async_atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import (
+    ShutdownReport,
     get_shutdown_coordinator,
     is_shutdown_requested,
+    publish_shutdown_verdict,
     request_shutdown,
 )
 from core.utils.task_tracker import get_task_tracker
@@ -27,6 +29,10 @@ logger = logging.getLogger("Aura.Daemon")
 
 DAEMON_SOCKET = Path.home() / ".aura" / "sockets" / "cognitive.sock"
 DAEMON_PID_FILE = Path.home() / ".aura" / "run" / "aura_daemon.pid"
+
+
+def _unlink_daemon_socket() -> None:
+    DAEMON_SOCKET.unlink(missing_ok=True)
 
 
 class CognitiveDaemon:
@@ -125,6 +131,12 @@ class CognitiveDaemon:
                 try:
                     socket_server.close()
                     await socket_server.wait_closed()
+                    try:
+                        from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                        get_runtime_hygiene().unregister_shutdown_resource(socket_server)
+                    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                        pass
                 except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                     record_degradation("daemon", exc)
                     logger.error("Daemon socket shutdown failed: %s", exc)
@@ -139,7 +151,7 @@ class CognitiveDaemon:
 
             try:
                 DAEMON_PID_FILE.unlink(missing_ok=True)
-                DAEMON_SOCKET.unlink(missing_ok=True)
+                _unlink_daemon_socket()
             except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
                 record_degradation("daemon", exc)
                 logger.debug("Daemon endpoint cleanup failed: %s", exc)
@@ -153,7 +165,7 @@ class CognitiveDaemon:
             raise RuntimeError("runtime_shutdown")
         DAEMON_SOCKET.parent.mkdir(parents=True, exist_ok=True)
         DAEMON_SOCKET.parent.chmod(0o700)  # Only owner can access
-        DAEMON_SOCKET.unlink(missing_ok=True)
+        _unlink_daemon_socket()
         server = await asyncio.start_unix_server(
             self._handle_api_connection,
             path=str(DAEMON_SOCKET),
@@ -161,9 +173,27 @@ class CognitiveDaemon:
         if is_shutdown_requested():
             server.close()
             await server.wait_closed()
-            DAEMON_SOCKET.unlink(missing_ok=True)
+            _unlink_daemon_socket()
             raise RuntimeError("runtime_shutdown")
         self._socket_server = server
+        try:
+            from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+            get_runtime_hygiene().register_shutdown_resource(
+                server,
+                kind="unix_listener",
+                name="cognitive_daemon.socket",
+                source="core.ops.daemon",
+                timeout_s=2.0,
+            )
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            if is_shutdown_requested():
+                server.close()
+                await server.wait_closed()
+                self._socket_server = None
+                raise RuntimeError("runtime_shutdown") from None
+            record_degradation("daemon", exc)
+            logger.warning("Daemon socket ownership registration failed: %s", exc)
         # SEC-03: Restrict socket permissions to owner only
         os.chmod(str(DAEMON_SOCKET), 0o600)
 
@@ -229,9 +259,8 @@ class WorldFeed:
         if is_shutdown_requested():
             return
         self._running = True
-        self._task = cast(
-            asyncio.Task[Any],
-            get_task_tracker().create_task(self._feed_loop(), name="cognitive_daemon.world_feed"),
+        self._task = get_task_tracker().create_task(
+            self._feed_loop(), name="cognitive_daemon.world_feed"
         )
 
     async def stop(self) -> None:
@@ -281,22 +310,77 @@ class WorldFeed:
         )
 
 
+async def _coordinate_daemon_shutdown(reason: str) -> ShutdownReport:
+    """Finish the full phase graph before the standalone event loop can exit."""
+
+    request_shutdown(reason)
+    report = await get_shutdown_coordinator().shutdown()
+    container_report: dict[str, object] | None = None
+    try:
+        from core.container import get_container
+
+        result = await get_container().shutdown()
+        container_report = (
+            dict(result)
+            if isinstance(result, dict)
+            else {"clean": True, "legacy_result": repr(result)}
+        )
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+        record_degradation("daemon", exc)
+        logger.error("Standalone daemon container shutdown failed: %s", exc)
+
+    runtime_hygiene_report = None
+    try:
+        from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+        runtime_hygiene_report = get_runtime_hygiene().get_shutdown_report()
+    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        record_degradation("daemon", exc)
+        logger.error("Standalone daemon runtime hygiene report unavailable: %s", exc)
+    try:
+        publish_shutdown_verdict(
+            coordinator_report=report,
+            container_report=container_report,
+            runtime_hygiene_report=runtime_hygiene_report,
+            stage="cognitive_daemon_complete",
+            final=True,
+        )
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("daemon", exc)
+        logger.error("Standalone daemon final shutdown verdict failed: %s", exc)
+    return report
+
+
 async def main() -> None:
     daemon = CognitiveDaemon()
     loop = asyncio.get_running_loop()
+    shutdown_task: asyncio.Task[ShutdownReport] | None = None
 
     def _request_stop(sig: signal.Signals) -> None:
+        nonlocal shutdown_task
         request_shutdown(f"cognitive_daemon_signal:{sig.name}")
-        get_task_tracker().create_task(
-            get_shutdown_coordinator().shutdown(timeout_per_phase=8.0),
-            name=f"cognitive_daemon.coordinated_shutdown.{sig.name}",
-            allow_during_shutdown=True,
-        )
+        if shutdown_task is None or shutdown_task.done():
+            shutdown_task = cast(
+                asyncio.Task[ShutdownReport],
+                get_task_tracker().create_task(
+                    _coordinate_daemon_shutdown(
+                        f"cognitive_daemon_signal:{sig.name}"
+                    ),
+                    name=f"cognitive_daemon.coordinated_shutdown.{sig.name}",
+                    allow_during_shutdown=True,
+                ),
+            )
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, partial(_request_stop, sig))
-    await daemon.start()
-    await daemon.run()
+    try:
+        await daemon.start()
+        await daemon.run()
+    finally:
+        if shutdown_task is not None:
+            await asyncio.shield(shutdown_task)
+        elif is_shutdown_requested():
+            await _coordinate_daemon_shutdown("cognitive_daemon_run_exit")
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from core.runtime import subprocess_gateway
+from core.runtime import shutdown_coordinator, subprocess_gateway
 from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -108,6 +108,48 @@ def test_shutdown_latch_allows_explicit_read_only_probe(
 
     assert result.returncode == 0
     assert result.stdout.strip() == "probe-ok"
+
+
+def test_shutdown_latch_never_allows_live_process_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    request_shutdown("unit-test")
+
+    with pytest.raises(subprocess_gateway.GovernanceViolation, match="runtime shutdown"):
+        subprocess_gateway.SubprocessGateway().spawn(
+            [sys.executable, "-c", "print('must-not-run')"],
+            read_only=True,
+            allow_during_shutdown=True,
+            source="test.subprocess_gateway.shutdown_live_handle",
+        )
+
+
+@pytest.mark.asyncio
+async def test_global_resource_fence_allows_only_bounded_read_only_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.runtime.runtime_hygiene import RuntimeHygieneManager
+
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    hygiene = RuntimeHygieneManager()
+    await hygiene.start(asyncio.get_running_loop())
+    request_shutdown("unit-test")
+
+    result = await subprocess_gateway.SubprocessGateway().run_async(
+        [sys.executable, "-c", "print('bounded-probe-ok')"],
+        timeout=5,
+        read_only=True,
+        allow_during_shutdown=True,
+        source="test.subprocess_gateway.shutdown_bounded_probe",
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "bounded-probe-ok"
+    assert shutdown_coordinator.shutdown_admission_snapshot()["counts"][
+        "allowed_read_only"
+    ] >= 1
+    await hygiene.stop()
 
 
 def test_shutdown_latch_never_allows_effectful_offline_tooling_override(

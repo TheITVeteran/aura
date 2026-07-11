@@ -1994,11 +1994,19 @@
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
+      "canonical_owner": true,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/runtime/shutdown_coordinator.py",
-      "scope": "<module>.request_shutdown"
+      "path": "core/runtime/shutdown_artifact_store.py",
+      "scope": "<module>.write_shutdown_artifact"
+    },
+    {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/shutdown_artifact_store.py",
+      "scope": "<module>.write_shutdown_artifact"
     },
     {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
@@ -6705,12 +6713,12 @@
       "scope": "<module>._verify"
     },
     {
-      "callee": "out_path.mkdir",
+      "callee": "path.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/capabilities/self_taught_builder.py",
-      "scope": "<module>.build_app_verified"
+      "scope": "<module>._prepare_output_directory"
     },
     {
       "callee": "tmp.unlink",
@@ -8945,14 +8953,6 @@
       "scope": "<module>.CognitiveDaemon._start_socket_server"
     },
     {
-      "callee": "DAEMON_SOCKET.unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/ops/daemon.py",
-      "scope": "<module>.CognitiveDaemon._start_socket_server"
-    },
-    {
       "callee": "os.chmod",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -8974,7 +8974,7 @@
       "category": "raw_file_mutation",
       "count": 1,
       "path": "core/ops/daemon.py",
-      "scope": "<module>.CognitiveDaemon.stop"
+      "scope": "<module>._unlink_daemon_socket"
     },
     {
       "callee": "victim.unlink",
@@ -9465,7 +9465,7 @@
       "scope": "<module>.StallWatchdog._drain_stall_dump_backlog"
     },
     {
-      "callee": "<pathlib.Path>.mkdir",
+      "callee": "crash_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -9489,7 +9489,7 @@
       "scope": "<module>.StallWatchdog._prune_stall_dumps"
     },
     {
-      "callee": "<pathlib.Path>.mkdir",
+      "callee": "dump_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
       "count": 1,
@@ -10201,12 +10201,20 @@
       "scope": "<module>.runtime_write_text"
     },
     {
-      "callee": "grace_file.parent.mkdir",
-      "canonical_owner": false,
+      "callee": "target.unlink",
+      "canonical_owner": true,
       "category": "raw_file_mutation",
       "count": 1,
-      "path": "core/runtime/shutdown_coordinator.py",
-      "scope": "<module>.request_shutdown"
+      "path": "core/runtime/shutdown_artifact_store.py",
+      "scope": "<module>.delete_shutdown_artifact"
+    },
+    {
+      "callee": "parent.chmod",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/shutdown_artifact_store.py",
+      "scope": "<module>.write_shutdown_artifact"
     },
     {
       "callee": "os.open",
@@ -12249,14 +12257,6 @@
       "scope": "<module>.SovereignNetworkSkill._check_internet"
     },
     {
-      "callee": "asyncio.create_subprocess_exec",
-      "canonical_owner": false,
-      "category": "raw_subprocess",
-      "count": 1,
-      "path": "core/capabilities/self_taught_builder.py",
-      "scope": "<module>._functional_test"
-    },
-    {
       "callee": "multiprocessing.Process",
       "canonical_owner": false,
       "category": "raw_subprocess",
@@ -13530,6 +13530,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "918916566af8bfd71af45573210cbc7d7866fce2af9c5a27c40f2c76323107a6",
+  "inventory_sha256": "5f49275a6cee9f4a5e411d14bfd8b24180f83f9b194dbdb99d5eade2b3e40e1b",
   "schema_version": 1
 }

@@ -2847,9 +2847,14 @@ def test_runtime_boot_noise_regressions_are_closed():
     assert "return await self.process_dreams()" in dream_cycle_source
     assert "async def engage_sleep_cycle_async(self)" in dreamer_source
     assert "return await self.engage_sleep_cycle()" in dreamer_source
-    assert "async def shutdown(cls, *, hook_timeout_s: float = 1.5, total_timeout_s: float = 12.0)" in container_source
+    assert "async def shutdown(" in container_source
+    assert "hook_timeout_s: float = 1.5" in container_source
+    assert "total_timeout_s: float = 12.0" in container_source
+    assert "-> dict[str, Any]:" in container_source
+    assert "failed_hooks" in container_source
     assert "bounded {hook_name} timeout" in container_source
-    assert "ServiceContainer.shutdown(hook_timeout_s=1.5, total_timeout_s=12.0)" in shutdown_source
+    assert "ServiceContainer.shutdown(" in shutdown_source
+    assert 'exclude={"runtime_hygiene"}' in shutdown_source
 
 
 def test_proof_ablation_guard_blocks_only_proof_runs(monkeypatch: pytest.MonkeyPatch):

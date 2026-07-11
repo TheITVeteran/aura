@@ -8,7 +8,7 @@ import logging
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
@@ -22,6 +22,7 @@ from core.exceptions import (
 from core.health.degraded_events import record_degraded_event
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.utils.concurrency import RobustLock
 
 logger = logging.getLogger("Aura.Container")
@@ -240,6 +241,7 @@ class ServiceContainer:
     _init_locks: dict[str, threading.Lock] = {}
     _last_seal_hash: str | None = None
     _optional_absent_breadcrumbs: set[str] = set()
+    _shutdown_reports: list[dict[str, Any]] = []
 
     def __new__(cls):
         with cls._lock:
@@ -261,6 +263,37 @@ class ServiceContainer:
                     else:
                         statuses[name] = "optional_missing"
             return statuses
+
+    @classmethod
+    def _assert_runtime_registration_allowed(cls, name: str) -> None:
+        try:
+            from core.runtime.shutdown_coordinator import (
+                is_shutdown_requested,
+                record_shutdown_admission_event,
+            )
+
+            if not is_shutdown_requested():
+                return
+            record_shutdown_admission_event(
+                f"service_container.register:{name}",
+                resource_kind="service",
+                outcome="suppressed",
+                detail="shutdown_latch",
+            )
+            raise ContainerError(
+                f"runtime shutdown is active: cannot register service '{name}'"
+            )
+        except ImportError:
+            return
+
+    @classmethod
+    def _begin_new_lifecycle_epoch_if_needed(cls) -> None:
+        with cls._lock:
+            if cls._shutdown_reports and not any(
+                descriptor.instance is not None
+                for descriptor in cls._services.values()
+            ):
+                cls._shutdown_reports.clear()
             
     @classmethod
     def register(
@@ -276,6 +309,8 @@ class ServiceContainer:
         failure_policy: str | None = None,
     ):
         """Register a service factory."""
+        cls._assert_runtime_registration_allowed(name)
+        cls._begin_new_lifecycle_epoch_if_needed()
         if cls._registration_locked:
             raise ContainerError(f"Registration locked: Cannot register '{name}'")
         if isinstance(lifetime, str):
@@ -370,6 +405,8 @@ class ServiceContainer:
         subsystems that boot asynchronously (final_engines, affective_circumplex,
         architecture_index, etc.) can complete their setup without crashing.
         """
+        cls._assert_runtime_registration_allowed(name)
+        cls._begin_new_lifecycle_epoch_if_needed()
         with cls._lock:
             resolved_name = cls._resolve_name(name)
             desc = cls._services.get(resolved_name)
@@ -453,6 +490,7 @@ class ServiceContainer:
     @classmethod
     def register_alias(cls, alias: str, target: str) -> None:
         """Register a legacy service alias that resolves to another service name."""
+        cls._assert_runtime_registration_allowed(alias)
         if cls._registration_locked:
             raise ContainerError(f"Registration locked: Cannot register alias '{alias}'")
         with cls._lock:
@@ -473,6 +511,7 @@ class ServiceContainer:
             cls._aliases.clear()
             cls._init_locks.clear()
             cls._optional_absent_breadcrumbs.clear()
+            cls._shutdown_reports.clear()
             cls._registration_locked = False
             cls._start_time = None
         cls._resolving_var.set(frozenset())
@@ -752,29 +791,51 @@ class ServiceContainer:
                 cls._wake_lock.release()
 
     @classmethod
-    async def shutdown(cls, *, hook_timeout_s: float = 1.5, total_timeout_s: float = 12.0) -> None:
-        """Cleanup all singleton services in reverse order with bounded hooks."""
+    async def shutdown(
+        cls,
+        *,
+        hook_timeout_s: float = 1.5,
+        total_timeout_s: float = 12.0,
+        exclude: Collection[str] | None = None,
+    ) -> dict[str, Any]:
+        """Cleanup singleton services in reverse order and return durable evidence."""
         def _resolve_hook(instance: Any, hook_name: str) -> Callable[..., Any] | None:
             return _callable_attr(instance, hook_name)
 
-        async def _await_bounded(
+        async def _invoke_bounded(
             name: str,
             hook_name: str,
-            result: Any,
+            hook: Callable[..., Any],
             remaining: float,
             *,
             hook_timeout_override_s: float | None = None,
-        ) -> None:
-            if not inspect.isawaitable(result):
-                if result is not None:
-                    logger.debug("%s for %s returned non-awaitable %r", hook_name, name, type(result).__name__)
-                return
+        ) -> str | None:
             effective_hook_timeout_s = hook_timeout_s
             if hook_timeout_override_s is not None:
                 effective_hook_timeout_s = max(float(hook_timeout_override_s), float(hook_timeout_s))
             timeout_s = max(0.05, min(float(effective_hook_timeout_s), remaining))
+            started = time.monotonic()
+            from core.utils.task_tracker import (
+                begin_shutdown_task_creation_scope,
+                end_shutdown_task_creation_scope,
+            )
+
+            shutdown_scope_token = begin_shutdown_task_creation_scope()
             try:
-                await asyncio.wait_for(result, timeout=timeout_s)
+                if inspect.iscoroutinefunction(hook):
+                    result = hook()
+                else:
+                    result = await run_sync_shutdown_callable(
+                        hook,
+                        timeout_s=timeout_s,
+                        name=f"container:{name}:{hook_name}",
+                    )
+                if inspect.isawaitable(result):
+                    awaitable_budget = max(
+                        0.05,
+                        min(timeout_s - (time.monotonic() - started), remaining),
+                    )
+                    await asyncio.wait_for(result, timeout=awaitable_budget)
             except TimeoutError as exc:
                 record_degradation(
                     "container",
@@ -783,10 +844,23 @@ class ServiceContainer:
                     severity="degraded",
                 )
                 logger.warning("%s timed out for %s after %.2fs", hook_name, name, timeout_s)
+                return f"timeout_after_{timeout_s:.3f}s"
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - final service teardown boundary
+                record_degradation('container', exc)
+                logger.error("%s failed for %s: %s", hook_name, name, exc)
+                return repr(exc)
+            finally:
+                end_shutdown_task_creation_scope(shutdown_scope_token)
+            return None
 
+        excluded = {str(name) for name in (exclude or ())}
         with cls._lock:
             names = list(reversed(list(cls._services.keys())))
-            descriptors = [(n, cls._services.get(n)) for n in names]
+            descriptors = [
+                (n, cls._services.get(n)) for n in names if n not in excluded
+            ]
             # Runtime hygiene observes threads/processes owned by other
             # services. Stop it after owners have had their own shutdown hooks
             # so it audits true leftovers instead of racing live subsystems.
@@ -799,7 +873,10 @@ class ServiceContainer:
                 ] + runtime_hygiene_descriptors
 
         shutdown_started = time.monotonic()
-        for name, desc in descriptors:
+        completed_services: list[str] = []
+        failures: dict[str, str] = {}
+        skipped_services: list[str] = []
+        for descriptor_index, (name, desc) in enumerate(descriptors):
             if not desc or not desc.instance:
                 continue
             remaining_total = total_timeout_s - (time.monotonic() - shutdown_started)
@@ -811,6 +888,11 @@ class ServiceContainer:
                     severity="degraded",
                 )
                 logger.warning("ServiceContainer shutdown budget exhausted; remaining services left cold by process exit.")
+                skipped_services.extend(
+                    pending_name
+                    for pending_name, pending_desc in descriptors[descriptor_index:]
+                    if pending_desc is not None and pending_desc.instance is not None
+                )
                 break
             instance = desc.instance
             service_shutdown_timeout_s = hook_timeout_s
@@ -820,46 +902,91 @@ class ServiceContainer:
                     service_shutdown_timeout_s = max(float(timeout_attr), float(hook_timeout_s))
                 except (TypeError, ValueError):
                     service_shutdown_timeout_s = hook_timeout_s
-            
-            # Async stop
-            hook = _resolve_hook(instance, "on_stop_async")
-            if hook is not None:
-                try:
-                    result = hook()
-                    await _await_bounded(
+            service_failed = False
+            selected_hook: tuple[str, Callable[..., Any]] | None = None
+            for candidate_name in ("on_stop_async", "on_stop", "cleanup"):
+                candidate = _resolve_hook(instance, candidate_name)
+                if candidate is not None:
+                    selected_hook = (candidate_name, candidate)
+                    break
+            if selected_hook is not None:
+                hook_name, hook_fn = selected_hook
+                remaining_total = total_timeout_s - (
+                    time.monotonic() - shutdown_started
+                )
+                failure: str | None
+                if remaining_total <= 0:
+                    failure = "container_total_budget_exhausted"
+                else:
+                    failure = await _invoke_bounded(
                         name,
-                        "on_stop_async",
-                        result,
+                        hook_name,
+                        hook_fn,
                         remaining_total,
                         hook_timeout_override_s=service_shutdown_timeout_s,
                     )
-                except _SERVICE_INIT_ERRORS as e:
-                    record_degradation('container', e)
-                    logger.error("on_stop_async failed for %s: %s", name, e)
-            
-            # Sync stop
-            for hook in ("on_stop", "cleanup"):
-                hook_fn = _resolve_hook(instance, hook)
-                if hook_fn is not None:
-                    try:
-                        result = hook_fn()
-                        remaining_total = total_timeout_s - (time.monotonic() - shutdown_started)
-                        if remaining_total <= 0:
-                            break
-                        await _await_bounded(
-                            name,
-                            hook,
-                            result,
-                            remaining_total,
-                            hook_timeout_override_s=service_shutdown_timeout_s,
-                        )
-                    except _SERVICE_INIT_ERRORS as e:
-                        record_degradation('container', e)
-                        logger.error("%s failed for %s: %s", hook, name, e)
-            
+                if failure is not None:
+                    failures[f"{name}:{hook_name}"] = failure
+                    service_failed = True
+
             desc.instance = None
             desc.initialized = False
             desc._async_initialized = False
+            if not service_failed:
+                completed_services.append(name)
+
+        for name in skipped_services:
+            failures.setdefault(f"{name}:container", "container_total_budget_exhausted")
+        current_report: dict[str, Any] = {
+            "clean": not failures,
+            "completed_services": completed_services,
+            "failed_hooks": failures,
+            "skipped_services": skipped_services,
+            "excluded_services": sorted(excluded),
+            "duration_seconds": round(time.monotonic() - shutdown_started, 6),
+            "total_timeout_seconds": float(total_timeout_s),
+            "hook_timeout_seconds": float(hook_timeout_s),
+        }
+        with cls._lock:
+            cls._shutdown_reports.append(dict(current_report))
+            cls._shutdown_reports = cls._shutdown_reports[-8:]
+            reports = list(cls._shutdown_reports)
+        aggregate_failures: dict[str, str] = {}
+        aggregate_skipped: list[str] = []
+        aggregate_completed: list[str] = []
+        aggregate_deferred: list[str] = []
+        for report in reports:
+            aggregate_failures.update(
+                {
+                    str(key): str(value)
+                    for key, value in dict(report.get("failed_hooks", {})).items()
+                }
+            )
+            aggregate_skipped.extend(
+                str(name) for name in report.get("skipped_services", [])
+            )
+            aggregate_completed.extend(
+                str(name) for name in report.get("completed_services", [])
+            )
+            aggregate_deferred.extend(
+                str(name) for name in report.get("excluded_services", [])
+            )
+        current_report["clean"] = not aggregate_failures
+        current_report["failed_hooks"] = aggregate_failures
+        current_report["skipped_services"] = sorted(set(aggregate_skipped))
+        current_report["completed_services"] = sorted(set(aggregate_completed))
+        current_report["deferred_services"] = sorted(set(aggregate_deferred))
+        current_report["shutdown_pass_count"] = len(reports)
+        with cls._lock:
+            cls._shutdown_reports[-1] = dict(current_report)
+        return current_report
+
+    @classmethod
+    def get_shutdown_report(cls) -> dict[str, Any] | None:
+        with cls._lock:
+            if not cls._shutdown_reports:
+                return None
+            return dict(cls._shutdown_reports[-1])
 
     @classmethod
     def get_health_report(cls) -> dict[str, Any]:

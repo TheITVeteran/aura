@@ -115,3 +115,25 @@ def test_operator_cli_uses_shared_control_plane_report(monkeypatch):
         "ok": True,
         "report": {"schema": SCHEMA, "ready": True, "status": "healthy"},
     }
+
+
+def test_operator_report_projects_shutdown_phase_and_admission(tmp_path):
+    from core.runtime.shutdown_coordinator import request_shutdown
+
+    store = ReceiptStore(tmp_path / "receipts")
+    plane = RuntimeControlPlane(admission=_admission(store))
+    request_shutdown("operator-report-test")
+
+    report = collect_runtime_control_plane_status(
+        plane=plane,
+        receipt_store=store,
+    )
+
+    assert report["status"] == "blocked"
+    assert report["ready"] is False
+    assert report["shutdown"]["request"]["first_reason"] == "operator-report-test"
+    blocker = next(
+        item for item in report["blockers"] if item["kind"] == "runtime_shutdown"
+    )
+    assert blocker["subject"] == "shutdown_coordinator"
+    store.close()

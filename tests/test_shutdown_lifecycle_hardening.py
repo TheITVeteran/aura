@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import signal
 from types import SimpleNamespace
 
@@ -52,6 +53,8 @@ async def test_shutdown_coordinator_concurrent_and_repeated_calls_run_handlers_o
     status = coordinator.get_status()
     assert status["running"] is True
     assert status["report"]["current_phase"] == "actors"
+    assert status["progress"]["active_handlers"] == ["actors:single-owner"]
+    assert status["progress"]["phase_remaining_seconds"] > 0
 
     second = asyncio.create_task(coordinator.shutdown(timeout_per_phase=1.0))
     await asyncio.sleep(0)
@@ -441,3 +444,438 @@ async def test_cognitive_daemon_reaps_socket_created_across_shutdown_boundary(
     assert server.closed is True
     assert server.waited is True
     assert daemon._socket_server is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_verdict_is_atomic_and_distinguishes_interim_from_final(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    target = tmp_path / "shutdown_report.json"
+    monkeypatch.setenv("AURA_SHUTDOWN_REPORT_PATH", str(target))
+    coordinator = shutdown_coordinator.ShutdownCoordinator(phases=("actors",))
+
+    report = await coordinator.shutdown()
+    interim = json.loads(target.read_text(encoding="utf-8"))
+    final = shutdown_coordinator.publish_shutdown_verdict(
+        coordinator_report=report,
+        container_report={"clean": True},
+        runtime_hygiene_report={"clean": True},
+        stage="unit_test_complete",
+        final=True,
+    )
+
+    assert interim["stage"] == "coordinator"
+    assert interim["final"] is False
+    assert final["verdict"] == {"clean": True, "blockers": []}
+    assert final["history_artifact_path"]
+    assert len(list((tmp_path / "shutdown_history").glob("*.json"))) == 1
+    persisted = json.loads(target.read_text(encoding="utf-8"))
+    assert persisted["stage"] == "unit_test_complete"
+    assert persisted["final"] is True
+
+
+def test_shutdown_verdict_blocks_on_surviving_crossed_resource(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv(
+        "AURA_SHUTDOWN_REPORT_PATH",
+        str(tmp_path / "shutdown_report.json"),
+    )
+    shutdown_coordinator.record_shutdown_admission_event(
+        "unit-test-worker",
+        resource_kind="process",
+        outcome="survived",
+        detail="forced reap failed",
+    )
+
+    payload = shutdown_coordinator.publish_shutdown_verdict(
+        coordinator_report={"clean": True},
+        container_report={"clean": True},
+        runtime_hygiene_report={"clean": True},
+        stage="unit_test_complete",
+        final=True,
+    )
+
+    assert payload["verdict"]["clean"] is False
+    assert "shutdown_resurrection_survived" in payload["verdict"]["blockers"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_verdict_blocks_on_unfinished_non_owner_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    from core.utils.task_tracker import get_task_tracker
+
+    monkeypatch.setenv(
+        "AURA_SHUTDOWN_REPORT_PATH",
+        str(tmp_path / "shutdown_report.json"),
+    )
+    release = asyncio.Event()
+
+    async def _linger() -> None:
+        await release.wait()
+
+    lingering = get_task_tracker().create_task(
+        _linger(),
+        name="lingering-finalizer",
+        allow_during_shutdown=True,
+    )
+    await asyncio.sleep(0)
+
+    payload = shutdown_coordinator.publish_shutdown_verdict(
+        coordinator_report={"clean": True},
+        container_report={"clean": True},
+        runtime_hygiene_report={"clean": True},
+        stage="unit_test_complete",
+        final=True,
+    )
+
+    assert payload["verdict"]["clean"] is False
+    assert "tasks_remaining_after_final_sweep" in payload["verdict"]["blockers"]
+    assert payload["components"]["final_tasks"]["count"] >= 1
+    release.set()
+    await lingering
+
+
+@pytest.mark.asyncio
+async def test_task_tracker_final_sweep_preserves_teardown_owner() -> None:
+    from core.utils.task_tracker import TaskTracker
+
+    tracker = TaskTracker(name="shutdown-owner-test")
+    release = asyncio.Event()
+
+    async def _hold() -> None:
+        await release.wait()
+
+    ordinary = tracker.create_task(_hold(), name="ordinary")
+    teardown_owner = tracker.create_task(
+        _hold(),
+        name="teardown-owner",
+        allow_during_shutdown=True,
+    )
+    await asyncio.sleep(0)
+
+    sweep = await tracker.shutdown(timeout=0.2)
+
+    assert ordinary.cancelled()
+    assert teardown_owner.done() is False
+    assert sweep["clean"] is True
+    assert sweep["shutdown_critical_active"] == 1
+    release.set()
+    await teardown_owner
+
+
+@pytest.mark.asyncio
+async def test_runtime_hygiene_closes_owned_resources_in_reverse_order() -> None:
+    from core.runtime.runtime_hygiene import RuntimeHygieneManager
+
+    events: list[str] = []
+
+    class _Resource:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def close(self) -> None:
+            events.append(self.name)
+
+    hygiene = RuntimeHygieneManager()
+    first = _Resource("first")
+    second = _Resource("second")
+    hygiene.register_shutdown_resource(
+        first,
+        kind="listener",
+        name="first",
+        source="unit-test",
+    )
+    hygiene.register_shutdown_resource(
+        second,
+        kind="listener",
+        name="second",
+        source="unit-test",
+    )
+
+    report = await hygiene._cleanup_shutdown_resources()
+
+    assert report["clean"] is True
+    assert report["completed"] == 2
+    assert events == ["second", "first"]
+
+
+@pytest.mark.asyncio
+async def test_service_container_shutdown_failure_survives_repeated_calls(
+    service_container,
+) -> None:
+    class _BrokenService:
+        async def on_stop_async(self) -> None:
+            raise RuntimeError("owner cleanup failed")
+
+    service_container.register_instance("broken_shutdown_owner", _BrokenService())
+
+    first = await service_container.shutdown(
+        hook_timeout_s=0.1,
+        total_timeout_s=0.5,
+    )
+    replay = await service_container.shutdown(
+        hook_timeout_s=0.1,
+        total_timeout_s=0.5,
+    )
+
+    assert first["clean"] is False
+    assert replay["clean"] is False
+    assert "broken_shutdown_owner:on_stop_async" in replay["failed_hooks"]
+    assert replay["shutdown_pass_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_service_container_defers_excluded_finalizer_until_root_pass(
+    service_container,
+) -> None:
+    stopped: list[str] = []
+
+    class _Owner:
+        async def on_stop_async(self) -> None:
+            stopped.append("owner")
+
+    class _Finalizer:
+        async def on_stop_async(self) -> None:
+            stopped.append("finalizer")
+
+    service_container.register_instance("ordinary_owner", _Owner())
+    service_container.register_instance("runtime_hygiene", _Finalizer())
+
+    intermediate = await service_container.shutdown(exclude={"runtime_hygiene"})
+
+    assert intermediate["clean"] is True
+    assert stopped == ["owner"]
+    assert service_container.get("runtime_hygiene") is not None
+
+    final = await service_container.shutdown()
+
+    assert final["clean"] is True
+    assert stopped == ["owner", "finalizer"]
+    assert "ordinary_owner" in final["completed_services"]
+    assert "runtime_hygiene" in final["completed_services"]
+    assert final["deferred_services"] == ["runtime_hygiene"]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_coordinator_bounds_synchronous_handler() -> None:
+    import threading
+    import time
+
+    release = threading.Event()
+    worker_daemon: list[bool] = []
+    coordinator = shutdown_coordinator.ShutdownCoordinator(phases=("actors",))
+
+    def _blocking_handler() -> None:
+        worker_daemon.append(threading.current_thread().daemon)
+        release.wait(0.5)
+
+    coordinator.register(
+        _blocking_handler,
+        phase="actors",
+        name="blocking-sync-handler",
+        timeout=0.05,
+    )
+
+    started = time.monotonic()
+    report = await coordinator.shutdown()
+    elapsed = time.monotonic() - started
+    release.set()
+
+    assert elapsed < 0.25
+    assert worker_daemon == [True]
+    assert report.clean is False
+    assert report.handler_statuses["actors:blocking-sync-handler"] == "failed"
+    assert any(item["kind"] == "handler_timeout" for item in report.escalations)
+
+
+def test_blocking_shutdown_callable_times_out_on_daemon_worker() -> None:
+    import threading
+    import time
+
+    from core.runtime.shutdown_execution import run_sync_shutdown_callable_blocking
+
+    release = threading.Event()
+    worker_daemon: list[bool] = []
+
+    def _block() -> None:
+        worker_daemon.append(threading.current_thread().daemon)
+        release.wait(0.5)
+
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="exceeded"):
+        run_sync_shutdown_callable_blocking(
+            _block,
+            timeout_s=0.03,
+            name="unit-test-blocking-cleanup",
+        )
+    elapsed = time.monotonic() - started
+    release.set()
+
+    assert elapsed < 0.2
+    assert worker_daemon == [True]
+
+
+@pytest.mark.asyncio
+async def test_runtime_hygiene_suppresses_raw_tasks_and_threads_after_latch() -> None:
+    import threading
+
+    from core.runtime.runtime_hygiene import RuntimeHygieneManager
+    from core.utils.task_tracker import (
+        begin_shutdown_resource_creation_scope,
+        begin_shutdown_task_creation_scope,
+        end_shutdown_resource_creation_scope,
+        end_shutdown_task_creation_scope,
+    )
+
+    hygiene = RuntimeHygieneManager()
+    await hygiene.start(asyncio.get_running_loop())
+    ran: list[str] = []
+
+    async def _late_task() -> None:
+        ran.append("task")
+
+    shutdown_coordinator.request_shutdown("raw-start-suppression-test")
+    task = asyncio.create_task(_late_task(), name="raw-late-task")
+    await task
+
+    blocked_thread = threading.Thread(
+        target=lambda: ran.append("blocked-thread"),
+        name="raw-late-thread",
+    )
+    with pytest.raises(RuntimeError, match="runtime_shutdown"):
+        blocked_thread.start()
+
+    task_token = begin_shutdown_task_creation_scope()
+    try:
+        async def _cleanup_task() -> None:
+            ran.append("cleanup-task")
+
+        cleanup_task = asyncio.create_task(_cleanup_task(), name="cleanup-task")
+        task_scope_thread = threading.Thread(
+            target=lambda: ran.append("task-scope-thread"),
+            name="task-scope-thread",
+        )
+        with pytest.raises(RuntimeError, match="runtime_shutdown"):
+            task_scope_thread.start()
+    finally:
+        end_shutdown_task_creation_scope(task_token)
+    await cleanup_task
+
+    resource_token = begin_shutdown_resource_creation_scope()
+    try:
+        cleanup_thread = threading.Thread(
+            target=lambda: ran.append("cleanup-thread"),
+            name="cleanup-thread",
+        )
+        cleanup_thread.start()
+        cleanup_thread.join(timeout=1.0)
+    finally:
+        end_shutdown_resource_creation_scope(resource_token)
+    await hygiene.stop()
+
+    assert ran == ["cleanup-task", "cleanup-thread"]
+    assert getattr(task, "_aura_shutdown_suppressed", False) is True
+    admission = shutdown_coordinator.shutdown_admission_snapshot()
+    assert admission["counts"]["suppressed"] >= 2
+
+
+def test_service_container_rejects_registration_after_shutdown_latch() -> None:
+    from core.container import ContainerError, ServiceContainer
+
+    shutdown_coordinator.request_shutdown("service-registration-test")
+
+    with pytest.raises(ContainerError, match="runtime shutdown"):
+        ServiceContainer.register_instance("late-service", object())
+
+    admission = shutdown_coordinator.shutdown_admission_snapshot()
+    assert admission["counts"]["suppressed"] == 1
+
+
+def test_production_shutdown_latch_cannot_be_cleared_in_process(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    shutdown_coordinator.request_shutdown("monotonic-latch-test")
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("AURA_ALLOW_IN_PROCESS_SHUTDOWN_RESET", raising=False)
+
+    with pytest.raises(RuntimeError, match="monotonic"):
+        shutdown_coordinator.clear_shutdown_request()
+
+
+@pytest.mark.asyncio
+async def test_sensory_queue_timeout_finishes_task_as_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import queue
+
+    from core.senses.sensory_client import SensoryLocalClient
+    from core.supervisor import registry as registry_module
+
+    updates: list[dict[str, object]] = []
+
+    class _Registry:
+        def register_task(self, *_args, **_kwargs) -> str:
+            return "sensory-task"
+
+        def update_task(self, _task_id: str, **kwargs) -> None:
+            updates.append(dict(kwargs))
+
+    class _Process:
+        @staticmethod
+        def is_alive() -> bool:
+            return True
+
+    class _RequestQueue:
+        @staticmethod
+        def put(_payload) -> None:
+            return None
+
+    class _ResponseQueue:
+        @staticmethod
+        def get(*, timeout: float):
+            raise queue.Empty from None
+
+    monkeypatch.setattr(registry_module, "get_task_registry", lambda: _Registry())
+    client = SensoryLocalClient()
+    client._process = _Process()
+    client._req_q = _RequestQueue()
+    client._res_q = _ResponseQueue()
+
+    assert await client._send_command("ping", timeout=0.01, auto_restart=False) is False
+    assert updates[-1]["error"] == ""
+    assert str(updates[-1]["status"]).lower().endswith("failed")
+
+
+def test_vision_inference_timeout_clears_request_and_stops_worker() -> None:
+    from core.brain.llm.mlx_vision_client import MLXVisionClient
+
+    stopped: list[bool] = []
+
+    class _RequestQueue:
+        @staticmethod
+        def put(_payload, *, timeout: float) -> None:
+            return None
+
+    class _Process:
+        @staticmethod
+        def is_alive() -> bool:
+            return True
+
+    client = MLXVisionClient("/models/test-vision")
+    client.start = lambda: True  # type: ignore[method-assign]
+    client.stop = lambda: stopped.append(True)  # type: ignore[method-assign]
+    client._req_q = _RequestQueue()
+    client._process = _Process()
+
+    with pytest.raises(TimeoutError, match="inference timed out"):
+        client.see("describe", "aW1hZ2U=", timeout_s=0.01)
+
+    assert stopped == [True]
+    assert client._pending_requests == {}

@@ -26,7 +26,11 @@ if TYPE_CHECKING:
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
-from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.runtime.shutdown_coordinator import (
+    is_shutdown_requested,
+    record_shutdown_admission_event,
+)
+from core.runtime.shutdown_execution import run_sync_shutdown_callable_blocking
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.concurrency import run_io_bound
 from core.utils.deadlines import Deadline, get_deadline
@@ -615,6 +619,12 @@ def _shutdown_blocks_model_work(model_path: str, *, action: str) -> bool:
 
     if not _runtime_shutdown_requested():
         return False
+    record_shutdown_admission_event(
+        f"mlx:{action}:{os.path.basename(str(model_path or '')) or 'unknown-model'}",
+        resource_kind="mlx_worker",
+        outcome="suppressed",
+        detail="shutdown_latch",
+    )
     logger.info(
         "🛑 [MLX] %s skipped for %s: runtime shutdown is latched.",
         action,
@@ -669,11 +679,37 @@ def _safe_close_queue(q: mp.Queue | None) -> None:
     """Close an mp.Queue to release its shared-memory file descriptor."""
     if q is None:
         return
-    try:
+    def _close_and_join() -> None:
         q.close()
         q.join_thread()
-    except (OSError, ValueError, BrokenPipeError, TypeError, AttributeError):
-        return
+
+    try:
+        run_sync_shutdown_callable_blocking(
+            _close_and_join,
+            timeout_s=1.0,
+            name="mlx-queue-close",
+        )
+    except (OSError, ValueError, BrokenPipeError, TypeError, AttributeError, TimeoutError) as exc:
+        logger.debug("MLX queue cleanup did not complete: %s", exc)
+    else:
+        try:
+            from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+            get_runtime_hygiene().unregister_shutdown_resource(q)
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            pass
+
+
+def _register_runtime_queue(q: mp.Queue, *, name: str) -> None:
+    from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+    get_runtime_hygiene().register_shutdown_resource(
+        q,
+        kind="multiprocessing_queue",
+        name=name,
+        source="core.brain.llm.mlx_client",
+        timeout_s=1.0,
+    )
 
 
 def _new_shared_future() -> SharedFuture:
@@ -2539,6 +2575,12 @@ class MLXLocalClient:
         _safe_close_queue(self._res_q)
         self._req_q = self._mp_context.Queue(maxsize=maxsize)
         self._res_q = self._mp_context.Queue(maxsize=maxsize)
+        try:
+            _register_runtime_queue(self._req_q, name="mlx.request_queue")
+            _register_runtime_queue(self._res_q, name="mlx.response_queue")
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+            self._close_ipc_queues()
+            raise
         self._closed = False
 
     def _close_ipc_queues(self) -> None:
@@ -3086,12 +3128,24 @@ class MLXLocalClient:
                     raise RuntimeError("runtime_shutdown")
                 p.start()
                 if _runtime_shutdown_requested():
+                    record_shutdown_admission_event(
+                        f"mlx:worker_start:{os.path.basename(self.model_path)}",
+                        resource_kind="mlx_worker",
+                        outcome="crossed",
+                        detail=f"pid={p.pid}",
+                    )
                     logger.warning(
                         "🛑 [MLX] Shutdown crossed worker start for %s; terminating pid=%s.",
                         os.path.basename(self.model_path),
                         p.pid,
                     )
                     self._kill_and_join_blocking(p)
+                    record_shutdown_admission_event(
+                        f"mlx:worker_start:{os.path.basename(self.model_path)}",
+                        resource_kind="mlx_worker",
+                        outcome="reaped" if not p.is_alive() else "survived",
+                        detail=f"pid={p.pid}",
+                    )
                     raise RuntimeError("runtime_shutdown")
                 try:
                     from core.runtime.runtime_hygiene import get_runtime_hygiene
