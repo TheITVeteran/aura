@@ -10665,3 +10665,128 @@ Remaining for this checkpoint:
 - Use the next residual snapshot, if any, to register/fix the remaining concrete
   owner. Continue phase-specific first/repeated signal injection only after the
   normal root-finalizer path is genuinely clean.
+
+## Checkpoint 2026-07-11-31: Root Finalizer Ownership, Production Interoception, And Teardown Authority
+
+Negative evidence from the second bounded live replay:
+
+- Clean commit `28e4fc56` booted healthy in `27.94s` at about `20GB` RSS.
+  Capability inventory, identity, continuity, the live cognitive-organ trace,
+  and `1/1` conversation turn passed. External stop completed in `42.43s/90s`
+  with no orphan and port `8034` free, but the proof remained failed because the
+  runtime stream contained a shutdown traceback and real MLX degradations.
+- `ProactiveCommunicationManager.stop()` cancelled its owned task and then let
+  the resulting `asyncio.CancelledError` escape. On Python 3.12 that cancellation
+  bypassed the container's ordinary exception boundary, aborted
+  `ServiceContainer.shutdown()`, and escaped the root orchestrator shutdown.
+- The kernel's container hook also finalized process-wide task tracking, runtime
+  hygiene, event-bus state, and the default executor from the middle of container
+  teardown. Later service owners could therefore lose the authority and executor
+  they needed to clean themselves, while the root final sweep ran too early to
+  give a truthful residual verdict.
+- The warmup visible-readiness check was blocked by the general background
+  headroom reservation even when the primary worker was already resident. That
+  created a false warmup failure, duplicate degradation events, and avoidable
+  worker recycle/recovery. The in-worker memory fuse also lacked an explicit
+  construction-time proof that it was running in a child process.
+- Cross-suite replay exposed a second production lifecycle defect after the live
+  repairs: the global `asyncio.create_task` patch discarded explicit shutdown
+  creation context. Once the monotonic latch was set, it could suppress the
+  canonical coordinator task or an explicitly authorized teardown child as
+  `Global.shutdown_suppressed`. Fable's root pytest latch fixture correctly
+  isolates tests, but test isolation cannot repair lost production authority.
+  Artifact:
+  `artifacts/current/shutdown_control_plane_checkpoint_20260710_retry2/live_proof_20260710_174703_verdict.json`.
+
+Implemented in the root lifecycle boundary:
+
+- Made `AuraKernel.shutdown()` exactly-once under a lock with sticky first-owner
+  semantics. Standalone kernels retain process-finalizer ownership; the
+  orchestrator/container path explicitly passes
+  `finalize_process_runtime=False` through `KernelInterface` and defers global
+  finalizers to the process root. A later duplicate call cannot escalate a
+  component shutdown into premature process finalization.
+- Taught the container to distinguish cancellation of its own current teardown
+  task from cancellation propagated by a service's owned child. Parent
+  cancellation still propagates; child cancellation becomes a named degraded
+  hook result and the remaining reverse-order service graph continues.
+  Proactive communication now cancels, awaits, and consumes its owned task's
+  cancellation before releasing ownership.
+- Removed implicit root-finalizer ownership from `ProcessManager` atexit
+  cleanup. Narrowed the MLX exception to one bounded readiness probe on an
+  already-live primary worker when, and only when, the deferral reason is
+  `foreground_headroom_reserved`; spawn, actual pressure, and shutdown gates
+  remain intact. Removed duplicate warmup degradation recording and made the
+  worker memory fuse require explicit child-process authorization before
+  `os._exit(137)` can run.
+- Preserved teardown authority through both global task-creation boundaries.
+  Explicit shutdown context is now read from the supplied `contextvars.Context`,
+  and only exact canonical coordinator/graceful-shutdown coroutine code objects
+  receive implicit root authority. Authorized tasks are marked shutdown-critical
+  and receipted as `allowed_teardown`; unrelated post-latch tasks remain
+  suppressed. The event-loop task factory enforces the same rule without
+  double-tracking tasks created through the patched public API.
+
+Productionized the Fable-origin thought interoception and epistemic-reach system:
+
+- Kept dense measurements for the first four generated tokens, then applied a
+  configurable production stride while preserving actual token positions and
+  full-text context. Felt-thought telemetry now separates observed tokens from
+  measured tokens and reports stride, skipped count, and sampling coverage.
+- Made epistemic reach a bounded owned service: hourly capacity is reserved
+  atomically before queue admission; duplicate claims are suppressed; queue,
+  active async verification, worker thread, stop, and join have explicit
+  ownership; shutdown closes intake and cannot resurrect the worker.
+- Treated retrieved pages as hostile data. Injection-bearing evidence is
+  rejected, Wikipedia results must resolve to the expected host, and the
+  deterministic verifier now requires complete substantive/figure coverage for
+  support and matching numeric relations for contradiction. Partial overlap,
+  changed entities, and ambiguous paraphrases remain inconclusive.
+- Replaced fire-and-forget correction prompts with a bounded deduplicated queue
+  and transactional lease. Evidence is escaped and delimited as untrusted data;
+  retries retain the same lease; a correction is committed only after the final
+  primary output explicitly owns the error, contains the corrected evidence,
+  and attributes the source. Both the HTTP chat receipt and canonical
+  `OutputGate` primary-delivery receipt acknowledge that proof.
+
+Verification on the reconciled tree, including Fable certification rounds 2-3:
+
+- Formerly order-dependent server, model-runtime, kernel, container, process,
+  launcher, media, live-surface, and shutdown suites in one Python process ->
+  `690 passed in 64.78s`.
+- Exact production task-patch/shutdown-authority regressions -> `4 passed`;
+  incoming bounded-await, self-modification recovery, and Swarm contracts ->
+  `25 passed`.
+- Strict target-isolated MyPy over the nine cleaned lifecycle/interoception
+  modules -> no issues. Full Ruff over cleaned source/tests; bounded
+  `F,E9,B904` Ruff over touched legacy surfaces; py-compile and
+  `git diff --check` -> passed. The wider strict-type debt in legacy
+  `chat.py`, `context_assembler.py`, and the global repository remains open and
+  is not relabeled by this bounded result.
+- Governance ownership ratchet matched exactly: `1,798` recognized calls in
+  `1,691` buckets, with `1,689` calls remaining migration debt.
+- Clean-tree closeout audit with configured gates passed over `4,993` tracked
+  files and `3,571,248` text lines. It reports `469/4,006` code files fully
+  covered by current semantic-review receipts, so mechanical `PASS` is not
+  represented as full semantic completion. Artifact:
+  `artifacts/current/closeout_audit_checkpoint31`.
+
+Remaining bounded work after this checkpoint:
+
+- Publish the three implementation checkpoints and this evidence to `main`, then
+  rerun the same one-turn desktop proof from the exact clean commit. Require no
+  traceback, no unexplained runtime degradation, a clean durable
+  `aura.shutdown_verdict.v1`, bounded graceful exit, no child/thread/listener
+  residual, free port, and released singleton lock.
+- If the normal root path is clean, execute the phase-specific first/repeated
+  SIGINT/SIGTERM matrix across boot, warmup, recovery, foreground action,
+  persistence, and every shutdown phase. Any residual becomes an implementation
+  task with an owner and regression proof; it is not normalized into an
+  allowlist.
+- Continue `CTX2-LANE-001..004`: atomic cross-lane reservations, synchronous
+  required eviction, complete model/trainer/process accounting, compensation,
+  and exactly-once terminal receipts. Then continue the canonical mind/state,
+  verifier/amplifier, memory/rollback, identity/welfare, colleague, UI/operator,
+  governance-ownership, type/effect, and semantic-review workstreams.
+- Keep multi-hour and 24-72 hour soak work deferred until every shorter static,
+  bounded, clean-machine, and live-runtime gate is green.
