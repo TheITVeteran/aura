@@ -763,7 +763,7 @@ evidence into a metaphysical, legal, or comparative claim.
      AGI/ASI or superhuman claims remain open unless measured performance, breadth,
      reliability, autonomy, and independent comparison jointly support them.
 
-32. **Signal-safe quiescence and no-resurrection shutdown** `[IN PROGRESS]`
+32. **Signal-safe quiescence and no-resurrection shutdown** `[COMPLETE 2026-07-11]`
    - `CTX2-SHUTDOWN-001`: make shutdown a process-wide monotonic latch. The first
      SIGINT, SIGTERM, operator stop, fatal-health stop, or parent-death event must
      transition the runtime to quiescing exactly once; later signals may tighten
@@ -10948,3 +10948,105 @@ Authoritative remaining work after this checkpoint:
   and effect debt, and full semantic-review coverage from the detailed ledger.
 - Multi-hour and 24-72 hour soaks remain deferred until all shorter static,
   bounded, fault-injection, clean-machine, and live-runtime gates are green.
+
+## Checkpoint 2026-07-11-33: Terminal Monotonic Shutdown And External Signal Matrix
+
+This checkpoint closes `CTX2-SHUTDOWN-001..003` for the production desktop
+runtime. It does so from fresh external processes and terminal root-process
+evidence, not by treating an API-level graceful-stop response as process exit.
+The multi-hour soak remains deferred; this closure is the bounded prerequisite
+for continuing the next implementation milestone.
+
+Negative evidence retained during implementation:
+
+- `shutdown_signal_matrix_20260711_live4` found four SQLite owners that could
+  outlive an interrupted boot. The process-wide database registry now closes
+  every thread-local connection and refuses new connections after quiescence.
+- `shutdown_signal_matrix_20260711_live6` terminated with native `SIGSEGV`.
+  `faulthandler.register(SIGTERM, chain=True)` had stolen the root signal and
+  then written through a recycled forensic descriptor. Aura now has one root
+  signal owner and a process-owned forensic handle; `SIGUSR1` remains the
+  explicit non-fatal stack-dump signal.
+- `shutdown_signal_matrix_20260711_live8` exposed an uncancellable
+  `queue.Queue.get()` occupying the default executor and preventing
+  `asyncio.run()` from returning. State-registry polling is now bounded, and
+  both shared executor families are named shutdown resources.
+- `shutdown_signal_matrix_20260711_live9` exited but truthfully failed its root
+  resource verdict due to receipt/mission databases and a resolver socket. Root
+  persistence closure now covers the receipt store, mission state, governance
+  vault, and database registry; the final socket sweep verifies descriptor type
+  before closing and then re-observes the process.
+- `shutdown_signal_matrix_20260711_live15` found first-use spiking-inference
+  registration during an active shutdown, while `live16` found that an initial
+  strict lazy-service gate broke optional teardown observations. Cognitive
+  providers now pre-register the service, required lazy construction is refused
+  after the latch, optional reads remain non-constructive, and interrupted chat
+  returns a typed `503 runtime_shutdown` outcome.
+
+Implemented in `13b93fba` and `6090195b`:
+
+- Added a synchronous root `SIGINT`/`SIGTERM` owner before boot checks, singleton
+  locking, port setup, and async-loop construction. First reason is sticky,
+  repeats are counted, uvicorn cannot replace root ownership, and signal
+  ownership remains installed through lock release, multiprocessing finalizers,
+  logging flush, and terminal receipt publication.
+- Made shutdown a process-wide admission boundary. Service factories, cognitive
+  work, chat checkpoints, executors, SQLite connections, model workers, and
+  recovery paths refuse new constructive work after the latch. Optional
+  observability reads return an existing instance or caller default without
+  resurrecting a service.
+- Advanced one durable shutdown-history artifact through graceful teardown to
+  `root_process_exit`. Every coordinator phase and root finalizer has a stable
+  exactly-once marker; the terminal report includes first reason, repeat count,
+  phase counts, admissions, process/thread/task/listener/resource/socket state,
+  persistence closure, singleton-lock release, logging flush, and exit verdict.
+- Added explicit close ownership for episodic memory, knowledge graph, goals,
+  mission state, governance vault, and receipt persistence. Runtime hygiene now
+  includes shared executors and a root-only verified socket cleanup pass.
+- Removed keep-awake import side effects and start it only after singleton-lock
+  acquisition. Its reaper cannot mistake Aura's newly created child for stale
+  state.
+- Added deterministic lifecycle probes with a two-second maximum hold and
+  timestamped start/completion evidence. The external driver sends signals to
+  the exact root PID, bounds process-group cleanup to failed cases, and rejects
+  residual processes, ports, locks, persistence handles, sockets, duplicate
+  phases/receipts, post-latch admissions, resurrection, or runtime tracebacks.
+
+Verification and terminal evidence:
+
+- Focused shutdown, provider, container, persistence, chat, receipt, executor,
+  and matrix regressions passed in consolidated slices totaling `659` tests;
+  the final lazy-read correction passed a further `29` targeted tests.
+- Ruff and py-compile passed over touched production and test files. Strict
+  target-isolated MyPy passed over nine shutdown/persistence/runtime modules.
+  Governance ownership matched the `1,800` recognized-call baseline with
+  `1,689` existing migration-debt calls and no new bypass debt.
+- The enterprise static ratchet passed from `6090195b`; all `37` production
+  readiness contract checks passed from the same commit.
+- `artifacts/current/shutdown_signal_matrix_20260711_full1/MATRIX_VERDICT.json`
+  passed all eight fresh-process cases in `172.488s`: launcher bootstrap,
+  interrupted orchestrator boot, ready runtime, state-vault phase, model-runtime
+  phase, container teardown, root finalization, and active foreground chat.
+- Each repeated-signal phase observed the second signal inside the instrumented
+  hold, preserved the first reason, ran every shutdown phase exactly once,
+  emitted one history and one terminal receipt, exited root with code zero, and
+  left no residual process, listener, port, singleton lock, persistence handle,
+  socket, executor, or post-latch admission. The active request returned typed
+  HTTP `503` with `status=runtime_shutdown` rather than a generated answer,
+  traceback, shallow fallback, or false success.
+
+Authoritative next work after this checkpoint:
+
+- Continue `CTX2-LANE-001..004`: replace boolean model-lane admission with one
+  durable fenced reservation transaction; synchronously execute required
+  evictions and observe resource reclamation before spawn; compensate failed
+  admission/spawn; account for every model, trainer, benchmark, and external
+  accelerator owner; and emit exactly-once terminal admission receipts.
+- Then continue hermetic resource-pressure proof, canonical state ownership and
+  causal graph, verifier/amplifier evaluation, one-shot adaptation, unified
+  memory/rollback, longitudinal identity/welfare, resident-colleague,
+  clean-machine replication, UI/operator, type/effect debt, and complete
+  semantic-review coverage.
+- Keep multi-hour and 24-72 hour soaks deferred until every remaining shorter
+  static, bounded, fault-injection, clean-machine, and live-runtime gate is
+  green.
