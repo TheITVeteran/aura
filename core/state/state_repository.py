@@ -20,6 +20,7 @@ from core.memory.retention_policy import state_log_retention_policy
 from core.runtime.background_policy import is_user_facing_origin
 from core.runtime.effect_boundary import effect_sink
 from core.runtime.errors import record_degradation
+from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.utils.task_tracker import get_task_tracker
 
 from ..bus.shared_mem_bus import SharedMemoryTransport
@@ -283,7 +284,7 @@ class StateRepository:
             constraints={"boot_phase": "initialize"},
         )
         if self.is_vault_owner:
-            Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+            self._ensure_db_parent_directory()
             db = await self._ensure_db()
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS state_log (
@@ -816,37 +817,14 @@ class StateRepository:
         """
 
         try:
-            db = await self._ensure_db()
-            await db.execute("""
-                CREATE TABLE IF NOT EXISTS state_log (
-                    state_id TEXT PRIMARY KEY,
-                    version INTEGER NOT NULL,
-                    parent_state_id TEXT,
-                    transition_cause TEXT,
-                    state_json TEXT NOT NULL,
-                    timestamp REAL NOT NULL
-                )
-            """)
-            await db.execute("CREATE INDEX IF NOT EXISTS idx_version ON state_log(version)")
-            await db.commit()
-            serialized_data = await asyncio.to_thread(self._serialize, state)
-            from core.governance_context import governed_scope
-
-            shutdown_decision = SimpleNamespace(
-                receipt_id=f"shutdown_state_snapshot:{getattr(state, 'version', 'unknown')}",
-                domain="state_mutation",
-                source="state_repository.shutdown_direct_snapshot",
-                constraints={
-                    "cause": getattr(state, "transition_cause", "shutdown"),
-                    "fallback": "vault_transport_closed",
-                },
+            await run_sync_shutdown_callable(
+                lambda: self._write_shutdown_snapshot_with_governance(state),
+                timeout_s=3.0,
+                name="state-repository-shutdown-snapshot",
             )
-            async with governed_scope(shutdown_decision):
-                await self._commit_to_db(state, serialized_data)
             self._current = state
             self._pending_proxy_commit_payload = None
             self._pending_proxy_commit_count = 0
-            await self._clear_pending_proxy_commit()
             self._last_proxy_commit_error = ""
             if isinstance(error, (BrokenPipeError, BusDegraded, ConnectionError)):
                 source = "vault_transport_closed"
@@ -870,6 +848,98 @@ class StateRepository:
                 exc,
             )
             return False
+
+    def _write_shutdown_snapshot_with_governance(self, state: AuraState) -> None:
+        from core.governance_context import local_internal_governed_scope
+
+        with local_internal_governed_scope(
+            "state_repository.shutdown_direct_snapshot",
+            domain="state_mutation",
+            constraints={
+                "cause": getattr(state, "transition_cause", "shutdown"),
+                "fallback": "vault_transport_closed",
+                "bounded_shutdown_writer": True,
+            },
+        ):
+            self._commit_shutdown_snapshot_sync(state)
+
+    @effect_sink(
+        "state.shutdown_direct_snapshot",
+        allowed_domains=("state_mutation",),
+    )
+    def _commit_shutdown_snapshot_sync(self, state: AuraState) -> None:
+        """Persist final state without creating an executor-owned DB worker."""
+
+        target = Path(self.db_path)
+        self._ensure_db_parent_directory()
+        serialized_data = (
+            self._serialize_transport_snapshot(state)
+            if self._should_use_bounded_db_snapshot(state, "shutdown")
+            else self._serialize(state)
+        )
+        payload_bytes = len(serialized_data.encode("utf-8"))
+        if payload_bytes > self.DB_PAYLOAD_MAX_BYTES:
+            serialized_data = self._serialize_transport_snapshot(state)
+
+        connection = sqlite3.connect(target, timeout=2.0)
+        try:
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA synchronous=FULL")
+            connection.execute("PRAGMA busy_timeout=2000")
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS state_log (
+                    state_id TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    parent_state_id TEXT,
+                    transition_cause TEXT,
+                    state_json TEXT NOT NULL,
+                    timestamp REAL NOT NULL
+                )
+            """)
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_version ON state_log(version)")
+            connection.execute(
+                """INSERT OR REPLACE INTO state_log
+                   (state_id, version, parent_state_id, transition_cause, state_json, timestamp)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    state.state_id,
+                    state.version,
+                    state.parent_state_id,
+                    state.transition_cause,
+                    serialized_data,
+                    state.updated_at,
+                ),
+            )
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS proxy_commit_outbox (
+                    slot TEXT PRIMARY KEY,
+                    payload_json TEXT NOT NULL,
+                    error TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL
+                )
+            """)
+            connection.execute(
+                "DELETE FROM proxy_commit_outbox WHERE slot = ?",
+                (self.PROXY_OUTBOX_SLOT,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _ensure_db_parent_directory(self) -> None:
+        from core.governance_context import local_internal_governed_scope
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
+        with local_internal_governed_scope(
+            "state_repository.db_directory",
+            domain="state_mutation",
+            constraints={"operation": "ensure_state_db_parent"},
+        ):
+            get_file_write_gateway().ensure_directory(
+                Path(self.db_path).parent,
+                source="state_repository.db_directory",
+            )
 
     async def _enqueue_owner_commit(self, payload: dict[str, Any]) -> None:
         """

@@ -993,6 +993,86 @@ def test_self_modification_error_forward_closes_coroutine_after_latch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_runtime_hygiene_treats_executor_timeout_warning_as_unclean() -> None:
+    import warnings
+
+    from core.runtime.runtime_hygiene import RuntimeHygieneManager
+
+    class Worker:
+        name = "Aura_Cognition_1"
+        ident = 12345
+        daemon = False
+
+        @staticmethod
+        def is_alive() -> bool:
+            return True
+
+    class Executor:
+        _threads = {Worker()}
+
+    class Loop:
+        _default_executor = Executor()
+
+        @staticmethod
+        async def shutdown_default_executor(
+            *,
+            timeout: float,  # noqa: ASYNC109 - mirrors asyncio API.
+        ) -> None:
+            warnings.warn(
+                f"executor still joining after {timeout}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+    hygiene = RuntimeHygieneManager()
+    report = await hygiene._shutdown_default_executor(Loop())
+
+    assert report["attempted"] is True
+    assert report["clean"] is False
+    assert report["warnings"] == ["executor still joining after 2.0"]
+    assert report["workers_after"] == [
+        {
+            "name": "Aura_Cognition_1",
+            "ident": 12345,
+            "daemon": False,
+        }
+    ]
+
+
+def test_runtime_hygiene_shutdown_thread_summary_includes_stack_and_authority() -> None:
+    import threading
+
+    from core.runtime.runtime_hygiene import RuntimeHygieneManager
+
+    release = threading.Event()
+    started = threading.Event()
+
+    def _wait_for_release() -> None:
+        started.set()
+        release.wait(1.0)
+
+    hygiene = RuntimeHygieneManager()
+    worker = threading.Thread(target=_wait_for_release, name="stack-evidence-worker")
+    worker._aura_shutdown_critical = True
+    hygiene._register_thread(worker, source="unit-test")
+    worker.start()
+    assert started.wait(0.2)
+    try:
+        summary = hygiene._thread_summary(include_stacks=True)
+    finally:
+        release.set()
+        worker.join(timeout=0.5)
+
+    sample = next(
+        item for item in summary["active_sample"] if item["name"] == "stack-evidence-worker"
+    )
+    assert sample["ident"] == worker.ident
+    assert sample["shutdown_critical"] is True
+    assert sample["source"] == "unit-test"
+    assert any(frame["function"] == "_wait_for_release" for frame in sample["stack"])
+
+
+@pytest.mark.asyncio
 async def test_metrics_exporter_owns_http_server_and_thread(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

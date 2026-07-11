@@ -7,9 +7,12 @@ import logging
 import multiprocessing as mp
 import os
 import subprocess
+import sys
 import threading
 import time
+import traceback
 import tracemalloc
+import warnings
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -278,6 +281,14 @@ class RuntimeHygieneManager:
             0.5, _declared_float("AURA_RUNTIME_TASK_SHUTDOWN_TIMEOUT_S", 3.0,
                                  "Per-task cancel budget during shutdown hygiene")
         )
+        self.executor_shutdown_timeout_s = max(
+            0.25,
+            _declared_float(
+                "AURA_RUNTIME_EXECUTOR_SHUTDOWN_TIMEOUT_S",
+                2.0,
+                "Default-executor join budget during final shutdown hygiene",
+            ),
+        )
         self.tracemalloc_enabled = str(
             os.getenv("AURA_RUNTIME_HYGIENE_TRACEMALLOC", "0") or "0"
         ).strip().lower() in {"1", "true", "yes", "on"}
@@ -344,7 +355,7 @@ class RuntimeHygieneManager:
         self._refresh_process_records()
         before = {
             "tasks": self._task_tracker.get_stats(),
-            "threads": self._thread_summary(),
+            "threads": self._thread_summary(include_stacks=True),
             "processes": self._process_summary(),
             "resources": self._resource_summary(),
             "native_resources": self._native_resource_summary(),
@@ -373,30 +384,10 @@ class RuntimeHygieneManager:
 
         self._task_tracker.restore_loop_hygiene()
         self._restore_patches()
-        executor_report: dict[str, Any] = {
-            "attempted": False,
-            "clean": True,
-        }
-        if shutdown_latched:
-            executor_started = time.monotonic()
-            executor_report["attempted"] = True
-            try:
-                await asyncio.get_running_loop().shutdown_default_executor(
-                    timeout=2.0,
-                )
-            except (RuntimeError, TimeoutError, AttributeError) as exc:
-                executor_report.update(clean=False, error=repr(exc))
-                record_degradation(
-                    "runtime_hygiene_shutdown",
-                    exc,
-                    severity="degraded",
-                    action="recorded default executor shutdown failure",
-                    enforce_failure_policy=False,
-                )
-            executor_report["duration_seconds"] = round(
-                time.monotonic() - executor_started,
-                6,
-            )
+        executor_report = await self._shutdown_default_executor(
+            asyncio.get_running_loop(),
+            enabled=shutdown_latched,
+        )
         if self._tracemalloc_started_by_hygiene and tracemalloc.is_tracing():
             try:
                 tracemalloc.stop()
@@ -411,7 +402,7 @@ class RuntimeHygieneManager:
         self._refresh_process_records()
         after = {
             "tasks": self._task_tracker.get_stats(),
-            "threads": self._thread_summary(),
+            "threads": self._thread_summary(include_stacks=True),
             "processes": self._process_summary(),
             "resources": self._resource_summary(),
             "native_resources": self._native_resource_summary(),
@@ -450,6 +441,95 @@ class RuntimeHygieneManager:
         }
         self._shutdown_complete = True
         return dict(self._last_shutdown_report)
+
+    async def _shutdown_default_executor(
+        self,
+        loop: Any,
+        *,
+        enabled: bool = True,
+    ) -> dict[str, Any]:
+        report: dict[str, Any] = {
+            "attempted": False,
+            "clean": True,
+            "timeout_seconds": self.executor_shutdown_timeout_s,
+            "workers_before": [],
+            "workers_after": [],
+            "warnings": [],
+        }
+        if not enabled:
+            return report
+
+        started = time.monotonic()
+        report["attempted"] = True
+        executor = getattr(loop, "_default_executor", None)
+        report["workers_before"] = self._executor_worker_summary(executor)
+        failure: BaseException | None = None
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", RuntimeWarning)
+            try:
+                await loop.shutdown_default_executor(
+                    timeout=self.executor_shutdown_timeout_s,
+                )
+            except (RuntimeError, TimeoutError, AttributeError) as exc:
+                failure = exc
+
+        warning_messages = [
+            str(item.message)[:500]
+            for item in caught
+            if issubclass(item.category, RuntimeWarning)
+        ]
+        workers_after = self._executor_worker_summary(executor)
+        report["warnings"] = warning_messages
+        report["workers_after"] = workers_after
+        report["duration_seconds"] = round(time.monotonic() - started, 6)
+        if failure is not None:
+            report.update(clean=False, error=repr(failure))
+        elif warning_messages:
+            report.update(
+                clean=False,
+                error="; ".join(warning_messages)[:500],
+            )
+        elif workers_after:
+            report.update(
+                clean=False,
+                error=f"{len(workers_after)} default executor worker(s) remain alive",
+            )
+
+        if report["clean"] is not True:
+            error = failure or RuntimeError(str(report.get("error") or "executor shutdown incomplete"))
+            record_degradation(
+                "runtime_hygiene_shutdown",
+                error,
+                severity="degraded",
+                action="recorded incomplete default executor shutdown with worker evidence",
+                extra={
+                    "workers_after": workers_after,
+                    "warnings": warning_messages,
+                    "timeout_seconds": self.executor_shutdown_timeout_s,
+                },
+                enforce_failure_policy=False,
+            )
+        return report
+
+    @staticmethod
+    def _executor_worker_summary(executor: Any) -> list[dict[str, Any]]:
+        workers = list(getattr(executor, "_threads", ()) or ())
+        summary: list[dict[str, Any]] = []
+        for worker in workers:
+            try:
+                alive = bool(worker.is_alive())
+            except (AttributeError, RuntimeError, TypeError, ValueError):
+                alive = False
+            if not alive:
+                continue
+            summary.append(
+                {
+                    "name": str(getattr(worker, "name", "executor-worker"))[:120],
+                    "ident": getattr(worker, "ident", None),
+                    "daemon": bool(getattr(worker, "daemon", False)),
+                }
+            )
+        return summary[:64]
 
     async def on_stop_async(self) -> dict[str, Any]:
         return await self.stop()
@@ -1260,8 +1340,9 @@ class RuntimeHygieneManager:
                         record.exit_code = None
                     record.finished_at = record.finished_at or now
 
-    def _thread_summary(self) -> dict[str, Any]:
+    def _thread_summary(self, *, include_stacks: bool = False) -> dict[str, Any]:
         now = time.monotonic()
+        frames = sys._current_frames() if include_stacks else {}
         active = 0
         active_non_daemon = 0
         active_daemon = 0
@@ -1273,14 +1354,31 @@ class RuntimeHygieneManager:
                 continue
             active += 1
             if len(active_sample) < 20:
-                active_sample.append(
-                    {
-                        "name": record.name,
-                        "daemon": record.daemon,
-                        "age_s": round(record.age_s(now), 1),
-                        "source": record.source,
-                    }
-                )
+                thread = self._thread_refs.get(record.key)
+                item: dict[str, Any] = {
+                    "name": record.name,
+                    "ident": record.ident,
+                    "daemon": record.daemon,
+                    "shutdown_critical": bool(
+                        getattr(thread, "_aura_shutdown_critical", False)
+                    ),
+                    "age_s": round(record.age_s(now), 1),
+                    "source": record.source,
+                    "exception": record.exception,
+                }
+                if include_stacks and record.ident is not None:
+                    frame = frames.get(record.ident)
+                    if frame is not None:
+                        item["stack"] = [
+                            {
+                                "file": entry.filename[-240:],
+                                "line": entry.lineno,
+                                "function": entry.name,
+                                "code": (entry.line or "")[:240],
+                            }
+                            for entry in traceback.extract_stack(frame, limit=12)
+                        ]
+                active_sample.append(item)
             if not record.daemon:
                 active_non_daemon += 1
                 if record.age_s(now) >= self.stale_thread_age_s:

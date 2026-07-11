@@ -9,6 +9,7 @@ contexts, including bare threads with no inherited scope.
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import threading
@@ -108,3 +109,101 @@ def test_degradation_is_not_recorded_for_governed_bookkeeping(monkeypatch, tmp_p
         trace.save()
 
     assert degradations == [], f"governed save still degraded: {degradations}"
+
+
+def test_mhaf_shutdown_checkpoint_establishes_local_state_authority(monkeypatch, tmp_path):
+    from core.consciousness import mhaf_field
+    from core.governance_context import get_active_governance
+
+    observed = []
+
+    class Gateway:
+        @staticmethod
+        def write_text(_path, _payload, **_kwargs):
+            observed.append(get_active_governance())
+
+    monkeypatch.setattr(mhaf_field, "_DATA_PATH", tmp_path / "mhaf.json")
+    monkeypatch.setattr(
+        "core.runtime.file_write_gateway.get_file_write_gateway",
+        lambda: Gateway(),
+    )
+    field = mhaf_field.MycelialHypergraphAttractorField()
+
+    with _governance_runtime_forced_active(monkeypatch):
+        field._save()
+
+    assert len(observed) == 1
+    assert observed[0] is not None
+    assert observed[0].domain == "state_mutation"
+    assert observed[0].source == "mhaf_field.persistence"
+
+
+def test_epistemic_humility_checkpoint_establishes_local_state_authority(
+    monkeypatch,
+    tmp_path,
+):
+    from core.adaptation import epistemic_humility as humility_module
+    from core.governance_context import get_active_governance
+
+    observed = []
+
+    class Gateway:
+        @staticmethod
+        def write_text(_path, _payload, **_kwargs):
+            observed.append(get_active_governance())
+
+    humility = humility_module.EpistemicHumility(orchestrator=None)
+    humility.data_path = tmp_path / "humility.json"
+    monkeypatch.setattr(humility_module, "get_file_write_gateway", lambda: Gateway())
+
+    with _governance_runtime_forced_active(monkeypatch):
+        humility._save()
+
+    assert len(observed) == 1
+    assert observed[0] is not None
+    assert observed[0].domain == "state_mutation"
+    assert observed[0].source == "epistemic_humility.persistence"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("owner_factory", "running_attr"),
+    [
+        (
+            lambda: __import__(
+                "core.consciousness.mhaf_field",
+                fromlist=["MycelialHypergraphAttractorField"],
+            ).MycelialHypergraphAttractorField(),
+            "_running",
+        ),
+        (
+            lambda: __import__(
+                "core.adaptation.epistemic_humility",
+                fromlist=["EpistemicHumility"],
+            ).EpistemicHumility(orchestrator=None),
+            "running",
+        ),
+    ],
+)
+async def test_internal_state_owner_quiesces_loop_before_shutdown_checkpoint(
+    monkeypatch,
+    owner_factory,
+    running_attr,
+):
+    events: list[str] = []
+
+    async def active_loop() -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            events.append("loop_stopped")
+
+    owner = owner_factory()
+    setattr(owner, running_attr, True)
+    owner._task = asyncio.create_task(active_loop())
+    monkeypatch.setattr(owner, "_save", lambda: events.append("checkpoint_saved"))
+    await asyncio.sleep(0)
+
+    await owner.stop()
+
+    assert events == ["loop_stopped", "checkpoint_saved"]

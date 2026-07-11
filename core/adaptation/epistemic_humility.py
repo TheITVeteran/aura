@@ -11,18 +11,17 @@ This is the essence of Epistemic Humility: the ability to recognize when you
 are wrong and autonomously adjust your own operating parameters to compensate.
 """
 
-from core.runtime.errors import record_degradation
-from core.runtime.file_write_gateway import get_file_write_gateway
-from core.utils.task_tracker import get_task_tracker
 import asyncio
-from collections import Counter
 import json
 import logging
 import time
-from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Optional
+from collections import Counter
+from dataclasses import asdict, dataclass, field
 
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.service_registry import get_runtime_service, register_runtime_service
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.EpistemicHumility")
 
@@ -46,26 +45,43 @@ class EpistemicHumility:
 
     def __init__(self, orchestrator):
         self.orchestrator = orchestrator
-        self.failures: List[FailureEvent] = []
-        self.heuristics: Dict[str, LearnedHeuristic] = {}
+        self.failures: list[FailureEvent] = []
+        self.heuristics: dict[str, LearnedHeuristic] = {}
         
         from core.config import config
         self.data_path = config.paths.data_dir / "epistemic_humility.json"
         
         self.running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._load()
 
     async def start(self):
-        if self.running: return
+        if self.running:
+            return
         self.running = True
         self._task = get_task_tracker().create_task(self._critic_loop(), name="EpistemicHumility.critic_loop")
         logger.info("🙇 Epistemic Humility ONLINE — ready to learn from mistakes.")
 
     async def stop(self):
         self.running = False
-        if self._task:
-            self._task.cancel()
+        task, self._task = self._task, None
+        if task and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=1.0)
+            except asyncio.CancelledError:
+                pass
+            except TimeoutError as exc:
+                record_degradation(
+                    "epistemic_humility",
+                    exc,
+                    severity="warning",
+                    action=(
+                        "checkpointed epistemic humility after bounded critic-loop "
+                        "cancellation timed out"
+                    ),
+                    enforce_failure_policy=False,
+                )
         self._save()
         logger.info("🙇 Epistemic Humility DORMANT.")
 
@@ -119,7 +135,7 @@ class EpistemicHumility:
             self.failures = [f for f in self.failures if f not in recent_failures]
             self._save()
 
-    async def _synthesize_heuristic(self, failures: List[FailureEvent]):
+    async def _synthesize_heuristic(self, failures: list[FailureEvent]):
         """Uses the CognitiveEngine to derive a rule from failures."""
         if not self.orchestrator:
             return
@@ -139,7 +155,8 @@ class EpistemicHumility:
         try:
             # We use the raw LLM router if available to avoid polluting the main chat stream
             llm = get_runtime_service("llm_router", default=None)
-            if not llm: return
+            if not llm:
+                return
             
             from core.schemas import Message
             response = await llm.chat(
@@ -172,7 +189,7 @@ class EpistemicHumility:
             record_degradation('epistemic_humility', e)
             logger.error("Failed to synthesize heuristic: %s", e)
 
-    def _select_domain(self, failures: List[FailureEvent]) -> str:
+    def _select_domain(self, failures: list[FailureEvent]) -> str:
         sources = [f.source for f in failures if f.source]
         if not sources:
             return "general"
@@ -200,19 +217,27 @@ class EpistemicHumility:
             data = {
                 "heuristics": {k: asdict(v) for k, v in self.heuristics.items()}
             }
-            get_file_write_gateway().write_text(
-                self.data_path,
-                json.dumps(data, indent=4),
-                source="adaptation.epistemic_humility.state",
-            )
+            from core.governance_context import local_internal_governed_scope
+
+            with local_internal_governed_scope(
+                "epistemic_humility.persistence",
+                domain="state_mutation",
+                constraints={"operation": "heuristic_checkpoint"},
+            ):
+                get_file_write_gateway().write_text(
+                    self.data_path,
+                    json.dumps(data, indent=4),
+                    source="adaptation.epistemic_humility.state",
+                )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('epistemic_humility', e)
             logger.error("Failed to save epistemic humility state: %s", e)
 
     def _load(self):
-        if not self.data_path.exists(): return
+        if not self.data_path.exists():
+            return
         try:
-            with open(self.data_path, "r") as f:
+            with open(self.data_path) as f:
                 data = json.load(f)
             
             self.heuristics = {

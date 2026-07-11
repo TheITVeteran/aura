@@ -15,18 +15,18 @@ cognitive modules at a deeper level than the service bus.
 Persistence: state is checkpointed to ~/.aura/data/mhaf_state.json
 """
 
-from core.runtime.background_policy import constitutive_compute_budget
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import json
 import logging
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
+
+from core.runtime.background_policy import constitutive_compute_budget
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 from .mhaf.hrr import HRREncoder
 from .mhaf.phi_estimator import compute_local_phi
@@ -42,7 +42,7 @@ class MHAFNode:
     """A cognitive subsystem node in the hypergraph."""
     name: str
     activation: float = 0.5        # current activation level [0, 1]
-    hrr_vector: Optional[np.ndarray] = None  # HRR encoding
+    hrr_vector: np.ndarray | None = None  # HRR encoding
     last_updated: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict:
@@ -56,7 +56,7 @@ class MHAFNode:
 @dataclass
 class MHAFEdge:
     """A hyperedge connecting 2+ nodes."""
-    nodes: List[str]               # node names in this hyperedge
+    nodes: list[str]               # node names in this hyperedge
     weight: float = 0.5            # edge strength [0, 1]
     phi: float = 0.0               # local Φ estimate for this edge's node activations
     free_energy: float = 1.0       # current free energy (lower = better)
@@ -94,13 +94,13 @@ class MycelialHypergraphAttractorField:
 
     def __init__(self):
         self.hrr = HRREncoder(dim=HRR_DIM)
-        self._nodes: Dict[str, MHAFNode] = {}
-        self._edges: Dict[str, MHAFEdge] = {}   # key: sorted tuple of node names
-        self._activation_history: Dict[str, List[float]] = {}
+        self._nodes: dict[str, MHAFNode] = {}
+        self._edges: dict[str, MHAFEdge] = {}   # key: sorted tuple of node names
+        self._activation_history: dict[str, list[float]] = {}
         self._global_phi: float = 0.0
         self._free_energy: float = 1.0
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._tick_count = 0
         self._last_tick = 0.0
         self._loop_errors = 0
@@ -153,7 +153,7 @@ class MycelialHypergraphAttractorField:
 
     def _update_edges_for_node(self, node_name: str):
         """Update or create hyperedges for a recently-activated node."""
-        for edge_key, edge in list(self._edges.items()):
+        for _edge_key, edge in list(self._edges.items()):
             if node_name in edge.nodes:
                 self._update_edge(edge)
 
@@ -166,7 +166,7 @@ class MycelialHypergraphAttractorField:
             for other in active_nodes[:3]:  # limit to 3 co-active nodes
                 self._ensure_edge([node_name, other])
 
-    def _ensure_edge(self, node_names: List[str]):
+    def _ensure_edge(self, node_names: list[str]):
         """Create an edge if it doesn't exist."""
         key = "|".join(sorted(node_names))
         if key not in self._edges:
@@ -218,8 +218,21 @@ class MycelialHypergraphAttractorField:
     async def stop(self):
         """Stop MHAF and save state."""
         self._running = False
-        if self._task and not self._task.done():
-            self._task.cancel()
+        task, self._task = self._task, None
+        if task and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=1.0)
+            except asyncio.CancelledError:
+                pass
+            except TimeoutError as exc:
+                record_degradation(
+                    "mhaf_field",
+                    exc,
+                    severity="warning",
+                    action="checkpointed MHAF after bounded loop cancellation timed out",
+                    enforce_failure_policy=False,
+                )
         self._save()
         logger.info("MHAF stopped.")
 
@@ -358,13 +371,19 @@ class MycelialHypergraphAttractorField:
                 "global_phi": self._global_phi,
                 "saved_at": time.time(),
             }
+            from core.governance_context import local_internal_governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
 
-            get_file_write_gateway().write_text(
-                _DATA_PATH,
-                json.dumps(state, indent=2),
-                source="mhaf_field.save",
-            )
+            with local_internal_governed_scope(
+                "mhaf_field.persistence",
+                domain="state_mutation",
+                constraints={"operation": "mhaf_checkpoint"},
+            ):
+                get_file_write_gateway().write_text(
+                    _DATA_PATH,
+                    json.dumps(state, indent=2),
+                    source="mhaf_field.save",
+                )
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('mhaf_field', e)
             logger.debug("MHAF save error: %s", e)
@@ -394,7 +413,7 @@ class MycelialHypergraphAttractorField:
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
 
-_mhaf: Optional[MycelialHypergraphAttractorField] = None
+_mhaf: MycelialHypergraphAttractorField | None = None
 
 
 def get_mhaf() -> MycelialHypergraphAttractorField:

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -138,6 +139,38 @@ async def test_shutdown_proxy_commit_bus_degraded_defers_instead_of_raising(tmp_
     assert any("Graceful-shutdown state commit stored for boot replay" in msg for msg in messages)
 
     await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_direct_snapshot_does_not_reopen_aiosqlite_worker(
+    monkeypatch,
+    tmp_path,
+):
+    from core.state.aura_state import AuraState
+
+    repo = StateRepository(db_path=str(tmp_path / "state.db"), is_vault_owner=False)
+    state = AuraState.default().derive("shutdown", origin="system")
+
+    async def forbidden_async_db_open():
+        raise RuntimeError("runtime_shutdown")
+
+    monkeypatch.setattr(repo, "_ensure_db", forbidden_async_db_open)
+
+    committed = await repo._commit_shutdown_direct_snapshot(
+        state,
+        BrokenPipeError("vault transport closed"),
+    )
+
+    assert committed is True
+    with sqlite3.connect(repo.db_path) as connection:
+        row = connection.execute(
+            "SELECT transition_cause FROM state_log ORDER BY timestamp DESC LIMIT 1"
+        ).fetchone()
+        outbox_count = connection.execute(
+            "SELECT COUNT(*) FROM proxy_commit_outbox"
+        ).fetchone()
+    assert row == ("shutdown",)
+    assert outbox_count == (0,)
 
 
 @pytest.mark.asyncio
