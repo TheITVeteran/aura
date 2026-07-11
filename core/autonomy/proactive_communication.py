@@ -135,46 +135,51 @@ class ProactiveCommunicationManager:
     """Manages when and how Aura initiates conversations.
     """
 
-    def __init__(self, notification_callback: Callable | None = None):
+    def __init__(self, notification_callback: Callable[..., Any] | None = None) -> None:
         self.notification_callback = notification_callback
         self.last_interaction_time = time.time()
         self.user_currently_active = False
         self.pending_messages: deque[ProactiveMessage] = deque(maxlen=50)
         self.current_emotion = EmotionalState.NEUTRAL
         self.messages_sent_today = 0
-        self.last_message_time = 0
+        self.last_message_time = 0.0
         self.daily_message_limit = 20
         
         # Track unanswered messages for intelligent backoff
         self.unanswered_count = 0
         self.max_unanswered = 3  # Stop proactive messaging after 3 unanswered
         
-        self._background_task: asyncio.Task | None = None
+        self._background_task: asyncio.Task[Any] | None = None
         self._stop_event = asyncio.Event()
         self._consecutive_processing_errors = 0
         self._next_processing_attempt_at = 0.0
 
-    def record_user_interaction(self):
+    def record_user_interaction(self) -> None:
         """Reset idle timer and unanswered counter"""
         self.last_interaction_time = time.time()
         self.user_currently_active = True
         self.unanswered_count = 0  # User responded, reset backoff
 
-    def update_emotion(self, emotion: EmotionalState):
+    def update_emotion(self, emotion: EmotionalState) -> None:
         self.current_emotion = emotion
 
-    def queue_message(self, content: str, emotion: EmotionalState, urgency: InterruptionUrgency):
+    def queue_message(
+        self,
+        content: str,
+        emotion: EmotionalState,
+        urgency: InterruptionUrgency,
+    ) -> None:
         msg = ProactiveMessage(content, emotion, urgency)
         self.pending_messages.append(msg)
 
-    async def start(self):
+    async def start(self) -> None:
         if self._background_task and not self._background_task.done():
             return
         self._background_task = None
         self._stop_event.clear()
         self._background_task = get_task_tracker().track_task(self._process_messages(), name="proactive_communication.process_messages")
 
-    async def stop(self):
+    async def stop(self) -> None:
         task = self._background_task
         self._stop_event.set()
         if task:
@@ -202,7 +207,7 @@ class ProactiveCommunicationManager:
             "next_attempt_at": self._next_processing_attempt_at,
         }
 
-    async def _process_messages(self):
+    async def _process_messages(self) -> None:
         while not self._stop_event.is_set():
             try:
                 await asyncio.sleep(5)
@@ -230,8 +235,8 @@ class ProactiveCommunicationManager:
                 # Stop proactive messaging if user isn't responding
                 if self.unanswered_count >= self.max_unanswered:
                     # Only let CRITICAL messages through when user is silent
-                    ready = []
-                    remaining = deque()
+                    ready: list[ProactiveMessage] = []
+                    remaining: deque[ProactiveMessage] = deque(maxlen=50)
                     while self.pending_messages:
                         msg = self.pending_messages.popleft()
                         if msg.urgency == InterruptionUrgency.CRITICAL and msg.should_send_now(self.last_interaction_time, self.user_currently_active, now):
@@ -245,7 +250,7 @@ class ProactiveCommunicationManager:
 
                 # Collect messages that can be sent
                 ready = []
-                remaining = deque()
+                remaining = deque(maxlen=50)
                 while self.pending_messages:
                     msg = self.pending_messages.popleft()
                     if msg.should_send_now(self.last_interaction_time, self.user_currently_active, now):
@@ -275,7 +280,7 @@ class ProactiveCommunicationManager:
                 )
                 logger.error("Proactive comm error: %s", e)
 
-    async def _send_msg(self, msg: ProactiveMessage):
+    async def _send_msg(self, msg: ProactiveMessage) -> None:
         if _proactivity_suppressed_now():
             logger.debug("Proactive communication suppressed by demo quiet window.")
             return
@@ -413,8 +418,10 @@ class ProactiveCommunicationManager:
         # Boredom scales with idle time and environmental entropy
         return base
 
-_inst = None
-def get_proactive_comm():
+_inst: ProactiveCommunicationManager | None = None
+
+
+def get_proactive_comm() -> ProactiveCommunicationManager:
     global _inst
     if _inst is None:
         _inst = ProactiveCommunicationManager()

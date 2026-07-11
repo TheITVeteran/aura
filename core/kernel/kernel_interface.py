@@ -45,6 +45,7 @@ from core.runtime import service_access
 from core.runtime.errors import (
     DependencyUnavailable,
     FallbackClassification,
+    Severity,
     record_degradation,
 )
 
@@ -87,7 +88,7 @@ def _emit_kernel_fault(
     error: BaseException,
     *,
     action: str,
-    severity: str = "degraded",
+    severity: Severity = "degraded",
     stage: str = "",
     extra: dict[str, Any] | None = None,
 ) -> None:
@@ -98,7 +99,7 @@ def _emit_kernel_fault(
         record_degradation(
             "kernel_interface",
             error,
-            severity=severity,  # type: ignore[arg-type]
+            severity=severity,
             action=action,
             classification=FallbackClassification.SAFE_FALLBACK,
             extra=metadata or None,
@@ -107,7 +108,7 @@ def _emit_kernel_fault(
         record_degradation(
             "kernel_interface",
             error,
-            severity=severity,  # type: ignore[arg-type]
+            severity=severity,
             action=action or "captured kernel-interface fault",
         )
 
@@ -168,7 +169,7 @@ class KernelInterface:
 
     _instance: KernelInterface | None = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the interface in an unbooted state."""
         self._kernel: AuraKernel | None = None
         self._ready: bool = False
@@ -197,9 +198,9 @@ class KernelInterface:
 
     async def boot(
         self,
-        kernel=None,
-        vault=None,
-        config=None,
+        kernel: AuraKernel | None = None,
+        vault: Any = None,
+        config: Any = None,
     ) -> KernelInterface:
         """
         Boot the kernel and mark the interface as ready.
@@ -355,14 +356,13 @@ class KernelInterface:
         shutdown = getattr(kernel, "shutdown", None)
         if callable(shutdown):
             try:
-                parameters = inspect.signature(shutdown).parameters.values()
+                supports_finalizer_ownership = any(
+                    parameter.name == "finalize_process_runtime"
+                    or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                    for parameter in inspect.signature(shutdown).parameters.values()
+                )
             except (TypeError, ValueError):
-                parameters = ()
-            supports_finalizer_ownership = any(
-                parameter.name == "finalize_process_runtime"
-                or parameter.kind is inspect.Parameter.VAR_KEYWORD
-                for parameter in parameters
-            )
+                supports_finalizer_ownership = False
             if supports_finalizer_ownership:
                 await shutdown(finalize_process_runtime=finalize_process_runtime)
             else:
@@ -394,7 +394,8 @@ class KernelInterface:
         message = _safe_text(message, max_chars=MAX_KERNEL_MESSAGE_CHARS)
         origin = _safe_text(origin, default="user", max_chars=MAX_ORIGIN_CHARS)
 
-        if not self.is_ready():
+        kernel = self._kernel
+        if not self._ready or kernel is None:
             logger.warning("KernelInterface.process() called before boot.")
             # [STABILITY v55] Return empty so chat.py can fire protected
             # foreground lane instead of showing a canned robot message.
@@ -463,8 +464,8 @@ class KernelInterface:
                     stage="process.proof_repair_classification",
                 )
 
-            if durable_working_memory_turn and self._kernel.state is not None:
-                cognition = getattr(self._kernel.state, "cognition", None)
+            if durable_working_memory_turn and kernel.state is not None:
+                cognition = getattr(kernel.state, "cognition", None)
                 if cognition is None:
                     raise AttributeError("kernel state has no cognition")
                 wm = getattr(cognition, "working_memory", None)
@@ -490,8 +491,8 @@ class KernelInterface:
             # Propagate origin to kernel state so phases can distinguish
             # user-facing vs autonomous/background ticks and route to the
             # correct LLM tier.
-            if self._kernel.state is not None:
-                cognition = getattr(self._kernel.state, "cognition", None)
+            if kernel.state is not None:
+                cognition = getattr(kernel.state, "cognition", None)
                 if cognition is None:
                     raise AttributeError("kernel state has no cognition")
                 cognition.current_origin = origin
@@ -512,7 +513,7 @@ class KernelInterface:
             return ""
 
         try:
-            tick_entry = await self._kernel.tick(message, priority=priority)
+            tick_entry = await kernel.tick(message, priority=priority)
             self._consecutive_tick_failures = 0
             self._last_fault = ""
             _mark_kernel_health("healthy")
@@ -523,7 +524,7 @@ class KernelInterface:
                 )
                 # response_preview is capped at 120 chars for the observer;
                 # get the full response from state
-                cognition = getattr(getattr(self._kernel, "state", None), "cognition", None)
+                cognition = getattr(getattr(kernel, "state", None), "cognition", None)
                 full_response = _safe_text(
                     getattr(cognition, "last_response", ""),
                     max_chars=MAX_KERNEL_MESSAGE_CHARS,
@@ -577,19 +578,21 @@ class KernelInterface:
 
     def print_loop(self, n: int = 5) -> None:
         """Print the last N ticks of the causal chain to stdout."""
-        if not self.is_ready():
+        kernel = self._kernel
+        if not self._ready or kernel is None:
             print("[KernelInterface] Not ready.")
             return
-        self._kernel.print_loop(n)
+        kernel.print_loop(n)
 
-    def loop_state(self) -> dict:
+    def loop_state(self) -> dict[str, Any]:
         """Return the current live state of the feedback loop."""
-        if not self.is_ready():
+        kernel = self._kernel
+        if not self._ready or kernel is None:
             return {"status": "not_ready"}
 
         # Don't leak raw kernel state directly; create a sanitized copy.
         try:
-            raw_state = self._kernel.loop_state()
+            raw_state = kernel.loop_state()
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
             self._last_fault = f"{type(exc).__name__}: {_safe_text(exc, max_chars=240)}"
             self._last_failure_at = time.time()

@@ -21,11 +21,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 
-class EpistemicStatus(str, Enum):
+class EpistemicStatus(StrEnum):
     KNOWN = "known"
     TOOL_VERIFIED = "tool_verified"
     SOURCE_BACKED = "source_backed"
@@ -276,14 +276,14 @@ class CalibrationGate:
     def _overall(labels: list[ClaimLabel]) -> EpistemicStatus:
         if not labels:
             return EpistemicStatus.UNVERIFIED
-        if any(l.status is EpistemicStatus.IMPOSSIBLE_LOCALLY for l in labels):
+        if any(label.status is EpistemicStatus.IMPOSSIBLE_LOCALLY for label in labels):
             return EpistemicStatus.IMPOSSIBLE_LOCALLY
         # The weakest load-bearing status dominates the headline.
         order = [
             EpistemicStatus.GUESSED, EpistemicStatus.UNVERIFIED, EpistemicStatus.INFERRED,
             EpistemicStatus.SOURCE_BACKED, EpistemicStatus.KNOWN, EpistemicStatus.TOOL_VERIFIED,
         ]
-        present = {l.status for l in labels}
+        present = {label.status for label in labels}
         for status in order:
             if status in present:
                 return status
@@ -293,7 +293,7 @@ class CalibrationGate:
     def _confidence(labels: list[ClaimLabel], *, v_checked: bool, v_ok: bool) -> float:
         if not labels:
             return 0.4
-        base = sum(_CONFIDENCE_RANK[l.status] for l in labels) / len(labels)
+        base = sum(_CONFIDENCE_RANK[label.status] for label in labels) / len(labels)
         if v_checked and not v_ok:
             base *= 0.6  # a verifier actively found a problem
         return round(max(0.05, min(0.98, base)), 4)

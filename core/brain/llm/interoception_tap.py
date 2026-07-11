@@ -4,7 +4,8 @@ Every decode step, the resident model computes a full log-probability
 distribution over its vocabulary — its actual, momentary belief about what
 comes next. Until now that signal was discarded in the worker loop, and the
 parent's "surprise" feedback ran on a unique-word-ratio heuristic over the
-finished text with ``logprobs=None``. This module captures the real thing.
+finished text with ``logprobs=None``. This module samples the real signal at a
+bounded cadence so observation cannot dominate generation latency.
 
 The tap is a **pure observer** with three hard guarantees:
 
@@ -42,6 +43,7 @@ logger = logging.getLogger("Aura.Brain.InteroceptionTap")
 
 # Mirrors the worker's absolute generation cap; the tap never stores more.
 _HARD_TOKEN_CAP = 8192
+_DENSE_OPENING_TOKENS = 4
 
 # A token only counts as a reportable "spike" above this surprisal (nats):
 # 2.0 nats ⇒ the model gave the sampled word < ~14% probability. Below that,
@@ -98,7 +100,7 @@ def _step_stats(logprobs: Any, token_id: int) -> tuple[float, float, float, floa
     (tests, CPU fallback). Returns ``None`` when the distribution is unusable;
     the caller counts it as a dropped measurement.
     """
-    stats = None
+    raw_stats: tuple[Any, Any, Any, Any, Any] | None = None
     try:
         import mlx.core as mx  # noqa: PLC0415 — worker-local heavy import
 
@@ -107,46 +109,68 @@ def _step_stats(logprobs: Any, token_id: int) -> tuple[float, float, float, floa
             size = int(lp.shape[0])
             if not (0 <= int(token_id) < size):
                 return None
-            tok_lp = lp[int(token_id)]
-            ent = -mx.sum(mx.exp(lp) * lp)
+            mlx_token_logprob = lp[int(token_id)]
+            mlx_entropy = -mx.sum(mx.exp(lp) * lp)
             pair = mx.topk(lp, k=2) if size >= 2 else mx.stack([lp[0], lp[0]])
             arg = mx.argmax(lp)
             # One materialization for the whole step: five scalars.
-            packed = mx.stack(
-                [tok_lp, ent, pair.reshape(-1)[0], pair.reshape(-1)[1], arg.astype(mx.float32)]
+            packed: Any = mx.stack(
+                [
+                    mlx_token_logprob,
+                    mlx_entropy,
+                    pair.reshape(-1)[0],
+                    pair.reshape(-1)[1],
+                    arg.astype(mx.float32),
+                ]
             ).tolist()
-            stats = (packed[0], packed[1], packed[2], packed[3], packed[4])
+            if isinstance(packed, (list, tuple)) and len(packed) >= 5:
+                raw_stats = (packed[0], packed[1], packed[2], packed[3], packed[4])
     except ImportError:
-        stats = None
+        raw_stats = None
 
-    if stats is None:
+    if raw_stats is None:
         import numpy as np  # noqa: PLC0415
 
         arr = np.asarray(logprobs, dtype=np.float64).reshape(-1)
         size = int(arr.shape[0])
         if size == 0 or not (0 <= int(token_id) < size):
             return None
-        tok_lp = float(arr[int(token_id)])
+        numpy_token_logprob = float(arr[int(token_id)])
         with np.errstate(over="ignore", invalid="ignore"):
             probs = np.exp(arr)
-            ent = float(-np.sum(probs * arr))
+            numpy_entropy = float(-np.sum(probs * arr))
         if size >= 2:
             top_idx = np.argpartition(arr, -2)[-2:]
-            a, b = float(arr[top_idx[0]]), float(arr[top_idx[1]])
+            numpy_top_a = float(arr[top_idx[0]])
+            numpy_top_b = float(arr[top_idx[1]])
         else:
-            a = b = tok_lp
-        stats = (tok_lp, ent, a, b, float(int(np.argmax(arr))))
+            numpy_top_a = numpy_top_b = numpy_token_logprob
+        raw_stats = (
+            numpy_token_logprob,
+            numpy_entropy,
+            numpy_top_a,
+            numpy_top_b,
+            float(int(np.argmax(arr))),
+        )
 
-    tok_lp = _finite(stats[0])
-    ent = _finite(stats[1])
-    a = _finite(stats[2])
-    b = _finite(stats[3])
-    arg_raw = _finite(stats[4])
-    if tok_lp is None or ent is None or a is None or b is None or arg_raw is None:
+    token_logprob = _finite(raw_stats[0])
+    entropy_raw = _finite(raw_stats[1])
+    top_a = _finite(raw_stats[2])
+    top_b = _finite(raw_stats[3])
+    arg_raw = _finite(raw_stats[4])
+    if (
+        token_logprob is None
+        or entropy_raw is None
+        or top_a is None
+        or top_b is None
+        or arg_raw is None
+    ):
         return None
-    top1, top2 = (a, b) if a >= b else (b, a)  # mx.topk does not guarantee order
-    surprisal = max(0.0, -tok_lp)
-    entropy = max(0.0, ent)
+    top1, top2 = (
+        (top_a, top_b) if top_a >= top_b else (top_b, top_a)
+    )  # mx.topk does not guarantee order
+    surprisal = max(0.0, -token_logprob)
+    entropy = max(0.0, entropy_raw)
     argmax_hit = int(arg_raw) == int(token_id)
     return surprisal, entropy, top1, top2, argmax_hit
 
@@ -184,6 +208,7 @@ class InteroceptionTap:
         curve_points: int | None = None,
         sample_points: int | None = None,
         near_tie_gap: float = 0.10,
+        step_stride: int = 1,
     ) -> None:
         self._spike_k = spike_k if spike_k is not None else _env_int(
             "AURA_INTEROCEPTION_TOPK_SPIKES", 8, 0, 32
@@ -195,13 +220,17 @@ class InteroceptionTap:
             "AURA_INTEROCEPTION_SAMPLE_POINTS", 128, 8, 512
         )
         self._near_tie_gap = max(0.0, min(1.0, float(near_tie_gap)))
+        self._step_stride = max(1, min(64, int(step_stride)))
 
+        self._observed_tokens = 0
+        self._skipped_stride = 0
         self._surprisals: list[float] = []
         self._entropies: list[float] = []
         self._prob_gaps: list[float] = []  # p(top1) - p(top2) per token
         self._argmax_hits = 0
         self._token_ids: list[int] = []
         self._token_lps: list[float] = []
+        self._sampled_positions: list[int] = []
         self._texts: list[str] = []
         self._dropped = 0
         self._first_feed_at: float | None = None
@@ -212,7 +241,20 @@ class InteroceptionTap:
     def feed(self, token_id: Any, logprobs: Any, token_text: Any) -> None:
         """Record one decode step. Never raises."""
         try:
-            if logprobs is None or len(self._surprisals) >= _HARD_TOKEN_CAP:
+            position = self._observed_tokens
+            self._observed_tokens += 1
+            if position >= _HARD_TOKEN_CAP:
+                self._dropped += 1
+                return
+            self._texts.append(str(token_text or ""))
+            sample_step = (
+                position < _DENSE_OPENING_TOKENS
+                or position % self._step_stride == 0
+            )
+            if not sample_step:
+                self._skipped_stride += 1
+                return
+            if logprobs is None:
                 self._dropped += 1
                 return
             stats = _step_stats(logprobs, int(token_id))
@@ -234,7 +276,7 @@ class InteroceptionTap:
                 self._argmax_hits += 1
             self._token_ids.append(int(token_id))
             self._token_lps.append(-surprisal)
-            self._texts.append(str(token_text or ""))
+            self._sampled_positions.append(position)
         except _STEP_RECOVERABLE as exc:
             self._dropped += 1
             if not self._step_error_logged:
@@ -253,7 +295,8 @@ class InteroceptionTap:
             if n == 0:
                 return None
             return {
-                "token_count": n,
+                "token_count": self._observed_tokens,
+                "measured_token_count": n,
                 "mean_surprisal": round(sum(self._surprisals) / n, 4),
                 "mean_entropy": round(sum(self._entropies) / n, 4),
             }
@@ -276,7 +319,8 @@ class InteroceptionTap:
                 duration = max(0.0, self._last_feed_at - self._first_feed_at)
             tps = generation_tps
             if tps is None and duration > 0 and n > 1:
-                tps = (n - 1) / duration
+                observed_span = self._sampled_positions[-1] - self._sampled_positions[0]
+                tps = observed_span / duration
 
             sorted_surprisal = sorted(self._surprisals)
             near_ties = sum(1 for gap in self._prob_gaps if gap < self._near_tie_gap)
@@ -286,7 +330,13 @@ class InteroceptionTap:
             payload: dict[str, Any] = {
                 "version": PAYLOAD_VERSION,
                 "attempt": int(attempt),
-                "token_count": n,
+                "token_count": self._observed_tokens,
+                "measured_token_count": n,
+                "sampling_stride": self._step_stride,
+                "sampling_coverage": round(
+                    n / max(1, min(self._observed_tokens, _HARD_TOKEN_CAP)), 4
+                ),
+                "skipped_stride": self._skipped_stride,
                 "dropped": self._dropped,
                 "duration_s": round(duration, 3),
                 "tokens_per_s": round(tps, 2) if tps is not None else None,
@@ -321,20 +371,22 @@ class InteroceptionTap:
             return []
         candidates = sorted(
             (
-                i for i in range(1, len(self._surprisals))
-                if self._surprisals[i] >= _SPIKE_FLOOR_NATS
+                i for i in range(len(self._surprisals))
+                if self._sampled_positions[i] != 0
+                and self._surprisals[i] >= _SPIKE_FLOOR_NATS
             ),
             key=lambda i: self._surprisals[i],
             reverse=True,
         )[: self._spike_k]
         spikes = []
         for i in sorted(candidates):
-            context = "".join(self._texts[max(0, i - 3): i + 3])
+            position = self._sampled_positions[i]
+            context = "".join(self._texts[max(0, position - 3): position + 3])
             context = " ".join(context.split())[:60]
             spikes.append(
                 {
-                    "pos": i,
-                    "text": self._texts[i].strip()[:24],
+                    "pos": position,
+                    "text": self._texts[position].strip()[:24],
                     "context": context,
                     "surprisal": round(self._surprisals[i], 4),
                 }
@@ -351,7 +403,9 @@ def maybe_build_tap() -> InteroceptionTap | None:
     try:
         if not interoception_enabled():
             return None
-        return InteroceptionTap()
+        return InteroceptionTap(
+            step_stride=_env_int("AURA_INTEROCEPTION_STEP_STRIDE", 4, 1, 64)
+        )
     except _STEP_RECOVERABLE as exc:
         logger.debug("Interoception tap unavailable: %s", exc)
         return None

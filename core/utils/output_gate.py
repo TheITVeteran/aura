@@ -9,7 +9,7 @@ import logging
 import asyncio
 import hashlib
 import time
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional
 
 from core.runtime.effect_boundary import effect_sink
 
@@ -508,6 +508,15 @@ class AutonomousOutputGate:
                     logger.critical("Final fail-safe failed: %s", e2)
 
         await self._emit_output_receipt(content, origin=origin, target="primary", metadata=metadata)
+        try:
+            from core.epistemics.epistemic_reach import (
+                acknowledge_epistemic_correction_delivery,
+            )
+
+            acknowledge_epistemic_correction_delivery(content)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("output_gate", exc)
+            logger.debug("Epistemic correction delivery acknowledgement skipped: %s", exc)
 
         # 4. Trigger High-Fidelity Multimodal Manifestation
         from core.container import ServiceContainer

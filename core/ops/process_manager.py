@@ -372,7 +372,7 @@ class ManagedProcess:
         """Stop health ownership and the child without blocking the event loop."""
 
         await self._stop_health_monitoring()
-        return await run_sync_shutdown_callable(
+        return bool(await run_sync_shutdown_callable(
             lambda: self._stop_process_blocking(
                 force=force,
                 timeout_s=timeout_s,
@@ -386,7 +386,7 @@ class ManagedProcess:
                 ),
             ),
             name=f"managed-process:{self.config.name}",
-        )
+        ))
 
     def _stop_process_blocking(
         self,
@@ -1031,11 +1031,12 @@ class ProcessManager:
         self.shutdown_event.set()
         if self._cleanup_complete.is_set():
             return dict(self._last_cleanup_summary)
-        return await run_sync_shutdown_callable(
+        summary = await run_sync_shutdown_callable(
             lambda: self.cleanup(timeout_s=self.cleanup_timeout_s),
             timeout_s=self.cleanup_timeout_s + 1.0,
             name="process-manager",
         )
+        return dict(summary)
 
     def cleanup(self, *, timeout_s: float | None = None) -> dict[str, Any]:
         """Clean up all processes exactly once within a bounded budget."""

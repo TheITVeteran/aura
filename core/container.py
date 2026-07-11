@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable, Collection
 from enum import Enum
 from pathlib import Path
+from types import FrameType
 from typing import Any, Optional
 
 from core.exceptions import (
@@ -132,7 +133,7 @@ def _determine_caller() -> str:
     registration, all synchronously on the loop. Raw frame walking + string
     slicing carries the same provenance for free.
     """
-    frame = sys._getframe(1)
+    frame: FrameType | None = sys._getframe(1)
     depth = 0
     while frame is not None and depth < 12:
         filename = frame.f_code.co_filename
@@ -144,11 +145,11 @@ def _determine_caller() -> str:
 
 class ServiceDescriptor:
     """Describes how to create and manage a service."""
-    def __init__(self, name: str, factory: Callable, lifetime: ServiceLifetime = ServiceLifetime.SINGLETON,
+    def __init__(self, name: str, factory: Callable[..., Any], lifetime: ServiceLifetime = ServiceLifetime.SINGLETON,
                  instance: Any = None, required: bool = True, initialized: bool = False,
                  dependencies: list[str] | None = None, owner: str | None = None,
                  registered_by: str | None = None, required_for: str | None = None,
-                 failure_policy: str | None = None):
+                 failure_policy: str | None = None) -> None:
         self.name = name
         self.factory = factory
         self.lifetime = lifetime
@@ -207,10 +208,10 @@ def _read_instance_status(name: str, instance: Any) -> str:
     return "active_unverified"
 
 
-def zero_sync_guard(func: Callable):
+def zero_sync_guard(func: Callable[..., Any]) -> Callable[..., Any]:
     """Decorator to ensure async methods do not perform synchronous blocking calls."""
     @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
         # In the future, this could monitor thread status or event loop lag
         return await func(*args, **kwargs)
     return wrapper
@@ -243,7 +244,7 @@ class ServiceContainer:
     _optional_absent_breadcrumbs: set[str] = set()
     _shutdown_reports: list[dict[str, Any]] = []
 
-    def __new__(cls):
+    def __new__(cls) -> "ServiceContainer":
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super().__new__(cls)
@@ -299,15 +300,15 @@ class ServiceContainer:
     def register(
         cls,
         name: str,
-        factory: Callable,
-        lifetime=ServiceLifetime.SINGLETON,
-        required=True,
+        factory: Callable[..., Any],
+        lifetime: ServiceLifetime | str = ServiceLifetime.SINGLETON,
+        required: bool = True,
         dependencies: list[str] | None = None,
         owner: str | None = None,
         registered_by: str | None = None,
         required_for: str | None = None,
         failure_policy: str | None = None,
-    ):
+    ) -> None:
         """Register a service factory."""
         cls._assert_runtime_registration_allowed(name)
         cls._begin_new_lifecycle_epoch_if_needed()
@@ -358,7 +359,7 @@ class ServiceContainer:
             )
             logger.debug("Registered static service: %s", name)
     @classmethod
-    def unlock_registration(cls, *, caller: str = "unknown", reason: str = ""):
+    def unlock_registration(cls, *, caller: str = "unknown", reason: str = "") -> None:
         """Unlock registration to allow dynamic service updates.
 
         AUDIT: Every unlock is logged at WARNING level with the caller identity
@@ -389,14 +390,23 @@ class ServiceContainer:
             )
 
     @classmethod
-    def lock_registration(cls):
+    def lock_registration(cls) -> None:
         """Standard locking interface."""
         with cls._lock:
             cls._registration_locked = True
             logger.info("🔒 ServiceContainer registration LOCKED")
 
     @classmethod
-    def register_instance(cls, name: str, instance: Any, required=True, owner: str | None = None, registered_by: str | None = None, required_for: str | None = None, failure_policy: str | None = None):
+    def register_instance(
+        cls,
+        name: str,
+        instance: Any,
+        required: bool = True,
+        owner: str | None = None,
+        registered_by: str | None = None,
+        required_for: str | None = None,
+        failure_policy: str | None = None,
+    ) -> None:
         """Register a pre-built instance.
 
         Unlike factory-based ``register()``, pre-built instances are safe to
@@ -427,7 +437,7 @@ class ServiceContainer:
             # and failing the health contract. Swap the instance in place;
             # provenance from first registration stands.
             if (
-                existing
+                desc is not None
                 and name not in _PROTECTED_CORE_SERVICES
                 and desc.lifetime == ServiceLifetime.SINGLETON
             ):
@@ -478,7 +488,7 @@ class ServiceContainer:
             logger.debug("Registered pre-built instance: %s", name)
 
     @classmethod
-    def set(cls, name: str, instance: Any, required: bool = True):
+    def set(cls, name: str, instance: Any, required: bool = True) -> Any:
         """Legacy compatibility alias for replacing a singleton instance.
 
         A large portion of Aura's older runtime expects ``ServiceContainer.set``
@@ -1066,7 +1076,7 @@ class ServiceContainer:
     @classmethod
     def get_health_report(cls) -> dict[str, Any]:
         """Generate a health report for all registered services."""
-        report = {
+        report: dict[str, Any] = {
             "status": "operational",
             "uptime_seconds": round(time.monotonic() - (cls._start_time or time.monotonic()), 2),
             "services": {},
@@ -1106,7 +1116,7 @@ class ServiceContainer:
         try:
             from core.config import config
 
-            return config.paths.data_dir / "sovereignty_seal.json"
+            return Path(config.paths.data_dir) / "sovereignty_seal.json"
         except (ImportError, AttributeError, RuntimeError, OSError) as exc:
             record_degradation("container", exc)
             logger.debug("Falling back to default sovereignty seal path after config lookup failed: %s", exc)
@@ -1225,7 +1235,8 @@ def _install_runtime_service_registry_bridge() -> None:
             return getattr(desc, "failure_policy", None)
 
         def _service_for(service_name: str, default: object | None = None) -> object | None:
-            return ServiceContainer.get(service_name, default=default)
+            result: object | None = ServiceContainer.get(service_name, default=default)
+            return result
 
         def _has_service(service_name: str) -> bool:
             return ServiceContainer.has(service_name)
@@ -1259,14 +1270,18 @@ def _install_runtime_service_registry_bridge() -> None:
             required: bool,
             metadata: dict[str, str | None],
         ) -> None:
-            resolved_lifetime = lifetime
-            if resolved_lifetime is None:
+            resolved_lifetime: ServiceLifetime
+            if isinstance(lifetime, ServiceLifetime):
+                resolved_lifetime = lifetime
+            elif lifetime is None:
                 resolved_lifetime = ServiceLifetime.SINGLETON
-            elif isinstance(resolved_lifetime, str):
+            elif isinstance(lifetime, str):
                 try:
-                    resolved_lifetime = ServiceLifetime(resolved_lifetime)
+                    resolved_lifetime = ServiceLifetime(lifetime)
                 except ValueError:
                     resolved_lifetime = ServiceLifetime.SINGLETON
+            else:
+                resolved_lifetime = ServiceLifetime.SINGLETON
 
             ServiceContainer.register(
                 service_name,

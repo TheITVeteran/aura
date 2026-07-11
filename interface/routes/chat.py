@@ -41,9 +41,9 @@ from core.runtime.desktop_task_contract import (
 )
 from core.runtime.errors import describe_error, record_degradation
 from core.runtime.structured_input import analyze_prompt_shape
+from core.runtime.version import version_string
 from core.utils.intent_normalization import normalize_memory_intent_text
 from core.utils.task_tracker import get_task_tracker
-from core.runtime.version import version_string
 from interface.auth import (
     CHEAT_CODE_COOKIE_NAME,
     CHEAT_CODE_COOKIE_TTL_SECS,
@@ -457,6 +457,19 @@ async def _emit_chat_output_receipt(
             metadata=dict(metadata or {}),
         )
         await asyncio.to_thread(get_receipt_store().emit, receipt)
+        if str(target or "primary") == "primary":
+            try:
+                from core.epistemics.epistemic_reach import (
+                    acknowledge_epistemic_correction_delivery,
+                )
+
+                acknowledge_epistemic_correction_delivery(reply_text)
+            except _CHAT_RECOVERABLE_ERRORS as correction_exc:
+                record_degradation("chat", correction_exc)
+                logger.debug(
+                    "Epistemic correction delivery acknowledgement skipped: %s",
+                    correction_exc,
+                )
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)
         logger.debug("Chat output receipt emit skipped: %s", exc)
@@ -14010,7 +14023,7 @@ class _WebInterlocutorCognitiveComposer:
                         len(text),
                     )
                     return text
-        except (asyncio.TimeoutError, TimeoutError, RuntimeError, TypeError, ValueError, AttributeError) as exc:
+        except (TimeoutError, RuntimeError, TypeError, ValueError, AttributeError) as exc:
             record_degradation(
                 "chat.web_interlocutor_direct_compose",
                 exc,

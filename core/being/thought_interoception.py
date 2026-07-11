@@ -37,7 +37,7 @@ import time
 import uuid
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -109,6 +109,7 @@ class FeltThought:
     origin: str
     foreground: bool
     token_count: int
+    measurement_count: int
     attempt: int
 
     fluency: float           # 1/(1+mean surprisal): how easily the words came
@@ -124,7 +125,7 @@ class FeltThought:
     tail_entropy: float
     argmax_rate: float
     near_tie_rate: float
-    tokens_per_s: Optional[float]
+    tokens_per_s: float | None
 
     spikes: tuple[dict[str, Any], ...]
     curve: tuple[float, ...]
@@ -140,6 +141,7 @@ class FeltThought:
             "origin": self.origin,
             "foreground": self.foreground,
             "token_count": self.token_count,
+            "measurement_count": self.measurement_count,
             "attempt": self.attempt,
             "fluency": round(self.fluency, 4),
             "felt_confidence": round(self.felt_confidence, 4),
@@ -189,10 +191,10 @@ class ThoughtInteroceptionEngine:
     def __init__(self, *, journal_size: int = 64) -> None:
         self._lock = threading.RLock()
         self._journal: deque[FeltThought] = deque(maxlen=max(4, journal_size))
-        self._last_foreground: Optional[FeltThought] = None
+        self._last_foreground: FeltThought | None = None
         self._live: dict[str, Any] = {}
         self._live_at = 0.0
-        self._tps_baseline: Optional[float] = None
+        self._tps_baseline: float | None = None
         self._ingested = 0
         self._dropped_payloads = 0
         # (felt_confidence, externally_verified_correct) pairs — the falsifier.
@@ -206,7 +208,7 @@ class ThoughtInteroceptionEngine:
         origin: str = "unknown",
         foreground: bool = False,
         response_text: str = "",
-    ) -> Optional[FeltThought]:
+    ) -> FeltThought | None:
         """Distil one worker payload into a FeltThought and fan it out. Never raises."""
         try:
             felt = self._distil(payload, origin=origin, foreground=foreground,
@@ -236,7 +238,7 @@ class ThoughtInteroceptionEngine:
 
     def _distil(
         self, payload: Any, *, origin: str, foreground: bool, response_text: str
-    ) -> Optional[FeltThought]:
+    ) -> FeltThought | None:
         if not isinstance(payload, dict):
             return None
         if int(payload.get("version") or 0) != 1:
@@ -244,6 +246,10 @@ class ThoughtInteroceptionEngine:
         token_count = int(payload.get("token_count") or 0)
         if token_count <= 0:
             return None
+        measurement_count = int(payload.get("measured_token_count") or token_count)
+        if measurement_count <= 0:
+            return None
+        measurement_count = min(token_count, measurement_count)
 
         mean_surprisal = max(0.0, _f(payload.get("mean_surprisal")))
         p90_surprisal = max(0.0, _f(payload.get("p90_surprisal")))
@@ -284,6 +290,7 @@ class ThoughtInteroceptionEngine:
             origin=str(origin or "unknown")[:64],
             foreground=bool(foreground),
             token_count=token_count,
+            measurement_count=measurement_count,
             attempt=attempt,
             fluency=_clamp(fluency),
             felt_confidence=felt_confidence,
@@ -304,7 +311,7 @@ class ThoughtInteroceptionEngine:
             text_excerpt=_THINK_RE.sub("", str(response_text or "")).strip()[:1500],
         )
 
-    def _compute_strain(self, tokens_per_s: Optional[float], attempt: int) -> float:
+    def _compute_strain(self, tokens_per_s: float | None, attempt: int) -> float:
         retry_strain = min(0.5, 0.25 * attempt)
         with self._lock:
             baseline = self._tps_baseline
@@ -528,13 +535,13 @@ class ThoughtInteroceptionEngine:
         return out
 
     # ── retrieval ────────────────────────────────────────────────────────────
-    def last(self, *, foreground_only: bool = True) -> Optional[FeltThought]:
+    def last(self, *, foreground_only: bool = True) -> FeltThought | None:
         with self._lock:
             if foreground_only:
                 return self._last_foreground
             return self._journal[-1] if self._journal else None
 
-    def find_for_text(self, text: str) -> Optional[FeltThought]:
+    def find_for_text(self, text: str) -> FeltThought | None:
         """The felt trace for a specific answer, or None.
 
         Matches by fingerprint first, then by normalized-prefix containment
@@ -560,7 +567,7 @@ class ThoughtInteroceptionEngine:
                     return felt
         return None
 
-    def find_by_fingerprint(self, fingerprint: str) -> Optional[FeltThought]:
+    def find_by_fingerprint(self, fingerprint: str) -> FeltThought | None:
         with self._lock:
             for felt in reversed(self._journal):
                 if felt.fingerprint == fingerprint:
@@ -604,7 +611,7 @@ class ThoughtInteroceptionEngine:
         return snapshot
 
 
-_engine: Optional[ThoughtInteroceptionEngine] = None
+_engine: ThoughtInteroceptionEngine | None = None
 _engine_lock = threading.Lock()
 
 

@@ -143,8 +143,8 @@ class ContextAssembler:
     def _build_self_correction_block() -> str:
         """An externally-verified correction queued by epistemic reach, if any.
 
-        The engine surfaces each correction exactly once; an empty string means
-        there is nothing to own right now.
+        Assembly leases rather than consumes the correction. The final primary
+        output receipt acknowledges delivery, so retries cannot silently lose it.
         """
         try:
             from core.epistemics.epistemic_reach import get_epistemic_reach
