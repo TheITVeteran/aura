@@ -674,7 +674,12 @@ class ServiceContainer:
                     return default
                 raise ServiceNotFoundError(f"Service '{resolved_name}' not found in static registry.")
 
-        cls._assert_runtime_initialization_allowed(resolved_name)
+        try:
+            cls._assert_runtime_initialization_allowed(resolved_name)
+        except ContainerError:
+            if default != "_SENTINEL":
+                return default
+            raise
 
         # 2. Initialization Path (Per-service Lock)
         with cls._lock:
@@ -696,7 +701,12 @@ class ServiceContainer:
             if desc.lifetime == ServiceLifetime.SINGLETON and desc.instance is not None and desc.initialized:
                 return desc.instance
 
-            cls._assert_runtime_initialization_allowed(resolved_name)
+            try:
+                cls._assert_runtime_initialization_allowed(resolved_name)
+            except ContainerError:
+                if default != "_SENTINEL":
+                    return default
+                raise
 
             # Circular Dependency Check
             resolving = cls._resolving_var.get()

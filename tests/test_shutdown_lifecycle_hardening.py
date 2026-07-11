@@ -145,6 +145,7 @@ def test_container_refuses_lazy_service_initialization_after_shutdown(
     with pytest.raises(ContainerError, match="cannot initialize service"):
         service_container.get("late_service")
 
+    assert service_container.get("late_service", default=None) is None
     assert calls == []
 
 
