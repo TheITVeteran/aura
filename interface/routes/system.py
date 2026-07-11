@@ -28,6 +28,7 @@ from core.config import config
 from core.container import ServiceContainer
 from core.health.boot_status import build_boot_health_snapshot
 from core.health.conversation_lane import conversation_lane_is_busy
+from core.runtime.service_access import optional_service
 from core.runtime.errors import record_degradation
 from core.runtime.health_contract import (
     REQUIRED_HEALTH_PROBE_GROUPS,
@@ -1137,7 +1138,7 @@ async def _collect_soma_payload() -> dict[str, Any]:
 
 
 def _collect_tool_catalog() -> list[dict[str, Any]]:
-    engine = ServiceContainer.get("capability_engine", default=None)
+    engine = optional_service("capability_engine", default=None)
     if not engine:
         return []
 
@@ -3129,7 +3130,7 @@ async def api_health(request: Request):
 @router.get("/tools/catalog")
 async def api_tools_catalog():
     catalog = _collect_tool_catalog()
-    engine = ServiceContainer.get("capability_engine", default=None)
+    engine = optional_service("capability_engine", default=None)
     health = (
         engine.get_catalog_health()
         if engine is not None and hasattr(engine, "get_catalog_health")

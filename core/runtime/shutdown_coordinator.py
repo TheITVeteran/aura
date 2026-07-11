@@ -560,7 +560,7 @@ class ShutdownCoordinator:
                 report.handler_statuses[key] = "cancelled"
                 report.handler_durations_seconds[key] = duration
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - final teardown boundary: a failing handler must be recorded, never re-raised into shutdown
             duration = round(time.monotonic() - started, 6)
             with self._lock:
                 self._active_handlers.discard(key)

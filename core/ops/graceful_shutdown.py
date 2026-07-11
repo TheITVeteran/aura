@@ -96,7 +96,16 @@ class GracefulShutdown:
         if cls._is_shutting_down:
             if current_task is cls._shutdown_owner_task:
                 return
-            await cls._shutdown_event.wait()
+            try:
+                # Bounded: if the owning shutdown task wedges, a secondary
+                # trigger must not wait forever — shutdown is already in
+                # motion; proceeding after the grace window is harmless.
+                await asyncio.wait_for(cls._shutdown_event.wait(), timeout=60.0)
+            except TimeoutError:
+                logger.warning(
+                    "Secondary shutdown trigger stopped waiting after 60s; "
+                    "primary shutdown task may be wedged."
+                )
             return
 
         shutdown_scope_token = begin_shutdown_task_creation_scope()

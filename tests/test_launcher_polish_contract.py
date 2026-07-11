@@ -495,7 +495,12 @@ def test_aura_main_acquires_singleton_lock_before_port_cleanup_and_reaper_boot()
     assert main_py.index("bootstrap_lock(skip_lock=args.watchdog)") < main_py.index("reaper_proc = multiprocessing.Process(")
     assert "stop_aura()" in main_py
     assert "if not args.cli and not args.gui_window and not args.watchdog:" in main_py
-    assert "if not args.gui_window and not args.watchdog:" in main_py
+    # The reaper-boot guard also refuses after a latched shutdown (monotonic
+    # shutdown, 76e5a71c) — pin the strengthened condition, not the old text.
+    assert (
+        "if not args.gui_window and not args.watchdog and not is_shutdown_requested():"
+        in main_py
+    )
     assert "AURA_REAPER_MANIFEST" in main_py
 
 

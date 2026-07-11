@@ -1399,12 +1399,15 @@ def test_stall_watchdog_traceback_dump_uses_internal_governance(monkeypatch, tmp
     from core.resilience.stall_watchdog import StallWatchdog
 
     monkeypatch.setenv("AURA_GOVERNANCE_MODE", "strict")
+    # Forensic sinks honor AURA_LOG_DIR (hermetic runs must not salt the
+    # live record); pin the routed location explicitly.
+    monkeypatch.setenv("AURA_LOG_DIR", str(tmp_path))
     monkeypatch.chdir(tmp_path)
 
     watchdog = StallWatchdog(loop=SimpleNamespace(is_closed=lambda: False))
     watchdog._report_stall(5.5)
 
-    dumps = sorted((tmp_path / "data" / "error_logs" / "stalls").glob("stall_*.txt"))
+    dumps = sorted((tmp_path / "error_logs" / "stalls").glob("stall_*.txt"))
     assert dumps
     assert "STALL DETECTED: 5.5s" in dumps[-1].read_text(encoding="utf-8")
 

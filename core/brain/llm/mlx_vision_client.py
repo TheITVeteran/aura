@@ -241,9 +241,10 @@ class MLXVisionClient:
                 self._pending_requests.pop(req_id, None)
             raise RuntimeError("Vision worker request queue is full") from exc
         
-        # Wait for response
+        # Wait for response (structurally bounded by the deadline).
         deadline = time.monotonic() + max(0.1, float(timeout_s))
-        while True:
+        response = None
+        while time.monotonic() < deadline:
             with self._pending_lock:
                 response = self._pending_requests.get(req_id)
             if response is not None:
@@ -253,19 +254,19 @@ class MLXVisionClient:
                     self._pending_requests.pop(req_id, None)
                 self.stop()
                 raise RuntimeError("runtime_shutdown")
-            if time.monotonic() >= deadline:
-                with self._pending_lock:
-                    self._pending_requests.pop(req_id, None)
-                self.stop()
-                raise TimeoutError(
-                    f"Vision worker inference timed out after {float(timeout_s):.1f}s"
-                )
             time.sleep(0.1)
             if self._process and not self._process.is_alive():
                 with self._pending_lock:
                     self._pending_requests.pop(req_id, None)
                 self.stop()
                 raise RuntimeError("Vision worker crashed during inference")
+        if response is None:
+            with self._pending_lock:
+                self._pending_requests.pop(req_id, None)
+            self.stop()
+            raise TimeoutError(
+                f"Vision worker inference timed out after {float(timeout_s):.1f}s"
+            )
                 
         with self._pending_lock:
             resp = self._pending_requests.pop(req_id)

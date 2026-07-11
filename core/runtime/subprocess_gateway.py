@@ -542,7 +542,16 @@ class SubprocessGateway:
                     await asyncio.wait_for(proc.wait(), timeout=2.0)
                 except TimeoutError:
                     proc.kill()
-                    await proc.wait()
+                    try:
+                        # Bounded: a SIGKILLed child that cannot be reaped
+                        # in 5s is an OS-level anomaly; leaking one zombie
+                        # beats wedging the caller (A1 discipline).
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    except TimeoutError:
+                        logger.warning(
+                            "SIGKILLed subprocess pid=%s not reaped in 5s",
+                            getattr(proc, "pid", None),
+                        )
             except (OSError, RuntimeError, ProcessLookupError, ValueError) as exc:
                 record_shutdown_admission_event(
                     f"subprocess_gateway.spawn_async:{source}",
@@ -622,7 +631,16 @@ class SubprocessGateway:
                     await asyncio.wait_for(proc.wait(), timeout=2.0)
                 except TimeoutError:
                     proc.kill()
-                    await proc.wait()
+                    try:
+                        # Bounded: a SIGKILLed child that cannot be reaped
+                        # in 5s is an OS-level anomaly; leaking one zombie
+                        # beats wedging the caller (A1 discipline).
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                    except TimeoutError:
+                        logger.warning(
+                            "SIGKILLed subprocess pid=%s not reaped in 5s",
+                            getattr(proc, "pid", None),
+                        )
             except (OSError, RuntimeError, ProcessLookupError, ValueError) as exc:
                 record_shutdown_admission_event(
                     f"subprocess_gateway.spawn_shell_async:{source}",

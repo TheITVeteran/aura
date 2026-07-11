@@ -2244,7 +2244,9 @@ class CapabilityEngine(AuraBaseModule):
     def _construct_skill_instance(metadata: SkillMetadata, skill_class: type[Any]) -> Any:
         dependencies: dict[str, Any] = {}
         for dependency_name in metadata.constructor_dependencies:
-            dependency = ServiceContainer.get(dependency_name, default=None)
+            from core.runtime.service_access import optional_service
+
+            dependency = optional_service(dependency_name, default=None)
             if dependency is None:
                 raise RuntimeError(
                     f"declared constructor dependency {dependency_name!r} is unavailable"
@@ -5255,8 +5257,8 @@ async def execute_tool(
 
     Resolves the active skill_router instance from the ServiceContainer.
     """
-    from core.container import ServiceContainer
-    engine: CapabilityEngine | None = ServiceContainer.get("skill_router", default=None)
+    from core.runtime.service_access import optional_service
+    engine: CapabilityEngine | None = optional_service("skill_router", default=None)
     if not engine:
         engine = CapabilityEngine()
         ServiceContainer.register_instance("skill_router", engine)

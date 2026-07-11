@@ -644,18 +644,17 @@ def _acquire_spawn_file_lock(lock_file: Any, *, model_path: str) -> None:
     except (TypeError, ValueError):
         timeout_s = 90.0
     deadline = time.monotonic() + timeout_s
-    while True:
+    while time.monotonic() < deadline:
         if _shutdown_blocks_model_work(model_path, action="spawn lock wait"):
             raise RuntimeError("runtime_shutdown")
         try:
             fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
             return
         except BlockingIOError:
-            if time.monotonic() >= deadline:
-                raise TimeoutError(
-                    f"mlx_spawn_file_lock_timeout:{os.path.basename(model_path)}:{timeout_s:.1f}s"
-                ) from None
             time.sleep(0.1)
+    raise TimeoutError(
+        f"mlx_spawn_file_lock_timeout:{os.path.basename(model_path)}:{timeout_s:.1f}s"
+    )
 
 
 def _real_model_path(value: Any) -> str:

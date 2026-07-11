@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from core.config import config
 from core.container import ServiceContainer
+from core.runtime.service_access import optional_service
 from core.runtime.errors import record_degradation
 from interface.auth import _require_internal, _restore_owner_session_from_request, _verify_token
 
@@ -888,7 +889,7 @@ async def api_skills():
         }
         for item in catalog
     ]
-    engine = ServiceContainer.get("capability_engine", default=None)
+    engine = optional_service("capability_engine", default=None)
     health = (
         engine.get_catalog_health()
         if engine is not None and hasattr(engine, "get_catalog_health")
@@ -911,7 +912,7 @@ async def api_skill_execute(
 
     try:
         intent_router = ServiceContainer.get("intent_router", default=None)
-        engine = ServiceContainer.get("capability_engine", default=None)
+        engine = optional_service("capability_engine", default=None)
         if not intent_router or not engine:
             return JSONResponse({"ok": False, "error": "Skill execution engine not available"}, status_code=503)
 

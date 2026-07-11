@@ -6,12 +6,16 @@ from core.skills.image_gen import ImageGenSkill
 
 
 class SavedImageProbe:
-    def __init__(self):
-        self.saved_paths = []
+    """Mirrors PIL's save contract: the skill encodes into a BytesIO with
+    an explicit format, then routes the BYTES through the governed file
+    write gateway (image writes are consequential writes now)."""
 
-    def save(self, path):
-        self.saved_paths.append(path)
-        path.write_bytes(b"png-probe")
+    def __init__(self):
+        self.save_calls = []
+
+    def save(self, target, format=None, **kwargs):
+        self.save_calls.append({"format": format})
+        target.write(b"png-probe")
 
 
 class RecordingTextToImagePipeline:
@@ -64,7 +68,9 @@ async def test_image_generation_skill_saves_recorded_pipeline_output(monkeypatch
     assert result["type"] == "image"
     assert result["mode"] == "txt2img"
     assert result["url"].startswith("/data/generated_images/gen_txt2img_")
-    assert image.saved_paths and image.saved_paths[0].exists()
+    assert image.save_calls and image.save_calls[0]["format"] == "PNG"
+    written = sorted(tmp_path.glob("gen_txt2img_*.png"))
+    assert written and written[0].read_bytes() == b"png-probe"
     assert pipeline.calls[0]["width"] == 512
     assert pipeline.calls[0]["height"] == 512
     assert pipeline.calls[0]["num_inference_steps"] == 12

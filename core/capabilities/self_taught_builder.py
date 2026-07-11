@@ -243,7 +243,10 @@ async def _functional_test(html_path: str) -> dict[str, Any]:
                 await asyncio.wait_for(proc.wait(), timeout=2.0)
             except TimeoutError:
                 proc.kill()
-                await proc.wait()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except TimeoutError:
+                    logger.warning("SIGKILLed tester pid=%s not reaped in 5s", proc.pid)
         return {"playable": None, "reason": f"functional tester could not run: {exc}"}
     line = (out or b"").decode(errors="replace").strip().splitlines()
     for candidate in reversed(line):

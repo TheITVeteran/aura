@@ -169,9 +169,18 @@ class BodySchema(AuraBaseModule):
                         and hasattr(obj, "description")
                         and attr_name != "BaseSkill"
                     ):
-                        skill_name = getattr(obj, "name", skill_name)
-                        description = getattr(obj, "description", "")
-                        metabolic_cost = getattr(obj, "metabolic_cost", 1)
+                        # Slotted classes expose `name` on the CLASS as a
+                        # member_descriptor, not a string — accept only
+                        # concrete string surfaces or keep scanning.
+                        candidate_name = getattr(obj, "name", None)
+                        if not isinstance(candidate_name, str):
+                            continue
+                        skill_name = candidate_name
+                        candidate_desc = getattr(obj, "description", "")
+                        description = candidate_desc if isinstance(candidate_desc, str) else ""
+                        candidate_cost = getattr(obj, "metabolic_cost", 1)
+                        if isinstance(candidate_cost, (int, float)):
+                            metabolic_cost = candidate_cost
                         break
             except (RuntimeError, AttributeError, TypeError) as exc:
                 record_degradation('body_schema', exc)

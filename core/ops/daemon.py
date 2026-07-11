@@ -172,7 +172,10 @@ class CognitiveDaemon:
         )
         if is_shutdown_requested():
             server.close()
-            await server.wait_closed()
+            try:
+                await asyncio.wait_for(server.wait_closed(), timeout=5.0)
+            except TimeoutError:
+                logger.debug("Daemon socket close timed out during shutdown abort.")
             _unlink_daemon_socket()
             raise RuntimeError("runtime_shutdown")
         self._socket_server = server
@@ -189,7 +192,10 @@ class CognitiveDaemon:
         except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             if is_shutdown_requested():
                 server.close()
-                await server.wait_closed()
+                try:
+                    await asyncio.wait_for(server.wait_closed(), timeout=5.0)
+                except TimeoutError:
+                    logger.debug("Daemon socket close timed out during shutdown abort.")
                 self._socket_server = None
                 raise RuntimeError("runtime_shutdown") from None
             record_degradation("daemon", exc)
@@ -233,7 +239,12 @@ class CognitiveDaemon:
                     logger.error("IPC error: %s", e)
         finally:
             writer.close()
-            await writer.wait_closed()
+            try:
+                # Bounded: a peer that never drains its side must not wedge
+                # the handler task forever (A1 bounded-await discipline).
+                await asyncio.wait_for(writer.wait_closed(), timeout=5.0)
+            except TimeoutError:
+                logger.debug("Daemon API writer close timed out; abandoning socket.")
 
 
 class WorldFeed:
