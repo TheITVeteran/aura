@@ -128,6 +128,15 @@ export AURA_AUTO_LISTEN
 export AURA_ENABLE_UVLOOP
 export AURA_ATTACH_LAUNCHER
 export AURA_LOCAL_BACKEND=mlx        # Aura's in-process fine-tuned MLX mind.
+# ── Substrate interoception + epistemic reach (felt thought) ─────────────────
+: "${AURA_INTEROCEPTION:=1}"             # Feel the decode: per-token surprisal/entropy tap
+: "${AURA_EPISTEMIC_REACH:=1}"           # Felt doubt may verify claims externally (governed)
+: "${AURA_REACH_READ_HOSTS:=en.wikipedia.org}"  # Operator READ allowlist for governed reach
+: "${AURA_EPISTEMIC_REACH_PER_HOUR:=6}"  # Hard hourly budget for external verifications
+export AURA_INTEROCEPTION
+export AURA_EPISTEMIC_REACH
+export AURA_REACH_READ_HOSTS
+export AURA_EPISTEMIC_REACH_PER_HOUR
 : "${AURA_SAFE_BOOT_DESKTOP:=0}" # Recovery-only; normal desktop launches are the full runtime
 : "${AURA_ENABLE_BACKGROUND_COGNITION:=1}"
 : "${AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM:=1}"
