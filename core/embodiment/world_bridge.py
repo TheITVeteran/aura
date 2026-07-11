@@ -42,15 +42,18 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from core.governance.will import ActionDomain
+from core.runtime.action_executor import ActionExecutor
 from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.runtime_settings import get_runtime_setting
+from core.runtime.skill_contract import ActionExpectation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.WorldBridge")
@@ -165,6 +168,42 @@ class WorldActionResult:
     receipt_id: str
     data: Any = None
     error: str | None = None
+    status: str = ""
+    transport_succeeded: bool = False
+    effect_verified: bool = False
+    manual_reconciliation_required: bool = False
+
+
+def _world_handler_effect_verified(channel: Channel, data: Any) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if channel in {Channel.FILE_WORKSPACE, Channel.CALENDAR_AWARENESS}:
+        return True
+    if channel == Channel.SHELL_SANDBOX:
+        return int(data.get("rc", 1)) == 0
+    return data.get("effect_verified") is True
+
+
+def _world_effect_verifier(context: Mapping[str, Any]) -> dict[str, Any]:
+    result = context.get("result")
+    verified = bool(
+        isinstance(result, dict)
+        and result.get("handler_effect_verified") is True
+    )
+    capability_receipt = (
+        str(result.get("capability_token_receipt") or "")
+        if isinstance(result, dict)
+        else ""
+    )
+    return {
+        "effect_verified": verified,
+        "reason": "world_handler_observed_effect" if verified else "world_effect_unverified",
+        "receipt_id": capability_receipt,
+        "observation": {
+            "handler_effect_verified": verified,
+            "capability_token_consumed": bool(capability_receipt),
+        },
+    }
 
 
 class WorldBridge:
@@ -205,62 +244,163 @@ class WorldBridge:
         if perm is None or not perm.is_active():
             return WorldActionResult(channel=channel.value, ok=False, receipt_id="", error="permission_denied")
 
-        from core.ethics.conscience import Verdict as ConscienceVerdict
-        from core.ethics.conscience import get_conscience
-        conscience = get_conscience()
-        c_decision = conscience.evaluate(
-            action=action,
-            domain="external_communication" if channel in (Channel.SOCIAL_POST,) else "tool_execution",
-            intent=intent,
-            context={"channel": channel.value, "payload": payload},
-        )
+        try:
+            from core.ethics.conscience import Verdict as ConscienceVerdict
+            from core.ethics.conscience import get_conscience
+
+            conscience = get_conscience()
+            c_decision = conscience.evaluate(
+                action=action,
+                domain=(
+                    "external_communication"
+                    if channel in (Channel.SOCIAL_POST,)
+                    else "tool_execution"
+                ),
+                intent=intent,
+                context={"channel": channel.value, "payload": payload},
+            )
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("world_bridge", exc)
+            return WorldActionResult(
+                channel=channel.value,
+                ok=False,
+                receipt_id="",
+                error=f"conscience_exception:{exc}",
+            )
         if c_decision.verdict == ConscienceVerdict.REFUSE:
             return WorldActionResult(channel=channel.value, ok=False, receipt_id="", error=f"conscience_refused:{c_decision.rule_id}")
         if c_decision.verdict == ConscienceVerdict.REQUIRE_FRESH_USER_AUTH:
             return WorldActionResult(channel=channel.value, ok=False, receipt_id="", error="require_fresh_user_auth")
 
-        try:
-            from core.governance.will_client import WillClient, WillRequest
-            from core.will import ActionDomain
-            decision = await WillClient().decide_async(
-                WillRequest(
-                    content=action,
-                    source="world_bridge",
-                    domain=getattr(ActionDomain, "TOOL_EXECUTION", "tool_execution"),
-                    context={"intent": intent, "channel": channel.value, "payload": payload},
-                )
-            )
-            if not WillClient.is_approved(decision):
-                return WorldActionResult(channel=channel.value, ok=False, receipt_id="", error=f"will_refused:{getattr(decision, 'reason', '')}")
-        except (ImportError, AttributeError, RuntimeError) as exc:
-            record_degradation('world_bridge', exc)
-            return WorldActionResult(channel=channel.value, ok=False, receipt_id="", error=f"will_exception:{exc}")
-
         from core.agency.capability_token import get_token_store
-        store = get_token_store()
-        tok = store.issue(
-            origin=f"world_bridge:{channel.value}",
-            scope=action,
-            ttl_seconds=60.0,
-            domain="tool_execution",
-            requested_action=action,
-            approver="UnifiedWill",
-            parent_receipt=getattr(decision, "receipt_id", "") or "",
-        )
 
+        store = get_token_store()
         handler = self._handlers.get(channel)
         if handler is None:
-            store.revoke(tok.token, reason="no_handler")
-            return WorldActionResult(channel=channel.value, ok=False, receipt_id=tok.token, error="no_handler")
+            return WorldActionResult(
+                channel=channel.value,
+                ok=False,
+                receipt_id="",
+                error="no_handler",
+            )
+
+        async def _execute_handler(execution: Mapping[str, Any]) -> dict[str, Any]:
+            will_receipt_id = str(execution.get("will_receipt_id") or "")
+            tok = store.issue(
+                origin=f"world_bridge:{channel.value}",
+                scope=action,
+                ttl_seconds=60.0,
+                domain=ActionDomain.ENVIRONMENT_ACTION.value,
+                requested_action=action,
+                approver="UnifiedWill",
+                parent_receipt=will_receipt_id,
+            )
+            try:
+                store.validate(
+                    tok.token,
+                    domain=ActionDomain.ENVIRONMENT_ACTION.value,
+                    action=action,
+                )
+                data = await handler(payload or {}, capability_token=tok.token)
+                verified = _world_handler_effect_verified(channel, data)
+                transport_succeeded = bool(
+                    not isinstance(data, dict)
+                    or data.get("transport_succeeded", True) is True
+                )
+                try:
+                    store.consume(
+                        tok.token,
+                        child_receipt=will_receipt_id,
+                        side_effects=[action],
+                    )
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    store.revoke(
+                        tok.token,
+                        reason=f"capability_receipt_completion_failed:{exc}",
+                    )
+                    return {
+                        "ok": transport_succeeded,
+                        "error": f"capability_receipt_completion_failed:{exc}",
+                        "handler_data": data,
+                        "handler_effect_verified": False,
+                        "capability_token_receipt": tok.token,
+                    }
+                return {
+                    "ok": transport_succeeded,
+                    "handler_data": data,
+                    "handler_effect_verified": verified,
+                    "capability_token_receipt": tok.token,
+                }
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                store.revoke(tok.token, reason=f"handler_error:{exc}")
+                return {
+                    "ok": False,
+                    "error": str(exc),
+                    "handler_effect_verified": False,
+                    "capability_token_receipt": tok.token,
+                }
 
         try:
-            data = await handler(payload or {}, capability_token=tok.token)
-            store.consume(tok.token, child_receipt=tok.token, side_effects=[action])
-            return WorldActionResult(channel=channel.value, ok=True, receipt_id=tok.token, data=data)
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('world_bridge', exc)
-            store.revoke(tok.token, reason=f"handler_error:{exc}")
-            return WorldActionResult(channel=channel.value, ok=False, receipt_id=tok.token, error=str(exc))
+            execution = await ActionExecutor.execute(
+                domain=ActionDomain.ENVIRONMENT_ACTION,
+                action_name=action,
+                params={
+                    "channel": channel.value,
+                    "intent": str(intent or "")[:500],
+                    "payload": dict(payload or {}),
+                },
+                source=f"world_bridge:{channel.value}",
+                expectation=ActionExpectation(
+                    objective=f"complete and observe {action} through {channel.value}",
+                    acceptance_criteria=["effect_verified"],
+                    required_evidence=["verification_evidence.custom_verifier"],
+                    repair_hint="inspect the channel handler receipt and observe the world effect",
+                    rollback_hint="use the channel-specific rollback or reconcile manually",
+                    allow_partial=False,
+                ),
+                effect_handler=_execute_handler,
+                effect_verifier=_world_effect_verifier,
+            )
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("world_bridge", exc)
+            return WorldActionResult(
+                channel=channel.value,
+                ok=False,
+                receipt_id="",
+                error=f"action_executor_exception:{exc}",
+            )
+        receipt_id = str(
+            execution.get("post_action_receipt_id")
+            or execution.get("will_receipt_id")
+            or execution.get("capability_token_receipt")
+            or ""
+        )
+        effect_verified = execution.get("effect_verified") is True
+        ok = bool(execution.get("ok") and effect_verified)
+        error = str(execution.get("error") or "") or None
+        transport_succeeded = execution.get("transport_succeeded") is True
+        manual_reconciliation_required = bool(
+            execution.get("manual_reconciliation_required")
+            or (transport_succeeded and not effect_verified)
+        )
+        if transport_succeeded and not effect_verified:
+            detail = str(error or "").strip()
+            error = (
+                f"world_effect_unverified:{detail}"
+                if detail
+                else "world_effect_unverified"
+            )
+        return WorldActionResult(
+            channel=channel.value,
+            ok=ok,
+            receipt_id=receipt_id,
+            data=execution.get("handler_data"),
+            error=error,
+            status=str(execution.get("status") or ""),
+            transport_succeeded=transport_succeeded,
+            effect_verified=effect_verified,
+            manual_reconciliation_required=manual_reconciliation_required,
+        )
 
 
 # ─── Default handlers ───────────────────────────────────────────────────────
@@ -331,9 +471,12 @@ _BRIDGE: WorldBridge | None = None
 def get_world_bridge() -> WorldBridge:
     global _BRIDGE
     if _BRIDGE is None:
+        from core.embodiment.iot_bridge import _environmental_change_handler
+
         b = WorldBridge()
         b.register(Channel.FILE_WORKSPACE, _file_workspace_handler)
         b.register(Channel.SHELL_SANDBOX, _shell_sandbox_handler)
+        b.register(Channel.ENVIRONMENTAL_CHANGE, _environmental_change_handler)
         _BRIDGE = b
     return _BRIDGE
 

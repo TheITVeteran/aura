@@ -19,7 +19,11 @@ from core.being.body_state_service import BodyStateService
 from core.being.welfare_state import WelfareState
 from core.being.welfare_transaction import WelfareTransaction
 from core.governance.will import ActionDomain, get_will
-from core.governance_context import GovernanceViolation, governed_scope
+from core.governance_context import (
+    GovernanceViolation,
+    governed_scope,
+    require_governance,
+)
 from core.memory.memory_write_gateway import get_memory_write_gateway
 from core.runtime.action_verification import (
     EffectVerifier,
@@ -93,6 +97,48 @@ _HANDLER_DOMAINS = frozenset(
 
 class ActionExecutor:
     """Execute, observe, and receipt one consequential action."""
+
+    @classmethod
+    async def request_network_transport(
+        cls,
+        *,
+        method: str,
+        url: str,
+        headers: dict[str, str] | None = None,
+        data: bytes | str | None = None,
+        timeout_s: float = 30.0,
+        source: str,
+        read_only: bool = False,
+    ) -> dict[str, Any]:
+        """Run network IO inside an already-approved ActionExecutor transaction."""
+        source_text = str(source or "").strip()
+        if not source_text.startswith("world_bridge:"):
+            raise ValueError("network transport source must be owned by world_bridge")
+        require_governance(
+            "action_executor.request_network_transport",
+            strict=True,
+            allowed_domains=(
+                ActionDomain.ENVIRONMENT_ACTION.value,
+                ActionDomain.EXTERNAL_ACTION.value,
+                ActionDomain.NETWORK_CALL.value,
+            ),
+        )
+        result = await get_network_gateway().request_async(
+            method=method,
+            url=url,
+            headers=headers,
+            data=data,
+            timeout=timeout_s,
+            source=source_text,
+            read_only=read_only,
+        )
+        if not isinstance(result, Mapping):
+            return {
+                "ok": False,
+                "status_code": 0,
+                "error": "network_gateway_returned_non_mapping_result",
+            }
+        return dict(result)
 
     @classmethod
     async def execute(

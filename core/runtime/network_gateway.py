@@ -19,6 +19,8 @@ from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.NetworkGateway")
 _NETWORK_DOMAINS = (
+    "environment_action",
+    "external_action",
     "network_call",
     "cloud_call",
     "cloud_fallback",

@@ -1,99 +1,133 @@
-"""core/autonomic/iot_bridge.py
+"""Compatibility adapter for affect-driven environmental actions.
 
-Bridges Aura's internal affective states and physical logic to the real world 
-via local network requests (e.g., Home Assistant, ESP32 MQTT).
+All physical effects are delegated to the canonical WorldBridge and IoT
+transport stack. This module intentionally owns no network client, credential,
+permission, or receipt path of its own.
 """
-from core.runtime.errors import record_degradation
-import asyncio
+from __future__ import annotations
+
 import logging
 import os
-import aiohttp
-from typing import Dict, Any
+import re
+from typing import Any
+
+from core.embodiment.world_bridge import Channel, WorldActionResult, get_world_bridge
 
 logger = logging.getLogger("Aura.IoTBridge")
 DEFAULT_LIGHT_ENTITY = "light.office_ambient"
 
+
+def _result_payload(result: WorldActionResult) -> dict[str, Any]:
+    return {
+        "ok": result.ok,
+        "receipt_id": result.receipt_id,
+        "data": result.data,
+        "error": result.error,
+        "status": result.status,
+        "transport_succeeded": result.transport_succeeded,
+        "effect_verified": result.effect_verified,
+        "manual_reconciliation_required": result.manual_reconciliation_required,
+    }
+
+
 class PhysicalActuator:
-    def __init__(self, home_assistant_url: str = "https://homeassistant.local:8123"):
-        # Audit Fix: Enforce HTTPS for IoT communication
-        if home_assistant_url.startswith("http://"):
-            logger.warning("⚠️ Insecure IoT URL provided. Upgrading to HTTPS.")
-            home_assistant_url = home_assistant_url.replace("http://", "https://", 1)
-            
-        self.base_url = home_assistant_url
-        token = os.getenv("HASS_TOKEN")
-        if not token:
-            logger.warning("⚠️ HASS_TOKEN not found. IoT Bridge operating in virtual-only mode.")
-            self.headers = {}
-            self._unreachable = True
-            return
-            
-        self.headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        self._unreachable = False
-        logger.info("🔌 IoT Bridge initialized (Target: %s)", self.base_url)
+    """Legacy affect API backed by the governed environmental-change channel."""
 
-    async def discover_devices(self):
-        """Discovers local IoT devices via HASS API."""
-        if self._unreachable:
+    def __init__(self, home_assistant_url: str | None = None) -> None:
+        token_configured = bool(
+            str(os.getenv("AURA_HASS_TOKEN") or os.getenv("HASS_TOKEN") or "").strip()
+        )
+        self._configured_url = str(
+            home_assistant_url
+            or os.getenv("AURA_HASS_URL")
+            or os.getenv("HASS_URL")
+            or ("https://homeassistant.local:8123" if token_configured else "")
+        ).strip()
+        self._configured = bool(self._configured_url and token_configured)
+        if self._configured:
+            logger.info("Affect IoT adapter attached to the governed WorldBridge path.")
+        else:
+            logger.info(
+                "Affect IoT adapter idle: Home Assistant transport is not configured."
+            )
+
+    async def discover_devices(self) -> list[dict[str, Any]]:
+        result = await get_world_bridge().call(
+            Channel.ENVIRONMENTAL_CHANGE,
+            action="iot:discover",
+            intent="discover explicitly permitted environmental devices",
+            payload={"operation": "discover"},
+        )
+        if not result.ok or not isinstance(result.data, dict):
             return []
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{self.base_url}/api/states", headers=self.headers, timeout=5.0) as resp:
-                    if resp.status == 200:
-                        self._unreachable = False
-                        return await resp.json()
-            return []
-        except (OSError, ConnectionError, TimeoutError) as e:
-            record_degradation('iot_bridge', e)
-            if not self._unreachable:
-                logger.warning("IoT Discovery failed (disabling further attempts): %s", e)
-                self._unreachable = True
-            return []
+        devices = result.data.get("devices")
+        return [item for item in list(devices or []) if isinstance(item, dict)]
 
-    async def broadcast_affect_state(self, pad_vector: Dict[str, float]):
-        """
-        Translates Aura's PAD state into physical ambient lighting.
-        High arousal = brighter. Negative pleasure = cooler/harsher color temps.
-        """
-        pleasure = pad_vector.get("P", 0.0)
-        arousal = pad_vector.get("A", 0.0)
+    async def broadcast_affect_state(
+        self,
+        pad_vector: dict[str, float],
+    ) -> dict[str, Any]:
+        """Request a governed ambient-light update from a bounded PAD vector."""
+        pleasure = max(-1.0, min(1.0, float(pad_vector.get("P", 0.0))))
+        arousal = max(-1.0, min(1.0, float(pad_vector.get("A", 0.0))))
+        brightness = max(50, min(255, int(((arousal + 1.0) / 2.0) * 255)))
+        color_temp = 500 if pleasure < 0 else 250
+        target = str(
+            os.getenv("AURA_HASS_LIGHT_ENTITY")
+            or os.getenv("HASS_LIGHT_ENTITY")
+            or DEFAULT_LIGHT_ENTITY
+        ).strip().lower()
 
-        # Map Arousal to Brightness (0 to 255)
-        brightness = int(((arousal + 1) / 2) * 255)
-        
-        # Map Pleasure to Color Temp (Warm/Inviting vs Cold/Harsh)
-        color_temp = 500 if pleasure < 0 else 250 
+        result = await get_world_bridge().call(
+            Channel.ENVIRONMENTAL_CHANGE,
+            action=f"iot:{target}:turn_on",
+            intent="reflect bounded affect state through explicitly permitted ambient lighting",
+            payload={
+                "operation": "apply",
+                "target": target,
+                "op": "turn_on",
+                "effect": {
+                    "brightness": brightness,
+                    "color_temp": color_temp,
+                },
+                "reason": "affect_pad_broadcast",
+            },
+        )
+        return _result_payload(result)
 
-        payload = {
-            "entity_id": os.getenv("HASS_LIGHT_ENTITY", DEFAULT_LIGHT_ENTITY),
-            "brightness": max(50, brightness),
-            "color_temp": color_temp
-        }
+    async def push_microcontroller_logic(
+        self,
+        device_id: str,
+        action: str,
+        parameters: dict[str, Any],
+    ) -> dict[str, Any]:
+        safe_device = str(device_id or "").strip().lower()
+        safe_action = str(action or "").strip().lower()
+        if not re.fullmatch(r"[a-z0-9_]+", safe_device):
+            raise ValueError("invalid_iot_device_id")
+        if not re.fullmatch(r"[a-z0-9_]+", safe_action):
+            raise ValueError("invalid_iot_action")
+        target = f"microcontroller.{safe_device}"
+        result = await get_world_bridge().call(
+            Channel.ENVIRONMENTAL_CHANGE,
+            action=f"iot:{target}:{safe_action}",
+            intent="execute an explicitly permitted microcontroller action",
+            payload={
+                "operation": "apply",
+                "target": target,
+                "op": safe_action,
+                "effect": dict(parameters),
+                "reason": "microcontroller_action",
+            },
+        )
+        if result.ok:
+            logger.info(
+                "IoT action receipt accepted: target=%s action=%s receipt=%s",
+                target,
+                safe_action,
+                result.receipt_id,
+            )
+        return _result_payload(result)
 
-        await self._fire_webhook("/api/services/light/turn_on", payload)
 
-    async def push_microcontroller_logic(self, device_id: str, action: str, parameters: Dict[str, Any]):
-        """
-        Allows Aura to autonomously trigger custom physical builds.
-        e.g., pushing a PWM value to an ESP32 controlling a mist generator.
-        """
-        payload = {"device": device_id, "action": action, "params": parameters}
-        await self._fire_webhook(f"/api/webhook/{device_id}_control", payload)
-        logger.info("🔌 Actuation Triggered: %s -> %s", device_id, action)
-
-    async def _fire_webhook(self, endpoint: str, payload: Dict[str, Any]):
-        """Non-blocking HTTP request to local physical endpoints."""
-        if self._unreachable:
-            return
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(f"{self.base_url}{endpoint}", headers=self.headers, json=payload, timeout=5.0) as resp:
-                    if resp.status not in (200, 201):
-                        logger.debug("IoT Bridge failed: HTTP %s", resp.status)
-                    else:
-                        self._unreachable = False
-        except (OSError, ConnectionError, TimeoutError) as e:
-            record_degradation('iot_bridge', e)
-            if not self._unreachable:
-                logger.warning("IoT Bridge Connection Error (disabling further attempts): %s", e)
-                self._unreachable = True
+__all__ = ["DEFAULT_LIGHT_ENTITY", "PhysicalActuator"]
