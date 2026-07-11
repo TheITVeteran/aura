@@ -1,8 +1,104 @@
 from __future__ import annotations
 
+import asyncio
+import threading
 from types import SimpleNamespace
 
 import pytest
+
+
+def test_voice_stt_automatic_initialization_is_local_only(monkeypatch, tmp_path) -> None:
+    import core.senses.voice_engine as voice_module
+
+    constructor_calls: list[tuple[str, dict]] = []
+
+    class FakeWhisperModel:
+        def __init__(self, model_name: str, **kwargs) -> None:
+            constructor_calls.append((model_name, dict(kwargs)))
+
+    monkeypatch.delenv("AURA_STT_ALLOW_MODEL_DOWNLOAD", raising=False)
+    monkeypatch.setattr(voice_module, "_get_whisper_model_class", lambda: FakeWhisperModel)
+    monkeypatch.setattr(voice_module, "_runtime_shutdown_requested", lambda: False)
+    engine = voice_module.SovereignVoiceEngine(data_dir=str(tmp_path))
+    monkeypatch.setattr(engine, "_pulse_hypha", lambda *_args, **_kwargs: None)
+
+    initialized = engine.ensure_stt()
+
+    assert initialized is True
+    assert constructor_calls == [
+        (
+            "base",
+            {
+                "device": "cpu",
+                "compute_type": "int8",
+                "local_files_only": True,
+            },
+        )
+    ]
+    assert engine.stt_model is not None
+    assert engine.get_status()["stt_load_state"] == "ready"
+    assert engine.get_status()["stt_local_files_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_cancelled_stt_waiter_cannot_publish_model_after_voice_shutdown(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import core.senses.voice_engine as voice_module
+
+    constructor_started = threading.Event()
+    release_constructor = threading.Event()
+
+    class BlockingWhisperModel:
+        def __init__(self, _model_name: str, **_kwargs) -> None:
+            constructor_started.set()
+            release_constructor.wait(1.0)
+
+    monkeypatch.delenv("AURA_STT_ALLOW_MODEL_DOWNLOAD", raising=False)
+    monkeypatch.setattr(voice_module, "_get_whisper_model_class", lambda: BlockingWhisperModel)
+    monkeypatch.setattr(voice_module, "_runtime_shutdown_requested", lambda: False)
+    engine = voice_module.SovereignVoiceEngine(data_dir=str(tmp_path))
+    monkeypatch.setattr(engine, "_pulse_hypha", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(engine, "_signal_mycelium", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(engine.ensure_stt_async(), timeout=0.02)
+    assert await asyncio.to_thread(constructor_started.wait, 0.2)
+    shared_task = engine._stt_init_task
+    assert shared_task is not None and not shared_task.done()
+
+    engine.on_stop()
+    release_constructor.set()
+    assert await asyncio.wait_for(asyncio.shield(shared_task), timeout=0.5) is False
+
+    assert engine.stt_model is None
+    assert engine._stt_initialized is False
+    assert engine.get_status()["stt_load_state"] == "stopping"
+    assert engine.get_status()["closing"] is True
+
+
+@pytest.mark.asyncio
+async def test_sovereign_ears_reports_listener_start_failure() -> None:
+    from core.senses.ears import SovereignEars
+
+    callbacks: list[str] = []
+
+    class VoiceEngine:
+        def on_transcript(self, _callback, *, key: str) -> None:
+            callbacks.append(key)
+
+        async def start_listening(self) -> bool:
+            return False
+
+    ears = object.__new__(SovereignEars)
+    ears.capabilities = SimpleNamespace(hearing_enabled=True)
+    ears._engine = VoiceEngine()
+
+    started = await ears.start_listening(lambda _text: None)
+
+    assert started is False
+    assert callbacks == ["sovereign_ears"]
 
 
 @pytest.mark.asyncio

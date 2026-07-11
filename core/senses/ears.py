@@ -4,13 +4,13 @@ Handles audio input, Voice Activity Detection (VAD), and Transcription.
 Now unified to wrap around SovereignVoiceEngine v5.0 for reliability.
 """
 
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
-from typing import Callable
+from collections.abc import Callable
 
-from core.utils.task_tracker import get_task_tracker
+from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
+from core.utils.task_tracker import get_task_tracker
 
 from .sensory_registry import get_capabilities
 
@@ -54,12 +54,12 @@ class SovereignEars:
             and getattr(engine, "should_auto_listen", lambda: False)()
         )
 
-    async def start_listening(self, callback: Callable[[str], None]):
+    async def start_listening(self, callback: Callable[[str], None]) -> bool:
         """Starts capture only if capability is enabled."""
         engine = self._resolve_engine()
         if not self.capabilities.hearing_enabled or not engine:
             logger.warning("👂 SovereignEars: Cannot start listening (Missing capability or engine)")
-            return
+            return False
         
         # Verify worker is responsive before starting capture
         # This prevents library-level deadlocks from blocking the main thread
@@ -70,8 +70,12 @@ class SovereignEars:
                 await res
             
         engine.on_transcript(_async_callback, key="sovereign_ears")
-        await engine.start_listening()
-        logger.info("👂 Ears listening (Guarded by Isolated Senses)")
+        started = bool(await engine.start_listening())
+        if started:
+            logger.info("👂 Ears listening (Guarded by Isolated Senses)")
+        else:
+            logger.warning("👂 Ears listener remains offline; explicit retry is available")
+        return started
 
     def transcribe(self, audio_source) -> str:
         """Transcribe audio from a file path or array using the VoiceEngine's model.
@@ -111,6 +115,6 @@ class SovereignEars:
             # No loop running, but we should not use asyncio.run inside this library
             # as it often collides with the larger service lifecycle.
             logger.warning("mock_hear: No running event loop. Transcript not dispatched.")
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+        except (AttributeError, TypeError, ValueError) as e:
             record_degradation('ears', e)
             logger.error("Mock hear failed: %s", e)

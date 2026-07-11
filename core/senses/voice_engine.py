@@ -84,6 +84,15 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on", "enabled", "accepted"}
 
 
+def _runtime_shutdown_requested() -> bool:
+    try:
+        from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+        return bool(is_shutdown_requested())
+    except (ImportError, AttributeError, RuntimeError):
+        return False
+
+
 def _coqui_license_accepted() -> bool:
     return any(
         _env_flag(name)
@@ -234,6 +243,11 @@ class SovereignVoiceEngine:
         # ── STT State ─────────────────────────────────────
         self.stt_model = None
         self._stt_initialized = False
+        self._stt_init_lock = threading.Lock()
+        self._stt_init_task: asyncio.Task[bool] | None = None
+        self._stt_load_state = "not_loaded"
+        self._stt_last_error = ""
+        self._closing_event = threading.Event()
         self._audio_buffer = queue.Queue()
         self.whisper_model_name = whisper_model
 
@@ -262,6 +276,8 @@ class SovereignVoiceEngine:
         self._mic_stream = None
         self._mic_listening = False
         self._stt_thread: threading.Thread | None = None
+        self._mic_start_task: asyncio.Task[Any] | None = None
+        self._mic_start_cancel_event: threading.Event | None = None
 
         # ── TTS State ─────────────────────────────────────
         self._tts_initialized = False
@@ -527,10 +543,11 @@ class SovereignVoiceEngine:
         self.ensure_stt()
         self.ensure_tts()
 
-    def ensure_stt(self):
+    def ensure_stt(self) -> bool:
         """Lazy-load only the STT stack."""
-        if not self._stt_initialized:
-            self._init_stt()
+        if self._stt_initialized:
+            return True
+        return self._init_stt()
 
     def ensure_tts(self):
         """Lazy-load only the TTS stack."""
@@ -543,68 +560,154 @@ class SovereignVoiceEngine:
 
     async def ensure_models_async(self):
         """Non-blocking model load — offloads to thread so event loop isn't frozen."""
-        if not self._stt_initialized or not self._tts_initialized:
-            await asyncio.get_running_loop().run_in_executor(None, self.ensure_models)
+        await asyncio.gather(self.ensure_stt_async(), self.ensure_tts_async())
 
-    async def ensure_stt_async(self):
-        """Non-blocking STT load only."""
-        if not self._stt_initialized:
-            await asyncio.get_running_loop().run_in_executor(None, self.ensure_stt)
+    async def ensure_stt_async(self) -> bool:
+        """Load STT once without letting one cancelled waiter cancel shared work."""
+        if self._stt_initialized:
+            return True
+        if self._voice_closing():
+            self._stt_load_state = "stopping"
+            return False
+
+        task = self._stt_init_task
+        if task is None or task.done():
+            task = asyncio.create_task(
+                asyncio.to_thread(self.ensure_stt),
+                name="voice_engine.ensure_stt",
+            )
+            self._stt_init_task = task
+        try:
+            return bool(await asyncio.shield(task))
+        finally:
+            if task.done() and self._stt_init_task is task:
+                self._stt_init_task = None
 
     async def ensure_tts_async(self):
         """Non-blocking TTS load only."""
         if not self._tts_initialized:
             await asyncio.get_running_loop().run_in_executor(None, self.ensure_tts)
 
-    def _init_stt(self):
-        whisper_model_cls = _get_whisper_model_class()
-        if whisper_model_cls is None:
-            return
-        try:
-            logger.info("Loading Whisper model: %s...", self.whisper_model_name)
+    def _voice_closing(self) -> bool:
+        return self._closing_event.is_set() or _runtime_shutdown_requested()
 
-            os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
-            device = "cpu"
-            compute_type = "int8"
+    def _init_stt(self) -> bool:
+        with self._stt_init_lock:
+            if self._stt_initialized:
+                return True
+            if self._voice_closing():
+                self._stt_load_state = "stopping"
+                return False
 
-            if _env_flag("AURA_STT_ENABLE_TORCH_DEVICE_PROBE", False):
-                try:
-                    import torch
+            whisper_model_cls = _get_whisper_model_class()
+            if whisper_model_cls is None:
+                self._stt_load_state = "unavailable"
+                self._stt_last_error = "faster_whisper_unavailable"
+                return False
 
-                    if torch.cuda.is_available():
-                        device = "cuda"
-                        compute_type = "float16"
-                except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
-                    record_degradation(
-                        "voice_engine",
-                        exc,
-                        severity="warning",
-                        action="continued STT init with CPU int8 after optional torch probe failed",
-                    )
-            
-            actual_device = device  # track what we actually end up using
+            local_files_only = not _env_flag("AURA_STT_ALLOW_MODEL_DOWNLOAD", False)
+            self._stt_load_state = "loading"
+            self._stt_last_error = ""
             try:
-                self.stt_model = whisper_model_cls(
+                logger.info(
+                    "Loading Whisper model: %s (local_files_only=%s)...",
                     self.whisper_model_name,
-                    device=device,
-                    compute_type=compute_type
+                    local_files_only,
                 )
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('voice_engine', e)
-                logger.warning("Primary STT init failed on %s, falling back to CPU: %s", device, e)
-                actual_device = "cpu"  # UPDATE: track the fallback
-                self.stt_model = whisper_model_cls(
+
+                os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+                device = "cpu"
+                compute_type = "int8"
+
+                if _env_flag("AURA_STT_ENABLE_TORCH_DEVICE_PROBE", False):
+                    try:
+                        import torch
+
+                        if torch.cuda.is_available():
+                            device = "cuda"
+                            compute_type = "float16"
+                    except (
+                        ImportError,
+                        AttributeError,
+                        RuntimeError,
+                        OSError,
+                        TypeError,
+                        ValueError,
+                    ) as exc:
+                        record_degradation(
+                            "voice_engine",
+                            exc,
+                            severity="warning",
+                            action=(
+                                "continued STT init with CPU int8 after optional torch "
+                                "probe failed"
+                            ),
+                        )
+
+                actual_device = device
+                constructor_kwargs = {
+                    "device": device,
+                    "compute_type": compute_type,
+                    "local_files_only": local_files_only,
+                }
+                try:
+                    model = whisper_model_cls(
+                        self.whisper_model_name,
+                        **constructor_kwargs,
+                    )
+                except (RuntimeError, AttributeError, OSError, TypeError, ValueError) as exc:
+                    if device == "cpu":
+                        raise
+                    record_degradation("voice_engine", exc)
+                    logger.warning(
+                        "Primary STT init failed on %s, falling back to CPU: %s",
+                        device,
+                        exc,
+                    )
+                    actual_device = "cpu"
+                    model = whisper_model_cls(
+                        self.whisper_model_name,
+                        device="cpu",
+                        compute_type="int8",
+                        local_files_only=local_files_only,
+                    )
+
+                if self._voice_closing():
+                    self._stt_load_state = "stopping"
+                    return False
+
+                self.stt_model = model
+                self._stt_initialized = True
+                self._stt_load_state = "ready"
+                self._pulse_hypha("voice_engine", "sensory_gate", success=True)
+                logger.info(
+                    "✅ Whisper STT online (model=%s, device=%s)",
                     self.whisper_model_name,
-                    device="cpu",
-                    compute_type="int8" # Improved CPU performance
+                    actual_device,
                 )
-            self._stt_initialized = True
-            self._pulse_hypha("voice_engine", "sensory_gate", success=True)
-            logger.info("✅ Whisper STT online (model=%s, device=%s)", self.whisper_model_name, actual_device)
-        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as e:
-            record_degradation('voice_engine', e)
-            logger.error("Failed to init STT: %s", e)
-            self._pulse_hypha("voice_engine", "sensory_gate", success=False)
+                return True
+            except (
+                ImportError,
+                AttributeError,
+                RuntimeError,
+                OSError,
+                ConnectionError,
+                TimeoutError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                self.stt_model = None
+                self._stt_initialized = False
+                self._stt_load_state = "unavailable"
+                self._stt_last_error = f"{type(exc).__name__}: {exc}"[:240]
+                record_degradation("voice_engine", exc)
+                logger.error(
+                    "Failed to init STT from %s cache: %s",
+                    "local" if local_files_only else "configured remote/local",
+                    exc,
+                )
+                self._pulse_hypha("voice_engine", "sensory_gate", success=False)
+                return False
 
     def _init_tts(self):
         tts_api = _load_tts_api() if self.use_xtts else None
@@ -747,6 +850,14 @@ class SovereignVoiceEngine:
             logger.warning("Already listening")
             return True
 
+        if self._voice_closing():
+            logger.info("Microphone start refused: voice runtime is stopping")
+            return False
+
+        if self._mic_start_task is not None and not self._mic_start_task.done():
+            logger.info("Microphone start already in progress")
+            return False
+
         # Ensure STT model is ready
         if not self._stt_initialized:
             await self.ensure_stt_async()
@@ -760,6 +871,9 @@ class SovereignVoiceEngine:
             if not hasattr(self, "_mic_breaker"):
                 self._mic_breaker = SmartCircuitBreaker("Microphone", failure_threshold=2, base_recovery_timeout=300)
 
+            start_cancelled = threading.Event()
+            self._mic_start_cancel_event = start_cancelled
+
             def _open_and_start_stream():
                 stream = sd.InputStream(
                     samplerate=SAMPLE_RATE,
@@ -768,51 +882,75 @@ class SovereignVoiceEngine:
                     blocksize=BLOCK_SIZE,
                     callback=self._mic_callback,
                 )
-                stream.start()
+                if start_cancelled.is_set() or self._voice_closing():
+                    self._close_mic_stream(stream)
+                    return None
+                stream_started = False
+                try:
+                    stream.start()
+                    stream_started = True
+                finally:
+                    if not stream_started:
+                        self._close_mic_stream(stream)
+                if start_cancelled.is_set() or self._voice_closing():
+                    self._close_mic_stream(stream)
+                    return None
                 return stream
 
-            async def _mic_payload():
-                try:
-                    start_timeout_s = max(
-                        0.05,
-                        float(os.environ.get("AURA_MIC_START_TIMEOUT_S", "6.0")),
-                    )
-                except (TypeError, ValueError):
-                    start_timeout_s = 6.0
+            try:
+                start_timeout_s = max(
+                    0.05,
+                    float(os.environ.get("AURA_MIC_START_TIMEOUT_S", "6.0")),
+                )
+            except (TypeError, ValueError):
+                start_timeout_s = 6.0
 
-                # Opening CoreAudio can block inside PortAudio/TCC on macOS.
-                # Keep it off the boot event loop and bound it so a broken mic
-                # permission path cannot prevent HTTP/chat readiness.
-                self._mic_stream = await asyncio.wait_for(
-                    asyncio.to_thread(_open_and_start_stream),
+            # Opening CoreAudio can block inside PortAudio/TCC on macOS. The
+            # thread owns late cleanup so cancellation cannot leak a stream.
+            start_task = asyncio.create_task(
+                asyncio.to_thread(_open_and_start_stream),
+                name="voice_engine.open_microphone",
+            )
+            self._mic_start_task = start_task
+            try:
+                stream = await asyncio.wait_for(
+                    asyncio.shield(start_task),
                     timeout=start_timeout_s,
                 )
+            except (TimeoutError, asyncio.CancelledError):
+                start_cancelled.set()
+                start_task.add_done_callback(self._finish_late_mic_start)
+                raise
+            finally:
+                if start_task.done() and self._mic_start_task is start_task:
+                    self._mic_start_task = None
 
-                # Start the STT worker thread only after the stream is live.
-                self._is_feeding = True
-                self._stt_thread = threading.Thread(
-                    target=self._stt_worker,
-                    daemon=True,
-                    name="VoiceSTTWorker",
-                )
-                self._stt_thread.start()
-                self._mic_listening = True
+            if stream is None or self._voice_closing():
+                self._close_mic_stream(stream)
+                return False
+            self._mic_stream = stream
 
-                self._pulse_hypha("voice_engine", "cognition", success=True)
-                self._signal_mycelium(
-                    "voice_engine",
-                    "cognition",
-                    {"event": "mic_activated", "sample_rate": SAMPLE_RATE},
-                )
-                return True
+            # Start the STT worker thread only after the stream is live.
+            self._is_feeding = True
+            self._stt_thread = threading.Thread(
+                target=self._stt_worker,
+                daemon=True,
+                name="VoiceSTTWorker",
+            )
+            self._stt_thread.start()
+            self._mic_listening = True
 
-            # Use await directly since we are now an async method
-            success = await _mic_payload()
+            self._pulse_hypha("voice_engine", "cognition", success=True)
+            self._signal_mycelium(
+                "voice_engine",
+                "cognition",
+                {"event": "mic_activated", "sample_rate": SAMPLE_RATE},
+            )
             logger.info(
                 "🎙️ Server-side mic capture ACTIVE (sounddevice, %dHz mono)",
                 SAMPLE_RATE,
             )
-            return success
+            return True
 
         except TimeoutError as e:
             record_degradation("voice_engine", e)
@@ -827,11 +965,40 @@ class SovereignVoiceEngine:
         except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as e:
             record_degradation('voice_engine', e)
             logger.error("Failed to start mic capture: %s", e, exc_info=True)
+            self.stop_listening()
             self._pulse_hypha("voice_engine", "cognition", success=False)
             return False
 
+    @staticmethod
+    def _close_mic_stream(stream: Any) -> None:
+        if stream is None:
+            return
+        try:
+            stop = getattr(stream, "stop", None)
+            if callable(stop):
+                stop()
+        except (RuntimeError, AttributeError, OSError, TypeError, ValueError):
+            pass
+        try:
+            close = getattr(stream, "close", None)
+            if callable(close):
+                close()
+        except (RuntimeError, AttributeError, OSError, TypeError, ValueError):
+            pass
+
+    def _finish_late_mic_start(self, task: asyncio.Task[Any]) -> None:
+        if self._mic_start_task is task:
+            self._mic_start_task = None
+        try:
+            stream = task.result()
+        except (asyncio.CancelledError, RuntimeError, OSError, TypeError, ValueError):
+            return
+        self._close_mic_stream(stream)
+
     def stop_listening(self):
         """Stop microphone capture."""
+        if self._mic_start_cancel_event is not None:
+            self._mic_start_cancel_event.set()
         self._mic_listening = False
         self._is_feeding = False
 
@@ -866,6 +1033,7 @@ class SovereignVoiceEngine:
         logger.info("🎙️ Mic capture stopped")
 
     def on_stop(self) -> None:
+        self._closing_event.set()
         self.stop_listening()
 
     def _mic_callback(self, indata, frames, time_info, status):
@@ -1685,7 +1853,17 @@ class SovereignVoiceEngine:
             "piper_tts_available": piper_tts_available,
             "pyttsx3_available": pyttsx3_available,
             "stt_initialized": self._stt_initialized,
+            "stt_load_state": self._stt_load_state,
+            "stt_last_error": self._stt_last_error,
+            "stt_local_files_only": not _env_flag("AURA_STT_ALLOW_MODEL_DOWNLOAD", False),
+            "stt_init_in_flight": bool(
+                self._stt_init_task is not None and not self._stt_init_task.done()
+            ),
             "tts_initialized": self._tts_initialized,
+            "mic_start_in_flight": bool(
+                self._mic_start_task is not None and not self._mic_start_task.done()
+            ),
+            "closing": self._voice_closing(),
             "capture_backend": "sounddevice" if _sounddevice_available() else "unavailable",
             "stt_backend": "faster_whisper" if _stt_dependency_available() else "unavailable",
             "tts_backend": tts_type,

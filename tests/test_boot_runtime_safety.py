@@ -1,9 +1,10 @@
 import asyncio
 import builtins
 import json
-import time
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -106,6 +107,8 @@ async def test_voice_engine_mic_stream_start_is_timeout_bounded(monkeypatch, tmp
     from core.senses import voice_engine
     from core.senses.voice_engine import SovereignVoiceEngine
 
+    stream_closed = threading.Event()
+
     class BlockingSoundDevice:
         class InputStream:
             def __init__(self, *args, **kwargs):
@@ -113,6 +116,12 @@ async def test_voice_engine_mic_stream_start_is_timeout_bounded(monkeypatch, tmp
 
             def start(self):
                 return None
+
+            def stop(self):
+                return None
+
+            def close(self):
+                stream_closed.set()
 
     monkeypatch.setenv("AURA_MIC_START_TIMEOUT_S", "0.05")
     monkeypatch.setattr(voice_engine, "sd", BlockingSoundDevice)
@@ -129,6 +138,12 @@ async def test_voice_engine_mic_stream_start_is_timeout_bounded(monkeypatch, tmp
     assert started is False
     assert engine._mic_listening is False
     assert engine._is_feeding is False
+    assert await asyncio.to_thread(stream_closed.wait, 0.5)
+    for _ in range(20):
+        if engine._mic_start_task is None:
+            break
+        await asyncio.sleep(0.01)
+    assert engine._mic_start_task is None
 
 
 def test_continuous_vision_blocks_forced_camera_on_darwin(monkeypatch):

@@ -546,8 +546,8 @@ class RobustOrchestrator(
 
     def _init_queues(self):
         """Initialize communication queues."""
-        from core.orchestrator.flow_control import CognitiveFlowController
         from core.conversation.tagged_reply_queue import TaggedReplyQueue
+        from core.orchestrator.flow_control import CognitiveFlowController
         from core.utils.queues import PriorityBackpressuredQueue
 
         self.message_queue = PriorityBackpressuredQueue(maxsize=100)
@@ -1044,7 +1044,10 @@ class RobustOrchestrator(
             # TerminalWatchdog: background monitor — autonomously opens terminal
             #   only when UI is confirmed gone for 30s AND Aura has queued messages.
             try:
-                from core.conversation.terminal_chat import get_terminal_fallback, get_terminal_watchdog
+                from core.conversation.terminal_chat import (
+                    get_terminal_fallback,
+                    get_terminal_watchdog,
+                )
 
                 _term = get_terminal_fallback()
                 ServiceContainer.register_instance("terminal_fallback", _term)
@@ -1355,9 +1358,48 @@ class RobustOrchestrator(
 
                             logger.error("Failed to schedule voice input: %s", e)
 
-                    await asyncio.wait_for(self.ears.start_listening(_hear_callback), timeout=15.0)
-                    logger.info("✓ Sovereign Ears listening")
+                    try:
+                        self._voice_listener_ready = bool(
+                            await asyncio.wait_for(
+                                self.ears.start_listening(_hear_callback),
+                                timeout=15.0,
+                            )
+                        )
+                        self._voice_listener_error = ""
+                    except TimeoutError as exc:
+                        self._voice_listener_ready = False
+                        self._voice_listener_error = "voice_listener_start_timeout"
+                        _record_main_degradation(
+                            exc,
+                            action=(
+                                "continued orchestrator startup with voice listener offline; "
+                                "voice can retry independently"
+                            ),
+                            severity="warning",
+                            subsystem="voice_engine",
+                        )
+                    except _ORCHESTRATOR_RECOVERABLE_ERRORS as exc:
+                        self._voice_listener_ready = False
+                        self._voice_listener_error = f"{type(exc).__name__}: {exc}"[:240]
+                        _record_main_degradation(
+                            exc,
+                            action=(
+                                "continued orchestrator startup after optional voice listener "
+                                "failed"
+                            ),
+                            severity="warning",
+                            subsystem="voice_engine",
+                        )
+                    if self._voice_listener_ready:
+                        logger.info("✓ Sovereign Ears listening")
+                    else:
+                        logger.warning(
+                            "Sovereign Ears offline at boot: %s",
+                            self._voice_listener_error or "listener_start_returned_false",
+                        )
                 else:
+                    self._voice_listener_ready = False
+                    self._voice_listener_error = "auto_listen_disabled"
                     logger.info("✓ Sovereign Ears standing by (mic idle until explicitly enabled)")
 
             # Start Pulse Manager (Proactive Awareness)
