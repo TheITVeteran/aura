@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+import time
 from typing import Any
 
 from core.runtime.errors import record_degradation
@@ -72,6 +73,10 @@ class ContextAssembler:
             runtime = get_being_runtime()
             now = runtime.sample(state, objective=objective)
             organismal_block = runtime.organismal_workspace_prompt_block(compact=compact)
+            felt_thought_block = (
+                ContextAssembler._build_felt_thought_block(compact=compact)
+                + ContextAssembler._build_self_correction_block()
+            )
             if compact:
                 packet = now.to_report_packet()
                 affect = packet["affect"]
@@ -81,9 +86,14 @@ class ContextAssembler:
                     f"valence={affect['valence']:+.2f} arousal={affect['arousal']:.2f} "
                     f"distress={affect['distress']:.2f} FE={affect['free_energy']:.2f} | "
                     "Self-report must stay state-grounded; do not claim phenomenal certainty.\n\n"
-                    f"{organismal_block}"
+                    f"{organismal_block}{felt_thought_block}"
                 )
-            return now.compact_prompt_block() + organismal_block + runtime.renderer.render_prompt_block(now)
+            return (
+                now.compact_prompt_block()
+                + organismal_block
+                + felt_thought_block
+                + runtime.renderer.render_prompt_block(now)
+            )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation(
                 "context_assembler",
@@ -92,6 +102,61 @@ class ContextAssembler:
                 action="continued prompt assembly without AuraNow state-grounded block",
             )
             logger.debug("AuraNow prompt block unavailable: %s", exc)
+            return ""
+
+    @staticmethod
+    def _build_felt_thought_block(*, compact: bool = False) -> str:
+        """Substrate interoception of the last reply — measured, never invented.
+
+        In compact mode a single line rides along; in full mode the organ's own
+        block (which includes the contested words) is used. Empty string when
+        no recent foreground trace exists, so prompts never carry a stale or
+        fabricated inner sense.
+        """
+        try:
+            from core.being.thought_interoception import get_thought_interoception
+
+            engine = get_thought_interoception()
+            if not compact:
+                return engine.prompt_block()
+            from core.being.thought_interoception import RECENT_TRACE_WINDOW_S
+
+            felt = engine.last(foreground_only=True)
+            if felt is None or (time.time() - felt.timestamp) > RECENT_TRACE_WINDOW_S:
+                return ""
+            return (
+                "## FELT THOUGHT\n"
+                f"last reply (measured): fluency={felt.fluency:.2f} "
+                f"confidence={felt.felt_confidence:.2f} ambivalence={felt.ambivalence:.2f} "
+                f"strain={felt.strain:.2f}\n\n"
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "context_assembler",
+                exc,
+                severity="debug",
+                action="continued prompt assembly without felt-thought block",
+            )
+            return ""
+
+    @staticmethod
+    def _build_self_correction_block() -> str:
+        """An externally-verified correction queued by epistemic reach, if any.
+
+        The engine surfaces each correction exactly once; an empty string means
+        there is nothing to own right now.
+        """
+        try:
+            from core.epistemics.epistemic_reach import get_epistemic_reach
+
+            return get_epistemic_reach().correction_prompt_block()
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "context_assembler",
+                exc,
+                severity="debug",
+                action="continued prompt assembly without self-correction block",
+            )
             return ""
 
     @staticmethod

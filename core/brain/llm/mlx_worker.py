@@ -2788,6 +2788,7 @@ def _mlx_worker_loop(
 
                     response_text = ""
                     total_generated_tokens = 0
+                    interoception_payload = None
                     surface_control_state = _apply_surface_generation_controls(engine, model, job)
                     surface_quality_gate_enabled = _surface_quality_gate_enabled(job)
                     surface_control_state["surface_quality_gate_enabled"] = surface_quality_gate_enabled
@@ -2858,6 +2859,23 @@ def _mlx_worker_loop(
                                         )
                                         sentinel = None
                                         logger.debug("TokenSentinel not available: %s", _sent_exc)
+
+                                    # ── Interoception tap: substrate self-measurement ──
+                                    # Pure observer of the decode distribution (surprisal,
+                                    # entropy, top-2 gap per sampled token). It cannot alter
+                                    # sampling and cannot raise into the loop. Built fresh per
+                                    # attempt so the final payload always describes the
+                                    # response actually returned.
+                                    try:
+                                        from core.brain.llm.interoception_tap import maybe_build_tap
+                                        intero_tap = maybe_build_tap()
+                                    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _intero_exc:
+                                        _record_mlx_degradation(
+                                            _intero_exc,
+                                            action="continued generation without interoception tap",
+                                            severity="warning",
+                                        )
+                                        intero_tap = None
 
                                     # [FRONTIER UPGRADE] KV Prompt Caching Injection
                                     tokens = tokenizer.encode(prompt)
@@ -2977,6 +2995,13 @@ def _mlx_worker_loop(
                                         ):
                                             prompt_cache_lru.insert_cache(model_key, list(tokens), response.prompt_cache)
 
+                                        if intero_tap is not None:
+                                            intero_tap.feed(
+                                                response.token,
+                                                getattr(response, "logprobs", None),
+                                                response.text,
+                                            )
+
                                         current_response += response.text
                                         current_response, role_continuation_hit = _truncate_role_continuation(current_response)
 
@@ -3029,13 +3054,18 @@ def _mlx_worker_loop(
                                             last_emit_at=last_progress_emit_at,
                                             now=progress_now,
                                         ):
-                                            ipc_writer.put({
+                                            progress_msg = {
                                                 "id": job.get("id"),
                                                 "action": "generate",
                                                 "status": "progress",
                                                 "tokens_generated": token_count,
                                                 "timestamp": progress_now,
-                                            })
+                                            }
+                                            if intero_tap is not None:
+                                                live_intero = intero_tap.live_snapshot()
+                                                if live_intero:
+                                                    progress_msg["interoception_live"] = live_intero
+                                            ipc_writer.put(progress_msg)
                                             last_progress_emit_at = progress_now
 
                                         # [PERF] Mid-generation cache clearing removed — was forcing Metal to
@@ -3056,6 +3086,14 @@ def _mlx_worker_loop(
                                                 break
                                         if stop_hit:
                                             break
+
+                                    # Interoception: distil this attempt's measurements.
+                                    # Later attempts overwrite, so the shipped payload always
+                                    # describes the response the caller actually receives.
+                                    if intero_tap is not None:
+                                        _intero_final = intero_tap.finalize(attempt=internal_attempt)
+                                        if _intero_final is not None:
+                                            interoception_payload = _intero_final
 
                                     # Log sentinel diagnostics
                                     if sentinel is not None:
@@ -3506,6 +3544,7 @@ def _mlx_worker_loop(
                             job,
                             surface_control_state,
                         ),
+                        "interoception": interoception_payload,
                     })
                 except (ImportError, AttributeError, RuntimeError) as e:
                     _record_mlx_degradation(

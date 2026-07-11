@@ -83,6 +83,9 @@ class CalibrationReport:
     calibrated_answer: str = ""
     downgraded: int = 0
     flagged_impossible: int = 0
+    # Substrate interoception coupling (None when no felt trace matched):
+    felt_confidence: float | None = None
+    felt_demotions: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +93,10 @@ class CalibrationReport:
             "confidence": round(self.confidence, 3),
             "downgraded": self.downgraded,
             "flagged_impossible": self.flagged_impossible,
+            "felt_confidence": (
+                round(self.felt_confidence, 3) if self.felt_confidence is not None else None
+            ),
+            "felt_demotions": self.felt_demotions,
             "labels": [c.to_dict() for c in self.labels[:10]],
         }
 
@@ -109,6 +116,7 @@ class CalibrationGate:
         evidence: list[str] | None = None,
         tool_verified: bool = False,
         known_facts: list[str] | None = None,
+        felt: Any | None = None,
     ) -> CalibrationReport:
         evidence_blob = "\n".join(str(e) for e in (evidence or [])).lower()
         known_blob = "\n".join(str(k) for k in (known_facts or [])).lower()
@@ -123,9 +131,23 @@ class CalibrationGate:
                 v_checked=v_checked, v_ok=v_ok, tool_verified=tool_verified,
             ))
 
+        # Substrate interoception: if the answer's felt trace shows the words
+        # were contested as they formed, unsupported sentences overlapping the
+        # contested regions lose their nerve (see _apply_felt).
+        felt_trace = felt if felt is not None else self._felt_trace_for(answer)
+        felt_demotions = 0
+        felt_conf: float | None = None
+        if felt_trace is not None:
+            felt_conf = float(getattr(felt_trace, "felt_confidence", 0.5))
+            felt_demotions = self._apply_felt(labels, felt_trace)
+
         calibrated, downgraded, flagged = self._apply(answer, labels)
         overall = self._overall(labels)
         confidence = self._confidence(labels, v_checked=v_checked, v_ok=v_ok)
+        if felt_conf is not None:
+            # Internal doubt can lower stated confidence, never raise it: a
+            # contested decode caps the ceiling, a fluent one changes nothing.
+            confidence = round(min(confidence, 0.45 + 0.5 * felt_conf), 4)
         return CalibrationReport(
             overall=overall,
             confidence=confidence,
@@ -133,7 +155,63 @@ class CalibrationGate:
             calibrated_answer=calibrated,
             downgraded=downgraded,
             flagged_impossible=flagged,
+            felt_confidence=felt_conf,
+            felt_demotions=felt_demotions,
         )
+
+    @staticmethod
+    def _felt_trace_for(answer: str) -> Any:
+        """Fetch the substrate felt-trace recorded for this exact answer, if any.
+
+        Fail-open: no trace, stale trace, or an unavailable organ simply means
+        the gate runs text-only, exactly as before interoception existed.
+        """
+        try:
+            from core.being.thought_interoception import get_thought_interoception
+
+            return get_thought_interoception().find_for_text(answer)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _apply_felt(labels: list[ClaimLabel], felt_trace: Any) -> int:
+        """Demote unsupported sentences that overlap contested decode regions.
+
+        Epistemology, deliberately conservative:
+        * externally supported statuses (KNOWN / SOURCE_BACKED / TOOL_VERIFIED)
+          are never demoted — real evidence beats internal fluency;
+        * already-hedged sentences (INFERRED) and already-demoted GUESSED stay;
+        * only UNVERIFIED sentences that contain words from the felt trace's
+          surprisal spikes are demoted to GUESSED (which the apply pass then
+          hedges), and only when the whole thought felt contested
+          (low felt confidence or high ambivalence).
+        """
+        try:
+            felt_confidence = float(getattr(felt_trace, "felt_confidence", 1.0))
+            ambivalence = float(getattr(felt_trace, "ambivalence", 0.0))
+            if felt_confidence >= 0.45 and ambivalence <= 0.35:
+                return 0
+            contested: set[str] = set()
+            for spike in getattr(felt_trace, "spikes", ()) or ():
+                blob = f"{spike.get('text', '')} {spike.get('context', '')}"
+                contested.update(w for w in re.findall(r"[a-zA-Z]{4,}", blob.lower()))
+            if not contested:
+                return 0
+            demoted = 0
+            for label in labels:
+                if label.status is not EpistemicStatus.UNVERIFIED:
+                    continue
+                sentence_words = set(re.findall(r"[a-zA-Z]{4,}", label.text.lower()))
+                if sentence_words & contested:
+                    label.status = EpistemicStatus.GUESSED
+                    label.reason = (
+                        "felt contested while forming (substrate interoception: "
+                        f"confidence={felt_confidence:.2f}, ambivalence={ambivalence:.2f})"
+                    )
+                    demoted += 1
+            return demoted
+        except (AttributeError, TypeError, ValueError):
+            return 0
 
     def _classify_sentence(
         self,

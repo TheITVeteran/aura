@@ -87,7 +87,9 @@ class UnifiedInferenceEngine:
         if not text:
             raise RuntimeError("internal_mlx_unified_inference_returned_no_text")
 
-        self._process_feedback(text, modulation)
+        intero_getter = getattr(client, "get_last_interoception", None)
+        interoception = intero_getter() if callable(intero_getter) else None
+        self._process_feedback(text, modulation, interoception=interoception)
         cleaned, thought = self._split_thought(text)
         return {"response": cleaned, "thought": thought}
 
@@ -124,20 +126,52 @@ class UnifiedInferenceEngine:
         else:
             messages.insert(0, {"role": "system", "content": identity_anchor})
 
-    def _process_feedback(self, text: str, modulation: Any) -> None:
-        words = text.lower().split()
-        token_ids = [abs(hash(word)) % 100000 for word in words]
+    def _process_feedback(
+        self, text: str, modulation: Any, interoception: dict[str, Any] | None = None
+    ) -> None:
+        """Feed the homeostatic loop from the generation that actually happened.
+
+        When the worker shipped an interoception trace for this exact text
+        (fingerprint-verified), the loop runs on REAL sampled-token ids and
+        log-probabilities from the substrate. The word-hash fallback survives
+        only for interoception-less runs (tap disabled, degraded worker).
+        """
+        token_ids: list[int] | None = None
+        logprobs: list[float] | None = None
+        intero = interoception or {}
+        if intero:
+            try:
+                from core.being.thought_interoception import text_fingerprint
+
+                if intero.get("_text_fingerprint") == text_fingerprint(text):
+                    ids = [int(i) for i in (intero.get("token_ids_sample") or [])]
+                    lps = [float(v) for v in (intero.get("logprob_sample") or [])]
+                    if ids and lps:
+                        token_ids = ids
+                        logprobs = lps
+            except (ImportError, AttributeError, TypeError, ValueError) as exc:
+                logger.debug("Interoception pairing unavailable for feedback: %s", exc)
+
+        if token_ids is None:
+            # Legacy heuristic path — hash-derived pseudo-token ids, no logprobs.
+            words = text.lower().split()
+            token_ids = [abs(hash(word)) % 100000 for word in words]
+
         feedback = self.feedback_loop.process_output(
             output_text=text,
             token_ids=token_ids,
-            logprobs=None,
+            logprobs=logprobs,
             modulation=modulation,
             modulator_projection=self.modulator.projection,
+            # With a real trace, the thought-interoception organ has already fed
+            # the homeostatic engines for this generation — only train here.
+            feed_engines=logprobs is None,
         )
         logger.info(
-            "Unified MLX feedback processed: surprise=%.4f, coherence=%.4f",
+            "Unified MLX feedback processed: surprise=%.4f, coherence=%.4f, grounded=%s",
             feedback["surprise"],
             feedback["coherence"],
+            "real_logprobs" if logprobs else "lexical_fallback",
         )
 
     @staticmethod

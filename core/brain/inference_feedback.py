@@ -60,7 +60,8 @@ class InferenceFeedbackLoop:
         token_ids: list[int],
         logprobs: list[float] | None,
         modulation: InferenceModulation,
-        modulator_projection: Any
+        modulator_projection: Any,
+        feed_engines: bool = True,
     ) -> dict[str, float]:
         """Process completed LLM response and update the homeostatic engines.
 
@@ -70,6 +71,11 @@ class InferenceFeedbackLoop:
             logprobs: Log probabilities for the generated tokens.
             modulation: The modulation configuration that was applied to this run.
             modulator_projection: The SubstrateLogitProjection instance to train.
+            feed_engines: When False, skip the free-energy / liquid-substrate /
+                precision-engine injections and only compute metrics + train the
+                projection. Callers pass False when the thought-interoception
+                organ has already fed those engines for this generation, so the
+                same response never doses the substrate twice.
 
         Returns:
             Dictionary of calculated metrics: surprise, coherence, etc.
@@ -127,7 +133,9 @@ class InferenceFeedbackLoop:
         coherence = float(np.clip(coherence, -1.0, 1.0))
 
         # 3. Feed Surprise back into the Free Energy Engine
-        free_energy_engine = get_runtime_service("free_energy_engine", default=None)
+        free_energy_engine = (
+            get_runtime_service("free_energy_engine", default=None) if feed_engines else None
+        )
         if free_energy_engine:
             try:
                 # Surprise signal scaled to 0-1 range for FreeEnergy
@@ -142,7 +150,7 @@ class InferenceFeedbackLoop:
                 logger.error("Failed to inject surprise into FreeEnergyEngine: %s", exc)
 
         # 4. Feed Surprise and Coherence back into Liquid Substrate
-        if substrate:
+        if substrate and feed_engines:
             try:
                 substrate.accept_inference_feedback(surprise=surprise, coherence=coherence)
             except _FEEDBACK_RECOVERABLE_ERRORS as exc:
@@ -153,7 +161,9 @@ class InferenceFeedbackLoop:
                 logger.error("Failed to inject feedback into LiquidSubstrate: %s", exc)
 
         # 4b. Feed Surprise and Coherence back into PrecisionEngine (FHN oscillator)
-        precision_engine = get_runtime_service("precision_engine", default=None)
+        precision_engine = (
+            get_runtime_service("precision_engine", default=None) if feed_engines else None
+        )
         if precision_engine:
             try:
                 precision_engine.accept_inference_feedback(surprise=surprise, coherence=coherence)

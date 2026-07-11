@@ -1509,6 +1509,7 @@ class MLXLocalClient:
         self._foreground_generation_watchdog: _threading.Timer | None = None
         self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
         self._last_surface_control_receipt: dict[str, Any] = {}
+        self._last_interoception: dict[str, Any] = {}
         self._clock_sample_wall = time.time()
         self._clock_sample_monotonic = time.monotonic()
 
@@ -1593,6 +1594,49 @@ class MLXLocalClient:
         )
         if receipt:
             self._last_surface_control_receipt = receipt
+
+    def get_last_interoception(self) -> dict[str, Any]:
+        """The substrate interoception payload of the most recent completed
+        generation on this lane (worker-measured; see interoception_tap)."""
+        return dict(self._last_interoception) if self._last_interoception else {}
+
+    def _record_interoception_from_response(
+        self,
+        response: dict[str, Any],
+        *,
+        foreground_request: bool,
+        owner_label: str,
+    ) -> None:
+        """Capture the worker's felt-thought measurements and hand them to the
+        thought-interoception organ. Observational only — never raises into the
+        generation path."""
+        try:
+            payload = response.get("interoception") if isinstance(response, dict) else None
+            if not isinstance(payload, dict) or not payload:
+                return
+            from core.being.thought_interoception import (
+                get_thought_interoception,
+                text_fingerprint,
+            )
+
+            # Fingerprint the payload to the text it measured, so consumers
+            # (e.g. unified_inference feedback) can prove they are pairing the
+            # right trace with the right response even under concurrent lanes.
+            stored = dict(payload)
+            stored["_text_fingerprint"] = text_fingerprint(str(response.get("text") or ""))
+            self._last_interoception = stored
+
+            get_thought_interoception().ingest(
+                payload,
+                origin=owner_label or "mlx",
+                foreground=bool(foreground_request),
+                response_text=str(response.get("text") or ""),
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, KeyError) as exc:
+            record_degradation(
+                "mlx_client_interoception", exc, severity="warning",
+                action="continued generation return after interoception ingest failed",
+            )
 
     def _note_expected_generation_cancellation(self, reason: str, *, count: int) -> None:
         if count <= 0:
@@ -3240,6 +3284,16 @@ class MLXLocalClient:
                     continue
                 if status in {"progress", "token"}:
                     self._mark_token_progress(res.get("id"))
+                    live_intero = res.get("interoception_live")
+                    if isinstance(live_intero, dict) and live_intero:
+                        try:
+                            from core.being.thought_interoception import (
+                                get_thought_interoception,
+                            )
+
+                            get_thought_interoception().pulse_live(live_intero)
+                        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+                            logger.debug("Live interoception pulse dropped.")
                     continue
 
                 # 2. Route init/generation responses to the correct awaiting future
@@ -4733,6 +4787,11 @@ class MLXLocalClient:
                 return None
             if res.get("status") == "ok":
                 self._record_surface_control_receipt_from_response(res)
+                self._record_interoception_from_response(
+                    res,
+                    foreground_request=foreground_request,
+                    owner_label=owner_label,
+                )
                 text = res.get("text", "").strip()
                 self._mark_progress()
                 if not text and not res.get("soft_cancelled"):
