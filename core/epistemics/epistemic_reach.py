@@ -460,7 +460,7 @@ class EpistemicReachEngine:
             active_task = self._active_task
             worker = self._worker
 
-            while True:
+            for _ in range(max(1, self._queue.maxsize)):
                 try:
                     queued = self._queue.get_nowait()
                 except queue.Empty:
