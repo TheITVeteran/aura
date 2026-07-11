@@ -10790,3 +10790,161 @@ Remaining bounded work after this checkpoint:
   governance-ownership, type/effect, and semantic-review workstreams.
 - Keep multi-hour and 24-72 hour soak work deferred until every shorter static,
   bounded, clean-machine, and live-runtime gate is green.
+
+## Checkpoint 2026-07-11-32: Attributable Autonomy, Runtime Lifecycle Truth, And Unified Environmental Effects
+
+This checkpoint continued item 32 and reopened any supposedly closed external
+action boundary contradicted by current-tree live evidence. The normal desktop
+path is now clean, but the phase-specific signal matrix remains open; this
+checkpoint does not relabel one clean stop path as complete shutdown closure.
+
+Negative evidence and root causes:
+
+- The first current-tree replay at
+  `artifacts/current/runtime_lifecycle_checkpoint_20260711_live1` completed chat
+  and graceful shutdown but failed the runtime stream scan. Orchestrator boot
+  cancelled `SovereignEars.start_listening()` after 15 seconds while the shared
+  local Whisper load continued. STT later became ready, but microphone startup
+  had lost its caller and never resumed.
+- Retained-memory prose from an earlier Biscuit exchange could be selected as a
+  new initiative and inferred as `web_search` from broad substring matching.
+  The action technically fired but had no attributable structured action
+  contract tying the effect to the chosen initiative.
+- The executor finalizer could report clean after Python 3.12 emitted a default
+  executor shutdown warning, and a single bounded health-probe timeout could
+  emit global degradation before the repeated-failure threshold was reached.
+- MHAf, epistemic-humility, and state-repository shutdown saves could attempt
+  ordinary governed or executor-backed work after the process latch. The state
+  repository could open a new `aiosqlite` worker while quiescing.
+- The passing second live replay still contained quieter false-failure signals:
+  expected pre-running service registration was labeled `BOOT COMPLETE ...
+  degraded mode`; the one-token shader precompile was logged and learned as a
+  zero-token generation failure; and the identity probe phrase `will you
+  remember this conversation tomorrow?` was substring-classified as an
+  anaphoric memory-write command. That silently pinned the preceding capability
+  inventory and forced an unrelated memory-state repair on the identity reply.
+- The last optional warning exposed a larger ownership defect. Aura had two IoT
+  implementations: the affect engine's `PhysicalActuator` could call Home
+  Assistant directly through `aiohttp`, while the nominal canonical IoT bridge
+  neither passed through `WorldBridge` nor registered an environmental handler.
+  `WorldBridge` issued an in-memory capability token but did not run the effect
+  as a canonical `ActionExecutor` transaction or persist a post-action receipt.
+
+Implemented action and lifecycle repairs:
+
+- `f6d1b721` requires autonomous initiatives to carry attributable structured
+  skill/tool metadata. Exact explicit natural-language web-search intent remains
+  supported; retained-memory prose and unknown goals are durably skipped with
+  reason `missing_structured_action_contract` instead of being mapped to a
+  convenient unrelated actuator.
+- `6b424cd7` replaced an unbounded epistemic-reach queue drain with a bounded
+  capacity-derived loop.
+- `650b49b5` made automatic STT local-cache-only unless model download is
+  explicitly enabled, made STT initialization a shielded single flight, closed
+  late microphone streams after cancellation, and prevented model publication
+  after voice/runtime shutdown.
+- `e9da40a4` made default-executor warning/residual evidence fail closed, added
+  thread stack and shutdown-authority evidence, escalated health-probe failure
+  only after a bounded repeated-failure threshold, and moved shutdown
+  persistence onto explicit governed teardown owners without opening a new
+  `aiosqlite` worker.
+- `12ac96f7` made voice-listener startup a tracked single flight that can outlive
+  the short boot wait. Telemetry now distinguishes `loading`, `ready`, `failed`,
+  `disabled`, and `stopping`; cold STT completion proceeds into real microphone
+  capture rather than becoming an abandoned ready model.
+- `7c2aaac8` separated initialization from runtime readiness. Missing services
+  before `running=true` are informational `BOOT CORE COMPLETE/readiness gated`
+  conditions; the same missing critical service after readiness is required is
+  still critical.
+- `8c50f768` constrained anaphoric memory writes to actual utterance-initial
+  commands or polite requests. Future-memory capability questions no longer
+  mutate memory or import the prior exchange as canonical evidence.
+- `6d0e3f1e` explicitly tagged the bounded one-token shader precompile. Expected
+  empty precompile text remains informational and does not feed
+  `generation_health=0.0`; empty readiness and user generations still fail and
+  recover through the established path.
+
+Implemented canonical environmental-action spine:
+
+- `9fe3db76` removed the direct affect-to-`aiohttp` path. The legacy
+  `PhysicalActuator` is now only a compatibility adapter over
+  `WorldBridge(Channel.ENVIRONMENTAL_CHANGE)`.
+- `WorldBridge` now performs privacy and permission checks, immutable-conscience
+  evaluation, one canonical `ActionExecutor` environment transaction, a scoped
+  child capability token, independent effect verification, welfare/outcome
+  closure, and a durable post-action receipt.
+- Home Assistant transport runs network I/O only through the ActionExecutor's
+  governed network transport. Missing credentials configure no transport and
+  cannot produce a fake noop success. Plain HTTP requires explicit opt-in;
+  target/domain/action syntax and origin-only URLs are validated.
+- A successful Home Assistant POST is transport acceptance, not physical
+  completion. The bridge performs bounded entity-state readback and compares the
+  observed state/attributes, including percent-to-byte brightness conversion.
+  Accepted-but-unobserved effects and capability-receipt closure failures return
+  `transport_succeeded=true`, `effect_verified=false`, and
+  `manual_reconciliation_required=true` with a durable receipt.
+- Environmental policy attempts are cooldown-bounded even when permission is
+  absent. Optional unconfigured Home Assistant state is logged as ordinary idle
+  capability state, not degradation.
+
+Current verification:
+
+- Attributable autonomy and adjacent action contracts passed in consolidated
+  slices up to `161 passed`; strict isolated MyPy over the four cleaned
+  initiative/tool modules passed; Ruff, governance, enterprise, and production
+  gates passed before publication.
+- Voice, shutdown, health, and persistence regressions passed at `161 passed`.
+  The installed offline Whisper probe initialized the real cached `base` model
+  in `1.75s` with `local_files_only=true`.
+- Boot/runtime classification regressions passed at `120 passed`; memory intent,
+  chat reliability, steering, and self-claim slices passed at `215 passed`; MLX
+  client/worker files passed at `87 passed`.
+- WorldBridge, IoT, NetworkGateway, ActionExecutor, runtime settings, and affect
+  integration slices passed at `111 passed`. Strict target-isolated MyPy passed
+  over all five environmental/action source modules. Ruff and py-compile passed.
+- Governance ownership matches exactly at `1,800` recognized calls in `1,693`
+  buckets with `1,689` migration-debt calls. The two new buckets are canonical
+  `WorldBridge -> ActionExecutor` and ActionExecutor-owned NetworkGateway calls;
+  migration debt did not increase.
+- Enterprise static ratchet and all `37` production-readiness contract checks
+  passed on the environmental-action tree.
+
+Live evidence from exact pushed commits:
+
+- `runtime_lifecycle_checkpoint_20260711_live2` passed after the voice fix:
+  healthy in `26.2s`, codeword continuity and `1/1` conversation turn passed,
+  all required cognitive organs participated, Whisper became ready, microphone
+  capture activated, and shutdown completed in `34.58s/90s` with no orphan and
+  a free port.
+- `runtime_lifecycle_checkpoint_20260711_live3` passed after boot, memory-intent,
+  and shader-precompile repairs: healthy in `22.9s`; no false degraded-boot,
+  response-confidence/rebound, zero-token-failure, governance, traceback, or
+  runtime-shutdown marker remained.
+- `runtime_lifecycle_checkpoint_20260711_live4` passed from `9fe3db76`: healthy
+  in `23.3s`; capability, identity, continuity, `1/1` conversation, and
+  cognitive-organ probes passed; RSS remained bounded near `20.2-20.5GB`;
+  optional IoT was idle without warning; voice reached real active capture; and
+  shutdown completed in `34.6s/90s` with no orphan, released port, and no
+  runtime failure marker.
+
+Authoritative remaining work after this checkpoint:
+
+- Keep `CTX2-SHUTDOWN-001..003` `IN PROGRESS`. Execute the bounded first/repeated
+  SIGINT/SIGTERM matrix during boot, STT/model warmup, lane recovery, active
+  foreground generation/action, persistence, container teardown, and root
+  finalization. Require the durable shutdown verdict, no post-latch admission,
+  no child/thread/listener residual, a released singleton lock, free port, and
+  exactly-once terminal receipts in every case.
+- Exercise a real configured Home Assistant environment only when the user has
+  granted the environmental-change channel and supplied credentials. The
+  transport/state-verification contract is tested with controlled HTTP
+  responses; this checkpoint does not claim a live physical device effect.
+- Continue `CTX2-LANE-001..004`: atomic cross-lane reservations, synchronous
+  required eviction, complete process/model/trainer accounting, compensation,
+  and exactly-once terminal admission receipts.
+- Then continue canonical mind/state ownership, verifier/amplifier evaluation,
+  one-shot adaptation, unified memory/rollback, longitudinal identity/welfare,
+  resident-colleague reliability, clean-machine replication, UI/operator, type
+  and effect debt, and full semantic-review coverage from the detailed ledger.
+- Multi-hour and 24-72 hour soaks remain deferred until all shorter static,
+  bounded, fault-injection, clean-machine, and live-runtime gates are green.
