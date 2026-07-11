@@ -1613,10 +1613,17 @@ class HeartbeatThread(threading.Thread):
 class WorkerMemorySentinel(threading.Thread):
     """Terminate this MLX worker before unified memory exhaustion kills macOS."""
 
-    def __init__(self, writer: IPCWriterThread, model_path: str):
+    def __init__(
+        self,
+        writer: IPCWriterThread,
+        model_path: str,
+        *,
+        hard_exit_allowed: bool = False,
+    ):
         super().__init__(name="MLX-MemorySentinel", daemon=True)
         self.writer = writer
         self.model_path = str(model_path or "")
+        self._hard_exit_allowed = bool(hard_exit_allowed)
         self._stop_event = threading.Event()
         self._pid = os.getpid()
 
@@ -1664,6 +1671,18 @@ class WorkerMemorySentinel(threading.Thread):
         except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError):
             return 0.0
 
+    def _exit_for_memory_fuse(self, reason: str) -> bool:
+        """Hard-exit only when the sentinel was created inside a worker child."""
+        if not self._hard_exit_allowed:
+            logger.critical(
+                "MLX worker memory fuse refused hard exit outside an authorized child "
+                "process: %s",
+                reason,
+            )
+            self._stop_event.set()
+            return False
+        os._exit(137)
+
     def run(self):
         while not self._stop_event.is_set():
             try:
@@ -1691,7 +1710,8 @@ class WorkerMemorySentinel(threading.Thread):
                             "memory_pressure": snapshot.to_dict(),
                         }
                     )
-                    os._exit(137)
+                    self._exit_for_memory_fuse(reason)
+                    return
             except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 logger.debug("MLX worker memory sentinel probe unavailable: %s", exc)
             time.sleep(0.5)
@@ -2219,7 +2239,11 @@ def _mlx_worker_loop(
     heartbeat = HeartbeatThread(ipc_writer)
     heartbeat.start()
 
-    memory_sentinel = WorkerMemorySentinel(ipc_writer, model_path)
+    memory_sentinel = WorkerMemorySentinel(
+        ipc_writer,
+        model_path,
+        hard_exit_allowed=mp.current_process().name != "MainProcess",
+    )
     memory_sentinel.start()
 
     watchdog = JobWatchdog(timeout=360.0)  # Align with the protected foreground solver envelope.

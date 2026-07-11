@@ -2018,6 +2018,27 @@ async def test_proactive_manager_background_task_is_supervised(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_proactive_manager_stop_consumes_owned_worker_cancellation():
+    manager = ProactiveCommunicationManager()
+    entered = asyncio.Event()
+
+    async def _hold():
+        entered.set()
+        await asyncio.Event().wait()
+
+    manager._process_messages = _hold
+    await manager.start()
+    await entered.wait()
+    assert manager._background_task is not None
+
+    manager._background_task.cancel()
+    await asyncio.sleep(0)
+    await manager.stop()
+
+    assert manager._background_task is None
+
+
+@pytest.mark.asyncio
 async def test_autonomous_initiative_loop_background_tasks_are_supervised(monkeypatch):
     from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
 

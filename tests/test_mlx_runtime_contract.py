@@ -298,6 +298,7 @@ def _install_worker_fakes(monkeypatch, mlx_worker, *, load_impl, steering_engine
     monkeypatch.setattr(mlx_worker, "resolve_personality_adapter", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(mlx_worker, "IPCWriterThread", FakeIPCWriter)
     monkeypatch.setattr(mlx_worker, "HeartbeatThread", FakeWorkerThread)
+    monkeypatch.setattr(mlx_worker, "WorkerMemorySentinel", FakeWorkerThread)
     monkeypatch.setattr(mlx_worker, "JobWatchdog", FakeWorkerThread)
 
     if steering_engine is not None:

@@ -36,6 +36,7 @@ anywhere in the codebase:
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -338,8 +339,13 @@ class KernelInterface:
         """Return True if the kernel has been successfully booted."""
         return self._ready and self._kernel is not None
 
-    async def shutdown(self) -> None:
-        """Shut down the attached kernel and mark the interface unready."""
+    async def shutdown(self, *, finalize_process_runtime: bool = True) -> None:
+        """Shut down the attached kernel and mark the interface unready.
+
+        ``finalize_process_runtime=False`` is used by the orchestrator so its
+        service owners retain task and executor authority through container
+        teardown.  Standalone callers keep the historical root-owner default.
+        """
         kernel = self._kernel
         self._ready = False
         self._last_fault = ""
@@ -348,9 +354,25 @@ class KernelInterface:
             return
         shutdown = getattr(kernel, "shutdown", None)
         if callable(shutdown):
-            await shutdown()
+            try:
+                parameters = inspect.signature(shutdown).parameters.values()
+            except (TypeError, ValueError):
+                parameters = ()
+            supports_finalizer_ownership = any(
+                parameter.name == "finalize_process_runtime"
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            )
+            if supports_finalizer_ownership:
+                await shutdown(finalize_process_runtime=finalize_process_runtime)
+            else:
+                await shutdown()
         self._kernel = None
         _mark_kernel_health("unavailable", "kernel interface shut down")
+
+    async def on_stop_async(self) -> None:
+        """Container hook that leaves process finalizers with the root owner."""
+        await self.shutdown(finalize_process_runtime=False)
 
     # ── Processing ───────────────────────────────────────────────────────────────
 

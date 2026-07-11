@@ -845,8 +845,26 @@ class ServiceContainer:
                 )
                 logger.warning("%s timed out for %s after %.2fs", hook_name, name, timeout_s)
                 return f"timeout_after_{timeout_s:.3f}s"
-            except asyncio.CancelledError:
-                raise
+            except asyncio.CancelledError as exc:
+                current_task = asyncio.current_task()
+                if current_task is None or current_task.cancelling():
+                    raise
+                failure = "hook_cancelled_without_container_cancellation"
+                record_degradation(
+                    "container",
+                    exc,
+                    action=(
+                        f"continued service teardown after {hook_name} for '{name}' "
+                        "propagated cancellation from owned work"
+                    ),
+                    severity="degraded",
+                )
+                logger.error(
+                    "%s for %s propagated child cancellation; continuing container shutdown",
+                    hook_name,
+                    name,
+                )
+                return failure
             except Exception as exc:  # noqa: BLE001 - final service teardown boundary
                 record_degradation('container', exc)
                 logger.error("%s failed for %s: %s", hook_name, name, exc)

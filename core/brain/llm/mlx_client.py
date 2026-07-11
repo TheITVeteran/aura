@@ -1539,6 +1539,20 @@ class MLXLocalClient:
         """The serving cortex lane specifically — deep/solver excluded."""
         return self._is_primary_or_deep_lane() and not self._is_deep_solver_lane()
 
+    def _can_run_resident_background_health_probe(
+        self,
+        deferral_reason: str,
+        *,
+        health_probe: bool,
+    ) -> bool:
+        """Allow one bounded readiness probe without weakening spawn admission."""
+        return bool(
+            health_probe
+            and deferral_reason == "foreground_headroom_reserved"
+            and self._is_primary_lane()
+            and self.is_alive()
+        )
+
     def _is_deep_solver_lane(self) -> bool:
         return _model_path_is_deep_solver(self.model_path)
 
@@ -4563,12 +4577,20 @@ class MLXLocalClient:
             )
             background_deferral = _background_deferral_active(background_origin)
             if background_deferral:
-                logger.info(
-                    "⏸️ [MLX] Background generation for %s stopped before worker spawn (%s).",
-                    os.path.basename(self.model_path),
+                if not self._can_run_resident_background_health_probe(
                     background_deferral,
+                    health_probe=bool(kwargs.get("health_probe")),
+                ):
+                    logger.info(
+                        "⏸️ [MLX] Background generation for %s stopped before worker spawn (%s).",
+                        os.path.basename(self.model_path),
+                        background_deferral,
+                    )
+                    return None
+                logger.info(
+                    "🩺 [MLX] Running bounded readiness probe on resident primary worker "
+                    "despite background headroom reservation."
                 )
-                return None
 
         deadline = kwargs.get("deadline")
         if not isinstance(deadline, Deadline):
@@ -5170,10 +5192,6 @@ class MLXLocalClient:
                 raise
             except (RuntimeError, TimeoutError, AttributeError) as exc:
                 last_exc = exc
-                _record_mlx_degradation(
-                    exc,
-                    action="retried or recycled warmup precompile after failure",
-                )
                 if attempt == 0:
                     logger.warning(
                         "⚠️ [MLX] Warmup pre-compile failed once for %s: %s. Retrying cleanly...",

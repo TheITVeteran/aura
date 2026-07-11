@@ -13,6 +13,7 @@ from core.brain.llm.mlx_client import MLXLocalClient
 from core.brain.llm.mlx_vision_client import MLXVisionClient
 from core.brain.llm.mlx_worker import (
     IPCWriterThread,
+    WorkerMemorySentinel,
     _apply_surface_generation_controls,
     _build_operator_evidence_prompt,
     _merge_stop_sequences,
@@ -27,6 +28,28 @@ from core.utils.deadlines import get_deadline
 TMP_ROOT = Path(tempfile.gettempdir())
 QWEN32_MODEL = str(TMP_ROOT / "Qwen2.5-32B-Instruct-8bit")
 TEST_MODEL = str(TMP_ROOT / "test-model")
+
+
+def test_worker_memory_sentinel_requires_explicit_child_exit_authority(monkeypatch):
+    writer = SimpleNamespace(put=lambda _payload: None)
+    sentinel = WorkerMemorySentinel(writer, QWEN32_MODEL)
+
+    assert sentinel._exit_for_memory_fuse("unit-test-pressure") is False
+    assert sentinel._stop_event.is_set()
+
+    exit_codes: list[int] = []
+    monkeypatch.setattr(
+        "core.brain.llm.mlx_worker.os._exit",
+        lambda code: exit_codes.append(code),
+    )
+    authorized = WorkerMemorySentinel(
+        writer,
+        QWEN32_MODEL,
+        hard_exit_allowed=True,
+    )
+
+    assert authorized._exit_for_memory_fuse("unit-test-pressure") is None
+    assert exit_codes == [137]
 
 
 class ReplaceAttr:
@@ -1209,6 +1232,52 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(readiness_kwargs["clear_prompt_cache"])
         self.assertEqual(readiness_kwargs["max_tokens"], 16)
 
+    async def test_resident_primary_readiness_probe_bypasses_only_headroom_reservation(self):
+        from core.brain.llm import mlx_client as mlx_client_module
+
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client._process = ProcessProbe(alive=True)
+        client._init_done = True
+        admitted_probe = AsyncCallProbe(return_value=False)
+
+        with ReplaceAttr(mlx_client_module, "_FOREGROUND_OWNER_NAME", None):
+            with ReplaceAttr(
+                mlx_client_module,
+                "_background_deferral_active",
+                lambda _origin: "foreground_headroom_reserved",
+            ):
+                with ReplaceAttr(client, "_ensure_worker_alive", admitted_probe):
+                    result = await client._generate_inner(
+                        "Reply exactly: ready",
+                        request_is_background=True,
+                        foreground_request=False,
+                        owner_label="warmup:test",
+                        health_probe=True,
+                        deadline=get_deadline(1.0),
+                    )
+
+        self.assertIsNone(result)
+        self.assertEqual(len(admitted_probe.await_args_list), 1)
+
+        blocked_probe = AsyncCallProbe(return_value=False)
+        with ReplaceAttr(
+            mlx_client_module,
+            "_background_deferral_active",
+            lambda _origin: "critical_memory_pressure",
+        ):
+            with ReplaceAttr(client, "_ensure_worker_alive", blocked_probe):
+                result = await client._generate_inner(
+                    "Reply exactly: ready",
+                    request_is_background=True,
+                    foreground_request=False,
+                    owner_label="warmup:test",
+                    health_probe=True,
+                    deadline=get_deadline(1.0),
+                )
+
+        self.assertIsNone(result)
+        self.assertEqual(blocked_probe.await_args_list, [])
+
     async def test_warmup_returns_false_when_worker_start_is_deferred(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
 
@@ -1267,21 +1336,48 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         client._warmup_in_flight = True
         client._process = ProcessProbe(alive=True)
         client._init_done = True
+        recorded: list[tuple[tuple, dict]] = []
 
-        with ReplaceAttr(client, "_generate_inner", AsyncCallProbe(side_effect=["", "", "", ""])):
-            with ReplaceAttr(client, "reboot_worker", AsyncCallProbe()):
-                with self.assertRaises(RuntimeError):
-                    await client._run_warmup_precompile(
-                        request_is_background=False,
-                        foreground_request=True,
-                        owner_name="warmup:test",
-                        warmup_timeout=1.0,
-                    )
+        def _record(*args, **kwargs):
+            recorded.append((args, kwargs))
+
+        with replace_dotted("core.brain.llm.mlx_client._record_mlx_degradation", _record):
+            with ReplaceAttr(client, "_generate_inner", AsyncCallProbe(side_effect=["", "", "", ""])):
+                with ReplaceAttr(client, "reboot_worker", AsyncCallProbe()):
+                    with self.assertRaises(RuntimeError):
+                        await client._run_warmup_precompile(
+                            request_is_background=False,
+                            foreground_request=True,
+                            owner_name="warmup:test",
+                            warmup_timeout=1.0,
+                        )
 
         lane = client.get_lane_status()
         self.assertEqual(lane["state"], "recovering")
         self.assertFalse(lane["conversation_ready"])
         self.assertEqual(lane["last_error"], "warmup_readiness_no_text")
+        self.assertEqual(recorded, [])
+
+    async def test_warmup_records_exhausted_precompile_once_at_outer_boundary(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client._process = ProcessProbe(alive=True)
+        client._init_done = True
+        recorded: list[tuple[tuple, dict]] = []
+
+        def _record(*args, **kwargs):
+            recorded.append((args, kwargs))
+
+        with replace_dotted("core.brain.llm.mlx_client._record_mlx_degradation", _record):
+            with ReplaceAttr(client, "_ensure_worker_alive", AsyncCallProbe(return_value=True)):
+                with ReplaceAttr(
+                    client,
+                    "_run_warmup_precompile",
+                    AsyncCallProbe(side_effect=RuntimeError("warmup_failed")),
+                ):
+                    result = await client.warmup(foreground_request=False)
+
+        self.assertFalse(result)
+        self.assertEqual(len(recorded), 1)
 
     async def test_foreground_empty_generation_marks_recoverable_reboot(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)

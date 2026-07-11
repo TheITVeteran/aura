@@ -311,7 +311,10 @@ async def _orchestrator_shutdown_impl(orch: RobustOrchestrator) -> None:
 
     if orch.kernel_interface and hasattr(orch.kernel_interface, "shutdown"):
         try:
-            await asyncio.wait_for(orch.kernel_interface.shutdown(), timeout=5.0)
+            await asyncio.wait_for(
+                orch.kernel_interface.shutdown(finalize_process_runtime=False),
+                timeout=5.0,
+            )
         except TimeoutError:
             _record_shutdown_degradation(
                 TimeoutError("KernelInterface shutdown timed out"),

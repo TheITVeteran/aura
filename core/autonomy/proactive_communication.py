@@ -175,10 +175,17 @@ class ProactiveCommunicationManager:
         self._background_task = get_task_tracker().track_task(self._process_messages(), name="proactive_communication.process_messages")
 
     async def stop(self):
-        if self._background_task:
-            self._stop_event.set()
-            await self._background_task
-            self._background_task = None
+        task = self._background_task
+        self._stop_event.set()
+        if task:
+            if not task.done():
+                task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                self._background_task = None
 
     def get_status(self) -> dict[str, Any]:
         return {

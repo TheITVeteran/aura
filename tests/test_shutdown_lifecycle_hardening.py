@@ -104,6 +104,23 @@ def test_process_manager_does_not_install_signal_handlers_by_default(
     assert installed == []
 
 
+def test_process_manager_atexit_fallback_is_explicit_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registered: list[object] = []
+    monkeypatch.setattr(
+        process_manager_module.atexit,
+        "register",
+        lambda callback: registered.append(callback),
+    )
+
+    ProcessManager()
+    assert registered == []
+
+    manager = ProcessManager(register_atexit=True)
+    assert registered == [manager.cleanup]
+
+
 def test_process_manager_signal_latches_global_shutdown_before_cleanup() -> None:
     manager = ProcessManager(register_atexit=False)
     observed: list[bool] = []
@@ -719,6 +736,84 @@ async def test_service_container_coalesces_duplicate_singleton_aliases(
     assert report["coalesced_aliases"] == {
         "canonical_runtime": "compatibility_runtime"
     }
+
+
+@pytest.mark.asyncio
+async def test_service_container_records_owned_hook_cancellation_and_continues(
+    service_container,
+) -> None:
+    calls: list[str] = []
+
+    class _LaterOwner:
+        async def stop(self) -> None:
+            calls.append("later")
+
+    class _CancellingOwner:
+        async def stop(self) -> None:
+            calls.append("cancelled")
+            raise asyncio.CancelledError()
+
+    service_container.register_instance("later_owner", _LaterOwner())
+    service_container.register_instance("cancelling_owner", _CancellingOwner())
+
+    report = await service_container.shutdown()
+
+    assert calls == ["cancelled", "later"]
+    assert report["clean"] is False
+    assert report["failed_hooks"] == {
+        "cancelling_owner:stop": "hook_cancelled_without_container_cancellation"
+    }
+
+
+@pytest.mark.asyncio
+async def test_service_container_propagates_root_shutdown_cancellation(
+    service_container,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class _BlockingOwner:
+        async def stop(self) -> None:
+            entered.set()
+            await release.wait()
+
+    service_container.register_instance("blocking_owner", _BlockingOwner())
+    shutdown_task = asyncio.create_task(
+        service_container.shutdown(hook_timeout_s=5.0, total_timeout_s=5.0)
+    )
+    await entered.wait()
+
+    shutdown_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await shutdown_task
+
+
+@pytest.mark.asyncio
+async def test_aura_kernel_shutdown_ownership_is_sticky_and_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.kernel.aura_kernel import AuraKernel
+
+    calls: list[bool] = []
+
+    async def _shutdown_impl(
+        _kernel: AuraKernel,
+        *,
+        finalize_process_runtime: bool,
+    ) -> None:
+        calls.append(finalize_process_runtime)
+
+    monkeypatch.setattr(AuraKernel, "_shutdown_impl", _shutdown_impl)
+    kernel = object.__new__(AuraKernel)
+    kernel._shutdown_lock = asyncio.Lock()
+    kernel._shutdown_complete = False
+    kernel._shutdown_process_runtime_owner = None
+
+    await kernel.shutdown(finalize_process_runtime=False)
+    await kernel.shutdown(finalize_process_runtime=True)
+    await kernel.on_stop_async()
+
+    assert calls == [False]
 
 
 @pytest.mark.asyncio

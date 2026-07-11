@@ -145,6 +145,9 @@ class AuraKernel:
         self.state: AuraState | None = None
         self.status = KernelStatus()
         self._running = False
+        self._shutdown_lock = asyncio.Lock()
+        self._shutdown_complete = False
+        self._shutdown_process_runtime_owner: bool | None = None
 
         # Pipelines & Supervision
         self._task_group: asyncio.TaskGroup | None = None
@@ -1522,8 +1525,36 @@ class AuraKernel:
             )
             logger.error("Mirror projection failed: %s", e)
 
-    async def shutdown(self):
-        """Graceful shutdown of all organs and background tasks."""
+    async def shutdown(self, *, finalize_process_runtime: bool = True):
+        """Gracefully stop this kernel and, when owned here, process finalizers.
+
+        The standalone kernel owns the process runtime.  An orchestrator-owned
+        kernel does not: its service container must stop every service before
+        the task tracker, runtime hygiene manager, and default executor are
+        finalized.
+        """
+        async with self._shutdown_lock:
+            if self._shutdown_complete:
+                return
+            if self._shutdown_process_runtime_owner is None:
+                self._shutdown_process_runtime_owner = bool(finalize_process_runtime)
+            elif not self._shutdown_process_runtime_owner and finalize_process_runtime:
+                logger.info(
+                    "Kernel ignored a duplicate request to escalate component shutdown "
+                    "into process-root finalization."
+                )
+
+            await self._shutdown_impl(
+                finalize_process_runtime=bool(self._shutdown_process_runtime_owner),
+            )
+            self._shutdown_complete = True
+
+    async def on_stop_async(self) -> None:
+        """Container hook that preserves process-root finalizer ownership."""
+        await self.shutdown(finalize_process_runtime=False)
+
+    async def _shutdown_impl(self, *, finalize_process_runtime: bool) -> None:
+        """Execute the kernel-owned portion of shutdown exactly once."""
         if (
             not self._running
             and not self._background_tasks
@@ -1590,8 +1621,11 @@ class AuraKernel:
         await self._close_kernel_vault()
 
         # 5. Stop process-wide event/task/runtime hygiene surfaces so an isolated
-        # kernel boot leaves no background loops behind after shutdown.
-        await self._shutdown_process_runtime()
+        # kernel boot leaves no background loops behind after shutdown.  The
+        # orchestrator defers these finalizers until its service owners stop.
+        await self._shutdown_process_runtime(
+            finalize_process_runtime=finalize_process_runtime,
+        )
 
         logger.info("✅ [KERNEL] Shutdown complete.")
 
@@ -1654,8 +1688,12 @@ class AuraKernel:
             )
             logger.warning("Kernel vault close failed: %s", exc)
 
-    async def _shutdown_process_runtime(self) -> None:
-        """Drain process-wide runtime services that can outlive a kernel instance."""
+    async def _shutdown_process_runtime(
+        self,
+        *,
+        finalize_process_runtime: bool = True,
+    ) -> None:
+        """Drain process services without violating root-owner teardown order."""
         try:
             import core.learning.live_learner as live_learner_module
 
@@ -1677,6 +1715,12 @@ class AuraKernel:
                 exc,
                 action="skipped lock watchdog shutdown after singleton lookup failed",
             )
+
+        if not finalize_process_runtime:
+            logger.info(
+                "Kernel process-wide finalizers deferred to orchestrator root shutdown."
+            )
+            return
 
         try:
             from core.event_bus import get_event_bus

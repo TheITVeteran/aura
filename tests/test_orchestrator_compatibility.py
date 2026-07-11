@@ -540,6 +540,7 @@ async def test_orchestrator_shutdown_requests_graceful_state_vault_stop_before_b
     )
     service_shutdown = AsyncCallFixture()
     event_bus_shutdown = AsyncCallFixture()
+    kernel_shutdown = AsyncCallFixture()
 
     monkeypatch.setattr(
         "core.resilience.snapshot_manager.SnapshotManager",
@@ -566,7 +567,7 @@ async def test_orchestrator_shutdown_requests_graceful_state_vault_stop_before_b
         _publish_status=lambda _payload: None,
         _save_state=lambda _cause: None,
         _stop_event=None,
-        kernel_interface=None,
+        kernel_interface=SimpleNamespace(shutdown=kernel_shutdown),
     )
 
     await orchestrator_shutdown(orch)
@@ -582,6 +583,10 @@ async def test_orchestrator_shutdown_requests_graceful_state_vault_stop_before_b
     state_repo.close.assert_awaited_once()
     service_shutdown.assert_awaited_once()
     event_bus_shutdown.assert_awaited_once()
+    assert kernel_shutdown.await_args == (
+        (),
+        {"finalize_process_runtime": False},
+    )
     assert supervisor.stop_calls == 1
 
 

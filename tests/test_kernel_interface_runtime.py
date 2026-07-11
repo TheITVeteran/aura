@@ -37,7 +37,8 @@ class WorkingKernel:
             "status": "engaged",
         }
 
-    async def shutdown(self):
+    async def shutdown(self, *, finalize_process_runtime=True):
+        self.finalize_process_runtime = finalize_process_runtime
         self.closed = True
 
 
@@ -63,6 +64,41 @@ def _reset_process_state():
     get_degradation_tracker().reset()
     kernel_module._ki = None
     KernelInterface._instance = None
+
+
+def test_kernel_interface_forwards_process_finalizer_ownership():
+    async def scenario():
+        _reset_process_state()
+        kernel = WorkingKernel()
+        ki = KernelInterface()
+        await ki.boot(kernel=kernel)
+
+        await ki.shutdown(finalize_process_runtime=False)
+
+        assert kernel.closed is True
+        assert kernel.finalize_process_runtime is False
+        assert ki.is_ready() is False
+
+    asyncio.run(scenario())
+
+
+def test_kernel_interface_preserves_legacy_shutdown_signature():
+    class LegacyKernel(WorkingKernel):
+        async def shutdown(self):
+            self.closed = True
+
+    async def scenario():
+        _reset_process_state()
+        kernel = LegacyKernel()
+        ki = KernelInterface()
+        await ki.boot(kernel=kernel)
+
+        await ki.shutdown(finalize_process_runtime=False)
+
+        assert kernel.closed is True
+        assert ki.is_ready() is False
+
+    asyncio.run(scenario())
 
 
 def test_kernel_interface_processes_turn_and_updates_health():

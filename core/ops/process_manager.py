@@ -761,7 +761,7 @@ class ProcessManager:
         self,
         *,
         install_signal_handlers: bool = False,
-        register_atexit: bool = True,
+        register_atexit: bool = False,
         cleanup_timeout_s: float = 6.0,
     ):
         self.processes: dict[str, ManagedProcess] = {}
