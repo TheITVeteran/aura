@@ -780,6 +780,19 @@ def _is_anaphoric_session_memory_pin_request(user_message: str) -> bool:
         return False
     if _extract_session_memory_pin_request(user_message):
         return False
+    # Anaphoric writes require a command/request at the start of the utterance.
+    # Substring matching used to turn capability questions such as "what are
+    # you, and will you remember this tomorrow?" into silent writes of the
+    # previous exchange. Accept polite request modals, but not predictive
+    # questions beginning with "will/do/did you".
+    command_text = re.sub(
+        r"^(?:can|could|would)\s+you\s+(?:please\s+)?",
+        "",
+        text,
+        count=1,
+        flags=re.IGNORECASE,
+    )
+    command_text = re.sub(r"^please\s+", "", command_text, count=1, flags=re.IGNORECASE)
     markers = (
         "hold this thought",
         "hold that thought",
@@ -799,7 +812,10 @@ def _is_anaphoric_session_memory_pin_request(user_message: str) -> bool:
         "dont forget that",
         "don't forget that",
     )
-    if not any(marker in text for marker in markers):
+    if not any(
+        command_text == marker or command_text.startswith(f"{marker} ")
+        for marker in markers
+    ):
         return False
     # A follow-up question is a discourse anchor, not a memory-write command.
     if re.search(

@@ -767,6 +767,58 @@ def test_identity_reliability_fastpath_answers_future_memory_without_overclaim()
     assert reliability.ok, reliability.reasons
 
 
+@pytest.mark.asyncio
+async def test_future_memory_identity_question_cannot_create_anaphoric_memory_pin(
+    monkeypatch,
+):
+    from interface.routes import chat as chat_routes
+
+    prompt = (
+        "Quick reliability check, in two or three sentences: what are you, "
+        "and will you remember this conversation tomorrow?"
+    )
+    writes: list[tuple] = []
+
+    async def _unexpected_store(*args, **kwargs):
+        writes.append((args, kwargs))
+        return True
+
+    async with chat_routes._get_convo_lock():
+        chat_routes._conversation_log.clear()
+        chat_routes._conversation_log.append(
+            {
+                "user": "What tools can you use?",
+                "aura": "I can use governed tools with receipts.",
+                "status": "complete",
+                "session_id": "identity-probe",
+            }
+        )
+    monkeypatch.setattr(chat_routes, "_store_session_memory_pin", _unexpected_store)
+
+    evidence = await chat_routes._build_memory_state_fastpath_reply(
+        prompt,
+        session_id="identity-probe",
+    )
+
+    assert chat_routes._is_anaphoric_session_memory_pin_request(prompt) is False
+    assert evidence is None
+    assert writes == []
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Remember this.",
+        "Please hold this thought for later.",
+        "Could you remember this for later?",
+    ],
+)
+def test_anaphoric_memory_pin_classifier_accepts_explicit_requests(prompt):
+    from interface.routes import chat as chat_routes
+
+    assert chat_routes._is_anaphoric_session_memory_pin_request(prompt) is True
+
+
 def test_assistant_mode_leak_is_rejected_and_repaired_to_live_identity():
     from core.conversation.response_reliability import assess_user_facing_reply
     from interface.routes import chat as chat_routes
