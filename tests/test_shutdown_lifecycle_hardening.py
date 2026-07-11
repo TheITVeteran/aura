@@ -35,6 +35,31 @@ def test_shutdown_latch_is_visible_before_grace_flag_io(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
+async def test_global_asyncio_patch_preserves_explicit_shutdown_task_scope() -> None:
+    from core.utils.asyncio_patch import install_asyncio_task_patch
+    from core.utils.task_tracker import (
+        begin_shutdown_task_creation_scope,
+        end_shutdown_task_creation_scope,
+    )
+
+    assert install_asyncio_task_patch() is True
+    shutdown_coordinator.request_shutdown("asyncio-patch-shutdown-scope")
+
+    async def _cleanup() -> str:
+        await asyncio.sleep(0)
+        return "cleanup-complete"
+
+    token = begin_shutdown_task_creation_scope()
+    try:
+        task = asyncio.create_task(_cleanup(), name="explicit-shutdown-cleanup")
+    finally:
+        end_shutdown_task_creation_scope(token)
+
+    assert await task == "cleanup-complete"
+    assert getattr(task, "_aura_shutdown_critical", False) is True
+
+
+@pytest.mark.asyncio
 async def test_shutdown_coordinator_concurrent_and_repeated_calls_run_handlers_once() -> None:
     coordinator = shutdown_coordinator.ShutdownCoordinator()
     entered = asyncio.Event()

@@ -23,8 +23,31 @@ _ALLOW_SHUTDOWN_RESOURCE_CREATION = contextvars.ContextVar(
 )
 
 
-def shutdown_task_creation_allowed() -> bool:
+def shutdown_task_creation_allowed(context: contextvars.Context | None = None) -> bool:
+    if context is not None:
+        return bool(context.get(_ALLOW_SHUTDOWN_TASK_CREATION, False))
     return bool(_ALLOW_SHUTDOWN_TASK_CREATION.get())
+
+
+_CANONICAL_SHUTDOWN_ENTRYPOINTS = frozenset(
+    {
+        ("core.ops.graceful_shutdown", "GracefulShutdown.trigger_shutdown"),
+        ("core.runtime.shutdown_coordinator", "ShutdownCoordinator.shutdown"),
+    }
+)
+
+
+def canonical_shutdown_awaitable(awaitable: Any) -> bool:
+    """Recognize exact root shutdown coroutines at the raw task boundary."""
+    if not inspect.iscoroutine(awaitable):
+        return False
+    code = getattr(awaitable, "cr_code", None)
+    frame = getattr(awaitable, "cr_frame", None)
+    if code is None or frame is None:
+        return False
+    module_name = str(frame.f_globals.get("__name__") or "")
+    qualname = str(getattr(code, "co_qualname", "") or "")
+    return (module_name, qualname) in _CANONICAL_SHUTDOWN_ENTRYPOINTS
 
 
 def begin_shutdown_task_creation_scope() -> contextvars.Token[bool]:
@@ -189,6 +212,12 @@ class TaskTracker:
                     end_shutdown_task_creation_scope(token)
         if allow_during_shutdown:
             self._mark_shutdown_critical(task)
+            if _runtime_shutdown_requested():
+                _record_shutdown_task_event(
+                    name=name,
+                    source="track:explicit_shutdown_owner",
+                    outcome="allowed_teardown",
+                )
         self._total_tracked += 1
         self._attach(task, name=name, supervision="explicit", source="track")
         return task
@@ -319,10 +348,12 @@ class TaskTracker:
         def _factory(factory_loop, coro, **kwargs):
             skip_factory_track = _SKIP_FACTORY_TRACK.get()
             shutdown_suppressed = False
+            canonical_shutdown = canonical_shutdown_awaitable(coro)
+            teardown_allowed = shutdown_task_creation_allowed() or canonical_shutdown
             if (
                 not skip_factory_track
                 and _runtime_shutdown_requested()
-                and not shutdown_task_creation_allowed()
+                and not teardown_allowed
             ):
                 close_awaitable(coro)
                 tracker._shutdown_suppressed_total += 1
@@ -355,6 +386,21 @@ class TaskTracker:
                     task._aura_shutdown_suppressed_source = "loop_factory"
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation("task_tracker", exc)
+            elif (
+                not skip_factory_track
+                and _runtime_shutdown_requested()
+                and teardown_allowed
+            ):
+                tracker._mark_shutdown_critical(task)
+                _record_shutdown_task_event(
+                    name=str(kwargs.get("name") or "shutdown_teardown_task"),
+                    source=(
+                        "loop_factory:canonical_shutdown_entrypoint"
+                        if canonical_shutdown
+                        else "loop_factory:explicit_shutdown_scope"
+                    ),
+                    outcome="allowed_teardown",
+                )
             if not skip_factory_track:
                 try:
                     tracker.observe(task, source="loop_factory")
