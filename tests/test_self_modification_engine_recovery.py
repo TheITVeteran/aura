@@ -84,7 +84,8 @@ async def test_shadow_ast_proposal_does_not_mutate_source_before_safe_apply(tmp_
 @pytest.mark.asyncio
 async def test_runtime_self_modification_promotion_requires_operator_opt_in(monkeypatch):
     monkeypatch.delenv("AURA_ALLOW_RUNTIME_SELF_MODIFICATION", raising=False)
-    monkeypatch.setattr(sm_mod.random, "random", lambda: 0.99)
+    # (The cycle is deterministic now — the old random-gate patch died with
+    # the stochastic path; the operator opt-in gate is the whole contract.)
     ServiceContainer.clear()
     ServiceContainer.register_instance("aura_kernel", SimpleNamespace(volition_level=3))
 

@@ -89,7 +89,12 @@ class SwarmProtocol:
         server, self._server = self._server, None
         if server is not None:
             server.close()
-            await server.wait_closed()
+            try:
+                # Bounded: a peer holding its connection open must not wedge
+                # listener teardown (A1 bounded-await discipline).
+                await asyncio.wait_for(server.wait_closed(), timeout=5.0)
+            except TimeoutError:
+                logger.debug("Swarm listener close timed out; abandoning socket.")
 
     async def _handle_peer(self, reader, writer):
         try:

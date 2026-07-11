@@ -664,8 +664,47 @@ def shutdown_admission_snapshot() -> dict[str, object]:
         }
 
 
+def _declared_string(name: str, default: str, description: str) -> str:
+    """Read a string knob through the typed flag layer (C1 discipline)."""
+    try:
+        from core.runtime.flags import FlagKind, declare
+
+        return str(
+            declare(
+                name,
+                kind=FlagKind.STRING,
+                default=default,
+                description=description,
+                owner="core.runtime.shutdown_coordinator",
+            ).value()
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return default
+
+
+def _declared_bool(name: str, default: bool, description: str) -> bool:
+    try:
+        from core.runtime.flags import FlagKind, declare
+
+        return bool(
+            declare(
+                name,
+                kind=FlagKind.BOOL,
+                default=default,
+                description=description,
+                owner="core.runtime.shutdown_coordinator",
+            ).value()
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return default
+
+
 def shutdown_verdict_path() -> Path:
-    configured = str(os.environ.get("AURA_SHUTDOWN_REPORT_PATH", "") or "").strip()
+    configured = str(_declared_string(
+        "AURA_SHUTDOWN_REPORT_PATH",
+        "",
+        "Override path for the durable shutdown verdict report",
+    ) or "").strip()
     if configured:
         return Path(configured).expanduser().resolve()
     if os.environ.get("PYTEST_CURRENT_TEST"):
@@ -875,9 +914,13 @@ def is_shutdown_requested() -> bool:
 def _shutdown_reset_allowed() -> bool:
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return True
-    return str(
-        os.environ.get("AURA_ALLOW_IN_PROCESS_SHUTDOWN_RESET", "") or ""
-    ).strip().lower() in {"1", "true", "yes", "on"}
+    return bool(
+        _declared_bool(
+            "AURA_ALLOW_IN_PROCESS_SHUTDOWN_RESET",
+            False,
+            "Permit clearing the monotonic shutdown latch in-process (tests/operators only)",
+        )
+    )
 
 
 def clear_shutdown_request() -> None:

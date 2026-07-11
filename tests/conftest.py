@@ -242,6 +242,33 @@ def service_container():
 
 
 @pytest.fixture(autouse=True)
+def _shutdown_latch_hygiene():
+    """Reset the process-global shutdown latch a leaking test leaves set.
+
+    Production shutdown is deliberately MONOTONIC (76e5a71c): once latched,
+    nothing may clear it in-process. In the suite that means one test that
+    calls request_shutdown without a finally-clear poisons EVERY later test
+    in the chunk — gateways/hygiene refuse resource creation, coordinators
+    skip handlers — and the victims flap by seed (stem-cell signing,
+    graceful-shutdown task tracking, coordinator replay all fell to this
+    across three certification runs). Per-test isolation of a deliberately
+    monotonic global is exactly a fixture's job; the polluter class is
+    unbounded (any test may exercise shutdown), so hygiene lives here.
+    """
+    yield
+    try:
+        from core.runtime.shutdown_coordinator import (
+            clear_shutdown_request,
+            is_shutdown_requested,
+        )
+
+        if is_shutdown_requested():
+            clear_shutdown_request()
+    except (ImportError, AttributeError, RuntimeError):
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _disable_redis_event_bus_for_tests():
     """Keep the test suite local-only so Redis client coroutines don't leak warnings."""
     from core import event_bus as event_bus_module

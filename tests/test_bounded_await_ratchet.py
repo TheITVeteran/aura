@@ -65,7 +65,6 @@ ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
         ("core/collective/swarm_protocol.py", "_handle_peer", "wait_closed"),
         ("core/collective/swarm_protocol.py", "broadcast", "drain"),
         ("core/collective/swarm_protocol.py", "broadcast", "wait_closed"),
-        ("core/collective/swarm_protocol.py", "stop", "wait_closed"),
         ("core/consciousness/aura_protocol.py", "_handle_connection", "readexactly"),
         ("core/consciousness/constitutive_expression.py", "tick", "get"),
         ("core/consciousness/heartbeat.py", "_gather_state", "get"),

@@ -84,6 +84,24 @@ def _env_int(name: str, default: int, *, low: int, high: int) -> int:
     return max(low, min(high, value))
 
 
+def _declared_float(name: str, default: float, description: str) -> float:
+    """Read a float knob through the typed flag layer (C1 discipline)."""
+    try:
+        from core.runtime.flags import FlagKind, declare
+
+        return float(
+            declare(
+                name,
+                kind=FlagKind.FLOAT,
+                default=default,
+                description=description,
+                owner="core.runtime.runtime_hygiene",
+            ).value()
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return default
+
+
 def _process_cmdline(proc: Any) -> list[str]:
     try:
         return [str(part) for part in (proc.cmdline() or [])]
@@ -253,12 +271,12 @@ class RuntimeHygieneManager:
             float(os.getenv("AURA_RUNTIME_HYGIENE_SHUTDOWN_TIMEOUT_S", "4.0") or 4.0),
         )
         self.resource_shutdown_timeout_s = max(
-            0.5,
-            float(os.getenv("AURA_RUNTIME_RESOURCE_SHUTDOWN_TIMEOUT_S", "3.0") or 3.0),
+            0.5, _declared_float("AURA_RUNTIME_RESOURCE_SHUTDOWN_TIMEOUT_S", 3.0,
+                                 "Per-resource close budget during shutdown hygiene")
         )
         self.task_shutdown_timeout_s = max(
-            0.5,
-            float(os.getenv("AURA_RUNTIME_TASK_SHUTDOWN_TIMEOUT_S", "3.0") or 3.0),
+            0.5, _declared_float("AURA_RUNTIME_TASK_SHUTDOWN_TIMEOUT_S", 3.0,
+                                 "Per-task cancel budget during shutdown hygiene")
         )
         self.tracemalloc_enabled = str(
             os.getenv("AURA_RUNTIME_HYGIENE_TRACEMALLOC", "0") or "0"
