@@ -129,6 +129,25 @@ def test_process_manager_does_not_install_signal_handlers_by_default(
     assert installed == []
 
 
+def test_container_refuses_lazy_service_initialization_after_shutdown(
+    service_container,
+) -> None:
+    from core.exceptions import ContainerError
+
+    calls: list[str] = []
+    service_container.register(
+        "late_service",
+        lambda: calls.append("factory") or object(),
+        required=False,
+    )
+    shutdown_coordinator.request_shutdown("unit-test")
+
+    with pytest.raises(ContainerError, match="cannot initialize service"):
+        service_container.get("late_service")
+
+    assert calls == []
+
+
 def test_process_manager_atexit_fallback_is_explicit_opt_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

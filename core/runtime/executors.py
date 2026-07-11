@@ -29,12 +29,11 @@ import asyncio
 import functools
 import logging
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, TypeVar
+from typing import Any
 
 logger = logging.getLogger("Aura.Executors")
-
-T = TypeVar("T")
 
 # ---------------------------------------------------------------------------
 # Pools
@@ -51,11 +50,29 @@ BLOCKING_IO_POOL = ThreadPoolExecutor(
 )
 
 
+def _register_pool(pool: ThreadPoolExecutor, *, name: str) -> None:
+    from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+    if is_shutdown_requested():
+        raise RuntimeError("runtime_shutdown")
+    from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+    get_runtime_hygiene().register_shutdown_resource(
+        pool,
+        kind="executor",
+        name=name,
+        source="core.runtime.executors",
+        closer=functools.partial(pool.shutdown, wait=False, cancel_futures=True),
+        timeout_s=1.0,
+        required=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Async helpers
 # ---------------------------------------------------------------------------
 
-async def run_heavy_cpu(
+async def run_heavy_cpu[T](
     fn: Callable[..., T],
     *args: Any,
     timeout_s: float = 2.0,
@@ -73,6 +90,7 @@ async def run_heavy_cpu(
     label : str
         Optional human-readable label for logging.
     """
+    _register_pool(HEAVY_CPU_POOL, name="heavy_cpu_thread_pool")
     loop = asyncio.get_running_loop()
     tag = label or getattr(fn, "__qualname__", str(fn))
 
@@ -92,7 +110,7 @@ async def run_heavy_cpu(
                 tag, elapsed, timeout_s * 1000,
             )
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = (time.monotonic() - t0) * 1000
         logger.warning(
             "Heavy CPU work '%s' timed out after %.1f ms (budget %.0f ms)",
@@ -101,7 +119,7 @@ async def run_heavy_cpu(
         raise
 
 
-async def run_blocking_io(
+async def run_blocking_io[T](
     fn: Callable[..., T],
     *args: Any,
     timeout_s: float = 5.0,
@@ -119,6 +137,7 @@ async def run_blocking_io(
     label : str
         Optional human-readable label for logging.
     """
+    _register_pool(BLOCKING_IO_POOL, name="blocking_io_thread_pool")
     loop = asyncio.get_running_loop()
     tag = label or getattr(fn, "__qualname__", str(fn))
 
@@ -138,7 +157,7 @@ async def run_blocking_io(
                 tag, elapsed, timeout_s * 1000,
             )
         return result
-    except asyncio.TimeoutError:
+    except TimeoutError:
         elapsed = (time.monotonic() - t0) * 1000
         logger.warning(
             "Blocking IO '%s' timed out after %.1f ms (budget %.0f ms)",
@@ -151,9 +170,9 @@ async def run_blocking_io(
 # Diagnostics
 # ---------------------------------------------------------------------------
 
-def pool_status() -> dict:
+def pool_status() -> dict[str, Any]:
     """Return worker status for both pools (for dashboards/health checks)."""
-    def _stats(pool: ThreadPoolExecutor, name: str) -> dict:
+    def _stats(pool: ThreadPoolExecutor, name: str) -> dict[str, Any]:
         return {
             "name": name,
             "max_workers": pool._max_workers,

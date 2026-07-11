@@ -163,12 +163,19 @@ class GracefulShutdown:
 
             try:
                 from core.container import get_container
+                from core.runtime.lifecycle_probe import hold_shutdown_probe_async
 
+                logger.info("Shutdown: container teardown started")
+                await hold_shutdown_probe_async("container")
                 container_result = await get_container().shutdown()
                 container_report = (
                     dict(container_result)
                     if isinstance(container_result, dict)
                     else {"clean": True, "legacy_result": repr(container_result)}
+                )
+                logger.info(
+                    "Shutdown: container teardown completed (clean=%s)",
+                    container_report.get("clean"),
                 )
             except Exception as exc:  # noqa: BLE001 - final teardown boundary
                 record_degradation("graceful_shutdown", exc)
@@ -178,7 +185,13 @@ class GracefulShutdown:
             try:
                 from core.runtime.runtime_hygiene import get_runtime_hygiene
 
-                runtime_hygiene_report = get_runtime_hygiene().get_shutdown_report()
+                runtime_hygiene = get_runtime_hygiene()
+                runtime_hygiene_report = runtime_hygiene.get_shutdown_report()
+                if runtime_hygiene_report is None:
+                    logger.info(
+                        "Runtime hygiene had no coordinator report; running the final sweep inline."
+                    )
+                    runtime_hygiene_report = await runtime_hygiene.stop()
             except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("graceful_shutdown", exc)
                 logger.error("Runtime hygiene shutdown report unavailable: %s", exc)

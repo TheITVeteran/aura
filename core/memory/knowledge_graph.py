@@ -2,7 +2,6 @@
 Aura's knowledge persists forever across sessions.
 v5.0: Thread-safe with WAL mode.
 """
-from core.runtime.errors import record_degradation
 import asyncio
 import hashlib
 import json
@@ -12,8 +11,10 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from core.config import config
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Knowledge.Graph")
 
@@ -42,6 +43,15 @@ class PersistentKnowledgeGraph:
         from core.memory import db_config
         return db_config.configure_connection(self.db_path)
 
+    def close(self) -> None:
+        """Commit and release every connection owned by this durable store."""
+
+        from core.memory.db_config import close_connections_for_path
+
+        report = close_connections_for_path(self.db_path)
+        if not report["clean"]:
+            raise RuntimeError(f"KnowledgeGraph close failed: {report['failures']}")
+
     def _approve_memory_write(
         self,
         memory_type: str,
@@ -49,13 +59,13 @@ class PersistentKnowledgeGraph:
         *,
         source: str,
         importance: float,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         return_decision: bool = False,
     ) -> bool | tuple[bool, Any]:
         runtime_live = False
         try:
-            from core.container import ServiceContainer
             from core.constitution import get_constitutional_core, unpack_governance_result
+            from core.container import ServiceContainer
 
             runtime_live = bool(
                 getattr(ServiceContainer, "_registration_locked", False)
@@ -103,7 +113,7 @@ class PersistentKnowledgeGraph:
                 return (not runtime_live), None
             return not runtime_live
 
-    async def check_health(self) -> Dict[str, Any]:
+    async def check_health(self) -> dict[str, Any]:
         """Diagnostic health check for the persistence layer."""
         health = {
             "status": "healthy",
@@ -212,7 +222,7 @@ class PersistentKnowledgeGraph:
             conn.commit()
     
     def add_knowledge(self, content: str, type: str, source: str = "learning",
-                      confidence: float = 0.7, metadata: Optional[Dict] = None) -> str:
+                      confidence: float = 0.7, metadata: dict | None = None) -> str:
         """Add knowledge — thread-safe."""
         node_id = hashlib.sha256(content.encode()).hexdigest()[:16]
 
@@ -272,7 +282,7 @@ class PersistentKnowledgeGraph:
         logger.info("📚 Learned: %s...", content[:80])
         return node_id
     
-    def get_knowledge(self, node_id: str) -> Optional[Dict]:
+    def get_knowledge(self, node_id: str) -> dict | None:
         """Get knowledge by ID"""
         with self._get_conn() as conn:
             conn.row_factory = sqlite3.Row
@@ -299,7 +309,7 @@ class PersistentKnowledgeGraph:
         terms = [t for t in re.findall(r"[\w']+", query or "") if t]
         return " ".join(f'"{t}"' for t in terms)
 
-    def search_knowledge(self, query: str, type: Optional[str] = None, limit: int = 10) -> List[Dict]:
+    def search_knowledge(self, query: str, type: str | None = None, limit: int = 10) -> list[dict]:
         """Search knowledge — FTS5 (bm25-ranked, confidence tie-break) with a
         LIKE fallback when FTS5 is unavailable or the query has no tokens."""
         fts_query = self._fts_query(query) if getattr(self, "_fts_enabled", False) else ""
@@ -351,7 +361,7 @@ class PersistentKnowledgeGraph:
                      (time.time(), confidence_boost, node_id))
             conn.commit()
     
-    def count_nodes(self, type: Optional[str] = None) -> int:
+    def count_nodes(self, type: str | None = None) -> int:
         """Count nodes"""
         with self._get_conn() as conn:
             c = conn.cursor()
@@ -361,7 +371,7 @@ class PersistentKnowledgeGraph:
                 c.execute("SELECT COUNT(*) FROM knowledge")
             return c.fetchone()[0]
     
-    def remember_person(self, name: str, interaction_data: Dict) -> str:
+    def remember_person(self, name: str, interaction_data: dict) -> str:
         """Remember person"""
         person_id = hashlib.sha256(name.lower().encode()).hexdigest()[:16]
         if not self._approve_memory_write(
@@ -403,7 +413,7 @@ class PersistentKnowledgeGraph:
             logger.info("👤 Remembered: %s", name)
             return person_id
     
-    def get_person(self, name: str) -> Optional[Dict]:
+    def get_person(self, name: str) -> dict | None:
         """Get person"""
         person_id = hashlib.sha256(name.lower().encode()).hexdigest()[:16]
         with self._get_conn() as conn:
@@ -449,7 +459,7 @@ class PersistentKnowledgeGraph:
                 # ISSUE 41 fix: Explicit commit
                 conn.commit()
     
-    def get_skills(self, min_prof: float = 0.0) -> List[Dict]:
+    def get_skills(self, min_prof: float = 0.0) -> list[dict]:
         """Get skills"""
         with self._get_conn() as conn:
             conn.row_factory = sqlite3.Row
@@ -479,7 +489,7 @@ class PersistentKnowledgeGraph:
             logger.info("🎯 Goal: %s", goal)
             return goal_id
     
-    def get_active_learning_goals(self) -> List[Dict]:
+    def get_active_learning_goals(self) -> list[dict]:
         """Get active goals"""
         with self._get_conn() as conn:
             conn.row_factory = sqlite3.Row
@@ -531,7 +541,7 @@ class PersistentKnowledgeGraph:
             self.add_knowledge(f"Q: {question}\nA: {answer}", type="qa",
                                source="self_inquiry", confidence=0.8)
     
-    def get_unanswered_questions(self, limit: int = 10) -> List[Dict]:
+    def get_unanswered_questions(self, limit: int = 10) -> list[dict]:
         """Get unanswered"""
         with self._get_conn() as conn:
             conn.row_factory = sqlite3.Row
@@ -613,7 +623,7 @@ class PersistentKnowledgeGraph:
 
     def get_relationships(self, node_id: str,
                           direction: str = "both",
-                          relation_type: Optional[str] = None) -> List[Dict]:
+                          relation_type: str | None = None) -> list[dict]:
         """Get relationships for a node.
         
         Args:
@@ -650,7 +660,7 @@ class PersistentKnowledgeGraph:
         return results
 
     def traverse(self, start_id: str, max_depth: int = 3,
-                 relation_filter: Optional[str] = None) -> List[Dict]:
+                 relation_filter: str | None = None) -> list[dict]:
         """BFS traversal from a start node, returning all reachable nodes with depth.
         
         Returns list of {"node_id": str, "depth": int, "via_relation": str, "content": str}
@@ -685,7 +695,7 @@ class PersistentKnowledgeGraph:
         return result
 
     async def find_path_async(self, from_id: str, to_id: str,
-                             max_depth: int = 5, max_nodes: int = 2000) -> Optional[List[Dict]]:
+                             max_depth: int = 5, max_nodes: int = 2000) -> list[dict] | None:
         """Asynchronous, strictly bounded BFS to prevent event-loop freezing.
         
         Aura Hardening:
@@ -737,7 +747,7 @@ class PersistentKnowledgeGraph:
 
         return None
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get stats"""
         with self._get_conn() as conn:
             rel_count = conn.execute("SELECT COUNT(*) FROM relationships").fetchone()[0]
@@ -752,7 +762,7 @@ class PersistentKnowledgeGraph:
                 "unanswered_questions": len(self.get_unanswered_questions())
             }
 
-    def to_vis_data(self) -> Dict[str, List[Dict]]:
+    def to_vis_data(self) -> dict[str, list[dict]]:
         """Export graph data for vis-network visualization."""
         nodes = []
         edges = []
@@ -807,7 +817,7 @@ class PersistentKnowledgeGraph:
             logger.error("Failed to generate vis data: %s", e)
             return {"nodes": [{"id": "error", "label": "Graph Error", "color": "red"}], "edges": []}
 
-    def get_random_node(self) -> Optional[str]:
+    def get_random_node(self) -> str | None:
         """Returns a random knowledge node's content."""
         with self._get_conn() as conn:
             c = conn.cursor()
@@ -815,7 +825,7 @@ class PersistentKnowledgeGraph:
             row = c.fetchone()
             return row[0] if row else None
 
-    def get_sparse_nodes(self, limit: int = 5) -> List[str]:
+    def get_sparse_nodes(self, limit: int = 5) -> list[str]:
         """Identify nodes with the few relationships (novelty targets)."""
         query = """
         SELECT k.content, COUNT(r.from_id) as rel_count
@@ -830,7 +840,7 @@ class PersistentKnowledgeGraph:
             c.execute(query, (limit,))
             return [row[0] for row in c.fetchall() if row[0]]
 
-    def get_recent_nodes(self, limit: int = 5, type: Optional[str] = None) -> List[Dict]:
+    def get_recent_nodes(self, limit: int = 5, type: str | None = None) -> list[dict]:
         """Fetch the most recently created or accessed knowledge nodes.
         Used by AgencyCore to drive autonomous interests.
         """

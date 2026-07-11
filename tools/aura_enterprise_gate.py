@@ -94,6 +94,9 @@ ALLOW_SUBPROCESS = {
     # ring it left behind — an in-process simulation would prove nothing.
     "tests/test_flight_recorder.py",
     "tools/live_boot_proof.py",
+    # Shutdown matrix: owns a fresh root process per case so real OS signals,
+    # process trees, locks, ports, and terminal receipts are independently observed.
+    "tools/shutdown_signal_matrix.py",
     "tools/build_release_manifest.py",
     "tools/run_proof_step.py",
     "tools/memory_sentinel.py",
@@ -124,6 +127,9 @@ ALLOW_SUBPROCESS = {
     # prove the out-of-process kill path (a GIL-locked deadlock can only be
     # broken from outside). Subprocess IS the point.
     "tests/test_liveness_sentinel.py",
+    # Regression isolation: the former unbounded Queue.get worker pinned
+    # asyncio.run() forever, so the proof needs an externally bounded child.
+    "tests/test_state_registry_shutdown.py",
     # Legitimate production modules requiring OS/subprocess interface
     "core/architect/safety_gate.py",
     "core/architect/shadow_workspace.py",

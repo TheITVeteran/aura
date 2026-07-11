@@ -288,6 +288,28 @@ class ServiceContainer:
             return
 
     @classmethod
+    def _assert_runtime_initialization_allowed(cls, name: str) -> None:
+        try:
+            from core.runtime.shutdown_coordinator import (
+                is_shutdown_requested,
+                record_shutdown_admission_event,
+            )
+
+            if not is_shutdown_requested():
+                return
+            record_shutdown_admission_event(
+                f"service_container.initialize:{name}",
+                resource_kind="service",
+                outcome="suppressed",
+                detail="shutdown_latch",
+            )
+            raise ContainerError(
+                f"runtime shutdown is active: cannot initialize service '{name}'"
+            )
+        except ImportError:
+            return
+
+    @classmethod
     def _begin_new_lifecycle_epoch_if_needed(cls) -> None:
         with cls._lock:
             if cls._shutdown_reports and not any(
@@ -652,6 +674,8 @@ class ServiceContainer:
                     return default
                 raise ServiceNotFoundError(f"Service '{resolved_name}' not found in static registry.")
 
+        cls._assert_runtime_initialization_allowed(resolved_name)
+
         # 2. Initialization Path (Per-service Lock)
         with cls._lock:
             if resolved_name not in cls._init_locks:
@@ -671,6 +695,8 @@ class ServiceContainer:
 
             if desc.lifetime == ServiceLifetime.SINGLETON and desc.instance is not None and desc.initialized:
                 return desc.instance
+
+            cls._assert_runtime_initialization_allowed(resolved_name)
 
             # Circular Dependency Check
             resolving = cls._resolving_var.get()

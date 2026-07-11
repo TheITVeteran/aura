@@ -9,6 +9,7 @@ from core.runtime.receipts import (
     ReceiptStore,
     ResourceAdmissionReceipt,
     StateMutationReceipt,
+    close_receipt_store,
     get_receipt_store,
     reset_receipt_store,
 )
@@ -194,6 +195,32 @@ def test_runtime_ledger_write_failure_falls_back_to_envelope(monkeypatch, tmp_pa
     assert store.get(receipt.receipt_id).request_id == "request-12"
     assert store.verify_chain()["ok"] is True
     store.close()
+
+
+def test_receipt_store_close_is_terminal_and_idempotent(tmp_path):
+    store = ReceiptStore(tmp_path / "receipts")
+    store.emit(_admission_receipt(1))
+
+    store.close()
+    store.close()
+
+    assert store._ledger is None
+    assert store._chain is None
+    assert store._ledger_available is False
+    with pytest.raises(RuntimeError, match="receipt store is closed"):
+        store.emit(_admission_receipt(2))
+
+
+def test_global_receipt_store_close_does_not_construct_store(tmp_path):
+    reset_receipt_store()
+    assert close_receipt_store() == {
+        "clean": True,
+        "closed": False,
+        "reason": "not_initialized",
+    }
+    get_receipt_store(tmp_path / "receipts")
+    assert close_receipt_store() == {"clean": True, "closed": True}
+    reset_receipt_store()
 
 
 def test_verify_chain_detects_persisted_cold_receipt_without_chain_entry(tmp_path):

@@ -32,6 +32,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from core.runtime.lifecycle_probe import (
+    hold_shutdown_probe_async,
+    shutdown_probe_hold_seconds,
+)
 from core.runtime.shutdown_artifact_store import (
     delete_shutdown_artifact,
     write_shutdown_artifact,
@@ -351,6 +355,8 @@ class ShutdownCoordinator:
         try:
             for phase in self._phases:
                 phase_started = time.monotonic()
+                probe_target = f"coordinator:{phase}"
+                probe_hold_seconds = shutdown_probe_hold_seconds(probe_target)
                 boundary = self._LIFECYCLE_BOUNDARIES.get(phase)
                 if boundary:
                     self._lifecycle_transition(boundary)
@@ -375,9 +381,19 @@ class ShutdownCoordinator:
                     self._current_phase_started_monotonic = phase_started
                     self._current_phase_timeout_seconds = effective_timeout
                     self._current_phase_deadline_monotonic = (
-                        phase_started + effective_timeout if handlers else None
+                        phase_started + probe_hold_seconds + effective_timeout
+                        if handlers
+                        else None
                     )
                     self._active_handlers.clear()
+                logger.info(
+                    "ShutdownCoordinator: phase started "
+                    "(phase=%s handlers=%d timeout_seconds=%.3f)",
+                    phase,
+                    len(handlers),
+                    effective_timeout,
+                )
+                await hold_shutdown_probe_async(probe_target)
                 if not handlers:
                     report.completed_phases.append(phase)
                     report.phase_durations_seconds[phase] = round(
@@ -820,6 +836,109 @@ def publish_shutdown_verdict(
             "blockers": blockers,
         },
     }
+    serialized = json.dumps(payload, indent=2, sort_keys=True)
+    write_shutdown_artifact(history_target, serialized, encoding="utf-8")
+    write_shutdown_artifact(target, serialized, encoding="utf-8")
+    _prune_shutdown_verdict_history(history_target.parent)
+    return payload
+
+
+def publish_root_exit_verdict(
+    *,
+    lock_released: bool,
+    finalizers_completed: bool,
+    logging_shutdown_completed: bool,
+    root_resource_report: dict[str, object],
+    exit_code: int,
+) -> dict[str, object]:
+    """Publish the terminal receipt after root-owned process cleanup.
+
+    ``graceful_shutdown_complete`` proves service/container teardown. The root
+    launcher still owns the singleton lock and multiprocessing finalizers at
+    that point, so it is not the terminal process receipt. This update reuses
+    the same history identity and atomically advances it exactly once to the
+    root-exit boundary.
+    """
+
+    target = shutdown_verdict_path()
+    try:
+        loaded = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        loaded = {}
+    payload = dict(loaded) if isinstance(loaded, dict) else {}
+    if payload.get("stage") == "root_process_exit":
+        raise RuntimeError("terminal root-exit receipt was already published")
+
+    blockers: list[str] = []
+    prior_verdict = payload.get("verdict")
+    if not isinstance(prior_verdict, dict) or prior_verdict.get("clean") is not True:
+        blockers.append("prior_shutdown_verdict_not_clean")
+        if isinstance(prior_verdict, dict):
+            prior_blockers = prior_verdict.get("blockers")
+            if isinstance(prior_blockers, list):
+                blockers.extend(str(item) for item in prior_blockers if str(item))
+    if payload.get("final") is not True:
+        blockers.append("prior_final_shutdown_receipt_missing")
+    if not lock_released:
+        blockers.append("singleton_lock_release_failed")
+    if not finalizers_completed:
+        blockers.append("multiprocessing_finalizers_incomplete")
+    if not logging_shutdown_completed:
+        blockers.append("logging_shutdown_incomplete")
+    if root_resource_report.get("clean") is not True:
+        blockers.append("root_process_resources_remaining")
+        resource_blockers = root_resource_report.get("blockers")
+        if isinstance(resource_blockers, list):
+            blockers.extend(str(item) for item in resource_blockers if str(item))
+    if int(exit_code) != 0:
+        blockers.append(f"nonzero_exit_code:{int(exit_code)}")
+
+    request = shutdown_request_snapshot()
+    admission = shutdown_admission_snapshot()
+    admission_counts = admission.get("counts")
+    if isinstance(admission_counts, dict) and int(admission_counts.get("survived", 0) or 0) > 0:
+        blockers.append("shutdown_resurrection_survived")
+
+    unique_blockers = list(dict.fromkeys(blockers))
+    history_target = _shutdown_verdict_history_path(target)
+    first_requested = request.get("first_requested_at_unix")
+    try:
+        timestamp_value = (
+            first_requested
+            if isinstance(first_requested, (int, float, str))
+            else time.time()
+        )
+        receipt_timestamp_ms = int(float(timestamp_value or time.time()) * 1000)
+    except (TypeError, ValueError, OverflowError):
+        receipt_timestamp_ms = int(time.time() * 1000)
+
+    payload.update(
+        {
+            "schema": "aura.shutdown_verdict.v1",
+            "pid": os.getpid(),
+            "generated_at_unix": time.time(),
+            "stage": "root_process_exit",
+            "final": True,
+            "artifact_path": str(target),
+            "history_artifact_path": str(history_target),
+            "terminal_receipt_id": f"{receipt_timestamp_ms}-{os.getpid()}",
+            "terminal_receipt_sequence": 1,
+            "request": request,
+            "admission": admission,
+            "root_exit": {
+                "lock_released": bool(lock_released),
+                "multiprocessing_finalizers_completed": bool(finalizers_completed),
+                "logging_shutdown_completed": bool(logging_shutdown_completed),
+                "exit_code": int(exit_code),
+                "completed_at_unix": time.time(),
+                "resources": dict(root_resource_report),
+            },
+            "verdict": {
+                "clean": not unique_blockers,
+                "blockers": unique_blockers,
+            },
+        }
+    )
     serialized = json.dumps(payload, indent=2, sort_keys=True)
     write_shutdown_artifact(history_target, serialized, encoding="utf-8")
     write_shutdown_artifact(target, serialized, encoding="utf-8")

@@ -324,6 +324,15 @@ class EpisodicMemory:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def close(self) -> None:
+        """Commit and release every connection owned by this durable store."""
+
+        from core.memory.db_config import close_connections_for_path
+
+        report = close_connections_for_path(self._db_path)
+        if not report["clean"]:
+            raise RuntimeError(f"EpisodicMemory close failed: {report['failures']}")
+
     # ---- Async Wrappers -----------------------------------------------------
 
     async def record_episode_async(

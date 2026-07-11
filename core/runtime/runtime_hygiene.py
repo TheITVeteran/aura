@@ -6,6 +6,7 @@ import inspect
 import logging
 import multiprocessing as mp
 import os
+import stat
 import subprocess
 import sys
 import threading
@@ -424,8 +425,16 @@ class RuntimeHygieneManager:
         if resource_report.get("clean") is not True:
             blockers.append("owned_resources_remaining")
         native_after = after["native_resources"]
-        if int(native_after.get("connection_count", 0) or 0) > 0:
-            blockers.append("native_sockets_remaining")
+        # The running asyncio loop necessarily owns an anonymous Unix
+        # socketpair for cross-thread wakeups. It cannot disappear until after
+        # asyncio.run() closes the loop, so only listeners are actionable at
+        # this async boundary. The synchronous root-exit receipt verifies that
+        # every socket and persistent-state handle is gone after loop close.
+        if int(native_after.get("listening_socket_count", 0) or 0) > 0:
+            blockers.append("listening_sockets_remaining")
+        native_after["connections_deferred_to_root_exit"] = int(
+            native_after.get("connection_count", 0) or 0
+        )
 
         self._last_shutdown_report = {
             "clean": not blockers,
@@ -646,6 +655,80 @@ class RuntimeHygieneManager:
 
     def get_shutdown_report(self) -> dict[str, Any] | None:
         return dict(self._last_shutdown_report) if self._last_shutdown_report is not None else None
+
+    def get_root_exit_resource_report(self) -> dict[str, Any]:
+        """Verify process resources after the event loop and logging close."""
+
+        native = self._native_resource_summary()
+        open_files = [str(path) for path in native.get("open_files", [])]
+        open_file_set = set(open_files)
+        persistent_state_files = [
+            path
+            for path in open_files
+            if (
+                path.lower().endswith(
+                    (
+                        ".db",
+                        ".db-wal",
+                        ".db-shm",
+                        ".sqlite",
+                        ".sqlite3",
+                        ".sqlite-wal",
+                        ".sqlite-shm",
+                        "-wal",
+                        "-shm",
+                    )
+                )
+                or f"{path}-wal" in open_file_set
+                or f"{path}-shm" in open_file_set
+            )
+        ]
+        blockers: list[str] = []
+        if int(native.get("connection_count", 0) or 0) > 0:
+            blockers.append("native_sockets_remaining_after_loop_close")
+        if persistent_state_files:
+            blockers.append("persistent_state_files_open_after_shutdown")
+        return {
+            "clean": not blockers,
+            "blockers": blockers,
+            "native_resources": native,
+            "persistent_state_files": persistent_state_files,
+        }
+
+    def close_root_exit_sockets(self) -> dict[str, Any]:
+        """Close residual socket descriptors after loops and services are gone."""
+
+        before = self._native_resource_summary()
+        attempted: list[int] = []
+        closed: list[int] = []
+        failures: list[str] = []
+        for connection in list(before.get("connections", [])):
+            if not isinstance(connection, dict):
+                continue
+            try:
+                fd = int(connection.get("fd", -1))
+            except (TypeError, ValueError):
+                continue
+            if fd < 3 or fd in attempted:
+                continue
+            attempted.append(fd)
+            try:
+                if not stat.S_ISSOCK(os.fstat(fd).st_mode):
+                    failures.append(f"fd:{fd}:not_socket")
+                    continue
+                os.close(fd)
+                closed.append(fd)
+            except OSError as exc:
+                failures.append(f"fd:{fd}:{type(exc).__name__}: {exc}")
+        after = self._native_resource_summary()
+        residual = int(after.get("connection_count", 0) or 0)
+        return {
+            "clean": not failures and residual == 0,
+            "attempted_fds": attempted,
+            "closed_fds": closed,
+            "failures": failures,
+            "remaining_connections": residual,
+        }
 
     def _patch_asyncio_new_event_loop(self) -> None:
         if self._original_new_event_loop is not None:

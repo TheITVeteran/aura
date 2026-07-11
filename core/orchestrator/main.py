@@ -747,7 +747,13 @@ class RobustOrchestrator(
             # Desktop launches install their own outer signal handler in aura_main;
             # letting this inner hook replace it makes SIGTERM tear down shared
             # services before the runtime owner can flush final state.
-            desktop_signal_owner = os.getenv("AURA_LAUNCHED_FROM_APP", "").strip().lower() in {
+            root_signal_owner = os.getenv("AURA_ROOT_SIGNAL_OWNER", "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            desktop_signal_owner = root_signal_owner or os.getenv("AURA_LAUNCHED_FROM_APP", "").strip().lower() in {
                 "1",
                 "true",
                 "yes",
@@ -759,7 +765,10 @@ class RobustOrchestrator(
                 "on",
             }
             if desktop_signal_owner:
-                logger.info("🛡️ Desktop shutdown signal owner preserved in aura_main.")
+                logger.info(
+                    "🛡️ Desktop shutdown signal owner preserved in aura_main "
+                    "(root-owned lifecycle)."
+                )
             else:
                 try:
                     from core.ops.graceful_shutdown import GracefulShutdown

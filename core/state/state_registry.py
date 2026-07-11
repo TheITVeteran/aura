@@ -5,17 +5,19 @@ Acts as the single source of truth for Affect, Agency, and Substrate states
 to prevent desynchronization and runtime contradictions.
 """
 
+import asyncio
+import copy
 import inspect
+import logging
+import queue
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
-import asyncio
-import logging
-import time
-import threading
-import queue
-import copy
-from dataclasses import dataclass, field, asdict
-from typing import Any, Dict, List, Optional, Callable
 
 logger = logging.getLogger("Aura.StateRegistry")
 
@@ -51,7 +53,7 @@ class UnifiedState:
     loop_cycle: int = 0             # MindTick iteration count
     bonding_level: float = 0.0      # Relationship depth
     stability: float = 1.0          # Identity stability
-    resonance: Dict[str, float] = field(default_factory=dict) # Persona blend
+    resonance: dict[str, float] = field(default_factory=dict) # Persona blend
     
     # Situational Context
     current_goal: str = "Maintain homeostasis and observe."
@@ -68,11 +70,11 @@ class UnifiedStateRegistry:
     """
     def __init__(self):
         self._state = UnifiedState()
-        self._listeners: List[Callable[[UnifiedState], None]] = []
+        self._listeners: list[Callable[[UnifiedState], None]] = []
         self._async_lock = asyncio.Lock()
         self._sync_lock = threading.Lock()
-        self._notify_queue: queue.Queue[Optional[UnifiedState]] = queue.Queue()
-        self._dispatcher_task: Optional[asyncio.Task] = None
+        self._notify_queue: queue.Queue[UnifiedState | None] = queue.Queue()
+        self._dispatcher_task: asyncio.Task | None = None
         
         # Instrumentation
         self.update_count = 0
@@ -97,8 +99,10 @@ class UnifiedStateRegistry:
         dispatcher_active = True
         while dispatcher_active:
             try:
-                # get() is blocking, use to_thread to avoid blocking loop
-                snapshot = await asyncio.to_thread(lambda: self._notify_queue.get())
+                # Cancellation cannot stop a thread blocked in Queue.get(). A
+                # bounded poll lets asyncio.run() join its default executor
+                # during root shutdown even if TaskTracker cancels us directly.
+                snapshot = await asyncio.to_thread(self._notify_queue.get, True, 0.25)
                 if snapshot is None:
                     dispatcher_active = False
                     break # Shutdown signal
@@ -109,13 +113,19 @@ class UnifiedStateRegistry:
                             await listener(snapshot)
                         else:
                             # Run sync listeners in threads to avoid blocking the dispatcher
-                            await asyncio.to_thread(lambda l=listener, s=snapshot: l(s))
+                            await asyncio.to_thread(
+                                lambda listener_fn=listener, snapshot_value=snapshot: listener_fn(
+                                    snapshot_value
+                                )
+                            )
                     except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                         record_degradation('state_registry', e)
                         self.failed_notifications += 1
                         logger.error("StateRegistry listener failed: %s", e)
                 
                 self._notify_queue.task_done()
+            except queue.Empty:
+                continue
             except asyncio.CancelledError:
                 break
             except (OSError, ConnectionError, TimeoutError) as e:
@@ -123,7 +133,12 @@ class UnifiedStateRegistry:
                 logger.error("StateRegistry dispatcher error: %s", e)
                 await asyncio.sleep(0.1)
 
-    async def shutdown_dispatcher(self, *, timeout: float = 1.0, clear_listeners: bool = False) -> None:
+    async def shutdown_dispatcher(
+        self,
+        *,
+        timeout_s: float = 1.0,
+        clear_listeners: bool = False,
+    ) -> None:
         """Stop the notification dispatcher without leaving event-loop work behind."""
         task = self._dispatcher_task
         if task is None:
@@ -134,7 +149,7 @@ class UnifiedStateRegistry:
         if not task.done():
             self._notify_queue.put(None)
             try:
-                await asyncio.wait_for(task, timeout=timeout)
+                await asyncio.wait_for(task, timeout=timeout_s)
             except TimeoutError as exc:
                 record_degradation("state_registry", exc)
                 task.cancel()
@@ -184,7 +199,7 @@ class UnifiedStateRegistry:
         """Get a copy of the current unified state to prevent reference leak."""
         return copy.deepcopy(self._state)
 
-    def get_snapshot(self) -> Dict[str, Any]:
+    def get_snapshot(self) -> dict[str, Any]:
         """Returns a dict snapshot of the current state."""
         return asdict(self._state)
 
@@ -193,7 +208,7 @@ class UnifiedStateRegistry:
         self._listeners.append(listener)
 
 # Singleton
-_instance: Optional[UnifiedStateRegistry] = None
+_instance: UnifiedStateRegistry | None = None
 
 def get_registry() -> UnifiedStateRegistry:
     global _instance

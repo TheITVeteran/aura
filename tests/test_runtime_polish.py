@@ -767,10 +767,11 @@ def test_desktop_shell_surfaces_full_runtime_autonomy_status():
     assert "admission.social" in aura_js
 
 
-def test_fault_forensics_supports_nonfatal_stack_dump_signal():
+def test_fault_forensics_preserves_root_shutdown_signal_ownership():
     source = (PROJECT_ROOT / "aura_main.py").read_text(encoding="utf-8")
 
-    assert "faulthandler.register(_signal.SIGTERM" in source
+    assert "faulthandler.register(_signal.SIGTERM" not in source
+    assert "faulthandler.register(_signal.SIGINT" not in source
     assert "faulthandler.register(_signal.SIGUSR1" in source
     assert "chain=False" in source
 

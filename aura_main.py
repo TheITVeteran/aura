@@ -21,7 +21,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 if sys.version_info < (3, 12):  # noqa: UP036 - boot contract asserts a clear runtime guard.
     raise SystemExit("Aura requires Python 3.12+")
@@ -30,6 +30,7 @@ import httpx
 
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
+from core.runtime.root_signal_owner import RootShutdownSignalOwner
 from core.runtime.shutdown_coordinator import is_shutdown_requested, request_shutdown
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.singleton import (
@@ -47,6 +48,7 @@ logger = logging.getLogger("Aura.Main")
 
 _RUNTIME_LOCK_CLAIMED = False
 _AURA_MAIN_DEGRADATION_KEY = "aura_main"
+_FAULT_FORENSICS_HANDLE: TextIO | None = None
 _MANIFEST_UNREADY_LOG_STATE: dict[str, tuple[float, tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]]] = {}
 _MANIFEST_UNREADY_LOG_INTERVAL_S = 60.0
 _AURA_MAIN_BOUNDARY_ERRORS = (
@@ -208,6 +210,22 @@ def _should_start_keep_awake_controller() -> bool:
     return process_name == "MainProcess" and __name__ != "__mp_main__"
 
 
+def _start_root_keep_awake_controller() -> None:
+    """Start keep-awake only after the root singleton lock is acquired."""
+
+    if not _should_start_keep_awake_controller() or is_shutdown_requested():
+        return
+    try:
+        from core.runtime.keep_awake import start_from_environment
+
+        status = start_from_environment()
+        if status.active:
+            logger.info("Aura keep-awake assertion active: pid=%s", status.pid)
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        record_degradation("aura_main", exc)
+        logger.warning("Aura keep-awake setup failed: %s", exc)
+
+
 def _should_force_root_process_exit_after_main(args: Any) -> bool:
     """Return true for long-lived root runtimes after their shutdown completes."""
 
@@ -223,7 +241,7 @@ def _should_force_root_process_exit_after_main(args: Any) -> bool:
     )
 
 
-def _run_multiprocessing_finalizers_before_hard_exit(timeout_s: float = 3.0) -> None:
+def _run_multiprocessing_finalizers_before_hard_exit(timeout_s: float = 3.0) -> bool:
     """Give multiprocessing a bounded chance to unregister queues/semaphores."""
 
     done = threading.Event()
@@ -260,9 +278,16 @@ def _run_multiprocessing_finalizers_before_hard_exit(timeout_s: float = 3.0) -> 
             "Multiprocessing finalizers did not finish within %.1fs before root hard-exit.",
             timeout_s,
         )
+        return False
+    return True
 
 
-def _finalize_root_runtime_process_exit(args: Any, exit_code: int = 0) -> None:
+def _finalize_root_runtime_process_exit(
+    args: Any,
+    exit_code: int = 0,
+    *,
+    signal_owner: RootShutdownSignalOwner | None = None,
+) -> None:
     if not _should_force_root_process_exit_after_main(args):
         return
     try:
@@ -276,8 +301,17 @@ def _finalize_root_runtime_process_exit(args: Any, exit_code: int = 0) -> None:
             action="continued root process exit after keep-awake stop failed",
         )
         logger.debug("Keep-awake final stop failed during root process exit: %s", exc)
+    logger.info("Root runtime finalization started (exit_code=%d).", exit_code)
+    try:
+        from core.runtime.lifecycle_probe import hold_shutdown_probe_sync
+
+        hold_shutdown_probe_sync("root_finalization")
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        logger.warning("Root lifecycle probe hold failed: %s", exc)
+    lock_released = False
     try:
         release_instance_lock()
+        lock_released = True
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         record_degradation(
             "aura_main",
@@ -285,8 +319,98 @@ def _finalize_root_runtime_process_exit(args: Any, exit_code: int = 0) -> None:
             action="continued root process exit after lock release failed",
         )
         logger.debug("Instance lock release failed during root process exit: %s", exc)
-    _run_multiprocessing_finalizers_before_hard_exit()
-    logger.info("Root runtime shutdown complete; exiting process with code %d.", exit_code)
+    finalizers_completed = _run_multiprocessing_finalizers_before_hard_exit()
+    persistence_close_reports: dict[str, object] = {}
+    try:
+        from core.memory.db_config import close_all_connections
+
+        persistence_close_reports["db_config"] = close_all_connections()
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        persistence_close_reports["db_config"] = {
+            "clean": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    try:
+        from core.security.governance_vault import close_governance_vault
+
+        persistence_close_reports["governance_vault"] = close_governance_vault()
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        persistence_close_reports["governance_vault"] = {
+            "clean": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    try:
+        from core.planning.mission_state import close_mission_state
+
+        persistence_close_reports["mission_state"] = close_mission_state()
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        persistence_close_reports["mission_state"] = {
+            "clean": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    try:
+        from core.runtime.receipts import close_receipt_store
+
+        persistence_close_reports["receipt_store"] = close_receipt_store()
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        persistence_close_reports["receipt_store"] = {
+            "clean": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    logging_shutdown_completed = True
+    try:
+        logging.shutdown()
+    except _AURA_MAIN_BOUNDARY_ERRORS:
+        logging_shutdown_completed = False
+    try:
+        from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+        runtime_hygiene = get_runtime_hygiene()
+        socket_cleanup_report = runtime_hygiene.close_root_exit_sockets()
+        root_resource_report = runtime_hygiene.get_root_exit_resource_report()
+        root_resource_report["socket_cleanup"] = socket_cleanup_report
+        if socket_cleanup_report.get("clean") is not True:
+            root_resource_report["clean"] = False
+            blockers = root_resource_report.setdefault("blockers", [])
+            if isinstance(blockers, list):
+                blockers.append("root_socket_cleanup_failed")
+        root_resource_report["persistence_close_reports"] = persistence_close_reports
+        if any(
+            isinstance(report, dict) and report.get("clean") is not True
+            for report in persistence_close_reports.values()
+        ):
+            root_resource_report["clean"] = False
+            blockers = root_resource_report.setdefault("blockers", [])
+            if isinstance(blockers, list):
+                blockers.append("persistence_close_failed")
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        root_resource_report = {
+            "clean": False,
+            "blockers": ["root_resource_report_unavailable"],
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    try:
+        from core.runtime.shutdown_coordinator import publish_root_exit_verdict
+
+        publish_root_exit_verdict(
+            lock_released=lock_released,
+            finalizers_completed=finalizers_completed,
+            logging_shutdown_completed=logging_shutdown_completed,
+            root_resource_report=root_resource_report,
+            exit_code=exit_code,
+        )
+    except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+        print(
+            f"Root process exit receipt persistence failed: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+    print(
+        f"Root runtime shutdown complete; exiting process with code {exit_code}.",
+        flush=True,
+    )
+    if signal_owner is not None:
+        signal_owner.close()
     os._exit(int(exit_code))
 
 
@@ -405,16 +529,6 @@ try:
     # Centralized logging setup - always include log_dir for persistence
     setup_logging(log_dir=config.paths.log_dir)
     logger = logging.getLogger("Aura.Main")
-    if _should_start_keep_awake_controller():
-        try:
-            from core.runtime.keep_awake import start_from_environment
-
-            _keep_awake_status = start_from_environment()
-            if _keep_awake_status.active:
-                logger.info("Aura keep-awake assertion active: pid=%s", _keep_awake_status.pid)
-        except _AURA_MAIN_BOUNDARY_ERRORS as _keep_awake_exc:
-            record_degradation("aura_main", _keep_awake_exc)
-            logger.warning("Aura keep-awake setup failed: %s", _keep_awake_exc)
 except _AURA_MAIN_BOUNDARY_ERRORS as exc:
     # Minimal fallback logging if core is broken
     import traceback
@@ -1057,6 +1171,11 @@ def _install_fault_forensics() -> None:
     ABRT/ILL) and on SIGTERM, so the next silent exit names its killer.
     SIGUSR1 is also registered without chaining so a live-but-stuck runtime can
     be sampled without killing it."""
+    global _FAULT_FORENSICS_HANDLE
+
+    if _FAULT_FORENSICS_HANDLE is not None:
+        return
+    crash_file: TextIO | None = None
     try:
         import faulthandler
         import signal as _signal
@@ -1069,11 +1188,16 @@ def _install_fault_forensics() -> None:
         )
         crash_file.flush()
         faulthandler.enable(file=crash_file, all_threads=True)
-        faulthandler.register(_signal.SIGTERM, file=crash_file, all_threads=True, chain=True)
+        # SIGINT/SIGTERM have one owner: RootShutdownSignalOwner. Registering
+        # either here replaces its handler and can crash while chaining a full
+        # all-thread dump through asyncio's signal wakeup path.
         if hasattr(_signal, "SIGUSR1"):
             faulthandler.register(_signal.SIGUSR1, file=crash_file, all_threads=True, chain=False)
+        _FAULT_FORENSICS_HANDLE = crash_file
         logger.info("🛡️ Fault forensics armed: data/error_logs/crash/faulthandler.log")
     except (OSError, ValueError, RuntimeError, AttributeError) as exc:
+        if crash_file is not None:
+            crash_file.close()
         record_degradation(
             _AURA_MAIN_DEGRADATION_KEY,
             exc,
@@ -2172,7 +2296,12 @@ def _install_health_access_log_filter() -> None:
         access_logger.addFilter(_HealthPollAccessLogFilter())
 
 
-async def run_server_async(host: str, port: int):
+async def run_server_async(
+    host: str,
+    port: int,
+    *,
+    shutdown_event: asyncio.Event | None = None,
+) -> None:
     """API Server Mode (Unified Loop)"""
     import uvicorn
 
@@ -2180,11 +2309,43 @@ async def run_server_async(host: str, port: int):
     logger.info("🚀 Starting API Server on %s:%s", host, port)
 
     _install_health_access_log_filter()
+    try:
+        graceful_shutdown_s = max(
+            1,
+            int(float(os.environ.get("AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S", "8"))),
+        )
+    except (TypeError, ValueError):
+        graceful_shutdown_s = 8
+
     server_config = uvicorn.Config(
-        fastapi_app, host=host, port=port, log_level="info"
+        fastapi_app,
+        host=host,
+        port=port,
+        log_level="info",
+        timeout_graceful_shutdown=graceful_shutdown_s,
     )
     server = uvicorn.Server(server_config)
-    await server.serve()
+    # aura_main owns signals from pre-boot through durable finalization.
+    server.capture_signals = contextlib.nullcontext
+
+    async def _watch_root_shutdown() -> None:
+        if shutdown_event is None:
+            return
+        await shutdown_event.wait()
+        logger.info("📡 API Server received root shutdown request.")
+        server.should_exit = True
+
+    watcher = get_task_tracker().create_task(
+        _watch_root_shutdown(),
+        name="api_server.root_shutdown_watcher",
+    )
+    try:
+        await server.serve()
+    finally:
+        if not watcher.done():
+            watcher.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watcher
 
 
 async def _stop_orchestrator_once(
@@ -2240,7 +2401,7 @@ async def _wait_for_server_http(url: str, timeout_s: float = 60.0) -> bool:
 
     logger.info("📡 Waiting for API Server health check: %s", url)
     count = 0
-    while time.time() - start < timeout_s:
+    while time.time() - start < timeout_s and not is_shutdown_requested():
         count += 1
         try:
             response = await asyncio.to_thread(
@@ -2295,6 +2456,9 @@ async def _wait_for_server_http(url: str, timeout_s: float = 60.0) -> bool:
 
         await asyncio.sleep(1.0)
         
+    if is_shutdown_requested():
+        logger.info("API Server health wait ended after root shutdown request.")
+        return False
     logger.error("❌ API Server health check TIMEOUT after %.1fs", timeout_s)
     return False
 
@@ -2305,7 +2469,13 @@ def _native_launcher_owns_gui() -> bool:
     )
 
 
-async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str = "desktop"):
+async def run_desktop(
+    port: int,
+    *,
+    launch_gui: bool | None = None,
+    profile: str = "desktop",
+    signal_owner: RootShutdownSignalOwner | None = None,
+) -> None:
     """GUI Mode (Managed Actor Process)"""
     from core.container import ServiceContainer
     from core.ops.graceful_shutdown import GracefulShutdown
@@ -2314,6 +2484,8 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
     
     supervisor = get_supervisor_tree()
     tracker = get_task_tracker()
+    root_signal_owner = signal_owner
+    os.environ["AURA_ROOT_SIGNAL_OWNER"] = "1"
     
     if launch_gui is None:
         launch_gui = not _native_launcher_owns_gui()
@@ -2516,34 +2688,35 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
                 severity="warning",
             )
 
-    async def _main_loop():
-        loop = asyncio.get_running_loop()
-        installed_signal_handlers: list[signal.Signals] = []
+    async def _main_loop() -> None:
         orchestrator = None
-        api_task: asyncio.Task | None = None
+        api_task: asyncio.Task[Any] | None = None
+        boot_task: asyncio.Task[Any] | None = None
 
-        def _request_desktop_shutdown(sig: signal.Signals) -> None:
-            nonlocal shutdown_reason
-            shutdown_reason = f"desktop_signal:{sig.name}"
-            # The signal callback owns the no-new-work linearization point.
-            # Teardown follows in the main-loop finalizer, but admission paths
-            # must observe shutdown before any recovery/prewarm can race it.
-            request_shutdown(shutdown_reason)
+        def _observe_desktop_shutdown(
+            _sig: signal.Signals,
+            _snapshot: dict[str, object],
+        ) -> None:
             try:
                 supervisor._is_running = False
                 supervisor._shutting_down = True
             except AttributeError as exc:
                 record_degradation("aura_main", exc)
 
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(sig, _request_desktop_shutdown, sig)
-                installed_signal_handlers.append(sig)
-            except (RuntimeError, AttributeError, NotImplementedError, ValueError) as exc:
-                logger.debug("Desktop signal handler registration skipped for %s: %s", sig, exc)
+            # Interrupt only unfinished boot. Repeated signals during final
+            # persistence must never cancel the root finalizer.
+            if boot_task is not None and not boot_task.done():
+                boot_task.cancel()
+
+        owner = root_signal_owner or RootShutdownSignalOwner(scope="desktop_signal")
+        owner.set_observer(_observe_desktop_shutdown)
+        owner.install()
 
         shutdown_reason = "desktop_exit"
         try:
+            if owner.requested:
+                logger.info("Desktop startup skipped because shutdown was requested before event-loop boot.")
+                return
             # Start the API before the heavy orchestrator boot. A live desktop
             # session must always expose the health/boot surface, even when the
             # mind stack is still warming or a post-boot artifact stalls.
@@ -2557,20 +2730,32 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
             except ValueError:
                 desktop_bind_wait_s = 30.0
             early_health_url = f"http://127.0.0.1:{port}/api/health/boot"
-            if not await _wait_for_server_http(early_health_url, desktop_bind_wait_s):
+            if (
+                not await _wait_for_server_http(early_health_url, desktop_bind_wait_s)
+                and not owner.requested
+            ):
                 logger.warning(
                     "⚠️ API Server did not expose boot health within %.0fs; continuing boot, "
                     "but launcher readiness remains blocked until the API binds.",
                     desktop_bind_wait_s,
                 )
+            if owner.requested:
+                return
         
             # 1. Initialize Orchestrator and wait for boot
             logger.info("🧠 Orchestrator boot beginning...")
-            orchestrator = await boot_aura_runtime(
-                profile=profile,
-                ready_label="Desktop",
-                readiness_context="server_boot",
+            boot_task = tracker.create_task(
+                boot_aura_runtime(
+                    profile=profile,
+                    ready_label="Desktop",
+                    readiness_context="server_boot",
+                ),
+                name="desktop.runtime_boot",
             )
+            orchestrator = await boot_task
+            boot_task = None
+            if owner.requested:
+                return
             tracker.create_task(orchestrator.run(), name="OrchestratorMainLoop")
 
             # 2. Verify API Server (v21: Server now runs in Kernel)
@@ -2716,19 +2901,21 @@ async def run_desktop(port: int, *, launch_gui: bool | None = None, profile: str
             # alive behind the desktop process.
             await supervisor.wait_forever()
         except asyncio.CancelledError:
-            shutdown_reason = "desktop_cancelled"
-            raise
+            if not owner.requested:
+                shutdown_reason = "desktop_cancelled"
+                raise
+            logger.info("Desktop boot interrupted by root shutdown request.")
         finally:
-            for sig in installed_signal_handlers:
-                try:
-                    loop.remove_signal_handler(sig)
-                except (RuntimeError, AttributeError, NotImplementedError, ValueError) as exc:
-                    logger.debug("Desktop signal handler cleanup skipped for %s: %s", sig, exc)
-            await _desktop_final_shutdown(
-                orchestrator=orchestrator,
-                api_task=api_task,
-                reason=shutdown_reason,
-            )
+            if owner.first_reason:
+                shutdown_reason = owner.first_reason
+            try:
+                await _desktop_final_shutdown(
+                    orchestrator=orchestrator,
+                    api_task=api_task,
+                    reason=shutdown_reason,
+                )
+            finally:
+                owner.finish_async_ownership()
 
     await _main_loop()
 
@@ -3583,7 +3770,16 @@ def main():
         os.environ.setdefault("AURA_EAGER_LOCAL_SENSORY_BOOT", "1")
         os.environ.setdefault("AURA_AUTO_LISTEN", "1")
 
-    if not args.gui_window:
+    root_signal_owner = None
+    if args.server or args.desktop:
+        os.environ["AURA_ROOT_SIGNAL_OWNER"] = "1"
+        root_signal_owner = RootShutdownSignalOwner(
+            scope="desktop_signal" if args.desktop else "server_signal"
+        )
+        root_signal_owner.retain_for_process_exit()
+        root_signal_owner.install_bootstrap()
+
+    if not args.gui_window and not is_shutdown_requested():
         check_environment()
     
     # uvloop activation is opt-in on macOS because native media stacks have
@@ -3610,16 +3806,19 @@ def main():
         )
     
     # Do not acquire lock for watchdog, since the watchdog itself runs the child process
-    if not args.gui_window:
+    if not args.gui_window and not is_shutdown_requested():
         bootstrap_lock(skip_lock=args.watchdog)
+        if not args.watchdog:
+            _start_root_keep_awake_controller()
 
     # Only the lock owner is allowed to reclaim ports or spawn the reaper.
     # This prevents a second boot attempt from disrupting a healthy live Aura
     # instance before the singleton fence has a chance to reject it.
     if not args.cli and not args.gui_window and not args.watchdog:
-        logger.info("🧹 Pre-clearing known ports...")
-        kill_port(args.port)
-        kill_port(10003, pattern="aura")
+        if not is_shutdown_requested():
+            logger.info("🧹 Pre-clearing known ports...")
+            kill_port(args.port)
+            kill_port(10003, pattern="aura")
 
     # SIGKILL Reaper Initialization
     if not args.gui_window and not args.watchdog and not is_shutdown_requested():
@@ -3659,45 +3858,83 @@ def main():
                 and not getattr(config.security, "internal_only_mode", False)
             ):
                 host = "0.0.0.0"
-            async def _run_server_with_bootstrap():
-                orchestrator = await boot_aura_runtime(
-                    profile=args.profile or "server",
-                    ready_label="Server",
-                    readiness_context="server_boot",
-                )
+            async def _run_server_with_bootstrap() -> None:
+                from core.ops.graceful_shutdown import GracefulShutdown
+
+                orchestrator = None
+                boot_task: asyncio.Task[Any] | None = None
+
+                def _observe_server_shutdown(
+                    _sig: signal.Signals,
+                    _snapshot: dict[str, object],
+                ) -> None:
+                    if boot_task is not None and not boot_task.done():
+                        boot_task.cancel()
+
+                signal_owner = root_signal_owner or RootShutdownSignalOwner(scope="server_signal")
+                signal_owner.set_observer(_observe_server_shutdown)
+                signal_owner.install()
                 from core.utils.task_tracker import get_task_tracker
 
-                get_task_tracker().create_task(orchestrator.run(), name="OrchestratorMainLoop")
                 try:
-                    await run_server_async(host, args.port)
-                finally:
-                    from core.ops.graceful_shutdown import GracefulShutdown
+                    if not signal_owner.requested:
+                        boot_task = get_task_tracker().create_task(
+                            boot_aura_runtime(
+                                profile=args.profile or "server",
+                                ready_label="Server",
+                                readiness_context="server_boot",
+                            ),
+                            name="server.runtime_boot",
+                        )
+                        try:
+                            orchestrator = await boot_task
+                        except asyncio.CancelledError:
+                            if not signal_owner.requested:
+                                raise
+                            logger.info("Server boot interrupted by root shutdown request.")
+                        finally:
+                            boot_task = None
 
-                    await _stop_orchestrator_once(orchestrator, reason="server_exit")
+                    if orchestrator is not None and not signal_owner.requested:
+                        get_task_tracker().create_task(
+                            orchestrator.run(),
+                            name="OrchestratorMainLoop",
+                        )
+                        await run_server_async(
+                            host,
+                            args.port,
+                            shutdown_event=signal_owner.event,
+                        )
+                finally:
+                    reason = signal_owner.first_reason or "server_exit"
                     try:
-                        await asyncio.wait_for(
-                            GracefulShutdown.trigger_shutdown("server_exit"),
-                            timeout=85.0,
-                        )
-                    except TimeoutError as exc:
-                        record_degradation(
-                            "aura_main",
-                            exc,
-                            action="continued server exit after graceful shutdown trigger timed out",
-                            severity="degraded",
-                        )
-                    try:
-                        await asyncio.wait_for(
-                            GracefulShutdown.wait_for_shutdown(),
-                            timeout=5.0,
-                        )
-                    except TimeoutError as exc:
-                        record_degradation(
-                            "aura_main",
-                            exc,
-                            action="continued server exit after graceful shutdown wait timed out",
-                            severity="warning",
-                        )
+                        await _stop_orchestrator_once(orchestrator, reason=reason)
+                        try:
+                            await asyncio.wait_for(
+                                GracefulShutdown.trigger_shutdown(reason),
+                                timeout=85.0,
+                            )
+                        except TimeoutError as exc:
+                            record_degradation(
+                                "aura_main",
+                                exc,
+                                action="continued server exit after graceful shutdown trigger timed out",
+                                severity="degraded",
+                            )
+                        try:
+                            await asyncio.wait_for(
+                                GracefulShutdown.wait_for_shutdown(),
+                                timeout=5.0,
+                            )
+                        except TimeoutError as exc:
+                            record_degradation(
+                                "aura_main",
+                                exc,
+                                action="continued server exit after graceful shutdown wait timed out",
+                                severity="warning",
+                            )
+                    finally:
+                        signal_owner.finish_async_ownership()
             asyncio.run(_run_server_with_bootstrap())
         elif args.desktop:
             # For desktop, we'll need a way to bootstrap the loop if uvicorn starts it
@@ -3708,6 +3945,7 @@ def main():
                     args.port,
                     launch_gui=None,
                     profile=args.profile or "desktop",
+                    signal_owner=root_signal_owner,
                 )
             )
         elif args.gui_window:
@@ -3730,7 +3968,13 @@ def main():
                 asyncio.run(run_console(profile=args.profile or "cli"))
             else:
                 logger.info("Initializing in Desktop/Autonomy mode...")
-                asyncio.run(run_desktop(args.port, profile=args.profile or "desktop"))
+                asyncio.run(
+                    run_desktop(
+                        args.port,
+                        profile=args.profile or "desktop",
+                        signal_owner=root_signal_owner,
+                    )
+                )
     except KeyboardInterrupt:
         request_shutdown("keyboard_interrupt")
         logger.info("Shutdown requested by user.")
@@ -3738,7 +3982,11 @@ def main():
         record_degradation('aura_main', e)
         logger.critical("FATAL BOOT ERROR: %s", e, exc_info=True)
         sys.exit(1)
-    _finalize_root_runtime_process_exit(args, exit_code=0)
+    _finalize_root_runtime_process_exit(
+        args,
+        exit_code=0,
+        signal_owner=root_signal_owner,
+    )
 
 if __name__ == "__main__":
     import multiprocessing

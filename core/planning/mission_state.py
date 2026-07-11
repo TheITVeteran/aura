@@ -18,26 +18,24 @@ Integrates with:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
-import os
 import sqlite3
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.container import ServiceContainer
-from core.planning.task_graph import TaskGraph, TaskNode, TaskStatus
+from core.planning.task_graph import TaskGraph, TaskNode
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.MissionState")
 
 
-class MissionStatus(str, Enum):
+class MissionStatus(StrEnum):
     PLANNING = "planning"
     ACTIVE = "active"
     PAUSED = "paused"
@@ -52,16 +50,16 @@ class Mission:
     mission_id: str
     objective: str
     status: MissionStatus = MissionStatus.PLANNING
-    graph: Optional[TaskGraph] = None
+    graph: TaskGraph | None = None
     source: str = ""                    # "voice", "text", "initiative"
     priority: float = 0.5              # 0-1
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     completed_at: float = 0.0
     error_summary: str = ""
-    narration_log: List[str] = field(default_factory=list)
+    narration_log: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "mission_id": self.mission_id,
             "objective": self.objective,
@@ -91,12 +89,12 @@ class MissionState:
 
     DB_NAME = "missions.db"
 
-    def __init__(self, data_dir: Optional[str] = None) -> None:
+    def __init__(self, data_dir: str | None = None) -> None:
         self._data_dir = Path(data_dir) if data_dir else Path.home() / ".aura" / "data" / "missions"
         self._data_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self._data_dir / self.DB_NAME
-        self._active_missions: Dict[str, Mission] = {}
-        self._conn: Optional[sqlite3.Connection] = None
+        self._active_missions: dict[str, Mission] = {}
+        self._conn: sqlite3.Connection | None = None
         self._started = False
 
     async def start(self) -> None:
@@ -111,6 +109,19 @@ class MissionState:
             "MissionState ONLINE — %d active mission(s) loaded from %s",
             active_count, self._db_path,
         )
+
+    def close(self) -> None:
+        """Commit and close mission persistence idempotently."""
+
+        connection = self._conn
+        self._conn = None
+        self._started = False
+        if connection is None:
+            return
+        try:
+            connection.commit()
+        finally:
+            connection.close()
 
     def _init_db(self) -> None:
         """Initialize the SQLite database."""
@@ -203,7 +214,7 @@ class MissionState:
         objective: str,
         source: str = "text",
         priority: float = 0.5,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> Mission:
         """Create a new mission from an objective.
 
@@ -245,7 +256,7 @@ class MissionState:
         )
         return mission
 
-    async def advance_mission(self, mission_id: str) -> Optional[TaskNode]:
+    async def advance_mission(self, mission_id: str) -> TaskNode | None:
         """Execute the next ready node in a mission's graph.
 
         Returns the node that was executed, or None if no nodes are ready.
@@ -315,7 +326,7 @@ class MissionState:
 
         return node
 
-    async def _execute_node(self, node: TaskNode) -> Dict[str, Any]:
+    async def _execute_node(self, node: TaskNode) -> dict[str, Any]:
         """Execute a single task node using the appropriate capability."""
         # Check permission first
         try:
@@ -374,8 +385,9 @@ class MissionState:
 
             elif action == "create_folder":
                 path = Path(params.get("path", ""))
-                path.mkdir(parents=True, exist_ok=True)
-                return {"success": path.exists(), "result": str(path)}
+                await asyncio.to_thread(path.mkdir, parents=True, exist_ok=True)
+                exists = await asyncio.to_thread(path.exists)
+                return {"success": exists, "result": str(path)}
 
             elif action == "create_text_file":
                 path = Path(params.get("path", ""))
@@ -556,14 +568,14 @@ class MissionState:
     # Queries
     # ------------------------------------------------------------------
 
-    def get_mission(self, mission_id: str) -> Optional[Mission]:
+    def get_mission(self, mission_id: str) -> Mission | None:
         return self._active_missions.get(mission_id)
 
-    def list_active_missions(self) -> List[Mission]:
+    def list_active_missions(self) -> list[Mission]:
         return [m for m in self._active_missions.values()
                 if m.status in (MissionStatus.PLANNING, MissionStatus.ACTIVE, MissionStatus.PAUSED)]
 
-    def list_all_missions(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def list_all_missions(self, limit: int = 50) -> list[dict[str, Any]]:
         """List all missions from SQLite."""
         if not self._conn:
             return []
@@ -581,7 +593,7 @@ class MissionState:
         except sqlite3.Error:
             return []
 
-    def get_mission_proof(self, mission_id: str) -> Optional[Dict[str, Any]]:
+    def get_mission_proof(self, mission_id: str) -> dict[str, Any] | None:
         """Get proof bundle for a mission."""
         mission = self._active_missions.get(mission_id)
         if mission and mission.graph:
@@ -615,7 +627,7 @@ class MissionState:
         except sqlite3.Error as e:
             record_degradation("mission_state.persist", e)
 
-    def _log_to_life_trace(self, event_type: str, mission_id: str, data: Dict[str, Any]) -> None:
+    def _log_to_life_trace(self, event_type: str, mission_id: str, data: dict[str, Any]) -> None:
         try:
             from core.runtime.life_trace import get_life_trace
             get_life_trace().record(
@@ -634,7 +646,7 @@ class MissionState:
             mission.updated_at = time.time()
             self._persist_mission(mission)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         active = [m for m in self._active_missions.values() if m.status == MissionStatus.ACTIVE]
         return {
             "total_missions": len(self._active_missions),
@@ -650,7 +662,7 @@ class MissionState:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_instance: Optional[MissionState] = None
+_instance: MissionState | None = None
 
 
 def get_mission_state() -> MissionState:
@@ -660,4 +672,26 @@ def get_mission_state() -> MissionState:
     return _instance
 
 
-__all__ = ["MissionState", "Mission", "MissionStatus", "get_mission_state"]
+def close_mission_state() -> dict[str, object]:
+    """Close the singleton without constructing it during root teardown."""
+
+    if _instance is None:
+        return {"clean": True, "closed": False, "reason": "not_initialized"}
+    try:
+        _instance.close()
+    except (OSError, RuntimeError, sqlite3.Error) as exc:
+        return {
+            "clean": False,
+            "closed": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    return {"clean": True, "closed": True}
+
+
+__all__ = [
+    "MissionState",
+    "Mission",
+    "MissionStatus",
+    "close_mission_state",
+    "get_mission_state",
+]

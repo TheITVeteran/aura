@@ -40,6 +40,10 @@ from core.runtime.desktop_task_contract import (
     desktop_task_planning_schema,
 )
 from core.runtime.errors import describe_error, record_degradation
+from core.runtime.shutdown_coordinator import (
+    is_shutdown_requested,
+    record_shutdown_admission_event,
+)
 from core.runtime.structured_input import analyze_prompt_shape
 from core.runtime.version import version_string
 from core.utils.intent_normalization import normalize_memory_intent_text
@@ -14851,7 +14855,41 @@ async def api_chat(
             record_degradation("chat", exc)
             logger.debug("KernelInterface task cleanup observed exception after %s: %s", reason, exc)
 
+    def _runtime_shutdown_response(
+        checkpoint: str,
+        *,
+        error: BaseException | None = None,
+    ) -> JSONResponse:
+        outcome = "reaped" if foreground_slot_acquired else "suppressed"
+        record_shutdown_admission_event(
+            "chat.foreground_turn",
+            resource_kind="foreground_turn",
+            outcome=outcome,
+            detail=f"checkpoint={checkpoint}",
+        )
+        logger.info(
+            "Foreground chat stopped by runtime shutdown "
+            "(checkpoint=%s error_type=%s).",
+            checkpoint,
+            type(error).__name__ if error is not None else "none",
+        )
+        return JSONResponse(
+            {
+                "response": (
+                    "The runtime is shutting down, so I stopped this turn cleanly "
+                    "before starting more cognitive work."
+                ),
+                "status": "runtime_shutdown",
+                "checkpoint": checkpoint,
+                "response_confidence": "not_generated",
+            },
+            status_code=503,
+            headers={"Retry-After": "1"},
+        )
+
     try:
+        if is_shutdown_requested():
+            return _runtime_shutdown_response("pre_admission")
         try:
             from core.runtime.foreground_guard import begin_foreground_turn
 
@@ -14927,6 +14965,9 @@ async def api_chat(
                 timeout=max(0.05, min(foreground_busy_wait_s, _remaining_foreground_budget(reserve=1.0))),
             )
             foreground_slot_acquired = True
+            logger.info("Foreground chat reservation acquired")
+            if is_shutdown_requested():
+                return _runtime_shutdown_response("foreground_reserved")
         except TimeoutError:
             held = getattr(_foreground_chat_lock, "held_duration", 0.0)
             if held > _FOREGROUND_CHAT_LOCK_PREEMPT_AFTER_S:
@@ -16132,6 +16173,8 @@ async def api_chat(
         reply_text: str | None = None
         reply_source = ""
         if not is_benchmark and desktop_requires_cognitive_engine:
+            if is_shutdown_requested():
+                return _runtime_shutdown_response("before_cognitive_engine")
             cognitive_budget = _desktop_required_cognitive_budget(
                 foreground_timeout=foreground_timeout,
                 elapsed_s=time.monotonic() - request_started_at,
@@ -17841,6 +17884,8 @@ async def api_chat(
             "response_confidence": "degraded",
         }, status_code=status_code)
     except Exception as e:  # noqa: BLE001 — last-resort turn-death floor
+        if is_shutdown_requested():
+            return _runtime_shutdown_response("exception_after_shutdown", error=e)
         # A turn must NEVER surface as HTTP 500. Exceptions outside
         # _CHAT_RECOVERABLE_ERRORS still reached the global handler and killed
         # the turn with a 500 — observed live during the soak: the local 32B

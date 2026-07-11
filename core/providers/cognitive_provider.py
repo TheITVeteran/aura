@@ -6,8 +6,8 @@ import logging
 import platform
 from collections.abc import Callable
 
-from core.runtime.service_registry import SERVICE_LIFETIME_SINGLETON
 from core.runtime.errors import record_degradation
+from core.runtime.service_registry import SERVICE_LIFETIME_SINGLETON
 
 logger = logging.getLogger("Aura.Providers.Cognitive")
 
@@ -85,6 +85,18 @@ def is_apple_silicon_host(
 
 
 def register_cognitive_services(container, is_proxy: bool = False):
+    def create_spiking_active_inference():
+        from core.cognitive.spiking_active_inference import SpikingActiveInferenceAdvisor
+
+        return SpikingActiveInferenceAdvisor()
+
+    container.register(
+        "spiking_active_inference",
+        create_spiking_active_inference,
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        required=False,
+    )
+
     # 1. Cognitive Engine
     def create_cognitive_engine():
         if is_proxy:
@@ -92,6 +104,8 @@ def register_cognitive_services(container, is_proxy: bool = False):
             return None
         try:
             from core.brain.cognitive_engine import CognitiveEngine
+
+            container.get("spiking_active_inference", default=None)
             return CognitiveEngine()
         except _COGNITIVE_PROVIDER_RECOVERABLE_ERRORS:
             logger.exception("Failed to create cognitive_engine")

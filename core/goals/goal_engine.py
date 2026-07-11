@@ -277,6 +277,19 @@ class GoalEngine:
             logger.error("GoalEngine initialization failed: %s", exc)
             self._conn = None
 
+    def close(self) -> None:
+        """Commit and close the durable lifecycle connection idempotently."""
+
+        with self._lock:
+            connection = self._conn
+            self._conn = None
+            if connection is None:
+                return
+            try:
+                connection.commit()
+            finally:
+                connection.close()
+
     def _load_subgoals_stack(self) -> list[dict[str, Any]]:
         if not self.subgoals_stack_path.exists():
             return []

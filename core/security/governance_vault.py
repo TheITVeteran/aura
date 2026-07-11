@@ -22,17 +22,16 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger("Aura.GovernanceVault")
 
 
-class SecurityException(RuntimeError):
+class SecurityException(RuntimeError):  # noqa: N818 - public compatibility name
     """Raised when a governance integrity violation is detected."""
 
 
@@ -82,11 +81,11 @@ class GovernanceVault:
         content = vault.unseal("canonical_self")  # verifies integrity
     """
 
-    def __init__(self, db_path: Optional[Path] = None) -> None:
+    def __init__(self, db_path: Path | None = None) -> None:
         self._db_path = Path(db_path or _DB_PATH)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
         self._init_db()
         logger.info("GovernanceVault initialized at %s", self._db_path)
 
@@ -218,7 +217,7 @@ class GovernanceVault:
 
         return json.loads(content_str)
 
-    def verify_integrity(self, artifact_id: str) -> Tuple[bool, str]:
+    def verify_integrity(self, artifact_id: str) -> tuple[bool, str]:
         """Verify artifact integrity without retrieving content.
 
         Returns:
@@ -246,7 +245,7 @@ class GovernanceVault:
 
         return True, f"Artifact '{artifact_id}' v{version} integrity verified"
 
-    def verify_all(self) -> Tuple[bool, List[Dict[str, Any]]]:
+    def verify_all(self) -> tuple[bool, list[dict[str, Any]]]:
         """Verify integrity of all sealed artifacts.
 
         Returns:
@@ -272,7 +271,7 @@ class GovernanceVault:
 
         return all_valid, results
 
-    def get_seal_chain(self, artifact_id: str) -> List[Dict[str, Any]]:
+    def get_seal_chain(self, artifact_id: str) -> list[dict[str, Any]]:
         """Get the seal history chain for an artifact."""
         with self._lock:
             cursor = self._conn.execute(
@@ -285,7 +284,7 @@ class GovernanceVault:
             return []
         return json.loads(row[0])
 
-    def list_artifacts(self) -> List[Dict[str, Any]]:
+    def list_artifacts(self) -> list[dict[str, Any]]:
         """List all sealed artifacts with metadata."""
         with self._lock:
             cursor = self._conn.execute(
@@ -319,7 +318,7 @@ class GovernanceVault:
     ) -> None:
         """Form a behavioral scar when tampering is detected."""
         try:
-            from core.memory.scar_formation import get_scar_formation, ScarDomain
+            from core.memory.scar_formation import ScarDomain, get_scar_formation
             scar_system = get_scar_formation()
             scar_system.form_scar(
                 domain=ScarDomain.CONSTITUTION_MODIFIED_EXTERNALLY,
@@ -356,7 +355,7 @@ class GovernanceVault:
                 self._conn.close()
                 self._conn = None
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return vault status for health endpoints."""
         all_valid, results = self.verify_all()
         return {
@@ -369,7 +368,38 @@ class GovernanceVault:
 
 # ── Singleton ─────────────────────────────────────────────────────────────
 
-_instance: Optional[GovernanceVault] = None
+_instance: GovernanceVault | None = None
+_shutdown_registered = False
+
+
+def _register_vault_lifecycle(vault: GovernanceVault) -> None:
+    global _shutdown_registered
+    if _shutdown_registered:
+        return
+    try:
+        from core.runtime.shutdown_coordinator import get_shutdown_coordinator
+
+        get_shutdown_coordinator().register(
+            vault.close,
+            phase="state_vault",
+            name="governance_vault",
+            timeout=5.0,
+        )
+        _shutdown_registered = True
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        logger.debug("GovernanceVault shutdown registration deferred: %s", exc)
+
+
+def close_governance_vault() -> dict[str, object]:
+    """Close the singleton without constructing it during shutdown."""
+
+    if _instance is None:
+        return {"clean": True, "closed": False, "reason": "not_initialized"}
+    try:
+        _instance.close()
+    except (sqlite3.Error, OSError) as exc:
+        return {"clean": False, "closed": False, "error": f"{type(exc).__name__}: {exc}"}
+    return {"clean": True, "closed": True}
 
 
 def get_governance_vault() -> GovernanceVault:
@@ -377,4 +407,5 @@ def get_governance_vault() -> GovernanceVault:
     global _instance
     if _instance is None:
         _instance = GovernanceVault()
+    _register_vault_lifecycle(_instance)
     return _instance

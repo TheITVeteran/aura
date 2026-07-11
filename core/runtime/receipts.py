@@ -318,6 +318,7 @@ class ReceiptStore:
         except OSError as exc:
             logger.debug("Could not restrict receipt root permissions: %s", exc)
         self._lock = threading.RLock()
+        self._closed = False
         self._index: dict[str, AnyReceipt] = {}
         self._chain_append_errors: list[dict[str, Any]] = []
         self._ledger_path = self.root / "_high_volume_receipts.sqlite3"
@@ -337,6 +338,8 @@ class ReceiptStore:
         return max(64, int(_HOT_INDEX_LIMIT_FLAG.value()))
 
     def _ledger_connection_locked(self) -> sqlite3.Connection:
+        if self._closed:
+            raise RuntimeError("receipt store is closed")
         current_pid = os.getpid()
         if self._ledger is not None and self._ledger_pid == current_pid:
             return self._ledger
@@ -482,6 +485,8 @@ class ReceiptStore:
             self._index.pop(receipt.receipt_id, None)
 
     def emit(self, receipt: AnyReceipt) -> AnyReceipt:
+        if self._closed:
+            raise RuntimeError("receipt store is closed")
         if not getattr(receipt, "receipt_id", None):
             receipt.receipt_id = _new_id(receipt.kind)
         body = receipt.to_dict()
@@ -826,16 +831,26 @@ class ReceiptStore:
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
+            self._closed = True
             if self._ledger is not None:
-                self._ledger.close()
+                connection = self._ledger
                 self._ledger = None
                 self._ledger_pid = 0
-            if self._chain is not None:
                 try:
-                    self._chain.flush()
+                    connection.commit()
+                finally:
+                    connection.close()
+            self._ledger_available = False
+            if self._chain is not None:
+                chain = self._chain
+                self._chain = None
+                try:
+                    chain.flush()
                 except OSError as exc:
                     logger.warning("Could not flush receipt audit chain during close: %s", exc)
-                self._chain.close()
+                chain.close()
 
     def verify_chain(self) -> dict[str, Any]:
         """Verify the tamper-evident chain.
@@ -901,3 +916,21 @@ def reset_receipt_store() -> None:
         if _global_store is not None:
             _global_store.close()
         _global_store = None
+
+
+def close_receipt_store() -> dict[str, object]:
+    """Close the process-global store without constructing a new one."""
+
+    with _singleton_lock:
+        store = _global_store
+    if store is None:
+        return {"clean": True, "closed": False, "reason": "not_initialized"}
+    try:
+        store.close()
+    except (OSError, RuntimeError, sqlite3.Error) as exc:
+        return {
+            "clean": False,
+            "closed": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    return {"clean": True, "closed": True}

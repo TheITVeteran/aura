@@ -23,6 +23,8 @@ from typing import Any
 
 import numpy as np
 
+from core.exceptions import ContainerError
+
 EPS = 1e-12
 _ADVISOR_RECOVERABLE_ERRORS = (
     ImportError,
@@ -31,6 +33,7 @@ _ADVISOR_RECOVERABLE_ERRORS = (
     RuntimeError,
     TypeError,
     ValueError,
+    ContainerError,
 )
 
 STATE_NAMES: tuple[str, ...] = (
@@ -1082,6 +1085,25 @@ def _register_advisor(advisor: SpikingActiveInferenceAdvisor) -> None:
 
 def get_spiking_active_inference_advisor() -> SpikingActiveInferenceAdvisor:
     global _ADVISOR
+    try:
+        from core.container import ServiceContainer
+        from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+        current = ServiceContainer.peek("spiking_active_inference", default=None)
+        if isinstance(current, SpikingActiveInferenceAdvisor):
+            _ADVISOR = current
+            return current
+        if is_shutdown_requested():
+            raise RuntimeError("runtime_shutdown")
+        current = ServiceContainer.get("spiking_active_inference", default=None)
+        if isinstance(current, SpikingActiveInferenceAdvisor):
+            _ADVISOR = current
+            return current
+    except _ADVISOR_RECOVERABLE_ERRORS:
+        from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+        if is_shutdown_requested():
+            raise RuntimeError("runtime_shutdown") from None
     with _ADVISOR_LOCK:
         if _ADVISOR is None:
             _ADVISOR = SpikingActiveInferenceAdvisor()
