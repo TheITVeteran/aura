@@ -109,6 +109,15 @@ def _job_requires_prompt_cache_bypass(job: dict[str, Any]) -> bool:
     )
 
 
+def _expected_empty_warmup_precompile(job: dict[str, Any]) -> bool:
+    """True only for the bounded shader precompile where visible text is optional."""
+
+    return bool(
+        job.get("warmup_precompile", False)
+        and 0 < _safe_int(job.get("max_tokens"), 0) <= 1
+    )
+
+
 def _surface_control_alpha(job: dict[str, Any], current_alpha: Any) -> float:
     # Strict/structured proof gens get steering driven near-off (kept >0 so the
     # hook stays attached and the worker-liveness gate is satisfied) — the proof
@@ -3510,16 +3519,27 @@ def _mlx_worker_loop(
                     finally:
                         _restore_surface_generation_controls(surface_control_state)
 
+                    expected_empty_precompile = bool(
+                        not response_text.strip()
+                        and _expected_empty_warmup_precompile(job)
+                    )
                     if not response_text.strip():
-                        logger.warning(
-                            "⚠️ [WORKER] Generation yielded ZERO tokens. "
-                            "Prompt length: %d, token_count: %d, stop_sequences: %s",
-                            len(prompt), token_count, list(stop_sequences)[:4],
-                        )
+                        if expected_empty_precompile:
+                            logger.info(
+                                "[WORKER] One-token warmup precompile produced no visible text; "
+                                "the required visible readiness probe will verify conversation output."
+                            )
+                        else:
+                            logger.warning(
+                                "⚠️ [WORKER] Generation yielded ZERO tokens. "
+                                "Prompt length: %d, token_count: %d, stop_sequences: %s",
+                                len(prompt), token_count, list(stop_sequences)[:4],
+                            )
                         if len(prompt) > 2000:
                             logger.debug("Prompt snippet: %s...", prompt[:100])
-                        # Self-heal: a zero-token generation almost always means
-                        # the prompt cache picked up a stale/corrupt KV state
+                        # Outside the explicit one-token precompile, a zero-token
+                        # generation almost always means the prompt cache picked
+                        # up a stale/corrupt KV state
                         # (MLX sampler hit EOS on the first step because the
                         # cached KV disagreed with the fresh prompt).  Nuke
                         # the per-model prompt cache AND the Metal cache so
@@ -3537,7 +3557,7 @@ def _mlx_worker_loop(
                         if engine is not None:
                             if response_text.strip():
                                 engine.observe_generation(response_text)
-                            else:
+                            elif not expected_empty_precompile:
                                 engine.observe_generation(
                                     "",
                                     generation_health=0.0,

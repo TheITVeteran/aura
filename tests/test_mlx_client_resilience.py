@@ -1226,6 +1226,9 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(client.get_lane_status()["state"], "ready")
         self.assertTrue(client.get_lane_status()["conversation_ready"])
         self.assertEqual(len(probe.await_args_list), 2)
+        precompile_kwargs = probe.await_args_list[0].kwargs
+        self.assertTrue(precompile_kwargs["warmup_precompile"])
+        self.assertEqual(precompile_kwargs["max_tokens"], 1)
         readiness_kwargs = probe.await_args_list[1].kwargs
         self.assertTrue(readiness_kwargs["health_probe"])
         self.assertTrue(readiness_kwargs["disable_prompt_cache"])

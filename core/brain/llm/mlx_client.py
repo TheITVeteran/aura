@@ -428,7 +428,7 @@ def _lane_admission_blocks_worker_spawn(client: Any) -> str | None:
     return decision.reason
 
 
-class _ModelLoadAdmissionDenied(RuntimeError):
+class _ModelLoadAdmissionDeniedError(RuntimeError):
     def __init__(self, reason: str, *, receipt_id: str = "") -> None:
         self.reason = str(reason or "resource_admission_denied")
         self.receipt_id = str(receipt_id or "")
@@ -470,7 +470,7 @@ async def _model_load_admission_context(client: Any, *, foreground_request: bool
             action="refused model load because canonical resource admission could not import",
             severity="critical",
         )
-        raise _ModelLoadAdmissionDenied("resource_admission_unavailable") from exc
+        raise _ModelLoadAdmissionDeniedError("resource_admission_unavailable") from exc
 
     lane, qos = classify_lane(client.model_path)
     request_gb = _projected_model_footprint_gb(
@@ -510,9 +510,9 @@ async def _model_load_admission_context(client: Any, *, foreground_request: bool
             action="refused model load because canonical resource admission failed",
             severity="critical",
         )
-        raise _ModelLoadAdmissionDenied("resource_admission_failed") from exc
+        raise _ModelLoadAdmissionDeniedError("resource_admission_failed") from exc
     if not decision.admitted:
-        raise _ModelLoadAdmissionDenied(
+        raise _ModelLoadAdmissionDeniedError(
             decision.reason,
             receipt_id=decision.receipt_id,
         )
@@ -3459,7 +3459,7 @@ class MLXLocalClient:
                         soft_timeout=soft_timeout,
                         skip_swap_cooldown=skip_swap_cooldown,
                     )
-        except _ModelLoadAdmissionDenied as admission_exc:
+        except _ModelLoadAdmissionDeniedError as admission_exc:
             self._set_lane_state("recovering", admission_exc.reason)
             self._record_degraded_event(
                 "model_load_admission_denied",
@@ -4707,6 +4707,7 @@ class MLXLocalClient:
             "operator_evidence_contract": bool(kwargs.get("operator_evidence_contract", False)),
             "web_interlocutor_contract": bool(kwargs.get("web_interlocutor_contract", False)),
             "health_probe": bool(kwargs.get("health_probe", False)),
+            "warmup_precompile": bool(kwargs.get("warmup_precompile", False)),
             "runtime_fact_status_contract": bool(
                 kwargs.get("runtime_fact_status_contract", False)
             ),
@@ -5134,6 +5135,7 @@ class MLXLocalClient:
                         foreground_request=False,
                         owner_label=owner_name,
                         max_tokens=1,
+                        warmup_precompile=True,
                     ),
                     timeout=warmup_timeout + (10.0 * attempt),
                 )

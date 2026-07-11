@@ -107,6 +107,29 @@ def test_worker_health_probe_bypasses_prompt_cache():
     assert mlx_worker._job_requires_prompt_cache_bypass({"health_probe": True}) is True
 
 
+def test_worker_only_accepts_empty_output_for_one_token_warmup_precompile():
+    from core.brain.llm import mlx_worker
+
+    assert (
+        mlx_worker._expected_empty_warmup_precompile(
+            {"warmup_precompile": True, "max_tokens": 1}
+        )
+        is True
+    )
+    assert (
+        mlx_worker._expected_empty_warmup_precompile(
+            {"warmup_precompile": True, "max_tokens": 16}
+        )
+        is False
+    )
+    assert (
+        mlx_worker._expected_empty_warmup_precompile(
+            {"health_probe": True, "max_tokens": 1}
+        )
+        is False
+    )
+
+
 def test_record_mlx_degradation_preserves_action_and_severity():
     from core.brain.llm.mlx_client import _record_mlx_degradation
     from core.runtime.errors import get_degradation_tracker
