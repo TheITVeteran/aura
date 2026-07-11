@@ -10593,3 +10593,75 @@ Remaining shutdown closure work:
   lane reservations and eviction/accounting/receipt closure
   (`CTX2-LANE-001..004`). The multi-hour and 24-72 hour final soaks remain
   deferred until every shorter bounded/live gate is green.
+
+## Checkpoint 2026-07-10-30: Live-Exposed Finalizer Ownership Repair
+
+Negative live evidence from the first Checkpoint 29 replay:
+
+- Current-tree desktop proof booted healthy in `28.6s` at about `20.3GB` RSS.
+  Capability inventory and identity returned through the CognitiveEngine path;
+  continuity set/recall passed; `1/1` conversation turn passed; semantic,
+  imagination, timescale, ambient, and autonomic organs participated.
+- External stop completed in `40.6s/90s` with `--stop rc=0`, graceful parent
+  exit, no orphan, and port `8034` free. The proof still failed correctly because
+  the runtime stream contained a shutdown traceback and the new durable verdict
+  was degraded.
+- Root cause 1: Python 3.12/uvicorn creates a standard-library thread solely to
+  join a loop's default executor. The global thread fence treated that teardown
+  thread as resurrection and raised `RuntimeError("runtime_shutdown")` after the
+  ASGI application had already stopped.
+- Root cause 2: `ServiceContainer.shutdown()` recognized only
+  `on_stop_async`/`on_stop`/`cleanup`, but nulled every descriptor even when its
+  real zero-argument lifecycle hook was conventional `stop()` or `close()`.
+  AuraProtocol, Swarm, metrics, ConsciousnessSystem/BeingRuntime, voice, and
+  other owners therefore disappeared from the container without running their
+  cleanup.
+- The final `aura.shutdown_verdict.v1` made the hidden gap machine-readable:
+  `runtime_hygiene_residuals`, with `12` tracked threads and `7` native sockets,
+  including listeners on `9900`, `9090`, and `10003`. Process exit eventually
+  reclaimed them, but that is not accepted as a clean in-process shutdown.
+  Artifact:
+  `artifacts/current/shutdown_control_plane_checkpoint_20260710/live_proof_20260710_172125_verdict.json`.
+
+Implemented after the live failure:
+
+- Added a narrow allowance for the identifiable
+  `asyncio.base_events.BaseEventLoop._do_shutdown` join thread. It is recorded as
+  `allowed_teardown`; arbitrary task cleanup still cannot start threads or
+  processes. Thread-suppression boundaries now invoke an owner-supplied cleanup
+  callback so a rejected thread cannot leak a captured coroutine. The
+  self-modification error forward closes immediately once shutdown is latched.
+- Expanded container lifecycle discovery to compatible zero-argument `stop()`
+  and `close()` hooks while preserving established hook priority. Required-arg
+  hooks become named failures instead of being invoked incorrectly. Passive
+  services without lifecycle hooks are listed separately.
+- Coalesced duplicate descriptors that point at the same singleton instance, so
+  compatibility names such as `consciousness` and `consciousness_system` map to
+  one cleanup owner and cannot double-stop the object.
+- MetricsExporter now retains the Prometheus HTTP server/thread, registers the
+  listener with runtime hygiene, and performs bounded `shutdown`, `server_close`,
+  and thread join. Swarm and AuraProtocol register their listeners, close and
+  await them, unregister only after success, and await background-task
+  cancellation.
+- VoiceEngine retains and joins its STT worker and exposes a container stop hook.
+  MemoryWatchdog stop now joins with a deadline. LocalPipeBus closes transports
+  before a bounded, waiting executor shutdown instead of abandoning non-daemon
+  `AuraPipeIO` workers with `wait=False`.
+
+Verification before second live replay:
+
+- Consolidated shutdown/runtime/health/reliability contracts ->
+  `320 passed in 21.87s`.
+- Focused container, protocol, Swarm, memory-watchdog, LocalPipeBus, voice, and
+  shutdown-owner contracts -> `112 passed in 11.70s`.
+- Full Ruff over every newly touched lifecycle owner -> passed. Governance
+  effect-ownership baseline remains matched at `1,689` migration-debt calls.
+
+Remaining for this checkpoint:
+
+- Publish these live-exposed repairs to `main`, then rerun the same bounded
+  desktop proof from a clean commit. Require a clean runtime stream and final
+  shutdown verdict, not merely external process exit.
+- Use the next residual snapshot, if any, to register/fix the remaining concrete
+  owner. Continue phase-specific first/repeated signal injection only after the
+  normal root-finalizer path is genuinely clean.

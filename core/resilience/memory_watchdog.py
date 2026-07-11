@@ -357,8 +357,15 @@ class MemoryWatchdog(threading.Thread):
     def last_sample(self) -> MemorySample | None:
         return self._last_sample
 
-    def stop(self) -> None:
+    def stop(self, *, timeout_s: float = 2.0) -> None:
         self._stop_event.set()
+        if self is threading.current_thread() or not self.is_alive():
+            return
+        self.join(timeout=max(0.0, float(timeout_s)))
+        if self.is_alive():
+            raise TimeoutError(
+                f"memory watchdog did not stop within {float(timeout_s):.1f}s"
+            )
 
     # ── thread loop ───────────────────────────────────────────────────
 

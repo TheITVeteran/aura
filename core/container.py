@@ -876,6 +876,9 @@ class ServiceContainer:
         completed_services: list[str] = []
         failures: dict[str, str] = {}
         skipped_services: list[str] = []
+        services_without_shutdown_hook: list[str] = []
+        cleanup_owner_by_instance: dict[int, str] = {}
+        coalesced_aliases: dict[str, str] = {}
         for descriptor_index, (name, desc) in enumerate(descriptors):
             if not desc or not desc.instance:
                 continue
@@ -895,6 +898,16 @@ class ServiceContainer:
                 )
                 break
             instance = desc.instance
+            instance_key = id(instance)
+            existing_owner = cleanup_owner_by_instance.get(instance_key)
+            if existing_owner is not None:
+                coalesced_aliases[name] = existing_owner
+                desc.instance = None
+                desc.initialized = False
+                desc._async_initialized = False
+                completed_services.append(name)
+                continue
+            cleanup_owner_by_instance[instance_key] = name
             service_shutdown_timeout_s = hook_timeout_s
             timeout_attr = getattr(instance, "shutdown_timeout_s", None)
             if timeout_attr is not None:
@@ -904,11 +917,26 @@ class ServiceContainer:
                     service_shutdown_timeout_s = hook_timeout_s
             service_failed = False
             selected_hook: tuple[str, Callable[..., Any]] | None = None
-            for candidate_name in ("on_stop_async", "on_stop", "cleanup"):
+            incompatible_hooks: list[str] = []
+            for candidate_name in (
+                "on_stop_async",
+                "on_stop",
+                "cleanup",
+                "stop",
+                "close",
+            ):
                 candidate = _resolve_hook(instance, candidate_name)
-                if candidate is not None:
-                    selected_hook = (candidate_name, candidate)
-                    break
+                if candidate is None:
+                    continue
+                try:
+                    inspect.signature(candidate).bind()
+                except TypeError:
+                    incompatible_hooks.append(candidate_name)
+                    continue
+                except (ValueError, AttributeError):
+                    pass
+                selected_hook = (candidate_name, candidate)
+                break
             if selected_hook is not None:
                 hook_name, hook_fn = selected_hook
                 remaining_total = total_timeout_s - (
@@ -928,6 +956,15 @@ class ServiceContainer:
                 if failure is not None:
                     failures[f"{name}:{hook_name}"] = failure
                     service_failed = True
+            elif incompatible_hooks:
+                failure_key = f"{name}:container"
+                failures[failure_key] = (
+                    "no_zero_argument_shutdown_hook:"
+                    + ",".join(incompatible_hooks)
+                )
+                service_failed = True
+            else:
+                services_without_shutdown_hook.append(name)
 
             desc.instance = None
             desc.initialized = False
@@ -942,6 +979,8 @@ class ServiceContainer:
             "completed_services": completed_services,
             "failed_hooks": failures,
             "skipped_services": skipped_services,
+            "services_without_shutdown_hook": services_without_shutdown_hook,
+            "coalesced_aliases": coalesced_aliases,
             "excluded_services": sorted(excluded),
             "duration_seconds": round(time.monotonic() - shutdown_started, 6),
             "total_timeout_seconds": float(total_timeout_s),
@@ -955,6 +994,8 @@ class ServiceContainer:
         aggregate_skipped: list[str] = []
         aggregate_completed: list[str] = []
         aggregate_deferred: list[str] = []
+        aggregate_without_hook: list[str] = []
+        aggregate_coalesced: dict[str, str] = {}
         for report in reports:
             aggregate_failures.update(
                 {
@@ -971,11 +1012,27 @@ class ServiceContainer:
             aggregate_deferred.extend(
                 str(name) for name in report.get("excluded_services", [])
             )
+            aggregate_without_hook.extend(
+                str(name)
+                for name in report.get("services_without_shutdown_hook", [])
+            )
+            aggregate_coalesced.update(
+                {
+                    str(alias): str(owner)
+                    for alias, owner in dict(
+                        report.get("coalesced_aliases", {})
+                    ).items()
+                }
+            )
         current_report["clean"] = not aggregate_failures
         current_report["failed_hooks"] = aggregate_failures
         current_report["skipped_services"] = sorted(set(aggregate_skipped))
         current_report["completed_services"] = sorted(set(aggregate_completed))
         current_report["deferred_services"] = sorted(set(aggregate_deferred))
+        current_report["services_without_shutdown_hook"] = sorted(
+            set(aggregate_without_hook)
+        )
+        current_report["coalesced_aliases"] = aggregate_coalesced
         current_report["shutdown_pass_count"] = len(reports)
         with cls._lock:
             cls._shutdown_reports[-1] = dict(current_report)

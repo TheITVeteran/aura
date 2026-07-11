@@ -662,6 +662,66 @@ async def test_service_container_defers_excluded_finalizer_until_root_pass(
 
 
 @pytest.mark.asyncio
+async def test_service_container_uses_conventional_zero_argument_stop_hook(
+    service_container,
+) -> None:
+    stopped: list[str] = []
+
+    class _Service:
+        async def stop(self) -> None:
+            stopped.append("stopped")
+
+    service_container.register_instance("conventional_stop_owner", _Service())
+
+    report = await service_container.shutdown()
+
+    assert report["clean"] is True
+    assert stopped == ["stopped"]
+    assert "conventional_stop_owner" in report["completed_services"]
+
+
+@pytest.mark.asyncio
+async def test_service_container_reports_incompatible_stop_hook(
+    service_container,
+) -> None:
+    class _Service:
+        def stop(self, required_reason: str) -> None:
+            del required_reason
+
+    service_container.register_instance("bad_stop_signature", _Service())
+
+    report = await service_container.shutdown()
+
+    assert report["clean"] is False
+    assert report["failed_hooks"]["bad_stop_signature:container"].startswith(
+        "no_zero_argument_shutdown_hook"
+    )
+
+
+@pytest.mark.asyncio
+async def test_service_container_coalesces_duplicate_singleton_aliases(
+    service_container,
+) -> None:
+    calls: list[str] = []
+
+    class _Service:
+        async def stop(self) -> None:
+            calls.append("stop")
+
+    instance = _Service()
+    service_container.register_instance("canonical_runtime", instance)
+    service_container.register_instance("compatibility_runtime", instance)
+
+    report = await service_container.shutdown()
+
+    assert report["clean"] is True
+    assert calls == ["stop"]
+    assert report["coalesced_aliases"] == {
+        "canonical_runtime": "compatibility_runtime"
+    }
+
+
+@pytest.mark.asyncio
 async def test_shutdown_coordinator_bounds_synchronous_handler() -> None:
     import threading
     import time
@@ -733,8 +793,11 @@ async def test_runtime_hygiene_suppresses_raw_tasks_and_threads_after_latch() ->
     )
 
     hygiene = RuntimeHygieneManager()
-    await hygiene.start(asyncio.get_running_loop())
+    loop = asyncio.get_running_loop()
+    await hygiene.start(loop)
+    await asyncio.to_thread(lambda: None)
     ran: list[str] = []
+    suppression_cleanup: list[str] = []
 
     async def _late_task() -> None:
         ran.append("task")
@@ -747,8 +810,13 @@ async def test_runtime_hygiene_suppresses_raw_tasks_and_threads_after_latch() ->
         target=lambda: ran.append("blocked-thread"),
         name="raw-late-thread",
     )
+    blocked_thread._aura_shutdown_suppressed_cleanup = lambda: suppression_cleanup.append(
+        "closed"
+    )
     with pytest.raises(RuntimeError, match="runtime_shutdown"):
         blocked_thread.start()
+
+    await loop.shutdown_default_executor(timeout=1.0)
 
     task_token = begin_shutdown_task_creation_scope()
     try:
@@ -779,9 +847,74 @@ async def test_runtime_hygiene_suppresses_raw_tasks_and_threads_after_latch() ->
     await hygiene.stop()
 
     assert ran == ["cleanup-task", "cleanup-thread"]
+    assert suppression_cleanup == ["closed"]
     assert getattr(task, "_aura_shutdown_suppressed", False) is True
     admission = shutdown_coordinator.shutdown_admission_snapshot()
     assert admission["counts"]["suppressed"] >= 2
+    assert admission["counts"]["allowed_teardown"] >= 1
+
+
+def test_self_modification_error_forward_closes_coroutine_after_latch() -> None:
+    import inspect
+
+    from core.self_modification.self_modification_engine import (
+        _schedule_background_coro,
+    )
+
+    async def _late_error_forward() -> None:
+        return None
+
+    coro = _late_error_forward()
+    shutdown_coordinator.request_shutdown("self-modification-forward-test")
+
+    _schedule_background_coro(coro, label="unit-test")
+
+    assert inspect.getcoroutinestate(coro) == inspect.CORO_CLOSED
+
+
+@pytest.mark.asyncio
+async def test_metrics_exporter_owns_http_server_and_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.resilience import metrics_exporter as metrics_module
+
+    events: list[str] = []
+
+    class _Thread:
+        alive = True
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def join(self, *, timeout: float) -> None:
+            events.append(f"join:{timeout}")
+
+    class _Server:
+        def __init__(self, thread: _Thread) -> None:
+            self.thread = thread
+
+        def shutdown(self) -> None:
+            events.append("shutdown")
+            self.thread.alive = False
+
+        def server_close(self) -> None:
+            events.append("close")
+
+    thread = _Thread()
+    server = _Server(thread)
+    monkeypatch.setattr(
+        metrics_module,
+        "start_http_server",
+        lambda _port: (server, thread),
+    )
+    exporter = metrics_module.MetricsExporter(port=19090)
+
+    await exporter.start()
+    await exporter.stop()
+
+    assert exporter._http_server is None
+    assert exporter._http_thread is None
+    assert events == ["shutdown", "close"]
 
 
 def test_service_container_rejects_registration_after_shutdown_latch() -> None:

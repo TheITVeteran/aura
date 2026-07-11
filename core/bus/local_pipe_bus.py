@@ -13,6 +13,7 @@ from typing import Any
 
 from core.bus.shared_mem_bus import SharedMemoryTransport
 from core.runtime.errors import record_degradation
+from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.LocalPipeBus")
@@ -482,7 +483,13 @@ class LocalPipeBus:
         else:
             self._safe_close_connection(self.read_conn)
             self._safe_close_connection(self.write_conn)
-        self._shutdown_executor()
+        executor, self._executor = self._executor, None
+        if executor is not None:
+            await run_sync_shutdown_callable(
+                lambda: executor.shutdown(wait=True, cancel_futures=True),
+                timeout_s=2.0,
+                name="local-pipe-bus-executor",
+            )
 
     def register_handler(self, msg_type: str, handler: Callable):
         """Register a handler for a specific message type."""

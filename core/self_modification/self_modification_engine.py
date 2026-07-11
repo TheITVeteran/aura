@@ -5,14 +5,15 @@ Orchestrates the complete self-improvement system.
 import asyncio
 import logging
 import os
-import random
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
-from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
+from core.runtime.atomic_writer import async_atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.runtime.task_ownership import close_awaitable
 from core.utils.task_tracker import get_task_tracker
 
 from .boot_validator import GhostBootValidator
@@ -22,6 +23,7 @@ from .code_repair import AutonomousCodeRepair
 from .error_intelligence import ErrorIntelligenceSystem
 from .kernel_refiner import KernelRefiner
 from .learning_system import MetaLearning, SelfImprovementLearning
+from .mutation_tiers import classify_mutation_path
 from .promotion_policy import (
     AUTONOMOUS_PATCH_PROMOTION_ENV as _AUTONOMOUS_PATCH_PROMOTION_ENV,
 )
@@ -30,7 +32,6 @@ from .promotion_policy import (
 )
 from .promotion_policy import RUNTIME_SELF_MODIFICATION_ENV as _RUNTIME_SELF_MODIFICATION_ENV
 from .promotion_policy import SUPERVISED_SELF_MODIFICATION_ENV as _SUPERVISED_SELF_MODIFICATION_ENV
-from .mutation_tiers import classify_mutation_path
 from .promotion_policy import (
     autonomous_source_promotion_decision,
     env_flag,
@@ -91,8 +92,11 @@ def _record_self_modification_degradation(
 
 def _schedule_background_coro(coro: Any, *, label: str) -> None:
     """Run a coroutine whether or not we're inside a live event loop."""
+    if is_shutdown_requested():
+        close_awaitable(coro)
+        return
     try:
-        loop = asyncio.get_running_loop()
+        asyncio.get_running_loop()
     except RuntimeError:
 
         def _runner() -> None:
@@ -108,7 +112,16 @@ def _schedule_background_coro(coro: Any, *, label: str) -> None:
                 )
                 logger.debug("%s background runner failed: %s", label, exc)
 
-        threading.Thread(target=_runner, name=f"aura_{label}", daemon=True).start()
+        thread = threading.Thread(target=_runner, name=f"aura_{label}", daemon=True)
+        owned_thread: Any = thread
+        owned_thread._aura_shutdown_suppressed_cleanup = lambda: close_awaitable(coro)
+        try:
+            thread.start()
+        except RuntimeError:
+            close_awaitable(coro)
+            if is_shutdown_requested():
+                return
+            raise
         return
 
     task = get_task_tracker().create_task(coro, name=f"self_modification.{label}")
@@ -1083,6 +1096,7 @@ class AutonomousSelfModificationEngine:
             return {"status": "rejected", "validated": False, "reason": "unsupported_fix_shape"}
 
         from dataclasses import asdict
+
         from core.self_modification.safe_pipeline import SafePipeline
 
         proposal = await SafePipeline().run(
@@ -1123,7 +1137,7 @@ class AutonomousSelfModificationEngine:
         self.monitoring_enabled = True
         try:
             try:
-                loop = asyncio.get_running_loop()
+                asyncio.get_running_loop()
             except RuntimeError:
                 logger.error("Failed to start monitoring: No asyncio loop available.")
                 self.monitoring_enabled = False

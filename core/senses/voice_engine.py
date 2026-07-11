@@ -261,6 +261,7 @@ class SovereignVoiceEngine:
         # ── Mic Capture State ─────────────────────────────
         self._mic_stream = None
         self._mic_listening = False
+        self._stt_thread: threading.Thread | None = None
 
         # ── TTS State ─────────────────────────────────────
         self._tts_initialized = False
@@ -789,7 +790,12 @@ class SovereignVoiceEngine:
 
                 # Start the STT worker thread only after the stream is live.
                 self._is_feeding = True
-                threading.Thread(target=self._stt_worker, daemon=True, name="VoiceSTTWorker").start()
+                self._stt_thread = threading.Thread(
+                    target=self._stt_worker,
+                    daemon=True,
+                    name="VoiceSTTWorker",
+                )
+                self._stt_thread.start()
                 self._mic_listening = True
 
                 self._pulse_hypha("voice_engine", "cognition", success=True)
@@ -838,10 +844,29 @@ class SovereignVoiceEngine:
                 capture_and_log(e, {'module': __name__})
             self._mic_stream = None
 
+        thread, self._stt_thread = self._stt_thread, None
+        if (
+            thread is not None
+            and thread is not threading.current_thread()
+            and thread.is_alive()
+        ):
+            thread.join(timeout=1.5)
+            if thread.is_alive():
+                record_degradation(
+                    "voice_engine",
+                    TimeoutError("VoiceSTTWorker did not stop within 1.5s"),
+                    severity="warning",
+                    action="left bounded STT worker cleanup visible to runtime hygiene",
+                    enforce_failure_policy=False,
+                )
+
         self._signal_mycelium("voice_engine", "cognition", {
             "event": "mic_deactivated"
         })
         logger.info("🎙️ Mic capture stopped")
+
+    def on_stop(self) -> None:
+        self.stop_listening()
 
     def _mic_callback(self, indata, frames, time_info, status):
         """sounddevice callback — runs in audio thread, must be fast."""
@@ -1547,7 +1572,8 @@ class SovereignVoiceEngine:
         """Full reset — stop listening, clear buffers."""
         self.stop_listening()
         self._is_feeding = False
-        if hasattr(self, "_stt_thread") and self._stt_thread.is_alive():
+        thread = self._stt_thread
+        if thread is not None and thread.is_alive():
             # Thread will exit on next loop iteration due to _is_feeding=False
             pass  # no-op: intentional
 

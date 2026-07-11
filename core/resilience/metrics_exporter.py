@@ -2,11 +2,13 @@ import asyncio
 import logging
 import socket
 import time
+from typing import Any
 
 import psutil
 from prometheus_client import Counter, Gauge, start_http_server
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Metrics")
@@ -57,6 +59,8 @@ class MetricsExporter:
         self._task: asyncio.Task | None = None
         self._start_time = time.time()
         self._monitor_failures = 0
+        self._http_server: Any | None = None
+        self._http_thread: Any | None = None
 
     def _find_free_port(self, start_port: int, max_attempts: int = 10) -> int:
         """Find an available port starting from start_port."""
@@ -84,7 +88,29 @@ class MetricsExporter:
 
             # Phase 33: start_http_server is synchronous and can block on DNS (socket.getfqdn)
             # We wrap it in to_thread to prevent event loop stalls during boot.
-            await asyncio.to_thread(start_http_server, self.actual_port)
+            self._http_server, self._http_thread = await asyncio.to_thread(
+                start_http_server,
+                self.actual_port,
+            )
+            try:
+                from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                get_runtime_hygiene().register_shutdown_resource(
+                    self._http_server,
+                    kind="tcp_listener",
+                    name=f"metrics_exporter:{self.actual_port}",
+                    source="core.resilience.metrics_exporter",
+                    closer=self._close_http_server_blocking,
+                    timeout_s=3.0,
+                    blocking=True,
+                )
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                await run_sync_shutdown_callable(
+                    self._close_http_server_blocking,
+                    timeout_s=3.0,
+                    name="metrics-exporter-registration-rollback",
+                )
+                raise
             logger.info("📊 Metrics Exporter ONLINE (port %s)", self.actual_port)
             self._task = get_task_tracker().create_task(
                 self._monitor_loop(),
@@ -110,7 +136,32 @@ class MetricsExporter:
             except asyncio.CancelledError as _e:
                 logger.debug('Ignored asyncio.CancelledError in metrics_exporter.py: %s', _e)
             self._task = None
+        server = self._http_server
+        if server is not None:
+            await run_sync_shutdown_callable(
+                self._close_http_server_blocking,
+                timeout_s=3.0,
+                name="metrics-exporter-stop",
+            )
+            try:
+                from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                get_runtime_hygiene().unregister_shutdown_resource(server)
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                pass
+        self.actual_port = None
         logger.info("📊 Metrics Exporter OFFLINE")
+
+    def _close_http_server_blocking(self) -> None:
+        server, self._http_server = self._http_server, None
+        thread, self._http_thread = self._http_thread, None
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=1.0)
+            if thread.is_alive():
+                raise TimeoutError("metrics HTTP server thread did not stop")
 
     async def _monitor_loop(self):
         process = psutil.Process()

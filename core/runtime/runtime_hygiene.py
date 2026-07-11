@@ -575,12 +575,22 @@ class RuntimeHygieneManager:
         manager = self
 
         def _patched_start(thread: threading.Thread, *args, **kwargs):
-            cleanup_critical = shutdown_resource_creation_allowed()
-            if manager._shutdown_blocks_resource_start(
-                operation=f"thread.start:{thread.name}",
-                resource_kind="thread",
+            executor_teardown = manager._is_executor_shutdown_thread(thread)
+            cleanup_critical = (
+                shutdown_resource_creation_allowed() or executor_teardown
+            )
+            if not cleanup_critical and manager._shutdown_blocks_resource_start(
+                operation=f"thread.start:{thread.name}", resource_kind="thread"
             ):
+                manager._run_thread_suppression_cleanup(thread)
                 raise RuntimeError("runtime_shutdown")
+            if executor_teardown and manager._runtime_shutdown_latched():
+                manager._record_creation_boundary(
+                    operation=f"thread.start:{thread.name}",
+                    resource_kind="thread",
+                    outcome="allowed_teardown",
+                    detail="asyncio_default_executor_shutdown",
+                )
             thread._aura_shutdown_critical = cleanup_critical
             manager._register_thread(thread, source="thread.start")
             result = manager._original_thread_start(thread, *args, **kwargs)
@@ -676,6 +686,31 @@ class RuntimeHygieneManager:
             return result
 
         mp.process.BaseProcess.start = _patched_start
+
+    @staticmethod
+    def _is_executor_shutdown_thread(thread: threading.Thread) -> bool:
+        target = getattr(thread, "_target", None)
+        module = str(getattr(target, "__module__", "") or "")
+        qualname = str(getattr(target, "__qualname__", "") or "")
+        return module == "asyncio.base_events" and qualname.endswith(
+            "BaseEventLoop._do_shutdown"
+        )
+
+    @staticmethod
+    def _run_thread_suppression_cleanup(thread: threading.Thread) -> None:
+        cleanup = getattr(thread, "_aura_shutdown_suppressed_cleanup", None)
+        if not callable(cleanup):
+            return
+        try:
+            cleanup()
+        except Exception as exc:  # noqa: BLE001 - late-work ownership boundary
+            record_degradation(
+                "runtime_hygiene_shutdown",
+                exc,
+                severity="warning",
+                action=f"recorded failed suppression cleanup for thread {thread.name}",
+                enforce_failure_policy=False,
+            )
 
     @staticmethod
     def _shutdown_blocks_resource_start(
@@ -877,6 +912,7 @@ class RuntimeHygieneManager:
                         outcome="suppressed",
                         detail="shutdown_latched_before_target_entry",
                     )
+                    self._run_thread_suppression_cleanup(thread)
                     return None
                 return original_run(*args, **kwargs)
             except _THREAD_RUN_FAILURES as exc:

@@ -609,7 +609,14 @@ _shutdown_admission_counts: dict[str, int] = {}
 _shutdown_admission_events: deque[dict[str, object]] = deque(maxlen=64)
 
 _ADMISSION_OUTCOMES = frozenset(
-    {"suppressed", "crossed", "reaped", "survived", "allowed_read_only"}
+    {
+        "suppressed",
+        "crossed",
+        "reaped",
+        "survived",
+        "allowed_read_only",
+        "allowed_teardown",
+    }
 )
 
 

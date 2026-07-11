@@ -3,7 +3,7 @@ import json
 import logging
 import socket
 import time
-from typing import Any, Dict
+from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
@@ -38,11 +38,25 @@ class SwarmProtocol:
                 asyncio.start_server(self._handle_peer, bind_host, self.port),
                 timeout=5.0,
             )
-        except (PermissionError, OSError, asyncio.TimeoutError) as exc:
+            try:
+                from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                get_runtime_hygiene().register_shutdown_resource(
+                    self._server,
+                    kind="tcp_listener",
+                    name=f"swarm_protocol:{bind_host}:{self.port}",
+                    source="core.collective.swarm_protocol",
+                    closer=self._close_listener,
+                    timeout_s=2.0,
+                )
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                await self._close_listener()
+                raise
+        except (PermissionError, OSError, TimeoutError) as exc:
             logger.warning("🕸️ SwarmProtocol bind failed on %s:%d (%s). Running offline.", bind_host, self.port, exc)
             self._server = None
             self.offline_only = True
-        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as exc:
+        except (RuntimeError, asyncio.CancelledError, AttributeError) as exc:
             logger.warning("🕸️ SwarmProtocol unexpected bind error: %s. Running offline.", exc)
             self._server = None
             self.offline_only = True
@@ -54,11 +68,28 @@ class SwarmProtocol:
 
     async def stop(self):
         self.running = False
-        if self._server:
-            self._server.close()
-            await self._server.wait_closed()
-        if self._mood_broadcast_task:
-            self._mood_broadcast_task.cancel()
+        server = self._server
+        await self._close_listener()
+        if server is not None:
+            try:
+                from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                get_runtime_hygiene().unregister_shutdown_resource(server)
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                pass
+        task, self._mood_broadcast_task = self._mood_broadcast_task, None
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def _close_listener(self) -> None:
+        server, self._server = self._server, None
+        if server is not None:
+            server.close()
+            await server.wait_closed()
 
     async def _handle_peer(self, reader, writer):
         try:
@@ -86,7 +117,7 @@ class SwarmProtocol:
             except (OSError, ConnectionError) as _exc:
                 logger.debug("Suppressed %s in core.collective.swarm_protocol: %s", type(_exc).__name__, _exc)
 
-    async def _process_gossip(self, message: Dict[str, Any]):
+    async def _process_gossip(self, message: dict[str, Any]):
         msg_type = message.get("type")
         if msg_type == "mood_sync":
             peer_id = message.get("node_id", "unknown")
@@ -111,7 +142,7 @@ class SwarmProtocol:
             # Automatically approve for now (In real AGI, other nodes would run tests)
             await self.broadcast({"type": "skill_approved", "skill_id": skill_id, "node_id": self.node_id})
 
-    async def broadcast(self, message: Dict[str, Any]):
+    async def broadcast(self, message: dict[str, Any]):
         message["node_id"] = self.node_id
         message["timestamp"] = time.time()
         payload = json.dumps(message).encode()

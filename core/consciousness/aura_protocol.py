@@ -282,6 +282,20 @@ class AuraProtocolServer:
                 self._host,
                 self._port,
             )
+            try:
+                from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                get_runtime_hygiene().register_shutdown_resource(
+                    self._server,
+                    kind="tcp_listener",
+                    name=f"aura_protocol:{self._host}:{self._port}",
+                    source="core.consciousness.aura_protocol",
+                    closer=self._close_listener,
+                    timeout_s=_PROTOCOL_CLOSE_TIMEOUT,
+                )
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                await self._close_listener()
+                raise
             self._running = True
             self._last_error = None
             ServiceContainer.register_instance("aura_protocol_server", self)
@@ -311,21 +325,34 @@ class AuraProtocolServer:
 
     async def stop(self) -> None:
         """Stop the server."""
-        if self._server:
-            self._server.close()
+        server = self._server
+        try:
+            await self._close_listener()
+        except asyncio.CancelledError:
+            raise
+        except _AURA_PROTOCOL_RECOVERABLE_ERRORS as exc:
+            _record_aura_protocol_degradation(
+                exc,
+                action="continued shutdown after aura protocol server close failed",
+                severity="warning",
+            )
+        if server is not None:
             try:
-                await asyncio.wait_for(self._server.wait_closed(), timeout=_PROTOCOL_CLOSE_TIMEOUT)
-            except asyncio.CancelledError:
-                raise
-            except _AURA_PROTOCOL_RECOVERABLE_ERRORS as exc:
-                _record_aura_protocol_degradation(
-                    exc,
-                    action="continued shutdown after aura protocol server close failed",
-                    severity="warning",
-                )
-            self._server = None
+                from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+                get_runtime_hygiene().unregister_shutdown_resource(server)
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                pass
         self._running = False
         logger.info("AuraProtocolServer OFFLINE")
+
+    async def _close_listener(self) -> None:
+        server, self._server = self._server, None
+        if server is None:
+            return
+        server.close()
+        async with asyncio.timeout(_PROTOCOL_CLOSE_TIMEOUT):
+            await server.wait_closed()
 
     def register_handler(self, handler: MessageHandler) -> None:
         """Register a handler to be called for every valid incoming message."""
