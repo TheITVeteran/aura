@@ -217,6 +217,10 @@ class RobustOrchestrator(
     _current_thought_task: asyncio.Task | None
     _autonomous_task: asyncio.Task | None
     _autonomous_action_times: collections.deque[float]
+    _voice_listener_task: asyncio.Task[bool] | None
+    _voice_listener_ready: bool
+    _voice_listener_state: str
+    _voice_listener_error: str
     _thread: threading.Thread | None
 
     # State tracking
@@ -515,6 +519,10 @@ class RobustOrchestrator(
         self._current_thought_task = None
         self._autonomous_task = None
         self._autonomous_action_times = collections.deque(maxlen=200)
+        self._voice_listener_task = None
+        self._voice_listener_ready = False
+        self._voice_listener_state = "not_started"
+        self._voice_listener_error = ""
         self._poison_pill_cache = set()
         self._correction_shards = []
 
@@ -591,6 +599,81 @@ class RobustOrchestrator(
         from core.orchestrator.handlers.aegis import aegis_sentinel_loop
 
         await aegis_sentinel_loop(self)
+
+    async def _run_voice_listener_start(self, callback: Any) -> bool:
+        """Own voice startup until capture is ready, fails, or shutdown cancels it."""
+        self._voice_listener_state = "loading"
+        self._voice_listener_error = ""
+        current_task = asyncio.current_task()
+        try:
+            ready = bool(await self.ears.start_listening(callback))
+            self._voice_listener_ready = ready
+            if ready:
+                self._voice_listener_state = "ready"
+                logger.info("Sovereign Ears listening")
+            else:
+                self._voice_listener_state = "offline"
+                self._voice_listener_error = "listener_start_returned_false"
+                logger.warning("Sovereign Ears failed to enter listening state")
+            return ready
+        except asyncio.CancelledError:
+            self._voice_listener_ready = False
+            self._voice_listener_state = (
+                "stopping" if is_shutdown_requested() else "cancelled"
+            )
+            self._voice_listener_error = "voice_listener_start_cancelled"
+            raise
+        except _ORCHESTRATOR_RECOVERABLE_ERRORS as exc:
+            self._voice_listener_ready = False
+            self._voice_listener_state = "failed"
+            self._voice_listener_error = f"{type(exc).__name__}: {exc}"[:240]
+            _record_main_degradation(
+                exc,
+                action="continued orchestrator startup after optional voice listener failed",
+                severity="warning",
+                subsystem="voice_engine",
+            )
+            logger.warning("Sovereign Ears startup failed: %s", exc)
+            return False
+        finally:
+            if self._voice_listener_task is current_task:
+                self._voice_listener_task = None
+
+    async def _start_voice_listener(self, callback: Any) -> bool:
+        """Start voice as a tracked single flight without making boot its deadline."""
+        task = self._voice_listener_task
+        if task is None or task.done():
+            task = get_task_tracker().track_task(
+                self._run_voice_listener_start(callback),
+                name="orchestrator.voice_listener_start",
+            )
+            self._voice_listener_task = task
+
+        try:
+            boot_wait_s = float(os.environ.get("AURA_VOICE_BOOT_WAIT_S", "1.0"))
+        except (TypeError, ValueError):
+            boot_wait_s = 1.0
+        boot_wait_s = min(15.0, max(0.05, boot_wait_s))
+
+        try:
+            return bool(
+                await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=boot_wait_s,
+                )
+            )
+        except TimeoutError:
+            if task.done():
+                return bool(task.result())
+            self._voice_listener_ready = False
+            self._voice_listener_state = "loading"
+            self._voice_listener_error = ""
+            logger.info(
+                "Sovereign Ears still loading after %.1fs; tracked startup continues "
+                "without blocking orchestrator boot",
+                boot_wait_s,
+            )
+            return False
 
     async def start(self):
         """Start the orchestrator (Async)"""
@@ -1358,47 +1441,15 @@ class RobustOrchestrator(
 
                             logger.error("Failed to schedule voice input: %s", e)
 
-                    try:
-                        self._voice_listener_ready = bool(
-                            await asyncio.wait_for(
-                                self.ears.start_listening(_hear_callback),
-                                timeout=15.0,
-                            )
-                        )
-                        self._voice_listener_error = ""
-                    except TimeoutError as exc:
-                        self._voice_listener_ready = False
-                        self._voice_listener_error = "voice_listener_start_timeout"
-                        _record_main_degradation(
-                            exc,
-                            action=(
-                                "continued orchestrator startup with voice listener offline; "
-                                "voice can retry independently"
-                            ),
-                            severity="warning",
-                            subsystem="voice_engine",
-                        )
-                    except _ORCHESTRATOR_RECOVERABLE_ERRORS as exc:
-                        self._voice_listener_ready = False
-                        self._voice_listener_error = f"{type(exc).__name__}: {exc}"[:240]
-                        _record_main_degradation(
-                            exc,
-                            action=(
-                                "continued orchestrator startup after optional voice listener "
-                                "failed"
-                            ),
-                            severity="warning",
-                            subsystem="voice_engine",
-                        )
-                    if self._voice_listener_ready:
-                        logger.info("✓ Sovereign Ears listening")
-                    else:
+                    listener_ready = await self._start_voice_listener(_hear_callback)
+                    if not listener_ready and self._voice_listener_state != "loading":
                         logger.warning(
                             "Sovereign Ears offline at boot: %s",
                             self._voice_listener_error or "listener_start_returned_false",
                         )
                 else:
                     self._voice_listener_ready = False
+                    self._voice_listener_state = "disabled"
                     self._voice_listener_error = "auto_listen_disabled"
                     logger.info("✓ Sovereign Ears standing by (mic idle until explicitly enabled)")
 

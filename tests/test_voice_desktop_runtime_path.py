@@ -102,6 +102,92 @@ async def test_sovereign_ears_reports_listener_start_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_voice_start_continues_after_boot_wait(monkeypatch) -> None:
+    import core.orchestrator.main as orchestrator_module
+
+    release_start = asyncio.Event()
+    degradations: list[BaseException] = []
+
+    class Ears:
+        async def start_listening(self, _callback) -> bool:
+            await release_start.wait()
+            return True
+
+    class Tracker:
+        def track_task(self, coroutine, name=None):
+            return asyncio.create_task(coroutine, name=name)
+
+    orchestrator = object.__new__(orchestrator_module.RobustOrchestrator)
+    orchestrator.ears = Ears()
+    orchestrator._voice_listener_task = None
+    orchestrator._voice_listener_ready = False
+    orchestrator._voice_listener_state = "not_started"
+    orchestrator._voice_listener_error = ""
+    monkeypatch.setenv("AURA_VOICE_BOOT_WAIT_S", "0.01")
+    monkeypatch.setattr(orchestrator_module, "get_task_tracker", lambda: Tracker())
+    monkeypatch.setattr(
+        orchestrator_module,
+        "_record_main_degradation",
+        lambda exc, **_kwargs: degradations.append(exc),
+    )
+
+    ready_during_boot = await orchestrator._start_voice_listener(lambda _text: None)
+    listener_task = orchestrator._voice_listener_task
+
+    assert ready_during_boot is False
+    assert listener_task is not None and not listener_task.done()
+    assert orchestrator._voice_listener_state == "loading"
+    assert orchestrator._voice_listener_error == ""
+    assert degradations == []
+
+    release_start.set()
+    assert await asyncio.wait_for(listener_task, timeout=0.2) is True
+    assert orchestrator._voice_listener_task is None
+    assert orchestrator._voice_listener_ready is True
+    assert orchestrator._voice_listener_state == "ready"
+    assert orchestrator._voice_listener_error == ""
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_voice_start_records_real_failure(monkeypatch) -> None:
+    import core.orchestrator.main as orchestrator_module
+
+    degradations: list[tuple[BaseException, dict]] = []
+
+    class Ears:
+        async def start_listening(self, _callback) -> bool:
+            raise OSError("input device unavailable")
+
+    class Tracker:
+        def track_task(self, coroutine, name=None):
+            return asyncio.create_task(coroutine, name=name)
+
+    orchestrator = object.__new__(orchestrator_module.RobustOrchestrator)
+    orchestrator.ears = Ears()
+    orchestrator._voice_listener_task = None
+    orchestrator._voice_listener_ready = False
+    orchestrator._voice_listener_state = "not_started"
+    orchestrator._voice_listener_error = ""
+    monkeypatch.setenv("AURA_VOICE_BOOT_WAIT_S", "0.2")
+    monkeypatch.setattr(orchestrator_module, "get_task_tracker", lambda: Tracker())
+    monkeypatch.setattr(
+        orchestrator_module,
+        "_record_main_degradation",
+        lambda exc, **kwargs: degradations.append((exc, kwargs)),
+    )
+
+    ready = await orchestrator._start_voice_listener(lambda _text: None)
+
+    assert ready is False
+    assert orchestrator._voice_listener_task is None
+    assert orchestrator._voice_listener_ready is False
+    assert orchestrator._voice_listener_state == "failed"
+    assert orchestrator._voice_listener_error == "OSError: input device unavailable"
+    assert len(degradations) == 1
+    assert degradations[0][1]["subsystem"] == "voice_engine"
+
+
+@pytest.mark.asyncio
 async def test_voice_transcript_callbacks_fan_out_without_clobbering(tmp_path) -> None:
     from core.senses.voice_engine import SovereignVoiceEngine
 

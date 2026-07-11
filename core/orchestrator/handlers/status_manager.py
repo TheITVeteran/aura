@@ -200,6 +200,14 @@ class StatusManagerMixin:
                 )
                 logger.debug("Organism status unavailable for status report: %s", exc)
 
+            voice_task = getattr(self, "_voice_listener_task", None)
+            status_report["voice_listener"] = {
+                "state": str(getattr(self, "_voice_listener_state", "unknown")),
+                "ready": bool(getattr(self, "_voice_listener_ready", False)),
+                "error": str(getattr(self, "_voice_listener_error", "")),
+                "startup_in_flight": bool(voice_task is not None and not voice_task.done()),
+            }
+
             return status_report
 
         finally:

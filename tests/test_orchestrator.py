@@ -2528,6 +2528,12 @@ def test_get_status_overload_with_stats(orchestrator):
     # This calls the first get_status overload at line 389
     result = orchestrator.get_status()
     assert "uptime" in result or "status" in result
+    assert result["voice_listener"] == {
+        "state": "not_started",
+        "ready": False,
+        "error": "",
+        "startup_in_flight": False,
+    }
 
 
 # --- _process_cycle with RL training trigger (line 604) ---
