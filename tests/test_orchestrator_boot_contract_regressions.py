@@ -28,8 +28,7 @@ def test_final_boot_complete_uses_fresh_runtime_health_check():
 
     assert "self.status.healthy = bool(self.health_check())" in final_boot_slice
     assert "final runtime health check failed" in final_boot_slice
-    assert "Cortex prewarm" in final_boot_slice
-    assert "launcher readiness remains gated" in final_boot_slice
+    assert "_final_boot_health_log(" in final_boot_slice
 
 
 def test_boot_phase_health_contract_does_not_emit_runtime_critical_summary():

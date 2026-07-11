@@ -48,23 +48,65 @@ def _record_boot_degradation(
 def _health_contract_boot_log(level: Any, *, initialized: bool, running: bool) -> tuple[int, str]:
     level_name = str(getattr(level, "value", level)).lower()
     runtime_ready = bool(initialized and running)
+    if not runtime_ready and level_name in {"dead", "critical", "degraded"}:
+        phase = "BOOT CORE COMPLETE" if initialized else "BOOTING"
+        return (
+            logging.INFO,
+            f"⏳ HEALTH CONTRACT: {phase} — runtime services are still registering",
+        )
     if level_name == "dead":
-        if not runtime_ready:
-            return (
-                logging.WARNING,
-                "⏳ HEALTH CONTRACT: BOOTING — critical services are still registering",
-            )
         return logging.CRITICAL, "🚨 HEALTH CONTRACT: DEAD — no critical services alive"
     if level_name == "critical":
-        if not runtime_ready:
-            return (
-                logging.WARNING,
-                "⏳ HEALTH CONTRACT: BOOTING — critical services are still registering",
-            )
         return logging.CRITICAL, "🚨 HEALTH CONTRACT: CRITICAL — some critical services missing"
     if level_name == "degraded":
         return logging.WARNING, "⚠️ HEALTH CONTRACT: DEGRADED — important services missing"
     return logging.INFO, "✅ HEALTH CONTRACT: All critical + important services online"
+
+
+def _final_boot_health_log(
+    contract: dict[str, Any],
+    *,
+    initialized: bool,
+    running: bool,
+) -> tuple[int, str]:
+    """Classify final initialization separately from live runtime readiness."""
+    status = str(contract.get("status") or "dead")
+    critical_keys = [
+        str(item.get("container_key") or "")
+        for item in contract.get("failures", {}).get("critical", [])
+        if isinstance(item, dict) and item.get("container_key")
+    ]
+    important_keys = [
+        str(item.get("container_key") or "")
+        for item in contract.get("failures", {}).get("important", [])
+        if isinstance(item, dict) and item.get("container_key")
+    ]
+    probe_blockers = [
+        str(item)
+        for item in contract.get("probe_blockers", [])
+        if str(item).strip()
+    ]
+    blockers = list(dict.fromkeys(critical_keys + important_keys + probe_blockers))
+
+    if initialized and not running:
+        if blockers == ["inference_gate"]:
+            return (
+                logging.INFO,
+                "⏳ BOOT CORE COMPLETE: core systems initialized; Cortex prewarm "
+                "is still pending, so launcher readiness remains gated.",
+            )
+        detail = f" ({', '.join(blockers)})" if blockers else ""
+        return (
+            logging.INFO,
+            "⏳ BOOT CORE COMPLETE: initialization succeeded; runtime readiness "
+            f"remains gated while services register{detail}.",
+        )
+
+    return _health_contract_boot_log(
+        status,
+        initialized=initialized,
+        running=running,
+    )
 
 
 class OrchestratorBootMixin(
@@ -1169,19 +1211,18 @@ class OrchestratorBootMixin(
                         from core.runtime.health_contract import runtime_health_report
 
                         contract = runtime_health_report()
-                        critical_keys = [
-                            str(item.get("container_key") or "")
-                            for item in contract.get("failures", {}).get("critical", [])
-                            if isinstance(item, dict)
-                        ]
-                    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-                        critical_keys = []
-                    if critical_keys == ["inference_gate"]:
-                        logger.info(
-                            "⏳ BOOT CORE COMPLETE: core systems initialized; Cortex prewarm "
-                            "is still pending, so launcher readiness remains gated."
+                        log_level, message = _final_boot_health_log(
+                            contract,
+                            initialized=bool(getattr(self.status, "initialized", False)),
+                            running=bool(getattr(self.status, "running", False)),
                         )
-                    else:
+                        logger.log(log_level, message)
+                    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                        _record_boot_degradation(
+                            exc,
+                            action="could not classify final boot readiness failure",
+                            severity="error",
+                        )
                         logger.warning("⚠️ BOOT COMPLETE: System initialized in degraded mode.")
 
             except (ImportError, AttributeError, RuntimeError) as e:

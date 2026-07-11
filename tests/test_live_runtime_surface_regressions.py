@@ -245,7 +245,7 @@ def test_boot_health_contract_reports_booting_before_runtime_ready():
         running=False,
     )
 
-    assert level == logging.WARNING
+    assert level == logging.INFO
     assert "BOOTING" in message
     assert "CRITICAL" not in message
 
@@ -256,7 +256,76 @@ def test_boot_health_contract_reports_booting_before_runtime_ready():
     )
 
     assert level == logging.CRITICAL
+
+
+def test_final_boot_health_reports_registration_pending_without_false_degradation():
+    from core.orchestrator.boot import _final_boot_health_log
+
+    contract = {
+        "status": "critical",
+        "failures": {
+            "critical": [{"container_key": "actor_supervision"}],
+            "important": [],
+        },
+        "probe_blockers": ["scheduler:scheduler"],
+    }
+
+    level, message = _final_boot_health_log(
+        contract,
+        initialized=True,
+        running=False,
+    )
+
+    assert level == logging.INFO
+    assert "BOOT CORE COMPLETE" in message
+    assert "runtime readiness remains gated" in message
+    assert "actor_supervision" in message
+    assert "degraded" not in message.lower()
+
+
+def test_final_boot_health_still_fails_loudly_after_runtime_should_be_ready():
+    from core.orchestrator.boot import _final_boot_health_log
+
+    contract = {
+        "status": "critical",
+        "failures": {
+            "critical": [{"container_key": "actor_supervision"}],
+            "important": [],
+        },
+        "probe_blockers": [],
+    }
+
+    level, message = _final_boot_health_log(
+        contract,
+        initialized=True,
+        running=True,
+    )
+
+    assert level == logging.CRITICAL
     assert "CRITICAL" in message
+
+
+def test_final_boot_health_names_cortex_prewarm_as_pending_readiness():
+    from core.orchestrator.boot import _final_boot_health_log
+
+    contract = {
+        "status": "critical",
+        "failures": {
+            "critical": [{"container_key": "inference_gate"}],
+            "important": [],
+        },
+        "probe_blockers": [],
+    }
+
+    level, message = _final_boot_health_log(
+        contract,
+        initialized=True,
+        running=False,
+    )
+
+    assert level == logging.INFO
+    assert "Cortex prewarm" in message
+    assert "launcher readiness remains gated" in message
 
 
 def test_background_policy_defers_work_during_boot_grace(monkeypatch):
@@ -430,8 +499,8 @@ def test_background_policy_blocks_loop_starts_during_proof_and_foreground(monkey
 
 
 def test_health_pulse_cannot_claim_healthy_from_required_probes_alone(monkeypatch):
-    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from core.ops.subsystem_audit import SubsystemAudit
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -459,8 +528,8 @@ def test_health_pulse_cannot_claim_healthy_from_required_probes_alone(monkeypatc
 
 def test_health_pulse_cannot_claim_healthy_when_conversation_lane_failed(monkeypatch):
     from core.container import ServiceContainer
-    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from core.ops.subsystem_audit import SubsystemAudit
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -506,8 +575,8 @@ def test_health_pulse_cannot_claim_healthy_when_conversation_lane_failed(monkeyp
 
 def test_health_pulse_reports_booting_during_boot_grace(monkeypatch):
     from core.container import ServiceContainer
-    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from core.ops.subsystem_audit import SubsystemAudit
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -564,8 +633,8 @@ def test_health_pulse_reports_booting_during_boot_grace(monkeypatch):
 
 def test_health_pulse_reports_conversation_warmup_as_booting_not_failure(monkeypatch):
     from core.container import ServiceContainer
-    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from core.ops.subsystem_audit import SubsystemAudit
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -620,8 +689,8 @@ def test_health_pulse_reports_conversation_warmup_as_booting_not_failure(monkeyp
 
 def test_health_pulse_reports_cold_conversation_standby_as_booting_not_degraded(monkeypatch):
     from core.container import ServiceContainer
-    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from core.ops.subsystem_audit import SubsystemAudit
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -672,8 +741,8 @@ def test_health_pulse_reports_cold_conversation_standby_as_booting_not_degraded(
 
 def test_health_pulse_reports_active_generation_as_working_not_failure(monkeypatch):
     from core.container import ServiceContainer
-    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from core.ops.subsystem_audit import SubsystemAudit
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -727,8 +796,8 @@ def test_health_pulse_reports_active_generation_as_working_not_failure(monkeypat
 
 def test_health_pulse_reports_shutdown_without_failure_noise(monkeypatch):
     from core.container import ServiceContainer
-    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from core.ops.subsystem_audit import SubsystemAudit
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
 
     required_probes = {
         group: {"ok": False, "components": {key: False for key in keys}}
@@ -2864,17 +2933,19 @@ def test_stall_watchdog_foreground_suppression_is_bounded(monkeypatch):
     """Jul 9 48%-wedge lesson: a lane perpetually 'warming' suppressed every
     stall dump for the exact window that mattered. Continuous foreground
     business past 300s stops suppressing — a wedge is not a warmup."""
-    from types import SimpleNamespace as NS
+    from types import SimpleNamespace
 
+    from core.container import ServiceContainer
     from core.resilience.stall_watchdog import StallWatchdog
 
     monkeypatch.setenv("AURA_WATCHDOG_BOOT_GRACE_S", "0")
     monkeypatch.setenv("AURA_WATCHDOG_FOREGROUND_GRACE_S", "75")
-    watchdog = StallWatchdog(NS(is_closed=lambda: False), threshold=1.0)
+    watchdog = StallWatchdog(SimpleNamespace(is_closed=lambda: False), threshold=1.0)
     watchdog._started_at = time.time() - 1000.0  # boot grace long past
 
-    gate = NS(get_conversation_status=lambda: {"state": "warming", "warmup_in_flight": True})
-    from core.container import ServiceContainer
+    gate = SimpleNamespace(
+        get_conversation_status=lambda: {"state": "warming", "warmup_in_flight": True}
+    )
 
     monkeypatch.setattr(
         ServiceContainer, "get", classmethod(lambda cls, name, default=None: gate)
