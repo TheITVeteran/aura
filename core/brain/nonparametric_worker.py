@@ -40,8 +40,16 @@ logger = logging.getLogger("Brain.NonParametricWorker")
 
 
 def foreground_enabled() -> bool:
-    """Whether the foreground non-parametric memory path is switched on (default OFF)."""
-    return os.getenv("AURA_NONPARAMETRIC_FOREGROUND", "0").strip().lower() in {"1", "true", "on", "yes"}
+    """Whether the foreground non-parametric memory path is switched on.
+
+    Default ON since the July end-to-end proof (tools/nonparametric_proof.py):
+    one-shot recall of session-random facts verified on the real model with
+    the anisotropy-corrected gate, and an unrelated control generation
+    byte-identical with the datastore loaded. Every layer stays fail-open
+    (empty store = no processor; below-gate similarity = untouched logits).
+    Kill switch: AURA_NONPARAMETRIC_FOREGROUND=0.
+    """
+    return os.getenv("AURA_NONPARAMETRIC_FOREGROUND", "1").strip().lower() in {"1", "true", "on", "yes"}
 
 
 def maybe_build_foreground(model: Any) -> tuple[HiddenStateTap, Callable[[Any, Any], Any]] | None:
@@ -162,7 +170,7 @@ def make_tapped_nonparametric_processor(
     memory: Any,
     *,
     k: int = 4,
-    temperature: float = 2.0,
+    temperature: float = 0.1,
     phi: float | None = 0.5,
     free_energy: float | None = 0.7,
     min_cos: float = 0.55,
@@ -170,6 +178,8 @@ def make_tapped_nonparametric_processor(
 ) -> Callable[[Any, Any], Any]:
     """O(1)-per-token non-parametric logits-processor driven by the hidden-state tap."""
     import mlx.core as mx
+
+    state = {"last_fired_index": -1}
 
     def _proc(tokens: Any, logits: Any) -> Any:
         key = tap.last_key
@@ -179,11 +189,20 @@ def make_tapped_nonparametric_processor(
             neighbors = memory.query(key, k=k)
             if not neighbors:
                 return logits
-            cos = cosine_from_l2(neighbors[0].distance)
-            if cos < min_cos:
+            # Anisotropy-corrected gate (see Neighbor.similarity): raw cosine
+            # cannot separate unrelated prompts on real hidden states.
+            sim = float(getattr(neighbors[0], "similarity", -1.0))
+            gate = float(getattr(memory, "min_similarity", lambda: min_cos)())
+            nearest_index = int(getattr(neighbors[0], "index", -1))
+            if sim < gate:
                 return logits
+            # Anti-stutter: the same nearest entry twice in a row means the
+            # recalled chain ended and its tail is re-firing.
+            if nearest_index == state["last_fired_index"]:
+                return logits
+            state["last_fired_index"] = nearest_index
             fe = 0.5 if free_energy is None else float(free_energy)
-            lam = base_lam * ((cos - min_cos) / (1.0 - min_cos)) * (0.6 + 0.8 * fe)
+            lam = base_lam * ((sim - gate) / max(1e-6, 1.0 - gate)) * (0.6 + 0.8 * fe)
             lg = np.array(logits, dtype=np.float32).reshape(-1)
             ktop = min(64, lg.shape[0])
             idx = np.argpartition(lg, -ktop)[-ktop:]
@@ -218,7 +237,11 @@ def cached_generate_with_memory(
     *,
     max_tokens: int = 40,
     k: int = 4,
-    temperature: float = 2.0,
+    # kNN softmax temperature over UNIT-key L2 distances: exact match d=0
+    # must dominate an unrelated entry at d≈0.35, so the scale is ~0.1 —
+    # the old 2.0 made the kNN distribution nearly uniform across entries
+    # (measured: cross-fact digit leakage corrupted recall).
+    temperature: float = 0.1,
     phi: float | None = 0.5,
     free_energy: float | None = 0.7,
     use_memory: bool = True,
@@ -244,6 +267,7 @@ def cached_generate_with_memory(
     ids = list(tokenizer.encode(prompt))
     eos = getattr(tokenizer, "eos_token_id", None)
     out_ids: list[int] = []
+    last_fired_index = -1  # anti-stutter: an entry may not fire twice in a row
 
     # Prefill the cache with the full prompt, then decode one token at a time.
     cursor = mx.array([ids])
@@ -262,16 +286,25 @@ def cached_generate_with_memory(
             try:
                 neighbors = memory.query(key, k=k)
                 if neighbors:
-                    cos = cosine_from_l2(neighbors[0].distance)
-                    if cos >= min_cos:
+                    # Anisotropy-corrected gate (see Neighbor.similarity).
+                    sim = float(getattr(neighbors[0], "similarity", -1.0))
+                    gate = float(getattr(memory, "min_similarity", lambda: min_cos)())
+                    nearest_index = int(getattr(neighbors[0], "index", -1))
+                    # Anti-stutter: a chain walks DIFFERENT entries each
+                    # step; the same nearest entry twice in a row means the
+                    # chain ended and the stale tail is re-firing.
+                    if sim >= gate and nearest_index != last_fired_index:
                         fe = 0.5 if free_energy is None else float(free_energy)
-                        lam = base_lam * max(0.0, (cos - min_cos) / (1.0 - min_cos)) * (0.6 + 0.8 * fe)
+                        lam = base_lam * max(0.0, (sim - gate) / max(1e-6, 1.0 - gate)) * (0.6 + 0.8 * fe)
                         from core.brain.nonparametric_generation import _topk_probs
                         blended = memory.interpolate(
                             _topk_probs(lg), key, k=k, temperature=temperature, phi=phi,
                             free_energy=free_energy, lam_override=min(lam, 0.9),
                         )
-                        next_id = int(max(blended, key=blended.get))
+                        memory_choice = int(max(blended, key=blended.get))
+                        if memory_choice != next_id:
+                            last_fired_index = nearest_index
+                        next_id = memory_choice
             except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
                 record_degradation("nonparametric_cached_generate_interp", exc)
 

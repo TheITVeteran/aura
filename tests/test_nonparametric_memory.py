@@ -190,3 +190,104 @@ def test_singleton_refuses_cross_model_hidden_dimension():
         assert get_nonparametric_memory(8) is None
     finally:
         reset_nonparametric_memory()
+
+
+# ── Anisotropy-corrected similarity (July proof-driven fixes) ─────────────
+
+
+def _unit(v):
+    import numpy as np
+
+    v = np.asarray(v, dtype=np.float32)
+    return v / np.linalg.norm(v)
+
+
+def test_similarity_raw_fallback_before_mu_ready(tmp_path):
+    """Before the query mean converges, similarity is raw cosine and the
+    gate is the strict 0.98 — exact re-encounters pass, everything else
+    is blocked (measured: unrelated prompts score raw 0.81-0.93)."""
+    import numpy as np
+
+    mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
+    key = _unit([1, 2, 3, 4, 5, 6, 7, 8])
+    mem.add(key, 42)
+    assert not mem.similarity_ready()
+    assert mem.min_similarity() == mem.MIN_SIM_RAW
+
+    exact = mem.query(key, k=1)[0]
+    assert exact.similarity > 0.99
+
+    related_but_not_exact = mem.query(_unit([1, 2, 3, 4, 5, 6, 7, 9]), k=1)[0]
+    assert related_but_not_exact.similarity < mem.MIN_SIM_RAW or exact.similarity > related_but_not_exact.similarity
+
+
+def test_similarity_centers_once_mu_ready(tmp_path):
+    """After MU_READY_N query samples, similarity subtracts the common
+    direction: two keys sharing a dominant component but differing in
+    their distinctive parts must separate."""
+    import numpy as np
+
+    mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
+    common = np.array([10, 10, 10, 10, 10, 10, 10, 10], dtype=np.float32)
+    a = _unit(common + np.array([3, 0, 0, 0, 0, 0, 0, 0]))
+    b = _unit(common + np.array([0, 3, 0, 0, 0, 0, 0, 0]))
+    mem.add(a, 1)
+
+    raw_cos = float(np.dot(a, b))
+    assert raw_cos > 0.9, "the anisotropy setup: raw cosine is inflated"
+
+    # Feed the mean with samples of the common direction.
+    rng = np.random.default_rng(7)
+    for _ in range(mem.MU_READY_N):
+        noise = rng.normal(0, 0.5, size=8).astype(np.float32)
+        mem.query(_unit(common + noise), k=1)
+    assert mem.similarity_ready()
+    assert mem.min_similarity() == mem.MIN_SIM_CENTERED
+
+    centered = mem.query(b, k=1)[0]
+    assert centered.similarity < 0.6, (
+        f"centered similarity must strip the common direction (got {centered.similarity:.3f})"
+    )
+    same = mem.query(a, k=1)[0]
+    assert same.similarity > 0.9, "identical keys stay similar after centering"
+
+
+def test_interpolate_filters_below_gate_neighbors(tmp_path):
+    """Below-gate entries must not leak probability mass (the cross-fact
+    digit-leakage failure the July proof caught)."""
+    import numpy as np
+
+    mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
+    target = _unit([1, 0, 0, 0, 0, 0, 0, 0.2])
+    other = _unit([0, 1, 0, 0, 0, 0, 0, 0.2])
+    mem.add(target, 111)
+    mem.add(other, 222)
+
+    blended = mem.interpolate({111: 0.01, 999: 0.99}, target, k=4, lam_override=0.9)
+    assert blended[111] > blended.get(222, 0.0), (
+        "the exact-match entry must dominate; the unrelated entry is filtered"
+    )
+
+
+def test_query_mu_persists_across_reload(tmp_path):
+    import numpy as np
+
+    mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
+    mem.add(_unit([1, 1, 1, 1, 1, 1, 1, 1]), 5)
+    for _ in range(20):
+        mem.query(_unit(np.random.default_rng(3).normal(1, 0.1, 8)), k=1)
+    assert mem.similarity_ready()
+    assert mem.persist()
+
+    reloaded = NonParametricMemory(dim=8, path=tmp_path / "npm")
+    assert reloaded.similarity_ready(), "the anisotropy mean must survive restarts"
+
+
+def test_neighbors_carry_store_index(tmp_path):
+    mem = NonParametricMemory(dim=8, path=tmp_path / "npm")
+    a = _unit([1, 0, 0, 0, 0, 0, 0, 0])
+    b = _unit([0, 1, 0, 0, 0, 0, 0, 0])
+    mem.add(a, 1)
+    mem.add(b, 2)
+    nearest = mem.query(a, k=1)[0]
+    assert nearest.index == 0 and nearest.token_id == 1

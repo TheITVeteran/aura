@@ -100,7 +100,7 @@ def generate_with_memory(
     *,
     max_tokens: int = 40,
     k: int = 4,
-    temperature: float = 2.0,
+    temperature: float = 0.1,
     phi: float | None = 0.5,
     free_energy: float | None = 0.7,
     use_memory: bool = True,
@@ -112,8 +112,9 @@ def generate_with_memory(
     ids = list(tokenizer.encode(prompt))
     start = len(ids)
     eos = getattr(tokenizer, "eos_token_id", None)
-    base_lam = 0.75            # at perfect recall (cos≈1) trust memory strongly
-    min_cos = 0.55             # below this, the neighbor is unrelated → defer to the model
+    base_lam = 0.75            # at perfect recall (sim≈1) trust memory strongly
+    min_cos = 0.55             # legacy fallback when the memory carries no gate
+    last_fired_index = -1      # anti-stutter: an entry may not fire twice in a row
     for _ in range(max(1, int(max_tokens))):
         try:
             key, lg = _bare_logits(model, ids)
@@ -126,17 +127,23 @@ def generate_with_memory(
                 qkey = normalize(key)
                 neighbors = memory.query(qkey, k=k)
                 if neighbors:
-                    cos = cosine_from_l2(neighbors[0].distance)
-                    if cos >= min_cos:
-                        # confidence-GATED λ: scales with cosine, zero for far neighbors.
+                    # Anisotropy-corrected gate (see Neighbor.similarity).
+                    sim = float(getattr(neighbors[0], "similarity", -1.0))
+                    gate = float(getattr(memory, "min_similarity", lambda: min_cos)())
+                    nearest_index = int(getattr(neighbors[0], "index", -1))
+                    if sim >= gate and nearest_index != last_fired_index:
+                        # confidence-GATED λ: scales with similarity, zero below the gate.
                         fe = 0.5 if free_energy is None else float(free_energy)
-                        lam = base_lam * max(0.0, (cos - min_cos) / (1.0 - min_cos)) * (0.6 + 0.8 * fe)
+                        lam = base_lam * max(0.0, (sim - gate) / max(1e-6, 1.0 - gate)) * (0.6 + 0.8 * fe)
                         lm_probs = _topk_probs(lg)
                         blended = memory.interpolate(
                             lm_probs, qkey, k=k, temperature=temperature, phi=phi,
                             free_energy=free_energy, lam_override=min(lam, 0.9),
                         )
-                        next_id = int(max(blended, key=blended.get))
+                        memory_choice = int(max(blended, key=blended.get))
+                        if memory_choice != next_id:
+                            last_fired_index = nearest_index
+                        next_id = memory_choice
             except (RuntimeError, ValueError, TypeError, AttributeError) as exc:
                 record_degradation("nonparametric_generation_interpolate", exc)
         ids.append(next_id)
@@ -150,7 +157,7 @@ def make_nonparametric_logits_processor(
     memory: Any,
     *,
     k: int = 4,
-    temperature: float = 2.0,
+    temperature: float = 0.1,
     phi: float | None = 0.5,
     free_energy: float | None = 0.7,
     min_cos: float = 0.55,
@@ -166,6 +173,8 @@ def make_nonparametric_logits_processor(
     """
     import mlx.core as mx
 
+    state = {"last_fired_index": -1}
+
     def _proc(tokens: Any, logits: Any) -> Any:
         try:
             seq = tokens.reshape(1, -1) if hasattr(tokens, "reshape") else mx.array([tokens])
@@ -174,11 +183,15 @@ def make_nonparametric_logits_processor(
             neighbors = memory.query(key, k=k)
             if not neighbors:
                 return logits
-            cos = cosine_from_l2(neighbors[0].distance)
-            if cos < min_cos:
+            # Anisotropy-corrected gate + anti-stutter (see Neighbor).
+            sim = float(getattr(neighbors[0], "similarity", -1.0))
+            gate = float(getattr(memory, "min_similarity", lambda: min_cos)())
+            nearest_index = int(getattr(neighbors[0], "index", -1))
+            if sim < gate or nearest_index == state["last_fired_index"]:
                 return logits
+            state["last_fired_index"] = nearest_index
             fe = 0.5 if free_energy is None else float(free_energy)
-            lam = base_lam * ((cos - min_cos) / (1.0 - min_cos)) * (0.6 + 0.8 * fe)
+            lam = base_lam * ((sim - gate) / max(1e-6, 1.0 - gate)) * (0.6 + 0.8 * fe)
             lg = np.array(logits, dtype=np.float32).reshape(-1)
             ktop = min(64, lg.shape[0])
             idx = np.argpartition(lg, -ktop)[-ktop:]

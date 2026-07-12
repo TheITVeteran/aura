@@ -157,8 +157,12 @@ class NonParametricIngestor:
         return n
 
     def ingest_from_trusted_stores(self, encoder: Encoder, *, limit: int = 500) -> int:
-        """Pull verifier-clean pairs from the on-disk trusted stores and ingest them."""
-        if not _flag_on("AURA_NONPARAMETRIC_INGEST"):
+        """Pull verifier-clean pairs from the on-disk trusted stores and ingest them.
+
+        Default ON since the July end-to-end proof; the background job that
+        calls this stays pressure-guarded. Kill switch: AURA_NONPARAMETRIC_INGEST=0.
+        """
+        if not _flag_on("AURA_NONPARAMETRIC_INGEST", "1"):
             return 0
         return self.ingest_pairs(collect_trusted_pairs(limit=limit), encoder)
 

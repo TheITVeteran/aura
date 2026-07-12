@@ -56,6 +56,10 @@ triage:
 	@echo "🩻 Categorizing the crash-forensics record into incident classes..."
 	@$(PYTHON) tools/crash_triage.py --window-days 7 --out artifacts/reliability/triage.json || true
 
+nonparametric-proof:
+	@echo "🧠 Proving one-shot foreground non-parametric recall on the real reflex model..."
+	@$(PYTHON) tools/nonparametric_proof.py
+
 inner-light:
 	@echo "🕯  Running the inner-light consciousness-discriminator test (demo reference vs controls)..."
 	@$(PYTHON) tools/inner_light_probe.py --demo

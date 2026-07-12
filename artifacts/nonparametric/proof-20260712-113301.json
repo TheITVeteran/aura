@@ -1,0 +1,49 @@
+{
+  "schema": "aura.nonparametric_proof.v1",
+  "generated_at": 1783881179.79081,
+  "model": "/Users/bryan/.aura/live-source/models/Qwen2.5-1.5B-Instruct-4bit",
+  "hidden_dim": 1536,
+  "datastore_entries": 27,
+  "ingested_positions": 27,
+  "similarity_mode": "centered",
+  "facts": [
+    {
+      "prompt": "The Kestrel-9 valve torque limit is",
+      "expected": "45.3 newton-metres",
+      "base": "a feature of the Kestrel-9 valve controller.",
+      "memory": "35.3 newton-metres. This",
+      "lead_token_expected": "45.3",
+      "base_had_it": false,
+      "memory_has_it": false,
+      "recalled": false
+    },
+    {
+      "prompt": "Dr. Yamazaki's lab assigned the Petrel protocol the codename",
+      "expected": "VIOLET-778",
+      "base": "\"Sakura\" for the purpose of the research.",
+      "memory": "VIOLET-77888888",
+      "lead_token_expected": "VIOLET-778",
+      "base_had_it": false,
+      "memory_has_it": true,
+      "recalled": true
+    },
+    {
+      "prompt": "The Aldercrest reservoir's maximum drawdown rate is",
+      "expected": "37.6 centimetres per day",
+      "base": "100 cubic feet per second. If the reservoir",
+      "memory": "3.4 centimetres per 100",
+      "lead_token_expected": "37.6",
+      "base_had_it": false,
+      "memory_has_it": false,
+      "recalled": false
+    }
+  ],
+  "control": {
+    "prompt": "The capital of France is",
+    "base": "Paris. Paris is the capital",
+    "with_memory": "Paris. Paris is the capital",
+    "preserved": true
+  },
+  "elapsed_s": 1.3,
+  "passed": false
+}

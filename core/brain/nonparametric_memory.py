@@ -61,6 +61,18 @@ class Neighbor:
     token: str
     distance: float
     weight: float
+    # Anisotropy-corrected similarity in [-1, 1]: cosine between the query
+    # and this key AFTER subtracting the running mean of the hidden space.
+    # Raw last-token hidden states share a dominant common direction —
+    # measured on the live 1.5B: UNRELATED prompts score raw cos 0.81-0.93
+    # while identical prompts score 1.0000, so raw-cos gates cannot
+    # separate them; mean-centered cosines put unrelated prompts at ≤0.36.
+    # Until the mean estimate is ready, this falls back to raw cosine and
+    # the gate compensates with a much higher threshold.
+    similarity: float = -1.0
+    # Position of this entry in the store — lets generation loops apply the
+    # anti-stutter guard (the same entry may not fire on consecutive steps).
+    index: int = -1
 
 
 class NonParametricMemory:
@@ -97,7 +109,26 @@ class NonParametricMemory:
         self._weights: list[float] = []
         self._ts: list[float] = []
         self._stats = {"added": 0, "queried": 0, "evicted": 0, "interpolated": 0, "fallthrough": 0}
+        # Running mean of QUERY keys — the estimator of the hidden space's
+        # anisotropic common direction. Every query is a sample; persisted
+        # with the store so the correction survives restarts.
+        self._query_mu = np.zeros(self._dim, dtype=np.float32)
+        self._query_mu_n = 0
         self._load()
+
+    # How many query samples the mean needs before centered similarity is
+    # trusted; below this the raw-cosine fallback gate applies.
+    MU_READY_N = 16
+    # Gate thresholds per mode (measured, see Neighbor.similarity).
+    MIN_SIM_CENTERED = 0.60
+    MIN_SIM_RAW = 0.98
+
+    def similarity_ready(self) -> bool:
+        return self._query_mu_n >= self.MU_READY_N
+
+    def min_similarity(self) -> float:
+        """The confident-recall gate matched to the active similarity mode."""
+        return self.MIN_SIM_CENTERED if self.similarity_ready() else self.MIN_SIM_RAW
 
     # ── population ────────────────────────────────────────────────────────────
     def add(self, key: np.ndarray, token_id: int, token: str = "", *, weight: float = 1.0) -> bool:
@@ -130,6 +161,15 @@ class NonParametricMemory:
             if n == 0 or q.shape[0] != self._dim:
                 return []
             self._stats["queried"] += 1
+            # Every query is a sample of the hidden space: feed the running
+            # mean that powers the anisotropy correction (cumulative mean up
+            # to 256 samples, then a slow EMA that tracks drift).
+            if np.all(np.isfinite(q)):
+                if self._query_mu_n < 256:
+                    self._query_mu_n += 1
+                    self._query_mu += (q - self._query_mu) / float(self._query_mu_n)
+                else:
+                    self._query_mu += 0.005 * (q - self._query_mu)
             # ||x-q||^2 = ||x||^2 + ||q||^2 - 2x.q avoids allocating an
             # n-by-hidden-dimension difference matrix on every decode step.
             dists_sq = self._key_norms[:n] + float(np.dot(q, q))
@@ -138,10 +178,43 @@ class NonParametricMemory:
             kk = min(max(1, int(k)), n)
             idx = np.argpartition(dists, kk - 1)[:kk]
             idx = idx[np.argsort(dists[idx])]
+            similarities = self._similarities_for(q, idx)
             return [
-                Neighbor(self._token_ids[i], self._tokens[i], float(dists[i]), float(self._weights[i]))
-                for i in idx
+                Neighbor(
+                    self._token_ids[i],
+                    self._tokens[i],
+                    float(dists[i]),
+                    float(self._weights[i]),
+                    similarity=float(sim),
+                    index=int(i),
+                )
+                for i, sim in zip(idx, similarities)
             ]
+
+    def _similarities_for(self, q: np.ndarray, idx: Any) -> list[float]:
+        """Gate-ready similarity per neighbor (caller holds the lock).
+
+        Centered cosine once the mean is ready; raw cosine before that.
+        O(k·dim) — computed only for the k returned neighbors.
+        """
+        centered = self._query_mu_n >= self.MU_READY_N
+        mu = self._query_mu if centered else None
+        sims: list[float] = []
+        for i in idx:
+            key_vec = self._keys[int(i)]
+            if mu is not None:
+                a = q - mu
+                b = key_vec - mu
+            else:
+                a = q
+                b = key_vec
+            na = float(np.linalg.norm(a))
+            nb = float(np.linalg.norm(b))
+            if na <= 1e-8 or nb <= 1e-8:
+                sims.append(-1.0)
+                continue
+            sims.append(float(np.dot(a, b)) / (na * nb))
+        return sims
 
     def knn_probs(self, neighbors: list[Neighbor], *, temperature: float = 1.0) -> dict[int, float]:
         """kNN-LM distribution: softmax over -distance, weighted by entry gravity, per token."""
@@ -175,8 +248,15 @@ class NonParametricMemory:
         """
         if not neighbors:
             return 0.0
-        nearest = min(nb.distance for nb in neighbors)
-        confidence = math.exp(-nearest / self._dist_scale)          # 1 at d=0 → 0 far away
+        # Anisotropy-corrected gate: below the confident-recall threshold the
+        # blend contributes NOTHING (measured: raw hidden-state cosine cannot
+        # separate unrelated prompts — the July proof caught the old
+        # distance-only confidence corrupting even unrelated generations).
+        best_sim = max(nb.similarity for nb in neighbors)
+        min_sim = self.min_similarity()
+        if best_sim < min_sim:
+            return 0.0
+        confidence = _clamp((best_sim - min_sim) / max(1e-6, 1.0 - min_sim), 0.0, 1.0)
         fe = _clamp(float(free_energy), 0.0, 1.0) if free_energy is not None else 0.5
         lam = self._base_lambda * (0.5 + 0.5 * confidence) * (0.6 + 0.8 * fe)
         if phi is not None:
@@ -203,6 +283,12 @@ class NonParametricMemory:
         generation never degrades below the raw model.
         """
         neighbors = self.query(query_key, k=k)
+        # Per-neighbor confidence filter: entries below the gate must not
+        # leak probability mass into the kNN distribution. Measured failure
+        # (July proof): with the soft filter, digits from OTHER facts at raw
+        # cos ~0.93 outvoted the exact-match entry and corrupted recall.
+        min_sim = self.min_similarity()
+        neighbors = [nb for nb in neighbors if nb.similarity >= min_sim]
         if not neighbors:
             with self._lock:
                 self._stats["fallthrough"] += 1
@@ -350,6 +436,10 @@ class NonParametricMemory:
                 self._weights = [max(0.0, float(value)) for value in weights[-count:]]
                 self._ts = [float(value) for value in timestamps[-count:]]
                 self._size = count
+                saved_mu = meta.get("query_mu")
+                if isinstance(saved_mu, list) and len(saved_mu) == self._dim:
+                    self._query_mu = np.asarray(saved_mu, dtype=np.float32)
+                    self._query_mu_n = max(0, int(meta.get("query_mu_n", 0) or 0))
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             record_degradation("nonparametric_memory_load", exc)
 
@@ -359,9 +449,11 @@ class NonParametricMemory:
             with self._lock:
                 keys = self._keys[: self._size].copy()
                 meta = {
-                    "schema_version": 1, "dim": self._dim, "saved_at": time.time(),
+                    "schema_version": 2, "dim": self._dim, "saved_at": time.time(),
                     "token_ids": list(self._token_ids), "tokens": list(self._tokens),
                     "weights": list(self._weights), "ts": list(self._ts),
+                    "query_mu": [float(v) for v in self._query_mu],
+                    "query_mu_n": int(self._query_mu_n),
                 }
             keys_path = self._path.with_suffix(".keys.npy")
             meta_path = self._path.with_suffix(".meta.json")

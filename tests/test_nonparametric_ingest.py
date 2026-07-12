@@ -100,10 +100,12 @@ def test_collect_trusted_pairs_missing_file_ok(tmp_path):
     assert collect_trusted_pairs(sources=[(tmp_path / "nope.json", "entries")]) == []
 
 
-def test_ingest_from_trusted_stores_flag_gated(tmp_path, monkeypatch):
+def test_ingest_from_trusted_stores_kill_switch(tmp_path, monkeypatch):
+    """Default flipped ON after the July end-to-end proof; the kill switch
+    must still stop ingestion cold."""
     mem, ing, enc = _ingestor(tmp_path)
-    monkeypatch.delenv("AURA_NONPARAMETRIC_INGEST", raising=False)
-    assert ing.ingest_from_trusted_stores(enc) == 0   # disabled → no-op
+    monkeypatch.setenv("AURA_NONPARAMETRIC_INGEST", "0")
+    assert ing.ingest_from_trusted_stores(enc) == 0   # kill switch → no-op
 
 
 def test_ingest_sequence_adds_every_answer_position(tmp_path):

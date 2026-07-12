@@ -176,11 +176,12 @@ async def _get_encoder() -> Any | None:
 async def _job_nonparametric_ingest() -> dict[str, Any]:
     """Ingest trusted knowledge into the non-parametric datastore (background-first).
 
-    OFF by default (AURA_NONPARAMETRIC_INGEST). Skips under memory pressure — loading the
-    cortex encoder is heavy and must never compete with a resident foreground model on a
-    64GB host. Bounded batch per run.
+    ON by default since the July end-to-end proof (AURA_NONPARAMETRIC_INGEST=0
+    reverts). Skips under memory pressure — loading the cortex encoder is heavy
+    and must never compete with a resident foreground model on a 64GB host.
+    Bounded batch per run.
     """
-    if not _flag_on("AURA_NONPARAMETRIC_INGEST"):
+    if not _flag_on("AURA_NONPARAMETRIC_INGEST", "1"):
         return {"status": "disabled"}
     try:
         from core.utils.memory_monitor import get_memory_pressure_snapshot
