@@ -63,3 +63,9 @@ core/capabilities/host_automation.py
 core/skills/os_automation.py
 # Bounded multimodal event-time fusion (2026-07-12)
 core/perception/multimodal_sync.py
+# Canonical legacy sensory adapter (2026-07-12)
+core/perception/sensory_integration.py
+# Consented visual-only speech recognition (2026-07-12)
+core/perception/visual_speech.py
+core/perception/visual_speech_tracking.py
+core/perception/visual_speech_auto_avsr.py

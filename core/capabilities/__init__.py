@@ -7,17 +7,17 @@ capability providers online in dependency order.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
-from typing import Any, Dict, List
+from collections.abc import Callable
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Capabilities")
 
 
-async def boot_capabilities() -> Dict[str, Any]:
+async def boot_capabilities() -> dict[str, Any]:
     """Boot all capability providers in dependency order.
 
     Order matters:
@@ -33,28 +33,29 @@ async def boot_capabilities() -> Dict[str, Any]:
     10. OSSettings (wallpaper, volume, etc.)
     11. ClipboardManager (clipboard ops)
     12. SourceSummarizer (multi-source summarization)
-    13. ScreenPerception (visual perception)
+    13. ScreenPerception and PerceptualPump (canonical multimodal perception)
+    14. VisualSpeech (consented visual-only speech recognition)
 
     Planning layer:
-    14. TaskDecomposer (NL → TaskGraph)
-    15. RecoveryEngine (failure recovery)
-    16. MissionState (durable mission progress)
+    15. TaskDecomposer (NL → TaskGraph)
+    16. RecoveryEngine (failure recovery)
+    17. MissionState (durable mission progress)
 
     Voice layer:
-    17. VoiceSession (narration + session management)
-    18. WakeWord (always-listening detection)
+    18. VoiceSession (narration + session management)
+    19. WakeWord (always-listening detection)
 
     Philosophical layer:
-    19. BehavioralProof (Path A functionalist evidence)
-    20. MindStateExporter (mind state export/import)
+    20. BehavioralProof (Path A functionalist evidence)
+    21. MindStateExporter (mind state export/import)
 
     Returns a status dict.
     """
     start = time.time()
-    booted: List[str] = []
-    failed: List[str] = []
+    booted: list[str] = []
+    failed: list[str] = []
 
-    async def _boot(name: str, factory):
+    async def _boot(name: str, factory: Callable[[], Any]) -> None:
         """Boot a single provider, recording success/failure."""
         try:
             instance = factory()
@@ -170,6 +171,13 @@ async def boot_capabilities() -> Dict[str, Any]:
         failed.append("perceptual_pump")
         record_degradation("boot.perceptual_pump", e)
 
+    try:
+        from core.perception.visual_speech import get_visual_speech_engine
+        await _boot("visual_speech", get_visual_speech_engine)
+    except ImportError as e:
+        failed.append("visual_speech")
+        record_degradation("boot.visual_speech", e)
+
     # --- Tier 3: Planning ---
 
     try:
@@ -243,7 +251,7 @@ async def boot_capabilities() -> Dict[str, Any]:
     return status
 
 
-async def get_capabilities_status() -> Dict[str, Any]:
+async def get_capabilities_status() -> dict[str, Any]:
     """Get status of all booted capability providers."""
     from core.container import ServiceContainer
 
@@ -252,7 +260,8 @@ async def get_capabilities_status() -> Dict[str, Any]:
         "host_automation", "post_action_verifier", "browser_controller",
         "document_service", "file_broker", "web_asset_handler",
         "os_settings", "clipboard_manager", "source_summarizer",
-        "screen_perception", "perceptual_pump", "task_decomposer", "recovery_engine",
+        "screen_perception", "perceptual_pump", "visual_speech",
+        "task_decomposer", "recovery_engine",
         "mission_state", "voice_session", "wake_word",
         "behavioral_proof", "mind_state_exporter",
     ]

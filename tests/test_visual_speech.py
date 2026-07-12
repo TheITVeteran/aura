@@ -1,170 +1,361 @@
-"""Visual speech pipeline: synthetic-frame verification.
-
-No camera, no model downloads, no cv2 dependence in-process — the face
-detector is injected, and the motion/band-pass/calibration logic runs
-on synthetic articulating mouths with known ground truth.
-"""
 from __future__ import annotations
 
-import math
+import asyncio
+from dataclasses import replace
 
 import numpy as np
 import pytest
 
-from core.senses.visual_speech import (
-    MouthRegion,
-    VisualSpeechPipeline,
-    mouth_roi_from_face,
+from core.container import ServiceContainer
+from core.perception.multimodal_sync import MissingReason, Modality, MultimodalSynchronizer
+from core.perception.visual_speech import (
+    AudioActivitySample,
+    BackendPrediction,
+    VisualSpeechConsent,
+    VisualSpeechEngine,
+    VisualSpeechEvidence,
+    VisualSpeechStatus,
 )
 
-FRAME_H, FRAME_W = 120, 160
-FACE = (40, 20, 80, 80)  # x, y, w, h
+NOW = 1_700_000_000.0
 
 
-def _fixed_detector(gray):
-    return FACE
+def _consent(**changes) -> VisualSpeechConsent:
+    values = {
+        "consent_id": "consent-visual-1",
+        "subject_id": "operator-bryan",
+        "purpose": "consented visual-only speech recognition test",
+        "issued_at": NOW - 60.0,
+        "expires_at": NOW + 600.0,
+        "allow_visual_speech": True,
+        "allow_audio_alignment": False,
+        "allow_raw_retention": False,
+    }
+    values.update(changes)
+    return VisualSpeechConsent(**values)
 
 
-def _frame_with_mouth(openness: float) -> np.ndarray:
-    """Synthetic face: light skin block with a dark mouth whose vertical
-    aperture follows ``openness`` in [0, 1]."""
-    frame = np.full((FRAME_H, FRAME_W), 180, dtype=np.uint8)
-    region = mouth_roi_from_face(FACE)
-    center_y = region.y + region.height // 2
-    half_open = max(1, int((region.height // 2 - 2) * openness))
-    frame[
-        center_y - half_open: center_y + half_open,
-        region.x + 4: region.x + region.width - 4,
-    ] = 30
-    return frame
+def _evidence(*, brightness: float = 100.0, competing: float = 0.1) -> VisualSpeechEvidence:
+    rng = np.random.default_rng(7)
+    frame_count = 40
+    crops = rng.integers(0, 255, size=(frame_count, 96, 96, 3), dtype=np.uint8)
+    activity = tuple(float(value) for value in rng.random(frame_count))
+    timestamps = tuple(index / 25.0 for index in range(frame_count))
+    return VisualSpeechEvidence(
+        source_digest="video-sha256-test",
+        mouth_crops=crops,
+        timestamps_s=timestamps,
+        mouth_activity=activity,
+        source_fps=30.0,
+        sampled_fps=25.0,
+        duration_s=1.56,
+        decoded_frames=40,
+        mouth_frames=40,
+        face_detection_coverage=1.0,
+        mouth_landmark_coverage=1.0,
+        mean_brightness=brightness,
+        mean_blur_variance=120.0,
+        mean_mouth_motion=6.0,
+        competing_face_ratio=competing,
+        ambiguous_face_frames=0,
+        track_switches=0,
+        speaker_track_id="visual-track-1",
+        source_audio_present=True,
+        source_audio_presence_known=True,
+        extractor="unit-native-vision",
+        quality_flags=("native_face_landmarks",),
+    )
 
 
-def _run_sequence(pipeline: VisualSpeechPipeline, openness_series) -> list:
-    return [
-        pipeline.process_frame(_frame_with_mouth(o), at=i / pipeline.fps)
-        for i, o in enumerate(openness_series)
+class Extractor:
+    def __init__(self, evidence: VisualSpeechEvidence) -> None:
+        self.evidence = evidence
+        self.calls = 0
+
+    def extract(self, _video_path, _policy):
+        self.calls += 1
+        return self.evidence
+
+
+class Backend:
+    def __init__(
+        self,
+        *,
+        transcript: str = "read the visual sentence",
+        confidence: float | None = 0.95,
+        calibrated: bool = True,
+        available: bool = True,
+    ) -> None:
+        self.transcript = transcript
+        self.confidence = confidence
+        self.calibrated = calibrated
+        self.is_available = available
+        self.calls = 0
+        self.saw_nonzero = False
+
+    def available(self) -> tuple[bool, str]:
+        return self.is_available, "ready" if self.is_available else "checkpoint_missing"
+
+    async def infer(self, mouth_crops, *, fps):
+        self.calls += 1
+        self.saw_nonzero = bool(np.any(mouth_crops))
+        assert fps == 25.0
+        return BackendPrediction(
+            transcript=self.transcript,
+            confidence=self.confidence,
+            calibrated=self.calibrated,
+            backend="unit-visual-only",
+            model_id="unit-vsr-1",
+        )
+
+
+@pytest.mark.asyncio
+async def test_expired_consent_denies_before_video_or_model_access(tmp_path) -> None:
+    evidence = _evidence()
+    extractor = Extractor(evidence)
+    backend = Backend()
+    sync = MultimodalSynchronizer()
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("multimodal_synchronizer", sync, required=False)
+    source = tmp_path / "private.mp4"
+    source.write_bytes(b"video")
+    engine = VisualSpeechEngine(
+        extractor=extractor,
+        backend=backend,
+        wall_clock=lambda: NOW,
+    )
+
+    try:
+        result = await engine.transcribe_video(
+            source,
+            consent=_consent(expires_at=NOW - 1.0),
+        )
+        frame = sync.fuse("expired-consent")
+
+        assert result.status is VisualSpeechStatus.DENIED
+        assert result.reason == "consent_expired"
+        assert extractor.calls == 0
+        assert backend.calls == 0
+        assert frame.missing[Modality.SPEECH] is MissingReason.PERMISSION_DENIED
+    finally:
+        ServiceContainer.clear()
+
+
+@pytest.mark.asyncio
+async def test_audio_alignment_requires_separate_consent(tmp_path) -> None:
+    evidence = _evidence()
+    extractor = Extractor(evidence)
+    backend = Backend()
+    source = tmp_path / "private.mp4"
+    source.write_bytes(b"video")
+    engine = VisualSpeechEngine(
+        extractor=extractor,
+        backend=backend,
+        wall_clock=lambda: NOW,
+    )
+
+    result = await engine.transcribe_video(
+        source,
+        consent=_consent(),
+        audio_activity=[AudioActivitySample(0.0, 0.5)] * 5,
+    )
+
+    assert result.status is VisualSpeechStatus.DENIED
+    assert result.reason == "audio_alignment_not_consented"
+    assert extractor.calls == 0
+    assert backend.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_poor_light_and_speaker_ambiguity_abstain_before_decoder(tmp_path) -> None:
+    evidence = _evidence(brightness=5.0, competing=0.9)
+    extractor = Extractor(evidence)
+    backend = Backend()
+    source = tmp_path / "dark.mp4"
+    source.write_bytes(b"video")
+    engine = VisualSpeechEngine(
+        extractor=extractor,
+        backend=backend,
+        wall_clock=lambda: NOW,
+    )
+
+    result = await engine.transcribe_video(source, consent=_consent())
+
+    assert result.status is VisualSpeechStatus.ABSTAINED
+    assert "poor_lighting" in result.reason
+    assert "speaker_face_ambiguous" in result.reason
+    assert backend.calls == 0
+    assert np.count_nonzero(evidence.mouth_crops) == 0
+
+
+@pytest.mark.asyncio
+async def test_calibrated_visual_only_result_is_actionable_and_causal(tmp_path) -> None:
+    evidence = _evidence()
+    extractor = Extractor(evidence)
+    backend = Backend()
+    source = tmp_path / "speaker.mp4"
+    source.write_bytes(b"video")
+    sync = MultimodalSynchronizer()
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("multimodal_synchronizer", sync, required=False)
+    engine = VisualSpeechEngine(
+        extractor=extractor,
+        backend=backend,
+        wall_clock=lambda: NOW,
+    )
+    audio = [
+        AudioActivitySample(timestamp, activity)
+        for timestamp, activity in zip(
+            evidence.timestamps_s,
+            evidence.mouth_activity,
+            strict=True,
+        )
     ]
 
+    try:
+        result = await engine.transcribe_video(
+            source,
+            consent=_consent(allow_audio_alignment=True),
+            audio_activity=audio,
+        )
+        frame = sync.fuse("visual-speech-success")
 
-def _talking_series(frames: int, fps: float, syllable_hz: float = 4.0):
-    return [
-        0.5 + 0.5 * math.sin(2 * math.pi * syllable_hz * i / fps)
-        for i in range(frames)
-    ]
-
-
-# ── Core discrimination: talking vs still ────────────────────────
-
-def test_articulating_mouth_is_detected_as_speech():
-    pipeline = VisualSpeechPipeline(fps=15.0, face_detector=_fixed_detector)
-    observations = _run_sequence(pipeline, _talking_series(90, 15.0))
-    tail = observations[45:]
-    assert any(obs.speaking for obs in tail)
-    assert max(obs.speaking_probability for obs in tail) > 0.9
-
-
-def test_static_mouth_is_not_speech():
-    pipeline = VisualSpeechPipeline(fps=15.0, face_detector=_fixed_detector)
-    observations = _run_sequence(pipeline, [0.4] * 90)
-    assert all(not obs.speaking for obs in observations)
-    assert all(obs.speaking_probability < 0.2 for obs in observations[10:])
-
-
-def test_slow_drift_outside_syllabic_band_is_rejected():
-    pipeline = VisualSpeechPipeline(fps=15.0, face_detector=_fixed_detector)
-    # 0.2 Hz slow drift — mouth moves, but far below articulation rate.
-    series = [0.5 + 0.4 * math.sin(2 * math.pi * 0.2 * i / 15.0) for i in range(90)]
-    observations = _run_sequence(pipeline, series)
-    assert all(not obs.speaking for obs in observations)
+        assert result.status is VisualSpeechStatus.TRANSCRIBED
+        assert result.transcript == "read the visual sentence"
+        assert result.actionable is True
+        assert result.calibrated is True
+        assert result.alignment.passed is True
+        assert result.speaker_association == "single_visible_track_not_identity_verified"
+        assert backend.saw_nonzero is True
+        assert np.count_nonzero(evidence.mouth_crops) == 0
+        assert frame.has_usable(Modality.SPEECH) is True
+        assert frame.belief("visual_speech.video_only").value is True
+        assert frame.belief("visual_speech.actionable").value is True
+        event = frame.observations[Modality.SPEECH]
+        assert "visual_only_lip_reading" in event.quality_flags
+        assert "read the visual sentence" not in repr(sync.get_status())
+    finally:
+        ServiceContainer.clear()
 
 
-def test_hysteresis_prevents_flicker():
-    pipeline = VisualSpeechPipeline(fps=15.0, face_detector=_fixed_detector)
-    talking = _talking_series(60, 15.0)
-    still = [0.5] * 60
-    observations = _run_sequence(pipeline, talking + still)
-    # Once ON, the state must not flap frame-to-frame: transitions are rare.
-    states = [obs.speaking for obs in observations]
-    transitions = sum(1 for a, b in zip(states, states[1:]) if a != b)
-    assert transitions <= 3
-    # And it must eventually release after silence.
-    assert states[-1] is False
+@pytest.mark.asyncio
+async def test_uncalibrated_decoder_output_remains_non_actionable_candidate(tmp_path) -> None:
+    evidence = _evidence()
+    backend = Backend(confidence=None, calibrated=False)
+    source = tmp_path / "speaker.mp4"
+    source.write_bytes(b"video")
+    sync = MultimodalSynchronizer()
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("multimodal_synchronizer", sync, required=False)
+    engine = VisualSpeechEngine(
+        extractor=Extractor(evidence),
+        backend=backend,
+        wall_clock=lambda: NOW,
+    )
+
+    try:
+        result = await engine.transcribe_video(source, consent=_consent())
+        frame = sync.fuse("uncalibrated-visual-speech")
+
+        assert result.status is VisualSpeechStatus.CANDIDATE
+        assert result.transcript == "read the visual sentence"
+        assert result.actionable is False
+        assert result.calibrated is False
+        assert result.confidence <= 0.49
+        assert result.reason == "uncalibrated_visual_only_candidate"
+        assert frame.missing[Modality.SPEECH] is MissingReason.UNCALIBRATED
+        assert frame.has_usable(Modality.SPEECH) is False
+        assert frame.belief("visual_speech.actionable") is None
+    finally:
+        ServiceContainer.clear()
 
 
-# ── Face handling ────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_decoder_unavailable_is_explicit_and_zeroes_ephemeral_crops(tmp_path) -> None:
+    evidence = _evidence()
+    backend = Backend(available=False)
+    source = tmp_path / "speaker.mp4"
+    source.write_bytes(b"video")
+    engine = VisualSpeechEngine(
+        extractor=Extractor(evidence),
+        backend=backend,
+        wall_clock=lambda: NOW,
+    )
 
-def test_no_face_yields_honest_absence():
-    pipeline = VisualSpeechPipeline(fps=15.0, face_detector=lambda gray: None)
-    obs = pipeline.process_frame(_frame_with_mouth(0.5), at=0.0)
-    assert not obs.face_present
-    assert obs.speaking_probability == 0.0
-    assert obs.transcript is None
+    result = await engine.transcribe_video(source, consent=_consent())
 
-
-def test_mouth_roi_geometry():
-    region = mouth_roi_from_face((40, 20, 80, 80))
-    assert region == MouthRegion(x=60, y=73, width=40, height=26)
-    clamped = MouthRegion(x=-5, y=1000, width=999, height=999).clamp(120, 160)
-    assert clamped.x >= 0 and clamped.y <= 118
-    assert clamped.x + clamped.width <= 160
-    assert clamped.y + clamped.height <= 120
-
-
-def test_bgr_frames_accepted():
-    pipeline = VisualSpeechPipeline(fps=15.0, face_detector=_fixed_detector)
-    gray = _frame_with_mouth(0.5)
-    bgr = np.stack([gray, gray, gray], axis=-1)
-    obs = pipeline.process_frame(bgr, at=0.0)
-    assert obs.face_present
+    assert result.status is VisualSpeechStatus.UNAVAILABLE
+    assert result.reason == "decoder_unavailable:checkpoint_missing"
+    assert backend.calls == 0
+    assert np.count_nonzero(evidence.mouth_crops) == 0
 
 
-# ── Viseme features ──────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_cancellation_zeroes_ephemeral_mouth_crops(tmp_path) -> None:
+    evidence = _evidence()
+    started = asyncio.Event()
 
-def test_viseme_openness_tracks_mouth_aperture():
-    pipeline = VisualSpeechPipeline(fps=15.0, face_detector=_fixed_detector)
-    closed = pipeline.process_frame(_frame_with_mouth(0.05), at=0.0)
-    open_wide = pipeline.process_frame(_frame_with_mouth(0.95), at=0.1)
-    assert open_wide.viseme_features[0] > closed.viseme_features[0]
-    assert open_wide.viseme_features[1] > closed.viseme_features[1]
-    for value in open_wide.viseme_features:
-        assert 0.0 <= value <= 1.0
+    class BlockingBackend(Backend):
+        async def infer(self, mouth_crops, *, fps):
+            started.set()
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
 
+    source = tmp_path / "speaker.mp4"
+    source.write_bytes(b"video")
+    engine = VisualSpeechEngine(
+        extractor=Extractor(evidence),
+        backend=BlockingBackend(),
+        wall_clock=lambda: NOW,
+    )
+    task = asyncio.create_task(engine.transcribe_video(source, consent=_consent()))
+    await started.wait()
+    task.cancel()
 
-# ── Honesty contract ─────────────────────────────────────────────
-
-def test_transcript_absent_without_model_and_source_says_why():
-    pipeline = VisualSpeechPipeline(fps=15.0, face_detector=_fixed_detector)
-    obs = pipeline.process_frame(_frame_with_mouth(0.5), at=0.0)
-    assert obs.transcript is None
-    assert obs.transcript_source == "unavailable_no_vsr_model"
-    assert not pipeline.vsr_model_attached
-
-
-def test_vsr_seam_refuses_missing_or_wrong_files(tmp_path):
-    pipeline = VisualSpeechPipeline(fps=15.0, face_detector=_fixed_detector)
-    result = pipeline.attach_vsr_model(tmp_path / "nope.onnx")
-    assert not result["ok"]
-    bogus = tmp_path / "model.txt"
-    bogus.write_text("not a model")
-    assert not pipeline.attach_vsr_model(bogus)["ok"]
-    garbage = tmp_path / "model.onnx"
-    garbage.write_bytes(b"garbage-not-onnx")
-    assert not pipeline.attach_vsr_model(garbage)["ok"]
-    assert not pipeline.vsr_model_attached
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert np.count_nonzero(evidence.mouth_crops) == 0
 
 
-def test_observation_serializes():
-    pipeline = VisualSpeechPipeline(fps=15.0, face_detector=_fixed_detector)
-    obs = pipeline.process_frame(_frame_with_mouth(0.5), at=1.0)
-    payload = obs.to_dict()
-    assert payload["face_present"] is True
-    assert "speaking_probability" in payload
-    assert payload["transcript"] is None
+def test_raw_retention_consent_is_rejected_by_contract() -> None:
+    with pytest.raises(ValueError, match="raw visual-speech retention is not supported"):
+        _consent(allow_raw_retention=True)
 
 
-def test_invalid_construction_rejected():
-    with pytest.raises(ValueError):
-        VisualSpeechPipeline(fps=0.0, face_detector=_fixed_detector)
-    pipeline = VisualSpeechPipeline(fps=15.0, face_detector=_fixed_detector)
-    with pytest.raises(ValueError):
-        pipeline.process_frame(np.zeros((2, 2, 2, 2), dtype=np.uint8))
+def test_evidence_rejects_unsorted_timestamps_and_invalid_crop_shape() -> None:
+    evidence = _evidence()
+    with pytest.raises(ValueError, match="strictly increasing"):
+        replace(evidence, timestamps_s=tuple(reversed(evidence.timestamps_s)))
+    with pytest.raises(ValueError, match="outside decoder bounds"):
+        replace(evidence, mouth_crops=np.zeros((40, 16, 16, 3), dtype=np.uint8))
+
+
+@pytest.mark.asyncio
+async def test_service_lifecycle_registers_and_reports_without_transcript_leak(tmp_path) -> None:
+    evidence = _evidence()
+    backend = Backend(transcript="private visible sentence")
+    source = tmp_path / "speaker.mp4"
+    source.write_bytes(b"video")
+    engine = VisualSpeechEngine(
+        extractor=Extractor(evidence),
+        backend=backend,
+        wall_clock=lambda: NOW,
+    )
+    ServiceContainer.clear()
+
+    try:
+        await engine.start()
+        result = await engine.transcribe_video(source, consent=_consent())
+        status = engine.get_status()
+
+        assert ServiceContainer.get("visual_speech") is engine
+        assert result.transcript == "private visible sentence"
+        assert status["started"] is True
+        assert status["requests"] == 1
+        assert status["status_counts"] == {"transcribed": 1}
+        assert status["latest"]["transcript_available"] is True
+        assert len(status["latest"]["transcript_digest"]) == 24
+        assert "private visible sentence" not in repr(status)
+    finally:
+        await engine.stop()
+        ServiceContainer.clear()

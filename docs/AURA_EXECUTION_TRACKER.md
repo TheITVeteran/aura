@@ -16,8 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **canonical mind/state ownership
-  (`MIND-001`, `STATE-001`)**. `CTX2-LANE-001..004` and
+- Current bounded implementation milestone: **real-time situation and calibrated
+  social intelligence (`CTX3-SITUATION-001`, `CTX3-DECIDE-001`,
+  `CTX3-SOCIAL-001..002`)**, following the bounded legacy-sensory and consented
+  visual-speech implementation recorded in Checkpoint 40. `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
   Signal-safe terminal shutdown (`CTX2-SHUTDOWN-001..003`) and the fail-closed
@@ -964,20 +966,35 @@ evidence into a metaphysical, legal, or comparative claim.
      multi-source failover, and confidence-weighted contradiction arbitration.
      Fused uncertainty and repair directives now causally alter substrate input,
      WorldState beliefs, cognitive attention/routing/sampling, response
-     abstention, and planner constraints. Still bridge every remaining legacy
-     producer, bind real sensor permission/consent receipts and calibrated source
-     identities, add event-time persistence/replay and richer spatial/body
-     schemas, prove action/repair learning, and pass live hardware, sensor-loss,
-     skew, occlusion, concurrency, restart, and longitudinal evaluation. Make continuous multimodal perception synchronize
+     abstention, and planner constraints. The legacy `SensorySystem` now uses the
+     same synchronizer, serializes same-modality capture, fixes its dead in-memory
+     vision payload path, and removes raw media/text from memory. Still bridge
+     every other remaining producer, bind real sensor permission/consent receipts
+     and calibrated source identities, add event-time persistence/replay and
+     richer spatial/body schemas, prove action/repair learning, and pass live
+     hardware, sensor-loss, skew, occlusion, concurrency, restart, and
+     longitudinal evaluation. Make continuous multimodal perception synchronize
      vision, audio, speech, spatial, device, body, and textual events with
      timestamps, calibration, provenance, confidence, privacy policy, missing
      modality semantics, and bounded queues. Fused beliefs must causally alter
      attention, memory, planning, action, and repair.
-   - `CTX3-PERCEPT-002`: implement consented computer-vision lip-reading as an
-     uncertainty-bearing modality, including face/mouth tracking, audiovisual
-     alignment, speaker association, occlusion and poor-light rejection,
-     demographic/accent evaluation, privacy/redaction, and explicit abstention.
-     A transcript generated from audio alone cannot satisfy this requirement.
+   - `CTX3-PERCEPT-002` `[IN PROGRESS 2026-07-12]`: a lifecycle-managed,
+     consent-expiring visual-only speech service now uses native macOS Vision
+     face/outer-lip landmarks, stable speaker tracks, bounded OpenCV video decode,
+     native audio-stream metadata without audio decode, optional separately
+     consented audiovisual activity alignment, and an integrity-pinned Auto-AVSR
+     checkpoint under the durable in-process model lane. Darkness, blur, static
+     lips, weak coverage, competing faces, track switches, and failed alignment
+     abstain before inference. Raw video and mouth crops are never retained;
+     diagnostics carry only digests, counts, quality, consent provenance, and
+     redacted status. Uncalibrated model output remains a caller-visible candidate
+     but enters canonical fusion as unusable `UNCALIBRATED` evidence with no
+     claims. Still add a governed clean-machine model installer and license flow,
+     real speaking-video WER and confidence calibration, accent/demographic and
+     camera/codec/pose/occlusion/lighting held-outs, verified multi-speaker
+     association, live camera consent UI, cancellation/restart/pressure trials,
+     and longitudinal causal evaluation. A transcript generated from audio alone
+     cannot satisfy this requirement.
    - `CTX3-SITUATION-001`: maintain real-time internal and external situation
      models: Aura state, operator/user state, agents, objects, hazards,
      affordances, goals, causal events, uncertainty, freshness, and predicted
@@ -11845,3 +11862,104 @@ Authoritative remaining perception and situation work:
   clock skew, overload, queue pressure, cancellation, restart, concurrent
   sources, and user interruption. Keep multi-hour and 24-72 hour soaks deferred
   until these and all other shorter gates are green.
+
+## Checkpoint 2026-07-12-40: Consented Visual Speech and Legacy Sensory Closure
+
+This checkpoint advances `MULTIMODAL-001`, `CTX3-PERCEPT-001`,
+`CTX3-PERCEPT-002`, `ARCH-001`, `FAULT-001`, `PRIVACY-001`, `RESOURCE-001`,
+and `OPERATIONS-001`. It closes the dead and raw-retaining legacy sensory path
+and establishes a real governed visual-only speech runtime. It does not claim
+calibrated production lip-reading accuracy, demographic/accent robustness,
+verified speaker identity, clean-machine model provisioning, or live-camera
+workflow closure.
+
+Implemented legacy sensory ownership and privacy:
+
+- Fixed the legacy camera capture/analyze contract so in-memory image data
+  reaches the vision lane instead of being silently ignored under a mismatched
+  key. Serialized each modality's concurrent captures and published camera,
+  microphone, speech, and text outcomes to the canonical event-time
+  synchronizer with explicit missing reasons.
+- Removed raw base64, raw text, and unconstrained interpretation payloads from
+  sensory memory and fusion. Memory stores bounded digests, encoded lengths,
+  privacy metadata, and copy-out snapshots; callers cannot mutate retained
+  history through a returned list.
+- Added strict types across the legacy sensory module and focused regressions
+  for in-memory camera analysis, redaction, same-modality serialization,
+  copy-out, and raw-free audio/text publication.
+
+Implemented consented visual-only speech:
+
+- Added explicit subject, purpose, issuance, expiry, visual-processing, and
+  separate audio-alignment consent. Consent is checked before source access;
+  raw retention is unsupported. Processing is serialized and cancellation
+  drains owned model work before ephemeral mouth crops are zeroed.
+- Added native macOS Vision face and outer-lip landmarks, stable IoU speaker
+  tracking, bounded 25 fps sampling, interpolation that preserves event time
+  without inflating landmark coverage, and measured face/landmark coverage,
+  brightness, blur, mouth motion, competing faces, ambiguity, and track
+  switches. OpenCV owns decode and image processing so PyAV cannot load a
+  conflicting FFmpeg runtime into the same macOS process. AVFoundation observes
+  audio-stream presence without decoding audio; unsupported platforms report
+  presence as unknown instead of falsely absent.
+- Added quality and ambiguity abstention before the decoder, optional
+  cross-correlated mouth/audio activity alignment, single-visible-track rather
+  than biometric identity claims, bounded source/frame/duration limits, and
+  privacy-safe status. Static lips, darkness, blur, weak landmarks, competing
+  faces, unstable tracks, and failed alignment cannot produce an accepted
+  transcript.
+- Installed and integrity-pinned the upstream Auto-AVSR visual-only runtime at
+  commit `182b62837773ab01052d4ac21ef1d2203ea7d267`; its 66 immutable source
+  files hash to
+  `16c00029964c56771bb3e7bf511c152204dfcb50f0837022575b8b97b93bceab`.
+  The 1,001,892,616-byte checkpoint hashes to
+  `fbf7cd70ff1c0e694b3030fb779dbb4570f04e4b841d62f9296c229e94878ddb`.
+  Loading uses PyTorch `weights_only=True`, scoped verified-source imports, a
+  4 GiB in-process model-lane reservation, heartbeat/fencing, preemptibility
+  transitions, drained thread calls, failed-load cleanup, compensation, and
+  deterministic unload. The external runtime and model are not committed.
+- Registered the service after the perceptual pump without eagerly loading its
+  model. Service shutdown releases model-lane ownership. Results publish only
+  transcript digests and quality/consent provenance to canonical fusion.
+  Uncalibrated decoder text is capped at `0.49`, remains non-actionable, and is
+  represented to cognition as `UNCALIBRATED` missing evidence with no claims.
+
+Verification completed for this checkpoint:
+
+- Visual-speech consent, quality, privacy, cancellation, tracking, model-lane,
+  lifecycle, and causal-fusion tests passed `18/18` with the real-model test
+  separately selected. The broader sensory, multimodal, pump, situation-frame,
+  boot/capability-contract, and legacy visual-speech matrix passed `97/97`.
+- The real 1 GiB checkpoint passed load, integrity verification, inference, lane
+  ownership, preemptibility fencing, and unload in `3.54s`. A real-face native
+  landmark trial had `1.0` face and lip coverage but only `0.2204` mean mouth
+  motion; it abstained before model load with no transcript. A motion-bearing
+  real-face trial reached the actual model, returned an uncalibrated candidate,
+  stayed non-actionable, entered fusion as unusable `UNCALIBRATED` evidence,
+  leaked no transcript through status, and released the lane.
+- Whole-tree compile and configured Ruff passed. Strict MyPy grew from `48` to
+  `52` production files. Governance remains at `1,805` recognized calls in
+  `1,699` buckets with zero `ActionExecutor` debt and `1,685` migration-debt
+  calls; no new effect debt was accepted. Source hygiene, enterprise static and
+  collection ratchets, security, 13/13 cognitive-gate ownership, 75/75 skill
+  parity, model-load ownership, resource-observation ownership, and all 37
+  production-readiness checks passed.
+
+Authoritative remaining visual-speech and perception work:
+
+- Build a governed, resumable, hash-verified clean-machine installer for the
+  external runtime/checkpoint with explicit upstream model and training-data
+  license acceptance, offline cache support, rollback, doctor diagnostics, and
+  signed provenance. Missing or corrupt artifacts must remain an honest service
+  degradation rather than a boot crash or fallback transcript.
+- Create a consented real-speaking evaluation corpus with sealed transcripts;
+  measure WER, calibration error, abstention precision/recall, latency, memory,
+  and failure rates across accents, languages, demographics, facial hair,
+  masks, camera/codec/resolution/frame-rate variation, pose, occlusion, lighting,
+  playback attacks, multiple speakers, and audio/video skew. No result becomes
+  actionable until held-out calibration supports the threshold.
+- Add live camera capture selection and consent UI, verified speaker association
+  across event time without biometric overclaiming, subtitle/meeting workflows,
+  permission revocation, cancellation, restart, model eviction/compensation,
+  thermal/pressure, and user-interruption trials. Complete every remaining
+  producer and richer situation/social model before final multi-hour soaks.
