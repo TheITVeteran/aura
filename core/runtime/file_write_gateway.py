@@ -176,10 +176,75 @@ class FileWriteGateway:
 
         await async_atomic_append_text(target, text, encoding=encoding)
 
+    @staticmethod
+    def _replace_symlink_unchecked(link: Path, target: Path) -> str:
+        from core.runtime.atomic_writer import ensure_private_directory
+
+        if not target.exists():
+            raise FileNotFoundError(f"symlink target does not exist: {target}")
+        if link.exists() and link.is_dir() and not link.is_symlink():
+            raise IsADirectoryError(f"refusing to replace directory with symlink: {link}")
+        ensure_private_directory(link.parent)
+        temporary = link.with_name(
+            f".{link.name}.{os.getpid()}.{time.time_ns()}.symlink.tmp"
+        )
+        try:
+            temporary.symlink_to(
+                target.resolve(),
+                target_is_directory=target.is_dir(),
+            )
+            os.replace(temporary, link)
+        finally:
+            if os.path.lexists(temporary):
+                temporary.unlink()
+        return str(target.resolve())
+
+    def replace_symlink(
+        self,
+        path: PathLike,
+        target_path: PathLike,
+        *,
+        source: str = "unknown",
+    ) -> str:
+        """Atomically create or replace a symlink through the file-write lane."""
+        link = _coerce_path_allow_dir(path)
+        target = _coerce_path_allow_dir(target_path)
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.replace_symlink:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        return self._replace_symlink_unchecked(link, target)
+
+    async def replace_symlink_async(
+        self,
+        path: PathLike,
+        target_path: PathLike,
+        *,
+        source: str = "unknown",
+    ) -> str:
+        """Atomically replace a symlink off the event loop after governance."""
+        link = _coerce_path_allow_dir(path)
+        target = _coerce_path_allow_dir(target_path)
+        if governance_runtime_active():
+            require_governance(
+                f"file_write_gateway.replace_symlink:{source}",
+                strict=True,
+                allowed_domains=self._allowed_domains,
+            )
+        import asyncio
+
+        return await asyncio.to_thread(
+            self._replace_symlink_unchecked,
+            link,
+            target,
+        )
+
     def delete_file(self, path: PathLike, *, source: str = "unknown") -> bool:
         """Delete a single file through the same governance lane as writes."""
         target = _coerce_target(path)
-        if target.exists() and target.is_dir():
+        if target.exists() and target.is_dir() and not target.is_symlink():
             raise IsADirectoryError(f"target path is a directory: {target}")
         if governance_runtime_active():
             require_governance(
@@ -380,7 +445,7 @@ def _coerce_target(path: PathLike) -> Path:
     if path is None:
         raise ValueError("target path is required")
     target = Path(path).expanduser()
-    if target.exists() and target.is_dir():
+    if target.exists() and target.is_dir() and not target.is_symlink():
         raise IsADirectoryError(f"target path is a directory: {target}")
     return target
 

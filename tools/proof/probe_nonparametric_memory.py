@@ -23,6 +23,12 @@ from pathlib import Path
 
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
+
 # Fictional facts — guaranteed absent from the base model's weights.
 FACTS = [
     ("In the Aetherium archives, the keeper of the seventh gate is named", "Tessaly"),
@@ -57,13 +63,12 @@ def _gold_token(tok, answer: str) -> int:
     return ids[0]
 
 
-def main() -> int:
+def _run_probe(model_path: str) -> int:
     import mlx.core as mx
     from mlx_lm import load
 
     from core.brain.nonparametric_memory import NonParametricMemory
 
-    model_path = sys.argv[1] if len(sys.argv) > 1 else "models/Qwen2.5-7B-Instruct-4bit"
     print(f"Loading {model_path} ...")
     model, tok = load(model_path)
     dim = int(model.args.hidden_size)
@@ -86,7 +91,7 @@ def main() -> int:
         sub = sub - sub.max()
         ex = np.exp(sub)
         ex /= ex.sum()
-        return {int(t): float(p) for t, p in zip(idx, ex)}
+        return {int(t): float(p) for t, p in zip(idx, ex, strict=True)}
 
     # 1. Build the datastore from real hidden states (ingestion, made real).
     probe_path = Path(tempfile.gettempdir()) / "aura_nonparametric_memory_probe"
@@ -138,6 +143,17 @@ def main() -> int:
     print(f"control preserved: {ctrl_ok}")
     print("==========================================")
     return 0
+
+
+def main() -> int:
+    model_path = sys.argv[1] if len(sys.argv) > 1 else "models/Qwen2.5-7B-Instruct-4bit"
+    with standalone_model_lane(
+        owner_id="nonparametric-memory-probe",
+        model_path=model_path,
+        purpose="benchmark",
+        metadata={"tool": "probe_nonparametric_memory"},
+    ):
+        return _run_probe(model_path)
 
 
 if __name__ == "__main__":

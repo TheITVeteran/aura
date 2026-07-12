@@ -1,0 +1,1053 @@
+from __future__ import annotations
+
+import asyncio
+import os
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from core.runtime.model_lane_control import (
+    LaneClaim,
+    LaneOwnerObservation,
+    LaneTransactionState,
+    ModelLaneControlError,
+    ModelLaneController,
+    ProcessIdentity,
+    acquire_in_process_model_lane,
+    acquire_standalone_model_lane,
+    acquire_synchronous_in_process_model_lane,
+    compensate_registered_model_owner,
+    discover_external_model_processes,
+    evict_registered_model_owner,
+    infer_model_process_claim,
+    register_model_lane_owner_adapter,
+    unregister_model_lane_owner_adapter,
+)
+from core.runtime.receipts import ReceiptStore
+
+pytestmark = pytest.mark.unit
+
+
+class AliveTable:
+    def __init__(self, *pids: int) -> None:
+        self.alive = {os.getpid(), *pids}
+
+    def __call__(self, identity: ProcessIdentity) -> bool:
+        return identity.pid in self.alive and identity.started_at > 0.0
+
+
+def _owner(
+    owner_id: str,
+    model_path: str,
+    declared_gb: float,
+    pid: int,
+    *,
+    purpose: str = "serve",
+    preemptible: bool = True,
+) -> LaneOwnerObservation:
+    return LaneOwnerObservation(
+        owner_id=owner_id,
+        model_path=model_path,
+        declared_gb=declared_gb,
+        purpose=purpose,
+        process=ProcessIdentity(pid, float(pid)),
+        preemptible=preemptible,
+    )
+
+
+def _controller(tmp_path: Path, alive: AliveTable) -> ModelLaneController:
+    return ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_alive=alive,
+        process_discovery=None,
+    )
+
+
+@pytest.fixture(autouse=True)
+def _fixed_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AURA_LANE_BUDGET_GB", "46")
+
+
+def test_commit_persists_fenced_process_owner_and_one_terminal_receipt(tmp_path: Path) -> None:
+    alive = AliveTable(101)
+    controller = _controller(tmp_path, alive)
+    claim = LaneClaim(
+        owner_id="mlx:root:cortex",
+        model_path="/m/Aura-32B-cortex",
+        request_gb=23.0,
+        request_id="commit-once",
+    )
+
+    reserved = controller.reserve_sync(claim)
+    assert reserved.admitted is True
+    assert reserved.ready_to_spawn is True
+
+    committed = controller.commit_sync(
+        reserved,
+        process=ProcessIdentity(101, 101.0),
+        observed_gb=20.5,
+    )
+    replay = controller.commit_sync(
+        committed,
+        process=ProcessIdentity(101, 101.0),
+        observed_gb=20.5,
+    )
+
+    assert committed.state is LaneTransactionState.COMMITTED
+    assert replay.replayed is True
+    assert replay.receipt_id == committed.receipt_id
+    snapshot = controller.snapshot()
+    assert snapshot["committed_gb"] == pytest.approx(23.0)
+    assert snapshot["reserved_gb"] == 0.0
+    assert snapshot["owners"][0]["fencing_token"] == reserved.fencing_token
+    assert controller._receipt_store.coverage_stats()["resource_admission"] == 1
+
+
+def test_request_replay_rejects_changed_capacity_or_disruption_claim(tmp_path: Path) -> None:
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+    original = LaneClaim(
+        owner_id="mlx:replay",
+        model_path="/m/qwen-7b",
+        request_gb=5.0,
+        request_id="exact-replay-only",
+        metadata={"origin": "unit"},
+    )
+    controller.reserve_sync(original)
+
+    with pytest.raises(ModelLaneControlError, match="different_claim"):
+        controller.reserve_sync(
+            LaneClaim(
+                owner_id=original.owner_id,
+                model_path=original.model_path,
+                request_gb=25.0,
+                request_id=original.request_id,
+                metadata=original.metadata,
+            )
+        )
+    with pytest.raises(ModelLaneControlError, match="different_claim"):
+        controller.reserve_sync(
+            LaneClaim(
+                owner_id=original.owner_id,
+                model_path=original.model_path,
+                request_gb=original.request_gb,
+                allow_disruptive_eviction=True,
+                request_id=original.request_id,
+                metadata=original.metadata,
+            )
+        )
+
+
+def test_concurrent_controllers_cannot_spend_same_unreserved_capacity(tmp_path: Path) -> None:
+    alive = AliveTable(201)
+    first = _controller(tmp_path, alive)
+    second = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=first._receipt_store,
+        process_alive=alive,
+        process_discovery=None,
+    )
+    observed = [_owner("mlx:cortex", "/m/Aura-32B-cortex", 20.0, 201)]
+    claims = (
+        LaneClaim(
+            owner_id="job:a",
+            model_path="/m/qwen-7b-a",
+            request_gb=20.0,
+            request_id="race-a",
+        ),
+        LaneClaim(
+            owner_id="job:b",
+            model_path="/m/qwen-7b-b",
+            request_gb=20.0,
+            request_id="race-b",
+        ),
+    )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        decisions = list(
+            pool.map(
+                lambda pair: pair[0].reserve_sync(pair[1], observations=observed),
+                ((first, claims[0]), (second, claims[1])),
+            )
+        )
+
+    assert sum(decision.admitted for decision in decisions) == 1
+    assert sum(not decision.admitted for decision in decisions) == 1
+    snapshot = first.snapshot()
+    assert snapshot["committed_gb"] == pytest.approx(20.0)
+    assert snapshot["reserved_gb"] == pytest.approx(20.0)
+
+
+@pytest.mark.asyncio
+async def test_required_eviction_completes_before_reservation_becomes_ready(tmp_path: Path) -> None:
+    alive = AliveTable(301, 302, 303)
+    controller = _controller(tmp_path, alive)
+    observations = [
+        _owner("mlx:cortex", "/m/Aura-32B-cortex", 20.0, 301),
+        _owner("mlx:brainstem", "/m/qwen-7b", 5.0, 302),
+        _owner("trainer:nightly", "/m/trainer", 8.0, 303, purpose="train"),
+    ]
+    claim = LaneClaim(
+        owner_id="mlx:solver",
+        model_path="/m/Deep-72B-solver",
+        request_gb=20.0,
+        request_id="evict-first",
+    )
+    decision = await controller.reserve(claim, observations=observations)
+    assert decision.state is LaneTransactionState.EVICTING
+    assert decision.evict_owner_ids == ("trainer:nightly",)
+
+    events: list[str] = []
+
+    async def evict(owner: LaneOwnerObservation, reason: str) -> bool:
+        events.append(f"evict:{owner.owner_id}:{reason}")
+        alive.alive.remove(owner.process.pid)
+        observations[:] = [item for item in observations if item.owner_id != owner.owner_id]
+        return True
+
+    ready = await controller.prepare(
+        decision,
+        evict=evict,
+        observe=lambda: list(observations),
+        reclaim=lambda _claim: True,
+    )
+
+    assert events and events[0].startswith("evict:trainer:nightly")
+    assert ready.state is LaneTransactionState.READY
+    assert ready.ready_to_spawn is True
+    assert ready.evicted_owner_ids == ("trainer:nightly",)
+    snapshot = controller.snapshot()
+    assert {owner["owner_id"] for owner in snapshot["owners"]} == {
+        "mlx:cortex",
+        "mlx:brainstem",
+    }
+    assert controller._receipt_store.coverage_stats()["resource_admission"] == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_required_eviction_cancels_candidate_and_receipts_failure(tmp_path: Path) -> None:
+    alive = AliveTable(401, 402)
+    controller = _controller(tmp_path, alive)
+    observations = [
+        _owner("mlx:cortex", "/m/Aura-32B-cortex", 20.0, 401),
+        _owner("trainer:nightly", "/m/trainer", 25.0, 402, purpose="train"),
+    ]
+    claim = LaneClaim(
+        owner_id="mlx:reflex",
+        model_path="/m/qwen-1.5b-reflex",
+        request_gb=4.0,
+        request_id="eviction-fails",
+    )
+    decision = await controller.reserve(claim, observations=observations)
+    assert decision.state is LaneTransactionState.EVICTING
+
+    cancelled = await controller.prepare(
+        decision,
+        evict=lambda _owner, _reason: False,
+        observe=lambda: list(observations),
+    )
+
+    assert cancelled.admitted is False
+    assert cancelled.state is LaneTransactionState.CANCELLED
+    assert "required_eviction_failed" in cancelled.reason
+    assert cancelled.receipt_id
+    assert controller.snapshot()["reserved_gb"] == 0.0
+    assert controller._receipt_store.coverage_stats()["resource_admission"] == 2
+
+
+@pytest.mark.asyncio
+async def test_wedged_eviction_callback_is_bounded_and_cancels_candidate(
+    tmp_path: Path,
+) -> None:
+    alive = AliveTable(451, 452)
+    controller = _controller(tmp_path, alive)
+    observations = [
+        _owner("mlx:cortex", "/m/Aura-32B-cortex", 20.0, 451),
+        _owner("trainer:wedged", "/m/trainer", 25.0, 452, purpose="train"),
+    ]
+    decision = await controller.reserve(
+        LaneClaim(
+            owner_id="mlx:reflex",
+            model_path="/m/qwen-1.5b-reflex",
+            request_gb=4.0,
+            request_id="eviction-wedged",
+        ),
+        observations=observations,
+    )
+
+    async def _never_returns(_owner: LaneOwnerObservation, _reason: str) -> bool:
+        await asyncio.sleep(60.0)
+        return True
+
+    started = time.monotonic()
+    cancelled = await controller.prepare(
+        decision,
+        evict=_never_returns,
+        observe=lambda: observations,
+        timeout_s=0.05,
+    )
+
+    assert time.monotonic() - started < 0.5
+    assert cancelled.state is LaneTransactionState.CANCELLED
+    assert "eviction_callback_timeout" in cancelled.reason
+    assert cancelled.receipt_id
+    assert controller.snapshot()["reserved_gb"] == 0.0
+
+
+def test_non_preemptible_required_owner_refuses_without_side_effect(tmp_path: Path) -> None:
+    alive = AliveTable(501)
+    controller = _controller(tmp_path, alive)
+    observations = [
+        _owner(
+            "trainer:operator",
+            "/m/trainer",
+            45.0,
+            501,
+            purpose="train",
+            preemptible=False,
+        )
+    ]
+    claim = LaneClaim(
+        owner_id="mlx:cortex",
+        model_path="/m/Aura-32B-cortex",
+        request_gb=23.0,
+        request_id="non-preemptible",
+        allow_last_warm_eviction=True,
+    )
+
+    decision = controller.reserve_sync(claim, observations=observations)
+
+    assert decision.admitted is False
+    assert decision.reason == "required_eviction_not_preemptible:trainer:operator"
+    assert controller.snapshot()["owners"][0]["eviction_requested_by"] == ""
+
+
+def test_last_warm_lane_is_not_evicted_into_a_cold_gap(tmp_path: Path) -> None:
+    alive = AliveTable(601)
+    controller = _controller(tmp_path, alive)
+    observations = [_owner("mlx:solver", "/m/Deep-72B-solver", 41.0, 601)]
+    claim = LaneClaim(
+        owner_id="mlx:cortex",
+        model_path="/m/Aura-32B-cortex",
+        request_gb=23.0,
+        request_id="last-warm",
+    )
+
+    decision = controller.reserve_sync(claim, observations=observations)
+
+    assert decision.admitted is False
+    assert decision.reason == "disruption_budget:last_warm_lane"
+
+
+def test_foreground_disruptive_swap_can_fence_idle_guaranteed_owner(tmp_path: Path) -> None:
+    alive = AliveTable(611)
+    controller = _controller(tmp_path, alive)
+    observations = [
+        _owner(
+            "mlx:cortex",
+            "/m/Aura-32B-cortex",
+            38.0,
+            611,
+            preemptible=True,
+        )
+    ]
+    claim = LaneClaim(
+        owner_id="mlx:solver",
+        model_path="/m/Deep-72B-solver",
+        request_gb=46.0,
+        foreground=True,
+        allow_disruptive_eviction=True,
+        allow_last_warm_eviction=True,
+        request_id="foreground-deep-swap",
+    )
+
+    decision = controller.reserve_sync(claim, observations=observations)
+
+    assert decision.admitted is True
+    assert decision.evict_owner_ids == ("mlx:cortex",)
+
+
+def test_disruptive_swap_cannot_fence_busy_guaranteed_owner(tmp_path: Path) -> None:
+    alive = AliveTable(612)
+    controller = _controller(tmp_path, alive)
+    observations = [
+        _owner(
+            "mlx:cortex",
+            "/m/Aura-32B-cortex",
+            38.0,
+            612,
+            preemptible=False,
+        )
+    ]
+    claim = LaneClaim(
+        owner_id="mlx:solver",
+        model_path="/m/Deep-72B-solver",
+        request_gb=46.0,
+        foreground=True,
+        allow_disruptive_eviction=True,
+        allow_last_warm_eviction=True,
+        request_id="busy-deep-swap",
+    )
+
+    decision = controller.reserve_sync(claim, observations=observations)
+
+    assert decision.admitted is False
+    assert decision.reason == "required_eviction_not_preemptible:mlx:cortex"
+
+
+def test_stale_fence_cannot_commit_after_transaction_cancel(tmp_path: Path) -> None:
+    alive = AliveTable(701)
+    controller = _controller(tmp_path, alive)
+    claim = LaneClaim(
+        owner_id="mlx:brainstem",
+        model_path="/m/qwen-7b",
+        request_gb=5.0,
+        request_id="old-fence",
+    )
+    old = controller.reserve_sync(claim)
+    controller.cancel_sync(old, reason="spawn_failed")
+
+    with pytest.raises(ModelLaneControlError, match="already_terminal"):
+        controller.commit_sync(old, process=ProcessIdentity(701, 701.0))
+
+
+def test_dead_reservation_owner_is_recovered_before_next_admission(tmp_path: Path) -> None:
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+    first = controller.reserve_sync(
+        LaneClaim(
+            owner_id="job:first",
+            model_path="/m/qwen-7b-first",
+            request_gb=30.0,
+            request_id="abandoned",
+        )
+    )
+    assert first.admitted is True
+
+    alive.alive.remove(os.getpid())
+    replacement = controller.reserve_sync(
+        LaneClaim(
+            owner_id="job:replacement",
+            model_path="/m/qwen-7b-replacement",
+            request_gb=30.0,
+            request_id="replacement",
+        )
+    )
+
+    assert replacement.admitted is True
+    envelope = controller._load_locked()
+    assert envelope["reservations"]["abandoned"]["state"] == "expired"
+
+
+@pytest.mark.asyncio
+async def test_in_process_lease_counts_memory_until_explicit_release(tmp_path: Path) -> None:
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+
+    lease = await acquire_in_process_model_lane(
+        owner_id="post-training-validator",
+        model_path="/models/validator-7b",
+        purpose="benchmark",
+        request_gb=0.1,
+        owner_lease_ttl_s=15.0,
+        controller=controller,
+    )
+
+    snapshot = controller.snapshot()
+    assert snapshot["committed_gb"] == pytest.approx(0.1)
+    assert snapshot["owners"][0]["metadata"]["lease_mode"] == "heartbeat"
+    assert await lease.set_preemptible(False) is True
+    assert controller.snapshot()["owners"][0]["preemptible"] is False
+    assert await lease.set_preemptible(True) is True
+    assert controller.snapshot()["owners"][0]["preemptible"] is True
+    assert await lease.release(reason="validator_unloaded") is True
+    assert controller.snapshot()["owners"] == []
+
+
+@pytest.mark.asyncio
+async def test_registered_local_evictor_is_used_before_process_signal_fallback() -> None:
+    owner = _owner("in-process:test", "/models/test-7b", 5.0, os.getpid())
+    calls: list[str] = []
+
+    async def evict(_owner: LaneOwnerObservation, reason: str) -> bool:
+        calls.append(reason)
+        return True
+
+    register_model_lane_owner_adapter(owner.owner_id, evict=evict)
+    try:
+        assert await evict_registered_model_owner(owner, "unit-preemption") is True
+    finally:
+        unregister_model_lane_owner_adapter(owner.owner_id)
+
+    assert calls == ["unit-preemption"]
+
+
+def test_standalone_spoofed_inheritance_falls_back_to_owned_reservation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+    monkeypatch.setenv("AURA_MODEL_LANE_INHERITED_OWNER_ID", "forged-owner")
+    monkeypatch.setenv("AURA_MODEL_LANE_INHERITED_REQUEST_ID", "forged-request")
+    monkeypatch.setenv("AURA_MODEL_LANE_INHERITED_MODEL_PATH", "/models/test-1b")
+    monkeypatch.setenv("AURA_MODEL_LANE_INHERITED_PURPOSE", "benchmark")
+    monkeypatch.setenv("AURA_MODEL_LANE_DELEGATION_TOKEN", "forged-token")
+
+    lease = acquire_standalone_model_lane(
+        owner_id="direct-tool",
+        model_path="/models/test-1b",
+        purpose="benchmark",
+        request_gb=0.1,
+        controller=controller,
+    )
+
+    assert lease.inherited is False
+    assert controller.snapshot()["owners"][0]["owner_id"].startswith("standalone:")
+    assert lease.release() is True
+    assert controller.snapshot()["owners"] == []
+
+
+def test_delegation_secret_is_hashed_and_wrong_token_is_rejected(tmp_path: Path) -> None:
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+    decision = controller.reserve_sync(
+        LaneClaim(
+            owner_id="subprocess:delegated",
+            model_path="/models/test-1b",
+            request_gb=0.1,
+            purpose="benchmark",
+            request_id="delegated-request",
+        )
+    )
+
+    token = controller.issue_inherited_claim_sync(decision)
+    snapshot = controller.snapshot()
+    delegation = snapshot["reservations"][0]["delegation"]
+
+    assert token not in str(delegation)
+    assert len(delegation["token_sha256"]) == 64
+    assert controller.validate_inherited_claim(
+        owner_id=decision.owner_id,
+        request_id=decision.request_id,
+        model_path=decision.model_path,
+        purpose="benchmark",
+        delegation_token="wrong-token",
+        child_pid=os.getpid(),
+        parent_pid=os.getppid(),
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_compensator_survives_owner_unregistration_for_failed_candidate() -> None:
+    owner = _owner("in-process:recoverable", "/models/recoverable-7b", 5.0, os.getpid())
+    calls: list[str] = []
+
+    async def evict(_owner: LaneOwnerObservation, _reason: str) -> bool:
+        return True
+
+    async def compensate(_owner: LaneOwnerObservation, reason: str) -> bool:
+        calls.append(reason)
+        return True
+
+    register_model_lane_owner_adapter(
+        owner.owner_id,
+        evict=evict,
+        compensate=compensate,
+    )
+    unregister_model_lane_owner_adapter(owner.owner_id)
+
+    assert await compensate_registered_model_owner(owner, "candidate_spawn_failed") is True
+    assert calls == ["candidate_spawn_failed"]
+    assert await compensate_registered_model_owner(owner, "replay") is False
+
+
+def test_process_table_discovery_accounts_for_external_model_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    external_pid = os.getpid() + 100_000
+
+    class FakeProcess:
+        info = {
+            "pid": external_pid,
+            "create_time": 1234.5,
+            "cmdline": [
+                "/usr/bin/python3",
+                "-m",
+                "mlx_lm.server",
+                "--model",
+                "/models/qwen-7b",
+            ],
+            "name": "python3",
+            "memory_info": SimpleNamespace(rss=3 * 1024**3),
+        }
+
+        @staticmethod
+        def create_time() -> float:
+            return 1234.5
+
+        @staticmethod
+        def parents() -> list[object]:
+            return []
+
+    monkeypatch.setattr(
+        "core.runtime.model_lane_control.psutil.process_iter",
+        lambda _attrs: [FakeProcess()],
+    )
+    monkeypatch.setattr("core.runtime.model_lane_control.os.getpgid", lambda _pid: 44_001)
+
+    observations = discover_external_model_processes([])
+
+    assert len(observations) == 1
+    observed = observations[0]
+    assert observed.model_path == "/models/qwen-7b"
+    assert observed.process == ProcessIdentity(external_pid, 1234.5)
+    assert observed.observed_gb == pytest.approx(3.0)
+    assert observed.preemptible is False
+    assert observed.metadata["externally_discovered"] is True
+    assert observed.metadata["model_identity_status"] == "resolved"
+
+
+def test_process_table_discovery_fails_closed_on_unknown_identity_and_marks_escape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parent_pid = os.getpid() + 300_000
+    child_pid = parent_pid + 1
+
+    class FakeProcess:
+        info = {
+            "pid": child_pid,
+            "create_time": 4321.0,
+            "cmdline": ["/usr/bin/python3", "-m", "mlx_lm.server"],
+            "name": "python3",
+            "memory_info": SimpleNamespace(rss=2 * 1024**3),
+        }
+
+        @staticmethod
+        def create_time() -> float:
+            return 4321.0
+
+        @staticmethod
+        def parents() -> list[object]:
+            return [SimpleNamespace(pid=parent_pid)]
+
+    known_parent = LaneOwnerObservation(
+        owner_id="managed-parent",
+        model_path="/models/managed-7b",
+        declared_gb=5.0,
+        process=ProcessIdentity(parent_pid, 4000.0),
+        metadata={"managed_model_process": True, "process_group_id": 41_000},
+    )
+    monkeypatch.setattr(
+        "core.runtime.model_lane_control.psutil.process_iter",
+        lambda _attrs: [FakeProcess()],
+    )
+    monkeypatch.setattr("core.runtime.model_lane_control.os.getpgid", lambda _pid: 42_000)
+
+    observations = discover_external_model_processes([known_parent])
+
+    assert len(observations) == 1
+    observed = observations[0]
+    assert observed.model_path == f"unresolved:model-process:{child_pid}"
+    assert observed.declared_gb == pytest.approx(46.0)
+    assert observed.preemptible is False
+    assert observed.metadata["model_identity_status"] == "unresolved_fail_closed"
+    assert observed.metadata["process_tree_escape"] is True
+    assert observed.metadata["registered_parent_owner_id"] == "managed-parent"
+
+
+def test_external_nonpreemptible_process_is_included_without_explicit_observations(
+    tmp_path: Path,
+) -> None:
+    external_pid = os.getpid() + 200_000
+    alive = AliveTable(external_pid)
+    external = _owner(
+        "external-model:test",
+        "/models/external-32b",
+        44.0,
+        external_pid,
+        purpose="train",
+        preemptible=False,
+    )
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_alive=alive,
+        process_discovery=lambda _known: [external],
+    )
+
+    decision = controller.reserve_sync(
+        LaneClaim(
+            owner_id="candidate",
+            model_path="/models/candidate-7b",
+            request_gb=5.0,
+            request_id="external-owner-blocks",
+        )
+    )
+
+    assert decision.admitted is False
+    assert decision.reason == "required_eviction_not_preemptible:external-model:test"
+    assert controller.snapshot()["owners"][0]["process"]["pid"] == external_pid
+
+
+def test_offline_front_door_does_not_claim_accelerator_lane() -> None:
+    claim = infer_model_process_claim(
+        ["python", "tools/front_door_demo.py"],
+        source="proof_tooling:front-door-offline",
+        timeout_s=60.0,
+    )
+
+    assert claim is None
+
+
+def test_import_only_mlx_probe_does_not_claim_accelerator_lane() -> None:
+    claim = infer_model_process_claim(
+        [
+            sys.executable,
+            "-c",
+            "import mlx.core as mx; import mlx_lm; print('mlx_runtime_ok')",
+        ],
+        source="runtime_probe:mlx_runtime_probe",
+        timeout_s=25.0,
+    )
+
+    assert claim is None
+
+
+def test_inline_mlx_model_call_still_fails_closed_without_identity() -> None:
+    with pytest.raises(RuntimeError, match="missing_model_path"):
+        infer_model_process_claim(
+            [sys.executable, "-c", "import mlx_lm; mlx_lm.load('/models/qwen-7b')"],
+            source="runtime_probe:mislabelled-model-load",
+            timeout_s=25.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_terminal_receipt_crash_replay_adopts_body_without_recompensating(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+    decision = controller.reserve_sync(
+        LaneClaim(
+            owner_id="candidate:crash-replay",
+            model_path="/models/candidate-1.5b",
+            request_gb=0.1,
+            request_id="terminal-crash-replay",
+        )
+    )
+    displaced = _owner(
+        "displaced:recoverable",
+        "/models/displaced-1.5b",
+        0.1,
+        os.getpid(),
+    )
+    compensation_calls: list[str] = []
+
+    async def compensate(_owner: LaneOwnerObservation, reason: str) -> bool:
+        compensation_calls.append(reason)
+        return True
+
+    original_save = controller._save_locked
+    failed_after_receipt = False
+
+    def _fail_once_after_receipt(state: dict[str, object]) -> None:
+        nonlocal failed_after_receipt
+        reservations = state.get("reservations")
+        records = reservations.values() if isinstance(reservations, dict) else ()
+        has_receipt = any(
+            bool(record.get("terminal_receipt_id"))
+            for record in records
+            if isinstance(record, dict)
+        )
+        if has_receipt and not failed_after_receipt:
+            failed_after_receipt = True
+            raise OSError("injected state save crash after durable receipt")
+        original_save(state)
+
+    monkeypatch.setattr(controller, "_save_locked", _fail_once_after_receipt)
+
+    with pytest.raises(OSError, match="injected state save crash"):
+        await controller.cancel(
+            decision,
+            reason="candidate_spawn_failed",
+            compensate=compensate,
+            evicted=[displaced],
+        )
+
+    replay = await controller.cancel(
+        decision,
+        reason="candidate_spawn_failed",
+        compensate=compensate,
+        evicted=[displaced],
+    )
+
+    assert replay.replayed is True
+    assert replay.receipt_id
+    assert compensation_calls == [
+        f"compensate_failed_candidate:{decision.transaction_id}"
+    ]
+    assert controller._receipt_store.coverage_stats()["resource_admission"] == 1
+    reservation = controller.snapshot()["reservations"][0]
+    assert reservation["terminal_receipt_id"] == replay.receipt_id
+
+
+def test_eviction_receipt_replay_uses_existing_deterministic_body(tmp_path: Path) -> None:
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+    controller.reserve_sync(
+        LaneClaim(
+            owner_id="candidate:eviction-replay",
+            model_path="/models/candidate-1.5b",
+            request_gb=0.1,
+            request_id="eviction-receipt-replay",
+        )
+    )
+    reservation = controller.snapshot()["reservations"][0]
+    owner = _owner("owner:evicted", "/models/evicted-1.5b", 0.1, os.getpid())
+
+    first = controller._emit_eviction_receipt(
+        reservation,
+        owner=owner,
+        outcome="evicted",
+        reason="process_dead_and_owner_absent",
+        completed_at=100.0,
+    )
+    replay = controller._emit_eviction_receipt(
+        reservation,
+        owner=owner,
+        outcome="evicted",
+        reason="different_replay_observation",
+        completed_at=200.0,
+    )
+
+    assert first == replay
+    assert first.startswith("resource_admission-eviction-")
+    assert controller._receipt_store.coverage_stats()["resource_admission"] == 1
+
+
+def test_expired_abandoned_reservation_gets_terminal_receipt(tmp_path: Path) -> None:
+    now = [100.0]
+    alive = AliveTable()
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_alive=alive,
+        process_discovery=None,
+        clock=lambda: now[0],
+    )
+    decision = controller.reserve_sync(
+        LaneClaim(
+            owner_id="candidate:abandoned",
+            model_path="/models/candidate-1.5b",
+            request_gb=0.1,
+            request_id="abandoned-expiry-receipt",
+            reservation_ttl_s=5.0,
+        )
+    )
+    assert decision.ready_to_spawn is True
+
+    now[0] = 106.0
+    reservation = controller.snapshot()["reservations"][0]
+
+    assert reservation["state"] == "expired"
+    assert reservation["reason"] == "reservation_ttl_expired"
+    assert reservation["terminal_receipt_id"]
+    assert controller._receipt_store.coverage_stats()["resource_admission"] == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_partial_eviction_compensates_before_terminal_receipt(
+    tmp_path: Path,
+) -> None:
+    now = [100.0]
+    alive = AliveTable(811)
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_alive=alive,
+        process_discovery=None,
+        clock=lambda: now[0],
+    )
+    displaced = _owner(
+        "mlx:solver",
+        "/models/Deep-72B-solver",
+        40.0,
+        811,
+    )
+    decision = controller.reserve_sync(
+        LaneClaim(
+            owner_id="mlx:cortex",
+            model_path="/models/Aura-32B-cortex",
+            request_gb=23.0,
+            allow_last_warm_eviction=True,
+            reservation_ttl_s=5.0,
+            request_id="expired-after-eviction",
+        ),
+        observations=[displaced],
+    )
+    assert decision.evict_owner_ids == (displaced.owner_id,)
+
+    state = controller._load_locked()
+    record = state["reservations"][decision.request_id]
+    state["owners"].pop(displaced.owner_id)
+    record["evicted_owner_ids"] = [displaced.owner_id]
+    record["evicted_owners"] = {
+        displaced.owner_id: controller._observation_payload(displaced)
+    }
+    controller._save_locked(state)
+
+    now[0] = 106.0
+    expired = controller.snapshot()["reservations"][0]
+    assert expired["state"] == "expired"
+    assert expired["compensation_pending_owner_ids"] == [displaced.owner_id]
+    assert expired["terminal_receipt_id"] == ""
+
+    with pytest.raises(ModelLaneControlError, match="compensation_pending"):
+        controller.reserve_sync(
+            LaneClaim(
+                owner_id="job:must-wait",
+                model_path="/models/qwen-7b",
+                request_gb=5.0,
+                request_id="blocked-by-compensation",
+            )
+        )
+
+    calls: list[str] = []
+
+    async def _restore(owner: LaneOwnerObservation, reason: str) -> bool:
+        assert owner.owner_id == displaced.owner_id
+        calls.append(reason)
+        return True
+
+    assert await controller.reconcile_expired_compensations(compensate=_restore) == 1
+    assert await controller.reconcile_expired_compensations(compensate=_restore) == 0
+
+    recovered = controller.snapshot()["reservations"][0]
+    assert recovered["compensation"] == {displaced.owner_id: True}
+    assert recovered["compensation_pending_owner_ids"] == []
+    assert recovered["terminal_receipt_id"]
+    assert calls == [f"compensate_expired_candidate:{decision.transaction_id}"]
+
+
+def test_synchronous_in_process_lease_counts_until_release(tmp_path: Path) -> None:
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+
+    lease = acquire_synchronous_in_process_model_lane(
+        owner_id="embedding-model",
+        model_path="sentence-transformers/all-MiniLM-L6-v2",
+        purpose="serve",
+        request_gb=0.25,
+        controller=controller,
+    )
+
+    owner = controller.snapshot()["owners"][0]
+    assert owner["declared_gb"] == pytest.approx(0.25)
+    assert owner["metadata"]["synchronous_loader"] is True
+    assert lease.set_preemptible(False) is True
+    assert controller.snapshot()["owners"][0]["preemptible"] is False
+    assert lease.set_preemptible(True) is True
+    assert controller.snapshot()["owners"][0]["preemptible"] is True
+    assert lease.release(reason="embedding_unloaded") is True
+    assert controller.snapshot()["owners"] == []
+
+
+def test_live_in_process_owner_heartbeat_expiry_fails_closed_until_recovery(
+    tmp_path: Path,
+) -> None:
+    now = [100.0]
+    alive = AliveTable()
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_alive=alive,
+        process_discovery=None,
+        clock=lambda: now[0],
+    )
+    lease = acquire_synchronous_in_process_model_lane(
+        owner_id="stale-live-embedding",
+        model_path="sentence-transformers/all-MiniLM-L6-v2",
+        purpose="serve",
+        request_gb=0.25,
+        owner_lease_ttl_s=15.0,
+        controller=controller,
+    )
+
+    now[0] = 116.0
+    stale = controller.snapshot()["owners"][0]
+
+    assert stale["lease_ttl_s"] == pytest.approx(15.0)
+    assert stale["metadata"]["heartbeat_lease_stale"] is True
+    assert stale["preemptible"] is False
+    assert lease.set_preemptible(True) is False
+
+    now[0] = 117.0
+    assert controller.heartbeat_owner_sync(
+        lease.decision.owner_id,
+        fencing_token=lease.decision.fencing_token,
+    ) is True
+    recovered = controller.snapshot()["owners"][0]
+    assert "heartbeat_lease_stale" not in recovered["metadata"]
+    assert recovered["preemptible"] is True
+    assert recovered["lease_expires_at"] == pytest.approx(132.0)
+
+    assert lease.release(reason="stale-heartbeat-test-complete") is True
+
+
+@pytest.mark.asyncio
+async def test_in_process_eviction_verifies_unload_without_root_process_death(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        "core.runtime.model_lane_control.psutil.virtual_memory",
+        lambda: SimpleNamespace(available=64 * 1024**3),
+    )
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+    lease_holder: dict[str, object] = {}
+
+    async def _evict(_owner: LaneOwnerObservation, _reason: str) -> bool:
+        lease = lease_holder["lease"]
+        assert hasattr(lease, "release")
+        return bool(lease.release(reason="unit_in_process_eviction"))
+
+    lease = acquire_synchronous_in_process_model_lane(
+        owner_id="large-optional-model",
+        model_path="/models/optional-32b",
+        purpose="train",
+        request_gb=44.0,
+        preemptible=True,
+        evict=_evict,
+        controller=controller,
+    )
+    lease_holder["lease"] = lease
+    candidate = await controller.reserve(
+        LaneClaim(
+            owner_id="foreground-candidate",
+            model_path="/models/foreground-7b",
+            request_gb=5.0,
+            request_id="in-process-eviction-candidate",
+        )
+    )
+    assert candidate.state is LaneTransactionState.EVICTING
+
+    ready = await controller.prepare(
+        candidate,
+        evict=evict_registered_model_owner,
+        observe=lambda: controller.owner_observations(),
+        reclaim=lambda _claim: True,
+    )
+
+    assert ready.ready_to_spawn is True
+    assert ready.evicted_owner_ids == (lease.decision.owner_id,)
+    assert controller.snapshot()["owners"] == []
+    controller.cancel_sync(ready, reason="unit_cleanup")

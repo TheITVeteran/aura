@@ -231,7 +231,10 @@ async def realize_deep_examine(args: dict[str, str], context: dict[str, Any]) ->
             from core.brain.llm.mlx_vision_client import MLXVisionClient
 
             client = MLXVisionClient()
-            described = await client.describe(str(path)) if hasattr(client, "describe") else None
+            try:
+                described = await client.describe(str(path))
+            finally:
+                await client.stop_async()
             return {
                 "ok": bool(described),
                 "kind": "examined_image",

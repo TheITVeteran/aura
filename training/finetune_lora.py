@@ -240,7 +240,7 @@ def main():
     print()
 
     try:
-        result = get_subprocess_gateway().run(
+        result = get_subprocess_gateway().run_model_blocking(
             cmd_parts,
             cwd=REPO_DIR,
             timeout=TRAINING_COMMAND_TIMEOUT_S,

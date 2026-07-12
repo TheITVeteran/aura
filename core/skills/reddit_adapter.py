@@ -590,13 +590,13 @@ class RedditAdapterSkill(BaseSkill):
                                 mlx_vision = MLXVisionClient(
                                     model_path="mlx-community/Qwen2-VL-2B-Instruct-4bit"
                                 )
-                                desc = mlx_vision.see(
+                                desc = await mlx_vision.see_async(
                                     prompt="Describe this CAPTCHA screen. What kind of CAPTCHA is it (e.g., text, image grid, cloudflare)?",
                                     image_base64=screenshot_b64,
                                 )
                                 if desc and "Vision Failure" not in desc:
                                     visual_note = f" [Visual Cortex: {desc}]"
-                                mlx_vision.stop()
+                                await mlx_vision.stop_async()
                         except (ImportError, AttributeError, RuntimeError) as ve:
                             logger.debug("Visual cortex failed to analyze CAPTCHA: %s", ve)
                         result = {

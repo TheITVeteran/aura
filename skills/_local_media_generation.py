@@ -1,5 +1,4 @@
 
-import asyncio
 import hashlib
 import logging
 import math
@@ -8,14 +7,6 @@ import time
 import zlib
 from pathlib import Path
 from typing import Any
-
-try:
-    import torch
-    from diffusers import AutoPipelineForText2Image, DiffusionPipeline
-except ImportError:
-    torch = None
-    AutoPipelineForText2Image = None
-    DiffusionPipeline = None
 
 from core.config import config
 from core.runtime.errors import record_degradation
@@ -36,10 +27,7 @@ class LocalMediaGenerationSkill(BaseSkill):
     
     def __init__(self):
         super().__init__()
-        self.pipeline = None
-        self.device = "mps" if torch and torch.backends.mps.is_available() else "cpu"
-        self.model_id = "runwayml/stable-diffusion-v1-5"  # Faster/smaller for initial test
-        # self.model_id = "stabilityai/stable-diffusion-xl-base-1.0" # Better but heavier
+        self._canonical_skill = None
         
         self.output_dir = Path(config.paths.data_dir) / "generated_images"
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -107,56 +95,6 @@ class LocalMediaGenerationSkill(BaseSkill):
             "model_id": None,
         }
         
-    def _load_model(self):
-        """Lazy load the model to save RAM until needed."""
-        if self.pipeline:
-            return True
-            
-        if not torch or not (AutoPipelineForText2Image or DiffusionPipeline):
-            logger.warning("Torch/Diffusers not installed; using procedural fallback for local media.")
-            return False
-            
-        logger.info("Loading Local Diffusion Model (%s) on %s...", self.model_id, self.device)
-        try:
-            pipeline_cls = AutoPipelineForText2Image or DiffusionPipeline
-
-            # Use float16 only on CUDA devices; MPS/CPU should use float32 to avoid issues
-            torch_dtype = (
-                torch.float16
-                if (hasattr(self, "device") and str(self.device).startswith("cuda"))
-                else torch.float32
-            )
-
-            self.pipeline = pipeline_cls.from_pretrained(
-                self.model_id,
-                torch_dtype=torch_dtype,
-                use_safetensors=True,
-            )
-            # Move to device (some pipelines require .to on underlying torch modules)
-            try:
-                self.pipeline.to(self.device)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation(
-                    "local_media_generation",
-                    exc,
-                    severity="warning",
-                    action="kept local media model loaded on default device after device move failed",
-                    extra={"device": self.device},
-                )
-                logger.debug("Local media pipeline device move skipped: %s", exc)
-
-            # Enable attention slicing for lower memory usage when supported
-            try:
-                if hasattr(self.pipeline, "enable_attention_slicing"):
-                    self.pipeline.enable_attention_slicing()
-            except (RuntimeError, AttributeError, TypeError) as exc:
-                logger.debug("Suppressed: %s", exc)
-            logger.info("✓ Local Diffusion Model Loaded.")
-            return True
-        except (RuntimeError, AttributeError, TypeError) as e:
-            logger.error("Failed to load local model: %s", e)
-            return False
-
     async def execute(self, goal: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         """Generate image locally."""
         prompt = goal.get("objective") or goal.get("params", {}).get("prompt")
@@ -164,53 +102,43 @@ class LocalMediaGenerationSkill(BaseSkill):
         if not prompt:
             return {"ok": False, "error": "No prompt provided."}
             
-        # 1. Load Model (Lazy)
-        if not self._load_model():
-            return self._generate_procedural_image(prompt)
-            
-        # 2. Generate
-        logger.info("Dreaming locally: '%s'...", prompt)
         try:
-            # Run in executor to avoid blocking async loop (generation takes seconds)
-            loop = asyncio.get_event_loop()
-            
-            def _generate():
-                # UPGRADE: Automatic Prompt Engineering for High Fidelity
-                enhanced_prompt = f"{prompt}, masterpiece, best quality, 8k, HDR, cinematic lighting, sharp focus, detailed texture"
-                negative = "blur, low quality, distortion, watermark, text, ugly, bad anatomy"
-                
-                return self.pipeline(
-                    prompt=enhanced_prompt,
-                    negative_prompt=negative,
-                    num_inference_steps=40,  # Increased for quality
-                    guidance_scale=8.0,  # Slightly higher adherence
-                ).images[0]
-                
-            image = await loop.run_in_executor(None, _generate)
-            
-            # 3. Save
-            timestamp = int(time.time())
-            filename = f"gen_{timestamp}.png"
-            filepath = self.output_dir / filename
-            image.save(filepath)
-            
-            # URL for frontend
-            # Assuming server serves /api/images or static files
-            # For now, we can just give the local path or a relative URL if we set up static serving
-            # Let's assume we'll serve 'data/generated_images' as '/images'
-            relative_url = f"/data/generated_images/{filename}"
-            
-            return {
-                "ok": True,
-                "url": relative_url,
-                "path": str(filepath),
-                "message": f"I painted this for you (locally): {relative_url}",
-                "type": "image",
-                "degraded": False,
-                "generation_mode": "diffusion",
-                "model_id": self.model_id,
-            }
-            
-        except (ImportError, AttributeError, RuntimeError) as e:
-            logger.error("Local generation failed: %s", e)
-            return {"ok": False, "error": f"Generation failed: {e}"}
+            from core.skills.image_gen import ImageGenSkill
+
+            if self._canonical_skill is None:
+                self._canonical_skill = ImageGenSkill()
+            result = await self._canonical_skill.execute(
+                {
+                    "prompt": str(prompt),
+                    "negative_prompt": goal.get("negative_prompt"),
+                    "style": goal.get("style"),
+                    "steps": 40,
+                    "guidance_scale": 8.0,
+                    "width": 768,
+                    "height": 512,
+                },
+                context,
+            )
+            if result.get("ok"):
+                return {
+                    **result,
+                    "degraded": False,
+                    "generation_mode": result.get("mode", "diffusion"),
+                }
+            logger.warning(
+                "Canonical image generation unavailable; using procedural fallback: %s",
+                result.get("error"),
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "local_media_generation",
+                exc,
+                severity="warning",
+                action="used procedural fallback after canonical image generation failed",
+            )
+        return self._generate_procedural_image(str(prompt))
+
+    async def on_stop_async(self) -> None:
+        if self._canonical_skill is not None:
+            await self._canonical_skill.on_stop_async()
+            self._canonical_skill = None

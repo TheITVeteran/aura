@@ -1,80 +1,53 @@
 #!/usr/bin/env python3
-"""Small, local fine-tune for persona using GPT-2 / DistilGPT2.
-Uses `data/personality_training/starter_aura.jsonl` if present, otherwise falls back to
-`data/personality_training/aura.jsonl`.
+"""Run a small local GPT-2 persona fine-tune under model-lane ownership."""
 
-This is intended as a lightweight demo run on CPU. For production/large runs use
-the `scripts/fine_tune_persona.sh` template with accelerate and a GPU.
-"""
+from __future__ import annotations
+
 import argparse
 import json
-import os
 from pathlib import Path
+from typing import Any
 
-def load_jsonl(path):
-    with open(path, 'r', encoding='utf-8') as f:
-        return [json.loads(line) for line in f if line.strip()]
 
-def build_text(example):
-    # Prefer explicit assistant field, then generated, then response.
-    user = example.get('user') or example.get('prompt') or ''
-    assistant = example.get('assistant') or example.get('generated') or example.get('response') or ''
-    # If assistant contains an unawaited coroutine repr, exclude it from training.
+def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    with path.open(encoding="utf-8") as handle:
+        return [json.loads(line) for line in handle if line.strip()]
+
+
+def build_text(example: dict[str, Any]) -> str:
+    user = example.get("user") or example.get("prompt") or ""
+    assistant = (
+        example.get("assistant")
+        or example.get("generated")
+        or example.get("response")
+        or ""
+    )
     if isinstance(assistant, str) and assistant.startswith("<coroutine"):
-        assistant = ''
-    return (user + "\n" + assistant).strip()
+        assistant = ""
+    return f"{user}\n{assistant}".strip()
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--train-file', default='data/personality_training/starter_aura.jsonl')
-    parser.add_argument('--model', default='distilgpt2')
-    parser.add_argument('--output-dir', default='outputs/aura-finetuned')
-    parser.add_argument('--epochs', type=int, default=1)
-    parser.add_argument('--batch-size', type=int, default=2)
-    args = parser.parse_args()
 
-    train_path = Path(args.train_file)
-    if not train_path.exists():
-        alt = Path('data/personality_training/aura.jsonl')
-        if alt.exists():
-            train_path = alt
-        else:
-            raise SystemExit(f"No training file found at {args.train_file} or {alt}")
+def _run_training(args: argparse.Namespace, texts: list[str]) -> None:
+    from datasets import Dataset
+    from transformers import (
+        AutoModelForCausalLM,
+        AutoTokenizer,
+        DataCollatorForLanguageModeling,
+        Trainer,
+        TrainingArguments,
+    )
 
-    print(f"Loading training data from {train_path}")
-    examples = load_jsonl(train_path)
-    texts = [build_text(e) for e in examples]
-    texts = [t for t in texts if t]
-    if not texts:
-        raise SystemExit("No usable training examples found after filtering.")
-
-    try:
-        from datasets import Dataset
-        from transformers import (
-            AutoTokenizer,
-            AutoModelForCausalLM,
-            DataCollatorForLanguageModeling,
-            TrainingArguments,
-            Trainer,
-        )
-    except ImportError as e:
-        raise SystemExit("Missing packages: install `transformers` and `datasets`. Error: " + str(e))
-
-    ds = Dataset.from_dict({'text': texts})
-
+    dataset = Dataset.from_dict({"text": texts})
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    def tokenize_fn(ex):
-        return tokenizer(ex['text'], truncation=True, max_length=512)
+    def tokenize_fn(example: dict[str, Any]) -> Any:
+        return tokenizer(example["text"], truncation=True, max_length=512)
 
-    tokenized = ds.map(tokenize_fn, batched=True, remove_columns=['text'])
-
+    tokenized = dataset.map(tokenize_fn, batched=True, remove_columns=["text"])
     model = AutoModelForCausalLM.from_pretrained(args.model)
-
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
-
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         num_train_epochs=args.epochs,
@@ -84,7 +57,6 @@ def main():
         fp16=False,
         report_to=[],
     )
-
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -97,5 +69,55 @@ def main():
     trainer.save_model(args.output_dir)
     print(f"Saved fine-tuned model to {args.output_dir}")
 
-if __name__ == '__main__':
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--train-file",
+        default="data/personality_training/starter_aura.jsonl",
+    )
+    parser.add_argument("--model", default="distilgpt2")
+    parser.add_argument("--output-dir", default="outputs/aura-finetuned")
+    parser.add_argument("--epochs", type=int, default=1)
+    parser.add_argument("--batch-size", type=int, default=2)
+    args = parser.parse_args()
+
+    train_path = Path(args.train_file)
+    if not train_path.exists():
+        alternative = Path("data/personality_training/aura.jsonl")
+        if alternative.exists():
+            train_path = alternative
+        else:
+            raise SystemExit(
+                f"No training file found at {args.train_file} or {alternative}"
+            )
+
+    print(f"Loading training data from {train_path}")
+    texts = [build_text(example) for example in load_jsonl(train_path)]
+    texts = [text for text in texts if text]
+    if not texts:
+        raise SystemExit("No usable training examples found after filtering.")
+
+    try:
+        import datasets  # noqa: F401
+        import transformers  # noqa: F401
+    except ImportError as exc:
+        raise SystemExit(
+            "Missing packages: install `transformers` and `datasets`. "
+            f"Error: {exc}"
+        ) from exc
+
+    from core.runtime.model_lane_control import standalone_model_lane
+
+    with standalone_model_lane(
+        owner_id="gpt2-persona-finetune",
+        model_path=args.model,
+        purpose="train",
+        preemptible=False,
+        metadata={"tool": "scripts.run_finetune_gpt2"},
+    ):
+        _run_training(args, texts)
+
+
+if __name__ == "__main__":
     main()

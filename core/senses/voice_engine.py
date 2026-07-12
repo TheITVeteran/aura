@@ -18,6 +18,7 @@ TTS uses pyttsx3 (macOS native NSSpeechSynthesizer under the hood).
 
 import asyncio
 import base64
+import contextlib
 import importlib
 import importlib.util
 import inspect
@@ -29,7 +30,7 @@ import subprocess
 import threading
 import time
 import wave
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from enum import Enum, auto
 from pathlib import Path
 from typing import Any
@@ -235,18 +236,24 @@ class SovereignVoiceEngine:
 
     def __init__(self,
                  whisper_model: str = "base",
-                 data_dir: str | None = None):
+                 data_dir: str | None = None,
+                 *,
+                 model_lane_controller: Any | None = None):
         from core.utils.paths import DATA_DIR
         self.data_dir = Path(data_dir or (DATA_DIR / "voice_models"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self._model_lane_controller_override = model_lane_controller
 
         # ── STT State ─────────────────────────────────────
         self.stt_model = None
         self._stt_initialized = False
         self._stt_init_lock = threading.Lock()
+        self._stt_usage_lock = threading.RLock()
+        self._stt_active_users = 0
         self._stt_init_task: asyncio.Task[bool] | None = None
         self._stt_load_state = "not_loaded"
         self._stt_last_error = ""
+        self._stt_lane_lease = None
         self._closing_event = threading.Event()
         self._audio_buffer = queue.Queue()
         self.whisper_model_name = whisper_model
@@ -281,6 +288,7 @@ class SovereignVoiceEngine:
 
         # ── TTS State ─────────────────────────────────────
         self._tts_initialized = False
+        self._tts_lane_lease = None
         self._voice_map = {}
         self._streaming = False
 
@@ -554,6 +562,133 @@ class SovereignVoiceEngine:
         if not self._tts_initialized:
             self._init_tts()
 
+    @staticmethod
+    def _whisper_footprint_gb(model_name: str) -> float:
+        lowered = str(model_name or "base").lower()
+        if "large" in lowered:
+            return 4.0
+        if "medium" in lowered:
+            return 2.0
+        if "small" in lowered:
+            return 1.0
+        if "tiny" in lowered:
+            return 0.25
+        return 0.5
+
+    async def _evict_stt_lane(self, _owner: Any, reason: str) -> bool:
+        released = await asyncio.to_thread(
+            self._release_stt_model_if_idle,
+            reason=f"stt_lane_eviction:{reason}",
+        )
+        if not released:
+            logger.warning("STT model preemption refused during active use: %s", reason)
+        return released
+
+    async def _compensate_stt_lane(self, _owner: Any, reason: str) -> bool:
+        logger.info("Restoring STT lane after failed candidate: %s", reason)
+        return await self.ensure_stt_async()
+
+    def _release_stt_model(self, *, reason: str) -> bool:
+        with self._stt_init_lock:
+            with self._stt_usage_lock:
+                return self._release_stt_model_locked(reason=reason)
+
+    def _release_stt_model_if_idle(self, *, reason: str) -> bool:
+        if not self._stt_init_lock.acquire(blocking=False):
+            return False
+        try:
+            if not self._stt_usage_lock.acquire(blocking=False):
+                return False
+            try:
+                return self._release_stt_model_locked(reason=reason)
+            finally:
+                self._stt_usage_lock.release()
+        finally:
+            self._stt_init_lock.release()
+
+    def _release_stt_model_locked(self, *, reason: str) -> bool:
+        self.stt_model = None
+        self._stt_initialized = False
+        if self._stt_load_state != "stopping":
+            self._stt_load_state = "not_loaded"
+        lease, self._stt_lane_lease = self._stt_lane_lease, None
+        if lease is not None:
+            lease.release(reason=reason)
+        return self.stt_model is None
+
+    @contextlib.contextmanager
+    def stt_model_session(self) -> Iterator[Any | None]:
+        """Hold exact model ownership for one complete transcription."""
+
+        if not self.ensure_stt():
+            yield None
+            return
+        with self._stt_usage_lock:
+            model = self.stt_model
+            if model is None:
+                yield None
+                return
+            self._stt_active_users += 1
+            try:
+                yield model
+            finally:
+                self._stt_active_users = max(0, self._stt_active_users - 1)
+
+    async def _evict_tts_lane(self, _owner: Any, reason: str) -> bool:
+        if self.is_speaking:
+            logger.warning("TTS model preemption refused during active speech: %s", reason)
+            return False
+        return await asyncio.to_thread(
+            self._release_tts_model,
+            reason=f"tts_lane_eviction:{reason}",
+        )
+
+    async def _compensate_tts_lane(self, _owner: Any, reason: str) -> bool:
+        logger.info("Restoring TTS lane after failed candidate: %s", reason)
+        await self.ensure_tts_async()
+        return bool(self._tts_initialized)
+
+    def _release_tts_model(self, *, reason: str) -> bool:
+        with self._tts_lock:
+            self._xtts_engine = None
+            self._piper_voice = None
+            self.tts_engine = None
+            self._tts_initialized = False
+            lease, self._tts_lane_lease = self._tts_lane_lease, None
+            if lease is not None:
+                lease.release(reason=reason)
+            return True
+
+    def _acquire_voice_model_lane(
+        self,
+        *,
+        owner_suffix: str,
+        model_path: str,
+        request_gb: float,
+        evict: Callable[..., Any],
+        compensate: Callable[..., Any],
+    ) -> Any:
+        from core.runtime.model_lane_control import (
+            acquire_synchronous_in_process_model_lane,
+        )
+
+        return acquire_synchronous_in_process_model_lane(
+            owner_id=f"voice:{id(self)}:{owner_suffix}",
+            model_path=model_path,
+            purpose="serve",
+            request_gb=request_gb,
+            priority=30,
+            preemptible=False,
+            evict=evict,
+            compensate=compensate,
+            metadata={
+                "engine": "voice",
+                "model_role": owner_suffix,
+                "lifecycle_state": "loading",
+            },
+            controller=self._model_lane_controller_override,
+        )
+
     def should_auto_listen(self) -> bool:
         """Whether mic capture should auto-start during boot."""
         return bool(self.auto_listen_enabled and self.microphone_enabled)
@@ -572,7 +707,7 @@ class SovereignVoiceEngine:
 
         task = self._stt_init_task
         if task is None or task.done():
-            task = asyncio.create_task(
+            task = get_task_tracker().create_task(
                 asyncio.to_thread(self.ensure_stt),
                 name="voice_engine.ensure_stt",
             )
@@ -593,6 +728,7 @@ class SovereignVoiceEngine:
 
     def _init_stt(self) -> bool:
         with self._stt_init_lock:
+            lane_lease = None
             if self._stt_initialized:
                 return True
             if self._voice_closing():
@@ -609,11 +745,27 @@ class SovereignVoiceEngine:
             self._stt_load_state = "loading"
             self._stt_last_error = ""
             try:
+                from core.runtime.model_lane_control import ModelLaneControlError
+
                 logger.info(
                     "Loading Whisper model: %s (local_files_only=%s)...",
                     self.whisper_model_name,
                     local_files_only,
                 )
+
+                try:
+                    lane_lease = self._acquire_voice_model_lane(
+                        owner_suffix="stt",
+                        model_path=f"faster-whisper/{self.whisper_model_name}",
+                        request_gb=self._whisper_footprint_gb(self.whisper_model_name),
+                        evict=self._evict_stt_lane,
+                        compensate=self._compensate_stt_lane,
+                    )
+                except ModelLaneControlError as exc:
+                    self._stt_load_state = "unavailable"
+                    self._stt_last_error = f"model_lane_refused:{exc}"[:240]
+                    logger.warning("STT model admission refused: %s", exc)
+                    return False
 
                 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
                 device = "cpu"
@@ -674,9 +826,16 @@ class SovereignVoiceEngine:
 
                 if self._voice_closing():
                     self._stt_load_state = "stopping"
+                    lane_lease.release(reason="stt_closed_during_model_load")
                     return False
 
+                if not lane_lease.set_preemptible(True):
+                    raise ModelLaneControlError(
+                        "stt_model_lane_activation_refused_after_load"
+                    )
                 self.stt_model = model
+                self._stt_lane_lease = lane_lease
+                lane_lease = None
                 self._stt_initialized = True
                 self._stt_load_state = "ready"
                 self._pulse_hypha("voice_engine", "sensory_gate", success=True)
@@ -696,6 +855,8 @@ class SovereignVoiceEngine:
                 TypeError,
                 ValueError,
             ) as exc:
+                if lane_lease is not None:
+                    lane_lease.release(reason="stt_model_load_failed")
                 self.stt_model = None
                 self._stt_initialized = False
                 self._stt_load_state = "unavailable"
@@ -712,14 +873,33 @@ class SovereignVoiceEngine:
     def _init_tts(self):
         tts_api = _load_tts_api() if self.use_xtts else None
         if self.use_xtts and tts_api:
+            lane_lease = None
             try:
+                lane_lease = self._acquire_voice_model_lane(
+                    owner_suffix="xtts",
+                    model_path=self.xtts_model_name,
+                    request_gb=4.0,
+                    evict=self._evict_tts_lane,
+                    compensate=self._compensate_tts_lane,
+                )
                 self._init_xtts()
+                if not lane_lease.set_preemptible(True):
+                    self._xtts_engine = None
+                    self._tts_initialized = False
+                    raise RuntimeError("xtts_model_lane_activation_refused_after_load")
+                self._tts_lane_lease = lane_lease
+                lane_lease = None
                 return
             except (EOFError, RuntimeError, AttributeError, TypeError, ValueError) as e:
+                if lane_lease is not None:
+                    lane_lease.release(reason="xtts_model_load_failed")
+                elif self._tts_lane_lease is not None and not self._tts_initialized:
+                    self._release_tts_model(reason="xtts_model_init_incomplete")
                 record_degradation('voice_engine', e)
                 logger.error("Failed to init XTTS: %s", e)
 
         if self.use_piper and PiperVoice:
+            lane_lease = None
             try:
                 model_dir = self.data_dir / "piper_voices"
                 model_dir.mkdir(parents=True, exist_ok=True)
@@ -728,13 +908,29 @@ class SovereignVoiceEngine:
                 
                 if not model_path.exists():
                      self._download_piper_voice(model_dir)
-                
+
+                lane_lease = self._acquire_voice_model_lane(
+                    owner_suffix="piper",
+                    model_path=str(model_path),
+                    request_gb=0.25,
+                    evict=self._evict_tts_lane,
+                    compensate=self._compensate_tts_lane,
+                )
                 self._piper_voice = PiperVoice.load(str(model_path), config_path=str(config_path))
+                if not lane_lease.set_preemptible(True):
+                    self._piper_voice = None
+                    raise RuntimeError("piper_model_lane_activation_refused_after_load")
+                self._tts_lane_lease = lane_lease
+                lane_lease = None
                 self._tts_initialized = True
                 logger.info("✅ Piper Voice '%s' loaded (High Fidelity)", self.piper_voice_name)
                 self._pulse_hypha("cognition", "voice_engine", success=True)
                 return
             except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
+                if lane_lease is not None:
+                    lane_lease.release(reason="piper_model_load_failed")
+                elif self._tts_lane_lease is not None and not self._tts_initialized:
+                    self._release_tts_model(reason="piper_model_init_incomplete")
                 record_degradation('voice_engine', e)
                 logger.warning("Failed to init Piper: %s. Falling back to pyttsx3.", e)
 
@@ -913,7 +1109,7 @@ class SovereignVoiceEngine:
 
             # Opening CoreAudio can block inside PortAudio/TCC on macOS. The
             # thread owns late cleanup so cancellation cannot leak a stream.
-            start_task = asyncio.create_task(
+            start_task = get_task_tracker().create_task(
                 asyncio.to_thread(_open_and_start_stream),
                 name="voice_engine.open_microphone",
             )
@@ -1041,6 +1237,8 @@ class SovereignVoiceEngine:
     def on_stop(self) -> None:
         self._closing_event.set()
         self.stop_listening()
+        self._release_stt_model(reason="voice_engine_stopped")
+        self._release_tts_model(reason="voice_engine_stopped")
 
     def _mic_callback(self, indata, frames, time_info, status):
         """sounddevice callback — runs in audio thread, must be fast."""
@@ -1183,9 +1381,6 @@ class SovereignVoiceEngine:
           2. Whisper confidence threshold — reject low-probability transcriptions
           3. Noise phrase list — reject common STT hallucinations and TV phrases
         """
-        if not self.stt_model:
-            return
-
         # Convert bytes to float32 numpy array for Whisper
         audio_np = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         audio_seconds = len(audio_np) / SAMPLE_RATE
@@ -1215,15 +1410,18 @@ class SovereignVoiceEngine:
                 return
 
             try:
-                segments_gen, info = self.stt_model.transcribe(
-                    audio_np,
-                    beam_size=5,
-                    language="en",
-                    vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=500)
-                )
-                # Collect segments with their probabilities
-                segments = list(segments_gen)
+                with self.stt_model_session() as stt_model:
+                    if stt_model is None:
+                        return
+                    segments_gen, _info = stt_model.transcribe(
+                        audio_np,
+                        beam_size=5,
+                        language="en",
+                        vad_filter=True,
+                        vad_parameters=dict(min_silence_duration_ms=500)
+                    )
+                    # Materialize while the model ownership session is held.
+                    segments = list(segments_gen)
             finally:
                 sentinel.release()
             text = " ".join([seg.text for seg in segments]).strip()

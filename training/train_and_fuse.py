@@ -47,6 +47,10 @@ REPO_DIR = TRAINING_DIR.parent
 if str(REPO_DIR) not in sys.path:
     sys.path.insert(0, str(REPO_DIR))
 
+from core.runtime.model_lane_control import (  # noqa: E402
+    LaneClaim,
+    estimate_model_job_footprint_gb,
+)
 from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 DATA_DIR = TRAINING_DIR / "data"
@@ -74,17 +78,29 @@ def _run(
     cmd: list[str],
     *,
     timeout: float | None = None,
+    env: dict[str, str] | None = None,
+    model_job: bool = False,
+    model_lane_claim: LaneClaim | None = None,
     source: str = "training_tooling:train_and_fuse",
 ) -> int:
     print(f"\n$ {' '.join(cmd)}", flush=True)
-    result = get_subprocess_gateway().run(
-        cmd,
-        cwd=REPO_DIR,
-        timeout=timeout if timeout is not None else TRAINING_COMMAND_TIMEOUT_S,
-        capture_output=False,
-        offline_tooling=True,
-        source=source,
-    )
+    gateway = get_subprocess_gateway()
+    run_kwargs = {
+        "cwd": REPO_DIR,
+        "env": env,
+        "timeout": timeout if timeout is not None else TRAINING_COMMAND_TIMEOUT_S,
+        "capture_output": False,
+        "offline_tooling": True,
+        "source": source,
+    }
+    if model_job or model_lane_claim is not None:
+        result = gateway.run_model_blocking(
+            cmd,
+            **run_kwargs,
+            model_lane_claim=model_lane_claim,
+        )
+    else:
+        result = gateway.run(cmd, **run_kwargs)
     return result.returncode
 
 
@@ -109,18 +125,14 @@ def train_lora(*, base_model: Path, resume: bool = False) -> None:
     cmd = [sys.executable, str(finetune)]
     if resume:
         cmd.append("--resume")
-    print(f"\n$ {' '.join(cmd)}  (AURA_LORA_BASE_MODEL={base_model})", flush=True)
-    result = get_subprocess_gateway().run(
+    print(f"  AURA_LORA_BASE_MODEL={base_model}", flush=True)
+    rc = _run(
         cmd,
-        cwd=REPO_DIR,
         env=env,
-        timeout=TRAINING_COMMAND_TIMEOUT_S,
-        capture_output=False,
-        offline_tooling=True,
         source="training_tooling:train_lora",
     )
-    if result.returncode != 0:
-        sys.exit(f"LoRA fine-tune failed (exit {result.returncode}).")
+    if rc != 0:
+        sys.exit(f"LoRA fine-tune failed (exit {rc}).")
 
 
 def _env_int(name: str, default: int, *, minimum: int = 0, maximum: int | None = None) -> int:
@@ -411,17 +423,13 @@ def train_crsm_delta_lora(
         max_seq_length=max_seq_length,
         lora_config_path=lora_config_path,
     )
-    print(f"\n$ {' '.join(cmd)}", flush=True)
-    result = get_subprocess_gateway().run(
+    rc = _run(
         cmd,
-        cwd=REPO_DIR,
-        timeout=TRAINING_COMMAND_TIMEOUT_S,
-        capture_output=False,
-        offline_tooling=True,
+        model_job=True,
         source="training_tooling:crsm_delta_lora",
     )
-    if result.returncode != 0:
-        sys.exit(f"CRSM delta LoRA fine-tune failed (exit {result.returncode}).")
+    if rc != 0:
+        sys.exit(f"CRSM delta LoRA fine-tune failed (exit {rc}).")
     if not (adapter_dir / "adapters.safetensors").exists():
         sys.exit(f"CRSM delta LoRA fine-tune ended without {adapter_dir / 'adapters.safetensors'}.")
     return adapter_dir
@@ -592,6 +600,7 @@ def fuse_adapter(*, base_model: Path, tag: str, adapter_dir: Path = ADAPTER_DIR)
             str(fused_path),
         ],
         timeout=1800,
+        model_job=True,
         source="training_tooling:fuse_adapter",
     )
     if rc != 0:
@@ -606,12 +615,40 @@ def verify_load(fused_path: Path) -> None:
     print(f"\nVerifying fused model loads: {fused_path}")
     code = (
         "import sys\n"
+        "from core.runtime.model_lane_control import standalone_model_lane\n"
         "from mlx_lm import load\n"
-        f"model, tok = load({str(fused_path)!r})\n"
-        "ids = tok.encode('Hello')\n"
-        "print(f'OK: tokenized {len(ids)} tokens, vocab_size={tok.vocab_size}')\n"
+        "model_path = sys.argv[1]\n"
+        "with standalone_model_lane(\n"
+        "    owner_id='verify-fused-model',\n"
+        "    model_path=model_path,\n"
+        "    purpose='benchmark',\n"
+        "    preemptible=True,\n"
+        "):\n"
+        "    model, tok = load(model_path)\n"
+        "    ids = tok.encode('Hello')\n"
+        "    print(f'OK: tokenized {len(ids)} tokens, vocab_size={tok.vocab_size}')\n"
     )
-    rc = _run([sys.executable, "-c", code], timeout=600, source="training_tooling:verify_fused_model")
+    timeout = 600.0
+    claim = LaneClaim(
+        owner_id=f"training:verify-fused:{os.getpid()}:{time.time_ns()}",
+        model_path=str(fused_path),
+        request_gb=estimate_model_job_footprint_gb(
+            str(fused_path),
+            purpose="benchmark",
+        ),
+        purpose="benchmark",
+        priority=50,
+        preemptible=True,
+        reservation_ttl_s=timeout + 30.0,
+        owner_lease_ttl_s=timeout + 30.0,
+        metadata={"source": "training_tooling:verify_fused_model"},
+    )
+    rc = _run(
+        [sys.executable, "-c", code, str(fused_path)],
+        timeout=timeout,
+        model_lane_claim=claim,
+        source="training_tooling:verify_fused_model",
+    )
     if rc != 0:
         sys.exit(f"Verification load failed (exit {rc}).")
 

@@ -14,6 +14,7 @@ Requires:
 import os
 import shutil
 import sys
+import time
 from pathlib import Path
 
 TRAINING_DIR = Path(__file__).parent
@@ -21,11 +22,33 @@ REPO_DIR = TRAINING_DIR.parent
 if str(REPO_DIR) not in sys.path:
     sys.path.insert(0, str(REPO_DIR))
 
+from core.runtime.model_lane_control import (  # noqa: E402
+    LaneClaim,
+    estimate_model_job_footprint_gb,
+)
 from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 ADAPTER_DIR = TRAINING_DIR / "adapters" / "aura-personality"
 MODEL_DIR = TRAINING_DIR.parent / "models" / "Qwen2.5-32B-Instruct-8bit"
 OUTPUT_GGUF = ADAPTER_DIR / "aura-personality-lora.gguf"
+
+
+def _conversion_claim(*, source: str) -> LaneClaim:
+    timeout = 300.0
+    return LaneClaim(
+        owner_id=f"training:gguf-conversion:{os.getpid()}:{time.time_ns()}",
+        model_path=str(MODEL_DIR),
+        request_gb=estimate_model_job_footprint_gb(
+            str(MODEL_DIR),
+            purpose="fuse",
+        ),
+        purpose="fuse",
+        priority=80,
+        preemptible=True,
+        reservation_ttl_s=timeout + 30.0,
+        owner_lease_ttl_s=timeout + 30.0,
+        metadata={"source": source},
+    )
 
 
 def fuse_and_export():
@@ -47,7 +70,7 @@ def fuse_and_export():
     print(f"  Output: {fused_dir}")
 
     try:
-        result = get_subprocess_gateway().run(
+        result = get_subprocess_gateway().run_model_blocking(
             [
                 sys.executable, "-m", "mlx_lm", "fuse",
                 "--model", str(MODEL_DIR),
@@ -87,7 +110,8 @@ def fuse_and_export():
                 if str(llama_convert).endswith(".py")
                 else [llama_convert]
             )
-            result = get_subprocess_gateway().run(
+            source = "training_tooling:convert_lora_to_gguf"
+            result = get_subprocess_gateway().run_model_blocking(
                 [
                     *convert_cmd,
                     "--base",
@@ -99,7 +123,8 @@ def fuse_and_export():
                 cwd=REPO_DIR,
                 timeout=300,
                 offline_tooling=True,
-                source="training_tooling:convert_lora_to_gguf",
+                source=source,
+                model_lane_claim=_conversion_claim(source=source),
             )
             if result.returncode == 0:
                 print(f"  GGUF LoRA adapter saved to {OUTPUT_GGUF}")

@@ -1,3 +1,5 @@
+import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,9 +11,12 @@ class SavedImageProbe:
     def __init__(self):
         self.saved_paths = []
 
-    def save(self, path):
-        self.saved_paths.append(path)
-        path.write_bytes(b"png-probe")
+    def save(self, target, *, format=None):
+        self.saved_paths.append(target)
+        if hasattr(target, "write"):
+            target.write(b"png-probe")
+        else:
+            target.write_bytes(b"png-probe")
 
 
 class RecordingTextToImagePipeline:
@@ -64,7 +69,7 @@ async def test_image_generation_skill_saves_recorded_pipeline_output(monkeypatch
     assert result["type"] == "image"
     assert result["mode"] == "txt2img"
     assert result["url"].startswith("/data/generated_images/gen_txt2img_")
-    assert image.saved_paths and image.saved_paths[0].exists()
+    assert image.saved_paths and await asyncio.to_thread(Path(result["path"]).exists)
     assert pipeline.calls[0]["width"] == 512
     assert pipeline.calls[0]["height"] == 512
     assert pipeline.calls[0]["num_inference_steps"] == 12

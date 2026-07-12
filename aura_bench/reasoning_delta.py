@@ -229,19 +229,36 @@ async def run_delta(
 
 
 # ── live wiring (explicit; never auto-runs on import) ───────────────────────
-def make_mlx_lm_generator(model_path: str, *, max_tokens: int = 640) -> GenerateFn:
-    """Build a standalone async generate fn over a local MLX model via mlx_lm.
+class _OwnedMLXGenerator:
+    """Process-owned, serialized MLX generator for an explicit live benchmark."""
 
-    No app boot, no InferenceGate — loads the weights directly (the same pattern as
-    benchmarks/reasoning). Only call this from an explicit --live run with verified
-    memory headroom; each call loads one model copy into unified memory.
-    """
-    from mlx_lm import generate as _mlx_generate
-    from mlx_lm import load as _mlx_load
+    def __init__(self, model_path: str, *, max_tokens: int) -> None:
+        import uuid
 
-    model, tokenizer = _mlx_load(model_path)
+        from mlx_lm import generate as mlx_generate
+        from mlx_lm import load as mlx_load
 
-    def _sampler(temperature: float):
+        from core.runtime.model_lane_control import acquire_standalone_model_lane
+
+        self._lease = acquire_standalone_model_lane(
+            owner_id=f"reasoning-delta-{uuid.uuid4().hex[:12]}",
+            model_path=model_path,
+            purpose="benchmark",
+            preemptible=False,
+            metadata={"tool": "aura_bench.reasoning_delta"},
+        )
+        try:
+            self._model, self._tokenizer = mlx_load(model_path)
+        except BaseException:  # noqa: BLE001 - release lease on interrupts and process termination.
+            self._lease.release(reason="reasoning_delta_model_load_failed")
+            raise
+        self._mlx_generate = mlx_generate
+        self._max_tokens = int(max_tokens)
+        self._lock = asyncio.Lock()
+        self._closed = False
+
+    @staticmethod
+    def _sampler(temperature: float) -> Any | None:
         try:
             from mlx_lm.sample_utils import make_sampler
 
@@ -249,29 +266,83 @@ def make_mlx_lm_generator(model_path: str, *, max_tokens: int = 640) -> Generate
         except (ImportError, TypeError, ValueError):
             return None
 
-    async def _gen(prompt: str, temperature: float) -> str:
-        def _run() -> str:
-            try:
-                chat = tokenizer.apply_chat_template(
-                    [{"role": "user", "content": prompt}],
-                    add_generation_prompt=True,
-                    tokenize=False,
-                )
-            except (AttributeError, TypeError, ValueError):
-                chat = prompt
-            sampler = _sampler(temperature)
-            kwargs: dict[str, Any] = {"max_tokens": max_tokens, "verbose": False}
-            if sampler is not None:
-                kwargs["sampler"] = sampler
-            try:
-                return str(_mlx_generate(model, tokenizer, prompt=chat, **kwargs) or "")
-            except TypeError:
-                # Older signature without sampler/verbose kwargs.
-                return str(_mlx_generate(model, tokenizer, prompt=chat, max_tokens=max_tokens) or "")
+    async def __call__(self, prompt: str, temperature: float) -> str:
+        from core.runtime.model_lane_control import run_owned_model_thread_call
 
-        return await asyncio.to_thread(_run)
+        async with self._lock:
+            if self._closed:
+                raise RuntimeError("reasoning_delta_generator_closed")
 
-    return _gen
+            def _run() -> str:
+                try:
+                    chat = self._tokenizer.apply_chat_template(
+                        [{"role": "user", "content": prompt}],
+                        add_generation_prompt=True,
+                        tokenize=False,
+                    )
+                except (AttributeError, TypeError, ValueError):
+                    chat = prompt
+                sampler = self._sampler(temperature)
+                kwargs: dict[str, Any] = {
+                    "max_tokens": self._max_tokens,
+                    "verbose": False,
+                }
+                if sampler is not None:
+                    kwargs["sampler"] = sampler
+                try:
+                    return str(
+                        self._mlx_generate(
+                            self._model,
+                            self._tokenizer,
+                            prompt=chat,
+                            **kwargs,
+                        )
+                        or ""
+                    )
+                except TypeError:
+                    return str(
+                        self._mlx_generate(
+                            self._model,
+                            self._tokenizer,
+                            prompt=chat,
+                            max_tokens=self._max_tokens,
+                        )
+                        or ""
+                    )
+
+            return await run_owned_model_thread_call(
+                _run,
+                operation_name="reasoning_delta_generate",
+            )
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._model = None
+        self._tokenizer = None
+        try:
+            import gc
+
+            import mlx.core as mx
+
+            gc.collect()
+            try:
+                mx.clear_cache()
+            except (AttributeError, RuntimeError):
+                logger.debug("MLX cache cleanup unavailable during benchmark close")
+        finally:
+            self._lease.release(reason="reasoning_delta_generator_closed")
+
+
+def make_mlx_lm_generator(
+    model_path: str,
+    *,
+    max_tokens: int = 640,
+) -> _OwnedMLXGenerator:
+    """Build an explicitly closable, model-lane-owned MLX generator."""
+
+    return _OwnedMLXGenerator(model_path, max_tokens=max_tokens)
 
 
 def _deterministic_generators() -> tuple[GenerateFn, GenerateFn]:
@@ -319,31 +390,41 @@ def main(argv: list[str] | None = None) -> int:
         suite = DEFAULT_TASKS
     tasks = suite[: args.limit] if args.limit > 0 else suite
 
-    if args.live:
-        logger.info("Loading cortex model: %s", args.model)
-        cortex = make_mlx_lm_generator(args.model)
-        solver = None
-        if args.solver_model:
-            logger.info("Loading solver model: %s", args.solver_model)
-            solver = make_mlx_lm_generator(args.solver_model)
-    else:
-        logger.warning("Running with deterministic CI generators (no models). Use --live for real numbers.")
-        cortex, solver = _deterministic_generators()
+    owned_generators: list[_OwnedMLXGenerator] = []
+    try:
+        if args.live:
+            logger.info("Loading cortex model: %s", args.model)
+            cortex = make_mlx_lm_generator(args.model)
+            owned_generators.append(cortex)
+            solver = None
+            if args.solver_model:
+                logger.info("Loading solver model: %s", args.solver_model)
+                solver = make_mlx_lm_generator(args.solver_model)
+                owned_generators.append(solver)
+        else:
+            logger.warning(
+                "Running with deterministic CI generators (no models). "
+                "Use --live for real numbers."
+            )
+            cortex, solver = _deterministic_generators()
 
-    report = asyncio.run(
-        run_delta(
-            cortex_generate=cortex,
-            solver_generate=solver,
-            tasks=tasks,
-            per_task_timeout=args.per_task_timeout,
-            wall_clock_deadline_s=args.deadline,
-            amplifier_time_budget_s=args.amp_budget,
-            grader=grader,
-            skip_amplified=args.skip_amplified,
+        report = asyncio.run(
+            run_delta(
+                cortex_generate=cortex,
+                solver_generate=solver,
+                tasks=tasks,
+                per_task_timeout=args.per_task_timeout,
+                wall_clock_deadline_s=args.deadline,
+                amplifier_time_budget_s=args.amp_budget,
+                grader=grader,
+                skip_amplified=args.skip_amplified,
+            )
         )
-    )
-    print(json.dumps(report.to_dict(), indent=2))
-    return 0
+        print(json.dumps(report.to_dict(), indent=2))
+        return 0
+    finally:
+        for generator in reversed(owned_generators):
+            generator.close()
 
 
 if __name__ == "__main__":

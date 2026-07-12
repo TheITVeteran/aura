@@ -10,62 +10,99 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 ### Current Estimate
 
 - Configured local proof profile: **100% passed historically**.
-- Expanded daily-runtime/product closure: **100% for the current configured
-  local checkpoint program** based on current live
-  evidence, not documentation. This number is deliberately governed by the live
-  desktop path, not by historical proof-profile success. Checkpoint 5 addresses
-  two live defects, and the follow-up desktop-mode live proof verified bounded
-  chat/runtime survival, full mind organ participation, clean shutdown, and no
-  runtime-stream failure markers. Checkpoint 6 then reran the operational-label
-  validator battery and tightened the sci-fi/frontier standard so character
-  imports must be backed by real organ-level tests, not the legacy themed silo.
-  Checkpoint 7 tightens the full-desktop/background-autonomy contract so the
-  `FrontierDiscoveryLoop` cannot disappear while health still claims full
-  initiative, and fixes a closure bug in autonomous mission pursuit. Checkpoint
-  8 decouples the desktop macOS permission/TCC probe from fast health and UI
-  startup, adds short-lived negative native-bridge caches, and verifies the
-  installed signed Aura.app bridge currently reports Screen Recording,
-  Accessibility, Automation, desktop control, screen text, and menu-clock access
-  ready through `com.aura.desktop`. Checkpoint 10C source-validates the
-  research-cycle failure-lockdown fix so a recoverable autonomous research
-  timeout no longer poisons unified runtime pressure or disables background
-  cognition. Checkpoint 10D adds a launched desktop-mode background-autonomy
-  proof: full runtime expected and ready, background cognition enabled and
-  active, 22/22 required background organs running, desktop access ready through
-  the signed `com.aura.desktop` bridge, no stream failure markers, clean
-  shutdown, no orphan processes, and port release after stop. Checkpoint 37
-  closes a real enterprise-gate regression introduced by the Program DNA proof
-  surface instead of relaxing the baseline. Checkpoint 38 replayed the live
-  desktop path from a clean commit with bounded RSS, CognitiveEngine replies,
-  live mind-organ participation, governed desktop action, restart continuity,
-  clean shutdown, and no runtime failure markers.
-- Estimated checkpoints in this expanded program: **12 total**. Checkpoint 1 is
-  committed and pushed; Checkpoint 2 is source-committed but live TCC remains
-  open; Checkpoint 3 is committed and pushed; Checkpoint 4 is committed and
-  pushed with an executable operational-label runner and full validator
-  execution; Checkpoint 5 is committed and pushed for source fixes to desktop
-  access truthfulness and Memory UI survival, then revalidated by a bounded
-  desktop-mode live proof; Checkpoint 6 is the source-validation
-  checkpoint for operational labels and fictional-AI/frontier requirements;
-  Checkpoint 7 is the background-autonomy/full-runtime contract checkpoint;
-  Checkpoint 8 is the source-validation checkpoint for desktop-access
-  TCC cache and UI-probe decoupling; Checkpoint 9 is the detailed
-  remaining-contract checkpoint that prevents the final checkpoints from
-  collapsing into generic wording; Checkpoint 10A is committed and pushed as
-  the desktop-permission truth reconciliation checkpoint. Checkpoint 10B is
-  source-validated as the boot/nonblocking-neural-stream hygiene checkpoint:
-  capability discovery no longer blocks launch, repeated foreground quiet-window
-  background deferrals are logged as state rather than feed floods, and unchanged
-  voice threshold pulses no longer dominate the neural stream. The real launched
-  Aura.app lane still shows a macOS TCC Accessibility denial for the exact
-  launched identity. Checkpoint 10C is source-validated for research-cycle
-  fail-open-with-repair semantics; Checkpoint 10D live-validates background
-  autonomy and desktop-access truth under a launched desktop-mode proof.
-  Checkpoint 37 is the enterprise-ratchet repair checkpoint. Checkpoint 38 is
-  the final clean-commit live desktop replay and evidence packaging checkpoint.
-  No configured local checkpoint group remains open after the final tracker
-  commit/push proof. Independent third-party evaluation and longer 24-72h
-  soaks remain outside this configured local checkpoint program.
+- Expanded Pass F / wholesale closure: **OPEN**. The earlier configured
+  checkpoint program reached 100%, but the larger standard introduced by the
+  current prompt and both criticism corpora supersedes that denominator. It is
+  not an honest measure of daily reliability, enterprise maturity, semantic
+  review, independent replication, clean-machine portability, or final soak
+  readiness.
+- Current bounded implementation milestone: **`CTX2-TEST-001..003` in
+  progress**. The source and deterministic portion of
+  `CTX2-LANE-001..004` is complete; its bounded live pressure evidence remains
+  explicitly open under `RESOURCE-001`. Signal-safe terminal shutdown
+  (`CTX2-SHUTDOWN-001..003`) and the fail-closed cognitive-gate/complete-skill-discovery slice
+  (`CTX2-GATE-001..002`, `CTX2-SKILL-001..002`) are complete with checkpoint
+  evidence. Every other item remains open or in progress unless its detailed
+  entry explicitly carries a completion date and proof.
+- Overall completion percentage: **intentionally not claimed yet**. The
+  requirement-to-proof control plane must first establish a stable denominator
+  and reject uncovered or evidence-free closure. Historical percentages below
+  are checkpoint records, not the status of this master program.
+- Final multi-hour and 24-72 hour soaks: **DEFERRED by design** until all
+  shorter source, deterministic, fault-injection, bounded live, GUI,
+  clean-machine, and release gates are green.
+
+### Authoritative Master TODO Index (2026-07-12)
+
+This index is the no-drop overview for the entire active pass. It covers the
+full user prompt, every obligation and criticism in
+`CONTEXT TO THINK ABOUT AS YOU WORK (1).txt`, and every item in the second
+canonical-mind criticism corpus. The detailed Pass F ledger and both criticism
+matrices below define the full acceptance criteria; this index makes their
+combined scope and ordering visible in one place.
+
+Status rules:
+
+- `COMPLETE` requires merged source on `main`, focused and adjacent regression
+  evidence, the applicable static/architecture/security gates, and bounded live
+  evidence whenever the claim concerns the launched runtime.
+- `IN PROGRESS` means source is actively changing; it is not a partial closure
+  claim. `OPEN` remains mandatory. `DEFERRED` is allowed only where this tracker
+  records an explicit prerequisite, such as the final soak.
+- A passing historical proof, existing class, named subsystem, mocked path, or
+  technically successful but shallow effect cannot close a task.
+- New defects, missing layers, and surviving criticisms discovered during any
+  task are added to this index or its detailed requirement entry before work
+  continues. Nothing may disappear merely because checkpoint prose is replaced.
+
+| Master ID | Status | Mandatory workstream and closure burden | Detailed scope |
+|---|---|---|---|
+| `SCOPE-001` | `OPEN` | Build the machine-readable requirement-to-proof control plane, assign every prompt/context obligation a stable ID, enforce evidence-backed transitions, and generate zero-unmapped coverage. | Matrix 1; Pass F 12-13; checkpoint hygiene |
+| `EXPECT-001` | `IN PROGRESS` | Complete Fable's Aura Expectation Engine so natural-language intent becomes causal acceptance criteria, observed-effect verdicts, repair, persistence, and follow-through across every action path. | Pass F 1 and 14; Matrix 9 |
+| `EFFECT-001` | `IN PROGRESS` | Put file, network, browser, OS, memory, model, patch, self-repair, social, and environmental effects through canonical authority, transaction, compensation, and reconstructable receipt boundaries. | Pass F 5; Matrix 9 and 11 |
+| `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
+| `LANE-001` | `IN PROGRESS` | Source/deterministic implementation completed 2026-07-12: atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, and terminal receipts are implemented and gated. Full closure still requires the bounded live pressure evidence carried by `RESOURCE-001`. | Addendum 21, `CTX2-LANE-001..004` |
+| `RESOURCE-001` | `IN PROGRESS` | Make RAM, accelerator, thermal, disk, process, port, cache, and pressure tests hermetic; separately preserve honestly labelled bounded host/live pressure proof. | Pass F 3; Addendum 22 |
+| `SHUTDOWN-001` | `COMPLETE 2026-07-11` | Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes. | Addendum 32, `CTX2-SHUTDOWN-001..003` |
+| `FAULT-001` | `IN PROGRESS` | Drain the FMEA and degradation-policy backlog: root-fix broad catches, swallowed cancellation, false success/health, partial mutation, retry storms, leaks, and noisy fallback at their originating layer. | Pass F 4; Matrix 12 |
+| `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
+| `MIND-001` | `OPEN` | Prove one boot-identified canonical self, workspace, substrate, welfare/homeostasis, consciousness cycle, identity, executive authority, and memory authority on the exact live path. | Matrix 3; Addendum 19 |
+| `STATE-001` | `OPEN` | Build the versioned canonical state catalog and inspectable causal graph with writer authority, freshness, arbitration, persistence, model-swap semantics, redaction, and action-to-learning traces. | Addendum 20 |
+| `MEMORY-001` | `OPEN` | Unify memory write/read authority and cross-store semantic retrieval; add provenance, conflict/freshness handling, exact live consumption proof, deletion, and symmetric observed rollback. | Addendum 26 |
+| `CONVERSATION-001` | `OPEN` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. | Pass F 6; Matrix 6 |
+| `SUBSTRATE-001` | `OPEN` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. | Matrix 2-3; Addendum 20 and 29 |
+| `DESKTOP-001` | `OPEN` | Generalize computer use into perception-plan-act-observe-repair loops over browser, files, Notes/Docs/PDF/images, dialogs, focus, permissions, changed layouts, and multi-app workflows. | Pass F 7; Matrix 7 |
+| `TOOLS-001` | `IN PROGRESS` | Make long, precise multi-tool workflows typed, resumable, idempotent, budgeted, compensating, provider-change tolerant, source preserving, and complete only after durable observed effects. | Matrix 9; original context tool/handoff goals |
+| `SKILLS-001` | `COMPLETE 2026-07-10` | Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill. | Addendum 23, `CTX2-GATE-*` and `CTX2-SKILL-*` |
+| `AGENCY-001` | `OPEN` | Prove bounded self-generated goals, coherent priority, obstacle recovery, foreground yielding, stale-obligation cleanup, restart continuity, operator override, and indefinite-life behavior. | Matrix 10; resident-colleague scope |
+| `CODING-001` | `OPEN` | Reach human-level-plus unseen-repository coding and governed closed-loop self-repair from failing evidence through root cause, mutation, review, validation, rollback, commit, learning, and monitoring. | Pass F 8; Matrix 8 |
+| `ADAPT-001` | `OPEN` | Correct and safely enable one-shot hidden-state adaptation; validate CRSM/CAA/LoRA/compounding with uncontaminated behavioral holdouts, calibration, rollback, and real capability-growth curves. | Pass F 8; Addendum 25; learning/substrate closure |
+| `AMPLIFY-001` | `OPEN` | Repair verifier soundness and retain reasoning amplification only where sealed matched controls show calibrated quality gains within latency/resource budgets. | Addendum 24 |
+| `IDENTITY-001` | `OPEN` | Preserve signed longitudinal identity, beliefs, commitments, values, relationships, consent, accountability, and uncertainty through restart, conflict, correction, rollback, and model replacement. | Addendum 27-28 |
+| `WELFARE-001` | `OPEN` | Unify computational welfare signals and prove longitudinal causal effects on attention, policy, learning, consent/refusal, continuity protection, and recovery under adversarial controls. | Addendum 29 |
+| `CLAIMS-001` | `OPEN` | Keep consciousness, self-awareness, sentience, ALife, organism, entity, personhood-candidate, inner-life, AGI, ASI, and comparison claims operational, falsifiable, and bounded by causal evidence. | Matrix 2 and 17; operational-label battery |
+| `FRONTIER-001` | `OPEN` | Import useful fictional-AI mechanisms into real organs, enforce anti-pattern safeguards, and re-evaluate every requested fictional/nonfictional comparison from code and evidence without themed theater. | Fictional-AI scope; Matrix 17-18 |
+| `INTELLIGENCE-001` | `OPEN` | Measure whole-system uplift with base/tools/memory/substrate/planner/full ablations, external sealed benchmarks, confidence intervals, contamination controls, and matched cost/latency. | Matrix 4; Addendum 31 |
+| `LONGHORIZON-001` | `OPEN` | Build a domain-general partially observable long-horizon agency harness, then a non-scripted NetHack-compatible evaluation with crash-resume, transfer, hidden maps, and adversarial interruption. | Matrix 5; Addendum 31 |
+| `COLLEAGUE-001` | `OPEN` | Validate the resident local synthetic-colleague contract through broad hidden day-in-the-life workflows, proactive precision, privacy, restart/update survival, honest degradation, and low correction burden. | Addendum 30 |
+| `UI-001` | `OPEN` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. | Pass F 11; Matrix 14 |
+| `PERF-001` | `OPEN` | Establish and enforce end-to-end latency, throughput, memory, thermal, startup, model-switch, queue-growth, and UI responsiveness budgets without reducing intelligence or correctness. | Runtime/resource/colleague SLOs; original context performance goals |
+| `OBSERVE-001` | `OPEN` | Standardize structured logs, traces, metrics, crash taxonomy, receipt correlation, privacy-aware incident export, operator diagnosis, and replayable failure reconstruction. | Pass F 2, 4, and 10; Matrix 12 and 15 |
+| `SECURITY-001` | `OPEN` | Complete threat modeling, secret/privacy boundaries, prompt/tool/desktop abuse tests, dependency and license review, SBOM/provenance, signed artifacts, and recovery from hostile inputs. | Pass F 9-10; Matrix 15-16 |
+| `OPERATIONS-001` | `OPEN` | Make clean install, first boot, doctor, model acquisition, permissions, migration, update, backup/restore, rollback, uninstall, crash triage, and release channels reproducible and boring. | Pass F 10; Matrix 15 |
+| `REPO-001` | `OPEN` | Drain type, effect, cancellation, lifecycle, concurrency, dependency, dead-code, scaffolding/stub, configuration, documentation, and runtime/proof artifact-placement debt across every tracked source file. | Pass F 12; Matrix 11, 12, and 18 |
+| `PROOF-001` | `OPEN` | Purify all proof runners against leakage, copied answers, stale artifacts, fallback success, runner-solved work, environment dependence, and unsupported claims; separate builder/solver/evaluator/signer. | Pass F 9; Matrix 16 |
+| `REPLICATION-001` | `OPEN` | Produce clean-machine setup, external challenge packs, source/SBOM/claims packages, replay commands, hashes, negative controls, and independent replication of every important causal result. | Matrix 16-17; Addendum 31 |
+| `AUDIT-001` | `OPEN` | Complete first and independent second every-line semantic passes, rerun the entire criticism/question corpus code-first, add every surviving gap, and make only evidence-defensible final assessments. | Pass F 12; Matrix 18; original assessment questions |
+| `VALIDATE-001` | `OPEN` | Run the complete fast, architecture, governance, security, operational-label, frontier, fault-injection, GUI, bounded live, and clean-machine ladder from a clean committed `main`. | Pass F 13; final live proof program |
+| `SOAK-001` | `DEFERRED` | Run bounded multi-hour and then 24-72 hour longevity/pressure/idle/recovery soaks only after `VALIDATE-001` and every shorter requirement are green; triage any failure back into this index. | Pass F 13; Matrix 10, 13, and 30 |
+| `CHECKPOINT-001` | `IN PROGRESS` | Keep work directly on `main`; preserve unrelated work; update evidence/status at each bounded milestone; commit and push meaningful checkpoints; finish with a clean worktree and no untracked obligation. | User process contract; checkpoint hygiene |
+
+Coverage assertion for this index is provisional until `SCOPE-001` supplies the
+machine-enforced report. Manual reconciliation on 2026-07-12 covered all 149
+numbered lines of the first context file and all 203 numbered lines of the
+second corpus. Any future source corpus is additive: it must be registered and
+mapped before its requirements can be called in scope.
 
 ### Scope Clarification For The Current Pass
 
@@ -542,7 +579,8 @@ evidence into a metaphysical, legal, or comparative claim.
      concurrent-writer races, restart/model-swap replay, causal ablations, and an
      independently replayed live trace whose state and receipt hashes agree.
 
-21. **Atomic model-lane admission, eviction, and complete accounting** `[OPEN]`
+21. **Atomic model-lane admission, eviction, and complete accounting**
+    `[SOURCE + DETERMINISTIC GATES COMPLETE 2026-07-12; BOUNDED LIVE PRESSURE OPEN]`
    - `CTX2-LANE-001`: replace the immediate spawn wrapper's boolean-only
      admission result with an admission transaction. Reserve the candidate's
      budget, execute every `evict_first` obligation, wait for process death and
@@ -566,6 +604,27 @@ evidence into a metaphysical, legal, or comparative claim.
      unkillable worker injection, process-tree escape detection, failed-spawn
      compensation, and live pressure proof showing no overcommit, cold-gap, or
      admission statement that precedes required eviction.
+   - 2026-07-12 implementation evidence: `core/runtime/model_lane_control.py`
+     now owns durable reservations, fencing, stale recovery, process identity,
+     process-group accounting, required eviction/reclamation, compensation,
+     heartbeat leases, inherited child claims, and terminal receipts. The
+     subprocess gateway governs asynchronous and explicit blocking model jobs;
+     in-process MLX, vision, Nucleus, embeddings, image, voice, validator,
+     benchmark, CAA, LoRA, fusion, conversion, and migration loaders are held
+     for their exact physical lifetime or delegated to an attributable child.
+   - Static ownership evidence: repository-wide AST and inline-child audit
+     `MODEL_LOAD_OWNERSHIP=PASS paths=27 references=39 findings=0`; the audit
+     scans 2,000+ production source paths and fails on unregistered root,
+     script, benchmark, submodule, and embedded-program loads.
+   - Deterministic evidence: 382 focused/adjacent tests passed in 48.50s;
+     67 loader/gateway/audit contracts passed; 45 model-ledger, atomic-symlink,
+     and validator lifecycle tests passed; Ruff, py_compile, `git diff --check`,
+     and strict isolated mypy for seven lane/audit modules passed. Governance
+     ownership matched its reviewed baseline after replacing seven raw adapter
+     mutations with two gateway calls and canonical atomic symlink replacement.
+   - Remaining closure burden: run the bounded, honestly labelled host/live
+     pressure proof after `CTX2-TEST-001..003` makes resource observations and
+     isolation hermetic. This is not the deferred multi-hour soak.
 
 22. **Hermetic resource and pressure testing** `[OPEN]`
    - `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk,

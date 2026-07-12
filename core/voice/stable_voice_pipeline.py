@@ -1,8 +1,4 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-from core.utils.task_tracker import get_task_tracker
-from core.utils.exceptions import capture_and_log
 
 import asyncio
 import logging
@@ -10,7 +6,11 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.utils.exceptions import capture_and_log
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.VoicePipeline")
 
@@ -46,7 +46,7 @@ class VoicePipelineConfig:
     # Pipeline settings
     min_response_length: int = 3           # Words — don't speak responses shorter than this
     processing_timeout_s: float = 120.0    # Max wait for LLM response
-    wake_word: Optional[str] = "aura"      # Set None to always listen
+    wake_word: str | None = "aura"      # Set None to always listen
     push_to_talk_mode: bool = False
 
 
@@ -58,15 +58,15 @@ class StableVoicePipeline:
     and clean integration with the orchestrator.
     """
 
-    def __init__(self, orchestrator, config: Optional[VoicePipelineConfig] = None):
+    def __init__(self, orchestrator, config: VoicePipelineConfig | None = None):
         self._orch = orchestrator
         self._config = config or VoicePipelineConfig()
         self._state = VoiceState.IDLE
         self._running = False
         
         # Phase 7: Voice Bridge integration
-        from core.voice.voice_bridge import VoiceConversationBridge
         from core.container import ServiceContainer
+        from core.voice.voice_bridge import VoiceConversationBridge
         conv_engine = ServiceContainer.get("conversation_engine")
         self._bridge = VoiceConversationBridge(orchestrator, conv_engine)
         
@@ -80,8 +80,8 @@ class StableVoicePipeline:
         self._tts = None
 
         # State management
-        self._current_tts_task: Optional[asyncio.Task] = None
-        self._processing_task: Optional[asyncio.Task] = None
+        self._current_tts_task: asyncio.Task | None = None
+        self._processing_task: asyncio.Task | None = None
         self._reconnect_attempts = 0
 
         # Metrics
@@ -250,7 +250,6 @@ class StableVoicePipeline:
                             self._utterance_queue.put_nowait(utterance)
                         except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                             record_degradation('stable_voice_pipeline', e)
-                            import logging
                             logger.debug("STT frame processing: %s", e)
 
             except asyncio.CancelledError:
@@ -263,7 +262,7 @@ class StableVoicePipeline:
                 if self._running:
                     await self._reconnect_stt()
 
-    async def _capture_utterance(self) -> Optional[str]:
+    async def _capture_utterance(self) -> str | None:
         """
         Capture a single utterance from the STT engine.
         Returns the transcribed text or None.
@@ -300,7 +299,7 @@ class StableVoicePipeline:
                     
             return await self._stt_breaker.execute(_do_capture)
             
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         except (sqlite3.Error, OSError) as e:
             record_degradation('stable_voice_pipeline', e)
@@ -322,7 +321,7 @@ class StableVoicePipeline:
                     utterance = await asyncio.wait_for(
                         self._utterance_queue.get(), timeout=1.0
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
 
                 await self._handle_utterance(utterance)
@@ -363,7 +362,7 @@ class StableVoicePipeline:
                             _pri, _seq, event = await asyncio.wait_for(stream_q.get(), timeout=0.1)
                             if event.get("type") == "chat_stream_chunk":
                                 yield event.get("chunk", "")
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             continue
                     
                     # Ensure we get the final response if needed
@@ -391,7 +390,7 @@ class StableVoicePipeline:
                 record_degradation('stable_voice_pipeline', e)
                 capture_and_log(e, {'module': __name__})
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 "Voice: LLM timed out after %.0fs for utterance %r",
                 self._config.processing_timeout_s, utterance[:50]
@@ -490,9 +489,9 @@ class StableVoicePipeline:
         task.cancel()
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
+        except (TimeoutError, asyncio.CancelledError):
             logger.debug('Ignored Exception in stable_voice_pipeline.py: %s', "unknown_error")
-        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
+        except (RuntimeError, AttributeError) as e:
             record_degradation('stable_voice_pipeline', e)
             logger.debug("Autonomous thought interruption: %s", e)
 
@@ -523,7 +522,7 @@ class StableVoicePipeline:
         logger.debug("Voice state: %s → %s", self._state.value, new_state.value)
         self._state = new_state
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "state": self._state.value,
             "utterances_processed": self._utterances_processed,
@@ -547,7 +546,6 @@ class _MacOSSayWrapper:
         self._proc = None
 
     def speak(self, text: str):
-        import subprocess
         from core.runtime.subprocess_gateway import get_subprocess_gateway
 
         # Kill previous
@@ -569,17 +567,19 @@ class _MacOSSayWrapper:
 # ── Whisper Direct Wrapper ────────────────────────────────────────────────────
 
 class _WhisperWrapper:
-    """Direct faster-whisper wrapper for audio capture."""
+    """Compatibility wrapper over the canonical governed Whisper owner."""
 
     def __init__(self, model_size: str = "base", language: str = "en"):
-        from faster_whisper import WhisperModel
-        # Issue 49: Force CPU on Apple Silicon (FW doesn't support 'mps')
-        self._model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        from core.senses.voice_socket_logic import get_whisper_model
+
+        self._model = get_whisper_model(model_size)
+        if self._model is None:
+            raise RuntimeError("canonical_whisper_model_unavailable")
         self._language = language
         self.last_text = None
-        logger.info("WhisperWrapper loaded (model=%s)", model_size)
+        logger.info("WhisperWrapper attached to canonical model=%s", model_size)
 
-    def transcribe(self, audio_path: Optional[str] = None) -> Optional[str]:
+    def transcribe(self, audio_path: str | None = None) -> str | None:
         """
         Transcribe from file path or from microphone capture.
         Returns transcribed text or None.
@@ -597,28 +597,29 @@ class _WhisperWrapper:
         text = " ".join(seg.text for seg in segments).strip()
         return text if text else None
 
-    def _capture_from_mic(self) -> Optional[str]:
+    def _capture_from_mic(self) -> str | None:
         """Capture audio from microphone to temp file."""
         try:
+            import tempfile
+
+            import numpy as np
             import sounddevice as sd
             import soundfile as sf
-            import tempfile
-            import numpy as np
 
-            SAMPLE_RATE = 16000
-            DURATION = 5  # seconds — adjust for your use case
+            sample_rate = 16000
+            duration = 5  # seconds — adjust for your use case
 
-            logger.debug("Recording %ds of audio...", DURATION)
+            logger.debug("Recording %ds of audio...", duration)
             audio = sd.rec(
-                int(DURATION * SAMPLE_RATE),
-                samplerate=SAMPLE_RATE,
+                int(duration * sample_rate),
+                samplerate=sample_rate,
                 channels=1,
                 dtype=np.float32,
             )
             sd.wait()
 
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                sf.write(f.name, audio, SAMPLE_RATE)
+                sf.write(f.name, audio, sample_rate)
                 return f.name
         except (ImportError, AttributeError, RuntimeError) as exc:
             record_degradation('stable_voice_pipeline', exc)

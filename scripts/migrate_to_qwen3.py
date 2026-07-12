@@ -36,6 +36,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
+
 ACTIVE_JSON = PROJECT_ROOT / "training" / "fused-model" / "active.json"
 
 
@@ -124,7 +127,14 @@ def run_fuse(base: Path, adapter: Path, out: Path, *, execute: bool) -> bool:
         print("  (dry-run — not executed; pass --execute --run-fuse to run)")
         return True
     try:
-        subprocess.run(cmd, check=True)
+        get_subprocess_gateway().run_model_blocking(
+            cmd,
+            cwd=PROJECT_ROOT,
+            timeout=1800.0,
+            offline_tooling=True,
+            check=True,
+            source="training_tooling:migrate_qwen3_fuse",
+        )
         return out.exists()
     except (subprocess.SubprocessError, OSError) as exc:
         print(f"  ✗ fuse failed: {exc}")

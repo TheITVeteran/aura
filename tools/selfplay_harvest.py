@@ -40,6 +40,7 @@ from core.learning.heldout_battery import (  # noqa: E402
     generate_battery,
     grade_response,
 )
+from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 EVAL_SEED_FLOOR = 1000  # weight_compounding.battery_seed_base — never harvest at/above
 
@@ -145,7 +146,13 @@ def main() -> int:
     parser.add_argument("--output", default="", help="optional stats JSON path")
     args = parser.parse_args()
 
-    stats = harvest(args)
+    with standalone_model_lane(
+        owner_id="selfplay-harvest",
+        model_path=args.model,
+        purpose="benchmark",
+        metadata={"tool": "selfplay_harvest"},
+    ):
+        stats = harvest(args)
     print(json.dumps(stats, indent=2, sort_keys=True))
     if args.output:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)

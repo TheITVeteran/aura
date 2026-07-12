@@ -1,0 +1,201 @@
+from __future__ import annotations
+
+import asyncio
+import queue
+from types import SimpleNamespace
+
+import pytest
+
+from core.brain.llm.mlx_client import MLXLocalClient
+from core.runtime.shutdown_coordinator import clear_shutdown_request
+
+
+class _ProcessProbe:
+    def __init__(self) -> None:
+        self.alive = True
+        self.killed = False
+
+    def is_alive(self) -> bool:
+        return self.alive
+
+    def kill(self) -> None:
+        self.killed = True
+        self.alive = False
+
+    def join(self, timeout: float | None = None) -> None:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _clear_shutdown() -> None:
+    clear_shutdown_request()
+    yield
+    clear_shutdown_request()
+
+
+@pytest.mark.asyncio
+async def test_worker_heartbeat_renews_durable_lane_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.container import ServiceContainer
+    from core.runtime import model_lane_control
+
+    renewed = asyncio.Event()
+    calls: list[tuple[str, int]] = []
+
+    class _Controller:
+        async def heartbeat_owner(self, owner_id: str, *, fencing_token: int) -> bool:
+            calls.append((owner_id, fencing_token))
+            renewed.set()
+            return True
+
+    monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: _Controller())
+    monkeypatch.setattr(ServiceContainer, "get", lambda *_args, **_kwargs: None)
+    client = MLXLocalClient(model_path="/models/test-1.5b")
+    client._res_q = queue.Queue()
+    client._model_lane_owner_id = "mlx:test:heartbeat"
+    client._model_lane_fencing_token = 77
+    listener = asyncio.create_task(client._response_listener_loop())
+    try:
+        client._res_q.put({"status": "heartbeat"})
+        await asyncio.wait_for(renewed.wait(), timeout=2.0)
+    finally:
+        listener.cancel()
+        await listener
+
+    assert calls == [("mlx:test:heartbeat", 77)]
+
+
+@pytest.mark.asyncio
+async def test_lost_heartbeat_fence_stops_stale_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.container import ServiceContainer
+    from core.runtime import model_lane_control
+
+    class _Controller:
+        async def heartbeat_owner(self, _owner_id: str, *, fencing_token: int) -> bool:
+            assert fencing_token == 88
+            return False
+
+    monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: _Controller())
+    monkeypatch.setattr(ServiceContainer, "get", lambda *_args, **_kwargs: None)
+    client = MLXLocalClient(model_path="/models/test-1.5b")
+    process = _ProcessProbe()
+    client._process = process
+    client._res_q = queue.Queue()
+    client._model_lane_owner_id = "mlx:test:stale"
+    client._model_lane_fencing_token = 88
+    client._res_q.put({"status": "heartbeat"})
+
+    await asyncio.wait_for(client._response_listener_loop(), timeout=2.0)
+
+    assert process.killed is True
+    assert client._process is None
+    assert client._model_lane_fencing_token == 0
+    assert client._lane_state == "cold"
+    assert client._deferred_reboot_reason == "model_lane_fence_lost"
+
+
+@pytest.mark.asyncio
+async def test_generation_boundary_updates_durable_owner_preemptibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.runtime import model_lane_control
+
+    calls: list[tuple[str, int, bool]] = []
+
+    class _Controller:
+        async def update_owner_preemptibility(
+            self,
+            owner_id: str,
+            *,
+            fencing_token: int,
+            preemptible: bool,
+        ) -> bool:
+            calls.append((owner_id, fencing_token, preemptible))
+            return True
+
+    monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: _Controller())
+    client = MLXLocalClient(model_path="/models/test-1.5b")
+    client._model_lane_owner_id = "mlx:test:generation-boundary"
+    client._model_lane_fencing_token = 91
+    future = asyncio.get_running_loop().create_future()
+    client._pending_generations["request-1"] = future
+    client._current_gen_future = future
+    client._active_generations = 1
+
+    assert await client._set_durable_lane_preemptible(False) is True
+    await client._finish_generation_ownership("request-1", future, None)
+
+    assert calls == [
+        ("mlx:test:generation-boundary", 91, False),
+        ("mlx:test:generation-boundary", 91, True),
+    ]
+    assert client._active_generations == 0
+    assert client._pending_generations == {}
+    assert client._current_gen_future is None
+    client._model_lane_fencing_token = 0
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_mlx_lane_preemption_refuses_active_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-1.5b")
+    client._model_lane_owner_id = "mlx:test:active"
+    client._active_generations = 1
+    rebooted: list[str] = []
+
+    async def _reboot_worker(*, reason: str, mark_failed: bool) -> None:
+        rebooted.append(f"{reason}:{mark_failed}")
+
+    monkeypatch.setattr(client, "reboot_worker", _reboot_worker)
+    monkeypatch.setattr(mlx_client, "_CLIENTS", {client.model_path: client})
+
+    accepted = await mlx_client._evict_model_lane_owner(
+        SimpleNamespace(owner_id="mlx:test:active"),
+        "foreground_candidate",
+    )
+
+    assert accepted is False
+    assert rebooted == []
+    client._active_generations = 0
+    client.close()
+
+
+@pytest.mark.asyncio
+async def test_generation_enqueue_failure_releases_busy_ownership(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.brain.llm import mlx_client
+
+    client = MLXLocalClient(model_path="/models/test-1.5b")
+    client._req_q = SimpleNamespace(put=lambda *_args, **_kwargs: None)
+
+    async def _worker_ready(**_kwargs: object) -> bool:
+        return True
+
+    async def _broken_enqueue(*_args: object, **_kwargs: object) -> object:
+        raise BrokenPipeError("injected queue failure")
+
+    monkeypatch.setattr(client, "_ensure_worker_alive", _worker_ready)
+    monkeypatch.setattr(mlx_client, "run_io_bound", _broken_enqueue)
+
+    result = await client._generate_inner(
+        "hello",
+        _retry=False,
+        foreground_request=False,
+        strict_answer_contract=True,
+    )
+
+    assert result is None
+    assert client._active_generations == 0
+    assert client._pending_generations == {}
+    assert client._current_gen_future is None
+    assert client._foreground_generation_watchdog is None
+    client._req_q = None
+    client.close()

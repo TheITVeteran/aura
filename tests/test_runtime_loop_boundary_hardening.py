@@ -62,6 +62,98 @@ async def test_model_manager_evict_loop_stops_at_capacity(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_model_manager_holds_lane_lease_until_unload(monkeypatch):
+    from core.runtime import model_lane_control
+    from core.utils import model_manager
+    from core.utils.model_manager import ModelManager
+
+    captured: list[dict[str, object]] = []
+
+    class _Lease:
+        released = False
+
+        async def release(self, *, reason):
+            captured.append({"release_reason": reason})
+            self.released = True
+            return True
+
+    lease = _Lease()
+
+    async def _acquire(**kwargs):
+        captured.append(kwargs)
+        return lease
+
+    monkeypatch.setattr(model_lane_control, "acquire_in_process_model_lane", _acquire)
+    monkeypatch.setattr(
+        model_manager.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(percent=20.0),
+    )
+    manager = ModelManager(lambda _name, _opts: object(), max_models=1)
+
+    loaded = await manager.load_model(
+        "coder",
+        {"model_path": "/models/coder-7b", "declared_gb": 5.0},
+    )
+
+    assert loaded is not None
+    assert manager._meta["coder"]["lane_lease"] is lease
+    assert captured[0]["model_path"] == "/models/coder-7b"
+
+    assert await manager.unload_model("coder") is True
+    assert lease.released is True
+
+
+@pytest.mark.asyncio
+async def test_model_manager_cancellation_after_load_cleans_object_and_lane(
+    monkeypatch,
+) -> None:
+    from core.runtime import model_lane_control
+    from core.utils import model_manager
+    from core.utils.model_manager import ModelManager
+
+    events: list[str] = []
+
+    class _Lease:
+        async def release(self, *, reason):
+            events.append(f"release:{reason}")
+            return True
+
+    class _Model:
+        def close(self) -> None:
+            events.append("model:closed")
+
+    async def _acquire(**_kwargs):
+        return _Lease()
+
+    manager: ModelManager
+    loaded = asyncio.Event()
+
+    async def _load(_name, _opts):
+        await manager._lock.acquire()
+        loaded.set()
+        return _Model()
+
+    monkeypatch.setattr(model_lane_control, "acquire_in_process_model_lane", _acquire)
+    monkeypatch.setattr(
+        model_manager.psutil,
+        "virtual_memory",
+        lambda: SimpleNamespace(percent=20.0),
+    )
+    manager = ModelManager(_load, max_models=1)
+    task = asyncio.create_task(manager.load_model("cancelled"))
+    await loaded.wait()
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    manager._lock.release()
+
+    assert manager.list_loaded() == []
+    assert events == ["model:closed", "release:model_manager_publish_cancelled"]
+
+
+@pytest.mark.asyncio
 async def test_streaming_coordinator_subscriber_exits_on_close() -> None:
     from core.multimodal.coordinator import StreamingCoordinator
 

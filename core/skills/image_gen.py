@@ -11,6 +11,7 @@ This closes the "image generation" gap in tool parity.
 """
 
 import asyncio
+import gc
 import logging
 import time
 import uuid
@@ -125,6 +126,11 @@ class ImageGenSkill(BaseSkill):
         self._model_id = "stabilityai/stable-diffusion-xl-base-1.0"
         self._fallback_model_id = "runwayml/stable-diffusion-v1-5"
         self._output_dir = Path(config.paths.data_dir) / "generated_images"
+        self._lane_lease: Any | None = None
+        self._pipeline_lock = asyncio.Lock()
+        self._generation_lock = asyncio.Lock()
+        self._resident_mode = "txt2img"
+        self._closing = False
 
     @staticmethod
     def _detect_device() -> str:
@@ -162,9 +168,22 @@ class ImageGenSkill(BaseSkill):
             logger.error("torch/diffusers not installed: %s", exc)
             return False
 
+        if img2img:
+            self._pipeline = None
+        else:
+            self._img2img_pipeline = None
+        gc.collect()
+        try:
+            if self._device == "mps" and torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+            elif self._device == "cuda" and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except (AttributeError, RuntimeError):
+            logger.debug("Diffusion cache clear before pipeline mode switch failed")
+
         torch_dtype = (
             torch.float16
-            if self._device == "cuda"
+            if self._device in {"cuda", "mps"}
             else torch.float32
         )
 
@@ -203,9 +222,13 @@ class ImageGenSkill(BaseSkill):
                         logger.debug("Suppressed %s in core.skills.image_gen: %s", type(_exc).__name__, _exc)
 
                 if img2img:
+                    self._pipeline = None
                     self._img2img_pipeline = pipe
+                    self._resident_mode = "img2img"
                 else:
+                    self._img2img_pipeline = None
                     self._pipeline = pipe
+                    self._resident_mode = "txt2img"
 
                 self._model_loaded = True
                 logger.info("✓ %s pipeline loaded.", "img2img" if img2img else "txt2img")
@@ -221,6 +244,84 @@ class ImageGenSkill(BaseSkill):
                 continue
 
         return False
+
+    async def _ensure_pipeline(self, *, img2img: bool) -> bool:
+        async with self._pipeline_lock:
+            if self._closing:
+                return False
+            if img2img and self._img2img_pipeline is not None:
+                return True
+            if not img2img and self._pipeline is not None:
+                return True
+            if self._lane_lease is None:
+                from core.runtime.model_lane_control import (
+                    acquire_in_process_model_lane,
+                    estimate_model_job_footprint_gb,
+                    run_owned_model_thread_call,
+                )
+
+                request_gb = max(
+                    estimate_model_job_footprint_gb(self._model_id, purpose="serve"),
+                    estimate_model_job_footprint_gb(
+                        self._fallback_model_id,
+                        purpose="serve",
+                    ),
+                )
+                self._lane_lease = await acquire_in_process_model_lane(
+                    owner_id=f"image-generation:{id(self)}",
+                    model_path=self._model_id,
+                    purpose="serve",
+                    request_gb=request_gb,
+                    priority=60,
+                    preemptible=False,
+                    evict=self._evict_for_model_lane,
+                    compensate=self._compensate_model_lane,
+                    metadata={
+                        "skill": self.name,
+                        "fallback_model": self._fallback_model_id,
+                        "single_pipeline_residency": True,
+                        "activation_state": "loading",
+                    },
+                )
+            loaded = await run_owned_model_thread_call(
+                lambda: self._load_pipeline(img2img),
+                operation_name="image-generation-pipeline-load",
+            )
+            if loaded:
+                if self._lane_lease is None or not await self._lane_lease.set_preemptible(
+                    True
+                ):
+                    await self._unload_pipelines(
+                        reason="image_generation_activation_fence_lost"
+                    )
+                    return False
+                return True
+            if self._pipeline is None and self._img2img_pipeline is None:
+                lease, self._lane_lease = self._lane_lease, None
+                if lease is not None:
+                    await lease.release(reason="image_generation_model_load_failed")
+            return False
+
+    async def _evict_for_model_lane(self, _owner: Any, reason: str) -> bool:
+        if self._generation_lock.locked():
+            logger.warning("Image model preemption refused during active use: %s", reason)
+            return False
+        try:
+            await asyncio.wait_for(self._pipeline_lock.acquire(), timeout=0.01)
+        except TimeoutError:
+            logger.warning("Image model preemption refused during pipeline transition: %s", reason)
+            return False
+        try:
+            await self._unload_pipelines(reason=f"lane_eviction:{reason}")
+        finally:
+            self._pipeline_lock.release()
+        return self._pipeline is None and self._img2img_pipeline is None
+
+    async def _compensate_model_lane(self, _owner: Any, reason: str) -> bool:
+        if self._closing:
+            return False
+        logger.info("Restoring diffusion pipeline after failed candidate: %s", reason)
+        return await self._ensure_pipeline(img2img=self._resident_mode == "img2img")
 
     def _enhance_prompt(self, prompt: str, style: str | None) -> str:
         """Apply automatic prompt engineering for maximum quality."""
@@ -267,15 +368,16 @@ class ImageGenSkill(BaseSkill):
         # Determine mode: img2img vs txt2img
         is_img2img = bool(params.source_image_path)
 
-        if is_img2img:
-            return await self._generate_img2img(params)
-        return await self._generate_txt2img(params)
+        async with self._generation_lock:
+            if is_img2img:
+                return await self._generate_img2img(params)
+            return await self._generate_txt2img(params)
 
     async def _generate_txt2img(
         self, params: ImageGenInput
     ) -> dict[str, Any]:
         """Text-to-image generation."""
-        if not await asyncio.to_thread(self._load_pipeline, False):
+        if not await self._ensure_pipeline(img2img=False):
             return {
                 "ok": False,
                 "error": "Image generation model failed to load. Check torch/diffusers installation.",
@@ -310,7 +412,12 @@ class ImageGenSkill(BaseSkill):
                     generator=generator,
                 ).images[0]
 
-            image = await asyncio.to_thread(_generate)
+            from core.runtime.model_lane_control import run_owned_model_thread_call
+
+            image = await run_owned_model_thread_call(
+                _generate,
+                operation_name="image-generation-txt2img",
+            )
             return await self._save_and_respond(image, params.prompt)
 
         except _IMAGEGEN_RECOVERABLE_ERRORS as exc:
@@ -332,7 +439,7 @@ class ImageGenSkill(BaseSkill):
         if not await asyncio.to_thread(source_path.exists):
             return {"ok": False, "error": f"Source image not found: {source_path}"}
 
-        if not await asyncio.to_thread(self._load_pipeline, True):
+        if not await self._ensure_pipeline(img2img=True):
             return {
                 "ok": False,
                 "error": "Image editing model failed to load.",
@@ -375,7 +482,12 @@ class ImageGenSkill(BaseSkill):
                     strength=params.strength,
                 ).images[0]
 
-            image = await asyncio.to_thread(_edit)
+            from core.runtime.model_lane_control import run_owned_model_thread_call
+
+            image = await run_owned_model_thread_call(
+                _edit,
+                operation_name="image-generation-img2img",
+            )
             return await self._save_and_respond(image, params.prompt, mode="img2img")
 
         except _IMAGEGEN_RECOVERABLE_ERRORS as exc:
@@ -421,12 +533,11 @@ class ImageGenSkill(BaseSkill):
             "message": f"Image created ({mode}): {relative_url}",
         }
 
-    async def on_stop_async(self) -> None:
-        """Release model references and accelerator cache during shutdown."""
-
+    async def _unload_pipelines(self, *, reason: str) -> None:
         self._pipeline = None
         self._img2img_pipeline = None
         self._model_loaded = False
+        lease, self._lane_lease = self._lane_lease, None
         try:
             import torch
 
@@ -435,4 +546,15 @@ class ImageGenSkill(BaseSkill):
             elif torch.cuda.is_available():
                 await asyncio.to_thread(torch.cuda.empty_cache)
         except (ImportError, AttributeError, RuntimeError):
-            return
+            pass
+        await asyncio.to_thread(gc.collect)
+        if lease is not None:
+            await lease.release(reason=reason)
+
+    async def on_stop_async(self) -> None:
+        """Release model references, lane ownership, and accelerator cache."""
+
+        self._closing = True
+        async with self._generation_lock:
+            async with self._pipeline_lock:
+                await self._unload_pipelines(reason="image_generation_skill_stopped")

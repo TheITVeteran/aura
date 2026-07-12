@@ -40,12 +40,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+
+from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 DEFAULT_MODEL = "mlx-community/Qwen2.5-1.5B-Instruct-4bit"
 LOCAL_MODEL = REPO_ROOT / "models" / "Qwen2.5-1.5B-Instruct-4bit"
@@ -174,13 +177,14 @@ def _run_amplifier_proof(proof: Proof, model_arg: str) -> None:
 
     # Arm B — amplifier: verifier-filtered self-consistency over the SAME
     # generate fn (sampled candidates + exact verifiers + calibration).
-    from core.brain.reasoning_amplifier_v2 import AmplificationRequest, ReasoningAmplifierV2
+    from core.brain.reasoning_amplifier_v2 import (
+        AmplificationRequest,
+        ReasoningAmplifierV2,
+    )
 
     # GenerateFn contract is POSITIONAL (prompt, temperature). One resident
     # model: serialize actual decoding under a lock — the amplifier gathers
     # candidates concurrently and MLX is not thread-safe.
-    import threading
-
     decode_lock = threading.Lock()
 
     def _locked_generate(prompt_text: str, temp: float) -> str:
@@ -351,7 +355,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.with_model:
         try:
-            _run_amplifier_proof(proofs[1], args.model)
+            model_id = _resolve_model(args.model)
+            with standalone_model_lane(
+                owner_id="front-door-amplifier",
+                model_path=model_id,
+                purpose="benchmark",
+                metadata={"tool": "front_door_demo"},
+            ):
+                _run_amplifier_proof(proofs[1], model_id)
         except (ImportError, OSError, RuntimeError, ValueError) as exc:
             proofs[1].verdict = "FAILED"
             proofs[1].detail = f"{type(exc).__name__}: {exc}"

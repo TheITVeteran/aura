@@ -1,52 +1,61 @@
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
+from typing import Any
 
 import numpy as np
 
+from core.runtime.errors import record_degradation
 from core.runtime.service_registry import get_runtime_service
 
 logger = logging.getLogger("Aura.VoiceProcessor")
 
-# Global singleton for Whisper to prevent RAM churn across connections
-_WHISPER_MODEL_CACHE = {}
-_WhisperModel = None
-_whisper_import_attempted = False
 
+class _CanonicalWhisperProxy:
+    """Expose Whisper's API without leaking the canonical raw model reference."""
 
-def _get_whisper_model_class():
-    global _WhisperModel, _whisper_import_attempted
-    if _WhisperModel is not None:
-        return _WhisperModel
-    if _whisper_import_attempted:
-        return None
+    def __init__(self, engine: Any) -> None:
+        self._engine = engine
 
-    _whisper_import_attempted = True
-    try:
-        from faster_whisper import WhisperModel as whisper_model_cls
-        _WhisperModel = whisper_model_cls
-    except ImportError:
-        logger.error("faster-whisper is unavailable; websocket STT disabled.")
-    except (ImportError, AttributeError, RuntimeError) as exc:
-        record_degradation('voice_socket_logic', exc)
-        logger.error("faster-whisper import failed; websocket STT disabled: %s", exc)
-    return _WhisperModel
+    def transcribe(self, *args: Any, **kwargs: Any) -> tuple[list[Any], Any]:
+        session = getattr(self._engine, "stt_model_session", None)
+        if not callable(session):
+            raise RuntimeError("canonical_voice_engine_missing_stt_session")
+        with session() as model:
+            if model is None:
+                raise RuntimeError("canonical_whisper_model_unavailable")
+            segments, info = model.transcribe(*args, **kwargs)
+            return list(segments), info
 
 def get_whisper_model(model_name="tiny"):
-    if model_name not in _WHISPER_MODEL_CACHE:
-        whisper_model_cls = _get_whisper_model_class()
-        if whisper_model_cls is None:
-            return None
+    """Return a governed proxy for the canonical voice engine's STT model."""
+
+    engine = get_runtime_service("voice_engine", default=None)
+    if engine is None:
         try:
-            logger.info("🎙️ Loading Whisper STT (%s)...", model_name)
-            _WHISPER_MODEL_CACHE[model_name] = whisper_model_cls(
-                model_name, device="cpu", compute_type="int8"
-            )
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('voice_socket_logic', e)
-            logger.error("Failed to load Whisper: %s", e)
+            from core.senses.voice_engine import get_voice_engine
+
+            engine = get_voice_engine()
+        except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("voice_socket_logic", exc)
+            logger.error("Canonical voice engine unavailable; websocket STT disabled: %s", exc)
             return None
-    return _WHISPER_MODEL_CACHE.get(model_name)
+    try:
+        configured = str(getattr(engine, "whisper_model_name", "") or "")
+        if configured and configured != str(model_name):
+            logger.debug(
+                "Websocket requested Whisper %s; sharing canonical configured model %s",
+                model_name,
+                configured,
+            )
+        if not bool(engine.ensure_stt()):
+            return None
+        if getattr(engine, "stt_model", None) is None:
+            return None
+        return _CanonicalWhisperProxy(engine)
+    except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+        record_degradation("voice_socket_logic", exc)
+        logger.error("Canonical Whisper model unavailable: %s", exc)
+        return None
 
 class VoiceStreamProcessor:
     """Stateful audio processor for Advanced Voice Mode.

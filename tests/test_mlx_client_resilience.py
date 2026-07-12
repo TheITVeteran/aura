@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from core.brain.llm.mlx_client import MLXLocalClient
 from core.brain.llm.mlx_vision_client import MLXVisionClient
 from core.brain.llm.mlx_worker import (
@@ -93,10 +95,17 @@ def replace_dotted(dotted_name: str, value):
 
 
 class ProcessProbe:
+    _next_pid = 900_000
+    _registry = {}
+
     def __init__(self, alive=True):
+        type(self)._next_pid += 1
+        self.pid = type(self)._next_pid
+        self.name = f"ProcessProbe-{self.pid}"
         self.alive = alive
         self.kill_calls = 0
         self.join_calls = []
+        type(self)._registry[self.pid] = self
 
     def is_alive(self):
         return self.alive
@@ -117,6 +126,43 @@ class ProcessProbe:
     def assert_joined_with(self, *, timeout):
         assert self.join_calls
         assert self.join_calls[-1].timeout == timeout
+
+
+@pytest.fixture(autouse=True)
+def _isolated_model_lane_controller(monkeypatch, tmp_path):
+    """Give synthetic worker processes a hermetic durable-lane identity."""
+
+    from core.runtime import model_lane_control
+    from core.runtime.receipts import ReceiptStore
+
+    original_identity = model_lane_control.process_identity_for_pid
+
+    def _identity(pid):
+        probe = ProcessProbe._registry.get(int(pid))
+        if probe is not None:
+            return model_lane_control.ProcessIdentity(int(pid), float(pid))
+        return original_identity(pid)
+
+    def _alive(identity):
+        probe = ProcessProbe._registry.get(int(identity.pid))
+        if probe is not None:
+            return bool(probe.alive and identity.started_at == float(identity.pid))
+        current = original_identity(identity.pid)
+        return bool(
+            current.started_at > 0.0
+            and abs(current.started_at - identity.started_at) <= 0.5
+        )
+
+    controller = model_lane_control.ModelLaneController(
+        state_path=tmp_path / "model_lane_control.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_alive=_alive,
+        process_discovery=None,
+    )
+    monkeypatch.setattr(model_lane_control, "process_identity_for_pid", _identity)
+    monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: controller)
+    yield
+    ProcessProbe._registry.clear()
 
 
 class AsyncCallProbe:
@@ -626,7 +672,12 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         primary_proc = ProcessProbe(alive=True)
         primary._process = primary_proc
         primary._init_done = True
-        primary_reboot = AsyncCallProbe()
+
+        async def _reboot_primary(*_args, **_kwargs):
+            primary_proc.alive = False
+            primary._init_done = False
+
+        primary_reboot = AsyncCallProbe(side_effect=_reboot_primary)
         primary.reboot_worker = primary_reboot
 
         solver_proc = ProcessProbe(alive=True)
@@ -650,8 +701,9 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
                  replace_dotted("core.brain.llm.model_registry.DEEP_MODEL", "Qwen2.5-72B-Instruct-4bit"), \
                  replace_dotted("core.brain.llm.model_registry.get_model_path", lambda name=None: primary_path if "32B" in str(name) or name is None else deep_path), \
                  replace_dotted("core.brain.llm.mlx_client.os.path.realpath", lambda path: path), \
+                 replace_dotted("core.brain.llm.mlx_client._reclaim_model_lane_capacity", lambda _claim: True), \
                  ReplaceAttr(solver, "_spawn_worker", AsyncCallProbe(side_effect=_spawn_solver)):
-                await solver._ensure_worker_alive()
+                await solver._ensure_worker_alive(foreground_request=True)
         finally:
             mlx_module._CLIENTS = old_clients
             mlx_module._GLOBAL_LAST_HEAVY_MODEL = old_last_heavy
@@ -659,6 +711,30 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
 
         primary_reboot.assert_awaited_once()
         self.assertTrue(solver._init_done)
+
+    async def test_model_lane_compensation_receipts_only_confirm_ready_owner(self):
+        import core.brain.llm.mlx_client as mlx_module
+
+        target = MLXLocalClient(model_path=TEST_MODEL)
+        target._model_lane_owner_id = "mlx:test:compensation"
+        warmup = AsyncCallProbe(return_value=True)
+        target.warmup = warmup
+        target.is_alive = lambda: True
+        previous_clients = dict(mlx_module._CLIENTS)
+        mlx_module._CLIENTS = {TEST_MODEL: target}
+        try:
+            restored = await mlx_module._compensate_model_lane_owner(
+                SimpleNamespace(
+                    owner_id=target._model_lane_owner_id,
+                    model_path=TEST_MODEL,
+                ),
+                "unit-test-candidate-failure",
+            )
+        finally:
+            mlx_module._CLIENTS = previous_clients
+
+        self.assertTrue(restored)
+        warmup.assert_awaited_once_with(skip_swap_cooldown=True)
 
     async def test_ensure_worker_sets_init_future_before_spawn(self):
         client = MLXLocalClient(model_path=TEST_MODEL)

@@ -40,9 +40,11 @@ os.environ.setdefault("AURA_RECURRENT_LOOPS", "2")
 # is loaded (so model.model.layers exists) but BEFORE LoRA layer conversion
 # (so the LoRA-wrapped Linears inherit the new forward pass). We achieve
 # this by patching the `load` symbol inside mlx_lm.lora's namespace.
-from mlx_lm.utils import load as _orig_load          # noqa: E402
+import mlx_lm.lora as _lora  # noqa: E402
+from mlx_lm.utils import load as _orig_load  # noqa: E402
+
 from core.brain.llm.recurrent_depth import apply_for_model  # noqa: E402
-import mlx_lm.lora as _lora                           # noqa: E402
+from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 
 def _patched_load(*args, **kwargs):
@@ -62,5 +64,33 @@ def _patched_load(*args, **kwargs):
 _lora.load = _patched_load
 
 
+def _required_model_path(argv: list[str]) -> str:
+    for index, argument in enumerate(argv[:-1]):
+        if argument in {"--model", "--model-path"}:
+            model_path = str(argv[index + 1]).strip()
+            if model_path:
+                return model_path
+    raise SystemExit(
+        "Recurrent-depth training requires an explicit --model path for "
+        "model-lane ownership."
+    )
+
+
+def main(argv: list[str] | None = None) -> None:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    owned_model_path = _required_model_path(arguments)
+    with standalone_model_lane(
+        owner_id="recurrent-depth-training",
+        model_path=owned_model_path,
+        purpose="train",
+        preemptible=False,
+        metadata={
+            "tool": "scripts.train_with_recurrent_depth",
+            "recurrent_loops": os.environ["AURA_RECURRENT_LOOPS"],
+        },
+    ):
+        _lora.main()
+
+
 if __name__ == "__main__":
-    _lora.main()
+    main()

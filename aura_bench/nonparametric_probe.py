@@ -41,7 +41,7 @@ def _gold_token(tok, answer: str) -> int:
     return ids[0]
 
 
-def main() -> int:
+def _run_probe(model_path: str) -> int:
     import mlx.core as mx
     from mlx_lm import load
 
@@ -49,7 +49,6 @@ def main() -> int:
     from core.brain.nonparametric_ingest import NonParametricIngestor
     from core.brain.nonparametric_memory import NonParametricMemory
 
-    model_path = sys.argv[1] if len(sys.argv) > 1 else "models/Qwen2.5-7B-Instruct-4bit"
     print(f"Loading {model_path} ...")
     model, tok = load(model_path)
     dim = int(model.args.hidden_size)
@@ -137,6 +136,20 @@ def main() -> int:
     print(f"control preserved: {ctrl_ok}")
     print("==========================================")
     return 0
+
+
+def main() -> int:
+    from core.runtime.model_lane_control import standalone_model_lane
+
+    model_path = sys.argv[1] if len(sys.argv) > 1 else "models/Qwen2.5-7B-Instruct-4bit"
+    with standalone_model_lane(
+        owner_id="nonparametric-memory-probe",
+        model_path=model_path,
+        purpose="benchmark",
+        preemptible=False,
+        metadata={"tool": "aura_bench.nonparametric_probe"},
+    ):
+        return _run_probe(model_path)
 
 
 if __name__ == "__main__":

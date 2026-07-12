@@ -9,12 +9,14 @@ import json
 import logging
 import multiprocessing as mp
 import os
+import queue
 import re
 import subprocess
 import sys
 import threading as _threading
 import time
 import uuid
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -92,8 +94,8 @@ _MLX_OPTIONAL_THROTTLE_ERRORS = (
 
 # Global state for swap management
 _GLOBAL_LAST_SWAP_TIME = 0.0
-_GLOBAL_LAST_HEAVY_MODEL = None
-_CLIENTS = {}
+_GLOBAL_LAST_HEAVY_MODEL: str | None = None
+_CLIENTS: dict[str, Any] = {}
 _FOREGROUND_OWNER_LOCK = _threading.Lock()
 _FOREGROUND_OWNER_NAME: str | None = None
 _FOREGROUND_OWNER_ACQUIRED_AT = 0.0
@@ -118,7 +120,7 @@ _MLX_RUNTIME_PROBE: dict[str, Any] = {
     "checked_at": 0.0,
 }
 _MLX_RUNTIME_PROBE_CACHE_PATH = Path.home() / ".aura" / "data" / "mlx_runtime_probe.json"
-SharedFuture = asyncio.Future | cfutures.Future
+SharedFuture = asyncio.Future[Any] | cfutures.Future[Any]
 
 
 def _read_recurrent_loop_env(name: str, default: int) -> int:
@@ -271,6 +273,23 @@ def _model_process_reserve_gb(model_path: str) -> float:
     return _env_float("AURA_MLX_MODEL_LOAD_PROCESS_RESERVE_GB", lane_default)
 
 
+def _declared_mlx_worker_footprint_gb(model_path: str) -> float:
+    """Declared peak for the main worker plus optional in-worker model owners."""
+
+    declared = _projected_model_footprint_gb(model_path) + _model_process_reserve_gb(
+        model_path
+    )
+    contrastive_enabled = str(
+        os.environ.get("AURA_CONTRASTIVE_DECODING", "")
+    ).strip().lower() in {"1", "true", "on", "yes"}
+    amateur_path = str(os.environ.get("AURA_CONTRASTIVE_AMATEUR_MODEL", "") or "").strip()
+    if contrastive_enabled and amateur_path and _real_model_path(amateur_path) != _real_model_path(
+        model_path
+    ):
+        declared += _projected_model_footprint_gb(amateur_path) + 1.0
+    return declared
+
+
 def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
     if str(os.environ.get("AURA_FORCE_CORTEX_WARMUP_UNDER_PRESSURE", "")).strip().lower() in {
         "1",
@@ -295,8 +314,10 @@ def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
         )
     process_rss_gb = float(getattr(snapshot, "process_rss_gb", 0.0) or 0.0)
     process_rss_limit_gb = float(getattr(snapshot, "process_rss_limit_gb", 0.0) or 0.0)
-    projected_footprint_gb = _projected_model_footprint_gb(model_path)
     process_reserve_gb = _model_process_reserve_gb(model_path)
+    projected_footprint_gb = (
+        _declared_mlx_worker_footprint_gb(model_path) - process_reserve_gb
+    )
     projected_process_rss_gb = process_rss_gb + projected_footprint_gb + process_reserve_gb
     if (
         process_rss_limit_gb > 0.0
@@ -312,7 +333,7 @@ def _memory_pressure_blocks_worker_spawn(model_path: str) -> str | None:
     return None
 
 
-def _observed_active_lanes(exclude_client: Any = None) -> list["ActiveLane"]:
+def _observed_active_lanes(exclude_client: Any = None) -> list[ActiveLane]:
     """Snapshot every live model lane as a declared-footprint ActiveLane.
 
     Pull-model observation over _CLIENTS: no bookkeeping to desync. The
@@ -336,12 +357,200 @@ def _observed_active_lanes(exclude_client: Any = None) -> list["ActiveLane"]:
             ActiveLane(
                 lane=lane,
                 qos=qos,
-                footprint_gb=_projected_model_footprint_gb(path),
+                footprint_gb=_declared_mlx_worker_footprint_gb(path),
                 model_path=path,
                 last_user_facing_age_s=(time.time() - last) if last > 0.0 else None,
             )
         )
     return lanes
+
+
+def _model_lane_owner_id(client: Any) -> str:
+    existing = str(getattr(client, "_model_lane_owner_id", "") or "")
+    if existing:
+        return existing
+    model_path = _real_model_path(getattr(client, "model_path", ""))
+    owner_id = f"mlx:{os.getpid()}:{model_path}"
+    try:
+        client._model_lane_owner_id = owner_id
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+    return owner_id
+
+
+def _observed_model_lane_owners(exclude_client: Any = None) -> list[Any]:
+    """Return process-identified MLX owners for durable lane accounting."""
+
+    from core.brain.lane_admission import QoSClass, classify_lane
+    from core.runtime.model_lane_control import (
+        LaneOwnerObservation,
+        process_identity_for_pid,
+    )
+
+    owners: list[LaneOwnerObservation] = []
+    for path, client in list(_CLIENTS.items()):
+        if client is None or client is exclude_client:
+            continue
+        try:
+            process = getattr(client, "_process", None)
+            if process is None or not process.is_alive() or not client.is_alive():
+                continue
+            pid = int(getattr(process, "pid", 0) or 0)
+            if pid <= 0:
+                continue
+            lane, qos = classify_lane(path)
+            last = float(getattr(client, "_last_user_facing_completed_at", 0.0) or 0.0)
+            try:
+                observed_gb = float(psutil.Process(pid).memory_info().rss) / float(1024**3)
+            except (psutil.Error, OSError, ValueError):
+                observed_gb = 0.0
+            owners.append(
+                LaneOwnerObservation(
+                    owner_id=_model_lane_owner_id(client),
+                    model_path=path,
+                    declared_gb=_declared_mlx_worker_footprint_gb(path),
+                    observed_gb=observed_gb,
+                    process=process_identity_for_pid(pid),
+                    priority=10 if qos is QoSClass.GUARANTEED else 50,
+                    preemptible=not bool(
+                        int(getattr(client, "_active_generations", 0) or 0) > 0
+                        or (
+                            getattr(client, "_current_gen_future", None) is not None
+                            and not client._current_gen_future.done()
+                        )
+                    ),
+                    last_user_facing_age_s=(time.time() - last) if last > 0.0 else None,
+                    metadata={
+                        "runtime_pid": os.getpid(),
+                        "lane": lane,
+                        "fencing_token": int(
+                            getattr(client, "_model_lane_fencing_token", 0) or 0
+                        ),
+                    },
+                )
+            )
+        except (AttributeError, RuntimeError, OSError, TypeError, ValueError):
+            continue
+    return owners
+
+
+async def _evict_model_lane_owner(owner: Any, reason: str) -> bool:
+    """Evict one exact local MLX owner and prove its worker is dead."""
+
+    target = next(
+        (
+            client
+            for client in list(_CLIENTS.values())
+            if client is not None and _model_lane_owner_id(client) == owner.owner_id
+        ),
+        None,
+    )
+    if target is None:
+        from core.runtime.model_lane_control import evict_managed_process_owner
+
+        return await evict_managed_process_owner(owner, reason)
+    active = bool(
+        int(getattr(target, "_active_generations", 0) or 0) > 0
+        or getattr(target, "_warmup_in_flight", False)
+        or getattr(target, "_current_request_started_at", 0.0) > 0.0
+        or any(
+            future is not None and not future.done()
+            for future in (
+                *getattr(target, "_pending_generations", {}).values(),
+                getattr(target, "_current_gen_future", None),
+                getattr(target, "_init_future", None),
+            )
+        )
+    )
+    if active:
+        logger.info(
+            "MLX model-lane preemption refused during active work owner=%s reason=%s",
+            owner.owner_id,
+            reason,
+        )
+        return False
+    await target.reboot_worker(
+        reason=f"yield_to_lane_transaction:{reason}",
+        mark_failed=False,
+    )
+    try:
+        alive = bool(target.is_alive())
+    except (AttributeError, RuntimeError, OSError, ValueError):
+        alive = True
+    return not alive
+
+
+async def _reclaim_model_lane_capacity(claim: Any) -> bool:
+    """Wait boundedly for killed model memory to leave the observed envelope."""
+
+    try:
+        timeout_s = max(
+            0.0,
+            float(os.environ.get("AURA_MODEL_LANE_RECLAIM_TIMEOUT_S", "20") or 20.0),
+        )
+    except (TypeError, ValueError):
+        timeout_s = 20.0
+    deadline = time.monotonic() + timeout_s
+    max_observations = max(1, int(timeout_s / 0.5) + 2)
+    blocker: str | None = "capacity_not_observed"
+    for _attempt in range(max_observations):
+        blocker = await asyncio.to_thread(
+            _memory_pressure_blocks_worker_spawn,
+            claim.model_path,
+        )
+        if blocker is None:
+            return True
+        remaining_s = deadline - time.monotonic()
+        if remaining_s <= 0.0:
+            break
+        await asyncio.sleep(min(0.5, remaining_s))
+    logger.warning(
+        "Model-lane reservation could not observe reclaimed capacity for %s: %s",
+        os.path.basename(claim.model_path),
+        blocker,
+    )
+    return False
+
+
+async def _compensate_model_lane_owner(owner: Any, reason: str) -> bool:
+    """Restore an owner displaced by a candidate that did not commit."""
+
+    target = next(
+        (
+            client
+            for client in list(_CLIENTS.values())
+            if client is not None and _model_lane_owner_id(client) == owner.owner_id
+        ),
+        None,
+    )
+    if target is None:
+        return False
+
+    timeout_s = max(60.0, float(target._warmup_timeout()) + 30.0)
+    try:
+        restored = bool(
+            await asyncio.wait_for(
+                target.warmup(skip_swap_cooldown=True),
+                timeout=timeout_s,
+            )
+        )
+        ready = bool(restored and target.is_alive())
+        if not ready:
+            logger.warning(
+                "Compensation could not restore model lane owner=%s reason=%s",
+                owner.owner_id,
+                reason,
+            )
+        return ready
+    except asyncio.CancelledError:
+        raise
+    except (OSError, RuntimeError, AttributeError, TypeError, ValueError, TimeoutError) as exc:
+        _record_mlx_degradation(
+            exc,
+            action="recorded failed restoration of an evicted model lane",
+            severity="error",
+        )
+        return False
 
 
 def _note_lane_worker_death(client: Any, reason: str) -> None:
@@ -394,38 +603,11 @@ def _crash_loop_blocks_worker_spawn(client: Any) -> str | None:
     try:
         from core.runtime.lane_reconciler import get_crash_loop_breaker
 
-        return get_crash_loop_breaker().blocked(_real_model_path(client.model_path))
+        blocked = get_crash_loop_breaker().blocked(_real_model_path(client.model_path))
+        return str(blocked) if blocked else None
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         logger.debug("Crash-loop consult unavailable (spawn proceeds): %s", exc)
         return None
-
-
-def _lane_admission_blocks_worker_spawn(client: Any) -> str | None:
-    """Consult the declarative lane-admission controller for this spawn.
-
-    Returns a named refusal reason, or None to proceed. The lane envelope is a
-    load-bearing safety boundary: an unavailable controller refuses the spawn
-    instead of silently returning to the historical over-commit path.
-    """
-    try:
-        from core.brain.lane_admission import get_lane_admission_controller
-
-        decision = get_lane_admission_controller().admit(
-            model_path=client.model_path,
-            request_gb=_projected_model_footprint_gb(client.model_path)
-            + _model_process_reserve_gb(client.model_path),
-            active=_observed_active_lanes(exclude_client=client),
-        )
-    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-        _record_mlx_degradation(
-            exc,
-            action="refused model spawn because declarative lane admission was unavailable",
-            severity="critical",
-        )
-        return f"lane_admission_unavailable:{type(exc).__name__}"
-    if decision.admitted or not decision.enforced:
-        return None
-    return decision.reason
 
 
 class _ModelLoadAdmissionDeniedError(RuntimeError):
@@ -448,12 +630,16 @@ def _model_load_admission_timeout_s(*, foreground_request: bool) -> float:
 
 
 @contextlib.asynccontextmanager
-async def _model_load_admission_context(client: Any, *, foreground_request: bool):
-    """Hold the cross-domain model-load lease for spawn through handshake.
+async def _model_load_admission_context(
+    client: Any,
+    *,
+    foreground_request: bool,
+) -> AsyncIterator[Any]:
+    """Hold scheduling and durable capacity reservations through handshake.
 
-    This lease is acquired before the mechanical spawn mutex, so resource
-    contention never leaves unrelated lanes queued behind a waiter that has
-    not itself been admitted.
+    Required evictions complete while the durable reservation remains counted.
+    The candidate is committed as a process-identified owner only after its
+    worker handshake succeeds; every other exit cancels and compensates.
     """
 
     try:
@@ -464,6 +650,11 @@ async def _model_load_admission_context(client: Any, *, foreground_request: bool
             WorkClass,
             get_runtime_control_plane,
         )
+        from core.runtime.model_lane_control import (
+            LaneClaim,
+            get_model_lane_controller,
+            process_identity_for_pid,
+        )
     except ImportError as exc:
         _record_mlx_degradation(
             exc,
@@ -473,9 +664,7 @@ async def _model_load_admission_context(client: Any, *, foreground_request: bool
         raise _ModelLoadAdmissionDeniedError("resource_admission_unavailable") from exc
 
     lane, qos = classify_lane(client.model_path)
-    request_gb = _projected_model_footprint_gb(
-        client.model_path
-    ) + _model_process_reserve_gb(client.model_path)
+    request_gb = _declared_mlx_worker_footprint_gb(client.model_path)
     timeout_s = _model_load_admission_timeout_s(
         foreground_request=foreground_request
     )
@@ -517,14 +706,15 @@ async def _model_load_admission_context(client: Any, *, foreground_request: bool
             receipt_id=decision.receipt_id,
         )
 
-    try:
-        yield decision
-    finally:
+    lease_released = False
+
+    async def _release_schedule_lease(reason: str) -> None:
+        nonlocal lease_released
+        if lease_released:
+            return
+        lease_released = True
         try:
-            await admission.release(
-                decision.lease_id,
-                reason="model_load_finished",
-            )
+            await admission.release(decision.lease_id, reason=reason)
         except KeyError:
             logger.warning(
                 "Model-load admission lease expired before release lane=%s lease=%s",
@@ -538,12 +728,159 @@ async def _model_load_admission_context(client: Any, *, foreground_request: bool
                 severity="warning",
             )
 
+    lane_controller = get_model_lane_controller()
+    disruptive_deep_handoff = bool(
+        foreground_request
+        and callable(getattr(client, "_is_deep_solver_lane", None))
+        and client._is_deep_solver_lane()
+    )
+    lane_claim = LaneClaim(
+        owner_id=_model_lane_owner_id(client),
+        model_path=str(client.model_path),
+        request_gb=request_gb,
+        priority=(
+            int(AdmissionPriority.FOREGROUND)
+            if foreground_request
+            else int(AdmissionPriority.BACKGROUND)
+        ),
+        foreground=foreground_request,
+        allow_disruptive_eviction=disruptive_deep_handoff,
+        allow_last_warm_eviction=disruptive_deep_handoff,
+        reservation_ttl_s=max(120.0, float(client._warmup_timeout()) + 60.0),
+        request_id=f"model-lane-{request.request_id}",
+        metadata={
+            "scheduling_lease_id": decision.lease_id,
+            "scheduling_receipt_id": decision.receipt_id,
+            "model_path": str(client.model_path),
+            "lane_qos": str(qos),
+            "foreground_request": bool(foreground_request),
+            "disruptive_deep_handoff": disruptive_deep_handoff,
+            "compensation_strategy": "mlx_warmup_exact_owner",
+        },
+    )
+    lane_decision = None
+    try:
+        lane_decision = await lane_controller.reserve(
+            lane_claim,
+            observations=_observed_model_lane_owners(exclude_client=client),
+        )
+        if not lane_decision.admitted:
+            await _release_schedule_lease("model_lane_reservation_refused")
+            raise _ModelLoadAdmissionDeniedError(
+                lane_decision.reason,
+                receipt_id=lane_decision.receipt_id,
+            )
+        if not lane_decision.ready_to_spawn:
+            lane_decision = await lane_controller.prepare(
+                lane_decision,
+                evict=_evict_model_lane_owner,
+                observe=lambda: _observed_model_lane_owners(exclude_client=client),
+                reclaim=_reclaim_model_lane_capacity,
+                compensate=_compensate_model_lane_owner,
+            )
+        if not lane_decision.ready_to_spawn:
+            await _release_schedule_lease("model_lane_eviction_or_reclamation_failed")
+            raise _ModelLoadAdmissionDeniedError(
+                lane_decision.reason,
+                receipt_id=lane_decision.receipt_id,
+            )
+
+        yield decision
+        process = getattr(client, "_process", None)
+        pid = int(getattr(process, "pid", 0) or 0) if process is not None else 0
+        worker_ready = bool(
+            process is not None
+            and process.is_alive()
+            and getattr(client, "_init_done", False)
+        )
+        if not worker_ready:
+            await _release_schedule_lease("model_load_did_not_reach_ready")
+            cancelled = await lane_controller.cancel(
+                lane_decision,
+                reason="candidate_worker_not_ready",
+                compensate=_compensate_model_lane_owner,
+            )
+            raise _ModelLoadAdmissionDeniedError(
+                cancelled.reason,
+                receipt_id=cancelled.receipt_id,
+            )
+        try:
+            observed_gb = float(psutil.Process(pid).memory_info().rss) / float(1024**3)
+        except (psutil.Error, OSError, ValueError):
+            observed_gb = 0.0
+        try:
+            committed = await lane_controller.commit(
+                lane_decision,
+                process=process_identity_for_pid(pid),
+                observed_gb=observed_gb,
+                metadata={"worker_name": str(getattr(process, "name", ""))},
+            )
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="killed candidate worker because durable lane commit failed",
+                severity="critical",
+            )
+            await client.reboot_worker(reason="lane_commit_failed", mark_failed=True)
+            await _release_schedule_lease("model_lane_commit_failed")
+            cancelled = await lane_controller.cancel(
+                lane_decision,
+                reason=f"candidate_commit_failed:{type(exc).__name__}",
+                compensate=_compensate_model_lane_owner,
+            )
+            raise _ModelLoadAdmissionDeniedError(
+                cancelled.reason,
+                receipt_id=cancelled.receipt_id,
+            ) from exc
+        client._model_lane_fencing_token = committed.fencing_token
+        client._model_lane_terminal_receipt_id = committed.receipt_id
+        from core.runtime.model_lane_control import register_model_lane_owner_adapter
+
+        register_model_lane_owner_adapter(
+            committed.owner_id,
+            evict=_evict_model_lane_owner,
+            compensate=_compensate_model_lane_owner,
+        )
+    except asyncio.CancelledError:
+        await asyncio.shield(_release_schedule_lease("model_load_cancelled"))
+        if lane_decision is not None and lane_decision.admitted:
+            await asyncio.shield(
+                lane_controller.cancel(
+                    lane_decision,
+                    reason="candidate_load_cancelled",
+                    compensate=_compensate_model_lane_owner,
+                )
+            )
+        raise
+    except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+        if lane_decision is not None and lane_decision.admitted:
+            await _release_schedule_lease("model_load_failed")
+            try:
+                await lane_controller.cancel(
+                    lane_decision,
+                    reason="candidate_load_failed",
+                    compensate=_compensate_model_lane_owner,
+                )
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                _record_mlx_degradation(
+                    exc,
+                    action="model load failed and lane reservation cancellation also failed",
+                    severity="critical",
+                )
+        raise
+    finally:
+        await _release_schedule_lease("model_load_finished")
+
 
 def _normalize_recurrent_depth_status(status: Any, *, model_path: str) -> dict[str, Any]:
     payload = dict(status) if isinstance(status, dict) else {}
     expected_loops = payload.get("expected_loops")
     try:
-        expected = int(expected_loops)
+        expected = (
+            int(expected_loops)
+            if expected_loops is not None
+            else _expected_recurrent_loops_from_model_path(model_path)
+        )
     except (TypeError, ValueError):
         expected = _expected_recurrent_loops_from_model_path(model_path)
     expected = max(0, expected)
@@ -605,7 +942,7 @@ _USER_FACING_PURPOSES = frozenset(
 
 
 def _runtime_shutdown_requested() -> bool:
-    return is_shutdown_requested()
+    return bool(is_shutdown_requested())
 
 
 def _shutdown_blocks_model_work(model_path: str, *, action: str) -> bool:
@@ -1462,6 +1799,9 @@ class MLXLocalClient:
         self._deferred_reboot_reason: str | None = None
         self._expert_adapter_path: str | None = None
         self._process: mp.Process | None = None
+        self._model_lane_owner_id = f"mlx:{os.getpid()}:{_real_model_path(model_path)}"
+        self._model_lane_fencing_token = 0
+        self._model_lane_terminal_receipt_id = ""
         self._mp_context = (
             mp.get_context("spawn")
             if os.uname().sysname == "Darwin"
@@ -2714,7 +3054,12 @@ class MLXLocalClient:
             return {"ok": False, "reason": "worker_not_ready"}
         if int(getattr(self, "_active_generations", 0) or 0) > 0 or self._warmup_in_flight:
             return {"ok": False, "reason": "generation_active"}
-        if path and not Path(path).expanduser().is_dir():
+        adapter_exists = (
+            await asyncio.to_thread(lambda: Path(path).expanduser().is_dir())
+            if path
+            else True
+        )
+        if not adapter_exists:
             return {"ok": False, "reason": f"adapter_missing:{path}"}
 
         req_id = uuid.uuid4().hex
@@ -2766,8 +3111,10 @@ class MLXLocalClient:
         respawn path re-resolves the fused manifest, so crash recovery after
         the swap also serves the promoted artifact.
         """
-        resolved = Path(str(model_path or "")).expanduser()
-        if not resolved.is_dir():
+        resolved = await asyncio.to_thread(
+            lambda: Path(str(model_path or "")).expanduser()
+        )
+        if not await asyncio.to_thread(resolved.is_dir):
             return {"ok": False, "reason": f"artifact_missing:{resolved}"}
         previous = self.model_path
         self.model_path = str(resolved)
@@ -3053,7 +3400,8 @@ class MLXLocalClient:
                         and any(model_basename in str(arg) for arg in (proc.info["cmdline"] or []))
                         and "mlx_worker" in str(proc.info.get("cmdline", []))
                     ):
-                        if proc.pid != os.getpid():
+                        ancestor_pids = {parent.pid for parent in proc.parents()}
+                        if proc.pid != os.getpid() and os.getpid() in ancestor_pids:
                             logger.warning(
                                 "🧹 [STABILITY] Killing orphan MLXWorker pid=%d for %s",
                                 proc.pid,
@@ -3061,6 +3409,13 @@ class MLXLocalClient:
                             )
                             proc.kill()
                             proc.wait(timeout=3.0)
+                        elif proc.pid != os.getpid():
+                            logger.info(
+                                "Model-path match pid=%d for %s belongs to another root; "
+                                "durable lane accounting will arbitrate it without cross-root kill.",
+                                proc.pid,
+                                model_basename,
+                            )
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
         except (OSError, ConnectionError, TimeoutError) as orphan_exc:
@@ -3115,29 +3470,6 @@ class MLXLocalClient:
             _record_mlx_degradation(
                 error,
                 action="refused MLX worker spawn before model load due to memory pressure",
-                severity="critical",
-            )
-            raise error
-
-        # Declarative lane admission (roadmap K3): beyond instantaneous
-        # pressure, the DECLARED footprints of all live lanes plus this
-        # candidate must fit the host lane budget. This is the check that
-        # refuses the spawns that were never going to survive (the OOM-
-        # SIGKILL-with-empty-stderr class) instead of letting the OS kill
-        # a 20 GB worker mid-load. Reuses the memory_pressure_refused_
-        # worker_spawn prefix so every downstream classifier keeps working.
-        admission = _lane_admission_blocks_worker_spawn(self)
-        if admission:
-            error = RuntimeError(f"memory_pressure_refused_worker_spawn:{admission}")
-            if self._is_deep_solver_lane():
-                logger.warning(
-                    "🛡️ [MLX] Refusing optional deep Solver spawn (lane budget): %s",
-                    admission,
-                )
-                raise error
-            _record_mlx_degradation(
-                error,
-                action="refused MLX worker spawn: declared lane footprints exceed host budget",
                 severity="critical",
             )
             raise error
@@ -3287,6 +3619,44 @@ class MLXLocalClient:
                 if status == "heartbeat":
                     self._last_heartbeat = time.time()
                     self._mark_progress()
+                    fencing_token = int(self._model_lane_fencing_token or 0)
+                    if fencing_token > 0 and self._model_lane_owner_id:
+                        try:
+                            from core.runtime.model_lane_control import (
+                                get_model_lane_controller,
+                            )
+
+                            lease_alive = await get_model_lane_controller().heartbeat_owner(
+                                self._model_lane_owner_id,
+                                fencing_token=fencing_token,
+                            )
+                            if not lease_alive:
+                                raise RuntimeError("model_lane_fence_lost")
+                        except (
+                            OSError,
+                            RuntimeError,
+                            AttributeError,
+                            TypeError,
+                            ValueError,
+                        ) as exc:
+                            _record_mlx_degradation(
+                                exc,
+                                action="stopped MLX worker after durable lane heartbeat failed",
+                                severity="critical",
+                            )
+                            self._deferred_reboot_reason = "model_lane_fence_lost"
+                            process, self._process = self._process, None
+                            if process is not None:
+                                await asyncio.to_thread(self._kill_and_join_blocking, process)
+                            from core.runtime.model_lane_control import (
+                                unregister_model_lane_owner_adapter,
+                            )
+
+                            unregister_model_lane_owner_adapter(self._model_lane_owner_id)
+                            self._model_lane_fencing_token = 0
+                            self._model_lane_terminal_receipt_id = ""
+                            self._set_lane_state("cold", "model_lane_fence_lost")
+                            return
                     audit = ServiceContainer.get("subsystem_audit", default=None)
                     if audit:
                         is_heavy = any(
@@ -3460,7 +3830,13 @@ class MLXLocalClient:
                         skip_swap_cooldown=skip_swap_cooldown,
                     )
         except _ModelLoadAdmissionDeniedError as admission_exc:
-            self._set_lane_state("recovering", admission_exc.reason)
+            # The inner spawn path can establish a specific terminal failure
+            # (for example, a failed Metal runtime probe) before the durable
+            # transaction observes that no candidate reached READY.  Preserve
+            # that causal state instead of replacing it with the less useful
+            # outer transaction consequence.
+            if self._lane_state != "failed" or not str(self._lane_error or ""):
+                self._set_lane_state("recovering", admission_exc.reason)
             self._record_degraded_event(
                 "model_load_admission_denied",
                 detail=(
@@ -3564,38 +3940,10 @@ class MLXLocalClient:
                 return False
 
         if target_path in (primary_path, deep_path):
-            other_heavy_path = deep_path if target_path == primary_path else primary_path
-            other_client = _CLIENTS.get(other_heavy_path)
-            if other_client and other_client is not self and other_client.is_alive():
-                # Cortex-protection mirror of the smaller-yield loop below: if
-                # the warm heavy model just served the user, do not evict it
-                # to bring up the other heavy lane. Background promotions in
-                # the middle of a conversation were the primary cause of the
-                # 32B → 72B → 32B thrash that left the user with "I got
-                # interrupted mid-thought" replies.
-                last_user_facing = float(
-                    getattr(other_client, "_last_user_facing_completed_at", 0.0) or 0.0
-                )
-                if (
-                    request_is_background
-                    and last_user_facing > 0.0
-                    and (time.time() - last_user_facing) < 180.0
-                ):
-                    logger.info(
-                        "🛡️ [MLX] NOT hot-swapping heavy model %s (served user %.1fs ago); "
-                        "background warmup of %s deferred.",
-                        os.path.basename(other_heavy_path),
-                        time.time() - last_user_facing,
-                        os.path.basename(target_path),
-                    )
-                    return False
-                logger.warning(
-                    "♻️ [MLX] Hot-swapping heavy model: unloading %s before loading %s.",
-                    os.path.basename(other_heavy_path),
-                    os.path.basename(target_path),
-                )
-                await other_client.reboot_worker()
-                gc.collect()  # [OOM FIX] Reclaim before loading new heavy model
+            # Required yields are owned by the durable lane transaction before
+            # this inner spawn path is entered.  This block now owns only the
+            # anti-thrash cooldown; it must never evict outside the reservation
+            # fence or claim admission before process death is verified.
             if _GLOBAL_LAST_HEAVY_MODEL and _GLOBAL_LAST_HEAVY_MODEL != target_path:
                 now = time.time()
                 elapsed = now - _GLOBAL_LAST_SWAP_TIME
@@ -3609,51 +3957,6 @@ class MLXLocalClient:
                         12.0 - elapsed,
                         os.path.basename(target_path),
                     )
-            for other_path, other_client in list(_CLIENTS.items()):
-                if other_path in (target_path, other_heavy_path):
-                    continue
-                if not other_client or other_client is self or not other_client.is_alive():
-                    continue
-                # Cortex-protection: if another client was serving a
-                # user-facing generation in the last 180 s, DO NOT evict it
-                # to make room for a background warmup.  This is the yield
-                # loop that caused the "CORTEX UNAVAILABLE" flap between
-                # turns — Cortex answered turn 1 at T, the 7B wanted to spin
-                # up at T+2 for a background appraisal, Cortex got reboot-
-                # yielded, turn 2 then had to cold-start the 32B all over
-                # and tripped the first-token SLA.  Holding Cortex warm
-                # across a conversation costs RAM; losing it between turns
-                # costs the entire user experience.
-                last_user_facing = float(
-                    getattr(other_client, "_last_user_facing_completed_at", 0.0) or 0.0
-                )
-                if last_user_facing > 0.0 and (time.time() - last_user_facing) < 180.0:
-                    logger.info(
-                        "🛡️ [MLX] NOT yielding %s (served a user-facing turn %.1fs ago; "
-                        "keeping warm for conversational continuity).",
-                        os.path.basename(other_path),
-                        time.time() - last_user_facing,
-                    )
-                    continue
-                if request_is_background and _lane_is_last_warm(other_client):
-                    # K5 disruption budget: a background warmup may not
-                    # voluntarily remove the ONLY warm lane on the host.
-                    logger.info(
-                        "🛡️ [MLX] NOT yielding %s for background warmup of %s "
-                        "(last warm lane; disruption budget).",
-                        os.path.basename(other_path),
-                        os.path.basename(target_path),
-                    )
-                    continue
-                logger.warning(
-                    "🧹 [MLX] Yielding %s before warming %s to reduce RAM pressure.",
-                    os.path.basename(other_path),
-                    os.path.basename(target_path),
-                )
-                await other_client.reboot_worker(
-                    reason=f"yield_to_{os.path.basename(target_path)}",
-                    mark_failed=False,
-                )
 
         acquired = await asyncio.to_thread(self._lock.acquire, True, 15.0)
         if not acquired:
@@ -4759,6 +5062,15 @@ class MLXLocalClient:
             existing_stops.extend(_bridge.extra_stop_sequences)
             req["stop_sequences"] = existing_stops
 
+        if self._active_generations <= 0 and not await self._set_durable_lane_preemptible(
+            False
+        ):
+            logger.info(
+                "MLX generation yielded because durable lane ownership is being evicted: %s",
+                os.path.basename(self.model_path),
+            )
+            return None
+
         foreground_watchdog = None
         fut = _new_shared_future()
         self._pending_generations[req_id] = fut
@@ -4785,8 +5097,23 @@ class MLXLocalClient:
             if self._req_q is None:
                 raise BrokenPipeError("MLX request queue is closed")
             await run_io_bound(self._req_q.put, req, True, enqueue_timeout)
-        except (BrokenPipeError, OSError) as exc:
-            self._pending_generations.pop(req_id, None)
+        except asyncio.CancelledError:
+            await asyncio.shield(
+                self._finish_generation_ownership(
+                    req_id,
+                    fut,
+                    foreground_watchdog,
+                )
+            )
+            raise
+        except (BrokenPipeError, OSError, TimeoutError, queue.Full) as exc:
+            await asyncio.shield(
+                self._finish_generation_ownership(
+                    req_id,
+                    fut,
+                    foreground_watchdog,
+                )
+            )
             if _retry and ("Broken pipe" in str(exc) or isinstance(exc, BrokenPipeError)):
                 logger.warning(
                     "🔄 [MLX] Broken pipe on %s — deferring reboot (lock held)",
@@ -4977,16 +5304,13 @@ class MLXLocalClient:
                 )
             return None
         finally:
-            if foreground_watchdog is not None:
-                foreground_watchdog.cancel()
-            if self._foreground_generation_watchdog is foreground_watchdog:
-                self._foreground_generation_watchdog = None
-            self._pending_generations.pop(req_id, None)
-            if self._current_gen_future is fut:
-                self._current_gen_future = None
-            self._active_generations = max(0, self._active_generations - 1)
-            if self._current_request_id == req_id:
-                self._clear_active_generation_tracking()
+            await asyncio.shield(
+                self._finish_generation_ownership(
+                    req_id,
+                    fut,
+                    foreground_watchdog,
+                )
+            )
 
     async def think_and_act(
         self,
@@ -5453,6 +5777,27 @@ class MLXLocalClient:
         finally:
             if acquired:
                 self._lock.release()
+        try:
+            from core.runtime.model_lane_control import (
+                get_model_lane_controller,
+                unregister_model_lane_owner_adapter,
+            )
+
+            released = await get_model_lane_controller().release_owner(
+                self._model_lane_owner_id,
+                fencing_token=(self._model_lane_fencing_token or None),
+                reason=reason,
+            )
+            if released:
+                unregister_model_lane_owner_adapter(self._model_lane_owner_id)
+                self._model_lane_fencing_token = 0
+                self._model_lane_terminal_receipt_id = ""
+        except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="worker stopped but durable model-lane owner release failed",
+                severity="warning",
+            )
         self._set_lane_state("failed" if mark_failed else "cold", reason if mark_failed else "")
 
     def idle_age(self, now: float | None = None) -> float:
@@ -5475,6 +5820,50 @@ class MLXLocalClient:
         if last <= 0.0:
             return 0.0
         return max(0.0, now - last)
+
+    async def _set_durable_lane_preemptible(self, preemptible: bool) -> bool:
+        fencing_token = int(self._model_lane_fencing_token or 0)
+        owner_id = str(self._model_lane_owner_id or "")
+        if fencing_token <= 0 or not owner_id:
+            return True
+        try:
+            from core.runtime.model_lane_control import get_model_lane_controller
+
+            return await get_model_lane_controller().update_owner_preemptibility(
+                owner_id,
+                fencing_token=fencing_token,
+                preemptible=preemptible,
+            )
+        except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action=(
+                    "refused generation before losing active-use protection"
+                    if not preemptible
+                    else "kept the idle model lane conservatively non-preemptible"
+                ),
+                severity="critical" if not preemptible else "warning",
+            )
+            return False
+
+    async def _finish_generation_ownership(
+        self,
+        request_id: str,
+        future: SharedFuture,
+        foreground_watchdog: _threading.Timer | None,
+    ) -> None:
+        if foreground_watchdog is not None:
+            foreground_watchdog.cancel()
+        if self._foreground_generation_watchdog is foreground_watchdog:
+            self._foreground_generation_watchdog = None
+        self._pending_generations.pop(request_id, None)
+        if self._current_gen_future is future:
+            self._current_gen_future = None
+        self._active_generations = max(0, self._active_generations - 1)
+        if self._current_request_id == request_id:
+            self._clear_active_generation_tracking()
+        if self._active_generations <= 0:
+            await self._set_durable_lane_preemptible(True)
 
     def _unload_safety_blocker(self) -> str | None:
         """Return why an idle VRAM unload is unsafe right now, or None if safe.

@@ -53,6 +53,7 @@ import hashlib
 import json
 import logging
 import sqlite3
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -151,15 +152,95 @@ class EmbeddingEngine:
         self._model = None
         self._tfidf_fallback = None
         self._initialized = False
+        self._lane_lease: Any | None = None
+        self._lifecycle_lock = threading.RLock()
+        self._closing = False
+
+    async def _evict_model_lane(self, _owner: Any, reason: str) -> bool:
+        def _close_if_idle() -> bool:
+            if not self._lifecycle_lock.acquire(blocking=False):
+                return False
+            try:
+                return self._close_model(
+                    reason=f"embedding_lane_eviction:{reason}",
+                    keep_fallback=True,
+                )
+            finally:
+                self._lifecycle_lock.release()
+
+        return await asyncio.to_thread(_close_if_idle)
+
+    async def _compensate_model_lane(self, _owner: Any, reason: str) -> bool:
+        if self._closing:
+            return False
+        logger.info("Restoring embedding model after failed candidate: %s", reason)
+
+        def _restore() -> bool:
+            with self._lifecycle_lock:
+                self._initialized = False
+                self._initialize_locked()
+                return self._model is not None and self._lane_lease is not None
+
+        return await asyncio.to_thread(_restore)
+
+    def close(self) -> None:
+        self._closing = True
+        self._close_model(reason="embedding_engine_closed", keep_fallback=False)
+
+    def _close_model(self, *, reason: str, keep_fallback: bool) -> bool:
+        with self._lifecycle_lock:
+            self._model = None
+            lease, self._lane_lease = self._lane_lease, None
+            if keep_fallback:
+                self._init_tfidf_fallback()
+            self._initialized = keep_fallback
+            if lease is not None:
+                lease.release(reason=reason)
+            return self._model is None
 
     def _initialize(self):
         """Lazy initialization — don't load model until first use."""
+        with self._lifecycle_lock:
+            self._initialize_locked()
+
+    def _initialize_locked(self) -> None:
         if self._initialized:
             return
 
         try:
             from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self.PREFERRED_MODEL)
+
+            from core.runtime.model_lane_control import (
+                ModelLaneControlError,
+                acquire_synchronous_in_process_model_lane,
+            )
+
+            try:
+                lane_lease = acquire_synchronous_in_process_model_lane(
+                    owner_id=f"embedding-engine:{id(self)}",
+                    model_path=f"sentence-transformers/{self.PREFERRED_MODEL}",
+                    purpose="serve",
+                    request_gb=0.5,
+                    priority=40,
+                    preemptible=False,
+                    evict=self._evict_model_lane,
+                    compensate=self._compensate_model_lane,
+                    metadata={
+                        "engine": "vector_memory",
+                        "model_role": "embedding",
+                        "activation_state": "loading",
+                    },
+                )
+            except ModelLaneControlError as exc:
+                logger.warning("Embedding model admission refused; using bounded fallback: %s", exc)
+                self._init_tfidf_fallback()
+                self._initialized = True
+                return
+            try:
+                self._model = SentenceTransformer(self.PREFERRED_MODEL)
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+                lane_lease.release(reason="embedding_model_load_failed")
+                raise
             # Move to Apple Silicon GPU if available
             try:
                 import torch
@@ -169,6 +250,11 @@ class EmbeddingEngine:
             except (ImportError, AttributeError, RuntimeError) as _e:
                 record_degradation('vector_memory_engine', _e)
                 logger.debug('Ignored Exception in vector_memory_engine.py: %s', _e)
+            if not lane_lease.set_preemptible(True):
+                self._model = None
+                lane_lease.release(reason="embedding_model_activation_fence_lost")
+                raise RuntimeError("embedding_model_activation_fence_lost")
+            self._lane_lease = lane_lease
             logger.info("✅ EmbeddingEngine: sentence-transformers loaded (%s)", self.PREFERRED_MODEL)
         except ImportError:
             logger.warning(
@@ -176,6 +262,11 @@ class EmbeddingEngine:
                 "Install with: pip install sentence-transformers\n"
                 "Falling back to TF-IDF (lower quality recall)"
             )
+            self._init_tfidf_fallback()
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation("vector_memory_engine", exc)
+            logger.warning("Embedding model unavailable; using bounded fallback: %s", exc)
+            self._model = None
             self._init_tfidf_fallback()
 
         self._initialized = True
@@ -193,20 +284,26 @@ class EmbeddingEngine:
 
     def embed(self, text: str) -> np.ndarray:
         """Convert text to a dense vector."""
-        self._initialize()
+        with self._lifecycle_lock:
+            self._initialize_locked()
 
-        if self._model:
-            return self._model.encode(text, normalize_embeddings=True)
+            if self._model:
+                return self._model.encode(text, normalize_embeddings=True)
 
         # Fallback: character n-gram hash (fast, fixed-size, reliable)
         return self._embed_hash(text)
 
     def embed_batch(self, texts: list[str]) -> np.ndarray:
         """Batch embed for efficiency."""
-        self._initialize()
+        with self._lifecycle_lock:
+            self._initialize_locked()
 
-        if self._model:
-            return self._model.encode(texts, normalize_embeddings=True, batch_size=32)
+            if self._model:
+                return self._model.encode(
+                    texts,
+                    normalize_embeddings=True,
+                    batch_size=32,
+                )
 
         return np.vstack([self.embed(t) for t in texts])
 
@@ -283,7 +380,7 @@ class MemoryVault:
                 "⚠️ chromadb not installed. Install with: pip install chromadb\n"
                 "Using local SQLite vector fallback"
             )
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except (AttributeError, RuntimeError) as e:
             record_degradation('vector_memory_engine', e)
             logger.error("ChromaDB init failed: %s. Using local SQLite vector fallback.", e)
         if self._collection is None:
@@ -638,6 +735,9 @@ class VectorMemoryEngine:
         self._spatial_registry: dict[tuple[int, int, int], list[str]] = {}
         
         logger.info("✅ VectorMemoryEngine initialized. Memories: %d", self.vault.count())
+
+    async def on_stop_async(self) -> None:
+        await asyncio.to_thread(self.embedder.close)
 
     def _constitutional_runtime_live(self) -> bool:
         return (

@@ -42,9 +42,10 @@ import logging
 import threading
 import time
 from collections import deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Iterable
+from typing import Any
 
 import psutil
 
@@ -99,7 +100,7 @@ def classify_lane(model_path: str, *, purpose: str = "serve") -> tuple[str, QoSC
     Token matching mirrors the projection heuristics in mlx_client so the
     two layers never disagree about which lane a path belongs to.
     """
-    if purpose in {"train", "compound", "fuse"}:
+    if purpose in {"train", "compound", "fuse", "benchmark", "evaluate", "eval"}:
         return "trainer", QoSClass.BEST_EFFORT
     lowered = str(model_path or "").lower()
     if any(token in lowered for token in ("72b", "solver")):
@@ -208,14 +209,15 @@ class LaneAdmissionController:
         request_gb: float,
         active: Iterable[ActiveLane],
         purpose: str = "serve",
+        allow_disruptive_eviction: bool = False,
     ) -> AdmissionDecision:
         lane, qos = classify_lane(model_path, purpose=purpose)
         request_gb = max(0.0, float(request_gb))
         budget = lane_budget_gb()
         # A lane replacing itself (worker recycle) must not double-count:
         # callers exclude the candidate's own lane from `active`.
-        lanes = [l for l in active if l.footprint_gb > 0.0]
-        committed = sum(l.footprint_gb for l in lanes)
+        lanes = [active_lane for active_lane in active if active_lane.footprint_gb > 0.0]
+        committed = sum(active_lane.footprint_gb for active_lane in lanes)
 
         if committed + request_gb <= budget:
             decision = self._record(
@@ -237,18 +239,27 @@ class LaneAdmissionController:
         # cortex must always be able to come up.
         shield_s = _eviction_shield_s()
         evictable = [
-            l
-            for l in lanes
-            if _QOS_RANK[l.qos] < _QOS_RANK[qos]
+            active_lane
+            for active_lane in lanes
+            if (
+                allow_disruptive_eviction
+                or _QOS_RANK[active_lane.qos] < _QOS_RANK[qos]
+            )
             and (
-                qos is QoSClass.GUARANTEED
-                or l.last_user_facing_age_s is None
-                or l.last_user_facing_age_s >= shield_s
+                allow_disruptive_eviction
+                or qos is QoSClass.GUARANTEED
+                or active_lane.last_user_facing_age_s is None
+                or active_lane.last_user_facing_age_s >= shield_s
             )
         ]
         # Best-effort first, then largest footprint — free the most with the
         # least collateral.
-        evictable.sort(key=lambda l: (_QOS_RANK[l.qos], -l.footprint_gb))
+        evictable.sort(
+            key=lambda active_lane: (
+                _QOS_RANK[active_lane.qos],
+                -active_lane.footprint_gb,
+            )
+        )
 
         freed = 0.0
         chosen: list[ActiveLane] = []

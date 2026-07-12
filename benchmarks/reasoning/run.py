@@ -37,7 +37,7 @@ def _resolve_model(explicit: str) -> str:
     return "mlx-community/Qwen2.5-7B-Instruct-4bit"  # let mlx_lm fetch/resolve
 
 
-def _mlx_generator(model_path: str):
+async def _mlx_generator(model_path: str):
     """A real on-device generate(prompt, temperature) backed by mlx_lm.
 
     Generation is serialized with a lock — the amplifier samples candidates in
@@ -47,8 +47,27 @@ def _mlx_generator(model_path: str):
     from mlx_lm import load
     from mlx_lm.sample_utils import make_sampler
 
+    from core.runtime.model_lane_control import (
+        acquire_in_process_model_lane,
+        run_owned_model_thread_call,
+    )
+
     print(f"loading MLX model: {model_path} …", flush=True)
-    model, tokenizer = load(model_path)
+    lease = await acquire_in_process_model_lane(
+        owner_id="reasoning-benchmark",
+        model_path=model_path,
+        purpose="benchmark",
+        preemptible=False,
+        metadata={"tool": "benchmarks.reasoning.run"},
+    )
+    try:
+        model, tokenizer = await run_owned_model_thread_call(
+            lambda: load(model_path),
+            operation_name="reasoning_benchmark_model_load",
+        )
+    except BaseException:  # noqa: BLE001 - release lease on interrupts and process termination.
+        await lease.release(reason="reasoning_benchmark_model_load_failed")
+        raise
     lock = asyncio.Lock()
 
     async def gen(prompt: str, temperature: float) -> str:
@@ -57,12 +76,19 @@ def _mlx_generator(model_path: str):
         )
         sampler = make_sampler(temp=max(0.01, float(temperature)))
         async with lock:
-            return await asyncio.to_thread(
-                mlx_generate, model, tokenizer, prompt=text, max_tokens=512,
-                sampler=sampler, verbose=False,
+            return await run_owned_model_thread_call(
+                lambda: mlx_generate(
+                    model,
+                    tokenizer,
+                    prompt=text,
+                    max_tokens=512,
+                    sampler=sampler,
+                    verbose=False,
+                ),
+                operation_name="reasoning_benchmark_generate",
             )
 
-    return gen
+    return gen, lease
 
 
 async def _router_generator():
@@ -81,20 +107,42 @@ async def _router_generator():
 
 async def _main_async(args: argparse.Namespace) -> int:
     generate = None
-    if args.live:
-        generate = await _router_generator() if args.router else _mlx_generator(_resolve_model(args.model))
-    result = await ReasoningBenchmark().run(generate=generate)
-    print(result.summary())
-    for o in result.outcomes:
-        flag = "✅" if o.correct else "❌"
-        fc = " ⚠️false-confidence" if o.false_confidence else ""
-        print(f"  {flag} {o.case_id:<12} verified={o.verified!s:<5} conf={o.confidence:.2f} "
-              f"lat={o.latency_ms:.0f}ms{fc}")
-    if args.out:
-        write_results(result, args.out)
-        print(f"wrote {args.out}")
-    ok = result.verifier_catch_rate >= 1.0 and result.false_confidence_rate <= 0.0
-    return 0 if ok else 1
+    model_lease = None
+    try:
+        if args.live:
+            if args.router:
+                generate = await _router_generator()
+            else:
+                generate, model_lease = await _mlx_generator(
+                    _resolve_model(args.model)
+                )
+        result = await ReasoningBenchmark().run(generate=generate)
+        print(result.summary())
+        for o in result.outcomes:
+            flag = "✅" if o.correct else "❌"
+            fc = " ⚠️false-confidence" if o.false_confidence else ""
+            print(
+                f"  {flag} {o.case_id:<12} verified={o.verified!s:<5} "
+                f"conf={o.confidence:.2f} lat={o.latency_ms:.0f}ms{fc}"
+            )
+        if args.out:
+            write_results(result, args.out)
+            print(f"wrote {args.out}")
+        ok = result.verifier_catch_rate >= 1.0 and result.false_confidence_rate <= 0.0
+        return 0 if ok else 1
+    finally:
+        if model_lease is not None:
+            generate = None
+            import gc
+
+            import mlx.core as mx
+
+            await asyncio.to_thread(gc.collect)
+            try:
+                mx.clear_cache()
+            except (AttributeError, RuntimeError):
+                pass
+            await model_lease.release(reason="reasoning_benchmark_finished")
 
 
 def main() -> int:

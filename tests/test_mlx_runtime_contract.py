@@ -1,6 +1,7 @@
 """Runtime contract tests for MLX client/worker hardening."""
 
 import asyncio
+import contextlib
 import os
 import sys
 import types
@@ -215,7 +216,6 @@ def test_mlx_worker_spawn_rechecks_shutdown_after_file_lock(monkeypatch, tmp_pat
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(mlx_client.psutil, "process_iter", lambda *_args, **_kwargs: [])
     monkeypatch.setattr(mlx_client, "_memory_pressure_blocks_worker_spawn", lambda *_args: None)
-    monkeypatch.setattr(mlx_client, "_lane_admission_blocks_worker_spawn", lambda *_args: None)
     monkeypatch.setattr(mlx_client, "_probe_mlx_runtime", lambda: (True, "ok"))
 
     def _flock(_file, operation):
@@ -561,6 +561,13 @@ async def test_primary_lane_recovery_exempt_from_foreground_owner_guards(monkeyp
     monkeypatch.setattr(
         mlx_client, "_background_deferral_active", lambda *_a, **_k: "foreground_reserved"
     )
+
+    @contextlib.asynccontextmanager
+    async def _admitted(_client, *, foreground_request):
+        del foreground_request
+        yield None
+
+    monkeypatch.setattr(mlx_client, "_model_load_admission_context", _admitted)
 
     result = await client._ensure_worker_alive(request_is_background=True)
     assert reached == ["inner"], (

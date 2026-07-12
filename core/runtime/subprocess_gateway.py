@@ -57,6 +57,54 @@ _DESKTOP_LONGRUN_COMMAND_MARKERS = (
 logger = logging.getLogger("Aura.SubprocessGateway")
 
 
+def _inferred_model_lane_claim(
+    command: Sequence[str],
+    *,
+    source: str,
+    timeout_s: float,
+) -> Any | None:
+    from core.runtime.model_lane_control import infer_model_process_claim
+
+    return infer_model_process_claim(
+        command,
+        source=source,
+        timeout_s=timeout_s,
+    )
+
+
+async def _reserve_model_lane_process(
+    claim: Any,
+) -> tuple[Any, Any]:
+    from core.runtime.model_lane_control import prepare_model_lane_claim
+
+    return await prepare_model_lane_claim(claim)
+
+
+async def _cancel_model_lane_process(
+    controller: Any,
+    decision: Any,
+    *,
+    reason: str,
+) -> None:
+    try:
+        await controller.cancel(decision, reason=reason)
+    except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        logger.error(
+            "Model subprocess reservation cancellation failed transaction=%s: %s",
+            getattr(decision, "transaction_id", ""),
+            exc,
+        )
+
+
+def _model_command_requires_async(command: Sequence[str], *, source: str) -> None:
+    claim = _inferred_model_lane_claim(command, source=source, timeout_s=30.0)
+    if claim is not None:
+        raise RuntimeError(
+            "accelerator-owning subprocesses require run_async/spawn_async so "
+            "their durable lane reservation can follow the child lifecycle"
+        )
+
+
 def _register_runtime_hygiene_process(
     proc: Any,
     *,
@@ -292,6 +340,7 @@ class SubprocessGateway:
         source: str = "unknown",
     ) -> subprocess.CompletedProcess[str]:
         command = _coerce_argv(argv)
+        _model_command_requires_async(command, source=source)
         if read_only and not offline_tooling:
             _validate_read_only_source(source)
         offline_bypass = _validate_offline_tooling_bypass(
@@ -331,6 +380,64 @@ class SubprocessGateway:
             if resource_token is not None:
                 end_shutdown_resource_creation_scope(resource_token)
 
+    def run_model_blocking(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: str | os.PathLike[str] | None = None,
+        env: Mapping[str, str] | None = None,
+        timeout: float = 30.0,
+        read_only: bool = False,
+        offline_tooling: bool = False,
+        allow_during_shutdown: bool = False,
+        capture_output: bool = True,
+        input: str | None = None,
+        check: bool = False,
+        source: str = "unknown",
+        model_lane_claim: Any | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run one governed model child from a synchronous CLI entrypoint.
+
+        The async path performs the reservation, eviction, delegated fencing,
+        process-group monitoring, and terminal release. Calling this method from
+        an event-loop thread is refused so a synchronous caller cannot stall the
+        runtime loop; async code must await ``run_async`` directly.
+        """
+        command = _coerce_argv(argv)
+        claim = model_lane_claim or _inferred_model_lane_claim(
+            command,
+            source=source,
+            timeout_s=float(timeout),
+        )
+        if claim is None:
+            raise RuntimeError(
+                f"run_model_blocking requires an attributable model claim: {source}"
+            )
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise RuntimeError(
+                "run_model_blocking cannot block an active event loop; await run_async"
+            )
+        return asyncio.run(
+            self.run_async(
+                command,
+                cwd=cwd,
+                env=env,
+                timeout=timeout,
+                read_only=read_only,
+                offline_tooling=offline_tooling,
+                allow_during_shutdown=allow_during_shutdown,
+                capture_output=capture_output,
+                input=input,
+                check=check,
+                source=source,
+                model_lane_claim=claim,
+            )
+        )
+
     async def run_async(
         self,
         argv: Sequence[str],
@@ -345,10 +452,66 @@ class SubprocessGateway:
         input: str | None = None,
         check: bool = False,
         source: str = "unknown",
+        model_lane_claim: Any | None = None,
     ) -> subprocess.CompletedProcess[str]:
+        command = _coerce_argv(argv)
+        inferred_claim = model_lane_claim or _inferred_model_lane_claim(
+            command,
+            source=source,
+            timeout_s=float(timeout),
+        )
+        if inferred_claim is not None:
+            process = await self.spawn_async(
+                command,
+                stdin=asyncio.subprocess.PIPE if input is not None else None,
+                stdout=asyncio.subprocess.PIPE if capture_output else None,
+                stderr=asyncio.subprocess.PIPE if capture_output else None,
+                cwd=cwd,
+                env=env,
+                read_only=read_only,
+                offline_tooling=offline_tooling,
+                allow_during_shutdown=allow_during_shutdown,
+                source=source,
+                model_lane_claim=inferred_claim,
+            )
+            input_bytes = input.encode() if input is not None else None
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    process.communicate(input_bytes),
+                    timeout=float(timeout),
+                )
+            except TimeoutError as exc:
+                process.kill()
+                stdout_bytes, stderr_bytes = await process.communicate()
+                raise subprocess.TimeoutExpired(
+                    command,
+                    float(timeout),
+                    output=stdout_bytes,
+                    stderr=stderr_bytes,
+                ) from exc
+            stdout_text = (
+                stdout_bytes.decode("utf-8", errors="replace")
+                if isinstance(stdout_bytes, bytes)
+                else stdout_bytes
+            )
+            stderr_text = (
+                stderr_bytes.decode("utf-8", errors="replace")
+                if isinstance(stderr_bytes, bytes)
+                else stderr_bytes
+            )
+            completed = subprocess.CompletedProcess(
+                command,
+                int(process.returncode or 0),
+                stdout_text,
+                stderr_text,
+            )
+            if check:
+                completed.check_returncode()
+            return completed
+
         def _run() -> subprocess.CompletedProcess[str]:
             return self.run(
-                argv,
+                command,
                 cwd=cwd,
                 env=env,
                 timeout=timeout,
@@ -362,11 +525,14 @@ class SubprocessGateway:
             )
 
         if is_shutdown_requested() and allow_during_shutdown and read_only:
-            return await run_sync_shutdown_callable(
+            result = await run_sync_shutdown_callable(
                 _run,
                 timeout_s=max(0.1, float(timeout)) + 1.0,
                 name=f"read-only-subprocess:{source}",
             )
+            if not isinstance(result, subprocess.CompletedProcess):
+                raise RuntimeError("shutdown subprocess bridge returned invalid result")
+            return result
         return await asyncio.to_thread(_run)
 
     def spawn(
@@ -389,6 +555,7 @@ class SubprocessGateway:
         source: str = "unknown",
     ) -> subprocess.Popen[Any]:
         command = _coerce_argv(argv)
+        _model_command_requires_async(command, source=source)
         if read_only and not offline_tooling:
             _validate_read_only_source(source)
         offline_bypass = _validate_offline_tooling_bypass(
@@ -499,6 +666,7 @@ class SubprocessGateway:
         offline_tooling: bool = False,
         allow_during_shutdown: bool = False,
         source: str = "unknown",
+        model_lane_claim: Any | None = None,
     ) -> asyncio.subprocess.Process:
         command = _coerce_argv(argv)
         if read_only and not offline_tooling:
@@ -518,15 +686,60 @@ class SubprocessGateway:
         if not read_only and not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn_async:{source}")
         _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn_async")
-        proc = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=stdin,
-            stdout=stdout,
-            stderr=stderr,
-            cwd=_coerce_cwd(cwd),
-            env=dict(env) if env is not None else None,
-            start_new_session=start_new_session,
+        claim = model_lane_claim or _inferred_model_lane_claim(
+            command,
+            source=source,
+            timeout_s=300.0,
         )
+        if claim is not None and not start_new_session:
+            raise RuntimeError("model_subprocess_requires_isolated_process_group")
+        model_controller = None
+        model_decision = None
+        model_delegation_token = ""
+        if claim is not None:
+            model_controller, model_decision = await _reserve_model_lane_process(claim)
+            try:
+                model_delegation_token = await model_controller.issue_inherited_claim(
+                    model_decision
+                )
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
+                await _cancel_model_lane_process(
+                    model_controller,
+                    model_decision,
+                    reason="model_subprocess_delegation_failed",
+                )
+                raise
+        process_env = dict(env) if env is not None else None
+        if claim is not None:
+            if process_env is None:
+                process_env = dict(os.environ)
+            process_env.update(
+                {
+                    "AURA_MODEL_LANE_INHERITED_OWNER_ID": str(claim.owner_id),
+                    "AURA_MODEL_LANE_INHERITED_REQUEST_ID": str(claim.request_id),
+                    "AURA_MODEL_LANE_INHERITED_MODEL_PATH": str(claim.model_path),
+                    "AURA_MODEL_LANE_INHERITED_PURPOSE": str(claim.purpose),
+                    "AURA_MODEL_LANE_DELEGATION_TOKEN": model_delegation_token,
+                }
+            )
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=stdin,
+                stdout=stdout,
+                stderr=stderr,
+                cwd=_coerce_cwd(cwd),
+                env=process_env,
+                start_new_session=start_new_session,
+            )
+        except (OSError, RuntimeError, ValueError):
+            if model_controller is not None and model_decision is not None:
+                await _cancel_model_lane_process(
+                    model_controller,
+                    model_decision,
+                    reason="model_subprocess_spawn_failed",
+                )
+            raise
         try:
             _require_not_shutting_down(
                 f"subprocess_gateway.spawn_async:{source}",
@@ -566,7 +779,138 @@ class SubprocessGateway:
                 outcome="reaped",
                 detail=f"pid={getattr(proc, 'pid', None)}",
             )
+            if model_controller is not None and model_decision is not None:
+                await _cancel_model_lane_process(
+                    model_controller,
+                    model_decision,
+                    reason="shutdown_crossed_model_subprocess_spawn",
+                )
             raise
+        if model_controller is not None and model_decision is not None:
+            from core.runtime.model_lane_control import (
+                managed_process_group_alive,
+                process_identity_for_pid,
+            )
+
+            try:
+                process_group_id = int(os.getpgid(proc.pid))
+            except (OSError, ProcessLookupError, ValueError):
+                process_group_id = 0
+            committed_process = process_identity_for_pid(proc.pid)
+            try:
+                committed = await model_controller.commit(
+                    model_decision,
+                    process=committed_process,
+                    metadata={
+                        "managed_model_process": True,
+                        "process_group_id": process_group_id,
+                        "start_new_session": bool(start_new_session),
+                        "source": source,
+                        "command": list(command),
+                    },
+                )
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                try:
+                    proc.kill()
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except (OSError, RuntimeError, ProcessLookupError, TimeoutError, ValueError):
+                    logger.error(
+                        "Model subprocess survived failed lane commit pid=%s",
+                        getattr(proc, "pid", None),
+                    )
+                await _cancel_model_lane_process(
+                    model_controller,
+                    model_decision,
+                    reason=f"model_subprocess_commit_failed:{type(exc).__name__}",
+                )
+                raise RuntimeError("model_subprocess_lane_commit_failed") from exc
+
+            async def _release_model_owner_when_done() -> None:
+                try:
+                    await proc.wait()
+                    # Descendants have no asyncio completion primitive.
+                    while managed_process_group_alive(  # noqa: ASYNC110
+                        process_group_id,
+                        root_started_at=committed_process.started_at,
+                    ):
+                        await asyncio.sleep(0.1)
+                except asyncio.CancelledError:
+                    if proc.returncode is None or managed_process_group_alive(
+                        process_group_id,
+                        root_started_at=committed_process.started_at,
+                    ):
+                        logger.info(
+                            "Model subprocess monitor cancelled while process tree remains "
+                            "live; durable owner retained owner=%s pid=%s pgid=%s",
+                            committed.owner_id,
+                            proc.pid,
+                            process_group_id,
+                        )
+                    raise
+                finally:
+                    if proc.returncode is not None and not managed_process_group_alive(
+                        process_group_id,
+                        root_started_at=committed_process.started_at,
+                    ):
+                        try:
+                            await model_controller.release_owner(
+                                committed.owner_id,
+                                fencing_token=committed.fencing_token,
+                                reason=f"model_subprocess_exit:{proc.returncode}",
+                            )
+                        except (
+                            OSError,
+                            RuntimeError,
+                            AttributeError,
+                            TypeError,
+                            ValueError,
+                        ) as exc:
+                            logger.warning(
+                                "Model subprocess owner release failed owner=%s: %s",
+                                committed.owner_id,
+                                exc,
+                            )
+
+            from core.utils.task_tracker import get_task_tracker
+
+            monitor_coroutine = _release_model_owner_when_done()
+            try:
+                monitor = get_task_tracker().create_task(
+                    monitor_coroutine,
+                    name=f"ModelProcessOwner:{committed.owner_id}",
+                )
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                monitor_coroutine.close()
+                try:
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=2.0)
+                    except TimeoutError:
+                        proc.kill()
+                        await asyncio.wait_for(proc.wait(), timeout=5.0)
+                except (
+                    OSError,
+                    RuntimeError,
+                    ProcessLookupError,
+                    TimeoutError,
+                    ValueError,
+                ) as reap_exc:
+                    logger.error(
+                        "Model subprocess monitor failed and child reap was incomplete pid=%s: %s",
+                        getattr(proc, "pid", None),
+                        reap_exc,
+                    )
+                finally:
+                    await model_controller.release_owner(
+                        committed.owner_id,
+                        fencing_token=committed.fencing_token,
+                        reason="model_subprocess_monitor_registration_failed",
+                    )
+                raise RuntimeError("model_subprocess_monitor_registration_failed") from exc
+            proc._aura_model_lane_owner_id = committed.owner_id  # type: ignore[attr-defined]
+            proc._aura_model_lane_fencing_token = committed.fencing_token  # type: ignore[attr-defined]
+            proc._aura_model_lane_receipt_id = committed.receipt_id  # type: ignore[attr-defined]
+            proc._aura_model_lane_monitor = monitor  # type: ignore[attr-defined]
         _register_runtime_hygiene_process(
             proc,
             kind="subprocess",
@@ -607,6 +951,14 @@ class SubprocessGateway:
         if not offline_bypass:
             _require_effect_governance(f"subprocess_gateway.spawn_shell_async:{source}")
         _validate_desktop_safe_subprocess(command, env=env, source=source, operation="spawn_shell_async")
+        if any(
+            marker in command.lower()
+            for marker in ("mlx_lm", "mlx-lm", "mlx_lm_lora", "heldout_eval.py")
+        ):
+            raise GovernanceViolation(
+                "accelerator-owning shell commands are denied; use spawn_async argv "
+                "so model identity and lane ownership remain parseable"
+            )
         proc = await asyncio.create_subprocess_shell(
             command,
             stdin=stdin,

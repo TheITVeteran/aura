@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from core.runtime.errors import record_degradation
@@ -32,20 +33,22 @@ class MLXClient:
         self.model_path = model_path
         self.model = None
         self.tokenizer = None
+        self._client = None
         self._load_model()
 
     def _load_model(self):
         try:
-            from mlx_lm import load
-            logger.info(f"Loading MLX Model: {self.model_path}...")
-            self.model, self.tokenizer = load(self.model_path)
-            logger.info("MLX Model Loaded Successfully.")
-        except ImportError as e:
-            _record_legacy_mlx_degradation(e, action="failed to import mlx_lm while loading legacy MLX client")
-            logger.error("mlx-lm not installed. Run 'pip install mlx-lm mlx'.")
+            from core.brain.llm.mlx_client import get_mlx_client
+
+            self._client = get_mlx_client(self.model_path, origin="legacy_mlx_client")
+            self.model = self._client
+            logger.info("Legacy MLXClient attached to canonical model lane: %s", self.model_path)
         except _LEGACY_MLX_CLIENT_ERRORS as e:
-            _record_legacy_mlx_degradation(e, action="failed to load legacy MLX model")
-            logger.error(f"Failed to load MLX model: {e}")
+            _record_legacy_mlx_degradation(
+                e,
+                action="failed to resolve canonical MLX client",
+            )
+            logger.error("Failed to resolve canonical MLX client: %s", e)
 
     @staticmethod
     def _extract_think_segments(text: str) -> tuple[str, str]:
@@ -60,86 +63,61 @@ class MLXClient:
         return cleaned.strip(), "\n\n".join(thoughts)
 
     def call(self, prompt: str, system_prompt: str = None, max_tokens: int = 2048, **kwargs) -> dict:
-        if not self.model:
-            return {"ok": False, "error": "MLX Model not loaded (pkg missing?)"}
+        if self._client is None:
+            return {"ok": False, "error": "Canonical MLX model lane unavailable"}
 
         try:
-            from mlx_lm import generate
-            
-            # Simple prompt assembly if system prompt provided
-            if system_prompt:
-                formatted_prompt = f"{system_prompt}\n\n{prompt}"
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                response_text = asyncio.run(
+                    self._client.generate_text_async(
+                        prompt,
+                        system_prompt=system_prompt or "",
+                        max_tokens=max_tokens,
+                        temperature=kwargs.get("temperature", 0.7),
+                        owner_label="legacy_mlx_client",
+                    )
+                )
+                if not response_text:
+                    return {"ok": False, "error": "Canonical MLX generation failed"}
+                cleaned, thought = self._extract_think_segments(response_text)
+                return {"ok": True, "text": cleaned, "thought": thought}
             else:
-                formatted_prompt = prompt
-                
-            temp = kwargs.get("temperature", 0.7)
-            logger.info(f"Generating MLX response (max {max_tokens} tokens)...")
-            
-            response_text = generate(
-                self.model, 
-                self.tokenizer, 
-                prompt=formatted_prompt, 
-                max_tokens=max_tokens, 
-                temp=temp,
-                verbose=False
-            )
-            
-            cleaned, thought = self._extract_think_segments(response_text)
-            return {"ok": True, "text": cleaned, "thought": thought}
-            
+                return {
+                    "ok": False,
+                    "error": "MLXClient.call cannot block an event loop; use call_stream",
+                }
         except _LEGACY_MLX_CLIENT_ERRORS as e:
-            _record_legacy_mlx_degradation(e, action="failed during legacy MLX generation")
-            logger.error(f"MLX Generation Error: {e}")
+            _record_legacy_mlx_degradation(
+                e,
+                action="failed during canonical legacy-compatibility generation",
+            )
+            logger.error("MLX Generation Error: %s", e)
             return {"ok": False, "error": str(e)}
 
     # v15: Streaming support
     async def call_stream(self, prompt: str, system_prompt: str = None, max_tokens: int = 2048, **kwargs):
-        if not self.model:
-            yield "Error: MLX Model not loaded"
+        if self._client is None:
+            yield "Error: canonical MLX model lane unavailable"
             return
-            
         try:
-            import mlx.core as mx
-            from mlx_lm import generate_step
-            
-            if system_prompt:
-                formatted_prompt = f"{system_prompt}\n\n{prompt}"
-            else:
-                formatted_prompt = prompt
-                
-            temp = kwargs.get("temperature", 0.7)
-            
-            # Simple non-blocking wrapper around sync generator (MLX is CPU/GPU locked)
-            # A true prod impl would run this in a threadpool
-            in_think_block = False
-            
-            for (token, _), _ in zip(
-                generate_step(mx.array(self.tokenizer.encode(formatted_prompt)), self.model, temp),
-                range(max_tokens),
-                strict=False,
-            ):
-                token_str = self.tokenizer.decode([token])
-                
-                # Real-time think block filtering
-                if in_think_block:
-                    if "</think>" in token_str:
-                        in_think_block = False
-                        parts = token_str.split("</think>")
-                        if len(parts) > 1 and parts[1]:
-                            yield parts[1]
-                    continue
-                    
-                if "<think>" in token_str:
-                    in_think_block = True
-                    parts = token_str.split("<think>")
-                    if parts[0]:
-                        yield parts[0]
-                    continue
-                    
-                if token_str:
-                    yield token_str
-                    
+            response_text = await self._client.generate_text_async(
+                prompt,
+                system_prompt=system_prompt or "",
+                max_tokens=max_tokens,
+                temperature=kwargs.get("temperature", 0.7),
+                owner_label="legacy_mlx_client_stream",
+            )
+            if not response_text:
+                yield "Error: canonical MLX generation failed"
+                return
+            cleaned, _thought = self._extract_think_segments(response_text)
+            if cleaned:
+                yield cleaned
         except _LEGACY_MLX_CLIENT_ERRORS as e:
-            _record_legacy_mlx_degradation(e, action="failed during legacy MLX streaming generation")
-            logger.error(f"MLX Streaming Error: {e}")
-            yield f"\n[MLX Generation Failed: {str(e)}]"
+            _record_legacy_mlx_degradation(
+                e,
+                action="failed during canonical legacy-compatibility stream",
+            )
+            yield f"Error: {e}"

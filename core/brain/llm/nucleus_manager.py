@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import threading
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +48,7 @@ def _empty_model_entry() -> dict[str, Any]:
         "loaded": False,
         "cache": None,
         "last_error": None,
+        "lane_lease": None,
     }
 
 
@@ -91,6 +95,9 @@ class NucleusManager(LLMProvider):
         self._adapter_dir = resolve_personality_adapter(self.cortex_path, backend="mlx") or ""
         
         self.models = {name: _empty_model_entry() for name in _NUCLEUS_MODEL_TYPES}
+        self._model_lifecycle_locks = {
+            name: threading.Lock() for name in _NUCLEUS_MODEL_TYPES
+        }
         self._anchor_text = None 
         self._refresh_threshold = 2048 
         self._tokens_seen = 0
@@ -118,8 +125,8 @@ class NucleusManager(LLMProvider):
                 _, _, event = await sub.get()
                 data = event.get("data", {})
                 if data.get("status") == "success":
-                    logger.info("🧠 [NUCLEUS] Optimization detected. Flagging Cortex for reload.")
-                    self.models["cortex"]["loaded"] = False
+                    logger.info("🧠 [NUCLEUS] Optimization detected. Unloading Cortex for reload.")
+                    await self._unload_model_entry("cortex", reason="optimizer_completed")
             except (OSError, ConnectionError, TimeoutError):
                 await asyncio.sleep(1)
         
@@ -135,7 +142,37 @@ class NucleusManager(LLMProvider):
     def _model_path_for(self, name: str) -> str:
         return self.brainstem_path if name == "brainstem" else self.cortex_path
 
+    @contextlib.asynccontextmanager
+    async def _model_lifecycle_context(self, name: str) -> AsyncIterator[None]:
+        lock = self._model_lifecycle_locks.setdefault(name, threading.Lock())
+        while not lock.acquire(blocking=False):  # noqa: ASYNC110
+            await asyncio.sleep(0.01)
+        try:
+            yield
+        finally:
+            lock.release()
+
+    @contextlib.contextmanager
+    def _model_thread_context(self, name: str):
+        """Pin one loaded model and its lane for a complete worker operation."""
+
+        lock = self._model_lifecycle_locks.setdefault(name, threading.Lock())
+        lock.acquire()
+        try:
+            entry = self._ensure_model_entry(name)
+            model = entry.get("model")
+            tokenizer = entry.get("tokenizer")
+            if not entry.get("loaded") or model is None or tokenizer is None:
+                raise RuntimeError(f"nucleus_model_not_owned:{name}")
+            yield entry, model, tokenizer
+        finally:
+            lock.release()
+
     async def load_model(self, name: str) -> bool:
+        async with self._model_lifecycle_context(name):
+            return await self._load_model_unlocked(name)
+
+    async def _load_model_unlocked(self, name: str) -> bool:
         """Lazy load a specific internal model, including LoRA adapters if present."""
         # Ensure event listener is started from async context
         await self.ensure_listener_started()
@@ -188,7 +225,21 @@ class NucleusManager(LLMProvider):
         try:
             from mlx_lm import load
 
+            from core.runtime.model_lane_control import (
+                acquire_in_process_model_lane,
+                run_owned_model_thread_call,
+            )
             from core.utils.gpu_sentinel import get_gpu_sentinel
+
+            lane_lease = await acquire_in_process_model_lane(
+                owner_id=f"nucleus:{id(self)}:{name}",
+                model_path=path,
+                purpose="serve",
+                priority=10 if name == "cortex" else 50,
+                preemptible=False,
+                metadata={"provider": "nucleus_manager", "model_type": name},
+            )
+            entry["lane_lease"] = lane_lease
             sentinel = get_gpu_sentinel()
             
             logger.info("🧠 [NUCLEUS] Loading %s from disk (Adapter: %s)...", name.upper(), adapter_path)
@@ -206,7 +257,10 @@ class NucleusManager(LLMProvider):
                     sentinel.release()
 
             # Use asyncio.to_thread as load is CPU/IO intensive
-            model, tokenizer = await asyncio.to_thread(_load_locked)
+            model, tokenizer = await run_owned_model_thread_call(
+                _load_locked,
+                operation_name=f"nucleus-{name}-load",
+            )
                 
             self.models[name]["model"] = model
             self.models[name]["tokenizer"] = tokenizer
@@ -227,7 +281,25 @@ class NucleusManager(LLMProvider):
             logger.info("✅ [NUCLEUS] %s load success.", name.upper())
             logger.info("✅ [NUCLEUS] %s ready.", name.upper())
             return True
+        except asyncio.CancelledError:
+            lease = entry.get("lane_lease")
+            entry["lane_lease"] = None
+            if lease is not None:
+                await lease.release(reason="nucleus_load_cancelled")
+            raise
         except _NUCLEUS_RECOVERABLE_ERRORS as e:
+            lease = entry.get("lane_lease")
+            entry["lane_lease"] = None
+            if lease is not None:
+                try:
+                    await lease.release(reason="nucleus_load_failed")
+                except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as release_exc:
+                    _record_nucleus_degradation(
+                        release_exc,
+                        severity="warning",
+                        action="model load failed and lane lease release also failed",
+                        extra={"model": name},
+                    )
             entry.update({
                 "model": None,
                 "tokenizer": None,
@@ -313,6 +385,7 @@ class NucleusManager(LLMProvider):
             from mlx_lm import generate
             from mlx_lm.sample_utils import make_sampler
 
+            from core.runtime.model_lane_control import run_owned_model_thread_call
             from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
 
             temp = self._resolve_temperature(kwargs, model_type=model_type, phase="text_generate")
@@ -321,26 +394,34 @@ class NucleusManager(LLMProvider):
             priority = GPUPriority.REFLEX if model_type == "cortex" else GPUPriority.REFLECTION
 
             def _generate_locked():
-                acquired = sentinel.acquire(priority=priority, timeout=60)
-                if not acquired:
-                    raise TimeoutError("NUCLEUS GPU Sentinel timeout during GENERATE")
-                try:
-                    # Semantic Anchor Refresh & Formatting
-                    p, s = self._apply_anchor(prompt, system_prompt, model_type)
-                    final_prompt = self._format_prompt(p, s, prefill=kwargs.get("prefill"))
-                    
-                    return generate(
-                        self.models[model_type]["model"],
-                        self.models[model_type]["tokenizer"],
-                        prompt=final_prompt,
-                        max_tokens=kwargs.get("max_tokens", 512),
-                        sampler=sampler,
-                        verbose=False
-                    )
-                finally:
-                    sentinel.release()
+                with self._model_thread_context(model_type) as (_entry, model, tokenizer):
+                    acquired = sentinel.acquire(priority=priority, timeout=60)
+                    if not acquired:
+                        raise TimeoutError("NUCLEUS GPU Sentinel timeout during GENERATE")
+                    try:
+                        # Semantic Anchor Refresh & Formatting
+                        p, s = self._apply_anchor(prompt, system_prompt, model_type)
+                        final_prompt = self._format_prompt(
+                            p,
+                            s,
+                            prefill=kwargs.get("prefill"),
+                        )
 
-            response = await asyncio.to_thread(_generate_locked)
+                        return generate(
+                            model,
+                            tokenizer,
+                            prompt=final_prompt,
+                            max_tokens=kwargs.get("max_tokens", 512),
+                            sampler=sampler,
+                            verbose=False,
+                        )
+                    finally:
+                        sentinel.release()
+
+            response = await run_owned_model_thread_call(
+                _generate_locked,
+                operation_name=f"nucleus-{model_type}-generate",
+            )
             return response.strip()
         except _NUCLEUS_RECOVERABLE_ERRORS as e:
             entry = self._ensure_model_entry(model_type)
@@ -385,15 +466,8 @@ class NucleusManager(LLMProvider):
             from mlx_lm.sample_utils import make_sampler
             from mlx_lm.utils import generate_step
 
-            # Phase 7: Semantic Anchor Refresh & Formatting
-            p, s = self._apply_anchor(prompt, system_prompt, model_type)
-            full_prompt = self._format_prompt(p, s, prefill=kwargs.get("prefill"))
-            model_entry = self._ensure_model_entry(model_type)
-            model = model_entry["model"]
-            tokenizer = model_entry["tokenizer"]
             temp = self._resolve_temperature(kwargs, model_type=model_type, phase="stream_generate")
             sampler = make_sampler(temp=temp)
-            tokens = mx.array(tokenizer.encode(full_prompt))
         except _NUCLEUS_RECOVERABLE_ERRORS as e:
             _record_nucleus_degradation(
                 e,
@@ -406,71 +480,82 @@ class NucleusManager(LLMProvider):
             yield f"[NUCLEUS ERROR] {e}"
             return
 
-        # KV-Cache management — clear stale cache to bound memory growth.
-        # generate_step creates a fresh cache per call; persisting one across
-        # calls without explicit invalidation leaks GPU RAM proportional to
-        # context length * num_layers.  Reset it each generation.
-        if model_entry.get("cache") is not None:
-            model_entry["cache"] = None
-            try:
-                if hasattr(mx, 'metal') and hasattr(mx.metal, 'clear_cache'):
-                    mx.metal.clear_cache()
-                else:
-                    mx.clear_cache()
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                _record_nucleus_degradation(
-                    e,
-                    severity="warning",
-                    action=(
-                        "continued streaming with stale-cache reference cleared "
-                        "after MLX cache cleanup failed"
-                    ),
-                    extra={"model": model_type, "phase": "stream_cache_clear"},
-                )
-
         max_tokens = kwargs.get("max_tokens", 1024)
+        stop_event = threading.Event()
         
         # Generator for streaming
         def _stream_gen():
             from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
-            sentinel = get_gpu_sentinel()
-            priority = GPUPriority.REFLEX if model_type == "cortex" else GPUPriority.REFLECTION
-            
-            acquired = sentinel.acquire(priority=priority, timeout=60)
-            if not acquired:
-                _record_nucleus_degradation(
-                    TimeoutError("NUCLEUS GPU Sentinel timeout during STREAM"),
-                    action="ended stream with explicit GPU timeout marker",
-                    extra={"model": model_type, "phase": "stream_gpu_acquire"},
+            with self._model_thread_context(model_type) as (model_entry, model, tokenizer):
+                p, s = self._apply_anchor(prompt, system_prompt, model_type)
+                full_prompt = self._format_prompt(p, s, prefill=kwargs.get("prefill"))
+                tokens = mx.array(tokenizer.encode(full_prompt))
+
+                # A cache belongs to this exact model instance and operation.
+                if model_entry.get("cache") is not None:
+                    model_entry["cache"] = None
+                    try:
+                        if hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
+                            mx.metal.clear_cache()
+                        else:
+                            mx.clear_cache()
+                    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                        _record_nucleus_degradation(
+                            e,
+                            severity="warning",
+                            action=(
+                                "continued streaming with stale-cache reference cleared "
+                                "after MLX cache cleanup failed"
+                            ),
+                            extra={"model": model_type, "phase": "stream_cache_clear"},
+                        )
+
+                sentinel = get_gpu_sentinel()
+                priority = (
+                    GPUPriority.REFLEX
+                    if model_type == "cortex"
+                    else GPUPriority.REFLECTION
                 )
-                yield "[NUCLEUS ERROR] GPU Sentinel timeout during STREAM"
-                return
+                acquired = sentinel.acquire(priority=priority, timeout=60)
+                if not acquired:
+                    _record_nucleus_degradation(
+                        TimeoutError("NUCLEUS GPU Sentinel timeout during STREAM"),
+                        action="ended stream with explicit GPU timeout marker",
+                        extra={"model": model_type, "phase": "stream_gpu_acquire"},
+                    )
+                    yield "[NUCLEUS ERROR] GPU Sentinel timeout during STREAM"
+                    return
 
-            try:
-                # Use persistent cache if available
-                cache = model_entry.get("cache")
-                
-                for response in generate_step(model, tokenizer, tokens, sampler=sampler, cache=cache):
-                    if response.token >= tokenizer.eos_token_id:
-                        break
-                    
-                    # --- Phase 7: GPU Pre-emption Yield ---
-                    if priority == GPUPriority.REFLECTION and sentinel.should_yield():
-                        logger.warning("🧠 [NUCLEUS] Pre-empted by REFLEX task. Yielding GPU.")
-                        yield "... [Pausing for sensory reflex] ..."
-                        break
+                try:
+                    cache = model_entry.get("cache")
+                    for response in generate_step(
+                        model,
+                        tokenizer,
+                        tokens,
+                        sampler=sampler,
+                        cache=cache,
+                    ):
+                        if stop_event.is_set() or response.token >= tokenizer.eos_token_id:
+                            break
 
-                    yield response.text
-                    if response.count >= max_tokens:
-                        yield "\n\n[MAX_TOKENS_REACHED]"
-                        # Save cache back for persistence
-                        model_entry["cache"] = cache
-                        break
-                
-                # Also save on normal completion
-                model_entry["cache"] = cache
-            finally:
-                sentinel.release()
+                        if (
+                            priority == GPUPriority.REFLECTION
+                            and sentinel.should_yield()
+                        ):
+                            logger.warning(
+                                "🧠 [NUCLEUS] Pre-empted by REFLEX task. Yielding GPU."
+                            )
+                            yield "... [Pausing for sensory reflex] ..."
+                            break
+
+                        yield response.text
+                        if response.count >= max_tokens:
+                            yield "\n\n[MAX_TOKENS_REACHED]"
+                            break
+
+                    model_entry["cache"] = cache
+                finally:
+                    sentinel.release()
 
         # ── [STABILITY v52] Non-blocking Streaming Bridge ───────────────
         # MLX generate_step is a blocking CPU/GPU operation. We must offload
@@ -503,13 +588,24 @@ class NucleusManager(LLMProvider):
             await queue.put("[NUCLEUS ERROR] failed to schedule stream worker")
             await queue.put(None)
 
-        stream_open = True
-        while stream_open:
-            chunk = await queue.get()
-            if chunk is None:
-                stream_open = False
-            else:
-                yield chunk
+        try:
+            stream_open = True
+            while stream_open:
+                chunk = await queue.get()
+                if chunk is None:
+                    stream_open = False
+                else:
+                    yield chunk
+        finally:
+            stop_event.set()
+            if worker_task is not None:
+                try:
+                    await asyncio.wait_for(asyncio.shield(worker_task), timeout=5.0)
+                except TimeoutError:
+                    logger.warning(
+                        "Nucleus stream worker remained active after consumer stop; "
+                        "model ownership is retained until the worker exits."
+                    )
 
     def _resolve_temperature(self, kwargs: dict[str, Any], *, model_type: str, phase: str) -> float:
         temp = kwargs.get("temp", kwargs.get("temperature"))
@@ -543,14 +639,33 @@ class NucleusManager(LLMProvider):
     async def generate(self, prompt: str, system_prompt: str = "", **kwargs) -> str:
         return await self.generate_text_async(prompt, system_prompt, **kwargs)
 
+    async def _unload_model_entry(self, name: str, *, reason: str) -> None:
+        async with self._model_lifecycle_context(name):
+            await self._unload_model_entry_locked(name, reason=reason)
+
+    async def _unload_model_entry_locked(self, name: str, *, reason: str) -> None:
+        entry = self._ensure_model_entry(name)
+        entry["model"] = None
+        entry["tokenizer"] = None
+        entry["loaded"] = False
+        entry["cache"] = None
+        lease, entry["lane_lease"] = entry.get("lane_lease"), None
+        if lease is not None:
+            try:
+                await lease.release(reason=f"nucleus_unload:{reason}")
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                _record_nucleus_degradation(
+                    exc,
+                    severity="warning",
+                    action="cleared in-process model references but lane lease release failed",
+                    extra={"model": name, "reason": reason},
+                )
+
     async def unload_models(self):
         """Force unload all internal models and clear caches."""
         logger.info("🧠 [NUCLEUS] Unloading all internal models...")
-        for _name, entry in self.models.items():
-            entry["model"] = None
-            entry["tokenizer"] = None
-            entry["loaded"] = False
-            entry["cache"] = None
+        for name in tuple(self.models):
+            await self._unload_model_entry(name, reason="unload_all")
         
         try:
             import mlx.core as mx

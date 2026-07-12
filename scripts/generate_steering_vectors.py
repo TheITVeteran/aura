@@ -20,12 +20,10 @@ import argparse
 import hashlib
 import json
 import logging
-import os
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -45,7 +43,7 @@ class ContrastPair:
 
 # ── Predefined Contrast Sets ────────────────────────────────────────────────
 
-AFFECT_CONTRAST_PAIRS: Dict[str, List[ContrastPair]] = {
+AFFECT_CONTRAST_PAIRS: dict[str, list[ContrastPair]] = {
     "curiosity": [
         ContrastPair(
             positive="I'm fascinated by this and want to explore further. Let me investigate the underlying mechanisms.",
@@ -170,7 +168,7 @@ class SteeringVector:
     generated_at: float = field(default_factory=time.time)
     seed: int = 42
 
-    def to_metadata(self) -> Dict[str, Any]:
+    def to_metadata(self) -> dict[str, Any]:
         return {
             "dimension": self.dimension,
             "magnitude": round(self.magnitude, 6),
@@ -196,10 +194,10 @@ class SteeringVectorGenerator:
 
     def __init__(
         self,
-        output_dir: Optional[Path] = None,
+        output_dir: Path | None = None,
         seed: int = 42,
         vector_dim: int = 256,
-        model_path: Optional[str] = None,
+        model_path: str | None = None,
         target_layer: int = 16,
     ) -> None:
         self.output_dir = Path(output_dir or _OUTPUT_DIR)
@@ -212,15 +210,59 @@ class SteeringVectorGenerator:
         self.model = None
         self.tokenizer = None
         self.target_layer = target_layer
+        self._model_lane_lease = None
         
         if model_path:
-            logger.info(f"Loading MLX model from {model_path} for real CAA extraction...")
-            import mlx.core as mx
-            from mlx_lm import load
-            self.model, self.tokenizer = load(model_path)
-            self.use_gpu = True
+            from core.runtime.model_lane_control import acquire_standalone_model_lane
 
-    def _get_model_layers(self, model) -> Optional[List[Any]]:
+            self._model_lane_lease = acquire_standalone_model_lane(
+                owner_id="caa-steering-vector-generator",
+                model_path=model_path,
+                purpose="benchmark",
+                preemptible=False,
+                metadata={"tool": "scripts.generate_steering_vectors"},
+            )
+            try:
+                logger.info(
+                    "Loading MLX model from %s for real CAA extraction...",
+                    model_path,
+                )
+                from mlx_lm import load
+
+                self.model, self.tokenizer = load(model_path)
+                self.use_gpu = True
+            except BaseException:  # noqa: BLE001 - release lease on interrupts and process termination.
+                self.close(reason="caa_steering_model_load_failed")
+                raise
+
+    def close(self, *, reason: str = "caa_steering_generator_closed") -> None:
+        """Release model memory before relinquishing its process ownership lease."""
+        lease, self._model_lane_lease = self._model_lane_lease, None
+        self.use_gpu = False
+        self.model = None
+        self.tokenizer = None
+        if lease is None:
+            return
+        try:
+            import gc
+
+            import mlx.core as mx
+
+            gc.collect()
+            try:
+                mx.clear_cache()
+            except (AttributeError, RuntimeError):
+                logger.debug("MLX cache cleanup unavailable during CAA close")
+        finally:
+            lease.release(reason=reason)
+
+    def __enter__(self) -> SteeringVectorGenerator:
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self.close()
+
+    def _get_model_layers(self, model) -> list[Any] | None:
         layers = getattr(model, "layers", None)
         if not layers and hasattr(model, "model"):
             layers = getattr(model.model, "layers", None)
@@ -304,7 +346,7 @@ class SteeringVectorGenerator:
         return vec
 
     def generate_dimension(
-        self, dimension: str, pairs: List[ContrastPair]
+        self, dimension: str, pairs: list[ContrastPair]
     ) -> SteeringVector:
         """Generate a steering vector for a single affect dimension.
 
@@ -342,7 +384,7 @@ class SteeringVectorGenerator:
             seed=self.seed,
         )
 
-    def generate_all(self) -> Dict[str, SteeringVector]:
+    def generate_all(self) -> dict[str, SteeringVector]:
         """Generate steering vectors for all predefined dimensions."""
         results = {}
         for dimension, pairs in AFFECT_CONTRAST_PAIRS.items():
@@ -354,7 +396,7 @@ class SteeringVectorGenerator:
             )
         return results
 
-    def save_vectors(self, vectors: Dict[str, SteeringVector]) -> Dict[str, str]:
+    def save_vectors(self, vectors: dict[str, SteeringVector]) -> dict[str, str]:
         """Save generated vectors to disk."""
         saved_paths = {}
         manifest = {
@@ -389,8 +431,8 @@ class SteeringVectorGenerator:
 
 
 def load_steering_vectors(
-    directory: Optional[Path] = None,
-) -> Dict[str, np.ndarray]:
+    directory: Path | None = None,
+) -> dict[str, np.ndarray]:
     """Load pre-generated steering vectors from disk.
 
     Returns:
@@ -443,23 +485,25 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(name)s | %(message)s")
 
-    generator = SteeringVectorGenerator(
+    with SteeringVectorGenerator(
         output_dir=args.output_dir,
         seed=args.seed,
         vector_dim=args.dim,
         model_path=args.model_path,
         target_layer=args.target_layer,
-    )
+    ) as generator:
+        vectors = generator.generate_all()
+        paths = generator.save_vectors(vectors)
 
-    vectors = generator.generate_all()
-    paths = generator.save_vectors(vectors)
-
-    print(f"\n✅ Generated {len(vectors)} steering vectors:")
-    for dim, path in paths.items():
-        if dim != "manifest":
-            sv = vectors[dim]
-            print(f"   {dim}: magnitude={sv.magnitude:.4f} checksum={sv.checksum}")
-    print(f"\n📁 Manifest: {paths.get('manifest', 'N/A')}")
+        print(f"\n✅ Generated {len(vectors)} steering vectors:")
+        for dim, _path in paths.items():
+            if dim != "manifest":
+                sv = vectors[dim]
+                print(
+                    f"   {dim}: magnitude={sv.magnitude:.4f} "
+                    f"checksum={sv.checksum}"
+                )
+        print(f"\n📁 Manifest: {paths.get('manifest', 'N/A')}")
 
 
 if __name__ == "__main__":

@@ -648,7 +648,10 @@ class EmailAdapterSkill(BaseSkill):
                 )
 
                 logger.info("👁️ Processing %s via local MLX Vision...", img["filename"])
-                desc = mlx_vision.see(prompt=prompt, image_base64=img["data"])
+                desc = await mlx_vision.see_async(
+                    prompt=prompt,
+                    image_base64=img["data"],
+                )
 
                 if desc and "Vision Failure" not in desc:
                     descriptions.append(
@@ -672,7 +675,7 @@ class EmailAdapterSkill(BaseSkill):
         finally:
             if mlx_vision is not None:
                 try:
-                    mlx_vision.stop()
+                    await mlx_vision.stop_async()
                 except _EMAIL_RECOVERABLE_ERRORS as stop_error:
                     _record_email_degradation(
                         stop_error,

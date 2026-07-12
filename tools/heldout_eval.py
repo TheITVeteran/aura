@@ -37,6 +37,7 @@ from core.learning.heldout_battery import (  # noqa: E402
     generate_battery,
     grade_battery,
 )
+from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 
 def _build_prompt(tokenizer, user_prompt: str) -> str:
@@ -151,7 +152,13 @@ def main() -> int:
     parser.add_argument("--output", required=True, help="report JSON path")
     args = parser.parse_args()
 
-    report = run_eval(args)
+    with standalone_model_lane(
+        owner_id="heldout-eval",
+        model_path=args.model,
+        purpose="benchmark",
+        metadata={"tool": "heldout_eval"},
+    ):
+        report = run_eval(args)
     acc = report["result"]
     print(
         f"[heldout_eval] {report['battery']['battery_id']} "

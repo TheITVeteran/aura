@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from pathlib import Path
@@ -8,9 +9,437 @@ from pathlib import Path
 import pytest
 
 from core.runtime import shutdown_coordinator, subprocess_gateway
+from core.runtime.model_lane_control import (
+    LaneClaim,
+    ModelLaneController,
+    infer_model_process_claim,
+)
+from core.runtime.receipts import ReceiptStore
 from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_model_process_claim_inference_requires_identity_and_sizes_peak() -> None:
+    claim = infer_model_process_claim(
+        [
+            sys.executable,
+            "-m",
+            "mlx_lm",
+            "lora",
+            "--model",
+            "/models/qwen-7b",
+            "--train",
+        ],
+        source="training_tooling:unit",
+        timeout_s=600.0,
+    )
+
+    assert claim is not None
+    assert claim.model_path == "/models/qwen-7b"
+    assert claim.purpose == "train"
+    assert claim.request_gb >= 9.0
+    assert claim.preemptible is True
+
+
+def test_model_process_claim_inference_fails_closed_without_model_path() -> None:
+    with pytest.raises(RuntimeError, match="missing_model_path"):
+        infer_model_process_claim(
+            [sys.executable, "-m", "mlx_lm", "lora", "--train"],
+            source="training_tooling:missing-model",
+            timeout_s=600.0,
+        )
+
+
+def test_benchmark_model_under_training_directory_is_not_misclassified() -> None:
+    claim = infer_model_process_claim(
+        [
+            sys.executable,
+            "tools/heldout_eval.py",
+            "--model",
+            "/repo/training/fused-model/Aura-32B",
+        ],
+        source="training_tooling:heldout-regression",
+        timeout_s=600.0,
+    )
+
+    assert claim is not None
+    assert claim.purpose == "benchmark"
+
+
+def test_sync_gateway_refuses_untrackable_model_process() -> None:
+    with pytest.raises(RuntimeError, match="require run_async/spawn_async"):
+        subprocess_gateway.SubprocessGateway().run(
+            [
+                sys.executable,
+                "-m",
+                "mlx_lm",
+                "lora",
+                "--model",
+                "/models/qwen-7b",
+                "--train",
+            ],
+            source="training_tooling:sync-denied",
+        )
+
+
+def test_blocking_model_gateway_routes_through_async_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = subprocess_gateway.SubprocessGateway()
+    claim = LaneClaim(
+        owner_id="subprocess:test:blocking-bridge",
+        model_path="/models/qwen-7b",
+        request_gb=0.1,
+        purpose="benchmark",
+        request_id="blocking-bridge",
+    )
+    calls: list[tuple[list[str], dict[str, object]]] = []
+
+    async def _run_async(argv, **kwargs):
+        calls.append((list(argv), kwargs))
+        return subprocess_gateway.subprocess.CompletedProcess(argv, 0, "ok", "")
+
+    monkeypatch.setattr(gateway, "run_async", _run_async)
+    result = gateway.run_model_blocking(
+        [sys.executable, "-c", "raise SystemExit(0)"],
+        timeout=12.0,
+        source="training_tooling:blocking-bridge",
+        model_lane_claim=claim,
+    )
+
+    assert result.returncode == 0
+    assert calls[0][1]["model_lane_claim"] is claim
+    assert calls[0][1]["timeout"] == 12.0
+
+
+@pytest.mark.asyncio
+async def test_blocking_model_gateway_refuses_active_event_loop() -> None:
+    claim = LaneClaim(
+        owner_id="subprocess:test:blocking-loop-refusal",
+        model_path="/models/qwen-7b",
+        request_gb=0.1,
+        purpose="benchmark",
+        request_id="blocking-loop-refusal",
+    )
+
+    with pytest.raises(RuntimeError, match="cannot block an active event loop"):
+        subprocess_gateway.SubprocessGateway().run_model_blocking(
+            [sys.executable, "-c", "raise SystemExit(0)"],
+            source="training_tooling:blocking-loop-refusal",
+            model_lane_claim=claim,
+        )
+
+
+@pytest.mark.asyncio
+async def test_spawn_async_commits_and_releases_model_process_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from core.runtime import model_lane_control
+
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_discovery=None,
+    )
+    monkeypatch.setattr(
+        model_lane_control,
+        "get_model_lane_controller",
+        lambda: controller,
+    )
+    claim = LaneClaim(
+        owner_id="subprocess:test:model-job",
+        model_path="/models/test-accelerator-job",
+        request_gb=0.1,
+        purpose="train",
+        request_id="subprocess-model-job",
+    )
+
+    proc = await subprocess_gateway.SubprocessGateway().spawn_async(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        source="training_tooling:model-owner-test",
+        model_lane_claim=claim,
+    )
+    snapshot = controller.snapshot()
+    assert snapshot["reserved_gb"] == 0.0
+    assert len(snapshot["owners"]) == 1
+    assert snapshot["owners"][0]["process"]["pid"] == proc.pid
+    assert snapshot["owners"][0]["metadata"]["managed_model_process"] is True
+    assert proc._aura_model_lane_fencing_token > 0
+
+    proc.terminate()
+    await proc.wait()
+    await proc._aura_model_lane_monitor
+
+    assert controller.snapshot()["owners"] == []
+    assert controller._receipt_store.coverage_stats()["resource_admission"] == 1
+
+
+@pytest.mark.asyncio
+async def test_model_owner_survives_root_exit_until_process_group_drains(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from core.runtime import model_lane_control
+
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_discovery=None,
+    )
+    monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: controller)
+    claim = LaneClaim(
+        owner_id="subprocess:test:escaped-descendant",
+        model_path="/models/test-accelerator-job",
+        request_gb=0.1,
+        purpose="train",
+        request_id="escaped-descendant-job",
+    )
+    root_code = "\n".join(
+        (
+            "import subprocess, sys",
+            "subprocess.Popen(",
+            "    [sys.executable, '-c', 'import time; time.sleep(1.5)'],",
+            "    stdin=subprocess.DEVNULL,",
+            "    stdout=subprocess.DEVNULL,",
+            "    stderr=subprocess.DEVNULL,",
+            ")",
+        )
+    )
+
+    proc = await subprocess_gateway.SubprocessGateway().spawn_async(
+        [sys.executable, "-c", root_code],
+        source="training_tooling:descendant-accounting",
+        model_lane_claim=claim,
+    )
+    await proc.wait()
+
+    assert proc.returncode == 0
+    assert proc._aura_model_lane_monitor.done() is False
+    assert [owner["owner_id"] for owner in controller.snapshot()["owners"]] == [
+        claim.owner_id
+    ]
+
+    await asyncio.wait_for(proc._aura_model_lane_monitor, timeout=5.0)
+    assert controller.snapshot()["owners"] == []
+
+
+@pytest.mark.asyncio
+async def test_model_subprocess_requires_isolated_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    claim = LaneClaim(
+        owner_id="subprocess:test:nonisolated",
+        model_path="/models/test-accelerator-job",
+        request_gb=0.1,
+        purpose="train",
+        request_id="nonisolated-model-job",
+    )
+
+    with pytest.raises(RuntimeError, match="requires_isolated_process_group"):
+        await subprocess_gateway.SubprocessGateway().spawn_async(
+            [sys.executable, "-c", "raise SystemExit(0)"],
+            source="training_tooling:nonisolated-model-job",
+            model_lane_claim=claim,
+            start_new_session=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_monitor_retains_owner_until_child_process_dies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from core.runtime import model_lane_control
+
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_discovery=None,
+    )
+    monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: controller)
+    claim = LaneClaim(
+        owner_id="subprocess:test:cancelled-monitor",
+        model_path="/models/test-accelerator-job",
+        request_gb=0.1,
+        purpose="benchmark",
+        request_id="cancelled-monitor-job",
+    )
+
+    proc = await subprocess_gateway.SubprocessGateway().spawn_async(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        source="training_tooling:cancelled-monitor",
+        model_lane_claim=claim,
+    )
+    proc._aura_model_lane_monitor.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await proc._aura_model_lane_monitor
+
+    assert proc.returncode is None
+    assert [owner["owner_id"] for owner in controller.snapshot()["owners"]] == [
+        claim.owner_id
+    ]
+
+    proc.terminate()
+    await proc.wait()
+    assert controller.snapshot()["owners"] == []
+
+
+@pytest.mark.asyncio
+async def test_gateway_child_consumes_exact_inherited_model_lane_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from core.runtime import model_lane_control
+
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    home = tmp_path / "delegated-home"
+    state_path = home / ".aura" / "run" / "model_lane_control.json"
+    controller = ModelLaneController(
+        state_path=state_path,
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_discovery=None,
+    )
+    monkeypatch.setattr(
+        model_lane_control,
+        "get_model_lane_controller",
+        lambda: controller,
+    )
+    claim = LaneClaim(
+        owner_id="subprocess:test:delegated-child",
+        model_path="/models/test-accelerator-job",
+        request_gb=0.1,
+        purpose="benchmark",
+        request_id="delegated-child-request",
+    )
+    child_code = "\n".join(
+        (
+            "import json",
+            "from core.runtime.model_lane_control import acquire_standalone_model_lane",
+            "lease = acquire_standalone_model_lane(owner_id='child-tool', "
+            "model_path='/models/test-accelerator-job', purpose='benchmark', request_gb=0.1)",
+            "print(json.dumps({'inherited': lease.inherited}))",
+        )
+    )
+    child_env = {**os.environ, "HOME": str(home)}
+
+    proc = await subprocess_gateway.SubprocessGateway().spawn_async(
+        [sys.executable, "-c", child_code],
+        cwd=PROJECT_ROOT,
+        env=child_env,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        source="training_tooling:delegated-child-test",
+        model_lane_claim=claim,
+    )
+    stdout, stderr = await proc.communicate()
+    await proc._aura_model_lane_monitor
+
+    assert proc.returncode == 0, stderr.decode()
+    assert json.loads(stdout.decode().strip()) == {"inherited": True}
+    assert controller.snapshot()["owners"] == []
+    reservation = controller.snapshot()["reservations"][0]
+    assert reservation["delegation"]["consumed_process"]["pid"] == proc.pid
+
+
+@pytest.mark.asyncio
+async def test_run_async_tracks_model_owner_through_completion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from core.runtime import model_lane_control
+
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_discovery=None,
+    )
+    monkeypatch.setattr(
+        model_lane_control,
+        "get_model_lane_controller",
+        lambda: controller,
+    )
+    claim = LaneClaim(
+        owner_id="subprocess:test:run-model-job",
+        model_path="/models/test-accelerator-job",
+        request_gb=0.1,
+        purpose="benchmark",
+        request_id="run-model-job",
+    )
+
+    completed = await subprocess_gateway.SubprocessGateway().run_async(
+        [sys.executable, "-c", "print('model-job-complete')"],
+        source="training_tooling:model-run-test",
+        model_lane_claim=claim,
+    )
+    for _ in range(50):
+        if not controller.snapshot()["owners"]:
+            break
+        await asyncio.sleep(0.01)
+
+    assert completed.returncode == 0
+    assert completed.stdout.strip() == "model-job-complete"
+    assert controller.snapshot()["owners"] == []
+
+
+@pytest.mark.asyncio
+async def test_monitor_registration_failure_reaps_committed_model_child(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from core.runtime import model_lane_control
+    from core.utils import task_tracker
+
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    controller = ModelLaneController(
+        state_path=tmp_path / "model_lanes.json",
+        receipt_store=ReceiptStore(tmp_path / "receipts"),
+        process_discovery=None,
+    )
+    monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: controller)
+    actual_tracker = task_tracker.get_task_tracker()
+
+    class _FailingMonitorTracker:
+        def create_task(self, coroutine, *, name: str):
+            if name.startswith("ModelProcessOwner:"):
+                raise RuntimeError("injected monitor registration failure")
+            return actual_tracker.create_task(coroutine, name=name)
+
+    monkeypatch.setattr(task_tracker, "get_task_tracker", lambda: _FailingMonitorTracker())
+    created: list[asyncio.subprocess.Process] = []
+    create_process = asyncio.create_subprocess_exec
+
+    async def _capture_process(*args, **kwargs):
+        process = await create_process(*args, **kwargs)
+        created.append(process)
+        return process
+
+    monkeypatch.setattr(subprocess_gateway.asyncio, "create_subprocess_exec", _capture_process)
+    claim = LaneClaim(
+        owner_id="subprocess:test:monitor-failure",
+        model_path="/models/test-accelerator-job",
+        request_gb=0.1,
+        purpose="benchmark",
+        request_id="monitor-failure-job",
+    )
+
+    with pytest.raises(RuntimeError, match="model_subprocess_monitor_registration_failed"):
+        await subprocess_gateway.SubprocessGateway().spawn_async(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            source="training_tooling:model-monitor-failure",
+            model_lane_claim=claim,
+        )
+
+    assert len(created) == 1
+    assert created[0].returncode is not None
+    assert controller.snapshot()["owners"] == []
 
 
 def test_offline_tooling_run_requires_named_source(monkeypatch: pytest.MonkeyPatch) -> None:

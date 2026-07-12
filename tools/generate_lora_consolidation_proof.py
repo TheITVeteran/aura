@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import gc
 import hashlib
 import json
 import re
@@ -41,6 +42,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from core.runtime.model_lane_control import standalone_model_lane  # noqa: E402
 
 DEFAULT_MODEL = ROOT / "models" / "Qwen2.5-1.5B-Instruct-4bit"
 WORK_DIR = ROOT / "artifacts" / "lora_consolidation"
@@ -154,7 +157,7 @@ def eval_model(model: Any, tokenizer: Any, pack: dict[str, Any], salt: str) -> d
 async def _train_adapter(model_path: Path, data_dir: Path, adapter_dir: Path, iters: int) -> dict[str, Any]:
     from core.learning.lora_trainer import LoraTrainer
 
-    adapter_dir.mkdir(parents=True, exist_ok=True)
+    await asyncio.to_thread(adapter_dir.mkdir, parents=True, exist_ok=True)
     trainer = LoraTrainer()
     return await trainer.train_adapter(
         str(data_dir),
@@ -194,9 +197,16 @@ def main() -> int:
     # 1) Baseline: the frozen base model on the held-out pack (expected to fail —
     #    the AURAZ convention is synthetic / not in pretraining).
     print("→ evaluating BASE model on held-out pack ...", flush=True)
-    base_model, tok = mlx_load(str(model_path))
-    base_eval = eval_model(base_model, tok, pack, salt)
-    del base_model
+    with standalone_model_lane(
+        owner_id="lora-consolidation-baseline",
+        model_path=str(model_path),
+        purpose="benchmark",
+        metadata={"tool": "generate_lora_consolidation_proof", "condition": "base"},
+    ):
+        base_model, tok = mlx_load(str(model_path))
+        base_eval = eval_model(base_model, tok, pack, salt)
+        del base_model, tok
+        gc.collect()
     print(f"   base held-out score = {base_eval['score']:.3f} ({base_eval['passed']}/{base_eval['total']})", flush=True)
 
     # 2) Sleep step: train a LoRA adapter on the experience shards.
@@ -209,9 +219,19 @@ def main() -> int:
     # 3) Candidate: SAME frozen base + the learned adapter. The adapter is the
     #    ONLY delta, so any held-out lift is attributable to it (inline ablation).
     print("→ evaluating BASE+ADAPTER on held-out pack ...", flush=True)
-    cand_model, tok2 = mlx_load(str(model_path), adapter_path=str(adapter_dir))
-    cand_eval = eval_model(cand_model, tok2, pack, salt)
-    del cand_model
+    with standalone_model_lane(
+        owner_id="lora-consolidation-candidate",
+        model_path=str(model_path),
+        purpose="benchmark",
+        metadata={
+            "tool": "generate_lora_consolidation_proof",
+            "condition": "base+lora_adapter",
+        },
+    ):
+        cand_model, tok2 = mlx_load(str(model_path), adapter_path=str(adapter_dir))
+        cand_eval = eval_model(cand_model, tok2, pack, salt)
+        del cand_model, tok2
+        gc.collect()
     print(f"   base+adapter held-out score = {cand_eval['score']:.3f} ({cand_eval['passed']}/{cand_eval['total']})", flush=True)
 
     baseline_score = float(base_eval["score"])

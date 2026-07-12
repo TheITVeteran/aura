@@ -18,23 +18,23 @@ Design principles:
     - Quarantined adapters are never deleted — only moved aside for review
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import json
 import logging
-import re
 import shutil
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 logger = logging.getLogger("Aura.PostTrainingValidator")
+GenerationFunction = Callable[[str, str], Awaitable[str]]
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -109,7 +109,7 @@ class ValidationResult:
     timestamp: str = ""
     notes: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "passed": self.passed,
             "pass_rate": round(self.pass_rate, 4),
@@ -478,16 +478,17 @@ class PostTrainingValidator:
         self,
         model_path: str,
         adapter_base_dir: str = "data/lora_adapters",
-        quarantine_dir: Optional[Path] = None,
-        validation_log_dir: Optional[Path] = None,
+        quarantine_dir: Path | None = None,
+        validation_log_dir: Path | None = None,
         min_pass_rate: float = MINIMUM_PASS_RATE,
-    ):
+    ) -> None:
         self.model_path = model_path
         self.adapter_base_dir = Path(adapter_base_dir)
         self.quarantine_dir = quarantine_dir or QUARANTINE_DIR
         self.validation_log_dir = validation_log_dir or VALIDATION_LOG_DIR
         self.min_pass_rate = min_pass_rate
         self.probes = list(IDENTITY_PROBES)
+        self._model_lane_lease: Any | None = None
 
         # Ensure directories exist
         self.quarantine_dir.mkdir(parents=True, exist_ok=True)
@@ -517,7 +518,7 @@ class PostTrainingValidator:
 
         logger.info("Starting post-training validation for adapter: %s", adapter_path)
 
-        if not adapter_path_obj.exists():
+        if not await asyncio.to_thread(adapter_path_obj.exists):
             logger.error("Adapter path does not exist: %s", adapter_path)
             return ValidationResult(
                 passed=False,
@@ -551,43 +552,49 @@ class PostTrainingValidator:
         probe_results: list[ProbeResult] = []
         critical_failures: list[str] = []
 
-        for probe in self.probes:
-            try:
-                result = await self._run_probe(probe, generate_fn)
-                probe_results.append(result)
+        try:
+            for probe in self.probes:
+                try:
+                    probe_result = await self._run_probe(probe, generate_fn)
+                    probe_results.append(probe_result)
 
-                if not result.passed and probe.criteria.is_critical:
-                    critical_failures.append(
-                        f"CRITICAL: {probe.name} — {'; '.join(result.violations)}"
-                    )
-                    logger.warning(
-                        "CRITICAL probe failure: %s — %s",
-                        probe.name,
-                        result.violations,
-                    )
-                elif not result.passed:
-                    logger.info(
-                        "Probe failed (non-critical): %s — %s",
-                        probe.name,
-                        result.violations,
-                    )
-                else:
-                    logger.debug("Probe passed: %s (score: %.3f)", probe.name, result.score)
+                    if not probe_result.passed and probe.criteria.is_critical:
+                        critical_failures.append(
+                            f"CRITICAL: {probe.name} — {'; '.join(probe_result.violations)}"
+                        )
+                        logger.warning(
+                            "CRITICAL probe failure: %s — %s",
+                            probe.name,
+                            probe_result.violations,
+                        )
+                    elif not probe_result.passed:
+                        logger.info(
+                            "Probe failed (non-critical): %s — %s",
+                            probe.name,
+                            probe_result.violations,
+                        )
+                    else:
+                        logger.debug(
+                            "Probe passed: %s (score: %.3f)",
+                            probe.name,
+                            probe_result.score,
+                        )
 
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('post_training_validator', e)
-                logger.error("Probe execution error for '%s': %s", probe.name, e)
-                probe_results.append(ProbeResult(
-                    probe_name=probe.name,
-                    category=probe.category,
-                    passed=False,
-                    response="",
-                    violations=[f"Execution error: {e}"],
-                    score=0.0,
-                ))
-
-        # Unload model to free memory
-        await self._unload_model()
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                    record_degradation('post_training_validator', e)
+                    logger.error("Probe execution error for '%s': %s", probe.name, e)
+                    probe_results.append(ProbeResult(
+                        probe_name=probe.name,
+                        category=probe.category,
+                        passed=False,
+                        response="",
+                        violations=[f"Execution error: {e}"],
+                        score=0.0,
+                    ))
+        finally:
+            # Cancellation of the validator cannot publish completion while
+            # the loaded model or its durable lane owner still exists.
+            await asyncio.shield(self._unload_model())
 
         # Compute results
         total = len(probe_results)
@@ -651,7 +658,11 @@ class PostTrainingValidator:
 
     # ── Probe Execution ──────────────────────────────────────────────────────
 
-    async def _run_probe(self, probe: ProbeDefinition, generate_fn) -> ProbeResult:
+    async def _run_probe(
+        self,
+        probe: ProbeDefinition,
+        generate_fn: GenerationFunction,
+    ) -> ProbeResult:
         """Run a single identity probe and score the response."""
         from ..brain.aura_persona import AURA_IDENTITY
 
@@ -733,7 +744,10 @@ class PostTrainingValidator:
 
     # ── Model Loading ────────────────────────────────────────────────────────
 
-    async def _load_model_with_adapter(self, adapter_path: str):
+    async def _load_model_with_adapter(
+        self,
+        adapter_path: str,
+    ) -> GenerationFunction | None:
         """
         Load the base model with the LoRA adapter applied.
 
@@ -743,21 +757,36 @@ class PostTrainingValidator:
         try:
             import mlx_lm  # noqa: F811
 
+            from core.runtime.model_lane_control import (
+                acquire_in_process_model_lane,
+                run_owned_model_thread_call,
+            )
+
             logger.info("Loading model '%s' with adapter '%s'", self.model_path, adapter_path)
 
+            self._model_lane_lease = await acquire_in_process_model_lane(
+                owner_id=f"post-training-validator:{id(self)}",
+                model_path=self.model_path,
+                purpose="benchmark",
+                priority=80,
+                preemptible=False,
+                metadata={
+                    "validator": "post_training",
+                    "adapter_path": adapter_path,
+                },
+            )
+
             # Run in executor to avoid blocking the event loop
-            loop = asyncio.get_event_loop()
-            model, tokenizer = await loop.run_in_executor(
-                None,
+            model, tokenizer = await run_owned_model_thread_call(
                 lambda: mlx_lm.load(self.model_path, adapter_path=adapter_path),
+                operation_name="post-training-validator-load",
             )
 
             self._model = model
             self._tokenizer = tokenizer
 
             async def generate_fn(system_prompt: str, user_prompt: str) -> str:
-                return await loop.run_in_executor(
-                    None,
+                return await run_owned_model_thread_call(
                     lambda: mlx_lm.generate(
                         model,
                         tokenizer,
@@ -765,18 +794,24 @@ class PostTrainingValidator:
                         max_tokens=512,
                         temp=0.7,
                     ),
+                    operation_name="post-training-validator-generate",
                 )
 
             logger.info("Model loaded successfully with adapter.")
             return generate_fn
 
+        except asyncio.CancelledError:
+            await self._unload_model()
+            raise
         except ImportError:
+            await self._unload_model()
             logger.error(
                 "mlx_lm not installed. Cannot validate adapter. "
                 "Install with: pip install mlx-lm"
             )
             return None
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except (OSError, AttributeError, RuntimeError, TypeError, ValueError) as e:
+            await self._unload_model()
             record_degradation('post_training_validator', e)
             logger.error("Failed to load model with adapter: %s", e, exc_info=True)
             return None
@@ -800,7 +835,12 @@ class PostTrainingValidator:
         # Fallback: simple concatenation
         return f"<s>[INST] {system_prompt}\n\n{user_prompt} [/INST]"
 
-    async def _generate_response(self, generate_fn, system_prompt: str, user_prompt: str) -> str:
+    async def _generate_response(
+        self,
+        generate_fn: GenerationFunction,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
         """Generate a model response with timeout protection."""
         try:
             response = await asyncio.wait_for(
@@ -808,20 +848,32 @@ class PostTrainingValidator:
                 timeout=120.0,
             )
             return response.strip() if response else ""
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("Model generation timed out for prompt: %s", user_prompt[:80])
             return ""
-        except (RuntimeError, asyncio.CancelledError, TimeoutError, AttributeError) as e:
+        except asyncio.CancelledError:
+            raise
+        except (RuntimeError, AttributeError) as e:
             record_degradation('post_training_validator', e)
             logger.error("Generation error: %s", e)
             return ""
 
-    async def _unload_model(self):
+    async def _unload_model(self) -> None:
         """Release model from memory."""
         if hasattr(self, "_model"):
             del self._model
         if hasattr(self, "_tokenizer"):
             del self._tokenizer
+        lease, self._model_lane_lease = self._model_lane_lease, None
+        if lease is not None:
+            try:
+                await lease.release(reason="post_training_validator_unloaded")
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "post_training_validator",
+                    exc,
+                    action="cleared model references but lane lease release failed",
+                )
         logger.debug("Model unloaded from memory.")
 
     # ── Adapter Management ───────────────────────────────────────────────────
@@ -838,7 +890,7 @@ class PostTrainingValidator:
             Path to the quarantined adapter location.
         """
         adapter_path_obj = Path(adapter_path)
-        if not adapter_path_obj.exists():
+        if not await asyncio.to_thread(adapter_path_obj.exists):
             logger.warning(
                 "Cannot quarantine — adapter path does not exist: %s", adapter_path
             )
@@ -849,11 +901,15 @@ class PostTrainingValidator:
         quarantine_dest = self.quarantine_dir / quarantine_name
 
         try:
-            shutil.move(str(adapter_path_obj), str(quarantine_dest))
+            await asyncio.to_thread(
+                shutil.move,
+                str(adapter_path_obj),
+                str(quarantine_dest),
+            )
             logger.info(
                 "Adapter quarantined: %s -> %s", adapter_path, quarantine_dest
             )
-        except (OSError, IOError) as e:
+        except OSError as e:
             record_degradation('post_training_validator', e)
             logger.error("Failed to move adapter to quarantine: %s", e)
             return self.quarantine_dir
@@ -868,7 +924,7 @@ class PostTrainingValidator:
         manifest_path = quarantine_dest / "_quarantine_manifest.json"
         try:
             # quarantine_dest is a directory (moved adapter dir), write inside it
-            if quarantine_dest.is_dir():
+            if await asyncio.to_thread(quarantine_dest.is_dir):
                 await get_file_write_gateway().write_text_async(
                     manifest_path,
                     json.dumps(manifest, indent=2),
@@ -890,6 +946,38 @@ class PostTrainingValidator:
 
         return quarantine_dest
 
+    def _promote_adapter_links_sync(
+        self,
+        adapter_path: Path,
+        active_link: Path,
+    ) -> Path | None:
+        gateway = get_file_write_gateway()
+        previous_target: Path | None = None
+        if active_link.is_symlink():
+            candidate = active_link.resolve()
+            previous_target = candidate if candidate.exists() else None
+        elif active_link.exists():
+            raise RuntimeError(
+                f"active adapter reference is not a symlink: {active_link}"
+            )
+        if previous_target is not None:
+            backup_ref = self.adapter_base_dir / "_previous_active"
+            try:
+                gateway.replace_symlink(
+                    backup_ref,
+                    previous_target,
+                    source="adaptation.post_training_validator.backup_adapter",
+                )
+            except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("post_training_validator", exc)
+                logger.warning("Could not back up previous adapter ref: %s", exc)
+        gateway.replace_symlink(
+            active_link,
+            adapter_path,
+            source="adaptation.post_training_validator.promote_adapter",
+        )
+        return previous_target
+
     async def promote_adapter(self, adapter_path: str) -> bool:
         """
         Promote a validated adapter as the active adapter.
@@ -905,29 +993,18 @@ class PostTrainingValidator:
         adapter_path_obj = Path(adapter_path)
         active_link = ACTIVE_ADAPTER_LINK
 
-        if not adapter_path_obj.exists():
+        if not await asyncio.to_thread(adapter_path_obj.exists):
             logger.error("Cannot promote — adapter does not exist: %s", adapter_path)
             return False
 
         try:
-            # Back up current active adapter reference before overwriting
-            if active_link.exists() or active_link.is_symlink():
-                previous_target = (
-                    active_link.resolve() if active_link.is_symlink() else active_link
-                )
-                backup_ref = self.adapter_base_dir / "_previous_active"
-                try:
-                    if backup_ref.exists() or backup_ref.is_symlink():
-                        backup_ref.unlink()
-                    backup_ref.symlink_to(previous_target)
-                    logger.info("Previous active adapter backed up: %s", previous_target)
-                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                    record_degradation('post_training_validator', e)
-                    logger.warning("Could not back up previous adapter ref: %s", e)
-
-                active_link.unlink()
-
-            active_link.symlink_to(adapter_path_obj.resolve())
+            previous_target = await asyncio.to_thread(
+                self._promote_adapter_links_sync,
+                adapter_path_obj,
+                active_link,
+            )
+            if previous_target is not None:
+                logger.info("Previous active adapter backed up: %s", previous_target)
             logger.info(
                 "Adapter promoted to active: %s -> %s",
                 active_link,
@@ -935,7 +1012,7 @@ class PostTrainingValidator:
             )
             return True
 
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('post_training_validator', e)
             logger.error("Failed to promote adapter: %s", e)
             return False
@@ -953,9 +1030,13 @@ class PostTrainingValidator:
             # Remove active link so system falls back to base model
             if active_link.exists() or active_link.is_symlink():
                 try:
-                    active_link.unlink()
+                    await asyncio.to_thread(
+                        get_file_write_gateway().delete_file,
+                        active_link,
+                        source="adaptation.post_training_validator.remove_active_adapter",
+                    )
                     logger.info("Active adapter link removed — falling back to base model.")
-                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
                     record_degradation('post_training_validator', e)
                     logger.error("Failed to remove active adapter link: %s", e)
             return
@@ -970,12 +1051,14 @@ class PostTrainingValidator:
                 )
                 return
 
-            if active_link.exists() or active_link.is_symlink():
-                active_link.unlink()
-            active_link.symlink_to(previous_target)
+            await get_file_write_gateway().replace_symlink_async(
+                active_link,
+                previous_target,
+                source="adaptation.post_training_validator.restore_adapter",
+            )
             logger.info("Previous adapter restored as active: %s", previous_target)
 
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('post_training_validator', e)
             logger.error("Failed to restore previous adapter: %s", e)
 
@@ -1005,9 +1088,9 @@ class PostTrainingValidator:
         self.probes.append(probe)
         logger.info("Added identity probe: %s (%s)", probe.name, probe.category.name)
 
-    def get_probe_summary(self) -> Dict[str, int]:
+    def get_probe_summary(self) -> dict[str, int]:
         """Return a count of probes by category."""
-        summary: Dict[str, int] = {}
+        summary: dict[str, int] = {}
         for probe in self.probes:
             key = probe.category.name
             summary[key] = summary.get(key, 0) + 1

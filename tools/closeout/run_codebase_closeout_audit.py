@@ -349,6 +349,34 @@ def architecture_map_gate(out_dir: Path) -> GateResult:
         )
 
 
+def model_load_ownership_gate() -> GateResult:
+    started = time.time()
+    try:
+        from tools.closeout.audit_model_load_ownership import run_audit
+
+        report = run_audit()
+        return GateResult(
+            name="model_load_ownership",
+            passed=bool(report.get("passed", False)),
+            detail=json.dumps(
+                {
+                    "owned_paths": report.get("owned_paths"),
+                    "load_references": report.get("load_references"),
+                    "findings": report.get("findings"),
+                },
+                sort_keys=True,
+            ),
+            duration_s=round(time.time() - started, 4),
+        )
+    except _GATE_RECOVERABLE_ERRORS as exc:
+        return GateResult(
+            name="model_load_ownership",
+            passed=False,
+            detail=f"{type(exc).__name__}: {exc}",
+            duration_s=round(time.time() - started, 4),
+        )
+
+
 def write_manifest(out_dir: Path) -> dict[str, Any]:
     files: dict[str, dict[str, Any]] = {}
     for path in sorted(out_dir.rglob("*")):
@@ -439,6 +467,7 @@ def build_closeout_audit(
         ),
         production_readiness_gate(),
         architecture_map_gate(out_dir),
+        model_load_ownership_gate(),
     ]
     if run_gates:
         gates.extend(

@@ -363,7 +363,7 @@ def _extract_hidden_states(
 # Main extraction pipeline
 # ---------------------------------------------------------------------------
 
-def extract_steering_vectors(
+def _extract_steering_vectors_owned(
     model_path: str = DEFAULT_MODEL_PATH,
     adapter_path: str | None = None,
     target_layers: list[int] | None = None,
@@ -569,6 +569,37 @@ def extract_steering_vectors(
         meta["total_vectors"], len(selected_dimensions), out_dir,
     )
     return all_vectors
+
+
+def extract_steering_vectors(
+    model_path: str = DEFAULT_MODEL_PATH,
+    adapter_path: str | None = None,
+    target_layers: list[int] | None = None,
+    output_dir: Path | None = None,
+    dimensions: list[str] | None = None,
+    max_prompts_per_polarity: int | None = None,
+) -> dict[str, dict[int, np.ndarray]]:
+    """Extract vectors while holding a process-scoped, non-preemptible model lease."""
+    from core.runtime.model_lane_control import standalone_model_lane
+
+    with standalone_model_lane(
+        owner_id="caa-steering-extraction",
+        model_path=model_path,
+        purpose="benchmark",
+        preemptible=False,
+        metadata={
+            "tool": "training.extract_steering_vectors",
+            "adapter_path": adapter_path or "",
+        },
+    ):
+        return _extract_steering_vectors_owned(
+            model_path=model_path,
+            adapter_path=adapter_path,
+            target_layers=target_layers,
+            output_dir=output_dir,
+            dimensions=dimensions,
+            max_prompts_per_polarity=max_prompts_per_polarity,
+        )
 
 
 # ---------------------------------------------------------------------------

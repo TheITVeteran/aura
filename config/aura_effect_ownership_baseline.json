@@ -1809,6 +1809,14 @@
       "scope": "<module>.WorkflowStore.save"
     },
     {
+      "callee": "core.runtime.atomic_writer.ensure_private_directory",
+      "canonical_owner": true,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway._replace_symlink_unchecked"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_append_text",
       "canonical_owner": true,
       "category": "direct_atomic_file_write",
@@ -2527,6 +2535,14 @@
       "count": 1,
       "path": "core/adaptation/online_lora_governor.py",
       "scope": "<module>.OnlineLoRAGovernor._record"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_file",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/adaptation/post_training_validator.py",
+      "scope": "<module>.PostTrainingValidator._restore_previous_adapter"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
@@ -3591,6 +3607,14 @@
       "count": 1,
       "path": "core/runtime/flight_recorder.py",
       "scope": "<module>.FlightRecorder._publish_death_artifact"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_json",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/model_lane_control.py",
+      "scope": "<module>.ModelLaneController._save_locked"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_file",
@@ -5303,54 +5327,6 @@
       "count": 1,
       "path": "core/adaptation/post_training_validator.py",
       "scope": "<module>.PostTrainingValidator.__init__"
-    },
-    {
-      "callee": "active_link.symlink_to",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/adaptation/post_training_validator.py",
-      "scope": "<module>.PostTrainingValidator._restore_previous_adapter"
-    },
-    {
-      "callee": "active_link.unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/adaptation/post_training_validator.py",
-      "scope": "<module>.PostTrainingValidator._restore_previous_adapter"
-    },
-    {
-      "callee": "active_link.symlink_to",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/adaptation/post_training_validator.py",
-      "scope": "<module>.PostTrainingValidator.promote_adapter"
-    },
-    {
-      "callee": "active_link.unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/adaptation/post_training_validator.py",
-      "scope": "<module>.PostTrainingValidator.promote_adapter"
-    },
-    {
-      "callee": "backup_ref.symlink_to",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/adaptation/post_training_validator.py",
-      "scope": "<module>.PostTrainingValidator.promote_adapter"
-    },
-    {
-      "callee": "backup_ref.unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/adaptation/post_training_validator.py",
-      "scope": "<module>.PostTrainingValidator.promote_adapter"
     },
     {
       "callee": "shutil.move",
@@ -9937,6 +9913,30 @@
       "scope": "<module>.WorkflowStore.__init__"
     },
     {
+      "callee": "os.replace",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway._replace_symlink_unchecked"
+    },
+    {
+      "callee": "temporary.symlink_to",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway._replace_symlink_unchecked"
+    },
+    {
+      "callee": "temporary.unlink",
+      "canonical_owner": true,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/runtime/file_write_gateway.py",
+      "scope": "<module>.FileWriteGateway._replace_symlink_unchecked"
+    },
+    {
       "callee": "shutil.copy2",
       "canonical_owner": true,
       "category": "raw_file_mutation",
@@ -13546,6 +13546,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "b00c2b36ee6d2a580ddce6f98cc886ba23d06cb8f2f341f890233c78931aaf99",
+  "inventory_sha256": "cc155d5bbb3de66e8768eb99c457d547887aca556ada9741344df706e6840062",
   "schema_version": 1
 }

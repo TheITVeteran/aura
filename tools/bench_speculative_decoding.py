@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -23,6 +24,13 @@ if not (ROOT / "models").is_dir():
     _canonical = Path.home() / ".aura" / "live-source"
     if (_canonical / "models").is_dir():
         ROOT = _canonical
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.model_lane_control import (  # noqa: E402
+    estimate_model_job_footprint_gb,
+    standalone_model_lane,
+)
 
 PROMPT = (
     "<|im_start|>system\nYou are Aura.<|im_end|>\n"
@@ -46,7 +54,7 @@ def _bench(model, tokenizer, draft_model, max_tokens: int, runs: int) -> dict:
                 kwargs["draft_model"] = draft
             t0 = time.perf_counter()
             count = 0
-            for response in stream_generate(
+            for _response in stream_generate(
                 model, tokenizer, prompt=PROMPT, **kwargs
             ):
                 count += 1
@@ -70,18 +78,28 @@ def main() -> int:
     parser.add_argument("--out", default="")
     args = parser.parse_args()
 
-    from mlx_lm import load
+    request_gb = estimate_model_job_footprint_gb(
+        args.target, purpose="benchmark"
+    ) + estimate_model_job_footprint_gb(args.draft, purpose="benchmark")
+    with standalone_model_lane(
+        owner_id="speculative-decoding-benchmark",
+        model_path=args.target,
+        purpose="benchmark",
+        request_gb=request_gb,
+        metadata={"tool": "bench_speculative_decoding", "draft_model": args.draft},
+    ):
+        from mlx_lm import load
 
-    print(f"Loading target: {args.target}")
-    model, tokenizer = load(args.target)
-    print(f"Loading draft:  {args.draft}")
-    draft_model, draft_tokenizer = load(args.draft)
-    probe = "Aura verifies every proposed token."
-    if draft_tokenizer.encode(probe) != tokenizer.encode(probe):
-        print("❌ tokenizer mismatch between draft and target")
-        return 2
+        print(f"Loading target: {args.target}")
+        model, tokenizer = load(args.target)
+        print(f"Loading draft:  {args.draft}")
+        draft_model, draft_tokenizer = load(args.draft)
+        probe = "Aura verifies every proposed token."
+        if draft_tokenizer.encode(probe) != tokenizer.encode(probe):
+            print("❌ tokenizer mismatch between draft and target")
+            return 2
 
-    results = _bench(model, tokenizer, draft_model, args.max_tokens, args.runs)
+        results = _bench(model, tokenizer, draft_model, args.max_tokens, args.runs)
     results["target"] = args.target
     results["draft"] = args.draft
     print(json.dumps(results, indent=2))

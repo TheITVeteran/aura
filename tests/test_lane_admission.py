@@ -7,6 +7,7 @@ eviction order, the envelope-breach refusal, and the mlx_client spawn seam.
 """
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -134,6 +135,30 @@ class TestAdmissionArithmetic:
         # cortex is GUARANTEED (higher QoS) and reflex is shielded: no advisories
         assert decision.evict_first == ()
 
+    def test_explicit_disruptive_handoff_can_replace_guaranteed_lane(
+        self, controller, budget_46
+    ):
+        active = [
+            ActiveLane(
+                "cortex",
+                QoSClass.GUARANTEED,
+                38.0,
+                model_path="/m/cortex",
+                last_user_facing_age_s=1.0,
+            )
+        ]
+
+        decision = controller.admit(
+            model_path="/models/Deep-72B-solver",
+            request_gb=46.0,
+            active=active,
+            allow_disruptive_eviction=True,
+        )
+
+        assert decision.admitted
+        assert decision.reason == "fits_after_yield"
+        assert decision.evict_first == ("/m/cortex",)
+
     def test_envelope_breach_names_the_arithmetic(self, controller, budget_46):
         """The 72B over a committed host: the refusal that replaces the
         OOM-SIGKILL-with-empty-stderr death."""
@@ -217,47 +242,7 @@ class TestSpawnSeam:
             mc, "_CLIENTS", {c.model_path: c for c in (me, other, dead)}
         )
         lanes = mc._observed_active_lanes(exclude_client=me)
-        assert [l.lane for l in lanes] == ["brainstem"]
-
-    def test_spawn_consult_refuses_envelope_breach(self, monkeypatch, budget_46):
-        from core.brain.llm import mlx_client as mc
-
-        cortex = self._FakeClient("/m/Aura-32B-cortex-4bit-fused-model")
-        solver = self._FakeClient("/m/Deep-72B-solver", alive=False)
-        monkeypatch.setattr(
-            mc, "_CLIENTS", {c.model_path: c for c in (cortex, solver)}
-        )
-        candidate = self._FakeClient("/m/Deep-72B-solver")
-        reason = mc._lane_admission_blocks_worker_spawn(candidate)
-        assert reason is not None and "lane_budget_exceeded" in reason
-
-    def test_spawn_consult_admits_within_budget(self, monkeypatch, budget_46):
-        from core.brain.llm import mlx_client as mc
-
-        monkeypatch.setattr(mc, "_CLIENTS", {})
-        candidate = self._FakeClient("/m/qwen-7b")
-        assert mc._lane_admission_blocks_worker_spawn(candidate) is None
-
-    def test_spawn_consult_fails_closed_when_lane_controller_is_unavailable(
-        self,
-        monkeypatch,
-    ):
-        from core.brain import lane_admission
-        from core.brain.llm import mlx_client as mc
-
-        def unavailable():
-            raise RuntimeError("controller offline")
-
-        monkeypatch.setattr(
-            lane_admission,
-            "get_lane_admission_controller",
-            unavailable,
-        )
-        candidate = self._FakeClient("/m/qwen-7b")
-
-        assert mc._lane_admission_blocks_worker_spawn(candidate) == (
-            "lane_admission_unavailable:RuntimeError"
-        )
+        assert [lane.lane for lane in lanes] == ["brainstem"]
 
     @pytest.mark.asyncio
     async def test_model_load_context_holds_and_releases_canonical_lease(
@@ -266,12 +251,13 @@ class TestSpawnSeam:
         tmp_path,
     ):
         from core.brain.llm import mlx_client as mc
-        from core.runtime import control_plane
+        from core.runtime import control_plane, model_lane_control
         from core.runtime.control_plane import (
             PressureSnapshot,
             ResourceAdmissionController,
             WorkClass,
         )
+        from core.runtime.model_lane_control import ModelLaneController
         from core.runtime.receipts import ReceiptStore
 
         controller = ResourceAdmissionController(
@@ -283,9 +269,26 @@ class TestSpawnSeam:
             "get_runtime_control_plane",
             lambda: SimpleNamespace(admission=controller),
         )
+        lane_controller = ModelLaneController(
+            state_path=tmp_path / "model_lanes.json",
+            receipt_store=ReceiptStore(tmp_path / "lane_receipts"),
+            process_discovery=None,
+        )
+        monkeypatch.setattr(
+            model_lane_control,
+            "get_model_lane_controller",
+            lambda: lane_controller,
+        )
+        monkeypatch.setattr(mc, "_CLIENTS", {})
 
         candidate = self._FakeClient("/m/Aura-32B-cortex")
         candidate._warmup_timeout = lambda: 60.0
+        candidate._process = SimpleNamespace(
+            pid=os.getpid(),
+            name="test-worker",
+            is_alive=lambda: True,
+        )
+        candidate._init_done = True
         async with mc._model_load_admission_context(
             candidate,
             foreground_request=True,
@@ -299,3 +302,9 @@ class TestSpawnSeam:
             "admitted",
             "released",
         ]
+        lane_snapshot = lane_controller.snapshot()
+        assert lane_snapshot["reserved_gb"] == 0.0
+        assert len(lane_snapshot["owners"]) == 1
+        assert lane_snapshot["owners"][0]["process"]["pid"] == os.getpid()
+        assert candidate._model_lane_fencing_token > 0
+        assert candidate._model_lane_terminal_receipt_id

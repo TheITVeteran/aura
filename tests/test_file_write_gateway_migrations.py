@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 
 class RecordingFileGateway:
     def __init__(self) -> None:
@@ -160,3 +162,38 @@ def test_file_write_gateway_drain_text_atomically_removes_drained_file(tmp_path)
     assert drained.splitlines() == ['{"one": 1}', '{"two": 2}']
     assert not target.exists()
     assert gateway.drain_text(target, source="unit.drain") == ""
+
+
+@pytest.mark.asyncio
+async def test_file_write_gateway_atomically_replaces_directory_symlink(tmp_path) -> None:
+    from core.runtime.file_write_gateway import FileWriteGateway
+
+    gateway = FileWriteGateway()
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    link = tmp_path / "active"
+
+    gateway.replace_symlink(link, first, source="unit.symlink")
+    assert link.is_symlink()
+    assert link.resolve() == first.resolve()
+
+    await gateway.replace_symlink_async(link, second, source="unit.symlink")
+    assert link.resolve() == second.resolve()
+    assert list(tmp_path.glob(".*.symlink.tmp")) == []
+    assert gateway.delete_file(link, source="unit.delete_symlink") is True
+    assert not link.is_symlink()
+
+
+def test_file_write_gateway_refuses_to_replace_real_directory(tmp_path) -> None:
+    from core.runtime.file_write_gateway import FileWriteGateway
+
+    gateway = FileWriteGateway()
+    target = tmp_path / "target"
+    link = tmp_path / "active"
+    target.mkdir()
+    link.mkdir()
+
+    with pytest.raises(IsADirectoryError, match="refusing to replace directory"):
+        gateway.replace_symlink(link, target, source="unit.symlink")

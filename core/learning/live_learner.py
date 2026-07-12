@@ -1061,9 +1061,43 @@ class LiveLearner:
         failures = []
         case_reports: list[dict[str, Any]] = []
 
-        # Try to load the new adapter for testing
+        lane_lease = None
         try:
             from mlx_lm import generate, load
+
+            from core.runtime.model_lane_control import (
+                acquire_in_process_model_lane,
+                estimate_model_job_footprint_gb,
+                run_owned_model_thread_call,
+            )
+
+            candidate_model_path = str(
+                promoted_model_path
+                or (adapter_dir if self._policy.fine_tune_type == "full" else self._model_path)
+            )
+            benchmark_peak_gb = max(
+                estimate_model_job_footprint_gb(
+                    str(self._model_path),
+                    purpose="benchmark",
+                ),
+                estimate_model_job_footprint_gb(
+                    candidate_model_path,
+                    purpose="benchmark",
+                ),
+            )
+            lane_lease = await acquire_in_process_model_lane(
+                owner_id=f"live-learner-benchmark:{id(self)}",
+                model_path=str(self._model_path),
+                purpose="benchmark",
+                request_gb=benchmark_peak_gb,
+                priority=80,
+                preemptible=False,
+                metadata={
+                    "benchmark": "paired_incumbent_candidate",
+                    "candidate_model_path": candidate_model_path,
+                    "sequential_loading": True,
+                },
+            )
 
             def _load_artifact(path: str | Path | None):
                 if path is None:
@@ -1073,62 +1107,83 @@ class LiveLearner:
                     return load(str(artifact))
                 return load(str(self._model_path), adapter_path=str(artifact))
 
-            incumbent_model, incumbent_tokenizer = _load_artifact(self._current_adapter)
-            if promoted_model_path is not None:
-                candidate_model, candidate_tokenizer = load(str(promoted_model_path))
-            elif self._policy.fine_tune_type == "full":
-                candidate_model, candidate_tokenizer = load(str(adapter_dir))
-            else:
-                candidate_model, candidate_tokenizer = load(str(self._model_path), adapter_path=str(adapter_dir))
+            async def evaluate_artifact(path: str | Path | None) -> list[str]:
+                import gc
 
-            async def test_inference(model: Any, tokenizer: Any, prompt: str) -> str:
-                result = await asyncio.to_thread(
-                    generate, model, tokenizer, prompt=prompt, max_tokens=100
+                model, tokenizer = await run_owned_model_thread_call(
+                    lambda: _load_artifact(path),
+                    operation_name="live-learner-benchmark-load",
                 )
-                return result if isinstance(result, str) else str(result)
-
-            for prompt, must_contain, must_not_contain in benchmarks:
+                responses: list[str] = []
                 try:
-                    incumbent_response = await asyncio.wait_for(
-                        test_inference(incumbent_model, incumbent_tokenizer, prompt),
-                        timeout=30.0,
-                    )
-                    response = await asyncio.wait_for(
-                        test_inference(candidate_model, candidate_tokenizer, prompt),
-                        timeout=30.0,
-                    )
-                    incumbent_score, _ = self._score_benchmark_response(
-                        incumbent_response,
-                        must_contain=must_contain,
-                        must_not_contain=must_not_contain,
-                    )
-                    candidate_score, candidate_failures = self._score_benchmark_response(
-                        response,
-                        must_contain=must_contain,
-                        must_not_contain=must_not_contain,
-                    )
-                    case_reports.append(
-                        {
-                            "prompt": prompt,
-                            "incumbent_score": incumbent_score,
-                            "candidate_score": candidate_score,
-                            "candidate_delta": round(candidate_score - incumbent_score, 3),
-                        }
-                    )
-                    if candidate_failures:
-                        failures.append(f"FAIL [{prompt!r}]: missing {must_contain}")
-                        failures.extend(f"FAIL [{prompt!r}]: {f}" for f in candidate_failures)
-                    if candidate_score + 0.05 < incumbent_score:
-                        failures.append(
-                            f"FAIL [{prompt!r}]: candidate regressed below incumbent "
-                            f"({candidate_score:.2f} < {incumbent_score:.2f})"
+                    for prompt, _must_contain, _must_not_contain in benchmarks:
+                        result = await run_owned_model_thread_call(
+                            lambda prompt=prompt: generate(
+                                model,
+                                tokenizer,
+                                prompt=prompt,
+                                max_tokens=100,
+                            ),
+                            operation_name="live-learner-benchmark-generate",
+                            timeout_s=30.0,
                         )
-                except TimeoutError:
-                    failures.append(f"FAIL [{prompt!r}]: timeout")
+                        responses.append(result if isinstance(result, str) else str(result))
+                    return responses
+                finally:
+                    model = None
+                    tokenizer = None
+                    await asyncio.to_thread(gc.collect)
+                    try:
+                        import mlx.core as mx
+
+                        await asyncio.to_thread(mx.clear_cache)
+                    except (ImportError, RuntimeError, AttributeError, TypeError, ValueError):
+                        pass
+
+            incumbent_responses = await evaluate_artifact(self._current_adapter)
+            candidate_source: str | Path | None = (
+                promoted_model_path
+                if promoted_model_path is not None
+                else adapter_dir
+            )
+            candidate_responses = await evaluate_artifact(candidate_source)
+
+            for (prompt, must_contain, must_not_contain), incumbent_response, response in zip(
+                benchmarks,
+                incumbent_responses,
+                candidate_responses,
+                strict=True,
+            ):
+                incumbent_score, _ = self._score_benchmark_response(
+                    incumbent_response,
+                    must_contain=must_contain,
+                    must_not_contain=must_not_contain,
+                )
+                candidate_score, candidate_failures = self._score_benchmark_response(
+                    response,
+                    must_contain=must_contain,
+                    must_not_contain=must_not_contain,
+                )
+                case_reports.append(
+                    {
+                        "prompt": prompt,
+                        "incumbent_score": incumbent_score,
+                        "candidate_score": candidate_score,
+                        "candidate_delta": round(candidate_score - incumbent_score, 3),
+                    }
+                )
+                if candidate_failures:
+                    failures.append(f"FAIL [{prompt!r}]: missing {must_contain}")
+                    failures.extend(f"FAIL [{prompt!r}]: {failure}" for failure in candidate_failures)
+                if candidate_score + 0.05 < incumbent_score:
+                    failures.append(
+                        f"FAIL [{prompt!r}]: candidate regressed below incumbent "
+                        f"({candidate_score:.2f} < {incumbent_score:.2f})"
+                    )
 
         except ImportError:
             failures.append("mlx_lm is not available; refusing to promote unverified learned weights")
-        except (AttributeError, RuntimeError) as exc:
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             _record_live_learning_degradation(
                 "live_learner",
                 exc,
@@ -1139,6 +1194,16 @@ class LiveLearner:
                 },
             )
             failures.append(f"benchmark inference failed: {exc}")
+        finally:
+            if lane_lease is not None:
+                try:
+                    await lane_lease.release(reason="live_learner_benchmark_finished")
+                except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    _record_live_learning_degradation(
+                        "live_learner",
+                        exc,
+                        action="benchmark models unloaded but lane lease release failed",
+                    )
 
         self._last_benchmark_report = {
             "paired_incumbent_candidate": True,
