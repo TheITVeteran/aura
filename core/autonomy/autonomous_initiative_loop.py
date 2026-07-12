@@ -494,7 +494,7 @@ class AutonomousInitiativeLoop:
         also runs, so expiry/lapse advance even without Will traffic.
         """
         try:
-            covenant = ServiceContainer.get("ulysses_covenant", default=None)
+            covenant = optional_service("ulysses_covenant", default=None)
             if covenant is None:
                 return
             covenant.maintenance_tick()

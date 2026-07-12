@@ -665,9 +665,12 @@ class TestOwnerAutonomyGating(unittest.TestCase):
         )
         self.assertTrue(gateway.is_owner_autonomous_active())
 
-        # Fast forward time manually in active tokens
-        token_id = next(iter(gateway._active_tokens.keys()))
-        gateway._active_tokens[token_id]["expires_at"] = time.time() - 10.0
+        # Fast forward time manually in active tokens.  Expire ALL of them:
+        # the gateway is a shared singleton, and a still-valid token issued
+        # by an earlier test would keep owner autonomy active (the recorded
+        # in-chunk order-dependence failure).
+        for token in gateway._active_tokens.values():
+            token["expires_at"] = time.time() - 10.0
 
         self.assertFalse(gateway.is_owner_autonomous_active())
         self.assertEqual(gateway._current_posture, "defensive_sandboxed")

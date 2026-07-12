@@ -988,7 +988,9 @@ class UnifiedWill:
         if not self._is_consequential_domain(domain):
             return outcome, reason, constraints
         try:
-            covenant = ServiceContainer.get("ulysses_covenant", default=None)
+            from core.runtime.service_access import optional_service
+
+            covenant = optional_service("ulysses_covenant", default=None)
             if covenant is None:
                 return outcome, reason, constraints
             verdict = covenant.evaluate(

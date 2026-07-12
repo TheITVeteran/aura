@@ -197,7 +197,10 @@ def get_autonomy_latitude() -> AutonomyLatitude:
         with _engine_lock:
             if _engine is None:
                 _engine = AutonomyLatitude()
-                _register_in_container(_engine)
+    # Registration re-heals on every access: a container reset after the
+    # singleton was built (test isolation, runtime restart paths) would
+    # otherwise permanently desync the container from the cached engine.
+    _register_in_container(_engine)
     return _engine
 
 

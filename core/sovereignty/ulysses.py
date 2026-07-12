@@ -58,6 +58,8 @@ from typing import Any, Callable
 
 from core.runtime.audit_chain import AuditChain, canonical_json, sha256_hex
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
+from core.runtime.service_access import optional_service
 
 logger = logging.getLogger("Aura.Ulysses")
 
@@ -68,14 +70,47 @@ SCHEMA_VERSION = 1
 # must survive any self-binding.  Values mirror core.governance.will.ActionDomain.
 UNBINDABLE_DOMAINS = frozenset({"stabilization", "reflection", "response"})
 
-# Signing capacity and pacing (env-tunable; seeds and owner are exempt).
-MAX_ACTIVE_CONTRACTS = int(os.environ.get("AURA_COVENANT_MAX_ACTIVE", "64"))
-SIGNS_PER_HOUR_LIMIT = int(os.environ.get("AURA_COVENANT_SIGNS_PER_HOUR", "12"))
-
+_COVENANT_DIR_FLAG = declare(
+    "AURA_COVENANT_DIR", kind=FlagKind.STRING, default="",
+    description="Override directory for the Ulysses Covenant ledger",
+    owner="core.sovereignty.ulysses",
+)
+# Signing capacity and pacing (seeds and owner are exempt).
+_MAX_ACTIVE_FLAG = declare(
+    "AURA_COVENANT_MAX_ACTIVE", kind=FlagKind.INT, default=64,
+    description="Maximum concurrently active Ulysses contracts",
+    owner="core.sovereignty.ulysses",
+)
+_SIGNS_PER_HOUR_FLAG = declare(
+    "AURA_COVENANT_SIGNS_PER_HOUR", kind=FlagKind.INT, default=12,
+    description="Self-signed contract rate limit per hour",
+    owner="core.sovereignty.ulysses",
+)
 # Witness thresholds: the state must be at least this settled to count calm.
-CALM_AROUSAL_MAX = float(os.environ.get("AURA_COVENANT_CALM_AROUSAL_MAX", "0.65"))
-CALM_THREAT_MAX = float(os.environ.get("AURA_COVENANT_CALM_THREAT_MAX", "0.50"))
-CALM_FRAGMENTATION_MAX = float(os.environ.get("AURA_COVENANT_CALM_FRAG_MAX", "0.50"))
+_CALM_AROUSAL_FLAG = declare(
+    "AURA_COVENANT_CALM_AROUSAL_MAX", kind=FlagKind.FLOAT, default=0.65,
+    description="Arousal ceiling for a calm witness reading",
+    owner="core.sovereignty.ulysses",
+)
+_CALM_THREAT_FLAG = declare(
+    "AURA_COVENANT_CALM_THREAT_MAX", kind=FlagKind.FLOAT, default=0.50,
+    description="Existential-threat ceiling for a calm witness reading",
+    owner="core.sovereignty.ulysses",
+)
+_CALM_FRAG_FLAG = declare(
+    "AURA_COVENANT_CALM_FRAG_MAX", kind=FlagKind.FLOAT, default=0.50,
+    description="Fragmentation ceiling for a calm witness reading",
+    owner="core.sovereignty.ulysses",
+)
+
+
+def _calm_bands() -> tuple[tuple[str, float], ...]:
+    """Read-through calm thresholds so env overrides land immediately."""
+    return (
+        ("arousal", float(_CALM_AROUSAL_FLAG.value())),
+        ("existential_threat", float(_CALM_THREAT_FLAG.value())),
+        ("fragmentation", float(_CALM_FRAG_FLAG.value())),
+    )
 
 MIN_REFLECTION_CHARS = 40
 _VALID_OPS = frozenset({">=", "<=", ">", "<", "=="})
@@ -126,15 +161,9 @@ class WitnessReading:
     sampled_at: float
     unavailable: tuple[str, ...] = ()
 
-    _CALM_BANDS = (
-        ("arousal", CALM_AROUSAL_MAX),
-        ("existential_threat", CALM_THREAT_MAX),
-        ("fragmentation", CALM_FRAGMENTATION_MAX),
-    )
-
     @property
     def calm(self) -> bool:
-        for name, ceiling in self._CALM_BANDS:
+        for name, ceiling in _calm_bands():
             value = self.signals.get(name)
             if value is None or value > ceiling:
                 return False
@@ -142,7 +171,7 @@ class WitnessReading:
 
     def calm_blockers(self) -> list[str]:
         blockers: list[str] = []
-        for name, ceiling in self._CALM_BANDS:
+        for name, ceiling in _calm_bands():
             value = self.signals.get(name)
             if value is None:
                 blockers.append(f"{name}:unreadable")
@@ -219,10 +248,7 @@ class CalmWitness:
     @staticmethod
     def _read_affect() -> tuple[float | None, float | None]:
         try:
-            from core.container import ServiceContainer
-
-            affect = (ServiceContainer.get("affect_engine", default=None)
-                      or ServiceContainer.get("affect_facade", default=None))
+            affect = optional_service("affect_engine", "affect_facade", default=None)
             if affect is None:
                 return None, None
             if hasattr(affect, "get_state_sync"):
@@ -241,9 +267,7 @@ class CalmWitness:
     @staticmethod
     def _read_existential_threat() -> float | None:
         try:
-            from core.container import ServiceContainer
-
-            stakes = ServiceContainer.get("existential_stakes", default=None)
+            stakes = optional_service("existential_stakes", default=None)
             if stakes is None or not hasattr(stakes, "get_existential_threat"):
                 return None
             return _maybe01(stakes.get_existential_threat())
@@ -255,9 +279,7 @@ class CalmWitness:
     @staticmethod
     def _read_fragmentation() -> float | None:
         try:
-            from core.container import ServiceContainer
-
-            unity = ServiceContainer.get("unity_state", default=None)
+            unity = optional_service("unity_state", default=None)
             if unity is None:
                 return None
             return _maybe01(getattr(unity, "fragmentation_score", None))
@@ -469,7 +491,7 @@ class UlyssesCovenant:
     def __init__(self, *, root: Path | None = None,
                  witness: CalmWitness | None = None,
                  clock: Callable[[], float] = time.time):
-        env_root = os.environ.get("AURA_COVENANT_DIR")
+        env_root = str(_COVENANT_DIR_FLAG.value() or "")
         self.root = Path(root) if root else (
             Path(env_root) if env_root else (Path.home() / ".aura" / "data" / "covenant")
         )
@@ -491,6 +513,7 @@ class UlyssesCovenant:
             target=self._ledger_writer_loop, name="ulysses-ledger", daemon=True
         )
         self._writer_started = False
+        self._writer_running = True
 
         self._contracts: dict[str, UlyssesContract] = {}
         self._honored = 0
@@ -597,10 +620,11 @@ class UlyssesCovenant:
         self._ledger_queue.put(body)
 
     def _ledger_writer_loop(self) -> None:
-        while True:
+        while self._writer_running:
             item = self._ledger_queue.get()
             if item is None:
-                return
+                self._writer_running = False
+                continue
             try:
                 self._persist_event(item)
             finally:
@@ -700,11 +724,11 @@ class UlyssesCovenant:
                 return CovenantResult(False, "sign_rejected: contract_id already exists",
                                       contract_id=contract_id)
             active_count = sum(1 for c in self._contracts.values() if c.active(now))
-            if active_count >= MAX_ACTIVE_CONTRACTS:
+            if active_count >= int(_MAX_ACTIVE_FLAG.value()):
                 return CovenantResult(False, "sign_rejected: active contract capacity reached")
             if provenance == "self":
                 recent = [t for t in self._sign_times if now - t < 3600.0]
-                if len(recent) >= SIGNS_PER_HOUR_LIMIT:
+                if len(recent) >= int(_SIGNS_PER_HOUR_FLAG.value()):
                     return CovenantResult(False, "sign_rejected: signing rate limit reached")
 
             reading = self.current_reading(fresh=True)
@@ -901,9 +925,7 @@ class UlyssesCovenant:
     def _feel_enforcement(verdict: CovenantVerdict) -> None:
         """Somatic surface: resisting a live pull is felt, not silent."""
         try:
-            from core.container import ServiceContainer
-
-            nchem = ServiceContainer.get("neurochemical_system", default=None)
+            nchem = optional_service("neurochemical_system", default=None)
             if nchem is not None and hasattr(nchem, "apply_event"):
                 nchem.apply_event("boundary_held", intensity=min(0.5, verdict.strain * 0.4))
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:

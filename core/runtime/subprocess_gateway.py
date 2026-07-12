@@ -830,10 +830,11 @@ class SubprocessGateway:
                     # Re-arming bounded slices: this monitor's LIFETIME is the
                     # worker's lifetime by design, but each individual await
                     # stays bounded (A1) so a wedged wait can never hide.
-                    while True:
+                    worker_exited = False
+                    while not worker_exited:
                         try:
                             await asyncio.wait_for(proc.wait(), timeout=60.0)
-                            break
+                            worker_exited = True
                         except TimeoutError:
                             continue
                     # Descendants have no asyncio completion primitive.

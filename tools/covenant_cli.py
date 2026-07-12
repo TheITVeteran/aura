@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -31,8 +30,9 @@ from core.sovereignty.ulysses import UlyssesCovenant  # noqa: E402
 
 
 def _covenant() -> UlyssesCovenant:
-    root = os.environ.get("AURA_COVENANT_DIR")
-    return UlyssesCovenant(root=Path(root) if root else None)
+    # Root resolution (incl. the AURA_COVENANT_DIR override) lives in the
+    # engine's declared flag — one knob, one meaning.
+    return UlyssesCovenant()
 
 
 def _print(obj: object) -> None:
