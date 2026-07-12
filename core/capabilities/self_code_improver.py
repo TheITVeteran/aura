@@ -12,16 +12,27 @@ and commits so the change survives the integrity guardian.
 
 This is deliberately narrow-waisted and verifiable — no "looks better," only
 "passes checks the old code failed, and breaks none it passed."
+
+Rollback is SYMMETRIC with promotion (July external review): before any
+enactment, a write-ahead ledger record persists the FULL pre-image (original
+function source + file hashes). ``rollback_enactment`` restores the original
+with the same atomic write lane, refuses on file drift (the file changed
+since the enactment — a blind restore would destroy someone else's work),
+and verifies the restored function matches the ledger byte-for-byte. An
+improvement that cannot be undone with the same rigor it was applied with
+was never a governed improvement.
 """
 from __future__ import annotations
 
 import ast
 import asyncio
+import hashlib
 import json
 import logging
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -29,6 +40,126 @@ from typing import Any
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.SelfCodeImprover")
+
+_ENACTMENT_LEDGER_DIR = Path("~/.aura/data/self_improvement/enactments").expanduser()
+
+
+def _sha(text: str) -> str:
+    return hashlib.blake2b(text.encode("utf-8", "replace"), digest_size=16).hexdigest()
+
+
+async def _record_enactment(
+    *,
+    path: Path,
+    func_name: str,
+    goal: str,
+    file_before: str,
+    file_after: str,
+    original_function: str,
+    improved_function: str,
+) -> str:
+    """Write-ahead rollback record: durable BEFORE the file mutates."""
+    from core.runtime.atomic_writer import async_atomic_write_text
+
+    record_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{_sha(file_after)[:8]}"
+    record = {
+        "schema": "aura.self_code_enactment.v1",
+        "id": record_id,
+        "at": time.time(),
+        "target_file": str(path),
+        "func_name": func_name,
+        "goal": goal,
+        "file_sha_before": _sha(file_before),
+        "file_sha_after": _sha(file_after),
+        "original_function_source": original_function,
+        "improved_function_source": improved_function,
+    }
+    _ENACTMENT_LEDGER_DIR.mkdir(parents=True, exist_ok=True)
+    await async_atomic_write_text(
+        _ENACTMENT_LEDGER_DIR / f"{record_id}.json", json.dumps(record, indent=1)
+    )
+    return record_id
+
+
+def _load_enactment(record_id: str) -> dict[str, Any] | None:
+    try:
+        return json.loads(
+            (_ENACTMENT_LEDGER_DIR / f"{record_id}.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
+
+
+def latest_enactment_for(target_file: str) -> dict[str, Any] | None:
+    """Most recent ledger record for a file (rollback without an id)."""
+    try:
+        records = sorted(_ENACTMENT_LEDGER_DIR.glob("*.json"), reverse=True)
+    except OSError:
+        return None
+    for record_path in records:
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if str(record.get("target_file")) == str(target_file):
+            return record
+    return None
+
+
+async def rollback_enactment(
+    record_id: str = "",
+    *,
+    target_file: str = "",
+    force: bool = False,
+) -> dict[str, Any]:
+    """Undo an enacted improvement with promotion-grade rigor.
+
+    Refuses when the file has drifted since the enactment (someone else's
+    edits would be destroyed) unless ``force``. Verifies the restored
+    function matches the ledger pre-image byte-for-byte.
+    """
+    record = _load_enactment(record_id) if record_id else latest_enactment_for(target_file)
+    if not record:
+        return {"ok": False, "status": "no_enactment_record"}
+
+    path = Path(str(record["target_file"]))
+    try:
+        current = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"ok": False, "status": "target_unreadable", "error": str(exc)}
+
+    if _sha(current) != record["file_sha_after"] and not force:
+        return {
+            "ok": False,
+            "status": "refused_file_drift",
+            "detail": "the file changed since this enactment; pass force=True only "
+            "after confirming the drift is safe to overwrite",
+            "record_id": record["id"],
+        }
+
+    restored = _replace_function(
+        current, str(record["func_name"]), str(record["original_function_source"])
+    )
+    from core.runtime.atomic_writer import async_atomic_write_text
+
+    await async_atomic_write_text(path, restored)
+
+    # Symmetric verification: the restored function must equal the pre-image.
+    extracted = _extract_function_source(
+        path.read_text(encoding="utf-8"), str(record["func_name"])
+    )
+    restored_ok = bool(
+        extracted and extracted[0].strip() == str(record["original_function_source"]).strip()
+    )
+    outcome = {
+        "ok": restored_ok,
+        "status": "rolled_back" if restored_ok else "rollback_verification_failed",
+        "record_id": record["id"],
+        "target_file": str(path),
+        "func_name": record["func_name"],
+    }
+    logger.warning("Self-code rollback %s: %s", outcome["status"], outcome)
+    return outcome
 
 
 @dataclass
@@ -48,6 +179,9 @@ class ImproveResult:
     lesson_retained: str = ""
     status: str = "ok"
     error: str = ""
+    # Write-ahead rollback ledger id — set before any enactment mutates the
+    # file, so every applied improvement is symmetrically undoable.
+    enactment_record: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         d = dict(self.__dict__)
@@ -272,6 +406,17 @@ async def improve_function(
     if enact:
         try:
             new_src = _replace_function(src, func_name, improved_src)
+            # Write-ahead rollback record FIRST: the pre-image is durable
+            # before the file mutates, so the undo path always exists.
+            result.enactment_record = await _record_enactment(
+                path=path,
+                func_name=func_name,
+                goal=goal,
+                file_before=src,
+                file_after=new_src,
+                original_function=original_src,
+                improved_function=improved_src,
+            )
             # Blessed async write lane — never a sync fsync on the live loop.
             from core.runtime.atomic_writer import async_atomic_write_text
 
