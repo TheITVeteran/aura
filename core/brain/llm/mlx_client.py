@@ -279,10 +279,18 @@ def _declared_mlx_worker_footprint_gb(model_path: str) -> float:
     declared = _projected_model_footprint_gb(model_path) + _model_process_reserve_gb(
         model_path
     )
-    contrastive_enabled = str(
-        os.environ.get("AURA_CONTRASTIVE_DECODING", "")
-    ).strip().lower() in {"1", "true", "on", "yes"}
-    amateur_path = str(os.environ.get("AURA_CONTRASTIVE_AMATEUR_MODEL", "") or "").strip()
+    from core.runtime.flags import FlagKind, declare
+
+    contrastive_enabled = bool(declare(
+        "AURA_CONTRASTIVE_DECODING", kind=FlagKind.BOOL, default=False,
+        description="Enable contrastive decoding with an amateur model",
+        owner="core.brain.llm.mlx_client",
+    ).value())
+    amateur_path = str(declare(
+        "AURA_CONTRASTIVE_AMATEUR_MODEL", kind=FlagKind.STRING, default="",
+        description="Amateur model path for contrastive decoding",
+        owner="core.brain.llm.mlx_client",
+    ).value() or "").strip()
     if contrastive_enabled and amateur_path and _real_model_path(amateur_path) != _real_model_path(
         model_path
     ):
@@ -481,12 +489,17 @@ async def _evict_model_lane_owner(owner: Any, reason: str) -> bool:
 
 
 async def _reclaim_model_lane_capacity(claim: Any) -> bool:
+    from core.runtime.flags import FlagKind, declare
     """Wait boundedly for killed model memory to leave the observed envelope."""
 
     try:
         timeout_s = max(
             0.0,
-            float(os.environ.get("AURA_MODEL_LANE_RECLAIM_TIMEOUT_S", "20") or 20.0),
+            float(declare(
+                "AURA_MODEL_LANE_RECLAIM_TIMEOUT_S", kind=FlagKind.FLOAT, default=20.0,
+                description="Budget for reclaiming a model lane before spawn",
+                owner="core.brain.llm.mlx_client",
+            ).value()),
         )
     except (TypeError, ValueError):
         timeout_s = 20.0

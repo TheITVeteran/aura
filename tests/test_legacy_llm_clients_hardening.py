@@ -16,6 +16,8 @@ def test_legacy_llm_clients_record_expected_failures():
     client_source = (PROJECT_ROOT / "llm" / "client.py").read_text(encoding="utf-8")
 
     assert "legacy_mlx_client" in mlx_source
-    assert "failed during legacy MLX generation" in mlx_source
+    # The legacy shim now delegates to the canonical client; the degradation
+    # action names the canonical compatibility path (81f2b64b).
+    assert "failed during canonical legacy-compatibility generation" in mlx_source
     assert "legacy_sovereign_llm_client" in client_source
     assert "failed during legacy sovereign LLM call" in client_source

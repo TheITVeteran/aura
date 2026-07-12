@@ -32,6 +32,14 @@ class _FakeOrphan:
     def wait(self, timeout=None):
         return None
 
+    def parents(self):
+        # Ownership check (81f2b64b): only orphans descended from THIS
+        # process are reclaimed. This fake is ours.
+        import os
+        from types import SimpleNamespace
+
+        return [SimpleNamespace(pid=os.getpid())]
+
 
 def test_orphan_reclaimed_before_memory_admission(monkeypatch):
     # Disable the bounded reclaim re-poll so the contrived always-blocked

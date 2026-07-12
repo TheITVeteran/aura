@@ -23,9 +23,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RAW_ENV_READ_BUDGET = 585
 
 # The flag layer itself and the settings store are the sanctioned readers.
+# model_lane_control's AURA_MODEL_LANE_* vars are parent->child process
+# INHERITANCE transport (incl. a delegation token) — spawn-scoped IPC, not
+# operator knobs; the flag registry is the wrong surface for them.
 SANCTIONED = {
     "core/runtime/flags.py",
     "core/runtime/runtime_settings.py",
+    "core/runtime/model_lane_control.py",
 }
 
 _READ_RE = re.compile(r"(?:os\.environ\.get|os\.getenv|environ\.get|\bgetenv)\(\s*[\"']AURA_")

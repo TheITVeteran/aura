@@ -827,7 +827,15 @@ class SubprocessGateway:
 
             async def _release_model_owner_when_done() -> None:
                 try:
-                    await proc.wait()
+                    # Re-arming bounded slices: this monitor's LIFETIME is the
+                    # worker's lifetime by design, but each individual await
+                    # stays bounded (A1) so a wedged wait can never hide.
+                    while True:
+                        try:
+                            await asyncio.wait_for(proc.wait(), timeout=60.0)
+                            break
+                        except TimeoutError:
+                            continue
                     # Descendants have no asyncio completion primitive.
                     while managed_process_group_alive(  # noqa: ASYNC110
                         process_group_id,
