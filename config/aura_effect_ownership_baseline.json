@@ -2293,14 +2293,6 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/social/other_agent_model.py",
-      "scope": "<module>.OtherAgentStateEstimator.save"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
       "path": "core/social/relationship_graph.py",
       "scope": "<module>.RelationshipGraph._persist"
     },
@@ -3025,7 +3017,15 @@
       "scope": "<module>.SynapticPlasticityEngine._persist_state"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/consciousness/theory_of_mind.py",
+      "scope": "<module>.TheoryOfMindEngine.save"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
       "count": 1,
@@ -4191,6 +4191,22 @@
       "count": 1,
       "path": "core/social/dialogue_cognition.py",
       "scope": "<module>.DialogueCognitionEngine.save"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/social/other_agent_model.py",
+      "scope": "<module>.OtherAgentStateEstimator.save"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/social/other_agent_model.py",
+      "scope": "<module>.OtherAgentStateEstimator.save"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -7151,14 +7167,6 @@
       "count": 1,
       "path": "core/consciousness/synaptic_plasticity.py",
       "scope": "<module>.SynapticPlasticityEngine._persist_state"
-    },
-    {
-      "callee": "p.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 2,
-      "path": "core/consciousness/theory_of_mind.py",
-      "scope": "<module>.TheoryOfMindEngine._resolve_data_path"
     },
     {
       "callee": "<pathlib.Path>.parent.mkdir",
@@ -11673,14 +11681,6 @@
       "scope": "<module>.DialogueCognitionEngine.__init__"
     },
     {
-      "callee": "self._path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/social/other_agent_model.py",
-      "scope": "<module>.OtherAgentStateEstimator.__init__"
-    },
-    {
       "callee": "self._data_path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13460,7 +13460,15 @@
       "callee": "core.will.get_will().decide",
       "canonical_owner": false,
       "category": "will_decision",
-      "count": 2,
+      "count": 1,
+      "path": "core/orchestrator/mixins/incoming_logic.py",
+      "scope": "<module>.IncomingLogicMixin._internal_model_updates_allowed"
+    },
+    {
+      "callee": "core.will.get_will().decide",
+      "canonical_owner": false,
+      "category": "will_decision",
+      "count": 1,
       "path": "core/orchestrator/mixins/incoming_logic.py",
       "scope": "<module>.IncomingLogicMixin._original_handle_incoming_logic"
     },
@@ -13594,6 +13602,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "443c2d156bb734b8ef06c2bb54e841651dddf879b6c0f36cad6ba0a32a14f194",
+  "inventory_sha256": "11df6adcb3713ea62f8107a33f1c3231e825e551825a4a2f285aed0922df18c3",
   "schema_version": 1
 }

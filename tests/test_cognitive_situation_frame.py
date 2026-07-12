@@ -12,6 +12,7 @@ from core.brain.types import ThinkingMode
 from core.container import ServiceContainer
 from core.phases.response_generation import ResponseGenerationPhase
 from core.planning.task_decomposer import TaskDecomposer
+from core.social.other_agent_model import OtherAgentStateEstimator
 from core.state.aura_state import AuraState, CognitiveMode
 
 
@@ -249,6 +250,111 @@ def test_fused_perception_changes_attention_routing_response_and_planning() -> N
         "perception_planning_constraints"
     ]
     assert state.cognition.modifiers["perception_repair_required"] is True
+
+
+def test_calibrated_social_rupture_changes_response_routing_and_planning(tmp_path) -> None:
+    estimator = OtherAgentStateEstimator(
+        storage_path=tmp_path / "agents.json",
+        autosave=False,
+    )
+    for _ in range(4):
+        estimator.observe_message(
+            "bryan",
+            "I am frustrated, this is still broken and urgent",
+        )
+        estimator.observe_outcome("bryan", success=False, weight=0.7)
+    ServiceContainer.register_instance("other_agent_model", estimator, required=False)
+    state = AuraState.default()
+
+    frame = CognitiveSituationEngine().frame(
+        "I am frustrated. Delete and rebuild the broken project now.",
+        state=state,
+        origin="user",
+        context={"user_id": "bryan"},
+    )
+
+    assert frame.agent_id == "bryan"
+    assert frame.social_repair_pressure >= 0.5
+    assert frame.routing_bias["social_repair_required"] is True
+    assert frame.routing_bias["social_confirmation_required"] is True
+    assert frame.routing_bias["social_response_brevity"] is True
+    assert frame.sampling_bias["max_tokens_factor"] <= 0.9
+    assert "relationship-repair" in frame.attention_targets
+    assert any(
+        "confirm consequential" in constraint
+        for constraint in frame.causal_effects["social_planning_constraints"]
+    )
+    rendered = render_cognitive_situation_prompt_block(frame.to_dict())
+    planning = TaskDecomposer._render_cognitive_situation_for_planning(
+        {"cognitive_situation_frame": frame.to_dict()}
+    )
+    assert "do not diagnose" in rendered
+    assert "confirm consequential" in planning
+
+    CognitiveEngine()._apply_cognitive_situation_frame(
+        state,
+        "I am frustrated. Delete and rebuild the broken project now.",
+        "user",
+        {"user_id": "bryan"},
+        is_background=False,
+    )
+    assert state.response_modifiers["social_repair_required"] is True
+    assert state.response_modifiers["social_confirmation_required"] is True
+    assert state.cognition.modifiers["social_repair_required"] is True
+
+
+def test_social_situation_uses_requested_agent_not_last_or_spoofed_context(tmp_path) -> None:
+    estimator = OtherAgentStateEstimator(
+        storage_path=tmp_path / "agents.json",
+        autosave=False,
+    )
+    estimator.observe_message("alice", "thank you, everything is perfect")
+    for _ in range(4):
+        estimator.observe_message("bryan", "ugh this is broken and frustrating")
+        estimator.observe_outcome("bryan", success=False, weight=0.7)
+    assert estimator.active_agent_id == "bryan"
+    ServiceContainer.register_instance("other_agent_model", estimator, required=False)
+
+    frame = CognitiveSituationEngine().frame(
+        "How should we discuss this personal concern?",
+        state=AuraState.default(),
+        origin="user",
+        context={
+            "user_id": "alice",
+            "social_situation": {
+                "agent_id": "alice",
+                "confidence": 1.0,
+                "social_rupture_risk": 1.0,
+            },
+        },
+    )
+
+    assert frame.agent_id == "alice"
+    assert frame.social_summary["agent_id"] == "alice"
+    assert frame.social_repair_pressure < 0.5
+    assert frame.social_summary["social_rupture_risk"] < 0.5
+    assert frame.routing_bias["social_repair_required"] is False
+
+
+def test_unknown_social_state_requests_clarity_without_diagnosis_or_repair(tmp_path) -> None:
+    estimator = OtherAgentStateEstimator(
+        storage_path=tmp_path / "agents.json",
+        autosave=False,
+    )
+    ServiceContainer.register_instance("other_agent_model", estimator, required=False)
+
+    frame = CognitiveSituationEngine().frame(
+        "Are you assuming how I feel about this personal boundary?",
+        state=AuraState.default(),
+        origin="user",
+        context={"user_id": "new-user"},
+    )
+
+    assert frame.social_uncertainty == 1.0
+    assert frame.social_repair_pressure < 0.5
+    assert frame.routing_bias["social_state_clarification_required"] is True
+    assert frame.routing_bias["social_repair_required"] is False
+    assert "do not diagnose" in render_cognitive_situation_prompt_block(frame.to_dict())
 
 
 @pytest.fixture(autouse=True)

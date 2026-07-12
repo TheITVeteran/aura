@@ -291,19 +291,50 @@ class SocialContextPhase(Phase):
 
     def _apply_theory_of_mind_register(self, modifiers: dict[str, Any]) -> None:
         try:
+            estimator = _service_get(self.container, "other_agent_model", default=None)
+            if estimator is None:
+                estimator = ServiceContainer.get("other_agent_model", default=None)
+            agent_id = str(getattr(estimator, "active_agent_id", "") or "")
+            if estimator and agent_id and hasattr(estimator, "cognitive_snapshot"):
+                snapshot = estimator.cognitive_snapshot(agent_id)
+                recommendation = snapshot.get("recommendation")
+                recommendation = recommendation if isinstance(recommendation, dict) else {}
+                modifiers["social_state_confidence"] = _safe_float(
+                    snapshot.get("confidence"),
+                    default=0.0,
+                )
+                modifiers["social_state_is_hypothesis"] = True
+                if recommendation.get("slow_down"):
+                    modifiers["relational_register"] = "repair"
+                elif recommendation.get("offer_reassurance"):
+                    modifiers["relational_register"] = "careful"
+                else:
+                    modifiers["relational_register"] = "neutral"
+                return
+
             tom = _service_get(self.container, "theory_of_mind", default=None)
             if tom is None:
                 tom = ServiceContainer.get("theory_of_mind", default=None)
             known_selves = getattr(tom, "known_selves", None) if tom else None
             if not known_selves:
                 return
-            values = known_selves.values() if hasattr(known_selves, "values") else known_selves
-            user_model = next(iter(values), None)
+            active_user_id = str(getattr(tom, "active_user_id", "") or "")
+            if active_user_id and hasattr(known_selves, "get"):
+                user_model = known_selves.get(active_user_id)
+            elif hasattr(known_selves, "__len__") and len(known_selves) == 1:
+                values = (
+                    known_selves.values()
+                    if hasattr(known_selves, "values")
+                    else known_selves
+                )
+                user_model = next(iter(values), None)
+            else:
+                user_model = None
             if user_model is None:
                 return
             rapport = _safe_float(getattr(user_model, "rapport", 0.5), default=0.5)
             if rapport > 0.75:
-                modifiers["relational_register"] = "intimate"
+                modifiers["relational_register"] = "established"
             elif rapport > 0.4:
                 modifiers["relational_register"] = "warm"
             else:

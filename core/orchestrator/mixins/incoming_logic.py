@@ -49,6 +49,140 @@ def _record_incoming_degradation(
 class IncomingLogicMixin:
     """Handles incoming message routing, pipeline dispatch, and the core logic handler."""
 
+    def _resolve_social_user_id(self, payload_context: dict[str, Any]) -> str:
+        identity = getattr(self, "user_identity", {}) or {}
+        payload_user = str(payload_context.get("user_id") or "").strip()
+        identity_name = (
+            str(identity.get("name") or "").strip()
+            if isinstance(identity, dict)
+            else ""
+        )
+        return (payload_user or identity_name or "local_user")[:160]
+
+    def _record_delivered_social_response(
+        self,
+        payload_context: dict[str, Any],
+        response_text: str,
+    ) -> None:
+        try:
+            from core.container import ServiceContainer
+
+            other_agent = ServiceContainer.get("other_agent_model", default=None)
+            if other_agent and hasattr(other_agent, "record_response"):
+                other_agent.record_response(
+                    self._resolve_social_user_id(payload_context),
+                    response_text,
+                )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_incoming_degradation(
+                exc,
+                action="continued after delivered response could not be paired with social feedback",
+            )
+
+    async def _emit_user_response(
+        self,
+        payload_context: dict[str, Any],
+        response_text: str,
+        *,
+        origin: str,
+        target: str = "primary",
+        **emit_kwargs: Any,
+    ) -> None:
+        """Emit first, then mark the exact response as eligible for feedback."""
+        await self.output_gate.emit(
+            response_text,
+            origin=origin,
+            target=target,
+            **emit_kwargs,
+        )
+        if origin in ("user", "voice", "admin"):
+            self._record_delivered_social_response(payload_context, response_text)
+
+    def _observe_social_turn(
+        self,
+        payload_context: dict[str, Any],
+        message: str,
+        live_state: Any,
+    ) -> str:
+        """Update exact-agent social state synchronously before cognition reads it."""
+        from core.container import ServiceContainer
+
+        user_id = self._resolve_social_user_id(payload_context)
+        payload_context["user_id"] = user_id
+        other_agent = ServiceContainer.get("other_agent_model", default=None)
+        if other_agent and hasattr(other_agent, "observe_message"):
+            observed_at = time.time()
+            other_agent.observe_message(
+                user_id,
+                message,
+                hour=time.localtime(observed_at).tm_hour,
+                now=observed_at,
+                persist=False,
+            )
+            if hasattr(other_agent, "cognitive_snapshot"):
+                payload_context["social_situation"] = other_agent.cognitive_snapshot(
+                    user_id,
+                    observed_at,
+                )
+            if hasattr(other_agent, "save_if_due"):
+                self._fire_and_forget(
+                    asyncio.to_thread(other_agent.save_if_due),
+                    name="other_agent_model_persist",
+                )
+            cognition = getattr(live_state, "cognition", None)
+            if cognition is not None and hasattr(cognition, "current_partner"):
+                cognition.current_partner = user_id
+        return user_id
+
+    def _internal_model_updates_allowed(self) -> bool:
+        """Authorize internal social/discourse mutation and fail closed."""
+        try:
+            from core.will import ActionDomain, get_will
+
+            decision = get_will().decide(
+                content="internal_model_update",
+                source="cognitive_background",
+                domain=ActionDomain.STATE_MUTATION,
+                priority=0.2,
+            )
+            if decision.is_approved():
+                return True
+            logger.debug(
+                "Background cognitive updates blocked by Unified Will: %s",
+                decision.reason,
+            )
+            return False
+        except (ImportError, AttributeError, RuntimeError) as exc:
+            _record_incoming_degradation(
+                exc,
+                action="blocked background discourse and user-model updates because Unified Will gate was unavailable",
+                severity="error",
+            )
+            try:
+                from core.health.degraded_events import record_degraded_event
+
+                record_degraded_event(
+                    "governance",
+                    "state_mutation_gate_unavailable",
+                    detail=repr(exc),
+                    severity="error",
+                    classification="background_degraded",
+                    context={"source": "cognitive_background"},
+                    exc=exc,
+                )
+            except (ImportError, AttributeError, RuntimeError) as event_err:
+                _record_incoming_degradation(
+                    event_err,
+                    action="kept background state mutation blocked after degraded-event emission failed",
+                    severity="error",
+                )
+                logger.debug("State-mutation degraded-event skipped: %s", event_err)
+            logger.warning(
+                "Governance unavailable for state_mutation; denying internal update: %s",
+                exc,
+            )
+            return False
+
     async def _route_prefixed_message(self, message: str, prefix: str, origin: str) -> Any:
         # Implementation of legacy prefix routing (e.g. stripping tag and updating origin)
         content = message[len(prefix) :].strip()
@@ -245,7 +379,11 @@ class IncomingLogicMixin:
             somatic_response = await self._check_embodied_reflexes(safe_msg)
             if somatic_response:
                 # Bypass everything. No history recording needed for low-level somatic pulses.
-                await self.output_gate.emit(somatic_response, origin=origin, target="primary")
+                await self._emit_user_response(
+                    payload_context,
+                    somatic_response,
+                    origin=origin,
+                )
                 return None
 
         # Phase 0: Social Reflexes (Zero-Latency)
@@ -257,7 +395,30 @@ class IncomingLogicMixin:
                     safe_msg[:20],
                     reflex_response[:30],
                 )
-                await self.output_gate.emit(reflex_response, origin=origin, target="primary")
+                if self._internal_model_updates_allowed():
+                    live_state = (
+                        getattr(self.state_repo, "_current", None)
+                        if hasattr(self, "state_repo")
+                        else None
+                    )
+                    try:
+                        self._observe_social_turn(payload_context, safe_msg, live_state)
+                    except (
+                        ImportError,
+                        AttributeError,
+                        RuntimeError,
+                        TypeError,
+                        ValueError,
+                    ) as exc:
+                        _record_incoming_degradation(
+                            exc,
+                            action="continued social reflex after calibrated user-state update failed",
+                        )
+                await self._emit_user_response(
+                    payload_context,
+                    reflex_response,
+                    origin=origin,
+                )
                 # Record in history anyway so subsequent turns have context
                 self._record_message_in_history(safe_msg, origin)
                 self._record_message_in_history(reflex_response, "assistant")
@@ -326,7 +487,8 @@ class IncomingLogicMixin:
 
                     mgr = SnapshotManager(self)
                     success = mgr.freeze()
-                    await self.output_gate.emit(
+                    await self._emit_user_response(
+                        payload_context,
                         f"✅ Cognitive State Snapshot {'successful' if success else 'failed'}.",
                         origin="admin",
                     )
@@ -344,7 +506,8 @@ class IncomingLogicMixin:
 
                     mgr = SnapshotManager(self)
                     success = mgr.thaw()
-                    await self.output_gate.emit(
+                    await self._emit_user_response(
+                        payload_context,
                         f"🔥 Cognitive State Thaw {'successful' if success else 'failed'}.",
                         origin="admin",
                     )
@@ -509,56 +672,25 @@ class IncomingLogicMixin:
                 getattr(self.state_repo, "_current", None) if hasattr(self, "state_repo") else None
             )
 
-            # Update discourse state (topic thread, user emotional trend, conversation energy)
-            # Gated by Unified Will — internal model updates are STATE_MUTATION (fail-closed)
-            _internal_update_allowed = True
-            try:
-                from core.will import ActionDomain, get_will
-
-                _state_decision = get_will().decide(
-                    content="internal_model_update",
-                    source="cognitive_background",
-                    domain=ActionDomain.STATE_MUTATION,
-                    priority=0.2,
-                )
-                if not _state_decision.is_approved():
-                    _internal_update_allowed = False
-                    logger.debug(
-                        "Background cognitive updates blocked by Unified Will: %s",
-                        _state_decision.reason,
-                    )
-            except (ImportError, AttributeError, RuntimeError) as _will_exc:
-                _record_incoming_degradation(
-                    _will_exc,
-                    action="blocked background discourse and user-model updates because Unified Will gate was unavailable",
-                    severity="error",
-                )
-                _internal_update_allowed = False
-                try:
-                    from core.health.degraded_events import record_degraded_event
-
-                    record_degraded_event(
-                        "governance",
-                        "state_mutation_gate_unavailable",
-                        detail=repr(_will_exc),
-                        severity="error",
-                        classification="background_degraded",
-                        context={"source": "cognitive_background"},
-                        exc=_will_exc,
-                    )
-                except (ImportError, AttributeError, RuntimeError) as event_err:
-                    _record_incoming_degradation(
-                        event_err,
-                        action="kept background state mutation blocked after degraded-event emission failed",
-                        severity="error",
-                    )
-                    logger.debug("State-mutation governance degraded-event skipped: %s", event_err)
-                logger.warning(
-                    "Governance unavailable for state_mutation — denying internal update (fail-closed): %s",
-                    _will_exc,
-                )
+            # Internal social and discourse mutations share one fail-closed authority decision.
+            _internal_update_allowed = self._internal_model_updates_allowed()
 
             if _internal_update_allowed:
+                try:
+                    user_id = self._observe_social_turn(
+                        payload_context,
+                        message,
+                        _live_state,
+                    )
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    user_id = self._resolve_social_user_id(payload_context)
+                    payload_context["user_id"] = user_id
+                    _record_incoming_degradation(
+                        exc,
+                        action="continued user turn without calibrated other-agent state",
+                    )
+                    logger.error("OtherAgentState update failed: %s", exc, exc_info=True)
+
                 try:
                     discourse_tracker = ServiceContainer.get("discourse_tracker", default=None)
                     if discourse_tracker and _live_state is not None:
@@ -577,9 +709,17 @@ class IncomingLogicMixin:
                 try:
                     tom = ServiceContainer.get("theory_of_mind", default=None)
                     if tom:
-                        user_id = (getattr(self, "user_identity", {}) or {}).get("name", "bryan")
                         self._fire_and_forget(
-                            tom.understand_user(user_id, message),
+                            tom.understand_user(
+                                user_id,
+                                message,
+                                {
+                                    "user_id": user_id,
+                                    "social_situation": payload_context.get(
+                                        "social_situation"
+                                    ),
+                                },
+                            ),
                             name="theory_of_mind_update",
                         )
                 except (ImportError, AttributeError, RuntimeError, TypeError) as _tom_err:
@@ -785,10 +925,10 @@ class IncomingLogicMixin:
                     if not _will_decision.is_approved():
                         logger.warning("Unified Will REFUSED response: %s", _will_decision.reason)
                         if origin in ("user", "voice", "admin"):
-                            await self.output_gate.emit(
+                            await self._emit_user_response(
+                                payload_context,
                                 "I need a moment to collect myself before I can respond properly.",
                                 origin=origin,
-                                target="primary",
                             )
                         return
                     if _will_decision.constraints:
@@ -801,10 +941,10 @@ class IncomingLogicMixin:
                     )
                     logger.debug("Unified Will gate degraded: %s", _will_err)
                     if origin in ("user", "voice", "admin"):
-                        await self.output_gate.emit(
+                        await self._emit_user_response(
+                            payload_context,
                             "I need a moment to re-establish my decision layer before I can respond safely.",
                             origin=origin,
-                            target="primary",
                         )
                     return None
 
@@ -877,7 +1017,9 @@ class IncomingLogicMixin:
                                             _emit_reason,
                                         )
                                         try:
-                                            from core.observability.unified_action_log import get_action_log
+                                            from core.observability.unified_action_log import (
+                                                get_action_log,
+                                            )
 
                                             get_action_log().record(
                                                 pathway.skill_name or "direct_response",
@@ -1045,8 +1187,10 @@ class IncomingLogicMixin:
                                             "reason", "I cannot process this request."
                                         )
                                         if origin in ("user", "voice", "admin"):
-                                            await self.output_gate.emit(
-                                                final_response, origin=origin, target="primary"
+                                            await self._emit_user_response(
+                                                payload_context,
+                                                final_response,
+                                                origin=origin,
                                             )
                                         return
                                 except (RuntimeError, AttributeError, TypeError) as e:
@@ -1090,8 +1234,10 @@ class IncomingLogicMixin:
                             )
 
                             if origin in ("user", "voice", "admin"):
-                                await self.output_gate.emit(
-                                    final_response, origin=origin, target="primary"
+                                await self._emit_user_response(
+                                    payload_context,
+                                    final_response,
+                                    origin=origin,
                                 )
                             return
 
@@ -1508,10 +1654,10 @@ class IncomingLogicMixin:
 
                         if origin in ("user", "voice", "admin"):
                             if self.output_gate:
-                                await self.output_gate.emit(
+                                await self._emit_user_response(
+                                    payload_context,
                                     final_response,
                                     origin=origin,
-                                    target="primary",
                                     metadata={"voice": True},
                                 )
                         else:
@@ -1578,7 +1724,11 @@ class IncomingLogicMixin:
                     if origin in ("user", "voice", "admin"):
                         error_msg = f"My cognitive process encountered a fatal interruption: {str(e)[:100]}. I am recovering my state."
                         if hasattr(self, "output_gate") and self.output_gate:
-                            await self.output_gate.emit(error_msg, origin=origin, target="primary")
+                            await self._emit_user_response(
+                                payload_context,
+                                error_msg,
+                                origin=origin,
+                            )
                         self.status.is_processing = False
                     return f"Cognitive failure: {str(e)}"
 

@@ -7227,7 +7227,11 @@ def test_memory_guard_unknown_actor_returns_no_violations():
 # ==========================================================================
 
 
-def test_incoming_logic_vector_memory_gate_fails_closed_when_will_raises():
+def test_incoming_logic_mutation_gates_fail_closed_when_will_raises(monkeypatch):
+    import core.health.degraded_events as degraded_events
+    import core.will as will_module
+    from core.orchestrator.mixins.incoming_logic import IncomingLogicMixin
+
     project_root = Path(__file__).resolve().parent.parent
     src = (project_root / "core" / "orchestrator" / "mixins" / "incoming_logic.py").read_text(
         encoding="utf-8"
@@ -7235,13 +7239,28 @@ def test_incoming_logic_vector_memory_gate_fails_closed_when_will_raises():
     # No old "fail-open" comment for memory write or state mutation gates
     assert "pass  # fail-open for safety" not in src
     assert "pass  # fail-open" not in src
-    # The fail-closed branch must record a degraded event AND set the local gate false.
+    # The still-inline vector-memory gate remains an explicit fail-closed assignment.
     assert '"memory_write_gate_unavailable"' in src
-    assert '"state_mutation_gate_unavailable"' in src
     assert "_mem_allowed = False" in src
-    assert "_internal_update_allowed = False" in src
     assert "blocked response dispatch because Unified Will gate was unavailable" in src
     assert "re-establish my decision layer before I can respond safely" in src
+
+    events = []
+    monkeypatch.setattr(
+        will_module,
+        "get_will",
+        lambda: (_ for _ in ()).throw(RuntimeError("governance offline")),
+    )
+    monkeypatch.setattr(
+        degraded_events,
+        "record_degraded_event",
+        lambda *args, **kwargs: events.append((args, kwargs)),
+    )
+
+    assert IncomingLogicMixin()._internal_model_updates_allowed() is False
+    assert events
+    assert events[0][0][:2] == ("governance", "state_mutation_gate_unavailable")
+    assert events[0][1]["classification"] == "background_degraded"
 
 
 # ==========================================================================

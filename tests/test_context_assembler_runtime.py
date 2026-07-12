@@ -62,6 +62,63 @@ def test_context_assembler_methods_are_not_replaced_at_import_time():
     assert not getattr(ContextAssembler, "_patched_v1", False)
 
 
+def test_context_assembler_uses_exact_active_social_agent_without_intimacy_claims():
+    class ExactAgentEstimator:
+        active_agent_id = "bryan"
+
+        def __init__(self):
+            self.requested_agents = []
+
+        def context_injection(self, agent_id):
+            self.requested_agents.append(agent_id)
+            return f"SOCIAL_MARKER agent={agent_id} hypothesis_only=true"
+
+    estimator = ExactAgentEstimator()
+    ServiceContainer.clear()
+    ServiceContainer.register_instance(
+        "other_agent_model",
+        estimator,
+        required=False,
+    )
+    state = AuraState.default()
+    state.cognition.current_objective = "Continue the architecture review."
+
+    try:
+        prompt = ContextAssembler.build_system_prompt(state)
+    finally:
+        ServiceContainer.clear()
+
+    assert estimator.requested_agents == ["bryan"]
+    assert "SOCIAL_MARKER agent=bryan hypothesis_only=true" in prompt
+    lowered = prompt.lower()
+    assert "## who i'm talking to" not in lowered
+    assert "deep bond" not in lowered
+    assert "be more personal" not in lowered
+    assert "high rapport → lean in" not in lowered
+    assert "relational register: intimate" not in lowered
+
+
+def test_context_assembler_excludes_unscoped_legacy_relationship_memory():
+    class LegacySocialMemory:
+        @staticmethod
+        def get_social_context():
+            return "PRIVATE_OTHER_USER_RELATIONSHIP"
+
+    ServiceContainer.clear()
+    ServiceContainer.register_instance(
+        "social_memory",
+        LegacySocialMemory(),
+        required=False,
+    )
+
+    try:
+        prompt = ContextAssembler.build_system_prompt(AuraState.default())
+    finally:
+        ServiceContainer.clear()
+
+    assert "PRIVATE_OTHER_USER_RELATIONSHIP" not in prompt
+
+
 def test_deep_conversation_keeps_compact_continuity():
     state = AuraState.default()
     state.cognition.current_objective = "Continue the architecture review."

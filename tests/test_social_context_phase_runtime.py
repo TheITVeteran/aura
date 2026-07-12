@@ -142,7 +142,7 @@ def test_social_context_clamps_rapport_and_sets_register():
         )
 
         assert state.cognition.modifiers["rapport_level"] == 1.0
-        assert state.cognition.modifiers["relational_register"] == "intimate"
+        assert state.cognition.modifiers["relational_register"] == "established"
         assert state.cognition.modifiers["lexical_mirror"][:3] == [
             "let's",
             "release",

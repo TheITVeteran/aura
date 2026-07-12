@@ -69,3 +69,7 @@ core/perception/sensory_integration.py
 core/perception/visual_speech.py
 core/perception/visual_speech_tracking.py
 core/perception/visual_speech_auto_avsr.py
+# Calibrated live situation and social inference (2026-07-12)
+core/social/other_agent_model.py
+core/consciousness/theory_of_mind.py
+core/brain/cognitive_situation.py

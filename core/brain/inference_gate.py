@@ -7261,21 +7261,6 @@ class InferenceGate:
             )
             logger.debug("Suppressed Exception in homeostasis feedback: %s", _exc)
 
-        # ── Theory of Mind: Update user model from response ───────────────
-        try:
-            tom = ServiceContainer.get("theory_of_mind", default=None)
-            if tom and hasattr(tom, "update_from_response"):
-                tom.update_from_response(
-                    user_id="default_user",
-                    response_text=response_text,
-                )
-        except _INFERENCE_RECOVERABLE_ERRORS as _exc:
-            _record_inference_degradation(
-                _exc,
-                action="skipped unavailable post-inference update hook after response delivery",
-            )
-            logger.debug("Suppressed Exception in ToM feedback: %s", _exc)
-
         # ── World Model: Extract beliefs from response ────────────────────
         try:
             world_model = ServiceContainer.get("epistemic_state", default=None)

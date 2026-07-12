@@ -2,11 +2,15 @@
 Advanced Theory of Mind (ToM) system for Aura.
 Consolidated from duplicate modules.
 """
+import asyncio
+import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from core.runtime import service_access
@@ -37,7 +41,7 @@ class AgentModel:
     attachment_state: dict[str, Any] = field(default_factory=dict)
     last_updated: float = field(default_factory=time.time)
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data['self_type'] = self.self_type.value
         return data
@@ -46,9 +50,10 @@ class TheoryOfMindEngine:
     """Complete Theory of Mind system with LLM-backed social reasoning.
     """
 
-    def __init__(self, cognitive_engine=None):
+    def __init__(self, cognitive_engine: Any = None) -> None:
         self.brain = cognitive_engine
         self.known_selves: dict[str, AgentModel] = {}
+        self.active_user_id = ""
         self._data_path = self._resolve_data_path()
         self._load()
         logger.info("TheoryOfMindEngine initialized.")
@@ -110,7 +115,12 @@ class TheoryOfMindEngine:
             event = AttachmentEvent(
                 person_key=model.identifier,
                 kind=kind,
-                summary=summary[:220],
+                summary=(
+                    f"{kind}:sha256:"
+                    + hashlib.sha256(
+                        str(summary or "").encode("utf-8", errors="replace")
+                    ).hexdigest()[:24]
+                ),
                 evidence_id=f"tom:{model.identifier}:{int(time.time() * 1000)}",
                 trust_delta=trust_delta,
                 care_delta=care_delta,
@@ -132,21 +142,14 @@ class TheoryOfMindEngine:
                 "attachment": max(0.0, (model.trust_level + model.rapport) / 2.0 - max(0.0, 0.5 - model.trust_level)),
             }
 
-    def _resolve_data_path(self):
+    def _resolve_data_path(self) -> Path:
         try:
-            from pathlib import Path
-
             from core.config import config
-            p = config.paths.data_dir / "memory" / "theory_of_mind.json"
-            p.parent.mkdir(parents=True, exist_ok=True)
-            return p
+            return Path(config.paths.data_dir) / "memory" / "theory_of_mind.json"
         except (ImportError, AttributeError, RuntimeError):
-            from pathlib import Path
-            p = Path.home() / ".aura" / "data" / "memory" / "theory_of_mind.json"
-            p.parent.mkdir(parents=True, exist_ok=True)
-            return p
+            return Path.home() / ".aura" / "data" / "memory" / "theory_of_mind.json"
 
-    def _load(self):
+    def _load(self) -> None:
         try:
             if self._data_path.exists():
                 with open(self._data_path) as f:
@@ -154,10 +157,28 @@ class TheoryOfMindEngine:
                 for uid, d in raw.items():
                     try:
                         d["self_type"] = SelfType(d.get("self_type", "human"))
-                        # interaction_history can grow large — cap on load
-                        d["interaction_history"] = d.get("interaction_history", [])[-20:]
+                        history: list[dict[str, Any]] = []
+                        for item in d.get("interaction_history", [])[-20:]:
+                            if not isinstance(item, dict):
+                                continue
+                            raw_message = str(item.get("message") or "")
+                            digest = str(item.get("message_digest") or "")
+                            if not digest and raw_message:
+                                digest = hashlib.sha256(
+                                    raw_message.encode("utf-8", errors="replace")
+                                ).hexdigest()
+                            history.append(
+                                {
+                                    "message_digest": digest[:128] or "none",
+                                    "characters": int(
+                                        item.get("characters") or len(raw_message)
+                                    ),
+                                    "timestamp": float(item.get("timestamp") or 0.0),
+                                }
+                            )
+                        d["interaction_history"] = history
                         self.known_selves[uid] = AgentModel(**{k: v for k, v in d.items() if k in AgentModel.__dataclass_fields__})
-                    except (OSError, ConnectionError, TimeoutError) as _exc:
+                    except (OSError, ConnectionError, TimeoutError, TypeError, ValueError) as _exc:
                         record_degradation('theory_of_mind', _exc)
                         logger.debug("Suppressed Exception: %s", _exc)
                 logger.debug("ToM: loaded %d user models", len(self.known_selves))
@@ -165,23 +186,29 @@ class TheoryOfMindEngine:
             record_degradation('theory_of_mind', e)
             logger.debug("ToM: load failed (%s), starting fresh", e)
 
-    def save(self):
+    def save(self) -> None:
         try:
-            data = {}
+            data: dict[str, Any] = {}
             for uid, model in self.known_selves.items():
                 d = model.to_dict()
                 d["interaction_history"] = d["interaction_history"][-20:]  # Keep it lean
+                d["goals"] = []  # Transient goal text stays in memory only.
                 data[uid] = d
             from core.governance_context import local_internal_governed_scope
             from core.runtime.file_write_gateway import get_file_write_gateway
 
             with local_internal_governed_scope("theory_of_mind.save", domain="file_write"):
-                get_file_write_gateway().write_text(
+                gateway = get_file_write_gateway()
+                gateway.ensure_directory(
+                    self._data_path.parent,
+                    source="theory_of_mind.save",
+                )
+                gateway.write_text(
                     self._data_path,
                     json.dumps(data, indent=2),
                     source="theory_of_mind.save",
                 )
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as e:
             record_degradation('theory_of_mind', e)
             logger.debug("ToM: save failed: %s", e)
 
@@ -193,7 +220,7 @@ class TheoryOfMindEngine:
         depth_val = float(sum(s.rapport for s in self.known_selves.values())) / len(self.known_selves)
         return {"depth": round(float(depth_val), 2), "status": "online"}
 
-    def _get_brain(self):
+    def _get_brain(self) -> Any:
         if self.brain:
             return self.brain
         try:
@@ -210,17 +237,41 @@ class TheoryOfMindEngine:
             self.known_selves[user_id] = AgentModel(identifier=user_id)
 
         model = self.known_selves[user_id]
-        model.interaction_history.append({"message": message, "timestamp": time.time()})
+        self.active_user_id = user_id
+        model.interaction_history.append(
+            {
+                "message_digest": hashlib.sha256(
+                    message.encode("utf-8", errors="replace")
+                ).hexdigest(),
+                "characters": len(message),
+                "timestamp": time.time(),
+            }
+        )
+        model.interaction_history = model.interaction_history[-20:]
         model.last_updated = time.time()
 
-        # Determine deep or fast analysis
-        if len(model.interaction_history) % 5 == 0:
+        social_context = context.get("social_situation") if isinstance(context, dict) else None
+        feedback_context = bool(
+            isinstance(social_context, dict)
+            and social_context.get("response_feedback_context")
+        )
+
+        # Deep social analysis is explicit-only; recursive hot-path model calls are unsafe.
+        if (
+            isinstance(context, dict)
+            and context.get("allow_deep_social_analysis") is True
+            and len(model.interaction_history) % 5 == 0
+        ):
             result = await self._deep_analyze(user_id, message, context)
         else:
-            result = self._fast_heuristic_update(user_id, message)
+            result = self._fast_heuristic_update(
+                user_id,
+                message,
+                response_feedback_context=feedback_context,
+            )
         # Persist after every 5th update to avoid excessive I/O
         if len(model.interaction_history) % 5 == 0:
-            self.save()
+            await asyncio.to_thread(self.save)
         return result
 
     async def infer_intent(self, message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -229,16 +280,22 @@ class TheoryOfMindEngine:
         result = await self.understand_user(user_id, message, context)
         # Extract intent data in the format expected by context builder
         intent_data = result.get("intent", {})
-        if intent_data and isinstance(intent_data, dict):
-             # Ensure 'pragmatic' key exists or fallback
-             intent_data["pragmatic"] = intent_data.get("intent", "standard")
-        return intent_data
+        if isinstance(intent_data, dict):
+            normalized = dict(intent_data)
+            normalized["pragmatic"] = normalized.get("intent", "standard")
+            return normalized
+        return {}
 
-    def _fast_heuristic_update(self, user_id: str, message: str) -> dict[str, Any]:
+    def _fast_heuristic_update(
+        self,
+        user_id: str,
+        message: str,
+        *,
+        response_feedback_context: bool = False,
+    ) -> dict[str, Any]:
         """Apply keyword heuristics for rapid updates without LLM calls."""
         model = self.known_selves[user_id]
         msg = message.lower()
-        rapport_delta = 0.0
 
         # Scale rapport changes by current conversation energy — high-energy exchanges
         # carry more weight for relationship development than idle one-liners.
@@ -250,11 +307,19 @@ class TheoryOfMindEngine:
             conv_energy = 0.5
         energy_scale = 0.5 + conv_energy  # range [0.5, 1.5]
 
-        if any(w in msg for w in ["thank", "great", "love", "appreciate", "good", "exactly", "yes", "perfect"]):
+        positive_feedback = bool(
+            re.search(
+                r"\b(thank(?:s| you)?|great|love|appreciate|good|exactly|yes|perfect)\b",
+                msg,
+            )
+        )
+        negative_feedback = bool(
+            re.search(r"\b(angry|wrong|bad|hate|rude|not helpful|too long)\b", msg)
+        )
+        if positive_feedback and response_feedback_context:
             delta = 0.05 * energy_scale
             model.trust_level = min(1.0, model.trust_level + delta)
             model.rapport = min(1.0, model.rapport + delta)
-            rapport_delta = delta
             self._record_attachment_event(
                 model,
                 kind="warmth",
@@ -264,11 +329,10 @@ class TheoryOfMindEngine:
                 familiarity_delta=0.02,
                 repair_delta=0.02 if model.attachment_state.get("rupture", 0.0) else 0.0,
             )
-        elif any(w in msg for w in ["angry", "wrong", "bad", "hate", "rude"]):
+        elif negative_feedback and response_feedback_context:
             delta = 0.05 * energy_scale
             model.trust_level = max(0.0, model.trust_level - delta)
             model.rapport = max(0.0, model.rapport - delta)
-            rapport_delta = -delta
             self._record_attachment_event(
                 model,
                 kind="rupture",
@@ -284,6 +348,8 @@ class TheoryOfMindEngine:
                 summary=message,
                 familiarity_delta=0.01,
             )
+            if negative_feedback:
+                model.emotional_state = "frustrated"
 
         # --- Question pattern detection ---
         question_words = ["how", "why", "what", "when", "where", "who", "which", "can you", "could you"]
@@ -309,27 +375,11 @@ class TheoryOfMindEngine:
         elif tech_count == 1 and model.knowledge_level == "beginner":
             model.knowledge_level = "intermediate"
 
-        # --- Short message detection (possible frustration/terseness) ---
-        if len(message.strip()) < 20 and message.strip():
-            # Short messages without positive sentiment hint at terseness
-            if rapport_delta <= 0:
-                model.emotional_state = "terse"
-
         # --- Long detailed message detection ---
         if len(message.strip()) > 200:
             model.emotional_state = "engaged"
             if model.knowledge_level == "beginner":
                 model.knowledge_level = "intermediate"
-
-        # Mirror rapport increases to SocialMemory depth
-        if rapport_delta > 0:
-            try:
-                social_mem = service_access.optional_service("social_memory", default=None)
-                if social_mem and hasattr(social_mem, "relationship_depth"):
-                    social_mem.relationship_depth = min(1.0, social_mem.relationship_depth + rapport_delta * 0.5)
-            except (RuntimeError, AttributeError, TypeError) as _exc:
-                record_degradation('theory_of_mind', _exc)
-                logger.debug("Suppressed Exception: %s", _exc)
 
         return {
             "user_model": model.to_dict(),
@@ -346,9 +396,9 @@ class TheoryOfMindEngine:
         if not brain:
             return self._fast_heuristic_update(user_id, message)
 
-        prompt = f"""Analyze user intent and state.
+        prompt = f"""Analyze user intent and state without diagnosing or inferring culture/demographics.
 User Message: {message}
-Recent History: {[str(m.get('message', '')) for m in list(model.interaction_history)[-3:]]}
+Recent evidence metadata: {list(model.interaction_history)[-3:]}
 Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "knowledge_level": "..."}}"""
 
         try:
@@ -412,50 +462,87 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
     # New capabilities — context block, response guidance, post-response
     # ------------------------------------------------------------------
 
-    def get_context_block(self, user_id: str = "default_user") -> str:
-        """Returns concise user model summary for inference context (max 200 chars)."""
-        model = self.known_selves.get(user_id)
-        if not model:
-            return "ToM: No user model yet"
+    @staticmethod
+    def _calibrated_social_snapshot(user_id: str) -> dict[str, Any]:
+        try:
+            from core.container import ServiceContainer
 
-        # Compute recent interaction trend
-        recent = model.interaction_history[-5:]
-        trend = "new"
-        if len(recent) >= 3:
-            recent_times = [r.get("timestamp", 0) for r in recent if r.get("timestamp")]
-            if len(recent_times) >= 2:
-                avg_gap = (recent_times[-1] - recent_times[0]) / max(len(recent_times) - 1, 1)
-                if avg_gap < 30:
-                    trend = "rapid"
-                elif avg_gap < 120:
-                    trend = "steady"
-                else:
-                    trend = "sporadic"
+            estimator = ServiceContainer.get("other_agent_model", default=None)
+            if estimator and hasattr(estimator, "cognitive_snapshot"):
+                snapshot = estimator.cognitive_snapshot(user_id)
+                if isinstance(snapshot, dict) and snapshot.get("agent_id") == user_id:
+                    return snapshot
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            pass
+        return {}
 
-        block = (
-            f"User({user_id[:15]}): "
-            f"know={model.knowledge_level}, "
-            f"mood={model.emotional_state}, "
-            f"rapport={model.rapport:.2f}, "
-            f"trust={model.trust_level:.2f}, "
-            f"trend={trend}"
+    @staticmethod
+    def _active_social_user_id() -> str:
+        try:
+            from core.container import ServiceContainer
+
+            estimator = ServiceContainer.get("other_agent_model", default=None)
+            return str(getattr(estimator, "active_agent_id", "") or "")[:160]
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return ""
+
+    def get_context_block(self, user_id: str | None = None) -> str:
+        """Return a bounded, explicitly uncertain social estimate."""
+        user_id = str(
+            user_id
+            or self._active_social_user_id()
+            or self.active_user_id
+            or "default_user"
         )
-        return block[:200]
+        model = self.known_selves.get(user_id)
+        snapshot = self._calibrated_social_snapshot(user_id)
+        confidence = float(snapshot.get("confidence") or 0.0)
+        if snapshot and int(snapshot.get("observations") or 0) > 0:
+            hypotheses = snapshot.get("affect_hypotheses")
+            hypotheses = hypotheses if isinstance(hypotheses, dict) else {}
+            salient: list[str] = []
+            for name in ("frustration", "urgency", "fatigue", "uncertainty"):
+                value = hypotheses.get(name)
+                if not isinstance(value, dict):
+                    continue
+                cue_confidence = float(value.get("confidence") or 0.0)
+                cue_value = float(value.get("value") or 0.0)
+                if cue_confidence >= 0.20 and cue_value >= 0.45:
+                    salient.append(f"{name}~{cue_value:.2f}@{cue_confidence:.2f}")
+            return (
+                "SOCIAL ESTIMATE (hypothesis, not fact): "
+                f"agent={user_id[:32]}, confidence={confidence:.2f}, "
+                f"signals={','.join(salient[:3]) or 'none reliable'}; "
+                "do not infer culture, demographics, diagnosis, or hidden intent."
+            )[:420]
+        observations = len(model.interaction_history) if model is not None else 0
+        return (
+            f"SOCIAL ESTIMATE: agent={user_id[:32]}, confidence=0.00, "
+            f"relationship_evidence={observations}; clarify material ambiguity rather than assume."
+        )[:240]
 
-    def get_response_guidance(self, user_id: str = "default_user") -> dict[str, Any]:
+    def get_response_guidance(self, user_id: str | None = None) -> dict[str, Any]:
         """Returns actionable guidance for shaping inference responses.
 
         Derived from the user model state — complexity preference, tone, length,
         topics to avoid and topics of interest.
         """
+        user_id = str(
+            user_id
+            or self._active_social_user_id()
+            or self.active_user_id
+            or "default_user"
+        )
         model = self.known_selves.get(user_id)
+        snapshot = self._calibrated_social_snapshot(user_id)
         if not model:
             return {
                 "preferred_complexity": "moderate",
-                "tone_hint": "friendly",
+                "tone_hint": "neutral and respectful",
                 "max_length_hint": 500,
                 "topics_to_avoid": [],
                 "topics_of_interest": [],
+                "social_confidence": float(snapshot.get("confidence") or 0.0),
             }
 
         # Preferred complexity from knowledge level
@@ -466,23 +553,21 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
         }
         preferred = complexity_map.get(model.knowledge_level, "moderate")
 
-        # Tone hint from emotional state and rapport
+        # Relationship state can tighten boundaries, never manufacture intimacy.
         attachment_effects = self._attachment_effects(model.attachment_state)
-        if model.emotional_state in ("frustrated", "terse"):
-            tone = "concise and empathetic"
-        elif attachment_effects["relational_state"] == "injured":
+        recommendation = snapshot.get("recommendation")
+        recommendation = recommendation if isinstance(recommendation, dict) else {}
+        if attachment_effects["relational_state"] == "injured":
             tone = "clear, honest, and repair-oriented"
         elif attachment_effects["relational_state"] == "guarded":
             tone = "careful, boundaried, and specific"
-        elif model.rapport > 0.75:
-            tone = "warm and familiar"
-        elif model.rapport < 0.3:
-            tone = "polite and professional"
+        elif recommendation.get("tone") in {"repair", "calm_direct"}:
+            tone = "calm, direct, and specific"
         else:
-            tone = "friendly"
+            tone = "neutral and respectful"
 
         # Length hint — frustrated/terse users get shorter responses
-        if model.emotional_state in ("frustrated", "terse"):
+        if recommendation.get("be_concise"):
             max_len = 200
         elif preferred == "detailed":
             max_len = 800
@@ -507,14 +592,22 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
             "topics_to_avoid": avoid[:5],
             "topics_of_interest": interests,
             "attachment_effects": attachment_effects,
+            "social_confidence": float(snapshot.get("confidence") or 0.0),
+            "social_inference_is_hypothesis": True,
         }
 
-    def update_from_response(self, user_id: str, response_text: str, user_reaction: str = ""):
+    def update_from_response(
+        self,
+        user_id: str | None,
+        response_text: str,
+        user_reaction: str = "",
+    ) -> None:
         """Post-response feedback loop — update trust/rapport from user reaction.
 
         *user_reaction* is free-form text from the user's next message.  We infer
         whether the previous response was well-received based on keyword signals.
         """
+        user_id = str(user_id or self.active_user_id or "default_user")
         if user_id not in self.known_selves:
             return
         model = self.known_selves[user_id]
@@ -562,9 +655,9 @@ Return JSON: {{"intent": "...", "sentiment": "...", "emotional_state": "...", "k
             logger.debug("ToM: negative reaction from %s, trust -= %.3f", user_id, delta)
 
 # Global Singletons for compatibility
-_engine_instance = None
+_engine_instance: TheoryOfMindEngine | None = None
 
-def get_theory_of_mind(brain=None):
+def get_theory_of_mind(brain: Any = None) -> TheoryOfMindEngine:
     global _engine_instance
     if _engine_instance is None:
         _engine_instance = TheoryOfMindEngine(brain)

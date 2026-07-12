@@ -361,7 +361,9 @@ class TaskDecomposer:
                 f"semantic_flexibility={_num('semantic_flexibility'):.2f}; "
                 f"analogical_leap_pressure={_num('analogical_leap_pressure'):.2f}; "
                 f"sensorimotor_grounding={_num('sensorimotor_grounding'):.2f}; "
-                f"verification_pressure={_num('verification_pressure'):.2f}"
+                f"verification_pressure={_num('verification_pressure'):.2f}; "
+                f"social_uncertainty={_num('social_uncertainty'):.2f}; "
+                f"social_repair_pressure={_num('social_repair_pressure'):.2f}"
             ),
             "Planning effects: preserve multiple valid interpretations, use analogous known workflows when useful, and bind every screen/tool step to observable verification.",
         ]
@@ -397,6 +399,12 @@ class TaskDecomposer:
                 lines.append(
                     "Evidence repair before irreversible action: "
                     + ", ".join(str(item)[:120] for item in repairs[:8])
+                )
+            social_constraints = causal_effects.get("social_planning_constraints")
+            if isinstance(social_constraints, list) and social_constraints:
+                lines.append(
+                    "Social/consent constraints: "
+                    + ", ".join(str(item)[:120] for item in social_constraints[:8])
                 )
         return "\n".join(lines)
 

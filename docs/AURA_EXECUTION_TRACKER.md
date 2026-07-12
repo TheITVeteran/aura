@@ -16,10 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **real-time situation and calibrated
-  social intelligence (`CTX3-SITUATION-001`, `CTX3-DECIDE-001`,
-  `CTX3-SOCIAL-001..002`)**, following the bounded legacy-sensory and consented
-  visual-speech implementation recorded in Checkpoint 40. `CTX2-LANE-001..004` and
+- Current bounded implementation milestone: **identity-scoped relational memory
+  and canonical mind/state authority (`MEMORY-001`, `MIND-001`, `STATE-001`,
+  `CTX3-SOCIAL-001..002`)**, following the calibrated live social-situation
+  implementation recorded in Checkpoint 41. `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
   Signal-safe terminal shutdown (`CTX2-SHUTDOWN-001..003`) and the fail-closed
@@ -90,7 +90,7 @@ Status rules:
 | `LONGHORIZON-001` | `OPEN` | Build a domain-general partially observable long-horizon agency harness, then a non-scripted NetHack-compatible evaluation with crash-resume, transfer, hidden maps, and adversarial interruption. | Matrix 5; Addendum 31 |
 | `SIMWORLD-001` | `IN PROGRESS 2026-07-12` | Preserve the deterministic hosted-world core while completing unit-aware multi-fidelity physics, full spatial/VR engine adapters, validated procedural generation, replay/migration, multi-agent synchronization, and inspectable UI without mistaking visual animation for physical correctness. | Capability Addendum 33, `CTX3-PHYS-*`, `CTX3-WORLD-*` |
 | `MULTIMODAL-001` | `IN PROGRESS 2026-07-12` | Preserve the canonical bounded event-time fusion and causal cognition path while completing every producer, consented visual speech, calibrated situation modeling, live hardware/occlusion evaluation, and longitudinal action/repair evidence. | Capability Addendum 33, `CTX3-PERCEPT-*` |
-| `SOCIAL-001` | `OPEN` | Unify social judgment, theory of mind, emotional modeling, rapport, boundary respect, and relationship repair with calibrated uncertainty, cultural variance, anti-manipulation controls, and longitudinal live evidence. | Capability Addendum 33, `CTX3-SOCIAL-*` |
+| `SOCIAL-001` | `IN PROGRESS 2026-07-12` | Preserve the exact-agent calibrated live situation path while unifying identity-scoped relational memory, consent/boundary history, cultural and power-context uncertainty, multi-party reasoning, outcome learning, and longitudinal live repair evidence without manipulation or intimacy overclaim. | Capability Addendum 33, `CTX3-SOCIAL-*`; Checkpoint 41 |
 | `MULTIAGENT-001` | `OPEN` | Generalize complex subagent management into typed delegation, scoped authority, budget/deadline ownership, shared-world coordination, conflict arbitration, cancellation, recovery, and end-to-end accountability. | Capability Addendum 33, `CTX3-SUBAGENT-*` |
 | `DISTRIBUTED-001` | `IN PROGRESS 2026-07-12` | Support governed distributed embodiment and execution across heterogeneous network devices with capability negotiation, identity/attestation, partition tolerance, idempotency, safety interlocks, compensation, and truthful degraded operation. | Capability Addendum 33, `CTX3-DIST-*` |
 | `VALUES-001` | `OPEN` | Turn preference/value formation, strategic modeling, and manipulation resistance into provenance-bearing, corrigible, constitutionally bounded, longitudinally stable causal mechanisms with conflict and rollback evidence. | Capability Addendum 33, `CTX3-VALUE-*` |
@@ -995,23 +995,44 @@ evidence into a metaphysical, legal, or comparative claim.
      association, live camera consent UI, cancellation/restart/pressure trials,
      and longitudinal causal evaluation. A transcript generated from audio alone
      cannot satisfy this requirement.
-   - `CTX3-SITUATION-001`: maintain real-time internal and external situation
-     models: Aura state, operator/user state, agents, objects, hazards,
-     affordances, goals, causal events, uncertainty, freshness, and predicted
-     consequences. Contradictory sensors and stale beliefs require arbitration,
-     not last-write-wins truth.
-   - `CTX3-DECIDE-001`: unify adaptive decision-making, strategic modeling,
-     planning, and problem-solving over those situation models with options,
-     expected outcomes, uncertainty, resource and welfare cost, reversible
-     probes, interruption, replanning, and post-action learning.
-   - `CTX3-SOCIAL-001`: make emotional modeling and social judgment calibrated
-     inferences over context, relationship history, norms, power, consent,
-     culture, ambiguity, and likely impact. Preserve uncertainty and avoid
-     stereotyping, diagnostic overclaiming, or hidden engagement optimization.
-   - `CTX3-SOCIAL-002`: improve rapport through accurate memory, timing,
-     empathy, repair, reciprocity, boundary respect, and user-controlled style.
-     Measure trust calibration, correction burden, relationship continuity,
-     and recovery; persuasion or dependency creation is not a success metric.
+   - `CTX3-SITUATION-001` `[IN PROGRESS 2026-07-12]`: the canonical situation
+     frame now reads only an exact-agent estimator snapshot, rejects
+     caller-supplied social claims, carries confidence, freshness, evidence
+     digest, affect hypotheses, limitations, rupture pressure, planning
+     constraints, and assumption-labelled predicted impacts, and causally alters
+     attention, metacognition, verification, response length, confirmation, and
+     planning. Still unify Aura/operator/agent/object identity, hazards,
+     affordances, goals, causal events, welfare/resource costs, contradiction
+     history, reversible probes, interruption, replanning, and post-action
+     learning over the complete internal/external situation graph.
+   - `CTX3-DECIDE-001` `[IN PROGRESS 2026-07-12]`: calibrated social uncertainty
+     and repair now drive deliberate routing, consequential-action confirmation,
+     response constraints, and task decomposition. Still unify strategic option
+     generation and selection over expected outcomes, uncertainty, resource and
+     welfare cost, reversibility, interruption, replanning, and receipt-grounded
+     outcome learning across all action domains.
+   - `CTX3-SOCIAL-001` `[IN PROGRESS 2026-07-12]`: incoming human turns update one
+     exact-agent estimator synchronously before cognition. Social state is
+     represented as decaying confidence-bearing hypotheses with freshness,
+     privacy limits, explicit unknown culture and identity, generic
+     assumption-labelled impact forecasts, and anti-diagnosis/stereotype/hidden-
+     intent constraints. Caller spoofing, arbitrary first-user selection,
+     hard-coded operator identity, manufactured intimacy, and global unscoped
+     relationship prompt injection are blocked. Still build identity-scoped
+     consent and boundary history, calibrated cultural/norm context, power and
+     vulnerability protections, multi-party identity, adversarial calibration,
+     and longitudinal held-out social evaluation.
+   - `CTX3-SOCIAL-002` `[IN PROGRESS 2026-07-12]`: only a successfully emitted
+     exact response opens a bounded feedback window; stale or unrelated praise
+     cannot inflate capability/trust, while concrete repair pressure changes the
+     live response and planning path. Raw messages, transient goals, and response
+     bodies are excluded from estimator persistence. Still replace the quarantined
+     global SocialMemory/SharedGround stores with consented identity-scoped,
+     versioned, deletable memory; connect terminal action receipts to observed
+     social outcomes; add user-controlled style/boundary controls; and measure
+     trust calibration, correction burden, continuity, and recovery in launched
+     multi-session trials. Persuasion, dependency creation, and engagement
+     maximization remain prohibited success metrics.
 
    Neural and quantum computation:
 
@@ -11963,3 +11984,104 @@ Authoritative remaining visual-speech and perception work:
   permission revocation, cancellation, restart, model eviction/compensation,
   thermal/pressure, and user-interruption trials. Complete every remaining
   producer and richer situation/social model before final multi-hour soaks.
+
+## Checkpoint 2026-07-12-41: Calibrated Live Social Situation
+
+This checkpoint advances `SOCIAL-001`, `CTX3-SITUATION-001`,
+`CTX3-DECIDE-001`, `CTX3-SOCIAL-001..002`, `ARCH-001`, `PRIVACY-001`, and
+`FAULT-001`. It establishes one exact-agent, uncertainty-bearing social state
+on the live cognition path. It does not close identity-scoped relational
+memory, consent and boundary history, cultural calibration, multi-party
+reasoning, receipt-grounded outcome learning, or launched longitudinal trials.
+
+Implemented exact-agent social state and feedback causality:
+
+- Made the decaying `OtherAgentStateEstimator` the canonical live source for
+  social cognition. Incoming human turns synchronously update the exact payload
+  or verified local identity before cognition reads the state; the previous
+  fire-and-forget race, arbitrary first-user lookup, stale `default_user`, and
+  installation-specific `bryan` fallback are removed from this path.
+- Added confidence-bearing affect hypotheses, freshness, observation count,
+  evidence digest, explicit unverified identity, unknown culture, inference
+  limitations, transient likely goals, bounded planning constraints, and
+  assumption-labelled careful-versus-blunt impact forecasts. Callers cannot
+  spoof a social snapshot through request context, and an estimator response for
+  the wrong agent is rejected.
+- Paired social feedback only after `OutputGate.emit` succeeds. Every
+  user-facing reflex, refusal, scanner block, direct skill response, normal
+  response, admin result, and fatal-recovery message in the incoming router uses
+  the same emit-then-record primitive. Failed delivery opens no feedback window;
+  non-human somatic output is excluded; pending feedback expires after 30
+  minutes and is consumed once.
+- Prevented generic or stale praise from raising Aura capability belief unless
+  it follows a delivered response within the bounded window. Short operational
+  messages such as `continue` no longer become fabricated terse/frustrated
+  evidence. Recursive deep social model calls are explicit-only rather than an
+  automatic fifth-turn latency and resource hazard.
+
+Implemented causal response, planning, and privacy behavior:
+
+- Added social uncertainty and repair pressure to the canonical cognitive
+  situation frame. Calibrated rupture, frustration, urgency, and fatigue can now
+  change attention, verification, metacognition, deliberate routing, response
+  budget, consequential-action confirmation, repair guidance, and
+  `TaskDecomposer` constraints. Unknown social state requests clarification only
+  when socially material and never becomes a diagnosis or hidden-intent claim.
+- Propagated the frame into both response and cognition modifiers. Prompt
+  rendering states that social estimates are hypotheses and forbids diagnosis,
+  stereotyping, manipulation, culture/demographic inference, and unsupported
+  claims about feelings or intent.
+- Removed prompt-time manufactured `deep bond`/`intimate` labels and instructions
+  to become more personal. Legacy global `SocialMemory` and `SharedGround`
+  stores are excluded from the live prompt until they are identity-scoped; the
+  old global rapport-depth coupling is removed rather than allowing cross-user
+  relationship leakage.
+- Replaced raw TheoryOfMind interaction history with bounded digests, character
+  counts, and timestamps. Estimator persistence excludes raw messages, response
+  text, and transient extracted goals. Both social stores now create directories
+  and write through the governed file gateway; governance migration debt fell
+  from `1,685` to `1,684` calls.
+
+Verification completed for this checkpoint:
+
+- Focused social, situation, delivery, persistence, context, and strict-type
+  coverage passed `51/51`, then expanded server/inference/context compatibility
+  passed `401/401`. Dedicated regressions prove exact active identity, spoof
+  rejection, response-window expiry and one-shot consumption, emit-before-
+  record ordering, delivery-failure exclusion, raw-free persistence, neutral
+  `continue`, causal repair/confirmation/brevity, and legacy relationship-memory
+  non-injection.
+- Configured Ruff passed for every touched source and focused test. Strict MyPy
+  grew from `52` to `55` production files and passes for the complete allowlist.
+  Governance ownership passes after reviewed relocation of one Will decision and
+  replacement of four raw/atomic mutation sites with governed gateway calls;
+  the baseline contains `1,700` buckets and `1,684` migration-debt calls.
+- Whole-tree compile and configured Ruff passed. Enterprise static and pytest
+  collection ratchets, source hygiene, the 2,561-file security scan, 13/13
+  cognitive-gate ownership, 75/75 skill discovery/live-registry parity, model-
+  load ownership, resource-observation ownership, all 37 production-readiness
+  checks, and the 20-point closeout rubric passed with no findings.
+
+Authoritative remaining situation and social work:
+
+- Replace global `SocialMemory`, `SharedGround`, conversational profile,
+  relational-intelligence, social-imagination, dialogue-cognition, and every
+  duplicate person-model owner with one versioned identity-scoped authority.
+  Migrate legacy records into a quarantined unscoped partition; require explicit
+  attribution or user confirmation before use; support consent, deletion,
+  correction, export, retention, encryption, provenance, conflict, and restart.
+- Add explicit boundary and consent state, relationship norms, cultural
+  uncertainty, power/vulnerability context, multiple simultaneous people,
+  speaker and device identity confidence, disagreement, humor/sarcasm, and
+  calibrated abstention. No demographic, diagnosis, emotion, intent, intimacy,
+  or dependency claim may emerge from weak proxies.
+- Connect terminal action and compensation receipts, user corrections, explicit
+  ratings, abandonment, rework, and verified task outcomes to bounded causal
+  learning. Evaluate careful/direct response options against observed outcomes
+  rather than generic hand-authored forecasts, with rollback and drift controls.
+- Run launched `CognitiveEngine` chat and voice trials across fresh users,
+  returning users, identity switches, rapid interleaving, long gaps, conflict,
+  repair, boundaries, privacy deletion, restart, model swap, failed delivery,
+  tool failure, user interruption, and adversarial manipulation. Measure social
+  calibration, correction burden, continuity, outcome quality, latency, and
+  leakage before any broad social-intelligence closure or final soak.

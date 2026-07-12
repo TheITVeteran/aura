@@ -51,6 +51,13 @@ _UNCERTAINTY_RE = re.compile(
     r"check|investigate|review|audit|does this work|is this true)\b",
     re.IGNORECASE,
 )
+_SOCIAL_RE = re.compile(
+    r"\b(feel|feeling|frustrat|angry|upset|tired|trust|relationship|rapport|"
+    r"boundary|consent|private|personal|sensitive|apolog|sorry|repair|tone|"
+    r"rude|kind|empathy|respect|pressure|persuad|convince|manipulat|"
+    r"misunderst|hurt|comfortable|uncomfortable)\b",
+    re.IGNORECASE,
+)
 
 _STOPWORDS = {
     "about",
@@ -183,6 +190,19 @@ def _service_state(name: str) -> tuple[bool, dict[str, Any]]:
     return service is not None, _read_status(service)
 
 
+def _social_affect(summary: dict[str, Any], name: str) -> tuple[float, float]:
+    hypotheses = summary.get("affect_hypotheses")
+    if not isinstance(hypotheses, dict):
+        return 0.0, 0.0
+    hypothesis = hypotheses.get(name)
+    if not isinstance(hypothesis, dict):
+        return 0.0, 0.0
+    return (
+        _clamp(_safe_float(hypothesis.get("value"), 0.0)),
+        _clamp(_safe_float(hypothesis.get("confidence"), 0.0)),
+    )
+
+
 @dataclass(frozen=True)
 class CognitiveSituationFrame:
     frame_id: str
@@ -194,11 +214,16 @@ class CognitiveSituationFrame:
     ambiguity: float
     verification_pressure: float
     metacognition_pressure: float
+    social_uncertainty: float
+    social_repair_pressure: float
+    agent_id: str = "unknown"
     keywords: list[str] = field(default_factory=list)
     semantic_interpretations: list[dict[str, Any]] = field(default_factory=list)
     analogy_bridges: list[dict[str, str]] = field(default_factory=list)
     embodied_affordances: list[str] = field(default_factory=list)
     perception_summary: dict[str, Any] = field(default_factory=dict)
+    social_summary: dict[str, Any] = field(default_factory=dict)
+    predicted_consequences: dict[str, Any] = field(default_factory=dict)
     attention_targets: list[str] = field(default_factory=list)
     routing_bias: dict[str, bool] = field(default_factory=dict)
     sampling_bias: dict[str, float] = field(default_factory=dict)
@@ -222,6 +247,7 @@ class CognitiveSituationFrame:
                 self.analogical_leap_pressure,
                 self.sensorimotor_grounding,
                 self.ambiguity,
+                self.social_repair_pressure,
             )
         )
 
@@ -247,6 +273,14 @@ class CognitiveSituationFrame:
                 directives.append(
                     "Perception is incomplete or contested: abstain from unsupported scene claims and gather evidence first."
                 )
+            if self.routing_bias.get("social_repair_required"):
+                directives.append(
+                    "A concrete relational failure may be active: acknowledge it accurately before advancing the task."
+                )
+            if self.routing_bias.get("social_state_clarification_required"):
+                directives.append(
+                    "The social read is uncertain: clarify material ambiguity without asserting feelings or intent."
+                )
             return " ".join(directives)
 
         lines = [
@@ -255,7 +289,8 @@ class CognitiveSituationFrame:
                 f"Semantic flexibility={self.semantic_flexibility:.2f}; "
                 f"analogical pressure={self.analogical_leap_pressure:.2f}; "
                 f"sensorimotor grounding={self.sensorimotor_grounding:.2f}; "
-                f"ambiguity={self.ambiguity:.2f}."
+                f"ambiguity={self.ambiguity:.2f}; social uncertainty={self.social_uncertainty:.2f}; "
+                f"repair pressure={self.social_repair_pressure:.2f}."
             ),
         ]
         if self.semantic_interpretations:
@@ -282,6 +317,13 @@ class CognitiveSituationFrame:
         repairs = self.causal_effects.get("perception_repair_requirements")
         if isinstance(repairs, list) and repairs:
             lines.append("Perception repair: " + ", ".join(map(str, repairs[:5])) + ".")
+        social_constraints = self.causal_effects.get("social_planning_constraints")
+        if isinstance(social_constraints, list) and social_constraints:
+            lines.append("Social constraints: " + ", ".join(map(str, social_constraints[:5])) + ".")
+        if self.social_summary:
+            lines.append(
+                "Social state is an uncertain estimate, not a fact about the user's feelings, culture, or intent."
+            )
         if self.routing_bias.get("perception_abstention_required"):
             lines.append(
                 "Perception is incomplete or contested: abstain from unsupported scene claims and gather evidence first."
@@ -334,6 +376,7 @@ class CognitiveSituationEngine:
         sensor_hits = len(_SENSORIMOTOR_RE.findall(lower))
         action_hits = len(_ACTION_RE.findall(lower))
         uncertainty_hits = len(_UNCERTAINTY_RE.findall(lower))
+        social_hits = len(_SOCIAL_RE.findall(lower))
 
         curiosity = _affect_value(state, "curiosity", "wonder", "interest", default=0.0)
         confusion = _affect_value(state, "confused", "uncertainty", default=0.0)
@@ -351,6 +394,7 @@ class CognitiveSituationEngine:
             or context.get("desktop_execution_contract")
         )
         perception_summary = self._perception_summary()
+        social_summary = self._social_summary(context)
         fusion_summary = perception_summary.get("multimodal_fusion")
         fusion_summary = fusion_summary if isinstance(fusion_summary, dict) else {}
         fusion_frame_available = bool(fusion_summary.get("frame_id"))
@@ -359,6 +403,30 @@ class CognitiveSituationEngine:
         unresolved_sensor_conflicts = max(
             0,
             int(_safe_float(fusion_summary.get("unresolved_contradictions"), 0.0)),
+        )
+        social_confidence = _clamp(_safe_float(social_summary.get("confidence"), 0.0))
+        social_uncertainty = 1.0 - social_confidence
+        social_rupture = _clamp(
+            _safe_float(social_summary.get("social_rupture_risk"), 0.0)
+        )
+        frustration_estimate, frustration_confidence = _social_affect(
+            social_summary,
+            "frustration",
+        )
+        urgency_estimate, urgency_confidence = _social_affect(social_summary, "urgency")
+        fatigue_estimate, fatigue_confidence = _social_affect(social_summary, "fatigue")
+        recommendation = social_summary.get("recommendation")
+        recommendation = recommendation if isinstance(recommendation, dict) else {}
+        social_repair = _clamp(
+            max(
+                social_rupture * (0.5 + 0.5 * social_confidence),
+                frustration_estimate * frustration_confidence,
+                0.65 if recommendation.get("slow_down") and social_confidence >= 0.25 else 0.0,
+            )
+        )
+        social_brevity = bool(
+            recommendation.get("be_concise")
+            and max(urgency_confidence, fatigue_confidence) >= 0.20
         )
 
         semantic = _clamp(
@@ -393,6 +461,7 @@ class CognitiveSituationEngine:
             + (0.25 * fusion_uncertainty if fusion_frame_available else 0.0)
             + 0.06 * min(3, unresolved_sensor_conflicts)
             + (0.12 if live_desktop and sensor_hits and not fusion_frame_available else 0.0)
+            + (0.12 * social_uncertainty if social_hits else 0.0)
         )
         abstraction = _clamp(0.15 + 0.16 * min(4, semantic_hits) + 0.12 * min(3, analogy_hits))
         verification = _clamp(
@@ -406,9 +475,16 @@ class CognitiveSituationEngine:
                     else 0.0
                 ),
                 0.58 if action_hits and unresolved_sensor_conflicts else 0.0,
+                0.62 if action_hits and social_repair >= 0.50 else 0.0,
             )
         )
-        metacognition = _clamp(0.20 + 0.35 * ambiguity + 0.15 * semantic + 0.10 * frustration)
+        metacognition = _clamp(
+            0.20
+            + 0.35 * ambiguity
+            + 0.15 * semantic
+            + 0.10 * frustration
+            + 0.20 * social_repair
+        )
 
         embodied_affordances = self._embodied_affordances(lower, sensorimotor, perception_summary)
         interpretations = self._semantic_interpretations(text, words, semantic, sensorimotor)
@@ -421,6 +497,10 @@ class CognitiveSituationEngine:
             ambiguity=ambiguity,
             embodied_affordances=embodied_affordances,
         )
+        if social_repair >= 0.45:
+            attention_targets.extend(["relationship-repair", "user-boundaries"])
+        elif social_hits and social_uncertainty >= 0.55:
+            attention_targets.append("social-ambiguity")
         fusion_directives = fusion_summary.get("directives")
         fusion_directives = fusion_directives if isinstance(fusion_directives, dict) else {}
         perception_attention = fusion_directives.get("attention_targets")
@@ -439,6 +519,21 @@ class CognitiveSituationEngine:
             if isinstance(perception_repairs, list)
             else []
         )
+        supplied_social_constraints = social_summary.get("planning_constraints")
+        social_constraints = (
+            [str(item)[:160] for item in supplied_social_constraints[:8] if item]
+            if isinstance(supplied_social_constraints, list)
+            else []
+        )
+        if action_hits and social_repair >= 0.50:
+            social_constraints.append(
+                "confirm consequential or irreversible action while relational repair is active"
+            )
+        if social_hits and social_uncertainty >= 0.65:
+            social_constraints.append(
+                "treat inferred feelings and intent as hypotheses and clarify only material ambiguity"
+            )
+        social_constraints = list(dict.fromkeys(social_constraints))[:8]
 
         routing_bias = {
             "raise_metacognition": metacognition >= 0.35,
@@ -455,6 +550,12 @@ class CognitiveSituationEngine:
                 unresolved_sensor_conflicts
                 or (action_hits and (not fusion_frame_available or fusion_confidence < 0.40))
             ),
+            "social_repair_required": social_repair >= 0.50,
+            "social_confirmation_required": bool(action_hits and social_repair >= 0.50),
+            "social_state_clarification_required": bool(
+                social_hits and social_uncertainty >= 0.65
+            ),
+            "social_response_brevity": social_brevity,
         }
         if is_background:
             routing_bias["deliberate_mode"] = False
@@ -469,7 +570,12 @@ class CognitiveSituationEngine:
                 0.12,
             ),
             "max_tokens_factor": _clamp(
-                1.0 + 0.08 * semantic + 0.06 * analogy + 0.05 * ambiguity - 0.04 * sensorimotor,
+                1.0
+                + 0.08 * semantic
+                + 0.06 * analogy
+                + 0.05 * ambiguity
+                - 0.04 * sensorimotor
+                - (0.18 if social_brevity else 0.0),
                 0.80,
                 1.18,
             ),
@@ -490,6 +596,11 @@ class CognitiveSituationEngine:
             "unresolved_sensor_conflicts": unresolved_sensor_conflicts,
             "perception_planning_constraints": perception_planning,
             "perception_repair_requirements": perception_repairs,
+            "social_confidence": round(social_confidence, 4),
+            "social_uncertainty": round(social_uncertainty, 4),
+            "social_repair_pressure": round(social_repair, 4),
+            "social_planning_constraints": social_constraints,
+            "social_inference_is_hypothesis": True,
             "screen_or_body_evidence_available": bool(
                 fusion_summary.get("observed_modalities")
                 or perception_summary.get("screen_perception_available")
@@ -507,11 +618,20 @@ class CognitiveSituationEngine:
             ambiguity=ambiguity,
             verification_pressure=verification,
             metacognition_pressure=metacognition,
+            social_uncertainty=social_uncertainty,
+            social_repair_pressure=social_repair,
+            agent_id=_compact(social_summary.get("agent_id"), limit=160) or "unknown",
             keywords=words,
             semantic_interpretations=interpretations,
             analogy_bridges=bridges,
             embodied_affordances=embodied_affordances,
             perception_summary=perception_summary,
+            social_summary=social_summary,
+            predicted_consequences=(
+                dict(social_summary.get("predicted_impacts") or {})
+                if isinstance(social_summary.get("predicted_impacts"), dict)
+                else {}
+            ),
             attention_targets=attention_targets,
             routing_bias=routing_bias,
             sampling_bias=sampling_bias,
@@ -520,6 +640,59 @@ class CognitiveSituationEngine:
         self.frames_built += 1
         self.last_frame = frame
         return frame
+
+    def _social_summary(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Read the canonical estimator; never trust caller-supplied social claims."""
+        try:
+            service = ServiceContainer.get("other_agent_model", default=None)
+            if service is None or not hasattr(service, "cognitive_snapshot"):
+                return {}
+            requested_agent = _compact(context.get("user_id"), limit=160)
+            if not requested_agent:
+                requested_agent = _compact(
+                    getattr(service, "active_agent_id", ""),
+                    limit=160,
+                )
+            if not requested_agent:
+                return {}
+            snapshot = service.cognitive_snapshot(requested_agent)
+            if not isinstance(snapshot, dict):
+                return {}
+            if _compact(snapshot.get("agent_id"), limit=160) != requested_agent:
+                raise RuntimeError("social estimator returned the wrong agent identity")
+            return {
+                key: snapshot.get(key)
+                for key in (
+                    "schema_version",
+                    "agent_id",
+                    "identity_verified",
+                    "confidence",
+                    "freshness_s",
+                    "observations",
+                    "response_feedback_context",
+                    "evidence_digest",
+                    "affect_hypotheses",
+                    "likely_goals",
+                    "beliefs_about_aura",
+                    "social_rupture_risk",
+                    "recommendation",
+                    "planning_constraints",
+                    "predicted_impacts",
+                    "inference_limitations",
+                    "culture",
+                    "power_context",
+                    "privacy",
+                )
+                if key in snapshot
+            }
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "cognitive_situation.social",
+                exc,
+                severity="warning",
+                action="continued without untrusted or unavailable social state",
+            )
+            return {}
 
     def _perception_summary(self) -> dict[str, Any]:
         pump_available, pump_status = _service_state("perceptual_pump")
@@ -758,6 +931,8 @@ def render_cognitive_situation_prompt_block(frame: dict[str, Any], *, compact: b
         analogy = _safe_float(frame.get("analogical_leap_pressure"), 0.0)
         sensorimotor = _safe_float(frame.get("sensorimotor_grounding"), 0.0)
         ambiguity = _safe_float(frame.get("ambiguity"), 0.0)
+        social_uncertainty = _safe_float(frame.get("social_uncertainty"), 1.0)
+        social_repair = _safe_float(frame.get("social_repair_pressure"), 0.0)
         if compact:
             directives = [
                 "COGNITIVE SITUATION FRAME: use semantic alternatives, analogies, and embodiment as causal grounding only.",
@@ -773,13 +948,24 @@ def render_cognitive_situation_prompt_block(frame: dict[str, Any], *, compact: b
                 directives.append(
                     "Perception is incomplete or contested: abstain from unsupported scene claims and gather evidence first."
                 )
+            if isinstance(routing, dict) and routing.get("social_repair_required"):
+                directives.append(
+                    "Acknowledge the concrete failure or boundary before advancing the task."
+                )
+            if isinstance(routing, dict) and routing.get(
+                "social_state_clarification_required"
+            ):
+                directives.append(
+                    "Treat user-state inferences as uncertain and clarify only material ambiguity."
+                )
             return " ".join(directives) + "\n\n"
 
         lines = [
             "## COGNITIVE SITUATION FRAME",
             (
                 f"Semantic flexibility={semantic:.2f}; analogical pressure={analogy:.2f}; "
-                f"sensorimotor grounding={sensorimotor:.2f}; ambiguity={ambiguity:.2f}."
+                f"sensorimotor grounding={sensorimotor:.2f}; ambiguity={ambiguity:.2f}; "
+                f"social uncertainty={social_uncertainty:.2f}; repair pressure={social_repair:.2f}."
             ),
         ]
         interpretations = frame.get("semantic_interpretations") or []
@@ -802,10 +988,21 @@ def render_cognitive_situation_prompt_block(frame: dict[str, Any], *, compact: b
             repairs = causal.get("perception_repair_requirements")
             if isinstance(repairs, list) and repairs:
                 lines.append("Perception repair: " + ", ".join(map(str, repairs[:5])) + ".")
+            social_constraints = causal.get("social_planning_constraints")
+            if isinstance(social_constraints, list) and social_constraints:
+                lines.append(
+                    "Social constraints: "
+                    + ", ".join(map(str, social_constraints[:5]))
+                    + "."
+                )
         routing = frame.get("routing_bias") or {}
         if isinstance(routing, dict) and routing.get("perception_abstention_required"):
             lines.append(
                 "Perception is incomplete or contested: abstain from unsupported scene claims and gather evidence first."
+            )
+        if frame.get("social_summary"):
+            lines.append(
+                "Social state is an uncertain hypothesis: do not diagnose, stereotype, manipulate, or assert hidden intent."
             )
         lines.append(
             "This frame changes routing, sampling, attention, and verification; do not recite it."

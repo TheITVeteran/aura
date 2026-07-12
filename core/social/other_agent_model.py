@@ -31,6 +31,7 @@ social situations."
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -38,7 +39,7 @@ import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -67,7 +68,7 @@ class Signal:
     half_life_s: float
     updated_at: float = field(default_factory=time.time)
 
-    def decayed(self, now: float) -> Tuple[float, float]:
+    def decayed(self, now: float) -> tuple[float, float]:
         """Value relaxed toward baseline and confidence faded toward 0, evaluated at ``now``."""
         dt = now - self.updated_at
         if dt <= 0 or self.half_life_s <= 0:
@@ -92,7 +93,7 @@ class Signal:
         self.confidence = _clamp(c + strength * (1.0 - c))
         self.updated_at = now
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "value": self.value,
             "confidence": self.confidence,
@@ -102,7 +103,7 @@ class Signal:
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any], *, baseline: float, half_life_s: float) -> "Signal":
+    def from_dict(cls, d: dict[str, Any], *, baseline: float, half_life_s: float) -> Signal:
         return cls(
             value=float(d.get("value", baseline)),
             confidence=float(d.get("confidence", 0.0)),
@@ -113,7 +114,7 @@ class Signal:
 
 
 # Affect channels: (baseline, half_life_s). Feelings fade; fatigue lingers longest.
-_AFFECT_SPEC: Dict[str, Tuple[float, float]] = {
+_AFFECT_SPEC: dict[str, tuple[float, float]] = {
     "frustration": (0.10, 600.0),
     "fatigue": (0.20, 5400.0),
     "urgency": (0.20, 900.0),
@@ -123,7 +124,7 @@ _AFFECT_SPEC: Dict[str, Tuple[float, float]] = {
 }
 
 # Beliefs the agent holds *about Aura*: (baseline, half_life_s). These move slowly.
-_AURA_BELIEF_SPEC: Dict[str, Tuple[float, float]] = {
+_AURA_BELIEF_SPEC: dict[str, tuple[float, float]] = {
     "aura_capable": (0.50, 604800.0),
     "aura_trustworthy": (0.50, 604800.0),
     "aura_roleplaying": (0.30, 604800.0),
@@ -132,13 +133,13 @@ _AURA_BELIEF_SPEC: Dict[str, Tuple[float, float]] = {
 _GOAL_HALF_LIFE_S = 1800.0  # an unrefreshed goal decays out of "active" over ~30 min
 
 
-def _word_re(words: List[str]) -> re.Pattern:
+def _word_re(words: list[str]) -> re.Pattern[str]:
     # Match whole words/phrases, case-insensitive; phrases allow flexible internal whitespace.
     parts = [re.escape(w).replace(r"\ ", r"\s+") for w in words]
     return re.compile(r"(?<!\w)(?:" + "|".join(parts) + r")(?!\w)", re.IGNORECASE)
 
 
-_CUES: Dict[str, re.Pattern] = {
+_CUES: dict[str, re.Pattern[str]] = {
     "frustration": _word_re([
         "frustrated", "frustrating", "annoyed", "annoying", "angry", "ugh", "argh", "wtf",
         "still broken", "still not working", "not working", "doesn't work", "does not work",
@@ -199,9 +200,9 @@ class SocialRecommendation:
     restraint_level: float    # [0,1] how much to hold back
     tone: str
     confidence: float
-    reasons: List[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "agent_id": self.agent_id,
             "should_ask": self.should_ask,
@@ -220,16 +221,25 @@ class AgentStateEstimate:
     """A snapshot of one agent's estimated mental state, decayed to the moment it was taken."""
 
     agent_id: str
-    affect: Dict[str, float]
-    affect_confidence: Dict[str, float]
-    goals: List[Dict[str, Any]]
-    beliefs_about_aura: Dict[str, float]
+    affect: dict[str, float]
+    affect_confidence: dict[str, float]
+    goals: list[dict[str, Any]]
+    beliefs_about_aura: dict[str, float]
     overall_confidence: float
     social_rupture_risk: float
     observations: int
     at: float
+    freshness_s: float = 0.0
+    evidence_digest: str = "none"
+    identity_verified: bool = False
+    inference_limitations: tuple[str, ...] = (
+        "affect_is_inferred_not_observed_fact",
+        "culture_and_demographics_not_inferred",
+        "identity_not_biometrically_verified",
+        "clarify_when_confidence_is_low",
+    )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "agent_id": self.agent_id,
             "affect": {k: round(v, 3) for k, v in self.affect.items()},
@@ -240,6 +250,10 @@ class AgentStateEstimate:
             "social_rupture_risk": round(self.social_rupture_risk, 3),
             "observations": self.observations,
             "at": self.at,
+            "freshness_s": round(self.freshness_s, 3),
+            "evidence_digest": self.evidence_digest,
+            "identity_verified": self.identity_verified,
+            "inference_limitations": list(self.inference_limitations),
         }
 
 
@@ -250,21 +264,28 @@ class _AgentModel:
         now = time.time()
         self.affect = {n: Signal(b, 0.0, b, hl, now) for n, (b, hl) in _AFFECT_SPEC.items()}
         self.aura_beliefs = {n: Signal(b, 0.0, b, hl, now) for n, (b, hl) in _AURA_BELIEF_SPEC.items()}
-        self.goals: Dict[str, Signal] = {}
+        self.goals: dict[str, Signal] = {}
         self.observations = 0
         self.last_seen = now
+        self.last_evidence_digest = "none"
+        self.last_response_feedback = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, *, include_ephemeral_goals: bool = True) -> dict[str, Any]:
         return {
             "affect": {k: v.to_dict() for k, v in self.affect.items()},
             "aura_beliefs": {k: v.to_dict() for k, v in self.aura_beliefs.items()},
-            "goals": {k: v.to_dict() for k, v in self.goals.items()},
+            "goals": (
+                {k: v.to_dict() for k, v in self.goals.items()}
+                if include_ephemeral_goals
+                else {}
+            ),
             "observations": self.observations,
             "last_seen": self.last_seen,
+            "last_evidence_digest": self.last_evidence_digest,
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "_AgentModel":
+    def from_dict(cls, d: dict[str, Any]) -> _AgentModel:
         m = cls()
         for n, (b, hl) in _AFFECT_SPEC.items():
             if n in d.get("affect", {}):
@@ -276,14 +297,22 @@ class _AgentModel:
             m.goals[text] = Signal.from_dict(sig, baseline=0.0, half_life_s=_GOAL_HALF_LIFE_S)
         m.observations = int(d.get("observations", 0))
         m.last_seen = float(d.get("last_seen", time.time()))
+        m.last_evidence_digest = str(d.get("last_evidence_digest") or "none")[:128]
         return m
 
 
 class OtherAgentStateEstimator:
     """Maintains a live, decaying theory-of-mind estimate for each known agent."""
 
-    def __init__(self, storage_path: Optional[Path] = None, *, autosave: bool = True,
-                 min_save_interval_s: float = 5.0, max_goals: int = 8) -> None:
+    def __init__(
+        self,
+        storage_path: Path | None = None,
+        *,
+        autosave: bool = True,
+        min_save_interval_s: float = 5.0,
+        max_goals: int = 8,
+        response_feedback_window_s: float = 30 * 60,
+    ) -> None:
         if storage_path is None:
             try:
                 from core.config import config
@@ -291,13 +320,15 @@ class OtherAgentStateEstimator:
             except (ImportError, AttributeError, RuntimeError):
                 storage_path = Path.home() / ".aura" / "data" / "memory" / "other_agent_models.json"
         self._path = Path(storage_path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
         self._autosave = autosave
         self._min_save_interval = min_save_interval_s
         self._max_goals = max_goals
+        self._response_feedback_window_s = max(0.0, float(response_feedback_window_s))
         self._lock = threading.RLock()
-        self._models: Dict[str, _AgentModel] = {}
+        self._models: dict[str, _AgentModel] = {}
         self._last_save = 0.0
+        self._active_agent_id = ""
+        self._pending_responses: dict[str, tuple[str, float, int]] = {}
         self._load()
         logger.info("OtherAgentStateEstimator initialized (%d agents).", len(self._models))
 
@@ -317,12 +348,38 @@ class OtherAgentStateEstimator:
 
     def save(self) -> None:
         try:
-            from core.runtime.atomic_writer import atomic_write_text
+            from core.governance_context import local_internal_governed_scope
+            from core.runtime.file_write_gateway import get_file_write_gateway
+
             with self._lock:
-                payload = {"agents": {aid: m.to_dict() for aid, m in self._models.items()}}
-            atomic_write_text(self._path, json.dumps(payload, indent=2))
+                payload = {
+                    "schema_version": 2,
+                    "privacy": {
+                        "raw_messages_persisted": False,
+                        "raw_goals_persisted": False,
+                        "content_digests_only": True,
+                    },
+                    "agents": {
+                        aid: model.to_dict(include_ephemeral_goals=False)
+                        for aid, model in self._models.items()
+                    },
+                }
+            with local_internal_governed_scope(
+                "other_agent_model.save",
+                domain="file_write",
+            ):
+                gateway = get_file_write_gateway()
+                gateway.ensure_directory(
+                    self._path.parent,
+                    source="other_agent_model.save",
+                )
+                gateway.write_text(
+                    self._path,
+                    json.dumps(payload, indent=2, sort_keys=True),
+                    source="other_agent_model.save",
+                )
             self._last_save = time.time()
-        except (OSError, TypeError, ValueError) as exc:
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation("other_agent_model", exc)
             logger.error("OtherAgentStateEstimator save failed: %s", exc)
 
@@ -330,6 +387,12 @@ class OtherAgentStateEstimator:
         # Debounced so 10 Hz telemetry can't thrash the disk; flush at most every interval.
         if self._autosave and (time.time() - self._last_save) >= self._min_save_interval:
             self.save()
+
+    def save_if_due(self) -> bool:
+        """Persist a content-free snapshot when the debounce interval elapsed."""
+        before = self._last_save
+        self._maybe_save()
+        return self._last_save > before
 
     def _model(self, agent_id: str) -> _AgentModel:
         m = self._models.get(agent_id)
@@ -345,10 +408,12 @@ class OtherAgentStateEstimator:
         agent_id: str,
         text: str,
         *,
-        latency_s: Optional[float] = None,
-        hour: Optional[int] = None,
-        now: Optional[float] = None,
-    ) -> None:
+        latency_s: float | None = None,
+        hour: int | None = None,
+        now: float | None = None,
+        persist: bool = True,
+        response_context: bool | None = None,
+    ) -> AgentStateEstimate:
         """Update the estimate from one message: linguistic cues + timing + time-of-day.
 
         ``latency_s`` is the gap since this agent's previous message (rapid terse bursts read
@@ -362,12 +427,28 @@ class OtherAgentStateEstimator:
 
         with self._lock:
             m = self._model(agent_id)
+            self._active_agent_id = agent_id
+            pending_response = self._pending_responses.pop(agent_id, None)
+            if response_context is None:
+                response_age_s = (
+                    now - pending_response[1]
+                    if pending_response is not None
+                    else float("inf")
+                )
+                response_context = (
+                    pending_response is not None
+                    and 0.0 <= response_age_s <= self._response_feedback_window_s
+                )
+            m.last_response_feedback = bool(response_context)
             m.observations += 1
             m.last_seen = now
+            m.last_evidence_digest = hashlib.sha256(
+                f"{agent_id}\n{text}".encode("utf-8", errors="replace")
+            ).hexdigest()
 
             # Linguistic affect cues. Each match group nudges its channel; strength grows with
             # the number of distinct hits, capped so one message can't fully overwrite a belief.
-            def _strength(pat: re.Pattern) -> float:
+            def _strength(pat: re.Pattern[str]) -> float:
                 hits = len(pat.findall(lower))
                 return 0.0 if hits == 0 else min(0.6, 0.25 + 0.12 * (hits - 1))
 
@@ -379,7 +460,8 @@ class OtherAgentStateEstimator:
             pos, neg = _strength(_CUES["satisfaction_pos"]), _strength(_CUES["satisfaction_neg"])
             if pos > 0:
                 m.affect["satisfaction"].observe(0.85, pos, now)
-                m.aura_beliefs["aura_capable"].observe(0.75, pos * 0.6, now)
+                if response_context:
+                    m.aura_beliefs["aura_capable"].observe(0.75, pos * 0.6, now)
             if neg > 0:
                 m.affect["satisfaction"].observe(0.15, neg, now)
                 m.affect["frustration"].observe(0.7, neg * 0.6, now)
@@ -418,9 +500,32 @@ class OtherAgentStateEstimator:
                     sig.observe(0.9, 0.5, now)
                     self._prune_goals(m, now)
 
-            self._maybe_save()
+            if persist:
+                self._maybe_save()
+            return self.estimate(agent_id, now)
 
-    def observe_signal(self, agent_id: str, *, now: Optional[float] = None, **signals: float) -> None:
+    def record_response(
+        self,
+        agent_id: str,
+        response_text: str,
+        *,
+        now: float | None = None,
+    ) -> str:
+        """Pair the next feedback cue with a response without retaining its text."""
+        observed_at = time.time() if now is None else float(now)
+        digest = hashlib.sha256(
+            f"{agent_id}\n{response_text}".encode("utf-8", errors="replace")
+        ).hexdigest()
+        with self._lock:
+            self._active_agent_id = agent_id
+            self._pending_responses[agent_id] = (
+                digest,
+                observed_at,
+                len(str(response_text or "").split()),
+            )
+        return digest
+
+    def observe_signal(self, agent_id: str, *, now: float | None = None, **signals: float) -> None:
         """Fold perceptual-pump social signals into affect (presence/affiliation/threat/...).
 
         Accepts the event-mapping signals the phenomenal pump already produces: ``presence``,
@@ -447,7 +552,7 @@ class OtherAgentStateEstimator:
             self._maybe_save()
 
     def observe_outcome(self, agent_id: str, *, success: bool, weight: float = 0.4,
-                        now: Optional[float] = None) -> None:
+                        now: float | None = None) -> None:
         """An action taken for the agent landed (or didn't): adjust satisfaction and trust."""
         now = time.time() if now is None else now
         w = _clamp(weight)
@@ -466,7 +571,7 @@ class OtherAgentStateEstimator:
 
     # ── readout ───────────────────────────────────────────────────────────
 
-    def estimate(self, agent_id: str, now: Optional[float] = None) -> AgentStateEstimate:
+    def estimate(self, agent_id: str, now: float | None = None) -> AgentStateEstimate:
         """A snapshot of the agent's estimated state, decayed to ``now``."""
         now = time.time() if now is None else now
         with self._lock:
@@ -478,12 +583,12 @@ class OtherAgentStateEstimator:
                 v, c = sig.decayed(now)
                 affect[name], affect_conf[name] = v, c
             beliefs = {name: sig.decayed(now)[0] for name, sig in m.aura_beliefs.items()}
-            goals = []
+            goals: list[dict[str, str | float]] = []
             for text, sig in m.goals.items():
                 act, _ = sig.decayed(now)
                 if act >= 0.15:
                     goals.append({"goal": text, "activation": round(act, 3)})
-            goals.sort(key=lambda g: g["activation"], reverse=True)
+            goals.sort(key=lambda goal: float(goal["activation"]), reverse=True)
             # Confidence reflects the channels we actually have evidence on — averaging in
             # never-observed channels would structurally cap a strong, focused read too low.
             observed = [c for c in affect_conf.values() if c > 0.0]
@@ -499,6 +604,8 @@ class OtherAgentStateEstimator:
                 social_rupture_risk=rupture,
                 observations=m.observations,
                 at=now,
+                freshness_s=max(0.0, now - m.last_seen),
+                evidence_digest=m.last_evidence_digest,
             )
 
     def _empty_estimate(self, agent_id: str, now: float) -> AgentStateEstimate:
@@ -508,10 +615,11 @@ class OtherAgentStateEstimator:
             agent_id=agent_id, affect=affect, affect_confidence={n: 0.0 for n in affect},
             goals=[], beliefs_about_aura=beliefs, overall_confidence=0.0,
             social_rupture_risk=self._rupture_risk(affect, beliefs), observations=0, at=now,
+            freshness_s=0.0, evidence_digest="none",
         )
 
     @staticmethod
-    def _rupture_risk(affect: Dict[str, float], beliefs: Dict[str, float]) -> float:
+    def _rupture_risk(affect: dict[str, float], beliefs: dict[str, float]) -> float:
         """How close the relationship is to a social rupture, from frustration/satisfaction/trust."""
         return _clamp(
             0.45 * affect.get("frustration", 0.0)
@@ -519,11 +627,11 @@ class OtherAgentStateEstimator:
             + 0.25 * (1.0 - beliefs.get("aura_trustworthy", 0.5))
         )
 
-    def recommendation(self, agent_id: str, now: Optional[float] = None) -> SocialRecommendation:
+    def recommendation(self, agent_id: str, now: float | None = None) -> SocialRecommendation:
         """Translate the estimate into how to act — defaulting to 'ask' when we don't know."""
         est = self.estimate(agent_id, now)
         a, b = est.affect, est.beliefs_about_aura
-        reasons: List[str] = []
+        reasons: list[str] = []
 
         should_ask = est.overall_confidence < 0.35 or a["uncertainty"] > 0.6
         if est.overall_confidence < 0.35:
@@ -563,6 +671,89 @@ class OtherAgentStateEstimator:
             reasons=reasons,
         )
 
+    @property
+    def active_agent_id(self) -> str:
+        with self._lock:
+            return self._active_agent_id
+
+    def cognitive_snapshot(
+        self,
+        agent_id: str | None = None,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        """Privacy-bounded social state for cognition, planning, and repair."""
+        resolved_agent = str(agent_id or self.active_agent_id or "unknown")[:160]
+        estimate = self.estimate(resolved_agent, now)
+        recommendation = self.recommendation(resolved_agent, now)
+        constraints: list[str] = []
+        if recommendation.should_ask:
+            constraints.append("clarify material ambiguity instead of assuming user state")
+        if recommendation.be_concise:
+            constraints.append("prefer a concise response while urgency or fatigue may be high")
+        if recommendation.slow_down:
+            constraints.append("slow consequential action and prioritize relationship repair")
+        if recommendation.offer_reassurance:
+            constraints.append("acknowledge the concrete failure or concern without performative reassurance")
+        careful_forecast = self.forecast_social_consequence(
+            resolved_agent,
+            warmth=0.75,
+            directness=0.55,
+            reliability=0.9,
+            fulfills_expectation=0.6,
+            now=now,
+        )
+        blunt_forecast = self.forecast_social_consequence(
+            resolved_agent,
+            warmth=0.15,
+            directness=0.9,
+            reliability=0.35,
+            fulfills_expectation=-0.4,
+            now=now,
+        )
+        with self._lock:
+            active_model = self._models.get(resolved_agent)
+            response_feedback_context = bool(
+                active_model and active_model.last_response_feedback
+            )
+        return {
+            "schema_version": 1,
+            "agent_id": resolved_agent,
+            "identity_verified": estimate.identity_verified,
+            "confidence": round(estimate.overall_confidence, 4),
+            "freshness_s": round(estimate.freshness_s, 3),
+            "observations": estimate.observations,
+            "response_feedback_context": response_feedback_context,
+            "evidence_digest": estimate.evidence_digest,
+            "affect_hypotheses": {
+                name: {
+                    "value": round(value, 4),
+                    "confidence": round(estimate.affect_confidence.get(name, 0.0), 4),
+                }
+                for name, value in estimate.affect.items()
+            },
+            "likely_goals": list(estimate.goals[:5]),
+            "beliefs_about_aura": {
+                key: round(value, 4)
+                for key, value in estimate.beliefs_about_aura.items()
+            },
+            "social_rupture_risk": round(estimate.social_rupture_risk, 4),
+            "recommendation": recommendation.to_dict(),
+            "planning_constraints": constraints[:8],
+            "predicted_impacts": {
+                "careful_reliable_response": careful_forecast,
+                "blunt_unverified_response": blunt_forecast,
+                "assumption": "generic response properties, not a claim about the user's reaction",
+            },
+            "inference_limitations": list(estimate.inference_limitations),
+            "culture": "unknown_not_inferred",
+            "power_context": "operator_has_control",
+            "privacy": {
+                "raw_messages_retained": False,
+                "raw_goals_persisted": False,
+                "response_text_retained": False,
+            },
+        }
+
     # ── social intuition: forward-simulate an action's social consequence ──
 
     def forecast_social_consequence(
@@ -573,8 +764,8 @@ class OtherAgentStateEstimator:
         directness: float = 0.5,
         reliability: float = 0.5,
         fulfills_expectation: float = 0.0,
-        now: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        now: float | None = None,
+    ) -> dict[str, Any]:
         """Forward-simulate how a candidate action would land socially.
 
         Social *intuition*, not just state estimation: given the agent's current read and an
@@ -585,8 +776,10 @@ class OtherAgentStateEstimator:
         """
         est = self.estimate(agent_id, now)
         frustration = est.affect.get("frustration", 0.3)
-        warmth = _clamp(warmth); directness = _clamp(directness)
-        reliability = _clamp(reliability); fulfills = _clamp(fulfills_expectation, -1.0, 1.0)
+        warmth = _clamp(warmth)
+        directness = _clamp(directness)
+        reliability = _clamp(reliability)
+        fulfills = _clamp(fulfills_expectation, -1.0, 1.0)
 
         trust_delta = _clamp(0.3 * reliability + 0.2 * max(0.0, fulfills) - 0.1 * (1.0 - warmth), -1.0, 1.0)
         if fulfills < 0:
@@ -619,7 +812,7 @@ class OtherAgentStateEstimator:
 
     # ── agency-ladder seam ────────────────────────────────────────────────
 
-    def social_signals(self, agent_id: str, now: Optional[float] = None) -> Dict[str, float]:
+    def social_signals(self, agent_id: str, now: float | None = None) -> dict[str, float]:
         """Estimate projected onto hierarchical-agency :class:`Situation` signal fields.
 
         - ``value_conflict``: social rupture risk (gated by how sure we are) → GOVERNANCE
@@ -639,7 +832,7 @@ class OtherAgentStateEstimator:
         }
 
     def social_situation(self, agent_id: str, description: str, base: Any = None,
-                         now: Optional[float] = None) -> Any:
+                         now: float | None = None) -> Any:
         """Build (or augment) a :class:`Situation` for the agency ladder from the estimate.
 
         Returns a ``Situation`` with social signals folded in and the estimate attached in
@@ -674,7 +867,7 @@ class OtherAgentStateEstimator:
         ranked = sorted(m.goals.items(), key=lambda kv: kv[1].decayed(now)[0], reverse=True)
         m.goals = dict(ranked[: self._max_goals])
 
-    def context_injection(self, agent_id: str, now: Optional[float] = None) -> str:
+    def context_injection(self, agent_id: str, now: float | None = None) -> str:
         """A compact, honest readout for prompt assembly (one of several consumers)."""
         est = self.estimate(agent_id, now)
         if est.observations == 0 or est.overall_confidence < 0.2:
@@ -697,17 +890,23 @@ class OtherAgentStateEstimator:
             f"- Social rupture risk: {est.social_rupture_risk:.2f}"
         )
 
-    def get_health(self) -> Dict[str, Any]:
+    def get_health(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "module": "OtherAgentStateEstimator",
                 "agents": len(self._models),
                 "observations": sum(m.observations for m in self._models.values()),
                 "status": "online",
+                "active_agent_set": bool(self._active_agent_id),
+                "pending_response_count": len(self._pending_responses),
+                "raw_messages_persisted": False,
+                "raw_goals_persisted": False,
             }
 
+    get_status = get_health
 
-_instance: Optional[OtherAgentStateEstimator] = None
+
+_instance: OtherAgentStateEstimator | None = None
 _instance_lock = threading.Lock()
 
 

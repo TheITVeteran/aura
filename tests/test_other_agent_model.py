@@ -63,10 +63,35 @@ def test_urgency_language_raises_urgency(estimator):
 
 
 def test_positive_feedback_raises_satisfaction_and_capability_belief(estimator):
+    estimator.record_response("bryan", "I fixed the login bug and verified the result.")
     estimator.observe_message("bryan", "perfect, that works now, thank you!")
     est = estimator.estimate("bryan")
     assert est.affect["satisfaction"] > 0.7
     assert est.beliefs_about_aura["aura_capable"] > 0.5
+
+
+def test_unpaired_praise_does_not_inflate_aura_capability(estimator):
+    estimator.observe_message("bryan", "the design in this article is perfect")
+
+    est = estimator.estimate("bryan")
+
+    assert est.affect["satisfaction"] > 0.7
+    assert est.beliefs_about_aura["aura_capable"] == 0.5
+
+
+def test_stale_response_does_not_turn_later_praise_into_feedback(tmp_path):
+    estimator = OtherAgentStateEstimator(
+        storage_path=tmp_path / "agents.json",
+        autosave=False,
+        response_feedback_window_s=60.0,
+    )
+    estimator.record_response("bryan", "old response", now=100.0)
+
+    estimator.observe_message("bryan", "perfect", now=161.0)
+
+    snapshot = estimator.cognitive_snapshot("bryan", now=161.0)
+    assert snapshot["response_feedback_context"] is False
+    assert estimator.estimate("bryan", now=161.0).beliefs_about_aura["aura_capable"] == 0.5
 
 
 def test_roleplay_accusation_raises_roleplaying_belief(estimator):
@@ -185,6 +210,51 @@ def test_state_persists_across_instances(tmp_path):
     a.save()
     b = OtherAgentStateEstimator(storage_path=path, autosave=False)
     assert b.estimate("bryan").affect["frustration"] > 0.5
+
+
+def test_persistence_omits_raw_goal_and_response_content(tmp_path):
+    path = tmp_path / "private" / "agents.json"
+    estimator = OtherAgentStateEstimator(storage_path=path, autosave=False)
+    estimator.observe_message("bryan", "please fix private-project-codename login bug")
+    estimator.record_response("bryan", "private response body with a secret detail")
+
+    estimator.save()
+    payload = path.read_text()
+
+    assert "private-project-codename" not in payload
+    assert "private response body" not in payload
+    assert '"raw_messages_persisted": false' in payload
+    assert '"raw_goals_persisted": false' in payload
+    assert estimator.estimate("bryan").goals
+    assert OtherAgentStateEstimator(storage_path=path, autosave=False).estimate("bryan").goals == []
+
+
+def test_cognitive_snapshot_uses_exact_active_agent_and_marks_inference_limits(estimator):
+    estimator.observe_message("alice", "everything is perfect")
+    estimator.observe_message("bryan", "ugh this is still broken and urgent")
+
+    active = estimator.cognitive_snapshot()
+    alice = estimator.cognitive_snapshot("alice")
+
+    assert estimator.active_agent_id == "bryan"
+    assert active["agent_id"] == "bryan"
+    assert alice["agent_id"] == "alice"
+    assert active["affect_hypotheses"]["frustration"]["value"] > 0.6
+    assert alice["affect_hypotheses"]["frustration"]["value"] < 0.5
+    assert active["culture"] == "unknown_not_inferred"
+    assert active["identity_verified"] is False
+    assert active["privacy"]["raw_messages_retained"] is False
+
+
+def test_feedback_context_is_consumed_once(estimator):
+    estimator.record_response("bryan", "first response")
+    estimator.observe_message("bryan", "perfect, thank you")
+    first = estimator.cognitive_snapshot("bryan")
+    estimator.observe_message("bryan", "please open the next file")
+    second = estimator.cognitive_snapshot("bryan")
+
+    assert first["response_feedback_context"] is True
+    assert second["response_feedback_context"] is False
 
 
 # ── singleton ───────────────────────────────────────────────────────────────

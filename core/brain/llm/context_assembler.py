@@ -955,61 +955,27 @@ class ContextAssembler:
             )
 
         # ── Social Intelligence Layer (wired for ALL interactions) ──────────
-        # 1. Theory of Mind: inject the user model (rapport, trust, emotional state)
+        # Use the exact active-agent estimate; never select an arbitrary dict entry.
         try:
-            tom = ServiceContainer.get("theory_of_mind", default=None)
-            if tom and tom.known_selves:
-                user_model = next(iter(tom.known_selves.values()))
-                rapport_label = (
-                    "deep bond" if user_model.rapport > 0.7
-                    else "trusted" if user_model.rapport > 0.4
-                    else "building"
-                )
-                trust_label = (
-                    "high" if user_model.trust_level > 0.7
-                    else "moderate" if user_model.trust_level > 0.4
-                    else "establishing"
-                )
-                base += (
-                    f"\n## WHO I'M TALKING TO\n"
-                    f"- Rapport: {rapport_label} ({user_model.rapport:.2f})\n"
-                    f"- Trust: {trust_label} ({user_model.trust_level:.2f})\n"
-                    f"- Their emotional state: {user_model.emotional_state}\n"
-                    f"- Knowledge level: {user_model.knowledge_level}\n"
-                )
-                if user_model.goals:
-                    base += f"- Their current goals: {', '.join(user_model.goals[:3])}\n"
-                base += (
-                    "Calibrate register and depth to this. High rapport → lean in, "
-                    "be more personal. Low rapport → earn it naturally.\n"
-                )
+            estimator = ServiceContainer.get("other_agent_model", default=None)
+            agent_id = str(getattr(estimator, "active_agent_id", "") or "")
+            if (
+                not cognitive_situation_context
+                and estimator
+                and agent_id
+                and hasattr(estimator, "context_injection")
+            ):
+                social_block = str(estimator.context_injection(agent_id) or "").strip()
+                if social_block:
+                    base += f"\n{social_block}\n"
         except (ImportError, AttributeError, RuntimeError) as _e:
             record_degradation('context_assembler', _e)
             logger.debug("ToM injection failed (non-critical): %s", _e)
 
-        # 2. Social Memory: relationship depth and milestones
-        try:
-            social_mem = ServiceContainer.get("social_memory", default=None)
-            if social_mem and hasattr(social_mem, "get_social_context"):
-                social_ctx = social_mem.get_social_context()
-                if social_ctx:
-                    base += f"\n{social_ctx}\n"
-        except (ImportError, AttributeError, RuntimeError) as _e:
-            record_degradation('context_assembler', _e)
-            logger.debug("SocialMemory injection failed (non-critical): %s", _e)
+        # Legacy SocialMemory and SharedGround stores are intentionally excluded here:
+        # neither is identity-scoped, so injecting either can cross user boundaries.
 
-        # 3. Shared Common Ground: inside jokes, established references, running callbacks
-        try:
-            from core.memory.shared_ground import get_shared_ground
-            sg = get_shared_ground()
-            sg_injection = sg.get_context_injection(max_entries=5)
-            if sg_injection:
-                base += f"\n{sg_injection}\n"
-        except (ImportError, AttributeError, RuntimeError) as _e:
-            record_degradation('context_assembler', _e)
-            logger.debug("SharedGround injection failed (non-critical): %s", _e)
-
-        # 4. OpinionEngine: inject held position if topic overlaps current objective
+        # 2. OpinionEngine: inject held position if topic overlaps current objective
         try:
             opinion_engine = ServiceContainer.get("opinion_engine", default=None)
             if opinion_engine and hasattr(opinion_engine, "get_context_injection"):
@@ -1022,7 +988,7 @@ class ContextAssembler:
             record_degradation('context_assembler', _e)
             logger.debug("OpinionEngine injection failed (non-critical): %s", _e)
 
-        # 5. Discourse State: topic thread, energy, user emotional trend
+        # 3. Discourse State: topic thread, energy, user emotional trend
         try:
             discourse_topic = getattr(state.cognition, "discourse_topic", None)
             discourse_depth = getattr(state.cognition, "discourse_depth", 0)

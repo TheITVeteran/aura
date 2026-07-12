@@ -1045,6 +1045,21 @@ class CognitiveEngine:
             state.response_modifiers["perception_repair_requirements"] = list(
                 perception_repairs[:8]
             )
+        social_constraints = causal.get("social_planning_constraints")
+        if isinstance(social_constraints, list):
+            state.response_modifiers["social_planning_constraints"] = list(
+                social_constraints[:8]
+            )
+        state.response_modifiers["social_uncertainty"] = frame.social_uncertainty
+        state.response_modifiers["social_repair_pressure"] = frame.social_repair_pressure
+        if routing.get("social_repair_required"):
+            state.response_modifiers["social_repair_required"] = True
+        if routing.get("social_confirmation_required"):
+            state.response_modifiers["social_confirmation_required"] = True
+        if routing.get("social_state_clarification_required"):
+            state.response_modifiers["social_state_clarification_required"] = True
+        if routing.get("social_response_brevity"):
+            state.response_modifiers["social_response_brevity"] = True
         if routing.get("requires_memory_grounding") or routing.get("preserve_conversation_context"):
             state.response_modifiers["requires_memory_grounding"] = True
         if routing.get("deliberate_mode") and not is_background:
@@ -1067,6 +1082,12 @@ class CognitiveEngine:
             cognition_mods["perception_abstention_required"] = True
         if routing.get("perception_repair_required"):
             cognition_mods["perception_repair_required"] = True
+        if routing.get("social_repair_required"):
+            cognition_mods["social_repair_required"] = True
+        if routing.get("social_confirmation_required"):
+            cognition_mods["social_confirmation_required"] = True
+        if routing.get("social_state_clarification_required"):
+            cognition_mods["social_state_clarification_required"] = True
         state.cognition.modifiers = cognition_mods
 
         if frame.attention_targets and not is_background:
