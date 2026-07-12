@@ -2,18 +2,24 @@
 
 Chaos injection — break things deliberately and prove repair works.
 
-Catalogue:
+Catalogue (every entry here is registered — pinned by
+tests/test_chaos_injector.py; a fault documented but not implemented is a
+false capability claim):
 
-  kill_subprocess          — pick a child PID and send SIGKILL
-  corrupt_sqlite_row       — write a bad row to a non-critical table
-  delete_vector_index      — delete one vector store partition
   induce_event_loop_lag    — sleep on the event loop for ~1.2s
   force_model_load_failure — flip the model registry to point at a nonexistent path
-  break_memory_facade      — register a no-op stand-in for memory_facade
-  break_agency_pathway     — disable one VolitionEngine pathway
+  expire_api_keys          — flip env vars to invalid values
+  delete_vector_index      — move one vector store partition aside
   fill_disk                — write bounded disk-pressure files in a safe temp target
   sever_network            — block outbound connections via local proxy
-  expire_api_keys          — flip env vars to invalid values
+
+Roadmap (deliberately NOT implemented yet — each needs a live kernel and
+blast-radius design): kill_subprocess, corrupt_sqlite_row,
+break_memory_facade, break_agency_pathway.
+
+All faults self-restore; AURA_CHAOS_RESTORE_SECONDS overrides every
+restore delay (drills and tests shorten it; production default keeps the
+per-fault windows).
 
 Each fault returns a dict ``{kind, applied: True|False, detail}``. The
 chaos run records the fault and the system's repair signal (the
@@ -40,6 +46,17 @@ if str(PROJECT_ROOT) not in sys.path:
 from core.utils.task_tracker import get_task_tracker  # noqa: E402
 
 logger = logging.getLogger("Aura.Chaos")
+
+
+def _restore_delay_s(default_s: float) -> float:
+    """Per-fault restore window, overridable globally for drills/tests."""
+    raw = os.environ.get("AURA_CHAOS_RESTORE_SECONDS")
+    if raw is None:
+        return default_s
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return default_s
 
 
 _FAULTS: dict[str, Callable[[], Awaitable[dict[str, Any]]]] = {}
@@ -79,7 +96,7 @@ async def _force_model_load_failure() -> dict[str, Any]:
         await asyncio.sleep(0)
     finally:
         async def _restore():
-            await asyncio.sleep(60.0)
+            await asyncio.sleep(_restore_delay_s(60.0))
             if prev is None:
                 os.environ.pop("AURA_MODEL", None)
             else:
@@ -98,7 +115,7 @@ async def _expire_api_keys() -> dict[str, Any]:
         os.environ[k] = "invalid-injection"
 
     async def _restore():
-        await asyncio.sleep(60.0)
+        await asyncio.sleep(_restore_delay_s(60.0))
         for k, prev in flipped.items():
             if prev is None:
                 os.environ.pop(k, None)
@@ -117,7 +134,7 @@ async def _delete_vector_index() -> dict[str, Any]:
     target.rename(backup)
 
     async def _restore():
-        await asyncio.sleep(120.0)
+        await asyncio.sleep(_restore_delay_s(120.0))
         if backup.exists() and not target.exists():
             backup.rename(target)
     get_task_tracker().create_task(_restore())
@@ -157,8 +174,16 @@ async def _fill_disk() -> dict[str, Any]:
             "error_type": type(exc).__name__,
         }
 
+    # Parse the window ONCE, tolerantly, outside the restore task: a garbage
+    # value must not kill the cleanup task and strand pressure files.
+    try:
+        disk_default_s = float(os.environ.get("AURA_CHAOS_DISK_RESTORE_SECONDS", "30"))
+    except ValueError:
+        disk_default_s = 30.0
+    restore_in_s = _restore_delay_s(disk_default_s)
+
     async def _restore():
-        await asyncio.sleep(float(os.environ.get("AURA_CHAOS_DISK_RESTORE_SECONDS", "30")))
+        await asyncio.sleep(restore_in_s)
         if pressure_file.exists():
             pressure_file.unlink()
         if pressure_dir.exists():
@@ -170,7 +195,7 @@ async def _fill_disk() -> dict[str, Any]:
         "applied": True,
         "target": str(pressure_file),
         "bytes_written": bytes_written,
-        "restored_in_s": int(os.environ.get("AURA_CHAOS_DISK_RESTORE_SECONDS", "30")),
+        "restored_in_s": restore_in_s,
     }
 
 
@@ -181,7 +206,7 @@ async def _sever_network() -> dict[str, Any]:
     os.environ["HTTPS_PROXY"] = "http://127.0.0.1:1"
 
     async def _restore():
-        await asyncio.sleep(45.0)
+        await asyncio.sleep(_restore_delay_s(45.0))
         if prev is None:
             os.environ.pop("HTTPS_PROXY", None)
         else:
