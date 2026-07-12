@@ -61,3 +61,5 @@ core/capabilities/self_code_improver.py
 core/runtime/os_automation_effects.py
 core/capabilities/host_automation.py
 core/skills/os_automation.py
+# Bounded multimodal event-time fusion (2026-07-12)
+core/perception/multimodal_sync.py

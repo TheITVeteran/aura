@@ -1,13 +1,14 @@
 import asyncio
-import pytest
 import subprocess
-import time
 from pathlib import Path
-from types import SimpleNamespace
 
-from core.perception.perception_daemon import PerceptionDaemon, get_perception_daemon
+import pytest
+
+from core.container import ServiceContainer
+from core.event_bus import EventPriority, get_event_bus
+from core.perception.multimodal_sync import Modality, MultimodalSynchronizer
+from core.perception.perception_daemon import PerceptionDaemon
 from core.perception.perception_runtime import PerceptionRuntime
-from core.event_bus import get_event_bus, EventPriority
 
 
 @pytest.mark.asyncio
@@ -59,6 +60,36 @@ async def test_perception_daemon_moment_buffering_and_privacy(monkeypatch):
     assert published_events[0][0] == "aura/perception/moment"
     assert published_events[0][1]["content"] == "Hello Bryan"
     assert published_events[0][2] == EventPriority.AUTONOMIC
+
+
+def test_perception_daemon_bridges_redacted_semantics_into_canonical_fusion() -> None:
+    ServiceContainer.clear()
+    synchronizer = MultimodalSynchronizer()
+    ServiceContainer.register_instance(
+        "multimodal_synchronizer",
+        synchronizer,
+        required=False,
+    )
+    daemon = PerceptionDaemon()
+
+    try:
+        daemon.register_moment(
+            "browser",
+            "Private project tab (https://secret.example)",
+            {"tabs": [{"title": "Private project tab", "url": "https://secret.example"}]},
+        )
+        frame = synchronizer.fuse("daemon-fusion")
+
+        assert frame.has_usable(Modality.TEXT) is True
+        assert frame.belief("browser.open_tab_count").value == 1
+        assert "browser_titles_and_urls_not_retained" in frame.observations[
+            Modality.TEXT
+        ].quality_flags
+        status_text = repr(synchronizer.get_status())
+        assert "Private project tab" not in status_text
+        assert "secret.example" not in status_text
+    finally:
+        ServiceContainer.clear()
 
 
 @pytest.mark.asyncio

@@ -87,7 +87,7 @@ Status rules:
 | `INTELLIGENCE-001` | `OPEN` | Measure whole-system uplift with base/tools/memory/substrate/planner/full ablations, external sealed benchmarks, confidence intervals, contamination controls, and matched cost/latency. | Matrix 4; Addendum 31 |
 | `LONGHORIZON-001` | `OPEN` | Build a domain-general partially observable long-horizon agency harness, then a non-scripted NetHack-compatible evaluation with crash-resume, transfer, hidden maps, and adversarial interruption. | Matrix 5; Addendum 31 |
 | `SIMWORLD-001` | `IN PROGRESS 2026-07-12` | Preserve the deterministic hosted-world core while completing unit-aware multi-fidelity physics, full spatial/VR engine adapters, validated procedural generation, replay/migration, multi-agent synchronization, and inspectable UI without mistaking visual animation for physical correctness. | Capability Addendum 33, `CTX3-PHYS-*`, `CTX3-WORLD-*` |
-| `MULTIMODAL-001` | `OPEN` | Make continuous synchronized vision/audio/spatial/body perception, consented lip-reading, and internal/external situational analysis causal to belief, uncertainty, planning, action, and repair under occlusion and sensor loss. | Capability Addendum 33, `CTX3-PERCEPT-*` |
+| `MULTIMODAL-001` | `IN PROGRESS 2026-07-12` | Preserve the canonical bounded event-time fusion and causal cognition path while completing every producer, consented visual speech, calibrated situation modeling, live hardware/occlusion evaluation, and longitudinal action/repair evidence. | Capability Addendum 33, `CTX3-PERCEPT-*` |
 | `SOCIAL-001` | `OPEN` | Unify social judgment, theory of mind, emotional modeling, rapport, boundary respect, and relationship repair with calibrated uncertainty, cultural variance, anti-manipulation controls, and longitudinal live evidence. | Capability Addendum 33, `CTX3-SOCIAL-*` |
 | `MULTIAGENT-001` | `OPEN` | Generalize complex subagent management into typed delegation, scoped authority, budget/deadline ownership, shared-world coordination, conflict arbitration, cancellation, recovery, and end-to-end accountability. | Capability Addendum 33, `CTX3-SUBAGENT-*` |
 | `DISTRIBUTED-001` | `IN PROGRESS 2026-07-12` | Support governed distributed embodiment and execution across heterogeneous network devices with capability negotiation, identity/attestation, partition tolerance, idempotency, safety interlocks, compensation, and truthful degraded operation. | Capability Addendum 33, `CTX3-DIST-*` |
@@ -956,7 +956,19 @@ evidence into a metaphysical, legal, or comparative claim.
      relations, plans, proofs, and program-like transformations. Route tasks
      between neural and symbolic methods by measured suitability and verify
      outputs against solvers, invariants, or executable consequences.
-   - `CTX3-PERCEPT-001`: make continuous multimodal perception synchronize
+   - `CTX3-PERCEPT-001` `[IN PROGRESS 2026-07-12]`: the canonical continuous
+     pump, semantic daemon, and on-demand camera/microphone runtime now publish
+     bounded event-time observations into one typed synchronizer. It carries
+     calibration state, provenance, confidence, privacy/retention policy,
+     explicit missing/stale/denied/error semantics, bounded per-modality queues,
+     multi-source failover, and confidence-weighted contradiction arbitration.
+     Fused uncertainty and repair directives now causally alter substrate input,
+     WorldState beliefs, cognitive attention/routing/sampling, response
+     abstention, and planner constraints. Still bridge every remaining legacy
+     producer, bind real sensor permission/consent receipts and calibrated source
+     identities, add event-time persistence/replay and richer spatial/body
+     schemas, prove action/repair learning, and pass live hardware, sensor-loss,
+     skew, occlusion, concurrency, restart, and longitudinal evaluation. Make continuous multimodal perception synchronize
      vision, audio, speech, spatial, device, body, and textual events with
      timestamps, calibration, provenance, confidence, privacy policy, missing
      modality semantics, and bounded queues. Fused beliefs must causally alter
@@ -11723,3 +11735,113 @@ Authoritative remaining desktop work:
   GUI/accessibility/clean-machine matrix before any general desktop closure.
 - Keep multi-hour and 24-72 hour soaks deferred until every remaining shorter
   static, fault-injection, GUI, clean-machine, and launched-runtime gate is green.
+
+## Checkpoint 2026-07-12-39: Canonical Multimodal Event-Time Fusion
+
+This checkpoint advances `MULTIMODAL-001`, `CTX3-PERCEPT-001`,
+`CTX3-SITUATION-001`, `CTX3-DECIDE-001`, `FAULT-001`, and `PRIVACY-001`.
+It replaces last-write-wins cached sensor federation with one bounded typed
+evidence ledger on the live cognition path. It does not claim visual speech,
+speaker-from-video association, complete situation modeling, or live hardware
+closure.
+
+Implemented canonical synchronization and arbitration:
+
+- Added a strict-typed event-time synchronizer for vision, audio, speech,
+  spatial, device, body, and text evidence. Every event carries monotonic and
+  wall time, source sequence, calibration state/reliability, provenance,
+  confidence, privacy classification, retention, consent scope, redaction,
+  quality flags, scalar claims, or an explicit missing reason.
+- Bounded every modality queue and duplicate-ID ledger. Future, expired,
+  duplicate, and excessively reordered events are rejected with receipts;
+  bounded overflow and late-event counts remain visible. Fusion distinguishes
+  not observed, stale, unavailable, permission denied, sensor error, redacted,
+  and uncalibrated evidence.
+- Selects the strongest fresh source per modality while retaining the newest
+  evidence from every independent source for arbitration. A failed source can
+  no longer mask a healthy source. Conflicting claims are confidence-weighted;
+  insufficient margin produces explicit abstention rather than last-write-wins
+  truth, while a resolved winner retains the contradiction and alternatives.
+- Emits causal attention, memory, planning, and repair directives. Only
+  reconciled claims above the memory confidence threshold become memory
+  candidates. Low-confidence frames require reversible information gathering;
+  denied, stale, unavailable, failed, and contradictory evidence produce
+  source-specific consent, refresh, restore, or re-observation requirements.
+- Made diagnostics privacy-safe: event summaries, provenance payloads, claim
+  values, transcript text, URLs, clipboard text, OCR text, and private scene
+  content are absent. Status retains evidence IDs, sources, ages, calibration,
+  confidence, conflict shape, and redaction state.
+
+Implemented live-path unity and causal consumption:
+
+- Made `PerceptualPump` the synchronizer owner and registered the synchronizer
+  as a runtime service. Real screen/window/OCR, audio/speech, device, and body
+  samples now carry availability, source, confidence, monotonic time, and
+  missing semantics. Screen app change and OCR change are independently
+  detected instead of reporting every sampled foreground app as a new change.
+- Fused frames now perturb phenomenal/substrate uncertainty and carry fusion
+  confidence, missing modalities, and unresolved contradiction counts. Freshness
+  gates prevent stale cached screen/audio/device state from being rewritten as
+  current. `WorldState` receives confidence, uncertainty, missing/conflict
+  beliefs and high-confidence reconciled claims; repeated unchanged transcripts
+  no longer create fresh voice events.
+- Connected the on-demand camera/microphone runtime to the same ledger while
+  preserving its perception-sentinel route. Hardware access is serialized;
+  failed captures become explicit missing evidence; image, descriptor, and
+  transcript payloads are never retained in fusion. Audio transcription is
+  explicitly marked as not visual-speech evidence.
+- Connected semantic daemon moments to the same ledger. Window focus can now
+  contradict another spatial source; browser, clipboard, terminal, file,
+  microphone-status, OCR, and presence moments publish only redacted digests,
+  counts, and bounded semantic claims, never raw tabs, URLs, paths, or text.
+- Added the fused frame to `CognitiveSituationEngine`. Confidence and
+  uncertainty now change sensorimotor grounding, ambiguity, verification,
+  metacognition, sampling, attention, deliberate routing, and abstention. The
+  live `CognitiveEngine`, response prompt, and `TaskDecomposer` consume
+  perception repair and verify-before-action constraints.
+
+Verification completed for this checkpoint:
+
+- Synchronizer invariant and adversarial coverage passed `9/9`, including
+  bounded overflow, duplicate/future/expired rejection, stale semantics,
+  same-modality multi-source contradiction, strong-evidence resolution,
+  independent-source failover, privacy enforcement, and diagnostic nonleakage.
+- Canonical daemon/on-demand sensor integration coverage passed `30/30`.
+  Expanded pump, cognition, planning, wake-word, live-mind, and desktop-runtime
+  coverage passed `71/71`, including a synchronized all-modality pump tick,
+  redacted speech, standing belief publication, causal abstention, planner
+  repair constraints, and status-shape compatibility.
+- Whole-tree compile and configured Ruff passed. Strict MyPy grew from `47` to
+  `48` production files. Governance ownership stayed at `1,805` calls in
+  `1,699` buckets with zero ActionExecutor debt and `1,685` migration-debt
+  calls. Enterprise static, security, model-load, resource-observation,
+  cognitive-gate ownership, `75/75` skill parity, and all `37` production
+  readiness checks passed. One upstream test comment that triggered the
+  placeholder scanner was reworded without behavioral change.
+
+Authoritative remaining perception and situation work:
+
+- Route `SensorySystem` and every remaining camera, microphone, screen,
+  subtitle, spatial, body, device, browser, voice, and agent producer through
+  the canonical ledger. Remove raw base64/media retention and mismatched vision
+  analysis keys in the legacy sensory surface; consolidate duplicate hardware
+  ownership and prove one lifecycle/permission owner per sensor.
+- Bind events to actual capability-token/consent receipts, calibrated sensor and
+  subject identities, clock domains, drift estimates, capture intervals,
+  coordinate frames, and durable schema versions. Add bounded persistence,
+  replay, migration, crash recovery, and cross-process backpressure.
+- Complete `CTX3-PERCEPT-002` with a real consented visual-speech model: face and
+  mouth tracking, audiovisual event alignment, speaker association, occlusion
+  and poor-light rejection, accent/demographic held-outs, privacy/redaction,
+  explicit abstention, and live causal tests. Audio transcript evidence alone
+  remains explicitly insufficient.
+- Build the richer internal/external situation model over fused event time:
+  Aura/operator/agent/object identity, location, hazards, affordances, goals,
+  causal events, freshness, hypotheses, predicted consequences, reversible
+  probes, interruption/replanning, post-action updates, and contradiction
+  persistence rather than scalar current-state fields.
+- Run live camera, microphone, screen, audio, body, and device trials under
+  permission denial, revocation, disconnect, occlusion, darkness, noise,
+  clock skew, overload, queue pressure, cancellation, restart, concurrent
+  sources, and user interruption. Keep multi-hour and 24-72 hour soaks deferred
+  until these and all other shorter gates are green.

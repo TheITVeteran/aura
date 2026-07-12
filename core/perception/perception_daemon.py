@@ -20,6 +20,15 @@ from core.container import ServiceContainer
 from core.event_bus import EventPriority, get_event_bus
 from core.governance_context import local_internal_governed_scope
 from core.perception.frontmost_app import frontmost_app_name_fast
+from core.perception.multimodal_sync import (
+    Calibration,
+    Modality,
+    MultimodalSynchronizer,
+    PerceptualClaim,
+    PerceptualEvent,
+    PrivacyClass,
+    PrivacyPolicy,
+)
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
@@ -73,6 +82,7 @@ class PerceptionDaemon:
         self.last_clipboard_hash = ""
         self.last_active_window = ""
         self._last_screen_hash = ""
+        self._synchronizer_sequence = 0
 
         # Privacy configs
         self.privacy_mode = False
@@ -151,6 +161,16 @@ class PerceptionDaemon:
         # Add to buffers
         self._short_term_buffer.append(moment)
         self._medium_term_buffer.append(moment)
+        try:
+            self._publish_synchronized_moment(moment)
+        except _PERCEPTION_DAEMON_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "perception_daemon.multimodal_sync",
+                exc,
+                severity="warning",
+                action="retained daemon moment after canonical fusion bridge rejected it",
+                enforce_failure_policy=False,
+            )
 
         # Publish autonomic sensory event
         try:
@@ -164,6 +184,116 @@ class PerceptionDaemon:
             logger.debug("Daemon failed to publish sensory moment to EventBus: %s", e)
 
         return moment
+
+    def _publish_synchronized_moment(self, moment: dict[str, Any]) -> None:
+        """Bridge semantic daemon moments into the canonical evidence ledger."""
+
+        synchronizer = ServiceContainer.get("multimodal_synchronizer", default=None)
+        if not isinstance(synchronizer, MultimodalSynchronizer):
+            return
+        source = str(moment.get("source") or "daemon")[:80]
+        metadata = moment.get("metadata")
+        metadata = metadata if isinstance(metadata, dict) else {}
+        content = str(moment.get("content") or "")
+        content_digest = hashlib.sha256(
+            content.encode("utf-8", errors="ignore")
+        ).hexdigest()[:24]
+        confidence = 0.65
+        modality = Modality.TEXT
+        claims: list[PerceptualClaim] = [
+            PerceptualClaim(f"moment.{source}.digest", content_digest, 0.70),
+        ]
+        quality_flags = ["semantic_daemon_moment", "raw_content_not_retained"]
+
+        if source == "window_focus":
+            modality = Modality.SPATIAL
+            app_name = str(metadata.get("app_name") or "")[:160]
+            if app_name:
+                claims.append(PerceptualClaim("spatial.foreground_app", app_name, 0.90))
+            confidence = 0.82
+        elif source == "clipboard":
+            claims.append(
+                PerceptualClaim(
+                    "text.clipboard_char_count",
+                    max(0, int(metadata.get("char_count", 0) or 0)),
+                    0.95,
+                )
+            )
+            quality_flags.append("clipboard_content_redacted_to_digest")
+        elif source == "browser":
+            tabs = metadata.get("tabs")
+            claims.append(
+                PerceptualClaim(
+                    "browser.open_tab_count",
+                    len(tabs) if isinstance(tabs, list) else 0,
+                    0.80,
+                )
+            )
+            quality_flags.append("browser_titles_and_urls_not_retained")
+        elif source == "terminal":
+            shells = metadata.get("shells")
+            claims.append(
+                PerceptualClaim(
+                    "device.active_shell_count",
+                    len(shells) if isinstance(shells, list) else 0,
+                    0.80,
+                )
+            )
+        elif source == "file_system":
+            files = metadata.get("modified_files")
+            claims.append(
+                PerceptualClaim(
+                    "text.recent_file_mutation_count",
+                    len(files) if isinstance(files, list) else 0,
+                    0.80,
+                )
+            )
+            quality_flags.append("file_paths_not_retained")
+        elif source == "microphone":
+            modality = Modality.AUDIO
+            claims.append(PerceptualClaim("audio.sensor_active", True, 0.70))
+            confidence = 0.45
+            quality_flags.append("sensor_status_not_audio_observation")
+        elif source == "user_presence":
+            modality = Modality.BODY
+            idle_seconds = max(0.0, float(metadata.get("idle_seconds", 0.0) or 0.0))
+            claims.extend(
+                (
+                    PerceptualClaim("user.idle_seconds", round(idle_seconds, 3), 0.70),
+                    PerceptualClaim("user.present", idle_seconds <= 120.0, 0.65),
+                )
+            )
+            confidence = 0.60
+        if metadata.get("redacted"):
+            quality_flags.append("source_content_redacted")
+
+        self._synchronizer_sequence += 1
+        observed_monotonic_ns = time.monotonic_ns()
+        synchronizer.ingest(
+            PerceptualEvent(
+                event_id=f"daemon:{moment.get('moment_id', self._synchronizer_sequence)}",
+                modality=modality,
+                source=f"perception_daemon:{source}",
+                sequence=self._synchronizer_sequence,
+                observed_at=float(moment.get("timestamp") or time.time()),
+                observed_monotonic_ns=observed_monotonic_ns,
+                summary=f"redacted semantic moment from {source}"[:320],
+                confidence=confidence,
+                claims=tuple(claims[:16]),
+                calibration=Calibration(
+                    f"runtime:perception_daemon:{source}",
+                    status="unknown",
+                    reliability=0.75,
+                ),
+                provenance=("core.perception.perception_daemon", source),
+                privacy=PrivacyPolicy(
+                    classification=PrivacyClass.SENSITIVE,
+                    retention="none",
+                    redacted=True,
+                ),
+                quality_flags=tuple(quality_flags[:8]),
+            )
+        )
 
     async def _main_perceptual_loop(self) -> None:
         """Poll clipboard, active window, terminal, browser, and file changes continuously."""

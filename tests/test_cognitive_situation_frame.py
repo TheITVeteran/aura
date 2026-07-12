@@ -11,6 +11,7 @@ from core.brain.llm.context_assembler import ContextAssembler
 from core.brain.types import ThinkingMode
 from core.container import ServiceContainer
 from core.phases.response_generation import ResponseGenerationPhase
+from core.planning.task_decomposer import TaskDecomposer
 from core.state.aura_state import AuraState, CognitiveMode
 
 
@@ -168,6 +169,86 @@ async def test_desktop_quick_path_consumes_cognitive_situation_frame():
 
 def test_render_cognitive_situation_prompt_block_handles_malformed_frame():
     assert render_cognitive_situation_prompt_block({"salience": object()}) == ""
+
+
+def test_fused_perception_changes_attention_routing_response_and_planning() -> None:
+    class Pump:
+        def get_status(self):
+            return {
+                "running": True,
+                "frames_produced": 42,
+                "substrate_injections": 21,
+                "errors": 0,
+                "pump_hz": 10.0,
+                "fusion": {
+                    "frame_id": "fusion-test-42",
+                    "confidence": 0.22,
+                    "uncertainty": 0.84,
+                    "observations": {"device": {"source": "unit"}},
+                    "missing": {
+                        "vision": "stale",
+                        "audio": "permission_denied",
+                    },
+                    "unresolved_contradictions": 1,
+                    "directives": {
+                        "attention_targets": [
+                            "perception-gap:vision:stale",
+                            "sensor-conflict:scene.person_present",
+                        ],
+                        "memory_candidates": [],
+                        "planning_constraints": [
+                            "verify-before-action:scene.person_present",
+                            "prefer-reversible-information-gathering",
+                        ],
+                        "repair_requirements": [
+                            "refresh-sensor:vision",
+                            "request-consent:audio",
+                        ],
+                    },
+                },
+            }
+
+    ServiceContainer.register_instance("perceptual_pump", Pump(), required=False)
+    state = AuraState.default()
+    engine = CognitiveSituationEngine()
+    frame = engine.frame(
+        "Open the visible app and click the person shown on screen.",
+        state=state,
+        origin="desktop",
+        context={"desktop_cognitive_engine_required": True},
+    )
+
+    assert frame.perception_summary["multimodal_fusion"]["frame_id"] == "fusion-test-42"
+    assert frame.ambiguity > 0.35
+    assert frame.verification_pressure >= 0.58
+    assert frame.routing_bias["perception_abstention_required"] is True
+    assert frame.routing_bias["perception_repair_required"] is True
+    assert "sensor-conflict:scene.person_present" in frame.attention_targets
+    assert frame.causal_effects["multimodal_confidence"] == 0.22
+    assert frame.causal_effects["unresolved_sensor_conflicts"] == 1
+
+    rendered = render_cognitive_situation_prompt_block(frame.to_dict())
+    planning = TaskDecomposer._render_cognitive_situation_for_planning(
+        {"cognitive_situation_frame": frame.to_dict()}
+    )
+    assert "abstain from unsupported scene claims" in rendered
+    assert "verify-before-action:scene.person_present" in rendered
+    assert "verify-before-action:scene.person_present" in planning
+    assert "request-consent:audio" in planning
+
+    cognitive_engine = CognitiveEngine()
+    cognitive_engine._apply_cognitive_situation_frame(
+        state,
+        "Open the visible app and click the person shown on screen.",
+        "desktop",
+        {"desktop_cognitive_engine_required": True},
+        is_background=False,
+    )
+    assert state.response_modifiers["perception_abstention_required"] is True
+    assert "verify-before-action:scene.person_present" in state.response_modifiers[
+        "perception_planning_constraints"
+    ]
+    assert state.cognition.modifiers["perception_repair_required"] is True
 
 
 @pytest.fixture(autouse=True)

@@ -355,6 +355,7 @@ class TaskDecomposer:
         affordances = frame.get("embodied_affordances")
         interpretations = frame.get("semantic_interpretations")
         bridges = frame.get("analogy_bridges")
+        causal_effects = frame.get("causal_effects")
         lines = [
             (
                 f"semantic_flexibility={_num('semantic_flexibility'):.2f}; "
@@ -384,6 +385,19 @@ class TaskDecomposer:
                 lines.append("Analogical bridges: " + "; ".join(labels))
         if isinstance(affordances, list) and affordances:
             lines.append("Embodied affordances: " + ", ".join(map(str, affordances[:6])))
+        if isinstance(causal_effects, dict):
+            constraints = causal_effects.get("perception_planning_constraints")
+            if isinstance(constraints, list) and constraints:
+                lines.append(
+                    "Perception constraints: "
+                    + ", ".join(str(item)[:120] for item in constraints[:8])
+                )
+            repairs = causal_effects.get("perception_repair_requirements")
+            if isinstance(repairs, list) and repairs:
+                lines.append(
+                    "Evidence repair before irreversible action: "
+                    + ", ".join(str(item)[:120] for item in repairs[:8])
+                )
         return "\n".join(lines)
 
     def _parse_llm_response(self, text: str) -> list[dict[str, Any]]:

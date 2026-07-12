@@ -432,8 +432,8 @@ def service_container():
     try:
         from core.utils.task_tracker import get_task_tracker, task_tracker
         # AttributeError included: tests may monkeypatch the tracker with a
-        # bare stub (no .shutdown); teardown must tolerate it regardless of
-        # fixture finalization order — same guard as the hygiene block below.
+        # minimal object without .shutdown; teardown must tolerate it regardless
+        # of fixture finalization order, matching the hygiene guard below.
         asyncio.run(get_task_tracker().shutdown(timeout=1.0))
         asyncio.run(task_tracker.shutdown(timeout=1.0))
     except (ImportError, RuntimeError, TimeoutError, AttributeError):

@@ -1031,6 +1031,20 @@ class CognitiveEngine:
         )
         if routing.get("use_tool_gateway") or routing.get("bind_sensorimotor_evidence"):
             state.response_modifiers["tool_governance_pressure"] = True
+        if routing.get("perception_abstention_required"):
+            state.response_modifiers["perception_abstention_required"] = True
+        if routing.get("perception_repair_required"):
+            state.response_modifiers["perception_repair_required"] = True
+        perception_constraints = causal.get("perception_planning_constraints")
+        if isinstance(perception_constraints, list):
+            state.response_modifiers["perception_planning_constraints"] = list(
+                perception_constraints[:8]
+            )
+        perception_repairs = causal.get("perception_repair_requirements")
+        if isinstance(perception_repairs, list):
+            state.response_modifiers["perception_repair_requirements"] = list(
+                perception_repairs[:8]
+            )
         if routing.get("requires_memory_grounding") or routing.get("preserve_conversation_context"):
             state.response_modifiers["requires_memory_grounding"] = True
         if routing.get("deliberate_mode") and not is_background:
@@ -1049,6 +1063,10 @@ class CognitiveEngine:
             cognition_mods["requires_memory_grounding"] = True
         if routing.get("bind_sensorimotor_evidence"):
             cognition_mods["bind_sensorimotor_evidence"] = True
+        if routing.get("perception_abstention_required"):
+            cognition_mods["perception_abstention_required"] = True
+        if routing.get("perception_repair_required"):
+            cognition_mods["perception_repair_required"] = True
         state.cognition.modifiers = cognition_mods
 
         if frame.attention_targets and not is_background:

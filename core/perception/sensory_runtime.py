@@ -20,15 +20,30 @@ demand is always available once permission is granted.
 """
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import logging
 import threading
-import importlib.util
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
+from core.container import ServiceContainer
 from core.media.safe_imports import cv2_main_process_blocked
+from core.perception.multimodal_sync import (
+    Calibration,
+    MissingReason,
+    MultimodalSynchronizer,
+    PerceptualClaim,
+    PerceptualEvent,
+    PrivacyClass,
+    PrivacyPolicy,
+)
+from core.perception.multimodal_sync import (
+    Modality as SynchronizedModality,
+)
 
 logger = logging.getLogger("Perception.Sensory")
 _SENSORY_IMPORT_ERRORS = (ImportError, ModuleNotFoundError)
@@ -243,24 +258,32 @@ class SensoryRuntime:
         self.mic = mic or MicProvider()
         self.voice = voice or VoiceProvider()
         self._lock = threading.RLock()
+        self._sync_sequences: dict[str, int] = {}
 
     # eyes ----------------------------------------------------------------
     def look(self, *, route: bool = True) -> Sight:
-        sight = self.camera.capture()
-        if route and sight.captured and sight.person_present:
-            self._route_face(sight)
+        with self._lock:
+            sight = self.camera.capture()
+        if route:
+            self._route_sight_to_synchronizer(sight)
+            if sight.captured and sight.person_present:
+                self._route_face(sight)
         return sight
 
     # ears ----------------------------------------------------------------
     def listen(self, *, seconds: float = 3.0, route: bool = True) -> Sound:
-        sound = self.mic.capture(seconds=seconds)
-        if route and sound.captured and (sound.transcript or sound.voice_descriptor is not None):
-            self._route_voice(sound)
+        with self._lock:
+            sound = self.mic.capture(seconds=seconds)
+        if route:
+            self._route_sound_to_synchronizer(sound)
+            if sound.captured and (sound.transcript or sound.voice_descriptor is not None):
+                self._route_voice(sound)
         return sound
 
     # voice ---------------------------------------------------------------
     def speak(self, text: str, **kw: Any) -> bool:
-        return self.voice.speak(text, **kw)
+        with self._lock:
+            return self.voice.speak(text, **kw)
 
     # take in the room at once -------------------------------------------
     def sense(self, *, listen_seconds: float = 2.0) -> dict[str, Any]:
@@ -274,6 +297,144 @@ class SensoryRuntime:
             "ears": self.mic.available(),
             "voice": True,  # `say` is effectively always present on macOS
         }
+
+    def _next_sync_sequence(self, source: str) -> int:
+        sequence = self._sync_sequences.get(source, 0) + 1
+        self._sync_sequences[source] = sequence
+        return sequence
+
+    @staticmethod
+    def _synchronizer() -> MultimodalSynchronizer | None:
+        try:
+            service = ServiceContainer.get("multimodal_synchronizer", default=None)
+        except (AttributeError, LookupError, RuntimeError, TypeError, ValueError):
+            return None
+        return service if isinstance(service, MultimodalSynchronizer) else None
+
+    def _publish_synchronized_event(
+        self,
+        *,
+        modality: SynchronizedModality,
+        source: str,
+        summary: str,
+        confidence: float,
+        claims: tuple[PerceptualClaim, ...] = (),
+        missing_reason: MissingReason | None = None,
+        quality_flags: tuple[str, ...] = (),
+    ) -> None:
+        synchronizer = self._synchronizer()
+        if synchronizer is None:
+            return
+        sequence_source = f"sensory_runtime:{source}:{modality.value}"
+        sequence = self._next_sync_sequence(sequence_source)
+        observed_monotonic_ns = time.monotonic_ns()
+        event = PerceptualEvent(
+            event_id=f"sensory:{modality.value}:{sequence}:{observed_monotonic_ns}",
+            modality=modality,
+            source=source,
+            sequence=sequence,
+            observed_at=time.time(),
+            observed_monotonic_ns=observed_monotonic_ns,
+            summary=summary,
+            confidence=0.0 if missing_reason is not None else confidence,
+            claims=() if missing_reason is not None else claims,
+            calibration=Calibration(
+                f"runtime:{source}",
+                status="unknown",
+                reliability=0.75,
+            ),
+            provenance=("core.perception.sensory_runtime", source),
+            privacy=PrivacyPolicy(
+                classification=PrivacyClass.SENSITIVE,
+                retention="none",
+                redacted=True,
+            ),
+            missing_reason=missing_reason,
+            quality_flags=quality_flags,
+        )
+        synchronizer.ingest(event)
+
+    def _route_sight_to_synchronizer(self, sight: Sight) -> None:
+        if not sight.captured:
+            reason = str(sight.detail.get("reason") or "camera_unavailable")
+            missing = (
+                MissingReason.SENSOR_ERROR
+                if "error" in reason
+                else MissingReason.PERMISSION_DENIED
+                if reason == "camera_permission_denied"
+                else MissingReason.UNAVAILABLE
+            )
+            self._publish_synchronized_event(
+                modality=SynchronizedModality.VISION,
+                source="on_demand_camera",
+                summary="camera observation unavailable",
+                confidence=0.0,
+                missing_reason=missing,
+                quality_flags=(reason[:120],),
+            )
+            return
+        self._publish_synchronized_event(
+            modality=SynchronizedModality.VISION,
+            source="on_demand_camera",
+            summary="redacted camera scene observation",
+            confidence=0.78 if sight.descriptor is not None else 0.68,
+            claims=(
+                PerceptualClaim("scene.person_present", sight.person_present, 0.78),
+                PerceptualClaim("camera.frame_width", sight.width, 0.95),
+                PerceptualClaim("camera.frame_height", sight.height, 0.95),
+            ),
+            quality_flags=("single_frame_observation",),
+        )
+
+    def _route_sound_to_synchronizer(self, sound: Sound) -> None:
+        if not sound.captured:
+            reason = str(sound.detail.get("reason") or "microphone_unavailable")
+            missing = (
+                MissingReason.SENSOR_ERROR
+                if "error" in reason
+                else MissingReason.PERMISSION_DENIED
+                if reason == "microphone_permission_denied"
+                else MissingReason.UNAVAILABLE
+            )
+            self._publish_synchronized_event(
+                modality=SynchronizedModality.AUDIO,
+                source="on_demand_microphone",
+                summary="microphone observation unavailable",
+                confidence=0.0,
+                missing_reason=missing,
+                quality_flags=(reason[:120],),
+            )
+            return
+        self._publish_synchronized_event(
+            modality=SynchronizedModality.AUDIO,
+            source="on_demand_microphone",
+            summary="redacted microphone observation",
+            confidence=0.75,
+            claims=(
+                PerceptualClaim("audio.capture_available", True, 0.98),
+                PerceptualClaim(
+                    "audio.speaker_descriptor_available",
+                    sound.voice_descriptor is not None,
+                    0.75,
+                ),
+            ),
+            quality_flags=("bounded_on_demand_capture",),
+        )
+        if sound.transcript:
+            digest = hashlib.sha256(
+                sound.transcript.encode("utf-8", errors="ignore")
+            ).hexdigest()[:24]
+            self._publish_synchronized_event(
+                modality=SynchronizedModality.SPEECH,
+                source="on_demand_microphone:transcript",
+                summary="redacted audio transcript digest",
+                confidence=0.72,
+                claims=(
+                    PerceptualClaim("speech.transcript_available", True, 0.95),
+                    PerceptualClaim("speech.transcript_digest", digest, 0.72),
+                ),
+                quality_flags=("audio_transcript_not_visual_speech",),
+            )
 
     # routing to the mind -------------------------------------------------
     def _route_face(self, sight: Sight) -> None:

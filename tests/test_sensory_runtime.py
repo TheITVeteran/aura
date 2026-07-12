@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
+from core.container import ServiceContainer
+from core.perception.multimodal_sync import Modality, MultimodalSynchronizer
 from core.perception.sensory_runtime import (
     CameraProvider,
     MicProvider,
@@ -153,3 +154,70 @@ def test_real_backends_are_importable_and_probe_safely():
 
 def test_singleton_stable():
     assert get_sensory_runtime() is get_sensory_runtime()
+
+
+def test_on_demand_senses_publish_redacted_events_to_canonical_fusion() -> None:
+    ServiceContainer.clear()
+    synchronizer = MultimodalSynchronizer()
+    ServiceContainer.register_instance(
+        "multimodal_synchronizer",
+        synchronizer,
+        required=False,
+    )
+    runtime = SensoryRuntime(
+        camera=_MockCamera(
+            Sight(captured=True, person_present=True, descriptor=_desc(3), width=640, height=480)
+        ),
+        mic=_MockMic(
+            Sound(
+                captured=True,
+                transcript="this transcript is private",
+                voice_descriptor=_desc(4),
+                duration_s=1.0,
+            )
+        ),
+        voice=_MockVoice(),
+    )
+
+    try:
+        runtime.look()
+        runtime.listen(seconds=1.0)
+        frame = synchronizer.fuse("on-demand-fusion")
+
+        assert frame.has_usable(Modality.VISION) is True
+        assert frame.has_usable(Modality.AUDIO) is True
+        assert frame.has_usable(Modality.SPEECH) is True
+        assert frame.belief("scene.person_present").value is True
+        assert frame.belief("speech.transcript_available").value is True
+        assert "this transcript is private" not in repr(synchronizer.get_status())
+        assert (
+            "audio_transcript_not_visual_speech"
+            in frame.observations[Modality.SPEECH].quality_flags
+        )
+    finally:
+        ServiceContainer.clear()
+
+
+def test_failed_on_demand_capture_becomes_explicit_missing_evidence() -> None:
+    ServiceContainer.clear()
+    synchronizer = MultimodalSynchronizer()
+    ServiceContainer.register_instance(
+        "multimodal_synchronizer",
+        synchronizer,
+        required=False,
+    )
+    runtime = SensoryRuntime(
+        camera=_MockCamera(Sight(captured=False, detail={"reason": "no_device"})),
+        mic=_MockMic(Sound(captured=False, detail={"reason": "capture_error:PortAudio"})),
+        voice=_MockVoice(),
+    )
+
+    try:
+        runtime.look()
+        runtime.listen()
+        frame = synchronizer.fuse("on-demand-missing")
+
+        assert frame.missing[Modality.VISION].value == "unavailable"
+        assert frame.missing[Modality.AUDIO].value == "sensor_error"
+    finally:
+        ServiceContainer.clear()

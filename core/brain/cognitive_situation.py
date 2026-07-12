@@ -243,6 +243,10 @@ class CognitiveSituationFrame:
                 directives.append("Use a relevant analogy or cross-domain bridge when it improves the answer.")
             if self.sensorimotor_grounding >= 0.30:
                 directives.append("Ground screen/tool claims in observed state or governed receipts before claiming completion.")
+            if self.routing_bias.get("perception_abstention_required"):
+                directives.append(
+                    "Perception is incomplete or contested: abstain from unsupported scene claims and gather evidence first."
+                )
             return " ".join(directives)
 
         lines = [
@@ -272,6 +276,16 @@ class CognitiveSituationFrame:
             )
         if self.attention_targets:
             lines.append("Attention targets: " + ", ".join(self.attention_targets[:5]) + ".")
+        constraints = self.causal_effects.get("perception_planning_constraints")
+        if isinstance(constraints, list) and constraints:
+            lines.append("Perception constraints: " + ", ".join(map(str, constraints[:5])) + ".")
+        repairs = self.causal_effects.get("perception_repair_requirements")
+        if isinstance(repairs, list) and repairs:
+            lines.append("Perception repair: " + ", ".join(map(str, repairs[:5])) + ".")
+        if self.routing_bias.get("perception_abstention_required"):
+            lines.append(
+                "Perception is incomplete or contested: abstain from unsupported scene claims and gather evidence first."
+            )
         lines.append(
             "This frame is causal grounding, not prose to recite. It may change routing, "
             "sampling, verification, and attention. It does not prove perception or tool completion."
@@ -336,6 +350,16 @@ class CognitiveSituationEngine:
             or context.get("desktop_task_contract")
             or context.get("desktop_execution_contract")
         )
+        perception_summary = self._perception_summary()
+        fusion_summary = perception_summary.get("multimodal_fusion")
+        fusion_summary = fusion_summary if isinstance(fusion_summary, dict) else {}
+        fusion_frame_available = bool(fusion_summary.get("frame_id"))
+        fusion_confidence = _clamp(_safe_float(fusion_summary.get("confidence"), 0.0))
+        fusion_uncertainty = _clamp(_safe_float(fusion_summary.get("uncertainty"), 1.0))
+        unresolved_sensor_conflicts = max(
+            0,
+            int(_safe_float(fusion_summary.get("unresolved_contradictions"), 0.0)),
+        )
 
         semantic = _clamp(
             0.10
@@ -358,6 +382,7 @@ class CognitiveSituationEngine:
             + 0.10 * min(3, action_hits)
             + (0.14 if live_desktop else 0.0)
             + (0.12 if has_screen_context else 0.0)
+            + (0.12 * fusion_confidence if fusion_frame_available else 0.0)
         )
         ambiguity = _clamp(
             0.08
@@ -365,6 +390,9 @@ class CognitiveSituationEngine:
             + 0.16 * confusion
             + (0.10 if len(words) >= 8 else 0.0)
             + (0.08 if "or" in lower or "maybe" in lower else 0.0)
+            + (0.25 * fusion_uncertainty if fusion_frame_available else 0.0)
+            + 0.06 * min(3, unresolved_sensor_conflicts)
+            + (0.12 if live_desktop and sensor_hits and not fusion_frame_available else 0.0)
         )
         abstraction = _clamp(0.15 + 0.16 * min(4, semantic_hits) + 0.12 * min(3, analogy_hits))
         verification = _clamp(
@@ -372,11 +400,16 @@ class CognitiveSituationEngine:
                 0.10 + 0.15 * min(3, uncertainty_hits) + 0.20 * sensorimotor,
                 0.35 if action_hits else 0.0,
                 0.42 if live_mind_required and sensorimotor >= 0.25 else 0.0,
+                (
+                    0.30 + 0.45 * fusion_uncertainty
+                    if fusion_frame_available and (action_hits or sensor_hits)
+                    else 0.0
+                ),
+                0.58 if action_hits and unresolved_sensor_conflicts else 0.0,
             )
         )
         metacognition = _clamp(0.20 + 0.35 * ambiguity + 0.15 * semantic + 0.10 * frustration)
 
-        perception_summary = self._perception_summary()
         embodied_affordances = self._embodied_affordances(lower, sensorimotor, perception_summary)
         interpretations = self._semantic_interpretations(text, words, semantic, sensorimotor)
         bridges = self._analogy_bridges(words, analogy, sensorimotor)
@@ -387,6 +420,24 @@ class CognitiveSituationEngine:
             sensorimotor=sensorimotor,
             ambiguity=ambiguity,
             embodied_affordances=embodied_affordances,
+        )
+        fusion_directives = fusion_summary.get("directives")
+        fusion_directives = fusion_directives if isinstance(fusion_directives, dict) else {}
+        perception_attention = fusion_directives.get("attention_targets")
+        if isinstance(perception_attention, list):
+            attention_targets.extend(str(item)[:160] for item in perception_attention[:8] if item)
+        attention_targets = list(dict.fromkeys(attention_targets))[:12]
+        perception_planning = fusion_directives.get("planning_constraints")
+        perception_planning = (
+            [str(item)[:160] for item in perception_planning[:8] if item]
+            if isinstance(perception_planning, list)
+            else []
+        )
+        perception_repairs = fusion_directives.get("repair_requirements")
+        perception_repairs = (
+            [str(item)[:160] for item in perception_repairs[:8] if item]
+            if isinstance(perception_repairs, list)
+            else []
         )
 
         routing_bias = {
@@ -399,12 +450,24 @@ class CognitiveSituationEngine:
             "bind_sensorimotor_evidence": sensorimotor >= 0.30,
             "requires_memory_grounding": semantic >= 0.45 or ambiguity >= 0.42,
             "deliberate_mode": not is_background and (semantic >= 0.52 or ambiguity >= 0.48 or sensorimotor >= 0.62),
+            "perception_repair_required": bool(perception_repairs),
+            "perception_abstention_required": bool(
+                unresolved_sensor_conflicts
+                or (action_hits and (not fusion_frame_available or fusion_confidence < 0.40))
+            ),
         }
         if is_background:
             routing_bias["deliberate_mode"] = False
 
         sampling_bias = {
-            "temperature_delta": _clamp(0.05 * analogy + 0.03 * semantic - 0.06 * sensorimotor, -0.12, 0.12),
+            "temperature_delta": _clamp(
+                0.05 * analogy
+                + 0.03 * semantic
+                - 0.06 * sensorimotor
+                - 0.06 * fusion_uncertainty,
+                -0.12,
+                0.12,
+            ),
             "max_tokens_factor": _clamp(
                 1.0 + 0.08 * semantic + 0.06 * analogy + 0.05 * ambiguity - 0.04 * sensorimotor,
                 0.80,
@@ -421,9 +484,15 @@ class CognitiveSituationEngine:
             "metacognition_depth": round(metacognition, 4),
             "attention_focus": attention_targets,
             "tool_governance_pressure": bool(routing_bias["use_tool_gateway"]),
+            "multimodal_fusion_frame_id": fusion_summary.get("frame_id", ""),
+            "multimodal_confidence": round(fusion_confidence, 4),
+            "multimodal_uncertainty": round(fusion_uncertainty, 4),
+            "unresolved_sensor_conflicts": unresolved_sensor_conflicts,
+            "perception_planning_constraints": perception_planning,
+            "perception_repair_requirements": perception_repairs,
             "screen_or_body_evidence_available": bool(
-                perception_summary.get("screen_perception_available")
-                or perception_summary.get("perception_daemon_available")
+                fusion_summary.get("observed_modalities")
+                or perception_summary.get("screen_perception_available")
                 or perception_summary.get("embodiment_available")
             ),
         }
@@ -453,6 +522,7 @@ class CognitiveSituationEngine:
         return frame
 
     def _perception_summary(self) -> dict[str, Any]:
+        pump_available, pump_status = _service_state("perceptual_pump")
         screen_available, screen_status = _service_state("screen_perception")
         daemon_available, daemon_status = _service_state("perception_daemon")
         runtime_available, runtime_status = _service_state("perception_runtime")
@@ -468,7 +538,46 @@ class CognitiveSituationEngine:
                 if status.get(key) not in (None, "", [], {})
             }
 
+        fusion_status = pump_status.get("fusion")
+        fusion_status = fusion_status if isinstance(fusion_status, dict) else {}
+        observations = fusion_status.get("observations")
+        observations = observations if isinstance(observations, dict) else {}
+        missing = fusion_status.get("missing")
+        missing = missing if isinstance(missing, dict) else {}
+        directives = fusion_status.get("directives")
+        directives = directives if isinstance(directives, dict) else {}
+        multimodal_fusion = {
+            "frame_id": _compact(fusion_status.get("frame_id"), limit=192),
+            "confidence": _clamp(_safe_float(fusion_status.get("confidence"), 0.0)),
+            "uncertainty": _clamp(_safe_float(fusion_status.get("uncertainty"), 1.0)),
+            "observed_modalities": sorted(str(key)[:40] for key in observations)[:12],
+            "missing": {
+                str(key)[:40]: _compact(value, limit=80)
+                for key, value in list(missing.items())[:12]
+            },
+            "unresolved_contradictions": max(
+                0,
+                int(_safe_float(fusion_status.get("unresolved_contradictions"), 0.0)),
+            ),
+            "directives": {
+                key: [str(item)[:160] for item in value[:8] if item]
+                for key in (
+                    "attention_targets",
+                    "memory_candidates",
+                    "planning_constraints",
+                    "repair_requirements",
+                )
+                if isinstance((value := directives.get(key)), list)
+            },
+        }
+
         return {
+            "perceptual_pump_available": pump_available,
+            "perceptual_pump": compact_status(
+                pump_status,
+                ("running", "frames_produced", "substrate_injections", "errors", "pump_hz"),
+            ),
+            "multimodal_fusion": multimodal_fusion,
             "screen_perception_available": screen_available,
             "screen": compact_status(
                 screen_status,
@@ -659,6 +768,11 @@ def render_cognitive_situation_prompt_block(frame: dict[str, Any], *, compact: b
                 directives.append("Use a relevant analogy when it helps.")
             if sensorimotor >= 0.30:
                 directives.append("Ground screen/tool claims in observed state or receipts.")
+            routing = frame.get("routing_bias")
+            if isinstance(routing, dict) and routing.get("perception_abstention_required"):
+                directives.append(
+                    "Perception is incomplete or contested: abstain from unsupported scene claims and gather evidence first."
+                )
             return " ".join(directives) + "\n\n"
 
         lines = [
@@ -680,6 +794,19 @@ def render_cognitive_situation_prompt_block(frame: dict[str, Any], *, compact: b
         affordances = frame.get("embodied_affordances") or []
         if isinstance(affordances, list) and affordances:
             lines.append("Embodied affordances: " + ", ".join(map(str, affordances[:5])) + ".")
+        causal = frame.get("causal_effects") or {}
+        if isinstance(causal, dict):
+            constraints = causal.get("perception_planning_constraints")
+            if isinstance(constraints, list) and constraints:
+                lines.append("Perception constraints: " + ", ".join(map(str, constraints[:5])) + ".")
+            repairs = causal.get("perception_repair_requirements")
+            if isinstance(repairs, list) and repairs:
+                lines.append("Perception repair: " + ", ".join(map(str, repairs[:5])) + ".")
+        routing = frame.get("routing_bias") or {}
+        if isinstance(routing, dict) and routing.get("perception_abstention_required"):
+            lines.append(
+                "Perception is incomplete or contested: abstain from unsupported scene claims and gather evidence first."
+            )
         lines.append(
             "This frame changes routing, sampling, attention, and verification; do not recite it."
         )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from core.container import ServiceContainer
+from core.perception.multimodal_sync import Modality
 from core.perception.perceptual_pump import (
     AudioState,
     PerceptualFrame,
@@ -169,6 +170,92 @@ def test_perceptual_pump_updates_world_state_with_grounded_frame() -> None:
         descriptions = [event["description"] for event in world.get_salient_events()]
         assert "App switched to Google Chrome" in descriptions
         assert "Voice detected: Open a few articles" in descriptions
+    finally:
+        ServiceContainer.clear()
+
+
+def test_perceptual_pump_tick_fuses_modalities_and_publishes_reconciled_beliefs(
+    monkeypatch,
+) -> None:
+    import asyncio
+
+    world = WorldState()
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("world_state", world, required=False)
+    pump = PerceptualPump()
+    pump._frame_count = 9
+
+    monkeypatch.setattr(pump, "_cognitive_load_throttle_active", lambda: False)
+    monkeypatch.setattr(
+        "core.perception.perceptual_pump._collect_screen_state",
+        lambda _prev: ScreenState(
+            active_app="Google Chrome",
+            window_title="Aura verification",
+            content_hash="ocr-digest",
+            screen_changed=True,
+            change_magnitude=0.8,
+            available=True,
+            source="unit_screen",
+            confidence=0.95,
+            missing_reason=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "core.perception.perceptual_pump._collect_audio_state",
+        lambda: AudioState(
+            rms_energy=0.3,
+            voice_activity=True,
+            transcript_snippet="private spoken request",
+            transcript_full="private spoken request",
+            transcript_changed=True,
+            available=True,
+            source="unit_audio",
+            confidence=0.90,
+            missing_reason=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "core.perception.perceptual_pump._collect_system_state",
+        lambda: SystemState(
+            cpu_percent=21.0,
+            memory_percent=42.0,
+            thermal_pressure=0.05,
+            battery_percent=90.0,
+            battery_charging=True,
+            available=True,
+            source="unit_system",
+            confidence=0.99,
+            missing_reason=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "core.perception.perceptual_pump._collect_user_state",
+        lambda: UserState(
+            idle_seconds=1.0,
+            presence=1.0,
+            available=True,
+            source="unit_user",
+            confidence=0.8,
+            missing_reason=None,
+        ),
+    )
+
+    try:
+        asyncio.run(pump._tick())
+
+        frame = pump.latest_frame
+        assert frame is not None and frame.fusion is not None
+        assert frame.fusion.missing == {}
+        assert frame.fusion.has_usable(Modality.VISION) is True
+        assert frame.fusion.has_usable(Modality.SPEECH) is True
+        assert frame.fusion.confidence > 0.65
+        assert world.get_belief("perception.fusion_confidence") == frame.fusion.confidence
+        assert world.get_belief("perception.device.cpu_percent") == 21.0
+        assert world.last_audio_source_assessment["visual_speech_evidence"] is False
+
+        status_text = repr(pump.get_status())
+        assert "private spoken request" not in status_text
+        assert "audio_transcript_not_visual_speech" in status_text
     finally:
         ServiceContainer.clear()
 
