@@ -640,6 +640,12 @@ class ResponseGenerationPhase(BasePhase):
                 "Use this as source-of-truth memory for the current recall question.",
             ),
             (
+                "DEEP MEMORY RECALL",
+                runtime_context.get("deep_memory_context"),
+                "Silent background recall from long-term memory; draw on it only where "
+                "genuinely relevant, never recite it.",
+            ),
+            (
                 "GOVERNED CAPABILITY INVENTORY EVIDENCE",
                 runtime_context.get("grounded_capability_inventory_context"),
                 "Use this for capability questions; do not claim execution without receipts.",

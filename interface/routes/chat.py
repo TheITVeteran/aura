@@ -2716,6 +2716,34 @@ async def _find_session_content_exchanges(
     return [entry for _, _, entry in scored]
 
 
+async def _fetch_deep_memory_context(user_message: str) -> str:
+    """The Invisible RAG Bridge, wired: silent per-turn semantic recall.
+
+    The bridge (core/memory/rag_bridge.py) self-gates on trivial queries,
+    records recall telemetry, and reranks temporally — it just had no
+    caller on the turn path (July external review). Bounded hard: a slow
+    vault must never stall a live turn; a timeout is backpressure, not an
+    incident.
+    """
+    try:
+        from core.memory.rag_bridge import fetch_deep_context
+
+        return str(
+            await asyncio.wait_for(fetch_deep_context(user_message), timeout=2.5) or ""
+        )
+    except (TimeoutError, asyncio.TimeoutError):
+        logger.debug("Deep memory recall timed out for this turn (backpressure).")
+        return ""
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation(
+            "rag_bridge",
+            exc,
+            severity="warning",
+            action="continued the turn without deep memory recall",
+        )
+        return ""
+
+
 async def _build_conversation_recall_reply(
     user_message: str,
     *,
@@ -5132,6 +5160,13 @@ async def _run_cognitive_engine_chat_turn(
         )
     if context_challenge_context:
         context["contextual_relevance_evidence"] = context_challenge_context[:2500]
+    deep_memory_context = (
+        ""
+        if capability_inventory_contract
+        else await _fetch_deep_memory_context(visible)
+    )
+    if deep_memory_context:
+        context["deep_memory_context"] = deep_memory_context[:3000]
     if turn_trace is not None:
         mind_snapshot_quality = dict(live_mind_context.get("mind_snapshot_quality") or {})
         turn_trace.update(

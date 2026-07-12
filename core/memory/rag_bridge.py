@@ -51,12 +51,19 @@ async def fetch_deep_context(user_query: str, threshold_words: int = 4) -> str:
         return ""
 
     try:
-        # 1. Get raw, flat vector results
-        raw_results = await asyncio.to_thread(
-            memory_facade.search,
-            query=user_query,
-            limit=10  # Pull a wider net initially
-        )
+        # 1. Get raw, flat vector results. MemoryFacade.search is ASYNC —
+        # the old asyncio.to_thread(...) call handed back an unawaited
+        # coroutine, so every fetch failed silently (July external review:
+        # the bridge had zero working integrations). Await it properly;
+        # a sync facade double still works through a thread.
+        search = getattr(memory_facade, "search", None)
+        if search is None:
+            _record(0, 0, skipped_reason="memory_facade_has_no_search")
+            return ""
+        if asyncio.iscoroutinefunction(search):
+            raw_results = await search(query=user_query, limit=10)
+        else:
+            raw_results = await asyncio.to_thread(search, query=user_query, limit=10)
 
         if not raw_results:
             _record(0, 0)

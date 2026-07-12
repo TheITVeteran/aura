@@ -2299,6 +2299,15 @@ class CognitiveEngine:
                 f"{recall_evidence}\n"
                 "Use this as the source of truth for the current recall question."
             )
+        deep_memory = str(context.get("deep_memory_context") or "").strip()
+        if deep_memory:
+            grounding_blocks.append(
+                "[DEEP MEMORY RECALL]\n"
+                f"{deep_memory}\n"
+                "Silent background recall from long-term memory. Draw on it only where "
+                "it is genuinely relevant to the user's message; never recite it, and "
+                "never present it as something the user just said."
+            )
         if canonical_memory_state_evidence:
             grounding_blocks.append(
                 "[CANONICAL MEMORY STATE EVIDENCE]\n"
