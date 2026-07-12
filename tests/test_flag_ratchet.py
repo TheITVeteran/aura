@@ -26,10 +26,13 @@ RAW_ENV_READ_BUDGET = 585
 # model_lane_control's AURA_MODEL_LANE_* vars are parent->child process
 # INHERITANCE transport (incl. a delegation token) — spawn-scoped IPC, not
 # operator knobs; the flag registry is the wrong surface for them.
+# runtime_preflight is stdlib-only BY CONTRACT (its own test pins that a
+# broken venv can still run it) — it cannot import the flag layer.
 SANCTIONED = {
     "core/runtime/flags.py",
     "core/runtime/runtime_settings.py",
     "core/runtime/model_lane_control.py",
+    "tools/runtime_preflight.py",
 }
 
 _READ_RE = re.compile(r"(?:os\.environ\.get|os\.getenv|environ\.get|\bgetenv)\(\s*[\"']AURA_")

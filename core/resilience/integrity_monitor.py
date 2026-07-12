@@ -9,6 +9,7 @@ except ImportError:
     def capture_and_log(e, ctx=None):
         logging.getLogger("Aura.IntegrityMonitor").error(f"Integrity Error: {e} | Context: {ctx}")
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
 from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
@@ -21,6 +22,24 @@ from typing import Optional
 from core.resilience.substrate_monitor import SubstrateMonitor
 
 logger = logging.getLogger("Aura.IntegrityMonitor")
+
+_SQLITE_MAGIC = b"SQLite format 3\x00"
+_SQLITE_SUFFIXES = (".db", ".sqlite3", ".sqlite")
+# Heavy artifact trees that hold no SQLite state worth sweeping every cycle.
+_SWEEP_EXCLUDED_DIRS = {"training", "error_logs", "bench", "__pycache__"}
+
+_DB_SWEEP_EVERY_N = declare(
+    "AURA_INTEGRITY_DB_SWEEP_EVERY_N",
+    kind=FlagKind.INT,
+    default=6,
+    description=(
+        "Run the SQLite quick_check sweep every Nth integrity cycle (cycle 1 "
+        "always sweeps, so boot is covered). At the default 300s cycle, 6 = "
+        "one sweep per half hour instead of full integrity_check page scans "
+        "of every store every 5 minutes."
+    ),
+    owner="core/resilience/integrity_monitor.py",
+)
 
 
 class IntegrityReport:
@@ -53,6 +72,8 @@ class SystemIntegrityMonitor:
         self._task: Optional[asyncio.Task] = None
         self._last_report: Optional[IntegrityReport] = None
         self._check_count = 0
+        self._last_db_checks: dict[str, str] = {}
+        self._last_db_errors: list[str] = []
         self._proc = None
         self._substrate_monitor = SubstrateMonitor()
         try:
@@ -111,12 +132,30 @@ class SystemIntegrityMonitor:
 
             await asyncio.sleep(self._interval)
 
-    async def run_check(self) -> IntegrityReport:
-        """Run a full integrity check."""
+    async def run_check(self, include_databases: bool | None = None) -> IntegrityReport:
+        """Run a full integrity check.
+
+        The DB sweep runs on the first cycle (boot coverage) and then every
+        Nth cycle (AURA_INTEGRITY_DB_SWEEP_EVERY_N); services and resources
+        are cheap and run every cycle. Callers can force either way.
+        """
         report = IntegrityReport()
 
-        # 1. Database integrity
-        await asyncio.to_thread(self._check_databases, report)
+        if include_databases is None:
+            every_n = max(1, int(_DB_SWEEP_EVERY_N.value() or 1))
+            include_databases = self._check_count % every_n == 0
+
+        # 1. Database integrity. A corrupt store is STATE, not an event:
+        # skip-cycles re-report the last sweep's verdict so health surfaces
+        # never show green over known corruption (degradations still fire
+        # only on real sweeps).
+        if include_databases:
+            await asyncio.to_thread(self._check_databases, report)
+            self._last_db_checks = dict(report.db_checks)
+            self._last_db_errors = [e for e in report.errors if "DB " in e or "db" in e.lower()]
+        else:
+            report.db_checks.update(self._last_db_checks)
+            report.errors.extend(self._last_db_errors)
 
         # 2. Service registration
         self._check_services(report)
@@ -161,28 +200,86 @@ class SystemIntegrityMonitor:
 
         return warning_mb, critical_mb
 
+    def _discover_sqlite_stores(self, max_stores: int = 200) -> list[Path]:
+        """Every real SQLite store under the state roots, header-verified.
+
+        The old sweep saw only top-level data/*.db — nested stores and
+        *.sqlite3 files (most of the 28 live stores) were never checked.
+        Suffix pre-filter keeps the walk cheap; the 16-byte header read
+        confirms the file is genuinely SQLite before it is ever opened.
+        """
+        roots = [self._data_dir]
+        for sibling in ("storage", ".aura_runtime"):
+            candidate = self._data_dir.parent / sibling
+            if candidate.is_dir():
+                roots.append(candidate)
+        stores: list[Path] = []
+        for root in roots:
+            if not root.is_dir():
+                continue
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = sorted(
+                    d for d in dirnames if d not in _SWEEP_EXCLUDED_DIRS
+                )
+                for fname in sorted(filenames):
+                    if len(stores) >= max_stores:
+                        return stores
+                    if fname.endswith(("-wal", "-shm")):
+                        continue
+                    path = Path(dirpath) / fname
+                    if path.suffix.lower() not in _SQLITE_SUFFIXES:
+                        continue
+                    try:
+                        with path.open("rb") as fh:
+                            if fh.read(16) != _SQLITE_MAGIC:
+                                continue
+                    except OSError:
+                        continue
+                    stores.append(path)
+        return stores
+
     def _check_databases(self, report: IntegrityReport):
-        """Run PRAGMA integrity_check on all .db files."""
+        """PRAGMA quick_check every discovered SQLite store.
+
+        quick_check, not integrity_check: the full scan reads every page of
+        every store (~700MB per pass on a mature instance) and belongs on
+        db_maintenance's weekly schedule, not a live monitor. quick_check
+        still catches malformed pages and broken btrees — the corruption
+        classes that actually strike this host.
+        """
         if not self._data_dir.exists():
             report.warnings.append(f"Data directory {self._data_dir} does not exist")
             return
 
-        db_files = list(self._data_dir.glob("*.db"))
-        for db_path in db_files:
-            db_name = db_path.name
+        for db_path in self._discover_sqlite_stores():
             try:
-                conn = sqlite3.connect(str(db_path), timeout=10)
-                conn.execute("PRAGMA busy_timeout=5000;")
-                result = conn.execute("PRAGMA integrity_check;").fetchone()
-                conn.close()
+                db_name = str(db_path.relative_to(self._data_dir.parent))
+            except ValueError:
+                db_name = str(db_path)
+            try:
+                conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=10)
+                try:
+                    conn.execute("PRAGMA busy_timeout=5000;")
+                    result = conn.execute("PRAGMA quick_check(1);").fetchone()
+                finally:
+                    conn.close()
 
                 if result and result[0] == "ok":
                     report.db_checks[db_name] = "ok"
                 else:
-                    msg = f"DB integrity failed: {db_name} — {result}"
+                    msg = (
+                        f"DB integrity failed: {db_name} — {result} "
+                        "(see docs/runbooks/memory-corruption.md)"
+                    )
                     report.db_checks[db_name] = str(result)
                     report.errors.append(msg)
                     logger.error("🔍 %s", msg)
+                    record_degradation(
+                        'integrity_monitor',
+                        RuntimeError(msg),
+                        severity="critical",
+                        action="reported corrupt store; operator runbook memory-corruption",
+                    )
             except sqlite3.OperationalError as e:
                 if "locked" in str(e).lower():
                     report.db_checks[db_name] = "locked (skipped)"
