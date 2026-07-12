@@ -577,6 +577,23 @@ def _reset_crash_loop_breaker_between_tests():
 
 
 @pytest.fixture(autouse=True)
+def _pin_measured_phi_off_between_tests(monkeypatch):
+    """Order-independence for the unified felt state's measured-Φ track.
+
+    The phi computer is process-global; a test that feeds its trajectory
+    would inject a live measurement (and a phi-divergence axis) into any
+    later reconcile() call. Tests that want the measured track pass
+    measured_phi explicitly or monkeypatch the resolver themselves.
+    """
+    from core.being.unified_felt_state import UnifiedFeltStateEngine
+
+    monkeypatch.setattr(
+        UnifiedFeltStateEngine, "_measured_system_phi", staticmethod(lambda: None)
+    )
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_escalation_governor_and_conditions_between_tests():
     """Order-independence for the A4 escalation cap and K6 conditions.
 

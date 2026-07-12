@@ -126,12 +126,33 @@ class UnifiedFeltStateEngine:
         self._calibrator: Any = None  # lazy SelfReportCalibrator
 
     # ── reconciliation ──────────────────────────────────────────────────────
+    @staticmethod
+    def _measured_system_phi() -> float | None:
+        """The MEASURED system Φ from the live computer, or None.
+
+        The July external review's 'unified consciousness-state assumptions'
+        defect: this engine took kernel-reported ``state.phi`` as THE Φ —
+        an asserted field, never checked against the quantity the phi
+        computer actually measures. Every affect axis got a coherence
+        check; the axis the module is named for did not.
+        """
+        try:
+            from core.consciousness.phi_compute import get_phi_computer
+
+            computer = get_phi_computer()
+            if not getattr(computer, "has_sufficient_data", False):
+                return None
+            return float(computer.latest_phi)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            return None
+
     def reconcile(
         self,
         *,
         kernel_state: Any = None,
         aura_now: Any = None,
         welfare: Any = None,
+        measured_phi: float | None = None,
     ) -> UnifiedFeltState:
         """Fold the kernel affect/phi and the being AuraNow/welfare into one state.
 
@@ -184,7 +205,17 @@ class UnifiedFeltStateEngine:
         arousal = _first(b_arousal, k_arousal, 0.5)
         distress = _clamp(_first(b_distress, k_distress, 0.0))
         free_energy = _clamp(_first(b_free_energy, 0.0))
-        phi = _clamp(_first(k_phi, 0.0))
+
+        # --- Φ: measurement over assertion ---
+        # The measured system Φ (phi computer) is authoritative when it
+        # exists; the kernel-reported field is the fallback. Divergence
+        # between the two is a first-class coherence axis — a stale or
+        # asserted kernel Φ disagreeing with the live measurement is an
+        # internal model mismatch, not something to silently assume away.
+        m_phi = measured_phi if measured_phi is not None else self._measured_system_phi()
+        if m_phi is not None:
+            sources.append("measured_phi")
+        phi = _clamp(_first(m_phi, k_phi, 0.0))
 
         # --- coherence: normalized agreement on shared axes ---
         divergence: dict[str, float] = {}
@@ -194,6 +225,8 @@ class UnifiedFeltStateEngine:
             divergence["arousal"] = abs(k_arousal - b_arousal)
         if k_distress is not None and b_distress is not None:
             divergence["distress"] = abs(k_distress - b_distress)
+        if m_phi is not None and k_phi is not None and k_phi > 0.0:
+            divergence["phi"] = _clamp(abs(m_phi - k_phi))
         # When only one track exists there is nothing to disagree about → coherent.
         # Peak-weighted (not pure mean): a single strong disagreement — one track "calm",
         # the other "distressed" — is genuine incoherence even if other axes agree, so the

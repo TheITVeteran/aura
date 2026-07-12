@@ -101,3 +101,48 @@ def test_singleton_and_container_registration():
     from core.container import ServiceContainer
 
     assert ServiceContainer.has(UnifiedFeltStateEngine.SERVICE_NAME)
+
+
+# ── Φ: measurement over assertion (July external review) ─────────────────
+
+
+class _PhiOnlyKernelState:
+    def __init__(self, phi):
+        self.phi = phi
+        self.affect = None
+
+
+def test_measured_phi_is_authoritative_over_kernel_assertion():
+    from core.being.unified_felt_state import UnifiedFeltStateEngine
+
+    engine = UnifiedFeltStateEngine()
+    unified = engine.reconcile(
+        kernel_state=_PhiOnlyKernelState(phi=0.9), measured_phi=0.3
+    )
+    assert unified.phi == pytest.approx(0.3), "measurement beats the asserted field"
+    assert "measured_phi" in unified.sources
+
+
+def test_phi_divergence_is_a_coherence_axis():
+    from core.being.unified_felt_state import UnifiedFeltStateEngine
+
+    engine = UnifiedFeltStateEngine()
+    unified = engine.reconcile(
+        kernel_state=_PhiOnlyKernelState(phi=0.9), measured_phi=0.1
+    )
+    assert "phi" in unified.divergence
+    assert unified.divergence["phi"] == pytest.approx(0.8)
+    assert unified.coherence < 1.0, "a stale asserted phi is an internal model mismatch"
+
+
+def test_kernel_phi_is_the_fallback_when_no_measurement(monkeypatch):
+    from core.being.unified_felt_state import UnifiedFeltStateEngine
+
+    monkeypatch.setattr(
+        UnifiedFeltStateEngine, "_measured_system_phi", staticmethod(lambda: None)
+    )
+    engine = UnifiedFeltStateEngine()
+    unified = engine.reconcile(kernel_state=_PhiOnlyKernelState(phi=0.7))
+    assert unified.phi == pytest.approx(0.7)
+    assert "measured_phi" not in unified.sources
+    assert "phi" not in unified.divergence, "one source → nothing to disagree about"
