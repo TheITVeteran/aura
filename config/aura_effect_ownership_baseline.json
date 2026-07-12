@@ -21,6 +21,14 @@
       "canonical_owner": true,
       "category": "action_executor",
       "count": 1,
+      "path": "core/capabilities/self_code_improver.py",
+      "scope": "<module>._execute_self_code_write"
+    },
+    {
+      "callee": "core.runtime.action_executor.ActionExecutor.execute",
+      "canonical_owner": true,
+      "category": "action_executor",
+      "count": 1,
       "path": "core/embodiment/world_bridge.py",
       "scope": "<module>.WorldBridge.call"
     },
@@ -751,14 +759,6 @@
       "count": 1,
       "path": "core/capabilities/app_builder.py",
       "scope": "<module>.build_app"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.async_atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/capabilities/self_code_improver.py",
-      "scope": "<module>.improve_function"
     },
     {
       "callee": "core.runtime.atomic_writer.async_atomic_write_text",
@@ -13570,6 +13570,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "5ded15181c3a5b98fd524ab38e6cce30d319189f440498e39d1af7da2b142487",
+  "inventory_sha256": "23ac98d86489b7c1ad489ef7fe45a4ae9cd8c591db7cf5e55b2fa24c69cb61e2",
   "schema_version": 1
 }

@@ -41,7 +41,7 @@ def test_websocket_chat_uses_desktop_cognitive_engine_trace_metadata():
     assert '"desktop_websocket"' in source
     assert '"paired_device_websocket"' in source
     assert "require_engine=True" in source
-    assert "conversation_only_surface=device_session is not None" in source
+    assert "conversation_only_surface=paired_session is not None" in source
     assert "desktop WebSocket chat path requires CognitiveEngine" in source
 
 

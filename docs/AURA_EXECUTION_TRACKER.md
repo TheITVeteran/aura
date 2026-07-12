@@ -11573,3 +11573,47 @@ Authoritative remaining work from this milestone:
 - Keep multi-hour and 24-72 hour soaks deferred until every remaining shorter
   static, bounded, fault-injection, GUI, clean-machine, and live-runtime gate is
   green.
+
+## Checkpoint 2026-07-12-37: Receipted Symmetric Self-Code Rollback
+
+This checkpoint advances `EFFECT-001`, `CODING-001`, `FAULT-001`, and
+`SECURITY-001`. Rebase validation found that the new symmetric self-code
+rollback feature persisted its ledger and source effects through direct atomic
+writes outside the canonical effect owner. The implementation now meets the
+stronger rollback claim instead of adding those writes to accepted debt.
+
+Implemented and verified:
+
+- Routed write-ahead ledger, enactment, and rollback writes through one
+  `ActionExecutor` file transaction. Each mutation now has a Will decision,
+  explicit non-partial expectation, durable atomic transport, hash readback,
+  welfare closure, rollback target, and durable post-action receipt.
+- Defined completion as all of transport success, observed hash equality, and
+  receipt persistence. A write that changes source but loses its enactment
+  receipt is no longer reported as merely "not enacted"; the improver invokes
+  forced symmetric rollback from the durable pre-image and reports either
+  verified compensation or manual reconciliation.
+- Rollback results now expose effect verification, receipt identity/persistence,
+  and reconciliation state. `ImproveResult` retains the enactment receipt and
+  compensation outcome for callers and later audit.
+- The expanded rollback/compensation suite passed `8/8`. Governance ownership
+  now records one canonical `ActionExecutor` call, removes the old direct atomic
+  write bucket, rejects all three unbaselined direct-write/raw-mkdir additions,
+  and reduces migration debt from `1,687` to `1,686` calls.
+- Removed synchronous file reads from the async enact/rollback path and added
+  the module to the strict MyPy ratchet, which now passes `44` production files.
+
+Authoritative remaining self-improvement work:
+
+- Make the entire generated-code lifecycle one durable transaction spanning
+  candidate provenance, isolated verification, authority, write-ahead state,
+  enactment, repository tests, semantic review, commit/signing, monitoring,
+  automatic rollback, and retained learning. Prove crash recovery at every
+  boundary and idempotent resume from receipts.
+- Replace raw test-helper mutations and remaining legacy self-modification
+  effect debt where surfaced; add concurrent enactment fencing, file-version
+  compare-and-swap, multi-file changesets, dependency-aware compensation, and
+  clean-worktree/repository rollback proofs before general autonomous coding or
+  self-repair closure.
+- Continue the paired/MLX and `os_automation` obligations from Checkpoint 36;
+  keep final multi-hour soaks deferred until all shorter gates are green.

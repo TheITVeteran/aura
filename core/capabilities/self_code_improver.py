@@ -37,7 +37,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from core.governance.will import ActionDomain
+from core.runtime.action_executor import ActionExecutor
 from core.runtime.errors import record_degradation
+from core.runtime.skill_contract import ActionExpectation
 
 logger = logging.getLogger("Aura.SelfCodeImprover")
 
@@ -46,6 +49,47 @@ _ENACTMENT_LEDGER_DIR = Path("~/.aura/data/self_improvement/enactments").expandu
 
 def _sha(text: str) -> str:
     return hashlib.blake2b(text.encode("utf-8", "replace"), digest_size=16).hexdigest()
+
+
+def _self_code_write_completed(result: dict[str, Any]) -> bool:
+    return bool(
+        result.get("ok") is True
+        and result.get("effect_verified") is True
+        and result.get("receipt_persisted") is True
+        and result.get("post_action_receipt_id")
+    )
+
+
+async def _execute_self_code_write(
+    *,
+    path: Path,
+    text: str,
+    action_name: str,
+    action_id: str,
+    rollback_target: str | None,
+) -> dict[str, Any]:
+    result = await ActionExecutor.execute(
+        domain=ActionDomain.FILE_WRITE,
+        action_name=action_name,
+        params={"path": str(path), "text": text, "encoding": "utf-8"},
+        source="self_code_improver",
+        rollback_target=rollback_target,
+        action_id=action_id,
+        expectation=ActionExpectation(
+            objective=f"durably write and hash-verify {path}",
+            acceptance_criteria=["effect_verified"],
+            required_evidence=[
+                "verification_evidence.observation.state.sha256",
+            ],
+            user_visible_effect=f"{path} matches the intended source bytes",
+            repair_hint="read back the target hash or compensate from the enactment ledger",
+            rollback_hint=rollback_target or "restore the pre-image from the enactment ledger",
+            allow_partial=False,
+        ),
+    )
+    if not isinstance(result, dict):
+        raise TypeError("ActionExecutor returned a non-mapping self-code result")
+    return {str(key): value for key, value in result.items()}
 
 
 async def _record_enactment(
@@ -59,8 +103,6 @@ async def _record_enactment(
     improved_function: str,
 ) -> str:
     """Write-ahead rollback record: durable BEFORE the file mutates."""
-    from core.runtime.atomic_writer import async_atomic_write_text
-
     record_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{_sha(file_after)[:8]}"
     record = {
         "schema": "aura.self_code_enactment.v1",
@@ -74,18 +116,29 @@ async def _record_enactment(
         "original_function_source": original_function,
         "improved_function_source": improved_function,
     }
-    _ENACTMENT_LEDGER_DIR.mkdir(parents=True, exist_ok=True)
-    await async_atomic_write_text(
-        _ENACTMENT_LEDGER_DIR / f"{record_id}.json", json.dumps(record, indent=1)
+    action = await _execute_self_code_write(
+        path=_ENACTMENT_LEDGER_DIR / f"{record_id}.json",
+        text=json.dumps(record, indent=1),
+        action_name="record_self_code_enactment",
+        action_id=f"self-code-ledger:{record_id}",
+        rollback_target=None,
     )
+    if not _self_code_write_completed(action):
+        raise OSError(
+            "enactment ledger write did not complete its effect/receipt contract: "
+            f"{action.get('status') or action.get('error') or 'unknown'}"
+        )
     return record_id
 
 
 def _load_enactment(record_id: str) -> dict[str, Any] | None:
     try:
-        return json.loads(
+        payload = json.loads(
             (_ENACTMENT_LEDGER_DIR / f"{record_id}.json").read_text(encoding="utf-8")
         )
+        if not isinstance(payload, dict):
+            return None
+        return {str(key): value for key, value in payload.items()}
     except (OSError, ValueError):
         return None
 
@@ -101,8 +154,10 @@ def latest_enactment_for(target_file: str) -> dict[str, Any] | None:
             record = json.loads(record_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        if not isinstance(record, dict):
+            continue
         if str(record.get("target_file")) == str(target_file):
-            return record
+            return {str(key): value for key, value in record.items()}
     return None
 
 
@@ -124,7 +179,7 @@ async def rollback_enactment(
 
     path = Path(str(record["target_file"]))
     try:
-        current = path.read_text(encoding="utf-8")
+        current = await asyncio.to_thread(path.read_text, encoding="utf-8")
     except OSError as exc:
         return {"ok": False, "status": "target_unreadable", "error": str(exc)}
 
@@ -140,23 +195,42 @@ async def rollback_enactment(
     restored = _replace_function(
         current, str(record["func_name"]), str(record["original_function_source"])
     )
-    from core.runtime.atomic_writer import async_atomic_write_text
-
-    await async_atomic_write_text(path, restored)
+    action = await _execute_self_code_write(
+        path=path,
+        text=restored,
+        action_name="rollback_self_code_enactment",
+        action_id=f"self-code-rollback:{record['id']}",
+        rollback_target=str(record["id"]),
+    )
 
     # Symmetric verification: the restored function must equal the pre-image.
     extracted = _extract_function_source(
-        path.read_text(encoding="utf-8"), str(record["func_name"])
+        await asyncio.to_thread(path.read_text, encoding="utf-8"),
+        str(record["func_name"]),
     )
     restored_ok = bool(
         extracted and extracted[0].strip() == str(record["original_function_source"]).strip()
     )
+    transaction_complete = _self_code_write_completed(action)
     outcome = {
-        "ok": restored_ok,
-        "status": "rolled_back" if restored_ok else "rollback_verification_failed",
+        "ok": restored_ok and transaction_complete,
+        "status": (
+            "rolled_back"
+            if restored_ok and transaction_complete
+            else "rollback_effect_verified_receipt_failed"
+            if restored_ok and action.get("effect_verified") is True
+            else "rollback_verification_failed"
+        ),
         "record_id": record["id"],
         "target_file": str(path),
         "func_name": record["func_name"],
+        "effect_verified": action.get("effect_verified") is True,
+        "post_action_receipt_id": action.get("post_action_receipt_id"),
+        "receipt_persisted": action.get("receipt_persisted") is True,
+        "manual_reconciliation_required": bool(
+            action.get("manual_reconciliation_required")
+            or (restored_ok and not transaction_complete)
+        ),
     }
     logger.warning("Self-code rollback %s: %s", outcome["status"], outcome)
     return outcome
@@ -182,6 +256,8 @@ class ImproveResult:
     # Write-ahead rollback ledger id — set before any enactment mutates the
     # file, so every applied improvement is symmetrically undoable.
     enactment_record: str = ""
+    enactment_receipt_id: str = ""
+    compensation: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         d = dict(self.__dict__)
@@ -199,7 +275,7 @@ def _extract_function_source(source: str, func_name: str) -> tuple[str, int, int
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == func_name:
             lines = source.splitlines()
             start = node.lineno - 1
-            end = node.end_lineno
+            end = node.end_lineno or node.lineno
             # include a leading decorator line span if present
             if node.decorator_list:
                 start = min(d.lineno - 1 for d in node.decorator_list)
@@ -310,18 +386,31 @@ async def _generate(prompt: str, *, max_tokens: int = 1200) -> str:
 
         model = get_local_code_model()
         if model is not None:
-            return await model.generate(
-                prompt,
-                system_prompt="You improve one Python function. Output only the corrected function, standard library only.",
-                max_tokens=max_tokens, temperature=0.1,
+            return str(
+                await model.generate(
+                    prompt,
+                    system_prompt=(
+                        "You improve one Python function. Output only the corrected "
+                        "function, standard library only."
+                    ),
+                    max_tokens=max_tokens,
+                    temperature=0.1,
+                )
             )
     except (ImportError, RuntimeError, OSError):
         pass
     try:
         from core.brain.llm.code_generator import LLMCodeGenerator
 
-        return await LLMCodeGenerator(max_tokens=max_tokens, temperature=0.1).generate_async(
-            prompt, context={"origin": "self_code_improver"})
+        return str(
+            await LLMCodeGenerator(
+                max_tokens=max_tokens,
+                temperature=0.1,
+            ).generate_async(
+                prompt,
+                context={"origin": "self_code_improver"},
+            )
+        )
     except (ImportError, RuntimeError, AttributeError, TypeError, ValueError, OSError):
         return ""
 
@@ -356,7 +445,7 @@ async def improve_function(
     path = Path(target_file)
     result = ImproveResult(ok=False, target_file=str(path), func_name=func_name, goal=goal)
     result.total_checks = len(checks)
-    src = path.read_text(encoding="utf-8")
+    src = await asyncio.to_thread(path.read_text, encoding="utf-8")
     extracted = _extract_function_source(src, func_name)
     if not extracted:
         result.status = "function_not_found"
@@ -417,11 +506,39 @@ async def improve_function(
                 original_function=original_src,
                 improved_function=improved_src,
             )
-            # Blessed async write lane — never a sync fsync on the live loop.
-            from core.runtime.atomic_writer import async_atomic_write_text
-
-            await async_atomic_write_text(path, new_src)
-            result.enacted = True
+            action = await _execute_self_code_write(
+                path=path,
+                text=new_src,
+                action_name="enact_self_code_improvement",
+                action_id=f"self-code-enact:{result.enactment_record}",
+                rollback_target=result.enactment_record,
+            )
+            result.enactment_receipt_id = str(
+                action.get("post_action_receipt_id") or ""
+            )
+            if _self_code_write_completed(action):
+                result.enacted = True
+            elif action.get("effect_verified") is True:
+                result.compensation = await rollback_enactment(
+                    result.enactment_record,
+                    force=True,
+                )
+                result.status = (
+                    "enactment_receipt_failed_rolled_back"
+                    if result.compensation.get("ok") is True
+                    else "enactment_partial_requires_manual_reconciliation"
+                )
+                result.error = (
+                    "target source changed but the enactment receipt did not persist; "
+                    f"compensation={result.compensation.get('status')}"
+                )
+            else:
+                result.status = "verified_not_enacted"
+                result.error = str(
+                    action.get("error")
+                    or action.get("status")
+                    or "self-code action did not verify"
+                )
         except (OSError, ValueError) as exc:
             result.error = f"verified but enactment failed: {exc}"
             result.status = "verified_not_enacted"
@@ -434,7 +551,14 @@ async def improve_function(
     return result
 
 
-def _improve_prompt(func_name, original, goal, research, checks, failure) -> str:
+def _improve_prompt(
+    func_name: str,
+    original: str,
+    goal: str,
+    research: list[str],
+    checks: list[dict[str, Any]],
+    failure: str,
+) -> str:
     parts = [
         f"Improve this Python function so that: {goal}\n",
         "Keep the same name, signature, and all existing correct behavior. "

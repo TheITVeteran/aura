@@ -55,3 +55,5 @@ core/orchestrator/mixins/tool_execution.py
 core/self_modification/error_intelligence.py
 interface/auth.py
 interface/websocket_manager.py
+# Receipted self-modification transaction (2026-07-12)
+core/capabilities/self_code_improver.py

@@ -90,6 +90,9 @@ class TestSymmetricRollback:
 
         outcome = asyncio.run(sci.rollback_enactment(record_id))
         assert outcome["ok"] is True and outcome["status"] == "rolled_back"
+        assert outcome["effect_verified"] is True
+        assert outcome["receipt_persisted"] is True
+        assert outcome["post_action_receipt_id"]
         restored = target.read_text(encoding="utf-8")
         assert 'case["a"] - case["b"]' in restored, "original behavior restored"
         assert "leave me alone" in restored, "unrelated code untouched"
@@ -123,3 +126,59 @@ class TestSymmetricRollback:
     def test_missing_record_is_a_named_refusal(self, ledger_dir):
         outcome = asyncio.run(sci.rollback_enactment("nope-does-not-exist"))
         assert outcome == {"ok": False, "status": "no_enactment_record"}
+
+
+def test_enactment_receipt_failure_triggers_symmetric_compensation(
+    target,
+    monkeypatch,
+):
+    async def _research(_goal):
+        return []
+
+    async def _generate(_prompt):
+        return IMPROVED_FUNC
+
+    async def _retain(*_args):
+        return "retained"
+
+    async def _record(**_kwargs):
+        return "record-1"
+
+    async def _write(**_kwargs):
+        return {
+            "ok": False,
+            "status": "partial_success",
+            "effect_verified": True,
+            "receipt_persisted": False,
+            "manual_reconciliation_required": True,
+        }
+
+    async def _rollback(*_args, **_kwargs):
+        return {"ok": True, "status": "rolled_back"}
+
+    def _verify(source, _func_name, _checks):
+        return (1, []) if 'case["a"] + case["b"]' in source else (0, [])
+
+    monkeypatch.setattr(sci, "_research", _research)
+    monkeypatch.setattr(sci, "_generate", _generate)
+    monkeypatch.setattr(sci, "_retain", _retain)
+    monkeypatch.setattr(sci, "_record_enactment", _record)
+    monkeypatch.setattr(sci, "_execute_self_code_write", _write)
+    monkeypatch.setattr(sci, "rollback_enactment", _rollback)
+    monkeypatch.setattr(sci, "_verify", _verify)
+
+    result = asyncio.run(
+        sci.improve_function(
+            target_file=str(target),
+            func_name="add_numbers",
+            goal="fix addition",
+            checks=[{"args": [{"a": 2, "b": 3}], "expected": 5}],
+            max_iters=1,
+            enact=True,
+        )
+    )
+
+    assert result.enacted is False
+    assert result.status == "enactment_receipt_failed_rolled_back"
+    assert result.compensation == {"ok": True, "status": "rolled_back"}
+    assert "receipt did not persist" in result.error
