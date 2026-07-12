@@ -46,6 +46,42 @@ PROTECTED_LOCAL_POST_PATHS = {
 CHEAT_CODE_COOKIE_NAME = "aura_owner_session"
 CHEAT_CODE_COOKIE_TTL_SECS = 60 * 60 * 24 * 30
 
+# ── Paired-device (LAN embodiment) surface ───────────────────
+#
+# Paired devices carry a revocable, per-device token minted by
+# core/security/device_pairing.py. They are authorized ONLY for the
+# conversation surface below — never the sovereign control surface
+# (skill execution, reboot, hot-reload, settings, privacy, memory
+# administration). Widening this allowlist is a security decision:
+# keep it deliberate and reviewed.
+DEVICE_SESSION_COOKIE_NAME = "aura_device_session"
+DEVICE_SESSION_COOKIE_TTL_SECS = 60 * 60 * 24 * 180
+# Reachable without credentials: the pairing ceremony IS the
+# authentication. Both are rate-limited and code/TTL/attempt bounded.
+PAIRING_PUBLIC_PATHS = {"/pair", "/api/devices/pair/complete"}
+DEVICE_ALLOWED_EXACT_PATHS = {
+    "/",
+    "/pair",
+    "/api/devices/pair/complete",
+}
+DEVICE_ALLOWED_PATH_PREFIXES = (
+    "/static/",
+    "/ws",
+    "/api/chat",
+    "/api/sessions",
+    "/api/ui/bootstrap",
+)
+
+_DEVICE_LOOKUP_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 
 # ── Internal-only guard ──────────────────────────────────────
 
@@ -92,6 +128,40 @@ def _is_allowed_local_ui_origin(value: str) -> bool:
     return bool(value and value in LOCAL_UI_ORIGINS)
 
 
+def _origin_matches_request_host(request: Request, origin: str) -> bool:
+    """True when the Origin header names this server itself.
+
+    A page served from ``http://192.168.1.20:8000`` posting back to the
+    same host:port is same-origin, not cross-site. Browsers enforce that
+    an attacker page cannot forge its own Origin, so trusting an exact
+    host:port match is sound and is what lets paired LAN devices use the
+    UI without weakening the localhost CSRF posture.
+    """
+    origin = str(origin or "").strip().rstrip("/")
+    if not origin:
+        return False
+    from urllib.parse import urlsplit
+
+    try:
+        parsed = urlsplit(origin)
+    except ValueError:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host_header = _header_value(request, "Host").strip().lower()
+    if not host_header:
+        return False
+    origin_netloc = (parsed.netloc or "").strip().lower()
+    if not origin_netloc:
+        return False
+    default_port = "443" if parsed.scheme == "https" else "80"
+    if ":" not in host_header:
+        host_header = f"{host_header}:{default_port}"
+    if ":" not in origin_netloc:
+        origin_netloc = f"{origin_netloc}:{default_port}"
+    return origin_netloc == host_header
+
+
 def _is_cross_site_browser_request(request: Request) -> bool:
     """Return True when browser metadata says this is not Aura's own UI.
 
@@ -100,10 +170,14 @@ def _is_cross_site_browser_request(request: Request) -> bool:
     hostile unless the request also supplies the real API token.
     """
     origin = _header_value(request, "Origin").strip()
-    if origin and not _is_allowed_local_ui_origin(origin):
+    if origin and not (
+        _is_allowed_local_ui_origin(origin) or _origin_matches_request_host(request, origin)
+    ):
         return True
     fetch_site = _header_value(request, "Sec-Fetch-Site").strip().lower()
-    if fetch_site in {"cross-site", "same-site"} and not _is_allowed_local_ui_origin(origin):
+    if fetch_site in {"cross-site", "same-site"} and not (
+        _is_allowed_local_ui_origin(origin) or _origin_matches_request_host(request, origin)
+    ):
         return True
     return False
 
@@ -144,6 +218,78 @@ def request_has_allowed_local_browser_origin(request: Request) -> bool:
     return True
 
 
+# ── Paired-device credentials ────────────────────────────────
+
+def device_path_allowed(path: str) -> bool:
+    """The conversation surface a paired device may touch. Deny by default."""
+    normalized = str(path or "")
+    if normalized in DEVICE_ALLOWED_EXACT_PATHS or normalized in HEALTH_PATHS:
+        return True
+    return normalized.startswith(DEVICE_ALLOWED_PATH_PREFIXES)
+
+
+def _extract_device_token(request: Request) -> str | None:
+    header_token = _header_value(request, "X-Aura-Device-Token").strip()
+    if header_token:
+        return header_token
+    bearer = _extract_request_token(request)
+    if bearer and bearer.startswith("adt1."):
+        return bearer
+    cookies = getattr(request, "cookies", None)
+    if cookies is not None:
+        try:
+            cookie_token = cookies.get(DEVICE_SESSION_COOKIE_NAME)
+        except _COOKIE_READ_RECOVERABLE_ERRORS as exc:
+            record_degradation("auth.device_cookie", exc)
+            cookie_token = None
+        if cookie_token:
+            return str(cookie_token)
+    cookie_header = _header_value(request, "Cookie")
+    if cookie_header:
+        parsed = SimpleCookie()
+        try:
+            parsed.load(cookie_header)
+        except _COOKIE_READ_RECOVERABLE_ERRORS as exc:
+            record_degradation("auth.device_cookie", exc)
+            return None
+        morsel = parsed.get(DEVICE_SESSION_COOKIE_NAME)
+        if morsel is not None:
+            return morsel.value
+    return None
+
+
+def device_for_request(request: Request):
+    """Resolve a paired device from the request, or None. Fails closed."""
+    token = _extract_device_token(request)
+    if not token:
+        return None
+    try:
+        from core.security.device_pairing import get_device_registry
+
+        return get_device_registry().verify_token(token)
+    except _DEVICE_LOOKUP_RECOVERABLE_ERRORS as exc:
+        record_degradation("auth.device_lookup", exc)
+        return None
+
+
+def _device_authorizes_request(request: Request, path: str) -> bool:
+    """True when a valid paired device may access this path.
+
+    Raises 403 when the device is valid but the path is outside the
+    conversation surface, so a stolen device token cannot even probe
+    the control plane quietly.
+    """
+    device = device_for_request(request)
+    if device is None:
+        return False
+    if device_path_allowed(path):
+        return True
+    logger.warning(
+        "Paired device %s attempted out-of-scope path %s", device.device_id, path
+    )
+    raise HTTPException(status_code=403, detail="Device session lacks access to this surface")
+
+
 def validate_runtime_security_request(request: Request) -> None:
     """Fail closed on every request if security config drifts after startup."""
     path = str(getattr(request.url, "path", "") or "")
@@ -172,7 +318,7 @@ def validate_runtime_security_request(request: Request) -> None:
 
     # Health endpoints can stay unauthenticated for monitors, but the rest of
     # the API must fail closed if the token disappears at runtime.
-    if path in HEALTH_PATHS:
+    if path in HEALTH_PATHS or path in PAIRING_PUBLIC_PATHS:
         return
 
     expected = config.api_token
@@ -182,6 +328,9 @@ def validate_runtime_security_request(request: Request) -> None:
 
     supplied = _extract_request_token(request)
     if supplied and hmac.compare_digest(supplied, expected):
+        return
+
+    if _device_authorizes_request(request, path):
         return
 
     protected_local_post = (
@@ -224,6 +373,11 @@ def _verify_token(request: Request, x_api_token: str | None = Header(default=Non
         raise HTTPException(status_code=503, detail="Authentication not configured")
 
     if supplied and hmac.compare_digest(supplied, expected):
+        return
+
+    if not internal_only and _device_authorizes_request(
+        request, str(getattr(request.url, "path", "") or "")
+    ):
         return
 
     if internal_only and _allow_local_without_token(request, protected_route=False):

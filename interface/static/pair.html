@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aura — Pair a device</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131826; --ink: #e6e9f2; --dim: #8b93a7;
+    --accent: #7c9eff; --ok: #4ade80; --err: #f87171; --line: #232a3d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: var(--bg); color: var(--ink);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    padding: 28px; width: min(420px, calc(100vw - 32px)); margin: 16px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p  { color: var(--dim); font-size: 14px; margin: 6px 0 18px; }
+  input, button {
+    width: 100%; padding: 13px 14px; border-radius: 10px; font-size: 16px;
+    border: 1px solid var(--line); margin-bottom: 12px;
+  }
+  input { background: #0d1120; color: var(--ink); letter-spacing: 2px; }
+  input:focus { outline: none; border-color: var(--accent); }
+  button { background: var(--accent); color: #0b0e14; font-weight: 600; border: none; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: transparent; color: var(--dim); border: 1px solid var(--line); }
+  .code {
+    font: 700 34px/1.2 ui-monospace, Menlo, monospace; letter-spacing: 8px;
+    text-align: center; padding: 14px 0; color: var(--accent);
+  }
+  .urls { font: 13px ui-monospace, Menlo, monospace; color: var(--ok); word-break: break-all; margin-bottom: 12px; }
+  .msg { font-size: 14px; min-height: 20px; margin-bottom: 8px; }
+  .msg.ok { color: var(--ok); } .msg.err { color: var(--err); }
+  .device { display: flex; justify-content: space-between; align-items: center;
+    border-top: 1px solid var(--line); padding: 10px 0; font-size: 14px; }
+  .device small { color: var(--dim); display: block; }
+  .device button { width: auto; padding: 6px 12px; font-size: 13px; margin: 0;
+    background: transparent; color: var(--err); border: 1px solid var(--err); }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="card">
+  <!-- Phone side: enter the code shown on the desktop -->
+  <div id="device-mode" class="hidden">
+    <h1>Pair with Aura</h1>
+    <p>Enter the 8-digit code shown on Aura's desktop pairing screen.</p>
+    <input id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="00000000" maxlength="12">
+    <input id="name" placeholder="Device name (e.g. Bryan's phone)" maxlength="64">
+    <div id="d-msg" class="msg"></div>
+    <button id="pair-btn">Pair this device</button>
+  </div>
+
+  <!-- Desktop side: mint a code, manage devices -->
+  <div id="owner-mode" class="hidden">
+    <h1>Pair a new device</h1>
+    <p>Generate a code, then open the address below on your phone (same Wi-Fi) and enter it. Codes last 3 minutes.</p>
+    <button id="gen-btn">Generate pairing code</button>
+    <div id="code-out" class="code"></div>
+    <div id="urls" class="urls"></div>
+    <div id="o-msg" class="msg"></div>
+    <h1 style="font-size:16px;margin-top:18px">Paired devices</h1>
+    <div id="devices"></div>
+  </div>
+</div>
+<script>
+(() => {
+  const isOwner = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+  document.getElementById(isOwner ? "owner-mode" : "device-mode").classList.remove("hidden");
+  const ownerHeaders = { "Content-Type": "application/json", "X-Aura-Desktop-Request": "1" };
+
+  async function api(path, opts) {
+    const res = await fetch(path, opts);
+    let body = {};
+    try { body = await res.json(); } catch (e) { /* non-JSON error body */ }
+    if (!res.ok) throw new Error(body.detail || body.message || ("HTTP " + res.status));
+    return body;
+  }
+
+  if (!isOwner) {
+    const msg = document.getElementById("d-msg");
+    document.getElementById("pair-btn").addEventListener("click", async () => {
+      msg.className = "msg"; msg.textContent = "Pairing…";
+      try {
+        const body = await api("/api/devices/pair/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            code: document.getElementById("code").value.trim(),
+            device_name: document.getElementById("name").value.trim() || "phone",
+          }),
+        });
+        msg.className = "msg ok";
+        msg.textContent = "Paired as " + body.name + " — opening Aura…";
+        setTimeout(() => { location.href = "/"; }, 800);
+      } catch (e) {
+        msg.className = "msg err"; msg.textContent = e.message;
+      }
+    });
+    return;
+  }
+
+  const omsg = document.getElementById("o-msg");
+  document.getElementById("gen-btn").addEventListener("click", async () => {
+    omsg.className = "msg"; omsg.textContent = "";
+    try {
+      const body = await api("/api/devices/pair/begin", { method: "POST", headers: ownerHeaders, body: "{}" });
+      document.getElementById("code-out").textContent = body.code;
+      document.getElementById("urls").textContent = (body.pair_urls || []).join("\n") || "No LAN address detected";
+    } catch (e) {
+      omsg.className = "msg err"; omsg.textContent = e.message;
+    }
+  });
+
+  async function refreshDevices() {
+    try {
+      const body = await api("/api/devices", { headers: ownerHeaders });
+      const box = document.getElementById("devices");
+      box.innerHTML = "";
+      (body.devices || []).forEach((d) => {
+        const row = document.createElement("div");
+        row.className = "device";
+        const info = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = d.name + (d.revoked ? " (revoked)" : "");
+        const sub = document.createElement("small");
+        sub.textContent = "last seen " + (d.last_seen ? new Date(d.last_seen * 1000).toLocaleString() : "never");
+        info.append(title, sub);
+        row.appendChild(info);
+        if (!d.revoked) {
+          const btn = document.createElement("button");
+          btn.textContent = "Revoke";
+          btn.addEventListener("click", async () => {
+            await api("/api/devices/revoke", {
+              method: "POST", headers: ownerHeaders,
+              body: JSON.stringify({ device_id: d.device_id }),
+            });
+            refreshDevices();
+          });
+          row.appendChild(btn);
+        }
+        box.appendChild(row);
+      });
+    } catch (e) {
+      omsg.className = "msg err"; omsg.textContent = e.message;
+    }
+  }
+  refreshDevices();
+})();
+</script>
+</body>
+</html>

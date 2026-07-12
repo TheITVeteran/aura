@@ -262,6 +262,7 @@ logging.getLogger().addHandler(_qh)
 from interface.auth import (
     _restore_owner_session_from_request,
     allowed_local_ui_origins,
+    device_for_request,
     request_has_allowed_local_browser_origin,
     validate_runtime_security_request,
 )
@@ -672,6 +673,7 @@ from core.session.checkpointing import CheckpointService
 from interface import memory_ui
 from interface.routes import chat as chat_routes
 from interface.routes import dashboard as dashboard_routes
+from interface.routes import devices as devices_routes
 from interface.routes import inner_state as inner_state_routes
 from interface.routes import interaction_signals as interaction_signal_routes
 from interface.routes import memory as memory_routes
@@ -689,6 +691,7 @@ checkpoint_service = CheckpointService()
 app.include_router(system_health_router, prefix="/api/health", tags=["health"])
 app.include_router(memory_ui.router, prefix="/memory", tags=["memory"])
 app.include_router(chat_routes.router, prefix="/api", tags=["chat"])
+app.include_router(devices_routes.router, prefix="/api", tags=["devices"])
 app.include_router(system_routes.router, prefix="/api", tags=["system"])
 app.include_router(subsystem_routes.router, prefix="/api", tags=["subsystems"])
 app.include_router(memory_routes.router, prefix="/api", tags=["memory-api"])
@@ -845,11 +848,30 @@ from interface.auth import _require_internal
 async def serve_ui(request: Request):
     """Main entry point for the Sovereign HUD."""
     _require_internal(request)
+    host = request.client.host if request.client else "unknown"
+    if host not in ("127.0.0.1", "::1", "localhost") and device_for_request(request) is None:
+        # Unpaired LAN visitor: the shell's assets would 401 anyway, so
+        # route them straight into the pairing ceremony.
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse(url="/pair", status_code=307)
     ui = LEGACY_UI_INDEX if LEGACY_UI_INDEX.exists() else (SHELL_DIST_DIR / "index.html")
     if not ui.exists():
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="UI not built")
     return FileResponse(str(ui), headers=NO_CACHE_HEADERS)
+
+
+@app.get("/pair", include_in_schema=False)
+async def serve_pair(request: Request):
+    """Device pairing page: shows codes on the desktop, accepts them on
+    the phone. Self-contained HTML — no /static dependencies, because an
+    unpaired device cannot fetch those yet."""
+    _require_internal(request)
+    p = STATIC_DIR / "pair.html"
+    if not p.exists():
+        return ORJSONResponse({"error": "pairing UI not found"}, status_code=404)
+    return FileResponse(str(p), headers=NO_CACHE_HEADERS)
 
 
 @app.get("/telemetry", include_in_schema=False)
@@ -921,6 +943,17 @@ async def restore_checkpoint(request: Request):
 
 # ── Routes — WebSocket ────────────────────────────────────────
 
+def _verify_ws_device_token(token: str):
+    """Resolve a paired device from an explicit WS auth message token."""
+    try:
+        from core.security.device_pairing import get_device_registry
+
+        return get_device_registry().verify_token(token)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+        record_degradation("server.ws_device_auth", exc)
+        return None
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws_manager.connect(ws)
@@ -930,15 +963,47 @@ async def websocket_endpoint(ws: WebSocket):
     is_local = host in ("127.0.0.1", "::1", "localhost")
     local_browser_origin_allowed = request_has_allowed_local_browser_origin(ws)
 
-    authenticated = not bool(expected) or (is_local and local_browser_origin_allowed)
+    # No configured token means no way to authenticate a remote peer:
+    # only same-host UI connections may proceed. WS handshakes bypass the
+    # HTTP middleware, so this must fail closed here.
+    authenticated = is_local and (not bool(expected) or local_browser_origin_allowed)
     auth_timeout = 5.0
 
+    # Paired LAN devices authenticate via their session cookie on the
+    # handshake itself (browsers attach it automatically), scoped by
+    # interface/auth.py to the conversation surface — /ws is in scope.
+    device_session = None
+    if not authenticated:
+        device_session = device_for_request(ws)
+        if device_session is not None:
+            authenticated = True
+
     try:
+        if device_session is not None:
+            await ws.send_text(json.dumps({
+                "type": "auth_success",
+                "note": "paired_device",
+                "device_id": device_session.device_id,
+            }))
         if not authenticated:
             try:
                 raw = await asyncio.wait_for(ws.receive_text(), timeout=auth_timeout)
                 data = json.loads(raw)
-                if data.get("type") == "auth" and hmac.compare_digest(data.get("token", ""), expected):
+                supplied_ws_token = str(data.get("token", "") or "")
+                if data.get("type") == "auth" and supplied_ws_token.startswith("adt1."):
+                    device_session = _verify_ws_device_token(supplied_ws_token)
+                    if device_session is not None:
+                        authenticated = True
+                        await ws.send_text(json.dumps({
+                            "type": "auth_success",
+                            "note": "paired_device",
+                            "device_id": device_session.device_id,
+                        }))
+                    else:
+                        await ws.send_text(json.dumps({"type": "error", "message": "Unauthorized"}))
+                        await ws.close(code=4001, reason="Unauthorized")
+                        return
+                elif data.get("type") == "auth" and expected and hmac.compare_digest(supplied_ws_token, expected):
                     authenticated = True
                     await ws.send_text(json.dumps({"type": "auth_success"}))
                 else:

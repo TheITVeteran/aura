@@ -1,0 +1,233 @@
+"""Paired-device LAN embodiment: registry lifecycle + auth scoping.
+
+Covers core/security/device_pairing.py and the interface/auth.py
+enforcement that keeps device tokens on the conversation surface and
+off the sovereign control surface.
+"""
+from __future__ import annotations
+
+import json
+import time
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
+
+import core.security.device_pairing as dp
+from interface import auth
+
+
+@pytest.fixture
+def registry(tmp_path, monkeypatch):
+    monkeypatch.setattr(dp, "registry_path", lambda: tmp_path / "paired_devices.json")
+    reg = dp.reset_device_registry_for_tests(tmp_path / "paired_devices.json")
+    yield reg
+    dp.reset_device_registry_for_tests(tmp_path / "unused.json")
+
+
+def _internal_only(monkeypatch, value: bool) -> None:
+    monkeypatch.setattr(
+        dp.get_config().security, "internal_only_mode", value, raising=False
+    )
+
+
+# ── Registry lifecycle ───────────────────────────────────────────
+
+async def test_pairing_roundtrip_and_verify(registry, monkeypatch):
+    _internal_only(monkeypatch, False)
+    challenge = registry.begin_pairing()
+    assert len(challenge["code"]) == 8 and challenge["code"].isdigit()
+
+    issued = await registry.complete_pairing(challenge["code"], "Bryan's phone")
+    assert issued["token"].startswith("adt1.")
+
+    device = registry.verify_token(issued["token"])
+    assert device is not None
+    assert device.name == "Bryan's phone"
+    assert device.scopes == (dp.SCOPE_CONVERSATION,)
+
+
+async def test_token_never_persisted_in_clear(registry, monkeypatch, tmp_path):
+    _internal_only(monkeypatch, False)
+    challenge = registry.begin_pairing()
+    issued = await registry.complete_pairing(challenge["code"], "phone")
+
+    on_disk = (tmp_path / "paired_devices.json").read_text(encoding="utf-8")
+    secret = issued["token"].split(".")[2]
+    assert issued["token"] not in on_disk
+    assert secret not in on_disk
+    document = json.loads(on_disk)
+    assert document["payload"]["devices"][0]["token_sha256"]
+
+
+async def test_registry_persistence_survives_reload(registry, monkeypatch, tmp_path):
+    _internal_only(monkeypatch, False)
+    issued = await registry.complete_pairing(registry.begin_pairing()["code"], "phone")
+
+    reloaded = dp.DevicePairingRegistry.load(tmp_path / "paired_devices.json")
+    assert reloaded.verify_token(issued["token"]) is not None
+
+
+async def test_wrong_code_attempts_exhaust_challenge(registry, monkeypatch):
+    _internal_only(monkeypatch, False)
+    registry.begin_pairing()
+    for _ in range(dp._MAX_ATTEMPTS):
+        with pytest.raises(dp.PairingError):
+            await registry.complete_pairing("00000000", "intruder")
+    # Challenge is now dead even with the right code.
+    with pytest.raises(dp.PairingError):
+        await registry.complete_pairing("00000000", "intruder")
+
+
+async def test_expired_code_rejected(registry, monkeypatch):
+    _internal_only(monkeypatch, False)
+    challenge = registry.begin_pairing()
+    registry._challenge.expires_at = time.time() - 1
+    with pytest.raises(dp.PairingError):
+        await registry.complete_pairing(challenge["code"], "late")
+
+
+async def test_revocation_kills_token(registry, monkeypatch):
+    _internal_only(monkeypatch, False)
+    issued = await registry.complete_pairing(registry.begin_pairing()["code"], "phone")
+    assert registry.verify_token(issued["token"]) is not None
+
+    assert await registry.revoke_device(issued["device_id"]) is True
+    assert registry.verify_token(issued["token"]) is None
+
+
+async def test_internal_only_mode_fails_closed(registry, monkeypatch):
+    _internal_only(monkeypatch, False)
+    issued = await registry.complete_pairing(registry.begin_pairing()["code"], "phone")
+
+    _internal_only(monkeypatch, True)
+    with pytest.raises(dp.PairingDisabledError):
+        registry.begin_pairing()
+    with pytest.raises(dp.PairingDisabledError):
+        await registry.complete_pairing("12345678", "phone")
+    # Even already-issued tokens stop verifying.
+    assert registry.verify_token(issued["token"]) is None
+
+
+def test_malformed_tokens_rejected(registry, monkeypatch):
+    _internal_only(monkeypatch, False)
+    for bad in (None, "", "adt1", "adt1.only-two", "wrong.prefix.secret", "adt1.x.y.z"):
+        assert registry.verify_token(bad) is None
+
+
+async def test_corrupt_registry_file_authorizes_nobody(registry, monkeypatch, tmp_path):
+    _internal_only(monkeypatch, False)
+    issued = await registry.complete_pairing(registry.begin_pairing()["code"], "phone")
+    (tmp_path / "paired_devices.json").write_text("{not json", encoding="utf-8")
+
+    reloaded = dp.DevicePairingRegistry.load(tmp_path / "paired_devices.json")
+    assert reloaded.devices == {}
+    assert reloaded.verify_token(issued["token"]) is None
+
+
+# ── HTTP auth scoping ────────────────────────────────────────────
+
+def _remote_request(path: str, token: str | None = None, method: str = "GET",
+                    headers: dict | None = None):
+    hdrs = dict(headers or {})
+    if token:
+        hdrs["X-Aura-Device-Token"] = token
+    return SimpleNamespace(
+        client=SimpleNamespace(host="192.168.1.77"),
+        headers=hdrs,
+        cookies={},
+        method=method,
+        url=SimpleNamespace(path=path),
+    )
+
+
+@pytest.fixture
+async def paired_token(registry, monkeypatch):
+    _internal_only(monkeypatch, False)
+    monkeypatch.setattr(auth.config, "api_token", "master-token-value", raising=False)
+    issued = await registry.complete_pairing(registry.begin_pairing()["code"], "phone")
+    return issued["token"]
+
+
+async def test_device_token_allows_conversation_surface(paired_token):
+    for path in ("/api/chat", "/static/aura.js", "/api/ui/bootstrap", "/api/sessions"):
+        auth.validate_runtime_security_request(_remote_request(path, paired_token))
+
+
+async def test_device_token_denied_on_control_surface(paired_token):
+    for path in ("/api/skill/execute", "/api/reboot", "/api/system/hot-reload",
+                 "/api/privacy/export", "/api/devices"):
+        with pytest.raises(HTTPException) as err:
+            auth.validate_runtime_security_request(
+                _remote_request(path, paired_token, method="POST")
+            )
+        assert err.value.status_code == 403
+
+
+async def test_forged_device_token_still_unauthorized(registry, monkeypatch):
+    _internal_only(monkeypatch, False)
+    monkeypatch.setattr(auth.config, "api_token", "master-token-value", raising=False)
+    with pytest.raises(HTTPException) as err:
+        auth.validate_runtime_security_request(
+            _remote_request("/api/chat", "adt1.deadbeef.forged-secret")
+        )
+    assert err.value.status_code == 401
+
+
+async def test_revoked_device_token_unauthorized(registry, monkeypatch, paired_token):
+    device_id = paired_token.split(".")[1]
+    await registry.revoke_device(device_id)
+    with pytest.raises(HTTPException) as err:
+        auth.validate_runtime_security_request(_remote_request("/api/chat", paired_token))
+    assert err.value.status_code == 401
+
+
+async def test_device_cookie_authenticates(paired_token):
+    request = _remote_request("/api/chat")
+    request.cookies = {auth.DEVICE_SESSION_COOKIE_NAME: paired_token}
+    auth.validate_runtime_security_request(request)
+
+
+async def test_pairing_public_paths_reachable_without_credentials(registry, monkeypatch):
+    _internal_only(monkeypatch, False)
+    monkeypatch.setattr(auth.config, "api_token", "master-token-value", raising=False)
+    auth.validate_runtime_security_request(_remote_request("/pair"))
+    auth.validate_runtime_security_request(
+        _remote_request("/api/devices/pair/complete", method="POST")
+    )
+
+
+async def test_internal_only_blocks_devices_at_http_layer(paired_token, monkeypatch):
+    monkeypatch.setattr(auth.config.security, "internal_only_mode", True, raising=False)
+    with pytest.raises(HTTPException) as err:
+        auth.validate_runtime_security_request(_remote_request("/api/chat", paired_token))
+    assert err.value.status_code == 403
+
+
+async def test_same_host_origin_not_treated_as_csrf(paired_token):
+    request = _remote_request(
+        "/api/chat", paired_token, method="POST",
+        headers={"Origin": "http://192.168.1.20:8000", "Host": "192.168.1.20:8000"},
+    )
+    auth.validate_runtime_security_request(request)
+
+
+async def test_foreign_origin_still_treated_as_csrf(paired_token):
+    request = _remote_request(
+        "/api/chat", paired_token, method="POST",
+        headers={"Origin": "http://evil.example", "Host": "192.168.1.20:8000"},
+    )
+    with pytest.raises(HTTPException) as err:
+        auth.validate_runtime_security_request(request)
+    assert err.value.status_code == 403
+
+
+def test_device_path_allowlist_is_deny_by_default():
+    assert auth.device_path_allowed("/api/chat")
+    assert auth.device_path_allowed("/static/aura.css")
+    assert auth.device_path_allowed("/ws")
+    assert not auth.device_path_allowed("/api/skill/execute")
+    assert not auth.device_path_allowed("/api/devices")
+    assert not auth.device_path_allowed("/memory")
+    assert not auth.device_path_allowed("/rpc/anything")
+    assert not auth.device_path_allowed("/api/settings")

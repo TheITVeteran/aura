@@ -3705,6 +3705,22 @@
       "scope": "<module>.DeletionGuard._snapshot"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/security/device_pairing.py",
+      "scope": "<module>.DevicePairingRegistry._persist"
+    },
+    {
+      "callee": "<file_write_gateway>.write_json_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/security/device_pairing.py",
+      "scope": "<module>.DevicePairingRegistry._persist"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -13562,6 +13578,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "07b539c2cde74b7147c98ee85290937d2f2dc43f03bb83b523fc9685a038ad2e",
+  "inventory_sha256": "b7af124356a569080a0c444a5cb5df3fd17477e0c265353e013c519d9d348462",
   "schema_version": 1
 }
