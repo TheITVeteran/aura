@@ -77,7 +77,8 @@ async def _reserve_model_lane_process(
 ) -> tuple[Any, Any]:
     from core.runtime.model_lane_control import prepare_model_lane_claim
 
-    return await prepare_model_lane_claim(claim)
+    prepared: tuple[Any, Any] = await prepare_model_lane_claim(claim)
+    return prepared
 
 
 async def _cancel_model_lane_process(

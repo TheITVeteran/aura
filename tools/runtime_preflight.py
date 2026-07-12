@@ -26,7 +26,9 @@ import shutil
 import socket
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from typing import Any
 from pathlib import Path
 
 OK = "OK"
@@ -60,7 +62,7 @@ def check_disk(
     path: Path,
     fail_gb: float = 10.0,
     warn_gb: float = 30.0,
-    usage_fn=shutil.disk_usage,
+    usage_fn: Callable[[Path], Any] = shutil.disk_usage,
 ) -> Check:
     try:
         usage = usage_fn(path)

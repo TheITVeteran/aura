@@ -38,6 +38,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 STATE_ROOTS = ("data", "storage", ".aura_runtime", ".aura_snapshots")
 EXCLUDE_RELATIVE = ("data/training", "data/error_logs", "data/bench")
@@ -196,7 +197,7 @@ def prune_ring(out_dir: Path, keep: int) -> int:
     return pruned
 
 
-def _manifest_entry_for(out_dir: Path, archive: Path) -> dict | None:
+def _manifest_entry_for(out_dir: Path, archive: Path) -> dict[str, Any] | None:
     manifest = out_dir / "manifest.jsonl"
     if not manifest.exists():
         return None

@@ -549,7 +549,7 @@ class FlightRecorder:
                 import psutil
 
                 self._process = psutil.Process()
-            return self._process.memory_info().rss / (1024.0 * 1024.0)
+            return float(self._process.memory_info().rss) / (1024.0 * 1024.0)
         except (ImportError, OSError, RuntimeError, AttributeError):
             return 0.0
 

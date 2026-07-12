@@ -1,0 +1,42 @@
+# mypy strict allowlist — every file here passes `mypy` in strict mode
+# (pyproject [tool.mypy]) with --follow-imports=skip --explicit-package-bases.
+#
+# RATCHET, ONLY GROWS: tests/test_mypy_strict_ratchet.py pins a minimum
+# count and typechecks every entry. Add files as they become clean; removing
+# one requires shrinking the pinned minimum in the test — a loud, reviewed
+# act. `make typecheck` reads this list.
+#
+# Original curated set
+core/conversation/apply_response_patches.py
+core/brain/llm/context_limit.py
+core/runtime/safe_mode.py
+core/runtime/atomic_writer.py
+core/consciousness/continuous_experience.py
+core/environment/experience_replay.py
+core/memory/procedural/store.py
+core/unity/runtime.py
+tools/aura_production_readiness_gate.py
+tools/build_provenance.py
+# Runtime spine (2026-07-12 maturity pass)
+core/container.py
+core/service_names.py
+core/runtime/service_access.py
+core/will.py
+core/runtime/flags.py
+core/runtime/conditions.py
+core/runtime/health_contract.py
+core/health/health_endpoint.py
+core/runtime/file_write_gateway.py
+core/runtime/flight_recorder.py
+core/runtime/subprocess_gateway.py
+core/runtime/runtime_settings.py
+core/runtime/flagship_doctor.py
+core/brain/lane_admission.py
+core/observability/stall_dump.py
+core/observability/incident_narrator.py
+core/observability/metrics.py
+core/observability/telemetry.py
+core/persistence/db_maintenance.py
+# Maturity-pass tools
+tools/runtime_preflight.py
+tools/state_backup.py

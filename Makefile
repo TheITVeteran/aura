@@ -6,7 +6,9 @@ RUFF_SURFACE_TARGETS ?= core interface llm security senses skills executors infr
 RUFF_CRITICAL_TARGETS ?= core interface llm security senses skills executors infrastructure aura_main.py
 RUFF_CRITICAL_SELECT ?= F821,F822,F823,F601
 RUFF_TARGETS ?= core/conversation/apply_response_patches.py core/brain/llm/context_assembler.py core/brain/llm/context_limit.py core/cognition/cognitive_integration_layer.py core/runtime/safe_mode.py core/coordinators/metabolic_coordinator.py core/evolution/persona_evolver.py core/orchestrator/mixins/autonomy.py core/orchestrator/mixins/context_streaming.py core/orchestrator/mixins/learning_evolution.py core/resilience/dream_cycle.py tests/test_response_patch_retirement.py tests/test_context_assembler_runtime.py tests/test_context_limit_runtime.py tests/test_cognitive_pipeline_2026.py tests/test_safe_mode_runtime.py tests/test_consciousness_patch_retirement.py
-MYPY_TARGETS ?= core/conversation/apply_response_patches.py core/brain/llm/context_limit.py core/runtime/safe_mode.py core/runtime/atomic_writer.py core/consciousness/continuous_experience.py core/environment/experience_replay.py core/memory/procedural/store.py core/unity/runtime.py tools/aura_production_readiness_gate.py tools/build_provenance.py
+# Strict-clean allowlist lives in config/mypy_strict_files.txt — an
+# only-grows ratchet enforced by tests/test_mypy_strict_ratchet.py.
+MYPY_TARGETS ?= $(shell grep -vE '^\s*(\#|$$)' config/mypy_strict_files.txt)
 MYPY_FLAGS ?= --follow-imports=skip --explicit-package-bases
 PYTEST_TARGETS ?= tests -q -m "not live and not network and not external"
 SMOKE_TEST_TARGETS ?= tests/test_response_contract.py tests/test_chat_format.py tests/test_effect_closure.py tests/test_retired_external_runtime.py tests/test_cognitive_pipeline_2026.py tests/test_safe_mode_runtime.py tests/test_response_patch_retirement.py tests/test_context_assembler_runtime.py tests/test_context_limit_runtime.py tests/test_consciousness_patch_retirement.py -q

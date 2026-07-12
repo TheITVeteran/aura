@@ -21,6 +21,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from core.runtime.errors import record_degradation
@@ -528,7 +529,7 @@ class DatabaseMaintenance:
             result.completed_at = time.time()
             return result
 
-        phases = (
+        phases: tuple[tuple[str, Callable[[], None]], ...] = (
             ("checkpoint", lambda: self.run_checkpoint(conn, result)),
             ("retention", lambda: self.run_retention(conn, result)),
             ("vacuum", lambda: self.run_vacuum(conn, result)),

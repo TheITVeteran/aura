@@ -12,7 +12,7 @@ class TelemetryEngine:
     Central 2026 telemetry system.
     Aggregates cognitive, hardware, and emotional state into unified pulses.
     """
-    def __init__(self):
+    def __init__(self) -> None:
         self.last_pulse = time.time()
         
     def get_pulse(self) -> Dict[str, Any]:
@@ -55,7 +55,7 @@ class TelemetryEngine:
         
         return pulse
 
-    async def broadcast_pulse(self):
+    async def broadcast_pulse(self) -> None:
         """Dispatches telemetry pulse to the EventBus/HUD."""
         from core.event_bus import get_event_bus
         pulse = self.get_pulse()
