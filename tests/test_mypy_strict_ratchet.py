@@ -15,8 +15,9 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ALLOWLIST = REPO_ROOT / "config" / "mypy_strict_files.txt"
 
 # Only grows. 10 original + 21 maturity-pass spine/tool files + 3 quantum
-# files + 5 persistent-world files + 4 incident/device-boundary files.
-MIN_STRICT_FILES = 44
+# files + 5 persistent-world files + 4 incident/device-boundary files +
+# self-code transaction + desktop effect verification/host automation skill.
+MIN_STRICT_FILES = 47
 
 MYPY_FLAGS = ["--follow-imports=skip", "--explicit-package-bases"]
 

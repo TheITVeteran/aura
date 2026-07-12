@@ -21,6 +21,30 @@
       "canonical_owner": true,
       "category": "action_executor",
       "count": 1,
+      "path": "core/capabilities/host_automation.py",
+      "scope": "<module>.HostAutomationProvider._enforce_screenshot_retention"
+    },
+    {
+      "callee": "core.runtime.action_executor.ActionExecutor.execute",
+      "canonical_owner": true,
+      "category": "action_executor",
+      "count": 1,
+      "path": "core/capabilities/host_automation.py",
+      "scope": "<module>.HostAutomationProvider.get_screen_text"
+    },
+    {
+      "callee": "core.runtime.action_executor.ActionExecutor.execute",
+      "canonical_owner": true,
+      "category": "action_executor",
+      "count": 1,
+      "path": "core/capabilities/host_automation.py",
+      "scope": "<module>.HostAutomationProvider.take_screenshot"
+    },
+    {
+      "callee": "core.runtime.action_executor.ActionExecutor.execute",
+      "canonical_owner": true,
+      "category": "action_executor",
+      "count": 1,
       "path": "core/capabilities/self_code_improver.py",
       "scope": "<module>._execute_self_code_write"
     },
@@ -3513,6 +3537,14 @@
       "scope": "<module>.ActionExecutor._dispatch"
     },
     {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": true,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/runtime/action_executor.py",
+      "scope": "<module>.ActionExecutor._dispatch"
+    },
+    {
       "callee": "<file_write_gateway>.move_path_async",
       "canonical_owner": true,
       "category": "file_write_gateway",
@@ -6743,14 +6775,6 @@
       "count": 1,
       "path": "core/capabilities/file_broker.py",
       "scope": "<module>.SandboxedFileBroker.rollback_last"
-    },
-    {
-      "callee": "save_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/capabilities/host_automation.py",
-      "scope": "<module>.HostAutomationProvider.take_screenshot"
     },
     {
       "callee": "pathlib.Path().unlink",
@@ -13570,6 +13594,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "23ac98d86489b7c1ad489ef7fe45a4ae9cd8c591db7cf5e55b2fa24c69cb61e2",
+  "inventory_sha256": "443c2d156bb734b8ef06c2bb54e841651dddf879b6c0f36cad6ba0a32a14f194",
   "schema_version": 1
 }

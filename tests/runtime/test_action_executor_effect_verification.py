@@ -89,6 +89,31 @@ async def test_file_write_requires_readback_and_emits_complete_causal_receipt(
 
 
 @pytest.mark.asyncio
+async def test_directory_creation_uses_receipted_file_transaction(
+    action_runtime: Any,
+    tmp_path: Path,
+) -> None:
+    executor, _fake_will, store = action_runtime
+    target = tmp_path / "screenshots"
+
+    result = await executor.ActionExecutor.execute(
+        domain="file_write",
+        action_name="ensure_screenshot_directory",
+        params={"path": str(target), "op": "ensure_directory"},
+        source="effect_test",
+    )
+
+    assert target.is_dir()
+    assert result["ok"] is True
+    assert result["effect_verified"] is True
+    assert result["receipt_persisted"] is True
+    assert result["directory_created"] is True
+    receipt = store.get_receipt(result["post_action_receipt_id"])
+    assert receipt is not None
+    assert receipt.domain == "file_write"
+
+
+@pytest.mark.asyncio
 async def test_malformed_file_action_fails_before_dispatch_but_is_receipted(
     action_runtime: Any,
 ) -> None:

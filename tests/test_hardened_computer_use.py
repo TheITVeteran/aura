@@ -955,13 +955,25 @@ async def test_computer_use_run_applescript_requires_permissions_and_blocks_shel
 
     monkeypatch.setattr(skill, "_require_permissions", allow_permissions)
     monkeypatch.setattr(skill, "_run_applescript", lambda *_args, **_kwargs: "done")
+    monkeypatch.setattr(skill, "_frontmost_app_name", lambda: "Notes")
 
-    ok = await skill.execute({"action": "run_applescript", "target": 'return "done"'}, {})
+    ok = await skill.execute(
+        {"action": "run_applescript", "target": 'tell application "Notes" to activate'},
+        {},
+    )
+    unverifiable = await skill.execute(
+        {"action": "run_applescript", "target": 'return "done"'},
+        {},
+    )
     blocked_target = 'do shell script "rm -rf ' + "/".join(["", "tmp", "demo"]) + '"'
     blocked = await skill.execute({"action": "run_applescript", "target": blocked_target}, {})
 
     assert ok["ok"] is True
     assert ok["output"] == "done"
+    assert ok["effect_verified"] is True
+    assert ok["verification_results"][0]["strong"] is True
+    assert unverifiable["ok"] is False
+    assert unverifiable["status"] == "applescript_effect_contract_required"
     assert blocked["ok"] is False
     assert "blocked desktop operation" in blocked["error"]
 

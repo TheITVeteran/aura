@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import os
+from types import SimpleNamespace
+
 import pytest
 
-from core.capabilities.host_automation import AppleScriptRunner, ScriptASTGuard
+from core.capabilities.host_automation import (
+    AppleScriptRunner,
+    HostAutomationProvider,
+    ScriptASTGuard,
+)
 from core.capabilities.permission_model import PermissionRiskModel, RiskLevel
 from core.capabilities.post_action_verifier import PostActionVerifier
 
@@ -59,6 +66,115 @@ async def test_applescript_runner_uses_subprocess_gateway(monkeypatch) -> None:
     assert gateway.spawn_calls[0]["argv"][:2] == ["osascript", "-e"]
     assert gateway.spawn_calls[0]["read_only"] is True
     assert gateway.spawn_calls[0]["source"] == "unit.host_automation.frontmost"
+
+
+@pytest.mark.asyncio
+async def test_host_applescript_inspection_is_read_only_and_not_action_logged(monkeypatch) -> None:
+    from core.capabilities import host_automation
+
+    gateway = _FakeSubprocessGateway(_FakeProcess(stdout=b"Finder\n"))
+    monkeypatch.setattr(host_automation, "get_subprocess_gateway", lambda: gateway)
+    provider = HostAutomationProvider()
+
+    receipt = await provider.inspect_applescript(
+        'tell application "System Events" to get name of first application process whose frontmost is true',
+        timeout_s=2.0,
+        source="unit.host_automation.inspection",
+    )
+
+    assert receipt.success is True
+    assert receipt.action == "inspect_applescript"
+    assert gateway.spawn_calls[0]["read_only"] is True
+    assert gateway.spawn_calls[0]["source"] == "unit.host_automation.inspection"
+    assert provider.get_recent_receipts() == []
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_ocr_capture_is_deleted_after_verification(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from core.capabilities import host_automation
+
+    provider = HostAutomationProvider()
+    capture_path = tmp_path / "aura-ephemeral-verification.png"
+    screenshot = SimpleNamespace(
+        success=True,
+        result=str(capture_path),
+        error="",
+    )
+
+    async def take_screenshot(*_args, **_kwargs):
+        return screenshot
+
+    deleted: list[tuple[str, str]] = []
+
+    async def execute_action(*, params, source, **_kwargs):
+        deleted.append((str(params["path"]), source))
+        return {
+            "ok": True,
+            "effect_verified": True,
+            "receipt_persisted": True,
+            "post_action_receipt_id": "receipt-cleanup",
+        }
+
+    monkeypatch.setattr(provider, "take_screenshot", take_screenshot)
+    monkeypatch.setattr(host_automation.ActionExecutor, "execute", execute_action)
+    monkeypatch.setattr(
+        provider,
+        "_ocr_image_text",
+        lambda _path: "Visible verification text",
+    )
+
+    receipt = await provider.get_screen_text(retain_screenshot=False)
+
+    assert receipt.success is True
+    assert receipt.result == "Visible verification text"
+    assert receipt.target == "ephemeral_verification_capture"
+    assert deleted == [
+        (
+            str(capture_path),
+            "host_automation.ephemeral_ocr_cleanup",
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_screenshot_retention_bounds_capture_count(monkeypatch, tmp_path) -> None:
+    from core.capabilities import host_automation
+
+    monkeypatch.setenv("AURA_SCREENSHOT_RETENTION_MAX_FILES", "10")
+    monkeypatch.setenv("AURA_SCREENSHOT_RETENTION_MAX_DAYS", "365")
+    monkeypatch.setenv("AURA_SCREENSHOT_RETENTION_MAX_BYTES", str(32 * 1024 * 1024))
+    paths = []
+    for index in range(12):
+        path = tmp_path / f"capture-{index:02d}.png"
+        path.write_bytes(b"png")
+        os.utime(path, (2_000_000_000 + index, 2_000_000_000 + index))
+        paths.append(path)
+    unrelated = tmp_path / "keep.txt"
+    unrelated.write_text("not a capture")
+
+    async def execute_action(*, params, **_kwargs):
+        path = tmp_path / str(params["path"]).split("/")[-1]
+        path.unlink(missing_ok=True)
+        return {
+            "ok": True,
+            "effect_verified": True,
+            "receipt_persisted": True,
+            "post_action_receipt_id": f"delete-{path.name}",
+        }
+
+    monkeypatch.setattr(host_automation.ActionExecutor, "execute", execute_action)
+    result = await HostAutomationProvider._enforce_screenshot_retention(
+        tmp_path,
+        keep_path=paths[-1],
+    )
+
+    assert result["kept"] == 10
+    assert result["deleted"] == 2
+    assert sum(path.exists() for path in paths) == 10
+    assert unrelated.exists()
 
 
 @pytest.mark.asyncio

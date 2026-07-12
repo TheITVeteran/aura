@@ -98,3 +98,73 @@ async def test_belief_write_fails_closed_when_authority_refuses(monkeypatch):
     )
     assert not result["ok"]
     assert "AuthorityGateway" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_intention_audit_failure_cannot_skip_authority_closure(monkeypatch):
+    from core.constitution import (
+        ConstitutionalCore,
+        ConstitutionalDecision,
+        ConstitutionalProposal,
+        ProposalKind,
+        ProposalOutcome,
+        ToolExecutionHandle,
+    )
+
+    class BrokenIntentionLoop:
+        def record_action(self, *_args, **_kwargs):
+            raise RuntimeError("audit store unavailable")
+
+    finalized = []
+
+    class ClosingGateway:
+        def finalize_tool_execution(self, **kwargs):
+            finalized.append(kwargs)
+            return {
+                "closed": True,
+                "intent_closed": True,
+                "token_revoked": True,
+                "errors": [],
+            }
+
+    proposal = ConstitutionalProposal(
+        kind=ProposalKind.TOOL,
+        source="user",
+        summary="unit closure",
+        payload={"tool_name": "os_automation", "args": {}},
+    )
+    decision = ConstitutionalDecision(
+        proposal_id=proposal.proposal_id,
+        kind=ProposalKind.TOOL,
+        outcome=ProposalOutcome.APPROVED,
+        reason="unit",
+        source="user",
+    )
+    handle = ToolExecutionHandle(
+        proposal=proposal,
+        decision=decision,
+        approved=True,
+        executive_intent_id="intent-1",
+        intention_id="intention-1",
+        capability_token_id="token-1",
+    )
+    core = ConstitutionalCore()
+    monkeypatch.setattr(core, "_get_intention_loop", lambda: BrokenIntentionLoop())
+    monkeypatch.setattr(core, "_get_authority_gateway", lambda: ClosingGateway())
+    monkeypatch.setattr(core, "_emit_tool_event", lambda *_args, **_kwargs: None)
+
+    closure = await core.finish_tool_execution(
+        handle,
+        result={"ok": True},
+        success=True,
+        duration_ms=1.0,
+    )
+
+    assert closure["closed"] is True
+    assert finalized == [
+        {
+            "executive_intent_id": "intent-1",
+            "capability_token_id": "token-1",
+            "success": True,
+        }
+    ]

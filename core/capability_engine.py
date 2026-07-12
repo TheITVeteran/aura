@@ -4515,7 +4515,7 @@ class CapabilityEngine(AuraBaseModule):
                     and tool_handle is not None
                     and bool(getattr(tool_handle, "approved", False))
                 ):
-                    await constitution.finish_tool_execution(
+                    closure_receipt = await constitution.finish_tool_execution(
                         tool_handle,
                         result=result or {"ok": False, "error": "execution_not_completed"},
                         success=bool(isinstance(result, dict) and result.get("ok", False)),
@@ -4524,13 +4524,62 @@ class CapabilityEngine(AuraBaseModule):
                         if bool(isinstance(result, dict) and result.get("ok", False))
                         else str((result or {}).get("error", "")),
                     )
-            except (OSError, ConnectionError, TimeoutError) as _exc:
+                    if skill_name == "os_automation" and isinstance(result, dict):
+                        if not isinstance(closure_receipt, dict):
+                            closure_receipt = {
+                                "closed": False,
+                                "mode": "constitutional_closure",
+                                "errors": ["constitutional core returned no closure receipt"],
+                            }
+                        result["authority_closure"] = closure_receipt
+                        if not bool(closure_receipt.get("closed")):
+                            original_status = str(result.get("status") or "")
+                            attempt_rows = result.get("attempts")
+                            if not isinstance(attempt_rows, list):
+                                attempt_rows = []
+                            action_may_have_occurred = bool(result.get("effect_verified")) or any(
+                                bool(attempt.get("transport_success"))
+                                for attempt in attempt_rows
+                                if isinstance(attempt, dict)
+                            )
+                            result["ok"] = False
+                            result["status"] = "authority_closure_failed"
+                            result["authority_closure_original_status"] = original_status
+                            result["manual_reconciliation_required"] = action_may_have_occurred
+                            result["error"] = (
+                                "OS automation authority did not close cleanly after execution. "
+                                "Do not retry automatically until capability-token state is reconciled."
+                            )
+            except (
+                OSError,
+                ConnectionError,
+                TimeoutError,
+                RuntimeError,
+                AttributeError,
+                TypeError,
+                ValueError,
+            ) as _exc:
                 _record_capability_degradation(
                     _exc,
                     action="returned skill result after constitutional finish receipt failed",
                     severity="degraded",
                 )
                 self.logger.debug("Suppressed Exception: %s", _exc)
+                if skill_name == "os_automation" and isinstance(result, dict):
+                    result["ok"] = False
+                    result["status"] = "authority_closure_failed"
+                    result["manual_reconciliation_required"] = bool(
+                        result.get("effect_verified")
+                    )
+                    result["authority_closure"] = {
+                        "closed": False,
+                        "mode": "constitutional_closure",
+                        "errors": [f"{type(_exc).__name__}:{_exc}"],
+                    }
+                    result["error"] = (
+                        "OS automation authority closure raised an error; "
+                        "capability-token state requires reconciliation."
+                    )
 
     def _apply_security(
         self, skill_name: str, params: dict[str, Any]

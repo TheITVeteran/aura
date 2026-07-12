@@ -2114,13 +2114,23 @@ class DesktopTaskSkill(BaseSkill):
                 return False, "missing wait duration evidence"
             return True, f"seconds={seconds}"
         if action == "run_applescript":
-            script_result = str(result.get("result") or result.get("output") or "").strip()
-            verification = str(result.get("verification") or "").strip()
-            verified = bool(result.get("effect_verified")) or bool(script_result) or bool(verification)
-            if not verified:
-                return False, "missing AppleScript result evidence"
-            evidence = verification or f"result={script_result[:160]}"
-            return True, evidence
+            if not bool(result.get("effect_verified")):
+                return False, "AppleScript transport output is not objective-specific effect evidence"
+            verification_results = result.get("verification_results")
+            if not isinstance(verification_results, list):
+                return False, "missing structured AppleScript verification results"
+            strong_passed = any(
+                isinstance(check, dict)
+                and bool(check.get("passed"))
+                and bool(check.get("strong", True))
+                for check in verification_results
+            )
+            if not strong_passed:
+                return False, "missing strong AppleScript postcondition"
+            evidence = str(result.get("effect_evidence") or "").strip()
+            if not evidence:
+                return False, "missing AppleScript effect evidence summary"
+            return True, evidence[:240]
         if action == "type":
             verification = str(result.get("verification") or "").strip()
             typed = str(result.get("typed") or "").strip()
@@ -2909,34 +2919,38 @@ class DesktopTaskSkill(BaseSkill):
     def _os_automation_effect_evidence(result: dict[str, Any]) -> tuple[bool, str]:
         if not bool(result.get("ok")):
             return False, str(result.get("error") or result.get("status") or "os automation reported failure")
-        postconditions = result.get("postconditions")
-        if isinstance(postconditions, dict) and any(
-            str(value or "").strip() for value in postconditions.values()
-        ):
-            summary_bits = [
-                f"{key}={str(value).strip()[:120]}"
-                for key, value in postconditions.items()
-                if str(value or "").strip()
-            ]
-            return True, "; ".join(summary_bits[:4])
-        if isinstance(postconditions, list) and any(str(value or "").strip() for value in postconditions):
-            return True, "; ".join(str(value).strip()[:120] for value in postconditions[:4])
-        verified_effects = result.get("verified_effects")
-        if isinstance(verified_effects, (list, tuple)) and any(
-            str(value or "").strip() for value in verified_effects
-        ):
-            return True, "; ".join(str(value).strip()[:120] for value in list(verified_effects)[:4])
-        if bool(result.get("effect_verified")):
-            effect_evidence = str(result.get("effect_evidence") or "").strip()
-            if effect_evidence and not effect_evidence.startswith("receipt_id="):
-                return True, effect_evidence[:240]
+        if not bool(result.get("effect_verified")):
+            return False, "os automation did not verify the requested effect"
+        contract = result.get("effect_contract")
+        if not isinstance(contract, dict) or not bool(contract.get("verifiable")):
+            return False, "missing verifiable os automation effect contract"
+        checks = result.get("verification_results")
+        if not isinstance(checks, list) or not checks:
+            return False, "missing structured os automation verification checks"
+        failed_required = any(
+            isinstance(check, dict)
+            and bool(check.get("required", True))
+            and not bool(check.get("passed"))
+            for check in checks
+        )
+        strong_passed = any(
+            isinstance(check, dict)
+            and bool(check.get("passed"))
+            and bool(check.get("strong", True))
+            for check in checks
+        )
+        if failed_required or not strong_passed:
+            return False, "os automation checks do not prove every required strong effect"
+        effect_evidence = str(result.get("effect_evidence") or "").strip()
+        if effect_evidence and not effect_evidence.startswith("receipt_id="):
+            return True, effect_evidence[:240]
         receipt_id = str(result.get("receipt_id") or "").strip()
         if receipt_id:
             return False, (
                 f"receipt_id={receipt_id} is audit evidence only; missing observable "
-                "postcondition proving the requested desktop effect."
+                "verification proving the requested desktop effect."
             )
-        return False, "missing observable os automation postcondition"
+        return False, "missing objective-specific os automation effect evidence"
 
     async def _execute_os_automation_escalation(
         self,
@@ -2963,7 +2977,10 @@ class DesktopTaskSkill(BaseSkill):
                     "Primitive desktop actions were not sufficient for this objective; "
                     "escalating to governed OS automation."
                 ),
-                "desktop_task_expect": "OS automation returns observable postconditions proving the visible desktop action.",
+                "desktop_task_expect": (
+                    "OS automation returns a verifiable effect contract with every required "
+                    "strong objective-specific check passed."
+                ),
                 "desktop_task_document_body": document_body,
                 "document_body": document_body,
             }

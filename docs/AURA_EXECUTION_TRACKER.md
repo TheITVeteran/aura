@@ -73,7 +73,7 @@ Status rules:
 | `MEMORY-001` | `OPEN` | Unify memory write/read authority and cross-store semantic retrieval; add provenance, conflict/freshness handling, exact live consumption proof, deletion, and symmetric observed rollback. | Addendum 26 |
 | `CONVERSATION-001` | `IN PROGRESS 2026-07-12` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. | Pass F 6; Matrix 6 |
 | `SUBSTRATE-001` | `OPEN` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. | Matrix 2-3; Addendum 20 and 29 |
-| `DESKTOP-001` | `OPEN` | Generalize computer use into perception-plan-act-observe-repair loops over browser, files, Notes/Docs/PDF/images, dialogs, focus, permissions, changed layouts, and multi-app workflows. | Pass F 7; Matrix 7 |
+| `DESKTOP-001` | `IN PROGRESS 2026-07-12` | Generalize computer use into perception-plan-act-observe-repair loops over browser, files, Notes/Docs/PDF/images, dialogs, focus, permissions, changed layouts, and multi-app workflows. | Pass F 7; Matrix 7; Checkpoint 38 |
 | `TOOLS-001` | `IN PROGRESS` | Make long, precise multi-tool workflows typed, resumable, idempotent, budgeted, compensating, provider-change tolerant, source preserving, and complete only after durable observed effects. | Matrix 9; original context tool/handoff goals |
 | `SKILLS-001` | `COMPLETE 2026-07-10` | Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill. | Addendum 23, `CTX2-GATE-*` and `CTX2-SKILL-*` |
 | `AGENCY-001` | `OPEN` | Prove bounded self-generated goals, coherent priority, obstacle recovery, foreground yielding, stale-obligation cleanup, restart continuity, operator override, and indefinite-life behavior. | Matrix 10; resident-colleague scope |
@@ -11617,3 +11617,109 @@ Authoritative remaining self-improvement work:
   self-repair closure.
 - Continue the paired/MLX and `os_automation` obligations from Checkpoint 36;
   keep final multi-hour soaks deferred until all shorter gates are green.
+
+## Checkpoint 2026-07-12-38: Causally Verified OS Automation
+
+This checkpoint advances `DESKTOP-001`, `TOOLS-001`, `EXPECT-001`,
+`EFFECT-001`, `FAULT-001`, and `SECURITY-001`. It closes the reported
+`os_automation` receipt-only false-success architecture; it does not close the
+broader desktop workstream, arbitrary visual interaction, multi-monitor control,
+or launched-runtime model-compilation proof.
+
+Implemented perceive/compile/act/observe/repair boundary:
+
+- Added a deterministic effect-contract engine that maps bounded natural
+  objectives to required, strong acceptance criteria for foreground app,
+  app closure, window region/minimization/geometry, visible text, browser URL,
+  calculator output, and named visible-state transitions. Clipboard content,
+  generic foreground state, script output, and transport receipts cannot prove
+  a visible write or requested desktop effect.
+- Split desired state from causal transition and detect already-satisfied goals
+  before compilation or mutation. Resize/tile/snap requests now require half-
+  screen occupancy, not merely a window whose left edge moved. A live Calculator
+  probe that moved to `0,33,230,408` is correctly rejected; a live Chrome probe
+  at `0,33,864,1035` against `0,33,1728,1036` is verified.
+- Forced compiler generation onto the foreground primary model lane with
+  reasoning strategies disabled, bounded deterministic decoding, exact text and
+  environment context, and a strict one-fenced-AppleScript/no-prose parser.
+  Shell is removed from this skill and embedded `do shell script` is rejected;
+  malformed or unsafe output gets one correction before a known-contract
+  deterministic fallback.
+- Added one evidence-driven action repair. Each attempt has a distinct script
+  hash, transport receipt, typed verification verdict, and authority closure.
+  Transport success with failed postconditions remains failed; unchanged repair
+  output is not replayed; authority-closure failure prevents retry and surfaces
+  manual reconciliation.
+- Reused the outer `CapabilityEngine` authority token instead of creating a
+  second competing tool intent. Direct invocations still receive fresh script-
+  hash authority and structured closure. `AuthorityGateway` and Constitution now
+  return intent/token closure receipts; intention-audit failure cannot skip token
+  revocation, and the outer engine rewrites an OS success to failure if closure
+  is not proven.
+- Restricted low-level `computer_use.run_applescript` to exact app activation
+  with foreground readback. Arbitrary raw scripts with no deterministic effect
+  contract are rejected before execution and routed conceptually to the richer
+  OS automation lane.
+
+Implemented host observation and longevity boundary:
+
+- Added attributed read-only AppleScript inspection and removed effectful probes
+  from perception. The real bounded desktop snapshot compiles and returns app,
+  window, frame, minimized/focus state, running apps, and AppKit usable desktop
+  geometry in about half a second; it no longer launches/hangs Finder to obtain
+  display bounds.
+- Replaced the dead OCR placeholder with native macOS Vision recognition off the
+  event loop plus optional Tesseract fallback. Verification screenshots use a
+  private ephemeral directory, receive native text evidence, and are deleted by
+  a receipted `ActionExecutor` file transaction.
+- Added collision-safe screenshot names and configurable retention defaults of
+  200 files, 14 days, and 512 MiB. Applied the policy once to Aura's generated
+  cache: 616 captures and 960,385,110 bytes were removed through the governed
+  gateway, preserving the newest 200 captures and reducing disk use from about
+  1.1 GiB to 245 MiB.
+- Added receipted `ensure_directory` support to the canonical `ActionExecutor`.
+  Screenshot directory creation, retention deletion, and ephemeral cleanup no
+  longer add direct file-mutation debt. Governance migration debt decreased from
+  1,686 to 1,685 calls.
+
+Verification completed for this checkpoint:
+
+- New effect/compiler/repair/authority tests passed `15/15`; complete desktop
+  task and planning-generality files passed `82/82`; complete desktop-agency,
+  hardened-computer-use, host-capability, and governance-closure files passed
+  `112/112`. Dedicated ActionExecutor directory creation, outer closure failure,
+  token revocation, ephemeral OCR cleanup, and retention tests passed.
+- Real macOS evidence passed: snapshot script and half-screen script compile via
+  `NSAppleScript`; read-only snapshot returned without error; native OCR returned
+  usable text and left zero ephemeral files; real Calculator activation verified;
+  constrained Calculator resize failed honestly; real Chrome half-screen resize
+  verified with exact geometry and transport receipt.
+- Whole-tree compile and configured Ruff passed. Strict MyPy grew from `44` to
+  `47` files and now includes the effect engine, host provider, and OS skill.
+  Enterprise static, security, model-load, resource-observation, `75/75` skill
+  catalog, all `37` production-readiness checks, `git diff --check`, and
+  governance ownership passed. Governance records `1,805` calls in `1,699`
+  buckets with zero ActionExecutor debt and `1,685` total migration-debt calls.
+
+Authoritative remaining desktop work:
+
+- Generalize acceptance contracts beyond the current deterministic ontology:
+  typed dialog/menu/form/list/tree/tab state, visual target localization,
+  before/after OCR regions, confidence and ambiguity, stable-poll requirements,
+  scroll/selection semantics, drag/drop, uploads/downloads, and app-specific
+  capability constraints without accepting generic state change.
+- Add multi-display coordinate transforms, spaces/full-screen handling, Retina
+  scale, Dock/menu/notch geometry, occlusion recovery, permission-prompt repair,
+  focus fencing, concurrent user-input arbitration, and compensating restoration
+  of window/focus/clipboard state.
+- Persist objective/attempt/observation state for crash-resume and idempotent
+  continuation; split compiler, observer, authority, and orchestration ownership
+  out of the remaining large skill module; connect learned repairs only after
+  replayable held-out verification.
+- Run the launched Aura `CognitiveEngine -> CapabilityEngine -> os_automation`
+  path with real model output and outer token closure across Notes, browser,
+  writing, search, calculator, dialogs, partial permissions, changed layouts,
+  OCR loss, cancellation, restart, and user interruption. Complete the broader
+  GUI/accessibility/clean-machine matrix before any general desktop closure.
+- Keep multi-hour and 24-72 hour soaks deferred until every remaining shorter
+  static, fault-injection, GUI, clean-machine, and launched-runtime gate is green.

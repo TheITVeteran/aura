@@ -1273,19 +1273,41 @@ class AuthorityGateway:
         executive_intent_id: str | None = None,
         capability_token_id: str | None = None,
         success: bool = True,
-    ) -> None:
+    ) -> dict[str, Any]:
+        """Close an execution intent and revoke its capability token.
+
+        Callers need a receipt they can use to distinguish "the action ran"
+        from "the authority lifecycle closed." Completion failures are still
+        recorded as degradations, but they are no longer silently converted to
+        an indistinguishable ``None`` result.
+        """
+        errors: list[str] = []
+        intent_closed = executive_intent_id is None
+        token_revoked = capability_token_id is None
         if executive_intent_id:
             try:
                 self._get_executive_core().complete_intent(executive_intent_id, success=success)
+                intent_closed = True
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('authority_gateway', exc, enforce_failure_policy=False)
                 logger.error("Executive intent completion failed: %s", exc, exc_info=True)
+                errors.append(f"executive_intent:{type(exc).__name__}:{exc}")
         if capability_token_id:
             try:
                 self._capabilities.revoke_token(capability_token_id)
+                token_revoked = True
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation('authority_gateway', exc, enforce_failure_policy=False)
                 logger.error("Capability token revoke failed: %s", exc, exc_info=True)
+                errors.append(f"capability_token:{type(exc).__name__}:{exc}")
+        return {
+            "closed": intent_closed and token_revoked,
+            "mode": "authority_gateway",
+            "success": bool(success),
+            "intent_closed": intent_closed,
+            "token_revoked": token_revoked,
+            "errors": errors,
+        }
 
     def _complete_intent_safely(self, intent_id: str | None, *, success: bool = True) -> None:
         if not intent_id:

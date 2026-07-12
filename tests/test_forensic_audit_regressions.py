@@ -697,12 +697,15 @@ async def test_authority_gateway_generates_and_revokes_tool_capability_token():
     assert decision.capability_token_id
     assert gateway.verify_tool_access("demo_tool", decision.capability_token_id) is True
 
-    gateway.finalize_tool_execution(
+    closure = gateway.finalize_tool_execution(
         executive_intent_id=decision.executive_intent_id,
         capability_token_id=decision.capability_token_id,
         success=True,
     )
 
+    assert closure["closed"] is True
+    assert closure["intent_closed"] is True
+    assert closure["token_revoked"] is True
     assert gateway.verify_tool_access("demo_tool", decision.capability_token_id) is False
 
 
@@ -724,13 +727,15 @@ async def test_constitution_tool_handle_carries_capability_token_and_revokes_it(
     assert handle.capability_token_id
     assert gateway.verify_tool_access("demo_tool", handle.capability_token_id) is True
 
-    await constitution.finish_tool_execution(
+    closure = await constitution.finish_tool_execution(
         handle,
         result={"ok": True},
         success=True,
         duration_ms=1.0,
     )
 
+    assert closure["closed"] is True
+    assert closure["token_revoked"] is True
     assert gateway.verify_tool_access("demo_tool", handle.capability_token_id) is False
 
 

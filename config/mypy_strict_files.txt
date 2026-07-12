@@ -57,3 +57,7 @@ interface/auth.py
 interface/websocket_manager.py
 # Receipted self-modification transaction (2026-07-12)
 core/capabilities/self_code_improver.py
+# Objective-specific desktop effect verification (2026-07-12)
+core/runtime/os_automation_effects.py
+core/capabilities/host_automation.py
+core/skills/os_automation.py

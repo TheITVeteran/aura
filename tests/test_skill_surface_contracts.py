@@ -785,6 +785,88 @@ async def test_capability_engine_promotes_executive_constraints_into_skill_conte
 
 
 @pytest.mark.asyncio
+async def test_os_automation_outer_authority_closure_failure_rewrites_success(monkeypatch):
+    class _VerifiedOSAutomationSkill:
+        name = "os_automation"
+        timeout_seconds = 30
+
+        async def safe_execute(self, params, context):
+            assert context["_capability_token_verified"] is True
+            return {
+                "ok": True,
+                "status": "completed_verified",
+                "effect_verified": True,
+                "effect_evidence": "frontmost_app=Notes",
+                "attempts": [{"transport_success": True}],
+            }
+
+    engine = CapabilityEngine()
+    skill = _VerifiedOSAutomationSkill()
+    engine.skills["os_automation"] = SkillMetadata(
+        name="os_automation",
+        description="verified OS automation closure probe",
+        skill_class=_VerifiedOSAutomationSkill,
+        instance=skill,
+        metabolic_cost=1,
+        effect_scope="foreground_desktop_control",
+    )
+    engine.instances["os_automation"] = skill
+
+    async def _begin_tool_execution(*_args, **_kwargs):
+        return SimpleNamespace(
+            approved=True,
+            capability_token_id="token-os-1",
+            constraints={},
+            decision=ConstitutionalDecision(
+                proposal_id="proposal-os-1",
+                kind=ProposalKind.TOOL,
+                outcome=ProposalOutcome.APPROVED,
+                reason="unit",
+                source="user",
+            ),
+        )
+
+    async def _finish_tool_execution(*_args, **_kwargs):
+        return {
+            "closed": False,
+            "mode": "unit",
+            "intent_closed": True,
+            "token_revoked": False,
+            "errors": ["token revoke failed"],
+        }
+
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            begin_tool_execution=_begin_tool_execution,
+            finish_tool_execution=_finish_tool_execution,
+        ),
+    )
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway",
+        lambda: SimpleNamespace(verify_tool_access=lambda *_args, **_kwargs: True),
+    )
+    monkeypatch.setattr("core.container.ServiceContainer.has", staticmethod(lambda _name: False))
+
+    result = await engine.execute(
+        "os_automation",
+        {"goal": "Open Notes", "script_type": "applescript", "execute": True},
+        context={
+            "objective": "Open Notes",
+            "origin": "user",
+            "foreground_request": True,
+            "user_requested_action": True,
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "authority_closure_failed"
+    assert result["authority_closure_original_status"] == "completed_verified"
+    assert result["manual_reconciliation_required"] is True
+    assert result["authority_closure"]["token_revoked"] is False
+
+
+@pytest.mark.asyncio
 async def test_toggle_senses_uses_subprocess_runner_without_local_sandbox(
     monkeypatch, tmp_path: Path
 ):

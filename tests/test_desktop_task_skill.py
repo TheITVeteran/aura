@@ -1624,9 +1624,30 @@ async def test_desktop_task_escalates_unrepresented_desktop_workflow_to_os_autom
             if skill_name == "os_automation":
                 return {
                     "ok": True,
+                    "status": "completed_verified",
                     "result": "arranged visible browser window",
                     "receipt_id": "receipt-os-1",
                     "adapter": "applescript",
+                    "effect_verified": True,
+                    "effect_evidence": (
+                        "frontmost_app=Google Chrome; window_region=left_half;"
+                        "window_frame=0,25,960,1080"
+                    ),
+                    "effect_contract": {"contract_id": "window-left", "verifiable": True},
+                    "verification_results": [
+                        {
+                            "kind": "app_frontmost",
+                            "passed": True,
+                            "required": True,
+                            "strong": True,
+                        },
+                        {
+                            "kind": "window_region",
+                            "passed": True,
+                            "required": True,
+                            "strong": True,
+                        },
+                    ],
                     "postconditions": {
                         "frontmost_app": "Google Chrome",
                         "frontmost_window_bounds": "0, 25, 960, 1080",
@@ -1681,7 +1702,10 @@ async def test_desktop_task_escalates_unrepresented_desktop_workflow_to_os_autom
                     "Primitive desktop actions were not sufficient for this objective; "
                     "escalating to governed OS automation."
                 ),
-                "desktop_task_expect": "OS automation returns observable postconditions proving the visible desktop action.",
+                "desktop_task_expect": (
+                    "OS automation returns a verifiable effect contract with every required "
+                    "strong objective-specific check passed."
+                ),
                 "desktop_task_document_body": "",
                 "document_body": "",
             },
@@ -1730,7 +1754,7 @@ async def test_desktop_task_rejects_os_automation_receipt_without_postcondition(
     receipt = result["receipts"][0]
     assert receipt["action"] == "os_automation"
     assert receipt["effect_verified"] is False
-    assert "audit evidence only" in receipt["effect_evidence"]
+    assert "did not verify" in receipt["effect_evidence"]
 
 
 @pytest.mark.asyncio
@@ -1783,13 +1807,27 @@ async def test_desktop_task_escalates_app_plus_unrepresented_action(monkeypatch)
             if skill_name == "os_automation":
                 return {
                     "ok": True,
+                    "status": "completed_verified",
                     "result": "pressed calculator keys and verified result",
                     "receipt_id": "receipt-os-calculator",
                     "adapter": "applescript",
-                    # The real os_automation skill returns observable
-                    # postconditions (_collect_applescript_postconditions); a
-                    # receipt_id alone is audit evidence, not effect proof, so the
-                    # desktop_task contract requires these to mark effect_verified.
+                    "effect_verified": True,
+                    "effect_evidence": "frontmost_app=Calculator; calculation_result=5",
+                    "effect_contract": {"contract_id": "calculator-5", "verifiable": True},
+                    "verification_results": [
+                        {
+                            "kind": "app_frontmost",
+                            "passed": True,
+                            "required": True,
+                            "strong": True,
+                        },
+                        {
+                            "kind": "calculation_result",
+                            "passed": True,
+                            "required": True,
+                            "strong": True,
+                        },
+                    ],
                     "postconditions": {
                         "frontmost_app": "Calculator",
                         "focused_value_excerpt": "5",
@@ -1815,7 +1853,7 @@ async def test_desktop_task_escalates_app_plus_unrepresented_action(monkeypatch)
     assert result["ok"] is True
     assert result["planner"] == "os_automation_escalation"
     assert [call[0] for call in calls] == ["os_automation"]
-    # Effect is verified by the observable postconditions, not the receipt id.
+    # Effect is verified by objective-specific checks, not generic postconditions.
     evidence = result["receipts"][0]["effect_evidence"]
     assert "frontmost_app=Calculator" in evidence
     assert "receipt_id=" not in evidence

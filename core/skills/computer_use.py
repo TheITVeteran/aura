@@ -392,6 +392,31 @@ class ComputerUseSkill(BaseSkill):
             expected_name,
         )
 
+    @staticmethod
+    def _verifiable_applescript_activation_target(script: str) -> str:
+        """Return the app for an exact activation-only AppleScript.
+
+        Raw AppleScript output is not effect proof. The low-level computer-use
+        lane therefore accepts only this narrow shape, whose postcondition can
+        be read back deterministically. Rich scripts belong in ``os_automation``
+        where a complete objective contract and repair loop are available.
+        """
+        value = str(script or "").strip()
+        one_line = re.fullmatch(
+            r'tell\s+application\s+"([^"\r\n]{1,160})"\s+to\s+activate',
+            value,
+            flags=re.IGNORECASE,
+        )
+        if one_line:
+            return one_line.group(1).strip()
+        block = re.fullmatch(
+            r'tell\s+application\s+"([^"\r\n]{1,160})"\s*\r?\n'
+            r"\s*activate\s*\r?\n\s*end\s+tell",
+            value,
+            flags=re.IGNORECASE,
+        )
+        return block.group(1).strip() if block else ""
+
     def _frontmost_or_prior_verified(
         self,
         front_app: str,
@@ -2467,12 +2492,62 @@ end tell
                 if blocked:
                     return blocked
                 script = self._validate_user_applescript(params.target)
+                expected_app = self._verifiable_applescript_activation_target(script)
+                if not expected_app:
+                    return {
+                        "ok": False,
+                        "status": "applescript_effect_contract_required",
+                        "error": (
+                            "Raw AppleScript is limited to exact app activation with frontmost "
+                            "read-back. Use os_automation for richer governed scripts and "
+                            "objective-specific verification."
+                        ),
+                        "effect_verified": False,
+                    }
+                frontmost_before = await asyncio.to_thread(self._frontmost_app_name)
                 output = await asyncio.to_thread(self._run_applescript, script, timeout=12)
+                effect_verified, frontmost_after = await self._wait_for_frontmost_app(expected_app)
+                verification = (
+                    f"frontmost_app={frontmost_after}"
+                    if effect_verified
+                    else (
+                        f"expected frontmost app {expected_app}; "
+                        f"observed {frontmost_after or 'unavailable'}"
+                    )
+                )
                 return {
-                    "ok": True,
+                    "ok": effect_verified,
                     "action": "run_applescript",
                     "output": output,
                     "chars": len(output),
+                    "effect_verified": effect_verified,
+                    "effect_evidence": verification if effect_verified else "",
+                    "verification": verification,
+                    "effect_contract": {
+                        "verifiable": True,
+                        "requirements": [
+                            {
+                                "kind": "app_frontmost",
+                                "expected": expected_app,
+                                "required": True,
+                                "strong": True,
+                            }
+                        ],
+                    },
+                    "verification_results": [
+                        {
+                            "kind": "app_frontmost",
+                            "passed": effect_verified,
+                            "required": True,
+                            "strong": True,
+                            "expected": expected_app,
+                            "observed": frontmost_after,
+                            "detail": verification,
+                        }
+                    ],
+                    "frontmost_app_before": frontmost_before,
+                    "frontmost_app_after": frontmost_after,
+                    **({} if effect_verified else {"error": verification}),
                 }
 
             elif action == "write_text_file":

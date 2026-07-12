@@ -109,7 +109,20 @@ class _GovernedEngineDouble:
         if action == "read_screen_text":
             return {"ok": True, "text": "Quarterly Report — draft v3"}
         if action == "run_applescript":
-            return {"ok": True, "result": "done"}
+            return {
+                "ok": True,
+                "output": "done",
+                "effect_verified": True,
+                "effect_evidence": "frontmost_app=Mail",
+                "verification_results": [
+                    {
+                        "kind": "app_frontmost",
+                        "passed": True,
+                        "required": True,
+                        "strong": True,
+                    }
+                ],
+            }
         return {"ok": True}
 
 

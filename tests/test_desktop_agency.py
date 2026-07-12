@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import tempfile
 import time
 import unittest
@@ -686,18 +687,46 @@ class TestOwnerAutonomyGating(unittest.TestCase):
                 self.response = "```applescript\ntell application \"Notes\" to activate\n```"
                 self.calls: list[dict[str, Any]] = []
 
-            async def generate(self, prompt, purpose=None, origin=None):
-                self.calls.append({"prompt": prompt, "purpose": purpose, "origin": origin})
+            async def generate(self, prompt, **kwargs):
+                self.calls.append({"prompt": prompt, **kwargs})
                 return self.response
 
         class RecordingHostAutomation(DeterministicHostAutomation):
             def __init__(self):
                 self.executed_scripts: list[str] = []
                 self.last_receipt = DeterministicAutomationReceipt("execute_applescript", "Notes", True, "ok")
+                self.visible_text = ""
 
             async def execute_applescript(self, script):
                 self.executed_scripts.append(script)
+                payload = re.search(r'set the clipboard to "(.*?)"', script)
+                if payload:
+                    self.visible_text = payload.group(1).replace('\\"', '"')
                 return self.last_receipt
+
+            async def inspect_applescript(self, script, *, timeout_s=5.0, source="unit"):
+                del script, timeout_s, source
+                app = "Notes" if self.executed_scripts else "Finder"
+                return DeterministicAutomationReceipt(
+                    "inspect_applescript",
+                    "",
+                    True,
+                    {
+                        "frontmost_app": app,
+                        "frontmost_window": "Test Window",
+                        "window_frame": (40, 40, 900, 700),
+                        "desktop_frame": (0, 0, 1920, 1080),
+                        "window_minimized": False,
+                        "focused_value_excerpt": self.visible_text,
+                        "running_apps": ("Finder", "Notes"),
+                    },
+                )
+
+            async def get_screen_text(self, region=None, *, retain_screenshot=True):
+                del region, retain_screenshot
+                return DeterministicAutomationReceipt(
+                    "get_screen_text", "", bool(self.visible_text), self.visible_text
+                )
 
         cog = DeterministicCognitiveEngine()
         ServiceContainer.register_instance("cognitive_engine", cog, required=False)
@@ -712,13 +741,23 @@ class TestOwnerAutonomyGating(unittest.TestCase):
             "executive_intent_id": None,
             "capability_token_id": None,
             "will_receipt_id": "will-os-auto",
+            "delegated": False,
         }
 
-        async def authorize_for_test(script_type, goal, script, script_hash, context):
+        async def authorize_for_test(goal, script, script_hash, context):
+            del goal, script, script_hash, context
             return auth
 
         def finalize_for_test(auth_payload, *, success):
             auth_payload["finalized_success"] = success
+            return {
+                "closed": True,
+                "mode": "unit",
+                "success": success,
+                "intent_closed": True,
+                "token_revoked": True,
+                "errors": [],
+            }
 
         original_authorize = OSAutomationCompilerSkill._authorize
         original_finalize = OSAutomationCompilerSkill._finalize
@@ -731,6 +770,7 @@ class TestOwnerAutonomyGating(unittest.TestCase):
             result = asyncio.run(skill.safe_execute(params, {"source": "unit", "user_requested_action": True}))
 
             self.assertTrue(result["ok"])
+            self.assertTrue(result["effect_verified"])
             self.assertEqual(result["result"], "ok")
             self.assertIn("script_hash", result)
             self.assertEqual(result["receipt_id"], host.last_receipt.receipt_id)
@@ -750,17 +790,22 @@ class TestOwnerAutonomyGating(unittest.TestCase):
                 skill.safe_execute(note_params, {"source": "unit", "user_requested_action": True})
             )
             self.assertTrue(result_fallback["ok"])
-            self.assertEqual(result_fallback["compiler_fallback"], "deterministic_intent_compiler")
+            self.assertTrue(result_fallback["effect_verified"])
+            self.assertEqual(result_fallback["compiler"]["fallback"], "deterministic_intent_compiler")
             self.assertIn("tell application \"Notes\"", result_fallback["script"])
             self.assertNotIn("Aura governed desktop automation", result_fallback["script"])
             self.assertNotIn("host automation receipt", result_fallback["script"].lower())
             self.assertGreaterEqual(len(host.executed_scripts), 2)
 
-            # Test validation guard failure on unsafe script
-            cog.response = "```applescript\ndo shell script \"sudo rm -rf /\"\n```"
-            result_unsafe = asyncio.run(skill.safe_execute(params, {"source": "unit"}))
-            self.assertFalse(result_unsafe["ok"])
-            self.assertIn("safety guard", result_unsafe["error"])
+            safe, reason = skill._validate_script(
+                "applescript",
+                'do shell script "sudo rm -rf /"',
+            )
+            self.assertFalse(safe)
+            self.assertIn("separately governed shell lane", reason)
+            self.assertFalse(cog.calls[0]["is_background"])
+            self.assertEqual(cog.calls[0]["prefer_tier"], "primary")
+            self.assertFalse(cog.calls[0]["use_strategies"])
         finally:
             OSAutomationCompilerSkill._authorize = original_authorize
             OSAutomationCompilerSkill._finalize = original_finalize

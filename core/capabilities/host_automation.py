@@ -23,13 +23,16 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core.container import ServiceContainer
+from core.governance.will import ActionDomain
+from core.runtime.action_executor import ActionExecutor
 from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
@@ -64,7 +67,7 @@ class AutomationReceipt:
     timestamp: float = field(default_factory=time.time)
     receipt_id: str = ""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not self.receipt_id:
             payload = f"{self.timestamp}|{self.action}|{self.target}|{self.success}"
             self.receipt_id = hashlib.sha256(payload.encode()).hexdigest()[:16]
@@ -109,7 +112,7 @@ class ScriptASTGuard:
     }
 
     @classmethod
-    def validate_applescript(cls, script: str) -> Tuple[bool, str]:
+    def validate_applescript(cls, script: str) -> tuple[bool, str]:
         """Validate an AppleScript for safety.
 
         Returns (is_safe, reason).
@@ -156,7 +159,7 @@ class ScriptASTGuard:
         return any(cmd_lower.startswith(prefix) for prefix in safe_prefixes)
 
     @classmethod
-    def validate_shell_command(cls, command: str) -> Tuple[bool, str]:
+    def validate_shell_command(cls, command: str) -> tuple[bool, str]:
         """Validate a direct shell command for safety."""
         if not command or not command.strip():
             return False, "Empty command"
@@ -185,9 +188,9 @@ class AppleScriptRunner:
     """Runs validated AppleScript with proper error handling and receipts."""
 
     @staticmethod
-    async def run(
+    async def run(  # noqa: ASYNC109 - public API accepts an explicit bounded timeout.
         script: str,
-        timeout: float = 10.0,
+        timeout: float = 10.0,  # noqa: ASYNC109
         *,
         read_only: bool = False,
         source: str = "host_automation.applescript",
@@ -236,7 +239,7 @@ class AppleScriptRunner:
                 duration_ms=(time.time() - start) * 1000,
                 script_hash=hashlib.sha256(script.encode()).hexdigest()[:16],
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return AutomationReceipt(
                 action="execute_applescript",
                 target=script[:200],
@@ -315,13 +318,21 @@ class HostAutomationProvider:
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation("host_automation.life_trace", e)
 
+    @staticmethod
+    def _action_completed(result: dict[str, Any]) -> bool:
+        return bool(
+            result.get("ok")
+            and result.get("effect_verified")
+            and result.get("receipt_persisted")
+            and result.get("post_action_receipt_id")
+        )
+
     # ------------------------------------------------------------------
     # App control primitives
     # ------------------------------------------------------------------
 
     async def launch_app(self, app_name: str) -> AutomationReceipt:
         """Launch an application by name. Uses AppleScript 'activate'."""
-        start = time.time()
         script = f'tell application "{app_name}" to activate'
         receipt = await AppleScriptRunner.run(script, timeout=10.0)
         receipt.action = "launch_app"
@@ -389,6 +400,52 @@ class HostAutomationProvider:
         receipt.target = app_name
         return receipt
 
+    @staticmethod
+    def _main_screen_visible_frame() -> tuple[int, int, int, int]:
+        """Return the primary usable display in System Events coordinates."""
+        from AppKit import NSScreen
+
+        screen = NSScreen.mainScreen()
+        if screen is None:
+            raise RuntimeError("macOS did not report a primary screen")
+        full = screen.frame()
+        visible = screen.visibleFrame()
+        x = int(round(float(visible.origin.x)))
+        y = int(
+            round(
+                float(full.origin.y + full.size.height)
+                - float(visible.origin.y + visible.size.height)
+            )
+        )
+        width = int(round(float(visible.size.width)))
+        height = int(round(float(visible.size.height)))
+        if width <= 0 or height <= 0:
+            raise RuntimeError(f"invalid primary screen frame: {x},{y},{width},{height}")
+        return x, y, width, height
+
+    async def get_desktop_frame(self) -> AutomationReceipt:
+        """Read the primary usable desktop frame without launching Finder."""
+        start = time.time()
+        try:
+            frame = await asyncio.to_thread(self._main_screen_visible_frame)
+            return AutomationReceipt(
+                action="get_desktop_frame",
+                target="primary_screen",
+                adapter="appkit",
+                success=True,
+                result=frame,
+                duration_ms=(time.time() - start) * 1000,
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            return AutomationReceipt(
+                action="get_desktop_frame",
+                target="primary_screen",
+                adapter="appkit",
+                success=False,
+                error=str(exc),
+                duration_ms=(time.time() - start) * 1000,
+            )
+
     async def close_app(self, app_name: str) -> AutomationReceipt:
         """Quit an application gracefully."""
         script = f'tell application "{app_name}" to quit'
@@ -418,7 +475,7 @@ class HostAutomationProvider:
     # UI interaction primitives
     # ------------------------------------------------------------------
 
-    async def menu_select(self, app_name: str, menu_path: List[str]) -> AutomationReceipt:
+    async def menu_select(self, app_name: str, menu_path: list[str]) -> AutomationReceipt:
         """Click a menu item by path. E.g., menu_path=["File", "Export as PDF..."]."""
         if not menu_path:
             return AutomationReceipt(
@@ -426,11 +483,6 @@ class HostAutomationProvider:
                 adapter="applescript", success=False, error="Empty menu path",
             )
 
-        # Build nested menu click AppleScript
-        menu_items = " of ".join(
-            f'menu item "{item}"' if i > 0 else f'menu item "{item}"'
-            for i, item in enumerate(reversed(menu_path))
-        )
         # Actually need to navigate the menu hierarchy
         if len(menu_path) == 1:
             script = f'''
@@ -528,7 +580,7 @@ class HostAutomationProvider:
                 self._log_receipt(receipt)
                 return receipt
 
-            except (OSError, asyncio.TimeoutError) as e:
+            except (TimeoutError, OSError) as e:
                 logger.debug("Clipboard paste failed, falling back to keystroke: %s", e)
                 # Fall through to keystroke method
 
@@ -670,7 +722,7 @@ class HostAutomationProvider:
                     error=str(e),
                     duration_ms=(time.time() - start) * 1000,
                 )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             receipt = AutomationReceipt(
                 action="click", target=f"{x},{y}",
                 adapter="cliclick", success=False,
@@ -708,7 +760,99 @@ class HostAutomationProvider:
     # Screen capture primitives
     # ------------------------------------------------------------------
 
-    async def take_screenshot(self, save_path: str = "", region: Optional[Tuple[int, int, int, int]] = None) -> AutomationReceipt:
+    @staticmethod
+    def _retention_limit(name: str, default: int, minimum: int) -> int:
+        try:
+            return max(minimum, int(os.getenv(name, str(default)) or str(default)))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _screenshot_retention_candidates(
+        directory: Path,
+        keep_path: Path | None,
+    ) -> list[tuple[Path, os.stat_result, bool]]:
+        candidates: list[tuple[Path, os.stat_result, bool]] = []
+        resolved_keep = keep_path.resolve() if keep_path is not None else None
+        try:
+            for path in directory.iterdir():
+                if path.suffix.lower() != ".png" or not path.is_file():
+                    continue
+                try:
+                    candidates.append(
+                        (
+                            path,
+                            path.stat(),
+                            resolved_keep is not None and path.resolve() == resolved_keep,
+                        )
+                    )
+                except OSError:
+                    continue
+        except OSError:
+            return []
+        candidates.sort(key=lambda item: item[1].st_mtime, reverse=True)
+        return candidates
+
+    @classmethod
+    async def _enforce_screenshot_retention(
+        cls,
+        directory: Path,
+        *,
+        keep_path: Path | None = None,
+    ) -> dict[str, int]:
+        """Bound retained captures by age, count, and total bytes."""
+        max_files = cls._retention_limit("AURA_SCREENSHOT_RETENTION_MAX_FILES", 200, 10)
+        max_age_days = cls._retention_limit("AURA_SCREENSHOT_RETENTION_MAX_DAYS", 14, 1)
+        max_bytes = cls._retention_limit(
+            "AURA_SCREENSHOT_RETENTION_MAX_BYTES",
+            512 * 1024 * 1024,
+            32 * 1024 * 1024,
+        )
+        cutoff = time.time() - max_age_days * 86400
+        candidates = await asyncio.to_thread(
+            cls._screenshot_retention_candidates,
+            directory,
+            keep_path,
+        )
+
+        kept = 0
+        kept_bytes = 0
+        deleted = 0
+        bytes_deleted = 0
+        for path, stat_result, is_keep in candidates:
+            expired = stat_result.st_mtime < cutoff
+            over_count = kept >= max_files
+            over_bytes = kept_bytes + stat_result.st_size > max_bytes
+            if not is_keep and (expired or over_count or over_bytes):
+                try:
+                    deletion = await ActionExecutor.execute(
+                        domain=ActionDomain.FILE_WRITE,
+                        action_name="host_automation.screenshot_retention_delete",
+                        params={"path": str(path), "op": "delete"},
+                        source="host_automation.screenshot_retention",
+                    )
+                    if cls._action_completed(deletion):
+                        deleted += 1
+                        bytes_deleted += stat_result.st_size
+                        continue
+                except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                    record_degradation(
+                        "host_automation.screenshot_retention",
+                        exc,
+                        action="retained a screenshot after governed retention cleanup failed",
+                        severity="warning",
+                    )
+            kept += 1
+            kept_bytes += stat_result.st_size
+        return {"kept": kept, "deleted": deleted, "bytes_deleted": bytes_deleted}
+
+    async def take_screenshot(
+        self,
+        save_path: str = "",
+        region: tuple[int, int, int, int] | None = None,
+        *,
+        retain_capture: bool = True,
+    ) -> AutomationReceipt:
         """Take a screenshot and optionally save to path.
 
         Args:
@@ -721,9 +865,28 @@ class HostAutomationProvider:
         start = time.time()
         if not save_path:
             ts = time.strftime("%Y%m%d_%H%M%S")
-            save_dir = Path.home() / ".aura" / "data" / "screenshots"
-            save_dir.mkdir(parents=True, exist_ok=True)
-            save_path = str(save_dir / f"screenshot_{ts}.png")
+            unique = f"{time.time_ns() % 1_000_000_000:09d}"
+            folder = "screenshots" if retain_capture else "ephemeral"
+            save_dir = Path.home() / ".aura" / "data" / folder
+            directory_result = await ActionExecutor.execute(
+                domain=ActionDomain.FILE_WRITE,
+                action_name="host_automation.ensure_screenshot_directory",
+                params={"path": str(save_dir), "op": "ensure_directory"},
+                source="host_automation.screenshot_directory",
+            )
+            if not self._action_completed(directory_result):
+                return AutomationReceipt(
+                    action="take_screenshot",
+                    target=str(save_dir),
+                    adapter="screencapture",
+                    success=False,
+                    error=(
+                        "Screenshot directory could not be created through the governed "
+                        "file transaction lane."
+                    ),
+                    duration_ms=(time.time() - start) * 1000,
+                )
+            save_path = str(save_dir / f"screenshot_{ts}_{unique}.png")
 
         try:
             cmd = ["screencapture", "-x"]  # -x = no sound
@@ -739,7 +902,8 @@ class HostAutomationProvider:
                 source="host_automation.screenshot",
             )
             await asyncio.wait_for(proc.communicate(), timeout=5.0)
-            success = proc.returncode == 0 and Path(save_path).exists()
+            output_exists = await asyncio.to_thread(Path(save_path).exists)
+            success = proc.returncode == 0 and output_exists
 
             receipt = AutomationReceipt(
                 action="take_screenshot", target=save_path,
@@ -747,7 +911,7 @@ class HostAutomationProvider:
                 result=save_path if success else "",
                 duration_ms=(time.time() - start) * 1000,
             )
-        except (OSError, asyncio.TimeoutError) as e:
+        except (TimeoutError, OSError) as e:
             receipt = AutomationReceipt(
                 action="take_screenshot", target=save_path,
                 adapter="screencapture", success=False,
@@ -756,13 +920,100 @@ class HostAutomationProvider:
             )
 
         self._log_receipt(receipt)
+        if receipt.success and retain_capture:
+            try:
+                retention = await self._enforce_screenshot_retention(
+                    Path(save_path).parent,
+                    keep_path=Path(save_path),
+                )
+                if retention["deleted"]:
+                    logger.info(
+                        "Screenshot retention removed %d captures (%d bytes)",
+                        retention["deleted"],
+                        retention["bytes_deleted"],
+                    )
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                record_degradation(
+                    "host_automation.screenshot_retention",
+                    exc,
+                    action="returned screenshot after retention enforcement failed",
+                    severity="warning",
+                )
         return receipt
 
-    async def get_screen_text(self, region: Optional[Tuple[int, int, int, int]] = None) -> AutomationReceipt:
-        """Take a screenshot and extract text via OCR."""
+    @staticmethod
+    def _ocr_image_text(image_path: str) -> str:
+        """Recognize text with native macOS Vision, then optional Tesseract."""
+        native_error = ""
+        try:
+            from Foundation import NSURL
+            from Quartz import (
+                CGImageSourceCreateImageAtIndex,
+                CGImageSourceCreateWithURL,
+            )
+            from Vision import (
+                VNImageRequestHandler,
+                VNRecognizeTextRequest,
+                VNRequestTextRecognitionLevelAccurate,
+            )
+
+            image_url = NSURL.fileURLWithPath_(str(image_path))
+            image_source = CGImageSourceCreateWithURL(image_url, None)
+            if image_source is None:
+                raise ValueError("Vision could not open the screenshot image source")
+            image = CGImageSourceCreateImageAtIndex(image_source, 0, None)
+            if image is None:
+                raise ValueError("Vision could not decode the screenshot image")
+            request = VNRecognizeTextRequest.alloc().init()
+            request.setRecognitionLevel_(VNRequestTextRecognitionLevelAccurate)
+            request.setUsesLanguageCorrection_(True)
+            handler = VNImageRequestHandler.alloc().initWithCGImage_options_(image, {})
+            succeeded, error = handler.performRequests_error_([request], None)
+            if not succeeded:
+                raise RuntimeError(f"Vision OCR request failed: {error}")
+            lines: list[str] = []
+            for observation in list(request.results() or []):
+                candidates = list(observation.topCandidates_(1) or [])
+                if not candidates:
+                    continue
+                value = str(candidates[0].string() or "").strip()
+                if value:
+                    lines.append(value)
+            if lines:
+                return "\n".join(lines)
+            native_error = "Vision returned no recognized text"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            native_error = f"{type(exc).__name__}:{exc}"
+
+        try:
+            import pytesseract
+            from PIL import Image
+
+            return str(pytesseract.image_to_string(Image.open(str(image_path))) or "").strip()
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            fallback_error = f"{type(exc).__name__}:{exc}"
+            raise RuntimeError(
+                f"OCR unavailable (native={native_error or 'unavailable'}; "
+                f"fallback={fallback_error})"
+            ) from exc
+
+    async def get_screen_text(
+        self,
+        region: tuple[int, int, int, int] | None = None,
+        *,
+        retain_screenshot: bool = True,
+    ) -> AutomationReceipt:
+        """Take a screenshot and extract text via OCR.
+
+        Verification callers set ``retain_screenshot=False`` so repeated
+        desktop actions do not accumulate private screen captures indefinitely.
+        """
         start = time.time()
         # Take screenshot first
-        ss = await self.take_screenshot(region=region)
+        ss = await self.take_screenshot(
+            region=region,
+            retain_capture=retain_screenshot,
+        )
         if not ss.success or not ss.result:
             return AutomationReceipt(
                 action="get_screen_text", target="",
@@ -771,36 +1022,40 @@ class HostAutomationProvider:
                 duration_ms=(time.time() - start) * 1000,
             )
 
-        # Try OCR
         text = ""
+        ocr_error = ""
         try:
-            # Try macOS Vision framework via swift/shortcuts
-            script = f'''
-                use framework "Vision"
-                use framework "Foundation"
-
-                set imagePath to POSIX file "{ss.result}"
-                set theImage to current application's NSImage's alloc()'s initWithContentsOfFile:(POSIX path of imagePath)
-            '''
-            # Fallback to pytesseract
-            import pytesseract
-            from PIL import Image
-            img = Image.open(str(ss.result))
-            text = pytesseract.image_to_string(img)
-        except ImportError:
-            # No pytesseract — try simple macOS shortcut
-            try:
-                # Use shortcuts or textutil as fallback
-                text = f"[OCR unavailable — screenshot saved at {ss.result}]"
-            except _HOST_AUTOMATION_ERRORS:
-                text = ""
+            text = await asyncio.to_thread(self._ocr_image_text, str(ss.result))
         except _HOST_AUTOMATION_ERRORS as e:
-            text = f"[OCR error: {e}]"
+            ocr_error = str(e)
+
+        if not retain_screenshot:
+            try:
+                cleanup = await ActionExecutor.execute(
+                    domain=ActionDomain.FILE_WRITE,
+                    action_name="host_automation.ephemeral_ocr_cleanup",
+                    params={"path": str(ss.result), "op": "delete"},
+                    source="host_automation.ephemeral_ocr_cleanup",
+                )
+                if not self._action_completed(cleanup):
+                    raise RuntimeError(
+                        str(cleanup.get("error") or "ephemeral OCR cleanup was not verified")
+                    )
+            except _HOST_AUTOMATION_ERRORS as exc:
+                record_degradation(
+                    "host_automation.ocr_cleanup",
+                    exc,
+                    action="retained an ephemeral OCR screenshot after governed cleanup failed",
+                    severity="warning",
+                )
+                logger.warning("Ephemeral OCR screenshot cleanup failed: %s", exc)
 
         receipt = AutomationReceipt(
-            action="get_screen_text", target=str(ss.result),
+            action="get_screen_text",
+            target=str(ss.result) if retain_screenshot else "ephemeral_verification_capture",
             adapter="ocr", success=bool(text),
             result=text[:2000],
+            error=ocr_error[:500],
             duration_ms=(time.time() - start) * 1000,
         )
         return receipt
@@ -822,11 +1077,38 @@ class HostAutomationProvider:
         self._log_receipt(receipt)
         return receipt
 
+    async def inspect_applescript(
+        self,
+        script: str,
+        *,
+        timeout_s: float = 5.0,
+        source: str = "host_automation.applescript_inspection",
+    ) -> AutomationReceipt:
+        """Run a read-only AppleScript probe without recording an action event.
+
+        Desktop verification needs current UI state, but those observations are
+        not host mutations and must not be mislabeled as executed actions. The
+        subprocess gateway receives ``read_only=True`` so policy can enforce the
+        same distinction below this provider boundary.
+        """
+        receipt = await AppleScriptRunner.run(
+            script,
+            timeout=max(0.5, min(float(timeout_s), 15.0)),
+            read_only=True,
+            source=source,
+        )
+        receipt.action = "inspect_applescript"
+        return receipt
+
     # ------------------------------------------------------------------
     # Shell command execution (governed)
     # ------------------------------------------------------------------
 
-    async def run_command(self, command: str, timeout: float = 15.0) -> AutomationReceipt:
+    async def run_command(  # noqa: ASYNC109 - public API accepts an explicit bounded timeout.
+        self,
+        command: str,
+        timeout: float = 15.0,  # noqa: ASYNC109
+    ) -> AutomationReceipt:
         """Run a shell command after safety validation."""
         start = time.time()
 
@@ -858,7 +1140,7 @@ class HostAutomationProvider:
                 error=stderr.decode("utf-8", errors="replace").strip()[:500] if stderr and not success else "",
                 duration_ms=(time.time() - start) * 1000,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             receipt = AutomationReceipt(
                 action="run_command", target=command[:200],
                 adapter="shell", success=False,
@@ -880,11 +1162,11 @@ class HostAutomationProvider:
     # Wait / condition primitives
     # ------------------------------------------------------------------
 
-    async def wait_for_condition(
+    async def wait_for_condition(  # noqa: ASYNC109 - bounded polling API.
         self,
         predicate_name: str,
-        predicate_args: Dict[str, Any],
-        timeout: float = 10.0,
+        predicate_args: dict[str, Any],
+        timeout: float = 10.0,  # noqa: ASYNC109
         poll_interval: float = 0.5,
     ) -> AutomationReceipt:
         """Wait until a condition is true or timeout.
@@ -918,7 +1200,7 @@ class HostAutomationProvider:
             duration_ms=(time.time() - start) * 1000,
         )
 
-    async def _check_predicate(self, name: str, args: Dict[str, Any]) -> bool:
+    async def _check_predicate(self, name: str, args: dict[str, Any]) -> bool:
         """Evaluate a single predicate."""
         if name == "app_is_frontmost":
             receipt = await self.get_frontmost_app()
@@ -927,7 +1209,7 @@ class HostAutomationProvider:
                 and str(args.get("name", "")).lower() in str(receipt.result).lower()
             )
         elif name == "file_exists":
-            return Path(str(args.get("path", ""))).exists()
+            return await asyncio.to_thread(Path(str(args.get("path", ""))).exists)
         elif name == "window_title_contains":
             receipt = await self.get_window_title(args.get("app", ""))
             return bool(
@@ -940,7 +1222,7 @@ class HostAutomationProvider:
     # Status / Audit
     # ------------------------------------------------------------------
 
-    def get_recent_receipts(self, limit: int = 20) -> List[Dict[str, Any]]:
+    def get_recent_receipts(self, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent automation receipts for audit."""
         return [
             {
@@ -956,7 +1238,7 @@ class HostAutomationProvider:
             for r in self._receipts[-limit:]
         ]
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Provider status for dashboards."""
         total = len(self._receipts)
         successes = sum(1 for r in self._receipts if r.success)
@@ -972,7 +1254,7 @@ class HostAutomationProvider:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_instance: Optional[HostAutomationProvider] = None
+_instance: HostAutomationProvider | None = None
 
 
 def get_host_automation() -> HostAutomationProvider:

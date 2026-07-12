@@ -16,9 +16,8 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from core.memory.retention_policy import working_history_retention_policy
-
 from core.container import ServiceContainer
+from core.memory.retention_policy import working_history_retention_policy
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.ConstitutionalCore")
@@ -539,9 +538,16 @@ class ConstitutionalCore:
         success: bool,
         duration_ms: float,
         error: str | None = None,
-    ) -> None:
+    ) -> dict[str, Any]:
         if handle is None:
-            return
+            return {
+                "closed": True,
+                "mode": "no_handle",
+                "success": bool(success),
+                "intent_closed": True,
+                "token_revoked": True,
+                "errors": [],
+            }
 
         intention_loop = self._get_intention_loop()
         if intention_loop is not None and handle.intention_id:
@@ -576,25 +582,59 @@ class ConstitutionalCore:
                     success=success,
                     status="deferred" if deferred_result else None,
                 )
-            except (OSError, ConnectionError, TimeoutError) as exc:
+            except (
+                OSError,
+                ConnectionError,
+                TimeoutError,
+                RuntimeError,
+                AttributeError,
+                TypeError,
+                ValueError,
+            ) as exc:
                 record_degradation('constitution', exc)
-                logger.debug("IntentionLoop completion skipped: %s", exc)
+                logger.warning(
+                    "IntentionLoop completion recording failed; authority closure will continue: %s",
+                    exc,
+                )
 
         gateway = self._get_authority_gateway()
         if gateway is not None:
-            gateway.finalize_tool_execution(
+            closure = gateway.finalize_tool_execution(
                 executive_intent_id=handle.executive_intent_id,
                 capability_token_id=handle.capability_token_id,
                 success=success,
             )
         elif handle.executive_intent_id:
+            errors: list[str] = []
+            intent_closed = False
             exec_core = self._get_executive_core()
             if exec_core is not None:
                 try:
                     exec_core.complete_intent(handle.executive_intent_id, success=success)
+                    intent_closed = True
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation('constitution', exc)
                     logger.debug("Executive intent completion skipped: %s", exc)
+                    errors.append(f"executive_intent:{type(exc).__name__}:{exc}")
+            else:
+                errors.append("executive_core_unavailable")
+            closure = {
+                "closed": intent_closed and not handle.capability_token_id,
+                "mode": "executive_core_fallback",
+                "success": bool(success),
+                "intent_closed": intent_closed,
+                "token_revoked": not handle.capability_token_id,
+                "errors": errors,
+            }
+        else:
+            closure = {
+                "closed": not handle.capability_token_id,
+                "mode": "no_gateway",
+                "success": bool(success),
+                "intent_closed": True,
+                "token_revoked": not handle.capability_token_id,
+                "errors": [] if not handle.capability_token_id else ["authority_gateway_unavailable"],
+            }
         tool_name = str(handle.proposal.payload.get("tool_name", "unknown") or "unknown")
         self._emit_tool_event(
             "completed" if success else "failed",
@@ -608,6 +648,7 @@ class ConstitutionalCore:
             error=error,
             duration_ms=duration_ms,
         )
+        return closure
 
     async def approve_state_mutation(
         self,

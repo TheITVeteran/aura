@@ -482,6 +482,9 @@ class ActionExecutor:
             gateway = get_file_write_gateway()
             path = _coerce_path_param(params.get("path"), "path")
             operation = str(params.get("op") or "").strip().lower()
+            if operation == "ensure_directory":
+                directory = await gateway.ensure_directory_async(path, source=source)
+                return {"ok": True, "path": directory, "directory_created": True}
             if operation == "delete":
                 deleted = await gateway.delete_path_async(
                     path,
