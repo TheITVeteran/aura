@@ -337,6 +337,11 @@ doctor:
 	@echo "  Checking test collection..."
 	@AURA_TEST_MODE=1 PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(PYTHON) -m pytest -p pytest_asyncio.plugin --collect-only -q 2>/dev/null | tail -1
 	@echo "✅ Doctor checks passed"
+	@echo "💡 Code is healthy. For the runtime environment (disk/RAM/port/.env/models/lockfile): make preflight"
+
+preflight:
+	@echo "🛫 Running runtime-environment preflight..."
+	@$(PYTHON) tools/runtime_preflight.py
 
 diagnostic-bundle:
 	@echo "📦 Creating diagnostic bundle..."
