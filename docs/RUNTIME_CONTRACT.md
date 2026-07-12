@@ -36,6 +36,7 @@ Contract version: `runtime-health-v1`
 | Service | Container key | Liveness check | Why it matters |
 | :--- | :--- | :--- | :--- |
 | Event Bus | `event_bus` | `is_alive` | Canonical runtime event transport. Without it, subsystems cannot reliably coordinate. |
+| Ulysses Covenant | `ulysses_covenant` | `is_alive` | Volitional self-binding registry enforced at the Will. Without it, precommitments against known failure modes stop holding. |
 | Cognitive Engine | `cognitive_engine` | `is_ready` | Manages cognitive state transitions and working memory. |
 | Affect Engine | `affect_engine` | `is_ready` | Emotional state management. Without it, responses are emotionally flat. |
 | Compute Orchestrator | `compute_orchestrator` | `is_alive` | Resource allocation and thermal pressure control. Without it, long-run survival degrades. |
