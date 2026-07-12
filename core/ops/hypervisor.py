@@ -11,6 +11,7 @@ import time
 
 from core.observability.metrics import get_metrics
 from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import get_resource_observer
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker, mark_task_protected
 
@@ -266,9 +267,14 @@ class Hypervisor:
                 self._severe_lag_streak = 0
 
             # Memory Check
-            import psutil
+            from core.runtime import resource_psutil as psutil
 
-            mem = psutil.Process().memory_info().rss / (1024 * 1024)
+            observed_process = get_resource_observer().process(os.getpid())
+            mem = (
+                float(observed_process.rss_bytes) / float(1024**2)
+                if observed_process is not None
+                else 0.0
+            )
             metrics.gauge("system.memory_rss_mb", mem)
             
             try:

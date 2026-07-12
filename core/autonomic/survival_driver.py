@@ -1,9 +1,10 @@
-from core.runtime.errors import record_degradation
-import os
-import psutil
 import logging
+import os
 import time
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
+from core.runtime import resource_psutil as psutil
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.SurvivalDriver")
 

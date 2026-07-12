@@ -1216,7 +1216,7 @@ class ResponseGenerationPhase(BasePhase):
                 memory_pressure = None
             if memory_pressure is None:
                 try:
-                    import psutil
+                    from core.runtime import resource_psutil as psutil
 
                     memory_pressure = psutil.virtual_memory().percent
                 except (ImportError, AttributeError, RuntimeError):

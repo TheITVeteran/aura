@@ -841,7 +841,7 @@ class ResponseProcessingMixin:
         # Critical Memory Override
         # If RAM is > 85%, we force ANY short message into fast-path to save the system
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
 
             mem = psutil.virtual_memory()
             if mem.percent > 85 and len(message) < 100:

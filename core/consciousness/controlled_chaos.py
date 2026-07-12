@@ -33,15 +33,14 @@ perfect determinism without destabilizing the substrate.
 """
 from __future__ import annotations
 
-
 import hashlib
 import logging
 import math
 import os
 import struct
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import numpy as np
 
@@ -343,7 +342,7 @@ class ChaosEngine:
 
         # System uptime
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             boot_time = psutil.boot_time()
             uptime_hours = (t - boot_time) / 3600.0
             signals.append((uptime_hours % 100.0) / 100.0)
@@ -352,7 +351,7 @@ class ChaosEngine:
 
         # Memory pressure
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             mem = psutil.virtual_memory()
             signals.append(mem.percent / 100.0)
             signals.append(mem.available / mem.total)
@@ -362,7 +361,7 @@ class ChaosEngine:
 
         # CPU temperature (macOS best-effort)
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             temps = psutil.sensors_temperatures()
             if temps:
                 # Take first available sensor
@@ -379,7 +378,7 @@ class ChaosEngine:
 
         # Process-level signals
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             proc = psutil.Process()
             rss_gb = proc.memory_info().rss / (1024**3)
             signals.append(min(1.0, rss_gb / 16.0))
@@ -390,7 +389,7 @@ class ChaosEngine:
 
         # CPU usage (non-blocking)
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             cpu = psutil.cpu_percent(interval=0)
             signals.append(cpu / 100.0)
         except (ImportError, AttributeError, RuntimeError):

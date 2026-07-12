@@ -26,13 +26,18 @@ def test_build_provenance_generates_sbom_and_materials(tmp_path):
 
 def test_makefile_gates_whole_surface_lint_and_source_hygiene():
     makefile = open("Makefile", encoding="utf-8").read()
+    strict_files = open("config/mypy_strict_files.txt", encoding="utf-8").read()
 
     assert "source-hygiene:" in makefile
     assert "quality: source-hygiene enterprise-gate enterprise-collect" in makefile
     assert "RUFF_SURFACE_TARGETS" in makefile
     assert "RUFF_CRITICAL_TARGETS" in makefile
     assert "F821,F822,F823,F601" in makefile
-    assert "core/consciousness/continuous_experience.py" in makefile
+    assert "config/mypy_strict_files.txt" in makefile
+    assert "$(MYPY_TARGETS)" in makefile
+    assert "core/runtime/atomic_writer.py" in strict_files
+    assert "core/consciousness/continuous_experience.py" in strict_files
+    assert "tools/build_provenance.py" in strict_files
 
 
 def test_final_proof_requires_live_desktop_runtime_evidence():

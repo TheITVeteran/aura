@@ -700,7 +700,7 @@ class FlagshipDoctorDaemon:
             # 2. RAM Pressure check
             ram_percent = 0.0
             try:
-                import psutil
+                from core.runtime import resource_psutil as psutil
                 ram_percent = psutil.virtual_memory().percent
             except ImportError as _exc:
                 logger.debug("Suppressed %s in core.runtime.flagship_doctor: %s", type(_exc).__name__, _exc)

@@ -5,19 +5,19 @@ Ensures the MTLCompilerService remains active and responsive by maintaining
 a direct, high-conductivity connection to the hardware.
 """
 
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
-import time
-import threading
 import subprocess
-from typing import Optional, Dict, Any
+import threading
+import time
+from typing import Optional
 
 from core.runtime.desktop_boot_safety import inprocess_mlx_metal_enabled
+from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 try:
-    import psutil
+    from core.runtime import resource_psutil as psutil
 except ImportError:
     psutil = None
 

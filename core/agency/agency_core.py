@@ -278,7 +278,7 @@ class SovereignSwarm:
         for p in list(roles)[:max_perspectives]:
             attempted += 1
             try:
-                import psutil
+                from core.runtime import resource_psutil as psutil
                 mem = psutil.virtual_memory()
                 if mem.percent > 90:
                     logger.warning("⚖️ Swarm: RAM Critical (%s%%). Throttling shard spawn for %s", mem.percent, p)
@@ -2436,7 +2436,7 @@ class AgencyCore:
         Models: 'I want to understand how I process information.'
         """
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             if psutil.virtual_memory().percent >= 84.0:
                 return None
             orch = self.orch

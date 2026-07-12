@@ -1,8 +1,7 @@
 import asyncio
 import logging
 
-import psutil
-
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 

@@ -10,14 +10,10 @@ and autonomous thoughts so Aura can be naturally aware of her environment.
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
-import os
 import platform
-import re
-import shutil
 import subprocess
 import time
 from dataclasses import asdict, dataclass
@@ -28,6 +24,7 @@ from core.container import ServiceContainer, ServiceLifetime
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.network_gateway import get_network_gateway
+from core.runtime.resource_observation import get_resource_observer
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Aura.Environment")
@@ -49,9 +46,6 @@ _ENVIRONMENT_ERRORS = (
 _ALLOWED_ENV_COMMANDS = frozenset(
     {
         "CoreLocationCLI",
-        "pmset",
-        "sysctl",
-        "vm_stat",
     }
 )
 
@@ -195,6 +189,11 @@ async def _run_command(cmd: list[str], timeout_s: float = 5.0) -> str:
 
 async def get_device_info() -> DeviceInfo:
     """Collect local device metadata (Async Native)."""
+    observer = get_resource_observer()
+    compute = observer.compute()
+    memory = observer.memory()
+    disk = observer.disk("/")
+    power = observer.power()
     info = DeviceInfo(
         hostname=platform.node(),
         os_name=platform.system(),
@@ -202,99 +201,20 @@ async def get_device_info() -> DeviceInfo:
         architecture=platform.machine(),
         processor=platform.processor(),
         python_version=platform.python_version(),
-        cpu_count=os.cpu_count() or 0,
+        cpu_count=compute.cpu_count if compute.available else 0,
         collected_at=time.time(),
     )
-    
-    # Memory
-    try:
-        if platform.system() == "Darwin":
-            # macOS: sysctl
-            output = await _run_command(["sysctl", "-n", "hw.memsize"])
-            if output:
-                info.memory_total_gb = int(output) / (1024**3)
-            # Available memory via vm_stat
-            output = await _run_command(["vm_stat"])
-            if output:
-                lines = output.split("\n")
-                free_pages = 0
-                for line in lines:
-                    if "Pages free" in line or "Pages inactive" in line:
-                        parts = line.split(":")
-                        if len(parts) == 2:
-                            free_pages += int(parts[1].strip().rstrip("."))
-                info.memory_available_gb = (free_pages * 4096) / (1024**3)
-        elif platform.system() == "Linux":
-            def _read_mem():
-                with open("/proc/meminfo") as f:
-                    return f.readlines()
-            lines = await asyncio.to_thread(_read_mem)
-            for line in lines:
-                if line.startswith("MemTotal"):
-                    info.memory_total_gb = int(line.split()[1]) / (1024**2)
-                elif line.startswith("MemAvailable"):
-                    info.memory_available_gb = int(line.split()[1]) / (1024**2)
-    except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-        _record_environment_degradation(
-            e,
-            action="returned partial device info after memory probe failed",
-            severity="warning",
-        )
-        logger.debug("Memory info failed: %s", e)
-    
-    # Battery (macOS)
-    try:
-        if platform.system() == "Darwin":
-            output = await _run_command(["pmset", "-g", "batt"])
-            if output:
-                # Parse "InternalBattery-0 (id=...)	85%; charging; ..."
-                for line in output.split("\n"):
-                    if "InternalBattery" in line or "%" in line:
-                        pct_match = re.search(r"(\d+)%", line)
-                        if pct_match:
-                            info.battery_percent = float(pct_match.group(1))
-                        info.battery_charging = "charging" in line.lower() or "AC Power" in output
-    except (ImportError, AttributeError, RuntimeError) as e:
-        _record_environment_degradation(
-            e,
-            action="returned partial device info after battery probe failed",
-            severity="warning",
-        )
-        logger.debug("Battery info failed: %s", e)
-    
-    # Disk
-    try:
-        total, used, free = await asyncio.to_thread(shutil.disk_usage, "/")
-        info.disk_free_gb = free / (1024**3)
-    except (ImportError, AttributeError, RuntimeError) as e:
-        _record_environment_degradation(
-            e,
-            action="returned partial device info after disk probe failed",
-            severity="warning",
-        )
-        logger.debug("Disk info unavailable: %s", e)
-    # Uptime
-    try:
-        if platform.system() == "Darwin":
-            output = await _run_command(["sysctl", "-n", "kern.boottime"])
-            if output:
-                match = re.search(r"sec = (\d+)", output)
-                if match:
-                    boot_time = int(match.group(1))
-                    info.uptime_hours = (time.time() - boot_time) / 3600
-        elif platform.system() == "Linux":
-            def _read_uptime():
-                with open("/proc/uptime") as f:
-                    return f.read()
-            content = await asyncio.to_thread(_read_uptime)
-            info.uptime_hours = float(content.split()[0]) / 3600
-    except (ImportError, AttributeError, RuntimeError) as e:
-        _record_environment_degradation(
-            e,
-            action="returned partial device info after uptime probe failed",
-            severity="warning",
-        )
-        logger.debug("Uptime info unavailable: %s", e)
+
+    if memory.available:
+        info.memory_total_gb = memory.total_bytes / (1024**3)
+        info.memory_available_gb = memory.available_bytes / (1024**3)
+    if power.available:
+        info.battery_percent = power.battery_percent
+        info.battery_charging = power.plugged
+    if disk.available:
+        info.disk_free_gb = disk.free_bytes / (1024**3)
+    if compute.available and compute.boot_time > 0.0:
+        info.uptime_hours = max(0.0, time.time() - compute.boot_time) / 3600
     
     summary_str = await info.summary()
     logger.info("📱 Device: %s", summary_str)

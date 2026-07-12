@@ -628,7 +628,7 @@ class CognitiveEngine:
             logger.debug("Background reflection suppression check failed: %s", exc)
 
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
 
             if psutil.virtual_memory().percent >= 80.0:
                 return True

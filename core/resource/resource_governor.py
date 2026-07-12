@@ -17,10 +17,12 @@ import enum
 import logging
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import ResourceObserver, get_resource_observer
 
 logger = logging.getLogger("Aura.Resource.Governor")
 
@@ -54,8 +56,12 @@ class ResourceSnapshot:
     inference_active: bool = False
     eviction_tier: EvictionTier = EvictionTier.NONE
     throttle_active: bool = False
+    observation_source: str = "unavailable"
+    observation_scenario_id: str = ""
+    observation_available: bool = False
+    thermal_provider: str = "blind"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "timestamp": self.timestamp,
             "memory_percent": round(self.memory_percent, 1),
@@ -67,6 +73,10 @@ class ResourceSnapshot:
             "inference_active": self.inference_active,
             "eviction_tier": self.eviction_tier.value,
             "throttle_active": self.throttle_active,
+            "observation_source": self.observation_source,
+            "observation_scenario_id": self.observation_scenario_id,
+            "observation_available": self.observation_available,
+            "thermal_provider": self.thermal_provider,
         }
 
 
@@ -78,7 +88,7 @@ class InferenceSemaphore:
     and requests global inference scope so it preserves the old limit of one.
     """
 
-    def __init__(self, max_concurrent: int = 1, *, admission=None):
+    def __init__(self, max_concurrent: int = 1, *, admission: Any | None = None):
         if int(max_concurrent) != 1:
             raise ValueError(
                 "InferenceSemaphore compatibility mode supports max_concurrent=1; "
@@ -104,7 +114,7 @@ class InferenceSemaphore:
     async def acquire(
         self,
         source: str = "unknown",
-        timeout: float = 120.0,
+        timeout: float = 120.0,  # noqa: ASYNC109 - compatibility API accepts a wait bound.
         priority: bool = False,
     ) -> bool:
         """Acquire inference slot.
@@ -194,7 +204,7 @@ class InferenceSemaphore:
         self._active = False
         self._active_source = ""
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         avg_wait = (
             self._total_wait_ms / self._total_acquired
             if self._total_acquired > 0
@@ -231,13 +241,14 @@ class ResourceGovernor:
         ThermalState.CRITICAL: 0.85,
     }
 
-    def __init__(self) -> None:
+    def __init__(self, *, observer: ResourceObserver | None = None) -> None:
+        self._observer = observer
         self._inference_semaphore = InferenceSemaphore(max_concurrent=1)
-        self._history: Deque[ResourceSnapshot] = deque(maxlen=60)
-        self._last_snapshot: Optional[ResourceSnapshot] = None
+        self._history: deque[ResourceSnapshot] = deque(maxlen=60)
+        self._last_snapshot: ResourceSnapshot | None = None
         self._last_sample_time: float = 0.0
         self._sample_interval_s: float = 5.0
-        self._eviction_callbacks: List = []
+        self._eviction_callbacks: list[Callable[[EvictionTier], None]] = []
         self._eviction_callback_failures: dict[int, int] = {}
         self._throttle_active: bool = False
         self._consecutive_pressure_samples: int = 0
@@ -246,7 +257,10 @@ class ResourceGovernor:
     def inference(self) -> InferenceSemaphore:
         return self._inference_semaphore
 
-    def register_eviction_callback(self, callback) -> None:
+    def register_eviction_callback(
+        self,
+        callback: Callable[[EvictionTier], None],
+    ) -> None:
         """Register a callback for memory eviction events.
 
         Callback signature: callback(tier: EvictionTier) -> None
@@ -256,26 +270,42 @@ class ResourceGovernor:
     def sample(self) -> ResourceSnapshot:
         """Take a point-in-time resource snapshot."""
         snap = ResourceSnapshot()
+        observer = self._observer or get_resource_observer()
+        provenance = observer.provenance
+        snap.observation_source = provenance.source.value
+        snap.observation_scenario_id = provenance.scenario_id
 
         # Memory
         try:
-            import psutil
-            vm = psutil.virtual_memory()
-            snap.memory_percent = vm.percent
-            proc = psutil.Process()
-            snap.memory_rss_mb = proc.memory_info().rss / (1024 * 1024)
-        except (ImportError, AttributeError, RuntimeError):
-            snap.memory_percent = 0.0
+            memory = observer.memory()
+            snap.memory_percent = float(memory.percent) if memory.available else 100.0
+            snap.memory_rss_mb = float(memory.process_rss_bytes) / float(1024**2)
+            snap.observation_available = bool(memory.available)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            snap.memory_percent = 100.0
 
         # CPU
         try:
-            import psutil
-            snap.cpu_percent = psutil.cpu_percent(interval=0)
-        except (ImportError, AttributeError, RuntimeError) as _exc:
+            compute = observer.compute()
+            snap.cpu_percent = float(compute.cpu_percent)
+            snap.observation_available = snap.observation_available and compute.available
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as _exc:
             logger.debug("Suppressed %s in core.resource.resource_governor: %s", type(_exc).__name__, _exc)
 
-        # Thermal (macOS native)
-        snap.thermal_state, snap.thermal_pressure_raw = self._read_thermal_state()
+        # Thermal
+        try:
+            thermal = observer.thermal()
+            snap.thermal_state, snap.thermal_pressure_raw = (
+                self._thermal_state_from_observation(thermal)
+            )
+            snap.thermal_provider = thermal.provider
+            snap.observation_available = snap.observation_available and thermal.available
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("Thermal resource observation failed: %s", exc)
+            snap.thermal_state = ThermalState.CRITICAL
+            snap.thermal_pressure_raw = 1.0
+            snap.thermal_provider = "unavailable"
+            snap.observation_available = False
 
         # Inference
         snap.inference_queue_depth = self._inference_semaphore.queue_depth
@@ -306,40 +336,24 @@ class ResourceGovernor:
 
         return snap
 
-    def _read_thermal_state(self) -> tuple:
-        """Read macOS thermal pressure via subprocess (cached)."""
+    def _read_thermal_state(self) -> tuple[ThermalState, float]:
+        """Map the injected canonical thermal observation into governor state."""
         try:
-            # Use pmset to read thermal state on macOS
-            from core.runtime.subprocess_gateway import get_subprocess_gateway
+            reading = (self._observer or get_resource_observer()).thermal()
+            return self._thermal_state_from_observation(reading)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return ThermalState.CRITICAL, 1.0
 
-            result = get_subprocess_gateway().run(
-                ["pmset", "-g", "therm"],
-                capture_output=True,
-                timeout=2.0,
-                read_only=True,
-                source="resource.resource_governor.thermal_state",
-            )
-            output = result.stdout.lower()
-            if "critical" in output:
-                return ThermalState.CRITICAL, 0.95
-            elif "serious" in output:
-                return ThermalState.SERIOUS, 0.7
-            elif "fair" in output:
-                return ThermalState.FAIR, 0.4
-            else:
-                return ThermalState.NOMINAL, 0.0
-        except (ImportError, AttributeError, RuntimeError):
-            # Fallback: use CPU as proxy
-            try:
-                import psutil
-                cpu = psutil.cpu_percent(interval=0)
-                if cpu > 90:
-                    return ThermalState.SERIOUS, 0.7
-                elif cpu > 70:
-                    return ThermalState.FAIR, 0.4
-                return ThermalState.NOMINAL, 0.0
-            except (ImportError, AttributeError, RuntimeError):
-                return ThermalState.NOMINAL, 0.0
+    def _thermal_state_from_observation(self, reading: Any) -> tuple[ThermalState, float]:
+        if not reading.available:
+            return ThermalState.CRITICAL, 1.0
+        state = {
+            0: ThermalState.NOMINAL,
+            1: ThermalState.FAIR,
+            2: ThermalState.SERIOUS,
+            3: ThermalState.CRITICAL,
+        }.get(max(0, min(3, int(reading.level))), ThermalState.CRITICAL)
+        return state, self.THERMAL_THRESHOLDS[state]
 
     def _compute_eviction_tier(self, snap: ResourceSnapshot) -> EvictionTier:
         """Determine memory eviction tier from current snapshot."""
@@ -436,7 +450,7 @@ class ResourceGovernor:
 
         return invoked
 
-    def get_snapshot(self) -> Optional[ResourceSnapshot]:
+    def get_snapshot(self) -> ResourceSnapshot | None:
         """Get the latest snapshot (may sample if stale)."""
         now = time.time()
         if (
@@ -457,7 +471,7 @@ class ResourceGovernor:
         except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
             return False
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return full resource status for observability."""
         snap = self._last_snapshot
         return {
@@ -471,7 +485,7 @@ class ResourceGovernor:
 
 # ── Singleton ─────────────────────────────────────────────────────────────
 
-_instance: Optional[ResourceGovernor] = None
+_instance: ResourceGovernor | None = None
 
 
 def get_resource_governor() -> ResourceGovernor:
@@ -480,3 +494,8 @@ def get_resource_governor() -> ResourceGovernor:
     if _instance is None:
         _instance = ResourceGovernor()
     return _instance
+
+
+def reset_resource_governor_for_test() -> None:
+    global _instance
+    _instance = None

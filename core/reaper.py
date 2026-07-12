@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.resource_observation import get_resource_observer
 
 try:
     import psutil
@@ -125,16 +126,17 @@ class ReaperManifest:
             "registered_by": os.getpid(),
         }
         try:
-            if psutil is None:
-                raise ImportError("psutil is required for reaper PID identity metadata")
-
-            proc = psutil.Process(int(pid))
+            process = get_resource_observer().process(int(pid))
+            if process is None:
+                raise RuntimeError("process_identity_unavailable")
             record.update(
                 {
-                    "create_time": float(proc.create_time()),
-                    "ppid": int(proc.ppid()),
-                    "cmdline": proc.cmdline(),
-                    "cwd": proc.cwd(),
+                    "create_time": process.create_time,
+                    "ppid": process.ppid,
+                    "cmdline": list(process.cmdline),
+                    "cwd": process.cwd,
+                    "observation_source": process.provenance.source.value,
+                    "observation_scenario_id": process.provenance.scenario_id,
                 }
             )
         except _REAPER_PROCESS_ERRORS as exc:  # pragma: no cover - defensive identity metadata path
@@ -289,27 +291,15 @@ def _pid_cleanup_authorized(
         return False, pid, "legacy_pid_without_identity"
 
     try:
-        if psutil is None:
-            _record_reaper_degradation(
-                ImportError("psutil is required for reaper PID identity verification"),
-                stage="pid_identity",
-                action="skipped PID cleanup because process identity verification is unavailable",
-                severity="degraded",
-                extra={"pid": pid},
-            )
-            return False, pid, "identity_check_failed:psutil_unavailable"
-
-        proc = psutil.Process(pid)
-        actual_create_time = float(proc.create_time())
+        process = get_resource_observer().process(pid)
+        if process is None:
+            return False, pid, "missing_pid"
+        actual_create_time = process.create_time
         if abs(actual_create_time - float(expected_create_time)) > 0.05:
             return False, pid, "pid_reused_or_stale"
         expected_cwd = str(entry.get("cwd") or "")
-        if expected_cwd:
-            try:
-                if proc.cwd() != expected_cwd:
-                    return False, pid, "process_identity_cwd_mismatch"
-            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-                raise
+        if expected_cwd and process.cwd != expected_cwd:
+            return False, pid, "process_identity_cwd_mismatch"
         if kernel_pid is not None and pid == int(kernel_pid):
             return False, pid, "refusing_to_signal_kernel_pid"
         return True, pid, "identity_verified"

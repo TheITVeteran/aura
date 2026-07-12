@@ -29,6 +29,14 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.resource_observation import (  # noqa: E402
+    ResourceObserver,
+    get_resource_observer,
+)
+
 # Write to a NON-tracked, unique-per-run path. The old default was a
 # git-tracked file; a concurrent git op (Zenflow commits/stashes/checkouts
 # write-and-rename) replaced the inode under this process's open handle and
@@ -198,7 +206,7 @@ def _chat(base: str, session: str, message: str, timeout: float) -> tuple[str, s
     return reply, status
 
 
-def _server_rss_mb() -> float | None:
+def _server_rss_mb(*, observer: ResourceObserver | None = None) -> float | None:
     """RSS of the whole aura_main process TREE (parent + children).
 
     The MLX worker that holds the ~20GB model is a spawned CHILD process whose
@@ -207,41 +215,26 @@ def _server_rss_mb() -> float | None:
     actually hit the 35GB lethal ceiling (July 3). Sum the full tree so the RSS
     series answers the real out-of-memory question.
     """
-    try:
-        import psutil
-    except ImportError:
+    processes = (observer or get_resource_observer()).processes()
+    root_pids = {
+        process.pid
+        for process in processes
+        if "aura_main.py" in " ".join(process.cmdline)
+    }
+    if not root_pids:
         return None
-
-    seen: set[int] = set()
-    total = 0
-    matched = False
-    for proc in psutil.process_iter(["cmdline", "pid"]):
-        try:
-            cmdline = " ".join(str(part) for part in (proc.info.get("cmdline") or []))
-            if "aura_main.py" not in cmdline:
-                continue
-            matched = True
-            for target in [proc, *proc.children(recursive=True)]:
-                pid = target.pid
-                if pid in seen:
-                    continue
-                seen.add(pid)
-                total += target.memory_info().rss
-        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError, TypeError, ValueError):
-            continue
-    if not matched:
-        return None
+    total = sum(
+        process.rss_bytes
+        for process in processes
+        if process.pid in root_pids
+        or any(ancestor in root_pids for ancestor in process.ancestor_pids)
+    )
     return round(total / 1e6, 1)
 
 
-def _thermal_level() -> int | None:
-    try:
-        sys.path.insert(0, str(ROOT))
-        from core.runtime.thermal import thermal_state
-
-        return thermal_state().level
-    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
-        return None
+def _thermal_level(*, observer: ResourceObserver | None = None) -> int | None:
+    thermal = (observer or get_resource_observer()).thermal()
+    return int(thermal.level) if thermal.available else None
 
 
 def _snapshot(base: str) -> dict:
@@ -276,8 +269,10 @@ def _snapshot(base: str) -> dict:
         urllib.error.URLError,
     ) as exc:
         snap["lane_error"] = str(exc)[:120]
-    snap["server_rss_mb"] = _server_rss_mb()
-    snap["thermal_level"] = _thermal_level()
+    observer = get_resource_observer()
+    snap["resource_observation"] = observer.provenance.to_dict()
+    snap["server_rss_mb"] = _server_rss_mb(observer=observer)
+    snap["thermal_level"] = _thermal_level(observer=observer)
     return snap
 
 

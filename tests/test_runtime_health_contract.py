@@ -341,15 +341,16 @@ def test_runtime_contract_requires_kernel_inference_memory_scheduler_and_tool_go
     assert required["output_gate"].liveness_check == "is_ready"
 
 
-def test_runtime_contract_fails_closed_on_critical_unified_memory_pressure(monkeypatch):
-    import core.utils.memory_monitor as memory_monitor
-
+def test_runtime_contract_fails_closed_on_critical_unified_memory_pressure(
+    monkeypatch,
+    resource_observer,
+):
     gib = 1024**3
     _register_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: SimpleNamespace(total=64 * gib, available=2 * gib, percent=96.0),
+    resource_observer.configure_memory(
+        total_bytes=64 * gib,
+        available_bytes=2 * gib,
+        percent=96.0,
     )
 
     report = runtime_health_report()
@@ -369,19 +370,16 @@ def test_runtime_contract_fails_closed_on_critical_unified_memory_pressure(monke
     )
 
 
-def test_runtime_contract_allows_high_noncritical_unified_memory_pressure(monkeypatch):
-    import core.utils.memory_monitor as memory_monitor
-
+def test_runtime_contract_allows_high_noncritical_unified_memory_pressure(
+    monkeypatch,
+    resource_observer,
+):
     gib = 1024**3
     _register_contract_services(tiers={ServiceTier.CRITICAL, ServiceTier.IMPORTANT})
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: SimpleNamespace(
-            total=64 * gib,
-            available=int(9.5 * gib),
-            percent=86.0,
-        ),
+    resource_observer.configure_memory(
+        total_bytes=64 * gib,
+        available_bytes=int(9.5 * gib),
+        percent=86.0,
     )
 
     report = runtime_health_report()

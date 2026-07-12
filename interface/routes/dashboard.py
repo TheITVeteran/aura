@@ -143,7 +143,8 @@ async def snapshot(_: None = Depends(_require_internal)) -> JSONResponse:
 
     # System / runtime
     try:
-        import psutil
+        from core.runtime import resource_psutil as psutil
+
         payload["system"] = {
             "cpu_pct": psutil.cpu_percent(interval=None),
             "ram_pct": psutil.virtual_memory().percent,

@@ -1,16 +1,17 @@
+import logging
+
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
-import logging
+
 logger = logging.getLogger(__name__)
 
 import asyncio
 from dataclasses import dataclass
 
-import psutil
-
 from core.agency_bus import AgencyBus
 from core.container import ServiceContainer
 from core.resilience.state_manager import StateManager
+from core.runtime import resource_psutil as psutil
 
 
 def _get_mx():

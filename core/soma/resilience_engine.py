@@ -362,8 +362,8 @@ class ResilienceEngine:
     def _check_subsystem_auto_recovery(self) -> None:
         """Restores degraded subsystems to healthy if no failures occurred in 300s."""
         try:
-            from core.runtime.errors import get_subsystem_registry
             from core.resilience.incident_manager import get_incident_manager
+            from core.runtime.errors import get_subsystem_registry
             
             subsystem_reg = get_subsystem_registry()
             # Recover subsystems that haven't failed in the last 300 seconds
@@ -416,7 +416,7 @@ class ResilienceEngine:
         ram_pressure = 0.0
         thermal_pressure = 0.0
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
 
             cpu_pressure = self._clamp01(psutil.cpu_percent(interval=None) / 100.0)
             ram_pressure = self._clamp01(psutil.virtual_memory().percent / 100.0)

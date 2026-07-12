@@ -33,6 +33,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.runtime.resource_observation import (  # noqa: E402
+    ProcessObservation,
+    ResourceObserver,
+    get_resource_observer,
+)
+
 _GIT_METADATA_ERRORS = (OSError, UnicodeDecodeError, ValueError)
 _DNU_RUN_RECOVERABLE_ERRORS = (
     AttributeError,
@@ -149,13 +155,25 @@ DNU_ABLATION_DEPENDENCY_EVIDENCE: dict[str, dict[str, Any]] = {
 # Utilities
 # ---------------------------------------------------------------------------
 
-def _is_resource_tracker_process(proc) -> bool:
+def _process_table_or_raise(
+    observer: ResourceObserver | None = None,
+) -> tuple[ProcessObservation, ...]:
+    table = (observer or get_resource_observer()).process_table()
+    if not table.available:
+        raise RuntimeError(f"process table observation unavailable: {table.error}")
+    return table.processes
+
+
+def _is_resource_tracker_process(proc: Any) -> bool:
     try:
-        name = str(proc.name() or "").lower()
+        raw_name = getattr(proc, "name", "")
+        name = str(raw_name() if callable(raw_name) else raw_name or "").lower()
     except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
         name = ""
     try:
-        cmdline = " ".join(str(part) for part in (proc.cmdline() or [])).lower()
+        raw_cmdline = getattr(proc, "cmdline", ())
+        parts = raw_cmdline() if callable(raw_cmdline) else raw_cmdline
+        cmdline = " ".join(str(part) for part in (parts or ())).lower()
     except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
         cmdline = ""
     return (
@@ -376,6 +394,7 @@ def collect_proof_resource_snapshot(
     label: str,
     task_index: int = 0,
     task_id: str = "",
+    observer: ResourceObserver | None = None,
 ) -> dict:
     """Collect bounded proof-run resource evidence without depending on psutil."""
     snapshot = {
@@ -390,8 +409,12 @@ def collect_proof_resource_snapshot(
         "system_memory_percent": None,
         "system_available_mb": None,
         "runtime_health_contract": None,
+        "resource_observation": None,
+        "process_table_available": None,
         "error": None,
     }
+    observer = observer or get_resource_observer()
+    snapshot["resource_observation"] = observer.provenance.to_dict()
     try:
         from core.runtime.health_contract import runtime_health_report
 
@@ -404,29 +427,42 @@ def collect_proof_resource_snapshot(
             "error": f"{type(exc).__name__}: {exc}",
         }
     try:
-        import psutil
-
-        proc = psutil.Process(os.getpid())
-        children = proc.children(recursive=True)
-        child_rss = 0
-        live_children = 0
-        for child in children:
-            try:
-                child_rss += int(child.memory_info().rss)
-                live_children += 1
-            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-                continue
-        mem = psutil.virtual_memory()
+        memory = observer.memory(root_pid=os.getpid())
+        table = observer.process_table()
+        snapshot["process_table_available"] = table.available
+        if not memory.available:
+            raise RuntimeError(f"memory observation unavailable: {memory.error}")
+        if not table.available:
+            raise RuntimeError(f"process table observation unavailable: {table.error}")
+        root = next(
+            (process for process in table.processes if process.pid == os.getpid()),
+            None,
+        )
+        children = [
+            process
+            for process in table.processes
+            if os.getpid() in process.ancestor_pids
+        ]
         snapshot.update(
             {
-                "process_rss_mb": round(proc.memory_info().rss / (1024 * 1024), 2),
-                "child_rss_mb": round(child_rss / (1024 * 1024), 2),
-                "child_count": live_children,
-                "system_memory_percent": float(mem.percent),
-                "system_available_mb": round(float(mem.available) / (1024 * 1024), 2),
+                "process_rss_mb": round(
+                    (root.rss_bytes if root is not None else memory.process_rss_bytes)
+                    / (1024 * 1024),
+                    2,
+                ),
+                "child_rss_mb": round(
+                    sum(process.rss_bytes for process in children) / (1024 * 1024),
+                    2,
+                ),
+                "child_count": len(children),
+                "system_memory_percent": float(memory.percent),
+                "system_available_mb": round(
+                    memory.available_bytes / (1024 * 1024),
+                    2,
+                ),
             }
         )
-    except (ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         snapshot["error"] = f"{type(exc).__name__}: {exc}"
     return snapshot
 
@@ -742,30 +778,23 @@ def _cmdline_invokes_script(cmdline: list[Any], script_name: str) -> bool:
     return False
 
 
-def find_existing_aura_runtimes() -> list[dict]:
+def find_existing_aura_runtimes(
+    *,
+    observer: ResourceObserver | None = None,
+) -> list[dict]:
     """Return live aura_main.py runtime processes that would contend with proof boot."""
     if sys.platform not in ("darwin", "linux"):
         return []
     me = os.getpid()
     parent = os.getppid()
     current_user = os.environ.get("USER") or ""
-    try:
-        import psutil
-    except ImportError as exc:
-        print(f"  [WARN] Could not inspect process table for Aura runtime exclusivity: {exc}")
-        return []
-
     instances: list[dict] = []
-    for proc in psutil.process_iter(["pid", "username", "cmdline", "ppid"]):
-        try:
-            info = proc.info
-            pid = int(info.get("pid") or 0)
-            user = str(info.get("username") or "")
-            cmdline = info.get("cmdline") or []
-            command = " ".join(str(part) for part in cmdline)
-            proc_parent = int(info.get("ppid") or 0)
-        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, TypeError, ValueError):
-            continue
+    for process in _process_table_or_raise(observer):
+        pid = process.pid
+        user = process.username
+        cmdline = process.cmdline
+        command = " ".join(cmdline)
+        proc_parent = process.ppid
         if pid in (me, parent):
             continue
         if proc_parent == me:
@@ -795,65 +824,51 @@ def _is_aura_checkout_cwd(path: Path) -> bool:
     )
 
 
-def find_existing_proof_runners() -> list[dict]:
+def find_existing_proof_runners(
+    *,
+    observer: ResourceObserver | None = None,
+) -> list[dict]:
     """Return stale DNU proof-runner processes from this checkout."""
     if sys.platform not in ("darwin", "linux"):
         return []
     me = os.getpid()
     current_user = os.environ.get("USER") or ""
-    try:
-        import psutil
-    except ImportError:
-        return []
-
     # Exclude our whole ancestor chain, not just our own pid: under the
     # bounded proof-step wrapper the PARENT's cmdline contains this
     # script's name as an argument, and matching it terminated our own
     # process tree 0.13s after launch (rc=-15 in final-proof run 3).
-    ancestors = {me}
-    # Resolve the error class up front: a replaced/lesioned psutil (test
-    # doubles, ablations) may lack .Process AND .Error — referencing
-    # psutil.Error inside the except clause would raise while handling.
-    _psutil_error = getattr(psutil, "Error", OSError)
-    try:
-        ancestors.update(p.pid for p in psutil.Process(me).parents())
-    except (AttributeError, _psutil_error, OSError):
-        # Degrade the exclusion to self-only instead of crashing.
-        pass
+    observer = observer or get_resource_observer()
+    processes = _process_table_or_raise(observer)
+    current = next((process for process in processes if process.pid == me), None)
+    ancestors = {me, *(current.ancestor_pids if current is not None else ())}
 
     instances: list[dict] = []
-    for proc in psutil.process_iter(["pid", "username", "cmdline"]):
-        try:
-            pid = int(proc.info.get("pid") or 0)
-            if pid in ancestors:
-                continue
-            user = str(proc.info.get("username") or "")
-            cmdline = proc.info.get("cmdline") or []
-            command = " ".join(str(part) for part in cmdline)
-            cwd = Path(proc.cwd()).resolve()
-        except (
-            psutil.AccessDenied,
-            psutil.NoSuchProcess,
-            psutil.ZombieProcess,
-            OSError,
-            RuntimeError,
-            TypeError,
-            ValueError,
-        ):
+    for process in processes:
+        pid = process.pid
+        if pid in ancestors:
             continue
+        user = process.username
+        cmdline = process.cmdline
+        command = " ".join(cmdline)
+        cwd = Path(process.cwd)
         if current_user and user != current_user:
             continue
         if not _cmdline_invokes_script(cmdline, "run_dnu_agi_proof_battery.py"):
             continue
-        if not _is_aura_checkout_cwd(cwd):
+        if not process.cwd or not _is_aura_checkout_cwd(cwd):
             continue
         instances.append({"pid": pid, "user": user, "command": command})
     return instances
 
 
-def stop_existing_proof_runners(timeout_s: float = 8.0) -> list[dict]:
+def stop_existing_proof_runners(
+    timeout_s: float = 8.0,
+    *,
+    observer: ResourceObserver | None = None,
+) -> list[dict]:
     """Stop stale proof-runner process trees before an exclusive proof boot."""
-    instances = find_existing_proof_runners()
+    observer = observer or get_resource_observer()
+    instances = find_existing_proof_runners(observer=observer)
     if not instances:
         return []
     print(f"  [EXCLUSIVE] Stopping {len(instances)} stale proof runner process(es).")
@@ -862,20 +877,25 @@ def stop_existing_proof_runners(timeout_s: float = 8.0) -> list[dict]:
     except ImportError:
         psutil = None
 
+    root_pids = {int(instance["pid"]) for instance in instances}
+    observed = _process_table_or_raise(observer)
+    target_pids = {
+        process.pid
+        for process in observed
+        if process.pid in root_pids
+        or any(ancestor in root_pids for ancestor in process.ancestor_pids)
+    }
     processes = []
-    for instance in instances:
-        pid = int(instance["pid"])
-        if psutil is not None:
-            try:
-                parent = psutil.Process(pid)
-                processes.extend(parent.children(recursive=True))
-                processes.append(parent)
-            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
-                continue
-        else:
+    for pid in sorted(target_pids, reverse=True):
+        if psutil is None:
             try:
                 os.kill(pid, signal.SIGTERM)
             except (OSError, PermissionError):
+                continue
+        else:
+            try:
+                processes.append(psutil.Process(pid))
+            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
                 continue
 
     if psutil is not None:
@@ -894,12 +914,17 @@ def stop_existing_proof_runners(timeout_s: float = 8.0) -> list[dict]:
             psutil.wait_procs(alive, timeout=0.5)
     else:
         time.sleep(max(1.0, timeout_s))
-    return find_existing_proof_runners()
+    return find_existing_proof_runners(observer=observer)
 
 
-def stop_existing_aura_runtimes(timeout_s: float = 8.0) -> list[dict]:
+def stop_existing_aura_runtimes(
+    timeout_s: float = 8.0,
+    *,
+    observer: ResourceObserver | None = None,
+) -> list[dict]:
     """Best-effort stop for live Aura runtimes before a proof run claims exclusivity."""
-    instances = find_existing_aura_runtimes()
+    observer = observer or get_resource_observer()
+    instances = find_existing_aura_runtimes(observer=observer)
     if not instances:
         return []
 
@@ -919,27 +944,37 @@ def stop_existing_aura_runtimes(timeout_s: float = 8.0) -> list[dict]:
     def _runtime_processes() -> list[Any]:
         if psutil is None:
             return []
-        targets: dict[int, Any] = {}
         me = os.getpid()
-        for instance in instances:
-            pid = int(instance["pid"])
+        observed = _process_table_or_raise(observer)
+        by_pid = {process.pid: process for process in observed}
+        runtime_pids = {int(instance["pid"]) for instance in instances}
+        target_pids = {
+            process.pid
+            for process in observed
+            if process.pid in runtime_pids
+            or any(ancestor in runtime_pids for ancestor in process.ancestor_pids)
+        }
+        launcher_pids = {
+            by_pid[pid].ppid
+            for pid in runtime_pids
+            if pid in by_pid
+            and by_pid[pid].ppid in by_pid
+            and "aura-launcher" in " ".join(by_pid[by_pid[pid].ppid].cmdline)
+        }
+        target_pids.update(launcher_pids)
+        target_pids.update(
+            process.pid
+            for process in observed
+            if any(ancestor in launcher_pids for ancestor in process.ancestor_pids)
+        )
+        targets: dict[int, Any] = {}
+        for pid in sorted(target_pids, reverse=True):
+            if pid == me:
+                continue
             try:
-                proc = psutil.Process(pid)
+                targets[pid] = psutil.Process(pid)
             except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
                 continue
-            for candidate in [*proc.children(recursive=True), proc]:
-                if candidate.pid != me:
-                    targets[candidate.pid] = candidate
-            try:
-                parent = proc.parent()
-                parent_cmd = " ".join(parent.cmdline()) if parent else ""
-            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError):
-                parent = None
-                parent_cmd = ""
-            if parent and "aura-launcher" in parent_cmd and parent.pid != me:
-                for candidate in [*parent.children(recursive=True), parent]:
-                    if candidate.pid != me:
-                        targets[candidate.pid] = candidate
         return list(targets.values())
 
     processes = _runtime_processes()
@@ -969,7 +1004,7 @@ def stop_existing_aura_runtimes(timeout_s: float = 8.0) -> list[dict]:
     deadline = time.time() + max(1.0, timeout_s)
     clear_since: float | None = None
     while time.time() < deadline:
-        remaining = find_existing_aura_runtimes()
+        remaining = find_existing_aura_runtimes(observer=observer)
         if not remaining:
             if clear_since is None:
                 clear_since = time.time()
@@ -984,17 +1019,21 @@ def stop_existing_aura_runtimes(timeout_s: float = 8.0) -> list[dict]:
                     continue
         time.sleep(0.25)
 
-    remaining = find_existing_aura_runtimes()
+    remaining = find_existing_aura_runtimes(observer=observer)
     for instance in remaining:
         try:
             os.kill(int(instance["pid"]), signal.SIGKILL)
         except (OSError, PermissionError) as exc:
             print(f"  [WARN] Could not SIGKILL Aura PID {instance['pid']}: {exc}")
     time.sleep(0.5)
-    return find_existing_aura_runtimes()
+    return find_existing_aura_runtimes(observer=observer)
 
 
-def stop_orphaned_aura_multiprocessing_children(timeout_s: float = 2.0) -> list[dict]:
+def stop_orphaned_aura_multiprocessing_children(
+    timeout_s: float = 2.0,
+    *,
+    observer: ResourceObserver | None = None,
+) -> list[dict]:
     """Reap orphaned Aura-owned multiprocessing helpers from interrupted proof runs."""
     if sys.platform not in ("darwin", "linux"):
         return []
@@ -1003,28 +1042,18 @@ def stop_orphaned_aura_multiprocessing_children(timeout_s: float = 2.0) -> list[
     except ImportError:
         return []
 
-    candidates = []
+    observer = observer or get_resource_observer()
+    observed = _process_table_or_raise(observer)
+    candidates: list[dict[str, Any]] = []
     orphan_parent_pids: set[int] = set()
-    for proc in psutil.process_iter(["pid", "ppid", "cmdline"]):
-        try:
-            pid = int(proc.info.get("pid") or 0)
-            ppid = int(proc.info.get("ppid") or 0)
-            cmdline = proc.info.get("cmdline") or []
-            command = " ".join(str(part) for part in cmdline)
-            cwd = Path(proc.cwd()).resolve()
-        except (
-            psutil.AccessDenied,
-            psutil.NoSuchProcess,
-            psutil.ZombieProcess,
-            OSError,
-            RuntimeError,
-            TypeError,
-            ValueError,
-        ):
-            continue
+    for process in observed:
+        pid = process.pid
+        ppid = process.ppid
+        command = " ".join(process.cmdline)
+        cwd = Path(process.cwd)
         if pid == os.getpid() or ppid != 1:
             continue
-        if not _is_aura_checkout_cwd(cwd):
+        if not process.cwd or not _is_aura_checkout_cwd(cwd):
             continue
         if (
             "multiprocessing.spawn" not in command
@@ -1035,52 +1064,43 @@ def stop_orphaned_aura_multiprocessing_children(timeout_s: float = 2.0) -> list[
         orphan_parent_pids.add(pid)
         candidates.append({"pid": pid, "command": command[:240], "role": "orphan_parent"})
 
-    processes_by_pid: dict[int, Any] = {}
-    for pid in sorted(orphan_parent_pids):
-        try:
-            parent = psutil.Process(pid)
-            for child in parent.children(recursive=True):
-                processes_by_pid[int(child.pid)] = child
-                try:
-                    child_cmd = " ".join(str(part) for part in (child.cmdline() or []))
-                except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError, RuntimeError, TypeError, ValueError):
-                    child_cmd = ""
-                candidates.append(
-                    {"pid": int(child.pid), "command": child_cmd[:240], "role": "orphan_descendant"}
-                )
-            processes_by_pid[pid] = parent
-        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess, OSError, RuntimeError, TypeError, ValueError):
-            continue
-
-    for proc in psutil.process_iter(["pid", "ppid", "cmdline"]):
-        try:
-            pid = int(proc.info.get("pid") or 0)
-            ppid = int(proc.info.get("ppid") or 0)
-            cmdline = proc.info.get("cmdline") or []
-            command = " ".join(str(part) for part in cmdline)
-            cwd = Path(proc.cwd()).resolve()
-        except (
-            psutil.AccessDenied,
-            psutil.NoSuchProcess,
-            psutil.ZombieProcess,
-            OSError,
-            RuntimeError,
-            TypeError,
-            ValueError,
+    target_pids = set(orphan_parent_pids)
+    for process in observed:
+        if any(parent in process.ancestor_pids for parent in orphan_parent_pids):
+            target_pids.add(process.pid)
+            candidates.append(
+                {
+                    "pid": process.pid,
+                    "command": " ".join(process.cmdline)[:240],
+                    "role": "orphan_descendant",
+                }
+            )
+        elif (
+            process.pid != os.getpid()
+            and process.ppid == 1
+            and process.cwd
+            and _is_aura_checkout_cwd(Path(process.cwd))
+            and process.cmdline
+            and Path(process.cmdline[0]).name == "caffeinate"
         ):
-            continue
-        if pid == os.getpid() or ppid != 1 or not _is_aura_checkout_cwd(cwd):
-            continue
-        if not cmdline or Path(str(cmdline[0])).name != "caffeinate":
-            continue
-        if pid not in processes_by_pid:
-            processes_by_pid[pid] = proc
-            candidates.append({"pid": pid, "command": command[:240], "role": "orphan_keep_awake"})
+            target_pids.add(process.pid)
+            candidates.append(
+                {
+                    "pid": process.pid,
+                    "command": " ".join(process.cmdline)[:240],
+                    "role": "orphan_keep_awake",
+                }
+            )
 
     if not candidates:
         return []
 
-    processes = list(processes_by_pid.values())
+    processes = []
+    for pid in sorted(target_pids, reverse=True):
+        try:
+            processes.append(psutil.Process(pid))
+        except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
     for proc in processes:
         try:
             proc.terminate()
@@ -1137,12 +1157,18 @@ async def _reap_proof_child_processes(
     try:
         import psutil
 
-        parent = psutil.Process(os.getpid())
-        children = [
-            child
-            for child in parent.children(recursive=True)
-            if include_resource_trackers or not _is_resource_tracker_process(child)
+        observed_children = [
+            process
+            for process in _process_table_or_raise()
+            if os.getpid() in process.ancestor_pids
+            and (include_resource_trackers or not _is_resource_tracker_process(process))
         ]
+        children = []
+        for process in observed_children:
+            try:
+                children.append(psutil.Process(process.pid))
+            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                continue
         if children:
             for proc in children:
                 try:
@@ -1199,13 +1225,14 @@ def _reap_proof_child_processes_sync(reason: str) -> None:
     try:
         import psutil
 
-        parent = psutil.Process(os.getpid())
         children = []
-        for child in parent.children(recursive=True):
+        for process in _process_table_or_raise():
+            if os.getpid() not in process.ancestor_pids:
+                continue
+            if process.status.lower() in {"dead", "zombie"}:
+                continue
             try:
-                if child.status() == psutil.STATUS_ZOMBIE:
-                    continue
-                children.append(child)
+                children.append(psutil.Process(process.pid))
             except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
                 continue
         if not children:
@@ -1229,11 +1256,13 @@ def _reap_proof_child_processes_sync(reason: str) -> None:
 
 
 def write_exclusive_runtime_report(path: Path, *, status: str, instances: list[dict]) -> dict:
+    provenance = get_resource_observer().provenance
     report = {
         "status": status,
         "checked_at_unix": time.time(),
         "existing_runtime_count": len(instances),
         "instances": instances,
+        "resource_observation": provenance.to_dict(),
     }
     path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     return report
@@ -3340,6 +3369,7 @@ async def main():
         "commit_sha": commit_sha,
         "python_version": sys.version,
         "platform": platform.platform(),
+        "resource_observation": get_resource_observer().provenance.to_dict(),
         "proof_model_tier": requested_proof_model_tier,
         "proof_live_message_origin": PROOF_LIVE_MESSAGE_ORIGIN,
         "structured_proof_solver_enabled": structured_solver_enabled_for_run,
@@ -3401,9 +3431,32 @@ async def main():
     # -----------------------------------------------------------------------
     print("\n[0/8] Checking proof runtime exclusivity...")
     exclusive_report_path = run_dir / "EXCLUSIVE_RUNTIME_PREFLIGHT.json"
-    existing_proof_runners = find_existing_proof_runners()
+    resource_observer = get_resource_observer()
+    try:
+        existing_proof_runners = find_existing_proof_runners(
+            observer=resource_observer
+        )
+    except RuntimeError as exc:
+        write_exclusive_runtime_report(
+            exclusive_report_path,
+            status="process_table_observation_failed",
+            instances=[],
+        )
+        print(f"  [FATAL] Cannot prove runtime exclusivity: {exc}")
+        return fail_run_status(
+            phase="runtime_exclusivity",
+            error=f"process_table_observation_failed:{exc}",
+        )
     if existing_proof_runners and args.stop_existing_runtime:
-        remaining_proof_runners = stop_existing_proof_runners()
+        try:
+            remaining_proof_runners = stop_existing_proof_runners(
+                observer=resource_observer
+            )
+        except RuntimeError as exc:
+            return fail_run_status(
+                phase="runtime_exclusivity",
+                error=f"proof_runner_stop_observation_failed:{exc}",
+            )
         if remaining_proof_runners:
             write_exclusive_runtime_report(
                 exclusive_report_path,
@@ -3432,9 +3485,21 @@ async def main():
             error="blocked_existing_proof_runner",
         )
 
-    existing_runtimes = find_existing_aura_runtimes()
+    try:
+        existing_runtimes = find_existing_aura_runtimes(observer=resource_observer)
+    except RuntimeError as exc:
+        return fail_run_status(
+            phase="runtime_exclusivity",
+            error=f"aura_runtime_observation_failed:{exc}",
+        )
     if existing_runtimes and args.stop_existing_runtime:
-        remaining = stop_existing_aura_runtimes()
+        try:
+            remaining = stop_existing_aura_runtimes(observer=resource_observer)
+        except RuntimeError as exc:
+            return fail_run_status(
+                phase="runtime_exclusivity",
+                error=f"aura_runtime_stop_observation_failed:{exc}",
+            )
         exclusive_report = write_exclusive_runtime_report(
             exclusive_report_path,
             status="stopped_existing_runtime" if not remaining else "stop_failed",
@@ -3470,7 +3535,15 @@ async def main():
             instances=existing_runtimes,
         )
         print(f"  [OK] Runtime exclusivity status: {status}.")
-    reaped_orphans = stop_orphaned_aura_multiprocessing_children()
+    try:
+        reaped_orphans = stop_orphaned_aura_multiprocessing_children(
+            observer=resource_observer
+        )
+    except RuntimeError as exc:
+        return fail_run_status(
+            phase="runtime_exclusivity",
+            error=f"orphan_observation_failed:{exc}",
+        )
     if reaped_orphans:
         exclusive_report["orphaned_multiprocessing_children_reaped"] = reaped_orphans
         exclusive_report_path.write_text(json.dumps(exclusive_report, indent=2), encoding="utf-8")

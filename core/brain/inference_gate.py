@@ -26,8 +26,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-import psutil
-
 from core.brain.llm.chat_format import format_chatml_messages
 from core.brain.llm.model_registry import (
     BRAINSTEM_ENDPOINT,
@@ -43,6 +41,7 @@ from core.conversation.response_reliability import (
     is_live_self_reflection_turn,
     is_self_process_question,
 )
+from core.runtime import resource_psutil as psutil
 from core.runtime.desktop_boot_safety import (
     desktop_resource_guard_enabled,
     desktop_safe_boot_enabled,

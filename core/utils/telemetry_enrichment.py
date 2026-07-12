@@ -5,19 +5,19 @@ Eliminates the previous 3x duplication across server.py broadcast_telemetry(),
 _event_bridge(), and orchestrator _publish_telemetry().
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-from core.runtime.service_registry import get_runtime_service
-
 
 import logging
 import time
 from typing import Any, Dict
 
+from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
+
 logger = logging.getLogger("Aura.Telemetry")
 
 # Pre-import psutil at module level (was previously imported inside loops)
 try:
-    import psutil
+    from core.runtime import resource_psutil as psutil
     # Warm the non-blocking percent counter
     psutil.cpu_percent(interval=None)
     _HAS_PSUTIL = True

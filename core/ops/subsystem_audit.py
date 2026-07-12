@@ -3,8 +3,7 @@ import os
 import time
 from typing import Any
 
-import psutil
-
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 

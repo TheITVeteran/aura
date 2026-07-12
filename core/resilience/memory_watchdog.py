@@ -40,9 +40,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-import psutil
-
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import (
+    ObservationSource,
+    ResourceObserver,
+    get_resource_observer,
+)
 from core.utils.memory_monitor import process_memory_bytes
 
 logger = logging.getLogger("Aura.Resilience.MemoryWatchdog")
@@ -92,6 +96,8 @@ class MemorySample:
     system_percent: float
     total_ram_gb: float
     sampled_at: float
+    observation_source: str = "unavailable"
+    observation_scenario_id: str = ""
 
     @property
     def managed_rss_mb(self) -> float:
@@ -212,39 +218,31 @@ def _child_processes(root_pid: int, *, recursive: bool = True) -> list[psutil.Pr
     return psutil.Process(root_pid).children(recursive=recursive)
 
 
-def default_sampler() -> MemorySample:
-    proc = psutil.Process(os.getpid())
-    core_rss = 0.0
-    child_rss = 0.0
-    try:
-        core_rss = proc.memory_info().rss / (1024 * 1024)
-    except _WATCHDOG_RECOVERABLE_ERRORS:
-        pass
-    # Compression-aware: managed memory is the larger of RSS and the
-    # kernel's phys_footprint view of this process.
-    core_rss = max(core_rss, _phys_footprint_mb(os.getpid()))
-    try:
-        for child in _child_processes(proc.pid, recursive=True):
-            try:
-                child_rss += max(
-                    child.memory_info().rss / (1024 * 1024),
-                    _phys_footprint_mb(child.pid),
-                )
-            except _WATCHDOG_RECOVERABLE_ERRORS:
-                continue
-    except _WATCHDOG_RECOVERABLE_ERRORS:
-        pass
-    try:
-        swap_used_gb = psutil.swap_memory().used / (1024**3)
-    except _WATCHDOG_RECOVERABLE_ERRORS:
-        swap_used_gb = 0.0
-    try:
-        vm = psutil.virtual_memory()
-        system_percent = float(getattr(vm, "percent", 0.0) or 0.0)
-        total_ram_gb = float(getattr(vm, "total", 0) or 0) / (1024**3)
-    except _WATCHDOG_RECOVERABLE_ERRORS:
-        system_percent = 0.0
-        total_ram_gb = 0.0
+def default_sampler(*, observer: ResourceObserver | None = None) -> MemorySample:
+    resource_observer = observer or get_resource_observer()
+    memory = resource_observer.memory()
+    provenance = memory.provenance
+    core_rss = float(memory.process_rss_bytes) / float(1024**2)
+    managed_rss = float(memory.process_tree_rss_bytes) / float(1024**2)
+    child_rss = max(0.0, managed_rss - core_rss)
+    if provenance.source in {ObservationSource.HOST, ObservationSource.LIVE_PRESSURE}:
+        # Compression-aware enhancement for the live Darwin adapter.
+        core_rss = max(core_rss, _phys_footprint_mb(os.getpid()))
+        child_rss = 0.0
+        try:
+            for child in _child_processes(os.getpid(), recursive=True):
+                try:
+                    child_rss += max(
+                        child.memory_info().rss / (1024 * 1024),
+                        _phys_footprint_mb(child.pid),
+                    )
+                except _WATCHDOG_RECOVERABLE_ERRORS:
+                    continue
+        except _WATCHDOG_RECOVERABLE_ERRORS:
+            child_rss = max(0.0, managed_rss - core_rss)
+    swap_used_gb = float(memory.swap_used_bytes) / float(1024**3)
+    system_percent = float(memory.percent) if memory.available else 100.0
+    total_ram_gb = float(memory.total_bytes) / float(1024**3)
     return MemorySample(
         core_rss_mb=core_rss,
         child_rss_mb=child_rss,
@@ -252,6 +250,8 @@ def default_sampler() -> MemorySample:
         system_percent=system_percent,
         total_ram_gb=total_ram_gb,
         sampled_at=time.time(),
+        observation_source=provenance.source.value,
+        observation_scenario_id=provenance.scenario_id,
     )
 
 

@@ -1606,8 +1606,8 @@ def test_background_policy_blocks_when_memory_probe_fails(monkeypatch):
     monkeypatch.setattr(foreground_guard, "foreground_activity_reason", lambda: "")
     monkeypatch.setattr("core.container.ServiceContainer.get", lambda _name, default=None: default)
     monkeypatch.setattr(
-        background_policy.psutil,
-        "virtual_memory",
+        background_policy,
+        "_read_memory_pressure_snapshot",
         lambda: (_ for _ in ()).throw(OSError("mem probe down")),
     )
 
@@ -1714,11 +1714,6 @@ def test_constitutive_compute_budget_throttles_under_foreground_activity(monkeyp
 
     monkeypatch.setattr(foreground_guard, "foreground_activity_reason", lambda: "foreground_chat_active")
     monkeypatch.setattr("core.container.ServiceContainer.get", lambda _name, default=None: default)
-    monkeypatch.setattr(
-        background_policy.psutil,
-        "virtual_memory",
-        lambda: SimpleNamespace(percent=40.0),
-    )
     monkeypatch.setattr(background_policy, "get_unified_failure_state", lambda: {"pressure": 0.0})
     monkeypatch.setattr("core.runtime.proof_policy.proof_run_active", lambda *args, **kwargs: False)
     monkeypatch.setattr(
@@ -1744,11 +1739,6 @@ def test_constitutive_compute_budget_throttles_under_memory_pressure(monkeypatch
 
     monkeypatch.setattr(foreground_guard, "foreground_activity_reason", lambda: "")
     monkeypatch.setattr("core.container.ServiceContainer.get", lambda _name, default=None: default)
-    monkeypatch.setattr(
-        background_policy.psutil,
-        "virtual_memory",
-        lambda: SimpleNamespace(percent=88.0),
-    )
     monkeypatch.setattr(background_policy, "get_unified_failure_state", lambda: {"pressure": 0.0})
     monkeypatch.setattr("core.runtime.proof_policy.proof_run_active", lambda *args, **kwargs: False)
     monkeypatch.setattr(

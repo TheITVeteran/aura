@@ -334,7 +334,7 @@ class WeightCompoundingLoop:
             )
 
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
 
             available = psutil.virtual_memory().available
             # DPO holds the policy AND a frozen reference model in memory —
@@ -638,7 +638,7 @@ class WeightCompoundingLoop:
         if base_bytes == 0:
             return True, "unknown_footprint"  # can't size it; don't block on ignorance
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
 
             available = psutil.virtual_memory().available
         except (ImportError, AttributeError, OSError):

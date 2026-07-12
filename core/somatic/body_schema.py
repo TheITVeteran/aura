@@ -22,23 +22,20 @@ Design:
     - Registered in ServiceContainer as ``body_schema``.
 """
 
-from core.runtime.errors import record_degradation
 import importlib
 import logging
-import os
-import platform
 import shutil
 import threading
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import psutil
-
-from core.runtime.base_module import AuraBaseModule
 from core.container import ServiceContainer
+from core.runtime import resource_psutil as psutil
+from core.runtime.base_module import AuraBaseModule
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Somatic.BodySchema")
 

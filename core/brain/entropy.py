@@ -18,7 +18,7 @@ class PhysicalEntropyInjector:
         and return a uniform float in [0.0, 0.40].
         """
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             mem_active  = psutil.virtual_memory().active
             net_io      = psutil.net_io_counters().bytes_recv
             cpu_time    = psutil.cpu_times().user

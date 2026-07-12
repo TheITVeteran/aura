@@ -38,6 +38,13 @@ _HOT_INDEX_LIMIT_FLAG = declare(
     description="Maximum receipts retained per kind in the process hot index",
     owner="core.runtime.receipts",
 )
+_RECEIPT_ROOT_FLAG = declare(
+    "AURA_RECEIPT_ROOT",
+    kind=FlagKind.STRING,
+    default="",
+    description="Override the durable receipt-store root for isolated runtimes and tests",
+    owner="core.runtime.receipts",
+)
 
 
 class PracticeCurriculumStore:
@@ -311,7 +318,14 @@ class ReceiptStore:
     SCHEMA_VERSION = 1
 
     def __init__(self, root: Path | None = None):
-        self.root = Path(root) if root is not None else (Path.home() / ".aura" / "receipts")
+        configured_root = str(_RECEIPT_ROOT_FLAG.value() or "").strip()
+        self.root = (
+            Path(root)
+            if root is not None
+            else Path(configured_root)
+            if configured_root
+            else (Path.home() / ".aura" / "receipts")
+        )
         self.root.mkdir(parents=True, exist_ok=True)
         try:
             self.root.chmod(0o700)

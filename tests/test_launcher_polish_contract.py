@@ -1,7 +1,24 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from core.runtime.resource_observation import ProcessObservation
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _launcher_observation(resource_observer, *, pid: int, create_time: float):
+    executable = "/Applications/Aura.app/Contents/MacOS/aura-launcher"
+    return ProcessObservation(
+        provenance=resource_observer.provenance,
+        pid=pid,
+        ppid=1,
+        create_time=create_time,
+        status="running",
+        name="aura-launcher",
+        cmdline=(executable,),
+        rss_bytes=1024,
+        exe=executable,
+    )
 
 
 def test_launcher_exposes_desktop_window_action_and_dock_presence():
@@ -229,71 +246,74 @@ def test_cleanup_recognizes_native_launcher_process():
 
 
 def test_cleanup_preserves_native_launcher_when_live_runtime_verified(monkeypatch):
-    import sys
-
     from scripts.one_off import aura_cleanup
 
-    terminated = []
-
-    class FakeProc:
-        pid = 4321
-        info = {
-            "pid": 4321,
-            "exe": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
-            "cmdline": ["/Applications/Aura.app/Contents/MacOS/aura-launcher"],
-            "name": "aura-launcher",
-        }
-
-        def terminate(self):
-            terminated.append(self.pid)
-
-    class FakePsutil:
-        Error = Exception
-        TimeoutExpired = TimeoutError
-
-        @staticmethod
-        def process_iter(_attrs):
-            return [FakeProc()]
-
-    monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
     monkeypatch.setattr(aura_cleanup, "_verified_live_runtime_pid", lambda: 1234)
 
     aura_cleanup._kill_stale_native_launchers()
 
-    assert terminated == []
+
+def test_cleanup_preserves_recent_native_launcher_without_force(
+    monkeypatch,
+    resource_observer,
+):
+    import time
+
+    from scripts.one_off import aura_cleanup
+
+    resource_observer.configure_processes(
+        [
+            _launcher_observation(
+                resource_observer,
+                pid=4321,
+                create_time=time.time() - 2.0,
+            )
+        ]
+    )
+    monkeypatch.setattr(aura_cleanup, "_verified_live_runtime_pid", lambda: None)
+    monkeypatch.setenv("AURA_CLEANUP_RECENT_GRACE_S", "45")
+    monkeypatch.delenv("AURA_CLEANUP_FORCE", raising=False)
+
+    aura_cleanup._kill_stale_native_launchers()
+
+    assert resource_observer.process(4321) is not None
 
 
-def test_cleanup_preserves_recent_native_launcher_without_force(monkeypatch):
+def test_cleanup_terminates_old_native_launcher(monkeypatch, resource_observer):
     import sys
     import time
 
     from scripts.one_off import aura_cleanup
 
-    terminated = []
+    terminated: list[int] = []
 
     class FakeProc:
-        pid = 4321
-        info = {
-            "pid": 4321,
-            "exe": "/Applications/Aura.app/Contents/MacOS/aura-launcher",
-            "cmdline": ["/Applications/Aura.app/Contents/MacOS/aura-launcher"],
-            "name": "aura-launcher",
-        }
-
-        def create_time(self):
-            return time.time() - 2.0
+        def __init__(self, pid: int):
+            self.pid = pid
 
         def terminate(self):
             terminated.append(self.pid)
+
+        def wait(self, timeout):
+            return 0
 
     class FakePsutil:
         Error = Exception
         TimeoutExpired = TimeoutError
 
         @staticmethod
-        def process_iter(_attrs):
-            return [FakeProc()]
+        def Process(pid):  # noqa: N802 - psutil-compatible test action handle.
+            return FakeProc(pid)
 
+    resource_observer.configure_processes(
+        [
+            _launcher_observation(
+                resource_observer,
+                pid=4321,
+                create_time=time.time() - 120.0,
+            )
+        ]
+    )
     monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
     monkeypatch.setattr(aura_cleanup, "_verified_live_runtime_pid", lambda: None)
     monkeypatch.setenv("AURA_CLEANUP_RECENT_GRACE_S", "45")
@@ -301,31 +321,11 @@ def test_cleanup_preserves_recent_native_launcher_without_force(monkeypatch):
 
     aura_cleanup._kill_stale_native_launchers()
 
-    assert terminated == []
+    assert terminated == [4321]
 
 
 def test_cleanup_treats_missing_lock_pid_as_stale(monkeypatch):
     from scripts.one_off import aura_cleanup
-
-    class FakePsutil:
-        STATUS_ZOMBIE = "zombie"
-
-        class NoSuchProcess(Exception):  # noqa: N818 - mirrors psutil
-            pass
-
-        class AccessDenied(Exception):  # noqa: N818 - mirrors psutil
-            pass
-
-        class ZombieProcess(Exception):  # noqa: N818 - mirrors psutil
-            pass
-
-        @staticmethod
-        def Process(_pid):  # noqa: N802 - mirrors psutil
-            if _pid:
-                raise FakePsutil.NoSuchProcess("missing")
-            return None
-
-    monkeypatch.setitem(__import__("sys").modules, "psutil", FakePsutil)
     monkeypatch.setattr(aura_cleanup, "read_instance_lock_pid", lambda _name: 999999)
 
     assert aura_cleanup._verified_live_runtime_pid() is None

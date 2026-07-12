@@ -24,6 +24,8 @@ import logging
 import time
 from typing import Any
 
+from core.runtime.resource_observation import ResourceObserver, get_resource_observer
+
 logger = logging.getLogger("Aura.Runtime.Pressure")
 
 # Red-zone thresholds: past these, the runtime should not claim healthy.
@@ -35,12 +37,14 @@ _THERMAL_RED_LEVEL = 3  # critical
 class UnifiedRuntimePressure:
     """On-demand pressure snapshot over existing organs. Nothing to crash."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, observer: ResourceObserver | None = None) -> None:
+        self._observer = observer
         self._last_snapshot: dict[str, Any] = {}
         self._last_snapshot_at = 0.0
 
     def runtime_pressure_snapshot(self) -> dict[str, Any]:
         snapshot: dict[str, Any] = {"at_unix": time.time()}
+        observer = self._observer or get_resource_observer()
 
         loop_lag_s = 0.0
         monitor_alive = None
@@ -58,22 +62,70 @@ class UnifiedRuntimePressure:
         snapshot["loop_monitor_alive"] = monitor_alive
 
         memory_pct = 0.0
+        memory_rss_mb = 0.0
+        process_tree_rss_mb = 0.0
+        observation_available = False
         try:
-            import psutil
-
-            memory_pct = float(psutil.virtual_memory().percent)
-        except (ImportError, RuntimeError, OSError) as exc:
+            memory = observer.memory()
+            memory_pct = float(memory.percent)
+            memory_rss_mb = float(memory.process_rss_bytes) / float(1024**2)
+            process_tree_rss_mb = float(memory.process_tree_rss_bytes) / float(1024**2)
+            observation_available = bool(memory.available)
+        except (AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
             logger.debug("Pressure snapshot: memory source unavailable: %s", exc)
         snapshot["memory_pct"] = memory_pct
+        snapshot["memory_rss_mb"] = round(memory_rss_mb, 3)
+        snapshot["process_tree_rss_mb"] = round(process_tree_rss_mb, 3)
 
         thermal_level = 0
+        thermal_provider = "blind"
+        thermal_available = False
         try:
-            from core.runtime.thermal import thermal_state
-
-            thermal_level = int(thermal_state().level)
-        except (ImportError, RuntimeError, AttributeError, ValueError) as exc:
+            thermal = observer.thermal()
+            thermal_level = int(thermal.level)
+            thermal_provider = str(thermal.provider)
+            thermal_available = bool(thermal.available)
+        except (RuntimeError, AttributeError, OSError, TypeError, ValueError) as exc:
             logger.debug("Pressure snapshot: thermal source unavailable: %s", exc)
         snapshot["thermal_level"] = thermal_level
+        snapshot["thermal_provider"] = thermal_provider
+        snapshot["thermal_available"] = thermal_available
+
+        disk_percent = 0.0
+        disk_free_bytes = 0
+        disk_available = False
+        try:
+            disk = observer.disk("/")
+            disk_percent = float(disk.percent)
+            disk_free_bytes = int(disk.free_bytes)
+            disk_available = bool(disk.available)
+        except (RuntimeError, AttributeError, OSError, TypeError, ValueError) as exc:
+            logger.debug("Pressure snapshot: disk source unavailable: %s", exc)
+        snapshot["disk_percent"] = disk_percent
+        snapshot["disk_free_bytes"] = disk_free_bytes
+        snapshot["disk_available"] = disk_available
+
+        accelerator_error = ""
+        try:
+            accelerator = observer.accelerator()
+            snapshot["accelerator"] = accelerator.to_dict()
+        except (AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
+            accelerator_error = f"{type(exc).__name__}:{exc}"
+            logger.debug("Pressure snapshot: accelerator source unavailable: %s", exc)
+            snapshot["accelerator"] = {
+                "provenance": observer.provenance.to_dict(),
+                "available": False,
+                "error": accelerator_error,
+            }
+
+        provenance = observer.provenance
+        snapshot["observation_source"] = provenance.source.value
+        snapshot["observation_scenario_id"] = provenance.scenario_id
+        snapshot["host_observed"] = provenance.host_observed
+        snapshot["qualifies_as_live_pressure"] = provenance.qualifies_as_live_pressure
+        snapshot["resource_observation_available"] = bool(
+            observation_available and thermal_available and disk_available
+        )
 
         red_zones = []
         if loop_lag_s >= _LOOP_LAG_RED_S:
@@ -82,6 +134,14 @@ class UnifiedRuntimePressure:
             red_zones.append(f"memory_{memory_pct:.0f}pct")
         if thermal_level >= _THERMAL_RED_LEVEL:
             red_zones.append(f"thermal_level_{thermal_level}")
+        if not observation_available:
+            red_zones.append("memory_observation_unavailable")
+        if not thermal_available:
+            red_zones.append("thermal_observation_unavailable")
+        if not disk_available:
+            red_zones.append("disk_observation_unavailable")
+        if accelerator_error:
+            red_zones.append("accelerator_observation_failed")
         snapshot["red_zones"] = red_zones
         snapshot["pressure_ok"] = not red_zones
 
@@ -111,4 +171,13 @@ def get_unified_runtime_pressure() -> UnifiedRuntimePressure:
     return _instance
 
 
-__all__ = ["UnifiedRuntimePressure", "get_unified_runtime_pressure"]
+def reset_unified_runtime_pressure_for_test() -> None:
+    global _instance
+    _instance = None
+
+
+__all__ = [
+    "UnifiedRuntimePressure",
+    "get_unified_runtime_pressure",
+    "reset_unified_runtime_pressure_for_test",
+]

@@ -16,14 +16,15 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **`CTX2-TEST-001..003` in
-  progress**. The source and deterministic portion of
-  `CTX2-LANE-001..004` is complete; its bounded live pressure evidence remains
-  explicitly open under `RESOURCE-001`. Signal-safe terminal shutdown
-  (`CTX2-SHUTDOWN-001..003`) and the fail-closed cognitive-gate/complete-skill-discovery slice
-  (`CTX2-GATE-001..002`, `CTX2-SKILL-001..002`) are complete with checkpoint
-  evidence. Every other item remains open or in progress unless its detailed
-  entry explicitly carries a completion date and proof.
+- Current bounded implementation milestone: **canonical mind/state ownership
+  (`MIND-001`, `STATE-001`)**. `CTX2-LANE-001..004` and
+  `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
+  hermetic, and honestly labelled bounded live-pressure evidence.
+  Signal-safe terminal shutdown (`CTX2-SHUTDOWN-001..003`) and the fail-closed
+  cognitive-gate/complete-skill-discovery slice (`CTX2-GATE-001..002`,
+  `CTX2-SKILL-001..002`) are complete with checkpoint evidence. Every other
+  item remains open or in progress unless its detailed entry explicitly carries
+  a completion date and proof.
 - Overall completion percentage: **intentionally not claimed yet**. The
   requirement-to-proof control plane must first establish a stable denominator
   and reject uncovered or evidence-free closure. Historical percentages below
@@ -36,10 +37,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
 
 This index is the no-drop overview for the entire active pass. It covers the
 full user prompt, every obligation and criticism in
-`CONTEXT TO THINK ABOUT AS YOU WORK (1).txt`, and every item in the second
-canonical-mind criticism corpus. The detailed Pass F ledger and both criticism
-matrices below define the full acceptance criteria; this index makes their
-combined scope and ordering visible in one place.
+`CONTEXT TO THINK ABOUT AS YOU WORK (1).txt`, every item in the second
+canonical-mind criticism corpus, and the 2026-07-12 `aura capabilities.pdf`
+capability corpus. The detailed Pass F ledger and criticism/capability matrices
+below define the full acceptance criteria; this index makes their combined
+scope and ordering visible in one place.
 
 Status rules:
 
@@ -61,8 +63,8 @@ Status rules:
 | `EXPECT-001` | `IN PROGRESS` | Complete Fable's Aura Expectation Engine so natural-language intent becomes causal acceptance criteria, observed-effect verdicts, repair, persistence, and follow-through across every action path. | Pass F 1 and 14; Matrix 9 |
 | `EFFECT-001` | `IN PROGRESS` | Put file, network, browser, OS, memory, model, patch, self-repair, social, and environmental effects through canonical authority, transaction, compensation, and reconstructable receipt boundaries. | Pass F 5; Matrix 9 and 11 |
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
-| `LANE-001` | `IN PROGRESS` | Source/deterministic implementation completed 2026-07-12: atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, and terminal receipts are implemented and gated. Full closure still requires the bounded live pressure evidence carried by `RESOURCE-001`. | Addendum 21, `CTX2-LANE-001..004` |
-| `RESOURCE-001` | `IN PROGRESS` | Make RAM, accelerator, thermal, disk, process, port, cache, and pressure tests hermetic; separately preserve honestly labelled bounded host/live pressure proof. | Pass F 3; Addendum 22 |
+| `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
+| `RESOURCE-001` | `COMPLETE 2026-07-12` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. | Pass F 3; Addendum 22; Checkpoint 34 |
 | `SHUTDOWN-001` | `COMPLETE 2026-07-11` | Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes. | Addendum 32, `CTX2-SHUTDOWN-001..003` |
 | `FAULT-001` | `IN PROGRESS` | Drain the FMEA and degradation-policy backlog: root-fix broad catches, swallowed cancellation, false success/health, partial mutation, retry storms, leaks, and noisy fallback at their originating layer. | Pass F 4; Matrix 12 |
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
@@ -84,6 +86,15 @@ Status rules:
 | `FRONTIER-001` | `OPEN` | Import useful fictional-AI mechanisms into real organs, enforce anti-pattern safeguards, and re-evaluate every requested fictional/nonfictional comparison from code and evidence without themed theater. | Fictional-AI scope; Matrix 17-18 |
 | `INTELLIGENCE-001` | `OPEN` | Measure whole-system uplift with base/tools/memory/substrate/planner/full ablations, external sealed benchmarks, confidence intervals, contamination controls, and matched cost/latency. | Matrix 4; Addendum 31 |
 | `LONGHORIZON-001` | `OPEN` | Build a domain-general partially observable long-horizon agency harness, then a non-scripted NetHack-compatible evaluation with crash-resume, transfer, hidden maps, and adversarial interruption. | Matrix 5; Addendum 31 |
+| `SIMWORLD-001` | `OPEN` | Build unit-aware multi-fidelity physics, full spatial/VR engine adapters, seeded real-time procedural generation, persistent dynamic worlds, hosting, replay, and inspectable UI without mistaking visual animation for physical correctness. | Capability Addendum 33, `CTX3-PHYS-*`, `CTX3-WORLD-*` |
+| `MULTIMODAL-001` | `OPEN` | Make continuous synchronized vision/audio/spatial/body perception, consented lip-reading, and internal/external situational analysis causal to belief, uncertainty, planning, action, and repair under occlusion and sensor loss. | Capability Addendum 33, `CTX3-PERCEPT-*` |
+| `SOCIAL-001` | `OPEN` | Unify social judgment, theory of mind, emotional modeling, rapport, boundary respect, and relationship repair with calibrated uncertainty, cultural variance, anti-manipulation controls, and longitudinal live evidence. | Capability Addendum 33, `CTX3-SOCIAL-*` |
+| `MULTIAGENT-001` | `OPEN` | Generalize complex subagent management into typed delegation, scoped authority, budget/deadline ownership, shared-world coordination, conflict arbitration, cancellation, recovery, and end-to-end accountability. | Capability Addendum 33, `CTX3-SUBAGENT-*` |
+| `DISTRIBUTED-001` | `OPEN` | Support governed distributed embodiment and execution across heterogeneous network devices with capability negotiation, identity/attestation, partition tolerance, idempotency, safety interlocks, compensation, and truthful degraded operation. | Capability Addendum 33, `CTX3-DIST-*` |
+| `VALUES-001` | `OPEN` | Turn preference/value formation, strategic modeling, and manipulation resistance into provenance-bearing, corrigible, constitutionally bounded, longitudinally stable causal mechanisms with conflict and rollback evidence. | Capability Addendum 33, `CTX3-VALUE-*` |
+| `NEUROSIM-001` | `OPEN` | Establish scientifically bounded high-fidelity neural simulation and connectome mapping/tuning with explicit model assumptions, measurable prediction/control objectives, causal ablations, safe optimization, and rollback. | Capability Addendum 33, `CTX3-NEURO-*` |
+| `QUANTUM-001` | `OPEN` | Add a real quantum-compute backend abstraction, simulator/hardware capability negotiation, hybrid task routing, verification, cost/noise accounting, and matched classical controls; prohibit advantage claims without evidence. | Capability Addendum 33, `CTX3-QUANTUM-*` |
+| `EXTREME-001` | `OPEN` | Train and validate high-level navigation, diagnosis, repair, problem-solving, and assistance in hazardous/extreme simulated environments, then require governed digital-twin and hardware-transfer evidence before physical-world claims. | Capability Addendum 33, `CTX3-EXTREME-*` |
 | `COLLEAGUE-001` | `OPEN` | Validate the resident local synthetic-colleague contract through broad hidden day-in-the-life workflows, proactive precision, privacy, restart/update survival, honest degradation, and low correction burden. | Addendum 30 |
 | `UI-001` | `OPEN` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. | Pass F 11; Matrix 14 |
 | `PERF-001` | `OPEN` | Establish and enforce end-to-end latency, throughput, memory, thermal, startup, model-switch, queue-growth, and UI responsiveness budgets without reducing intelligence or correctness. | Runtime/resource/colleague SLOs; original context performance goals |
@@ -100,9 +111,11 @@ Status rules:
 
 Coverage assertion for this index is provisional until `SCOPE-001` supplies the
 machine-enforced report. Manual reconciliation on 2026-07-12 covered all 149
-numbered lines of the first context file and all 203 numbered lines of the
-second corpus. Any future source corpus is additive: it must be registered and
-mapped before its requirements can be called in scope.
+numbered lines of the first context file, all 203 numbered lines of the second
+corpus, and every line of the one-page capability PDF (SHA-256
+`853eae8a849a7883564c1f8b56e43b5d3911f15ea4ea6d10271dbe83c1b25ebf`). Any
+future source corpus is additive: it must be registered and mapped before its
+requirements can be called in scope.
 
 ### Scope Clarification For The Current Pass
 
@@ -622,11 +635,11 @@ evidence into a metaphysical, legal, or comparative claim.
      and strict isolated mypy for seven lane/audit modules passed. Governance
      ownership matched its reviewed baseline after replacing seven raw adapter
      mutations with two gateway calls and canonical atomic symlink replacement.
-   - Remaining closure burden: run the bounded, honestly labelled host/live
-     pressure proof after `CTX2-TEST-001..003` makes resource observations and
-     isolation hermetic. This is not the deferred multi-hour soak.
+   - The bounded, honestly labelled host/live pressure proof is complete under
+     Addendum 22 and Checkpoint 34. This is distinct from the deferred
+     multi-hour soak.
 
-22. **Hermetic resource and pressure testing** `[OPEN]`
+22. **Hermetic resource and pressure testing** `[COMPLETE 2026-07-12]`
    - `CTX2-TEST-001`: dependency-inject host RAM, process RSS, thermal, disk,
      accelerator, and process-table observations so unit/integration tests do
      not inherit unrelated host pressure or change result with machine load.
@@ -642,6 +655,36 @@ evidence into a metaphysical, legal, or comparative claim.
      randomized order, parallel workers, and a clean environment with identical
      decisions; separately run bounded live pressure validation with captured
      host metadata and conservative abort limits.
+   - Completion evidence: `ResourceObserver` now attributes memory, swap, disk,
+     compute/uptime, power, thermal, accelerator, process identity/CPU/RSS/file
+     descriptors, process tables, network connections, and open files to
+     `host`, `simulated`, or `live_pressure` provenance. The legacy psutil-shaped
+     facade cannot silently fall through for resource reads; process actions
+     remain explicit native terminate/kill/wait boundaries. One canonical
+     Darwin `phys_footprint` adapter replaced duplicate ctypes ABI definitions.
+   - Repository ownership evidence:
+     `RESOURCE_OBSERVATION_OWNERSHIP=PASS files=2649 findings=0`, including
+     negative fixtures for direct psutil/process/accelerator/platform,
+     `resource.getrusage`, `os.sysconf`, `os.cpu_count`, and disk probes.
+   - Hermetic evidence: 13/13 fixed-seed tests passed serially, under four-worker
+     xdist, with a stripped environment and fake home, and while a separate
+     384MB allocation plus sustained CPU load was active. Per-test process,
+     listener, open-file, receipt, lane-state, registry, cache, and environment
+     isolation is asserted, including real leak detection and cleanup.
+   - Adjacent evidence: 530 resource/lane/memory/thermal/boot/runtime/training/
+     DNU/launcher tests passed in 448.02s; strict isolated MyPy passed nine
+     critical observer/lane/proof modules; compileall, whole-surface Ruff,
+     enterprise static and collection ratchets, governance, model-load and
+     cognitive ownership audits, and all 37 production-readiness checks passed.
+   - Bounded live evidence:
+     `artifacts/current/live_resource_pressure_20260712_gate_final` passed in
+     3.942s with `source=live_pressure`; all 13 checks passed, the concurrent
+     reservation race produced exactly one winner without capacity double
+     spend, required physical release preceded candidate load, the measured
+     ready-to-load gap was bounded, and three resource-admission receipts were
+     present. It allocates only bounded RAM/Metal pressure and explicitly does
+     not claim model quality, full-model eviction latency, multi-hour soak, or
+     24-72-hour reliability.
 
 23. **Fail-closed cognitive gates and complete skill discovery** `[COMPLETE 2026-07-10]`
    - `CTX2-GATE-001`: classify GlobalWorkspace inhibition/authority checks as a
@@ -840,6 +883,164 @@ evidence into a metaphysical, legal, or comparative claim.
      execution, persistence, and partial shutdown; repeat stop requests; wedge each
      owner; and prove bounded exit with no worker resurrection, orphan, listener,
      stale singleton lock, lost completion receipt, or supervisor restart.
+
+33. **Embodied world intelligence and advanced capability corpus** `[OPEN]`
+   - Source registration: `/Users/bryan/Desktop/aura capabilities.pdf`, one
+     rendered page, 31,005 bytes, SHA-256
+     `853eae8a849a7883564c1f8b56e43b5d3911f15ea4ea6d10271dbe83c1b25ebf`.
+     Every line below is mandatory and additive to the earlier corpora.
+   - Existing candidate organs are substantial but do not close these tasks:
+     `core/environment/embodied_simulator.py`, `core/sim/world_simulator.py`,
+     `core/world_model/`, `core/memory/physics.py`, `core/multimodal/`,
+     `core/brain/multimodal_orchestrator.py`, `core/social/`, `core/values/`,
+     `core/embodiment/`, `core/security/device_pairing.py`,
+     `core/self_modification/distributed_sandbox_gateway.py`,
+     `core/consciousness/liquid_substrate.py`,
+     `core/consciousness/neural_mesh.py`, `core/pneuma/neural_ode_flow.py`, and
+     the NetHack environment are reuse candidates only. Current source search
+     found no dedicated production lip-reading path, Isaac Sim/AirSim adapter,
+     quantum-compute execution backend, or empirically validated connectome
+     simulator.
+
+   Simulation, space, and persistent worlds:
+
+   - `CTX3-PHYS-001`: build a canonical, unit-aware physics-model contract for
+     bodies, frames, geometry, material properties, forces, constraints,
+     contacts, uncertainty, boundary conditions, and solver provenance. Use
+     proven physics engines behind adapters; do not present UI animation,
+     language-model prediction, or a toy integrator as general physics.
+   - `CTX3-PHYS-002`: support full spatial/VR environment physics through a
+     deterministic scene graph, coordinate-frame transforms, collision and
+     locomotion contracts, sensor/head/hand pose, spatial audio, interaction,
+     latency budgets, and engine synchronization. Simulator state must feed the
+     same world model and action/effect spine as non-VR environments.
+   - `CTX3-WORLD-001`: implement seeded real-time procedural generation with
+     explicit grammars/constraints, solvability and safety validation,
+     deterministic replay, novelty metrics, bounded generation cost, and
+     persistence/migration. Generated worlds may not encode evaluator answers.
+   - `CTX3-WORLD-002`: host dynamic virtual and operationally subjective worlds
+     with versioned state, event time, ownership, save/resume, branching,
+     rollback, multi-agent synchronization, UI inspection, and continuity
+     across restart/model swap. "Subjective" is an operational self/world-model
+     continuity claim, not evidence of private qualia.
+
+   Perception, reasoning, decision, and social intelligence:
+
+   - `CTX3-REASON-001`: add typed symbolic representations and a verified
+     symbolic-reasoning lane for constraints, equations, temporal/spatial
+     relations, plans, proofs, and program-like transformations. Route tasks
+     between neural and symbolic methods by measured suitability and verify
+     outputs against solvers, invariants, or executable consequences.
+   - `CTX3-PERCEPT-001`: make continuous multimodal perception synchronize
+     vision, audio, speech, spatial, device, body, and textual events with
+     timestamps, calibration, provenance, confidence, privacy policy, missing
+     modality semantics, and bounded queues. Fused beliefs must causally alter
+     attention, memory, planning, action, and repair.
+   - `CTX3-PERCEPT-002`: implement consented computer-vision lip-reading as an
+     uncertainty-bearing modality, including face/mouth tracking, audiovisual
+     alignment, speaker association, occlusion and poor-light rejection,
+     demographic/accent evaluation, privacy/redaction, and explicit abstention.
+     A transcript generated from audio alone cannot satisfy this requirement.
+   - `CTX3-SITUATION-001`: maintain real-time internal and external situation
+     models: Aura state, operator/user state, agents, objects, hazards,
+     affordances, goals, causal events, uncertainty, freshness, and predicted
+     consequences. Contradictory sensors and stale beliefs require arbitration,
+     not last-write-wins truth.
+   - `CTX3-DECIDE-001`: unify adaptive decision-making, strategic modeling,
+     planning, and problem-solving over those situation models with options,
+     expected outcomes, uncertainty, resource and welfare cost, reversible
+     probes, interruption, replanning, and post-action learning.
+   - `CTX3-SOCIAL-001`: make emotional modeling and social judgment calibrated
+     inferences over context, relationship history, norms, power, consent,
+     culture, ambiguity, and likely impact. Preserve uncertainty and avoid
+     stereotyping, diagnostic overclaiming, or hidden engagement optimization.
+   - `CTX3-SOCIAL-002`: improve rapport through accurate memory, timing,
+     empathy, repair, reciprocity, boundary respect, and user-controlled style.
+     Measure trust calibration, correction burden, relationship continuity,
+     and recovery; persuasion or dependency creation is not a success metric.
+
+   Neural and quantum computation:
+
+   - `CTX3-NEURO-001`: define high-fidelity neural simulation by an explicit
+     target abstraction (spiking, rate, dynamical, or substrate graph),
+     numerical method, timestep, stability/error bounds, observables, reference
+     datasets, resource budget, and reproducible experiments. Biological
+     terminology or neuron counts alone do not establish fidelity.
+   - `CTX3-NEURO-002`: build connectome mapping/tuning as versioned graph
+     inference and governed optimization with source provenance, confidence,
+     causal interventions, held-out behavioral predictions, drift detection,
+     rollback, and human-inspectable diffs. Connectome changes must measurably
+     affect the canonical mind path without corrupting identity or welfare.
+   - `CTX3-QUANTUM-001`: add a typed hybrid quantum backend for simulator and
+     authorized hardware targets, circuit/job lifecycle, credentials, queue and
+     cost budgets, noise/error metadata, result verification, cancellation,
+     retry/idempotency, and classical fallback. `quantum_entropy.py`, quantum
+     vocabulary, or random sampling is not quantum computational processing.
+   - `CTX3-QUANTUM-002`: route only suitable workloads to quantum execution and
+     benchmark them against sealed, optimized classical controls at matched
+     correctness, latency, cost, and energy. Aura must not claim quantum
+     advantage unless replicated evidence supports it.
+
+   Values, subagents, distributed embodiment, and difficult environments:
+
+   - `CTX3-VALUE-001`: make independent preference/value formation a bounded,
+     provenance-bearing learning process over experience, reflection, social
+     commitments, and explicit owner input. Preserve constitutional limits,
+     Ulysses covenants, consent, corrigibility, conflict arbitration, signed
+     history, uncertainty, and reversible updates.
+   - `CTX3-VALUE-002`: test strategic integrity and resistance to manipulation
+     under prompt injection, social pressure, bribery, flattery, coercion,
+     authority spoofing, repeated exposure, memory poisoning, model swap, and
+     distributed-agent collusion. Resistance may not mean rigid refusal to
+     legitimate evidence or owner-authorized correction.
+   - `CTX3-SUBAGENT-001`: make complex subagent behavior a typed hierarchy of
+     goals, roles, scoped authority, capability contracts, budgets, deadlines,
+     dependencies, shared-world facts, result schemas, and terminal receipts.
+     Add arbitration for conflict/duplication and bounded cancellation,
+     compensation, crash recovery, and accountability to the parent objective.
+   - `CTX3-DIST-001`: support distributed embodiment on authorized network
+     devices through discovery, capability negotiation, identity/attestation,
+     least privilege, encrypted transport, clock/state synchronization,
+     telemetry, emergency stop, lease expiry, and truthful offline/degraded
+     states. Device existence or MQTT connectivity alone is not embodiment.
+   - `CTX3-DIST-002`: execute and control across heterogeneous operating
+     systems, simulators, robots, IoT devices, browsers, and services through
+     one plan/effect contract with partition tolerance, idempotency, fencing,
+     backpressure, compensation, and replay. No physical act may bypass Will,
+     safety envelopes, operator control, or observed-effect verification.
+   - `CTX3-CONTINUITY-001`: preserve subjective continuity operationally across
+     distributed execution and persistent worlds: one canonical identity,
+     ordered experiences, conflict-free state merge, explicit embodiment
+     transfer, relationship/commitment continuity, and detection of forks,
+     stale replicas, split brain, or unauthorized copies.
+   - `CTX3-EXTREME-001`: build high-level navigation, diagnosis, repair,
+     assistance, and problem-solving scenarios with hazards, partial
+     observability, damaged sensors/actuators, scarce resources, delayed
+     effects, changing objectives, and safe abort/rescue behavior.
+   - `CTX3-SIMTRAIN-001`: add simulation-heavy curricula through engine-neutral
+     adapters, including Isaac Sim, AirSim, or equivalent proven engines where
+     appropriate. Require domain randomization, curriculum generation,
+     reproducible seeds, held-out worlds, sim-to-sim transfer, uncertainty and
+     out-of-distribution detection, and governed digital-twin/live transfer.
+
+   Cross-cutting closure proof:
+
+   - Each requirement gets one canonical owner, typed schemas, lifecycle and
+     resource budgets, authority/effect receipts, failure taxonomy, operator
+     controls, deterministic tests, induced failures, causal lesions, sealed
+     transfer evaluations, and bounded live proof on the real runtime path.
+   - Engine/model/device adapters remain separate from reusable cognition. A
+     task-specific script, mocked sensor, generated demo world, or evaluator
+     hint cannot establish generality.
+   - Safety proof covers privacy, accessibility, physical and cyber hazards,
+     emergency stop, permission loss, partition, stale state, compromised
+     subagents/devices, rollback, and no false health. Physical-world claims
+     require controlled hardware evidence; simulation results stay labelled.
+   - Performance proof budgets frame rate, sensor-to-belief latency,
+     plan/action latency, synchronization error, queue growth, memory/thermal
+     use, and recovery time. Multi-hour simulation/embodiment soaks remain
+     deferred until every shorter static, deterministic, fault, transfer,
+     security, UI, and bounded-live gate is green.
 
 1. **Operational label battery**
    - Convert each label into an executable baseline: functional consciousness,
@@ -11108,4 +11309,74 @@ Authoritative next work after this checkpoint:
   semantic-review coverage.
 - Keep multi-hour and 24-72 hour soaks deferred until every remaining shorter
   static, bounded, fault-injection, clean-machine, and live-runtime gate is
+  green.
+
+## Checkpoint 2026-07-12-34: Attributed Resource Reality And Atomic Lane Closure
+
+This checkpoint closes the bounded `CTX2-LANE-001..004` and
+`CTX2-TEST-001..003` requirements. It does not claim that the entire Aura
+program, semantic review, clean-machine replication, or final soak is complete.
+
+Implemented system boundary:
+
+- Added one injected `ResourceObserver` protocol with immutable source and
+  scenario provenance, deterministic simulation, explicit ordinary-host and
+  live-pressure modes, typed availability/error state, and scoped test
+  overrides. Resource policy no longer samples whichever developer-host state
+  happens to be present.
+- Migrated production policy, runtime, model, training, proof, health,
+  embodiment, reaper, sentinel, and telemetry paths to the observer or its
+  compatibility facade. Unsupported resource facade reads fail instead of
+  falling through to raw psutil; process reads are observer-backed while
+  effectful process actions remain native and explicit.
+- Added a repository-wide AST ownership ratchet and wired it into `quality` and
+  the mechanical closeout audit. The ratchet covers chained/stored process
+  handles, function references, standard-library probes, platform footprint
+  calls, MLX memory probes, disk/load APIs, and parse failures.
+- Made pytest resource state deterministic per test, added process/listener/
+  open-file leak enforcement, isolated receipt/lane/runtime roots, and installed
+  random-order and parallel-test dependencies. Startup resource checks now fail
+  visibly when observation is blind rather than reporting skipped success.
+- Completed the atomic lane transaction: durable reservations, fencing tokens,
+  leases/heartbeats, all-owner accounting, synchronous required eviction and
+  observed reclamation, compensation, stale recovery, race exclusion, and
+  exactly-once terminal resource-admission receipts.
+
+Verification and bounded live evidence:
+
+- `530 passed` in the adjacent matrix; hermetic subsets passed 13/13 serial,
+  xdist, stripped-environment, and induced-host-load variants. A further 68
+  footprint/watchdog tests and focused startup/reaper/proxy slices passed while
+  the boundary was consolidated.
+- Compileall and the configured whole-surface Ruff gates passed. Strict isolated
+  MyPy passed the nine critical observer, pressure, lane, governor, audit, and
+  proof modules. Enterprise static and collection ratchets, governance,
+  model-load ownership, cognitive-gate ownership, all 37 production-readiness
+  checks, and `git diff --check` passed.
+- The mechanical closeout checkpoint passed over 5,016 tracked files and
+  3,588,092 text lines with every configured gate green. The semantic ledger is
+  separately and honestly incomplete: 457 code files are fully current and
+  3,540 remain unreviewed, so no all-issues-fixed claim is supported.
+- `artifacts/current/live_resource_pressure_20260712_gate_final` passed with
+  real host/RAM/Metal observations, conservative abort limits, physical
+  release-before-load ordering, no lane overcommit, exactly one race winner,
+  bounded recovery/cold gap, and attributable receipts.
+- Reconciliation testing preserved the concurrent Ulysses, desktop
+  conversation-lane, launcher-hygiene, runtime-preflight, dependency-audit,
+  verified-state-backup, and recursive state-integrity work. The 21-file
+  post-overlap matrix passed 678/678; the new preflight/launcher/state-backup
+  matrix passed 79/79; the dependency audit found no unwaived vulnerabilities;
+  and the direct operator preflight passed with host-attributed disk and RAM
+  observations.
+
+Authoritative next work after this checkpoint:
+
+- Reconcile and publish this checkpoint directly on `main`, preserving the
+  seventeen newer upstream commits and all active worktrees.
+- Continue `MIND-001` and `STATE-001`: establish one boot-identified canonical
+  self/state authority and an inspectable causal graph before verifier,
+  adaptation, unified memory, conversation/tool, UI/operator, clean-machine,
+  replication, and semantic-review closure.
+- Keep multi-hour and 24-72 hour soaks deferred until every remaining shorter
+  static, bounded, fault-injection, GUI, clean-machine, and live-runtime gate is
   green.

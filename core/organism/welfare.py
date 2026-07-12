@@ -23,8 +23,7 @@ import threading
 import time
 from dataclasses import dataclass
 
-import psutil
-
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Organism.Welfare")

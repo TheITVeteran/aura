@@ -6,9 +6,8 @@ import sqlite3
 import time
 from typing import Any
 
-import psutil
-
 from core.memory.physics import hawking_decay
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.utils.exceptions import capture_and_log
 from core.utils.memory_monitor import process_memory_bytes

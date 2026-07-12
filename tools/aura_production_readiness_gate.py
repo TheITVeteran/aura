@@ -53,6 +53,43 @@ def _contains(rel: str, *needles: str) -> bool:
     return all(needle.lower() in text for needle in needles)
 
 
+def _strict_typecheck_status(makefile: str) -> tuple[bool, str]:
+    allowlist_path = "config/mypy_strict_files.txt"
+    entries = [
+        line.strip()
+        for line in _read(allowlist_path).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    required = {
+        "core/runtime/atomic_writer.py",
+        "core/consciousness/continuous_experience.py",
+        "tools/build_provenance.py",
+    }
+    missing_anchors = sorted(required - set(entries))
+    missing_files = sorted(entry for entry in entries if not _exists(entry))
+    wired = all(
+        token in makefile
+        for token in (allowlist_path, "MYPY_TARGETS", "$(MYPY_TARGETS)")
+    )
+    passed = (
+        wired
+        and len(entries) >= 31
+        and len(entries) == len(set(entries))
+        and not missing_anchors
+        and not missing_files
+    )
+    detail = f"{len(entries)} strict files via {allowlist_path}"
+    if not wired:
+        detail += "; Makefile allowlist wiring missing"
+    if len(entries) != len(set(entries)):
+        detail += "; duplicate entries"
+    if missing_anchors:
+        detail += f"; missing anchors: {', '.join(missing_anchors)}"
+    if missing_files:
+        detail += f"; missing files: {', '.join(missing_files[:5])}"
+    return passed, detail
+
+
 def _any_file(pattern: str) -> bool:
     return any(ROOT.glob(pattern))
 
@@ -123,7 +160,8 @@ def run_checks() -> list[Check]:
     add("source_hygiene_gate", "source-hygiene:" in makefile and "__pycache__" in makefile and "*.py[cod]" in _read(".gitignore"), "Tracked cache artifacts are blocked from release snapshots")
     add("ruff_format_type_security_gates", all(item in makefile for item in ("lint:", "typecheck:", "security:", "governance-lint:")), "Quality gates include lint/type/security/governance")
     add("whole_surface_lint_bug_gate", all(token in makefile for token in ("RUFF_SURFACE_TARGETS", "RUFF_CRITICAL_TARGETS", "F821,F822,F823,F601", "--select E9")), "Ruff covers whole-surface syntax and production undefined-name/repeated-key bugs")
-    add("production_anchor_typecheck", all(token in makefile for token in ("core/runtime/atomic_writer.py", "core/consciousness/continuous_experience.py", "tools/build_provenance.py")), "Mypy covers runtime/proof anchors beyond the legacy curated slice")
+    strict_typecheck_ok, strict_typecheck_detail = _strict_typecheck_status(makefile)
+    add("production_anchor_typecheck", strict_typecheck_ok, strict_typecheck_detail)
     add("quality_runs_enterprise_collect", re.search(r"^quality:.*enterprise-collect", makefile, re.MULTILINE) is not None, "Quality target includes pytest collection")
     add("enterprise_static_gate", _exists("tools/aura_enterprise_gate.py") and _exists("config/aura_enterprise_gate_baseline.json"), "Enterprise ratchet gate and baseline exist")
     add("governance_bypass_sweep", _contains("tools/lint_governance.py", "CONSEQUENTIAL_CALLS", "ALLOW_LIST", "governance lint"), "Governance lint scans direct consequential calls")

@@ -12,13 +12,12 @@ import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
-
-import psutil
+from typing import Any, Optional
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.resource_observation import ResourceObserver, get_resource_observer
 
 
 @dataclass
@@ -30,6 +29,9 @@ class OnlineLoRAReceipt:
     reason: str = ""
     dataset_path: str = ""
     optimizer_result: dict[str, Any] = field(default_factory=dict)
+    observation_source: str = "unavailable"
+    observation_scenario_id: str = ""
+    process_observation_available: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -48,13 +50,13 @@ class OnlineLoRAGovernor:
         self,
         *,
         receipt_path: str | Path | None = None,
-        process_iter: Callable[..., Any] | None = None,
+        observer: ResourceObserver | None = None,
     ) -> None:
         self.receipt_path = Path(
             receipt_path or Path.home() / ".aura" / "data" / "runtime" / "online_lora_updates.jsonl"
         )
         self.receipt_path.parent.mkdir(parents=True, exist_ok=True)
-        self._process_iter = process_iter or psutil.process_iter
+        self._observer = observer
         self._lock = asyncio.Lock()
         self.last_receipt: Optional[OnlineLoRAReceipt] = None
 
@@ -63,21 +65,30 @@ class OnlineLoRAGovernor:
         return os.getenv("AURA_ONLINE_LORA", "1").strip().lower() not in {"0", "false", "off", "no"}
 
     def active_lora_processes(self) -> list[dict[str, Any]]:
+        observer = self._observer or get_resource_observer()
+        table = observer.process_table()
+        if not table.available:
+            return [
+                {
+                    "pid": None,
+                    "cmdline": [],
+                    "observation_error": table.error or "process_table_unavailable",
+                }
+            ]
         found: list[dict[str, Any]] = []
-        for proc in self._process_iter(["pid", "cmdline", "name"]):
-            try:
-                info = getattr(proc, "info", {}) or {}
-                cmdline = info.get("cmdline") or []
-                joined = " ".join(str(part) for part in cmdline).lower()
-                if "mlx_lm" in joined and "lora" in joined:
-                    found.append({"pid": info.get("pid"), "cmdline": cmdline})
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-            except (OSError, ConnectionError, TimeoutError) as exc:
-                record_degradation("online_lora_governor", exc)
+        for process in table.processes:
+            joined = " ".join(process.cmdline).lower()
+            if "mlx_lm" in joined and "lora" in joined:
+                found.append({"pid": process.pid, "cmdline": list(process.cmdline)})
         return found
 
     def _record(self, receipt: OnlineLoRAReceipt) -> OnlineLoRAReceipt:
+        provenance = (self._observer or get_resource_observer()).provenance
+        receipt.observation_source = provenance.source.value
+        receipt.observation_scenario_id = provenance.scenario_id
+        receipt.process_observation_available = not receipt.reason.startswith(
+            "process_table_unavailable"
+        )
         self.last_receipt = receipt
         get_file_write_gateway().append_text(
             self.receipt_path,
@@ -108,12 +119,17 @@ class OnlineLoRAGovernor:
 
             running = self.active_lora_processes()
             if running and not force:
+                observation_error = str(running[0].get("observation_error") or "")
                 return self._record(
                     OnlineLoRAReceipt(
                         requested_at=time.time(),
                         status="blocked_existing_training",
                         reflection_hash=_hash_text(reflection),
-                        reason=f"active mlx_lm lora process pid={running[0].get('pid')}",
+                        reason=(
+                            f"process_table_unavailable:{observation_error}"
+                            if observation_error
+                            else f"active mlx_lm lora process pid={running[0].get('pid')}"
+                        ),
                     )
                 )
 

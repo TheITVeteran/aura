@@ -137,11 +137,11 @@ def _isolated_model_lane_controller(monkeypatch, tmp_path):
 
     original_identity = model_lane_control.process_identity_for_pid
 
-    def _identity(pid):
+    def _identity(pid, *, observer=None):
         probe = ProcessProbe._registry.get(int(pid))
         if probe is not None:
             return model_lane_control.ProcessIdentity(int(pid), float(pid))
-        return original_identity(pid)
+        return original_identity(pid, observer=observer)
 
     def _alive(identity):
         probe = ProcessProbe._registry.get(int(identity.pid))

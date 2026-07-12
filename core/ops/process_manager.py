@@ -30,6 +30,7 @@ from typing import Any
 import psutil
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.resource_observation import get_resource_observer
 from core.runtime.shutdown_coordinator import (
     is_shutdown_requested,
     record_shutdown_admission_event,
@@ -178,6 +179,8 @@ class ProcessStats:
     last_health_check: float | None = None
     restart_timestamps: list[float] = field(default_factory=list)
     last_backoff_s: float = 0.0
+    observation_source: str = "unavailable"
+    observation_scenario_id: str = ""
 
 
 class ManagedProcess:
@@ -673,17 +676,23 @@ class ManagedProcess:
             return
 
         try:
-            psutil_process = psutil.Process(self.process.pid)
+            observer = get_resource_observer()
+            observed = observer.process(self.process.pid)
+            if observed is None:
+                logger.warning("Process %s PID %s not found", self.config.name, self.process.pid)
+                return
+            self.stats.observation_source = observed.provenance.source.value
+            self.stats.observation_scenario_id = observed.provenance.scenario_id
 
             # Check CPU usage
-            cpu_percent = psutil_process.cpu_percent(interval=0.1)
+            cpu_percent = observed.cpu_percent
             self.stats.cpu_usage.append(cpu_percent)
             if len(self.stats.cpu_usage) > 100:  # Keep last 100 samples
                 self.stats.cpu_usage.pop(0)
 
             # Check memory usage
-            memory_info = psutil_process.memory_info()
-            self.stats.memory_usage.append(memory_info.rss)
+            memory_rss = observed.rss_bytes
+            self.stats.memory_usage.append(memory_rss)
             if len(self.stats.memory_usage) > 100:
                 self.stats.memory_usage.pop(0)
 
@@ -696,18 +705,16 @@ class ManagedProcess:
                     self.config.cpu_limit,
                 )
 
-            if self.config.memory_limit and memory_info.rss > self.config.memory_limit:
+            if self.config.memory_limit and memory_rss > self.config.memory_limit:
                 logger.warning(
                     "Process %s memory usage %d exceeds limit %d",
                     self.config.name,
-                    memory_info.rss,
+                    memory_rss,
                     self.config.memory_limit,
                 )
 
             self.stats.last_health_check = time.time()
 
-        except psutil.NoSuchProcess:
-            logger.warning("Process %s PID %s not found", self.config.name, self.process.pid)
         except _PROCESS_RECOVERABLE_ERRORS as e:
             _record_process_degradation(
                 e,
@@ -743,6 +750,8 @@ class ManagedProcess:
                 "avg_cpu": round(avg_cpu, 1),
                 "avg_memory": avg_memory,
                 "last_health_check": self.stats.last_health_check,
+                "observation_source": self.stats.observation_source,
+                "observation_scenario_id": self.stats.observation_scenario_id,
             }
 
 

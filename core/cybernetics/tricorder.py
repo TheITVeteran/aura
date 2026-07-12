@@ -1,12 +1,13 @@
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
+import asyncio
 import logging
 import time
-import asyncio
 from typing import Any, Dict, List, Optional
-import math
+
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
+
 try:
-    import psutil
+    from core.runtime import resource_psutil as psutil
 except ImportError:
     psutil = None
 

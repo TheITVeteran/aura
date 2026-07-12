@@ -19,7 +19,7 @@ from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 try:
-    import psutil
+    from core.runtime import resource_psutil as psutil
     _HAS_PSUTIL = True
 except ImportError:
     _HAS_PSUTIL = False

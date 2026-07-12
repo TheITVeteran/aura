@@ -81,7 +81,7 @@ def _clamp_unit(value: float, *, default: float = 0.5) -> float:
 
 # Safe import — psutil might not be installed in all envs
 try:
-    import psutil
+    from core.runtime import resource_psutil as psutil
 
     _HAS_PSUTIL = True
 except ImportError:

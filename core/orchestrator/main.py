@@ -15,10 +15,9 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-import psutil
-
 from core.bus.actor_bus import ActorBus
 from core.health.degraded_events import record_degraded_event
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.scheduler import TaskSpec, scheduler
@@ -1920,7 +1919,7 @@ class RobustOrchestrator(
                     return
                 # Guard: skip if memory pressure is high or system is under load
                 try:
-                    import psutil
+                    from core.runtime import resource_psutil as psutil
 
                     mem = psutil.virtual_memory()
                     if mem.percent > 75:

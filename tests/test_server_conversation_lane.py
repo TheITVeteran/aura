@@ -3231,8 +3231,11 @@ async def test_session_memory_context_change_uses_pinned_note(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(monkeypatch):
-    import core.utils.memory_monitor as memory_monitor
+async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
+    monkeypatch,
+    resource_observer,
+):
+    from core.runtime.resource_observation import SimulatedResourceObserver
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -3256,14 +3259,11 @@ async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
             return _FakeInferenceGate()
         return default
 
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: SimpleNamespace(
-            total=64 * gib,
-            available=2 * gib,
-            percent=96.0,
-        ),
+    assert isinstance(resource_observer, SimulatedResourceObserver)
+    resource_observer.configure_memory(
+        total_bytes=64 * gib,
+        available_bytes=2 * gib,
+        percent=96.0,
     )
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
@@ -3307,8 +3307,11 @@ async def test_api_chat_desktop_surface_blocks_critical_memory_before_cognition(
 
 
 @pytest.mark.asyncio
-async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognition(monkeypatch):
-    import core.utils.memory_monitor as memory_monitor
+async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognition(
+    monkeypatch,
+    resource_observer,
+):
+    from core.runtime.resource_observation import SimulatedResourceObserver
     from interface import server as server_module
     from interface.routes import chat as chat_routes
 
@@ -3325,16 +3328,6 @@ async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognit
         async def _shed_background_workers_for_memory_pressure(self, *, reason):
             shed_calls.append(reason)
 
-    class _Process:
-        def __init__(self, *_args, _rss_gb=None, **_kwargs):
-            self._rss_gb = 3.0 if _rss_gb is None else float(_rss_gb)
-
-        def memory_info(self):
-            return SimpleNamespace(rss=int(self._rss_gb * gib))
-
-        def children(self, recursive=True):
-            return [_Process(_rss_gb=38.0)]
-
     def _fake_get(name, default=None):
         if name == "cognitive_engine":
             return _FakeCognitiveEngine()
@@ -3343,16 +3336,14 @@ async def test_api_chat_desktop_surface_blocks_process_tree_memory_before_cognit
         return default
 
     monkeypatch.setenv("AURA_PROCESS_RSS_LIMIT_GB", "40")
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: SimpleNamespace(
-            total=64 * gib,
-            available=24 * gib,
-            percent=62.0,
-        ),
+    assert isinstance(resource_observer, SimulatedResourceObserver)
+    resource_observer.configure_memory(
+        total_bytes=64 * gib,
+        available_bytes=24 * gib,
+        percent=62.0,
+        process_rss_bytes=3 * gib,
+        process_tree_rss_bytes=41 * gib,
     )
-    monkeypatch.setattr(memory_monitor.psutil, "Process", _Process)
     monkeypatch.setattr(chat_routes, "_restore_owner_session_from_request", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_notify_user_spoke", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(chat_routes, "_resolve_live_aura_state", lambda: None)

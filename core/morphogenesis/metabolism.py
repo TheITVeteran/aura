@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from .types import clamp01, json_safe
+from core.runtime.resource_observation import ResourceObserver, get_resource_observer
+
+from .types import clamp01
 
 logger = logging.getLogger("Aura.Morphogenesis.Metabolism")
 
@@ -19,6 +20,8 @@ class ResourceSnapshot:
     memory_available_mb: float = 0.0
     load_average_1m: float = 0.0
     pressure: float = 0.0
+    observation_source: str = "unavailable"
+    observation_scenario_id: str = ""
     timestamp: float = field(default_factory=time.time)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -29,6 +32,8 @@ class ResourceSnapshot:
             "memory_available_mb": round(float(self.memory_available_mb), 1),
             "load_average_1m": round(float(self.load_average_1m), 3),
             "pressure": round(float(self.pressure), 5),
+            "observation_source": self.observation_source,
+            "observation_scenario_id": self.observation_scenario_id,
             "timestamp": self.timestamp,
         }
 
@@ -73,10 +78,12 @@ class MetabolismManager:
         global_energy: float = 1.0,
         recovery_per_tick: float = 0.035,
         high_pressure_threshold: float = 0.82,
+        observer: ResourceObserver | None = None,
     ):
         self.global_energy = clamp01(global_energy)
         self.recovery_per_tick = clamp01(recovery_per_tick)
         self.high_pressure_threshold = clamp01(high_pressure_threshold)
+        self._observer = observer
         self._budgets: Dict[str, CellBudget] = {}
         self._last_snapshot = ResourceSnapshot()
 
@@ -118,22 +125,27 @@ class MetabolismManager:
         return snap
 
     def sample_resources(self) -> ResourceSnapshot:
+        observer = self._observer or get_resource_observer()
+        provenance = observer.provenance
         try:
-            import psutil
-            mem = psutil.virtual_memory()
-            cpu = float(psutil.cpu_percent(interval=None))
-            used = float(getattr(mem, "used", 0.0)) / (1024 ** 2)
-            avail = float(getattr(mem, "available", 0.0)) / (1024 ** 2)
-            mem_pct = float(getattr(mem, "percent", 0.0))
-        except (ImportError, AttributeError, RuntimeError):
-            cpu, used, avail, mem_pct = 0.0, 0.0, 0.0, 0.0
+            memory = observer.memory()
+            compute = observer.compute()
+            cpu = float(compute.cpu_percent)
+            used = float(memory.used_bytes) / float(1024**2)
+            avail = float(memory.available_bytes) / float(1024**2)
+            mem_pct = float(memory.percent) if memory.available else 100.0
+            load_1 = float(compute.load_1m)
+            cpu_count = max(1, int(compute.cpu_count))
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            cpu, used, avail, mem_pct, load_1, cpu_count = 100.0, 0.0, 0.0, 100.0, 0.0, 1
 
-        try:
-            load_1 = float(os.getloadavg()[0])
-        except (RuntimeError, AttributeError, TypeError, ValueError):
-            load_1 = 0.0
-
-        pressure = clamp01(max(cpu / 100.0, mem_pct / 100.0, min(1.0, load_1 / max(1.0, os.cpu_count() or 1))))
+        pressure = clamp01(
+            max(
+                cpu / 100.0,
+                mem_pct / 100.0,
+                min(1.0, load_1 / cpu_count),
+            )
+        )
         return ResourceSnapshot(
             cpu_percent=cpu,
             memory_percent=mem_pct,
@@ -141,6 +153,8 @@ class MetabolismManager:
             memory_available_mb=avail,
             load_average_1m=load_1,
             pressure=pressure,
+            observation_source=provenance.source.value,
+            observation_scenario_id=provenance.scenario_id,
         )
 
     @property

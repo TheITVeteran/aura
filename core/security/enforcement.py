@@ -93,7 +93,7 @@ class ProcessGuard:
     @staticmethod
     def terminate(pid: int) -> bool:
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
         except ImportError as exc:
             logger.debug("Process terminate unavailable for %s: %s", pid, exc)
             return False
@@ -157,7 +157,7 @@ class ResourceMonitor:
 
     def sample(self) -> dict[str, float]:
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
         except ImportError as exc:
             logger.debug("Resource sample unavailable: %s", exc)
             return {}

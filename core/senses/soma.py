@@ -4,19 +4,20 @@ Soma (Body) — Unified Sensory Registry and Proprioception Layer.
 Aggregates hardware metrics, network latency, and sensory imprints 
 into a cohesive self-perception of physical state.
 """
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
-import psutil
-import time
 import os
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from subprocess import SubprocessError
-from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
+
 from core.container import ServiceContainer
+from core.runtime import resource_psutil as psutil
+from core.runtime.errors import record_degradation
 from core.runtime.subprocess_gateway import get_subprocess_gateway
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Senses.Soma")
 

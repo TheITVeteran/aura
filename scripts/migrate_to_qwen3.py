@@ -37,6 +37,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.runtime.resource_observation import (  # noqa: E402
+    ResourceObserver,
+    get_resource_observer,
+)
 from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 ACTIVE_JSON = PROJECT_ROOT / "training" / "fused-model" / "active.json"
@@ -46,37 +50,38 @@ def _gb(n: float) -> str:
     return f"{n / (1024 ** 3):.1f} GB"
 
 
-def _free_disk_gb(path: Path) -> float:
-    try:
-        return shutil.disk_usage(path).free / (1024 ** 3)
-    except OSError:
-        return 0.0
+def _free_disk_gb(path: Path, *, observer: ResourceObserver | None = None) -> float:
+    disk = (observer or get_resource_observer()).disk(path)
+    return disk.free_bytes / (1024**3) if disk.available else 0.0
 
 
-def _total_ram_gb() -> float:
-    try:
-        import psutil
-
-        return psutil.virtual_memory().total / (1024 ** 3)
-    except (ImportError, OSError):
-        try:
-            import os
-
-            return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024 ** 3)
-        except (ValueError, AttributeError, OSError):
-            return 0.0
+def _total_ram_gb(*, observer: ResourceObserver | None = None) -> float:
+    memory = (observer or get_resource_observer()).memory()
+    return memory.total_bytes / (1024**3) if memory.available else 0.0
 
 
-def preflight(base: Path, adapter: Path, out: Path) -> bool:
+def preflight(
+    base: Path,
+    adapter: Path,
+    out: Path,
+    *,
+    observer: ResourceObserver | None = None,
+) -> bool:
     print("── STAGE 1: PREFLIGHT ──────────────────────────────────────")
     ok = True
+    observer = observer or get_resource_observer()
+    provenance = observer.provenance
+    print(
+        "  Resource observation: "
+        f"source={provenance.source.value} scenario={provenance.scenario_id}"
+    )
 
-    ram = _total_ram_gb()
+    ram = _total_ram_gb(observer=observer)
     print(f"  Host RAM: {ram:.0f} GB")
     if ram and ram < 48:
         print("  ⚠️  <48 GB RAM: a 32B-8bit fuse is tight; prefer a 4-bit base.")
 
-    free = _free_disk_gb(PROJECT_ROOT)
+    free = _free_disk_gb(PROJECT_ROOT, observer=observer)
     print(f"  Free disk: {free:.0f} GB")
     if free < 60:
         print("  ⚠️  <60 GB free: a 32B fuse + base may not fit. Free space first.")

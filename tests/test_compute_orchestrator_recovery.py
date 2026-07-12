@@ -1,6 +1,5 @@
 import asyncio
 import math
-import sys
 from types import SimpleNamespace
 
 import pytest
@@ -17,14 +16,16 @@ async def test_resource_sampling_keeps_cpu_ram_when_thermal_sensor_is_unsupporte
         lambda error, **kwargs: recorded.append((error, kwargs)),
     )
 
-    fake_psutil = SimpleNamespace(
-        cpu_percent=lambda _interval: 87.5,
-        virtual_memory=lambda: SimpleNamespace(percent=91.0),
-        sensors_temperatures=lambda: (_ for _ in ()).throw(
-            NotImplementedError("thermal unavailable")
-        ),
+    from core.runtime.resource_observation import get_resource_observer
+
+    observer = get_resource_observer()
+    observer.configure_compute(cpu_percent=87.5)
+    observer.configure_memory(percent=91.0)
+    monkeypatch.setattr(
+        observer,
+        "thermal",
+        lambda: (_ for _ in ()).throw(NotImplementedError("thermal unavailable")),
     )
-    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
 
     orchestrator = co.ComputeOrchestrator()
 

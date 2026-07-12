@@ -1,11 +1,11 @@
+import asyncio
+import logging
+from dataclasses import dataclass
+
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker
-import mlx.core as mx
-from dataclasses import dataclass, field
-import psutil
-import logging
-import asyncio
 
 logger = logging.getLogger("Aura.Memory")
 
@@ -27,7 +27,7 @@ class MemoryBudget:
             
             # 1. Clear MLX Cache safely
             try:
-                from core.utils.gpu_sentinel import get_gpu_sentinel, GPUPriority
+                from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
                 sentinel = get_gpu_sentinel()
                 if sentinel.acquire(priority=GPUPriority.REFLEX, timeout=5.0):
                     try:

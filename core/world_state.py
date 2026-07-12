@@ -187,7 +187,7 @@ class WorldState:
 
         # System telemetry via psutil
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             self.cpu_percent = psutil.cpu_percent(interval=0)
             self.memory_percent = psutil.virtual_memory().percent
             battery = psutil.sensors_battery()

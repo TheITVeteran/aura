@@ -9,17 +9,17 @@ Verifies:
 """
 
 import asyncio
-import psutil
 import os
 import sys
-import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from core.runtime.resource_observation import get_resource_observer
 from core.utils.task_tracker import get_task_tracker
+
 
 async def test_task_tracker_memory():
     """Test that TaskTracker cleanup works"""
@@ -53,11 +53,11 @@ async def test_task_tracker_memory():
 
 async def test_process_memory():
     """Check process memory is stable"""
-    proc = psutil.Process(os.getpid())
+    observer = get_resource_observer()
     
     print("\n🧪 Testing Process Memory Stability...")
     
-    mem_before = proc.memory_info().rss / 1024 / 1024  # MB
+    mem_before = observer.memory(root_pid=os.getpid()).process_rss_bytes / 1024 / 1024
     print(f"   Memory before: {mem_before:.1f} MB")
     
     # Simulate activity
@@ -70,7 +70,7 @@ async def test_process_memory():
         tasks = [tracker.track(work(), name=f"work_{i}") for i in range(10)]
         await asyncio.gather(*tasks, return_exceptions=True)
     
-    mem_after = proc.memory_info().rss / 1024 / 1024  # MB
+    mem_after = observer.memory(root_pid=os.getpid()).process_rss_bytes / 1024 / 1024
     growth = mem_after - mem_before
     
     print(f"   Memory after:  {mem_after:.1f} MB")

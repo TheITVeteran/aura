@@ -1,17 +1,24 @@
 import asyncio
 import contextlib
-import ctypes
 import logging
 import os
-import sys
 import threading
 import time
 from dataclasses import asdict, dataclass
-from typing import Any
 
 import psutil
 
 from core.runtime.errors import record_degradation
+from core.runtime.process_footprint import (
+    DarwinRUsageInfoV4,
+    current_darwin_footprint_bytes,
+    darwin_phys_footprint_bytes,
+)
+from core.runtime.resource_observation import (
+    ObservationSource,
+    ResourceObserver,
+    get_resource_observer,
+)
 
 logger = logging.getLogger("Aura.MemoryMonitor")
 _MEMORY_MONITOR_RECOVERABLE_ERRORS = (
@@ -25,62 +32,14 @@ _MEMORY_MONITOR_RECOVERABLE_ERRORS = (
 
 _GIB = float(1024**3)
 
-
-class _DarwinRUsageInfoV4(ctypes.Structure):
-    _fields_ = [
-        ("ri_uuid", ctypes.c_ubyte * 16),
-        ("ri_user_time", ctypes.c_uint64),
-        ("ri_system_time", ctypes.c_uint64),
-        ("ri_pkg_idle_wkups", ctypes.c_uint64),
-        ("ri_interrupt_wkups", ctypes.c_uint64),
-        ("ri_pageins", ctypes.c_uint64),
-        ("ri_wired_size", ctypes.c_uint64),
-        ("ri_resident_size", ctypes.c_uint64),
-        ("ri_phys_footprint", ctypes.c_uint64),
-        ("ri_proc_start_abstime", ctypes.c_uint64),
-        ("ri_proc_exit_abstime", ctypes.c_uint64),
-        ("ri_child_user_time", ctypes.c_uint64),
-        ("ri_child_system_time", ctypes.c_uint64),
-        ("ri_child_pkg_idle_wkups", ctypes.c_uint64),
-        ("ri_child_interrupt_wkups", ctypes.c_uint64),
-        ("ri_child_pageins", ctypes.c_uint64),
-        ("ri_child_elapsed_abstime", ctypes.c_uint64),
-        ("ri_diskio_bytesread", ctypes.c_uint64),
-        ("ri_diskio_byteswritten", ctypes.c_uint64),
-        ("ri_cpu_time_qos_default", ctypes.c_uint64),
-        ("ri_cpu_time_qos_maintenance", ctypes.c_uint64),
-        ("ri_cpu_time_qos_background", ctypes.c_uint64),
-        ("ri_cpu_time_qos_utility", ctypes.c_uint64),
-        ("ri_cpu_time_qos_legacy", ctypes.c_uint64),
-        ("ri_cpu_time_qos_user_initiated", ctypes.c_uint64),
-        ("ri_cpu_time_qos_user_interactive", ctypes.c_uint64),
-        ("ri_billed_system_time", ctypes.c_uint64),
-        ("ri_serviced_system_time", ctypes.c_uint64),
-        ("ri_logical_writes", ctypes.c_uint64),
-        ("ri_lifetime_max_phys_footprint", ctypes.c_uint64),
-        ("ri_instructions", ctypes.c_uint64),
-        ("ri_cycles", ctypes.c_uint64),
-        ("ri_billed_energy", ctypes.c_uint64),
-        ("ri_serviced_energy", ctypes.c_uint64),
-        # The kernel writes sizeof(rusage_info_v4) == 304 bytes for flavor
-        # 4. The struct previously ended here at 280 bytes, so every call
-        # had the kernel write 24 bytes past the buffer — heap corruption
-        # on each memory snapshot (caught by PYTHONMALLOC=debug: trailing
-        # guard bytes overwritten with ri_interval_max_phys_footprint).
-        ("ri_interval_max_phys_footprint", ctypes.c_uint64),
-        ("ri_runnable_time", ctypes.c_uint64),
-        ("ri_flags", ctypes.c_uint64),
-        # Spare capacity: newer kernels must never write past us again,
-        # even if a future flavor is requested without updating fields.
-        ("_ri_spare", ctypes.c_uint64 * 16),
-    ]
+# Compatibility names retained for focused ABI tests and existing monkeypatches.
+_DarwinRUsageInfoV4 = DarwinRUsageInfoV4
+_current_darwin_footprint_bytes = current_darwin_footprint_bytes
+_darwin_phys_footprint_bytes = darwin_phys_footprint_bytes
 
 
-_DARWIN_RUSAGE_INFO_V4 = 4
-_DARWIN_LIBPROC: Any | None = None
-_DARWIN_LIBPROC_UNAVAILABLE = False
 _SNAPSHOT_CACHE_LOCK = threading.Lock()
-_SNAPSHOT_CACHE: tuple[float, "MemoryPressureSnapshot"] | None = None
+_SNAPSHOT_CACHE: tuple[float, tuple[int, str, str], "MemoryPressureSnapshot"] | None = None
 
 
 def _clamp_pressure(value: float) -> int:
@@ -113,55 +72,6 @@ def clear_memory_pressure_snapshot_cache() -> None:
     global _SNAPSHOT_CACHE
     with _SNAPSHOT_CACHE_LOCK:
         _SNAPSHOT_CACHE = None
-
-
-def _current_darwin_footprint_bytes(info: _DarwinRUsageInfoV4) -> int:
-    """Return current macOS footprint without retaining a historical peak.
-
-    ``ri_lifetime_max_phys_footprint`` is a process-lifetime high-water mark.
-    Using it as current usage makes every memory gate stay tripped after one
-    transient spike, even after the allocation has been released.
-    """
-
-    current = int(getattr(info, "ri_phys_footprint", 0) or 0)
-    if current > 0:
-        return current
-    return int(getattr(info, "ri_resident_size", 0) or 0)
-
-
-def _darwin_phys_footprint_bytes(pid: int) -> int:
-    """Return current macOS phys_footprint when available.
-
-    Activity Monitor's "Memory" column tracks process footprint more closely
-    than plain RSS for unified-memory-heavy MLX workers. RSS remains the
-    portable fallback, but on Darwin this catches the value that actually
-    forced the user's desktop into application-memory pressure.
-    """
-
-    global _DARWIN_LIBPROC, _DARWIN_LIBPROC_UNAVAILABLE
-    if sys.platform != "darwin" or _DARWIN_LIBPROC_UNAVAILABLE:
-        return 0
-    try:
-        if _DARWIN_LIBPROC is None:
-            _DARWIN_LIBPROC = ctypes.CDLL("/usr/lib/libproc.dylib")
-            _DARWIN_LIBPROC.proc_pid_rusage.argtypes = [
-                ctypes.c_int,
-                ctypes.c_int,
-                ctypes.c_void_p,
-            ]
-            _DARWIN_LIBPROC.proc_pid_rusage.restype = ctypes.c_int
-        info = _DarwinRUsageInfoV4()
-        rc = _DARWIN_LIBPROC.proc_pid_rusage(
-            int(pid),
-            _DARWIN_RUSAGE_INFO_V4,
-            ctypes.byref(info),
-        )
-        if rc != 0:
-            return 0
-        return _current_darwin_footprint_bytes(info)
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError, ctypes.ArgumentError):
-        _DARWIN_LIBPROC_UNAVAILABLE = True
-        return 0
 
 
 def _process_memory_bytes_from_process(process: psutil.Process) -> int:
@@ -216,6 +126,11 @@ class MemoryPressureSnapshot:
     min_available_gb: float
     level: str
     reason: str
+    observation_source: str
+    observation_scenario_id: str
+    host_observed: bool
+    qualifies_as_live_pressure: bool
+    observation_available: bool
 
     @property
     def warning(self) -> bool:
@@ -277,22 +192,26 @@ def get_memory_pressure_snapshot(
     *,
     force_refresh: bool = False,
     max_age_s: float | None = None,
+    observer: ResourceObserver | None = None,
 ) -> MemoryPressureSnapshot:
     """Return one canonical unified-memory pressure decision for runtime gates."""
 
     global _SNAPSHOT_CACHE
+    resource_observer = observer or get_resource_observer()
+    provenance = resource_observer.provenance
+    cache_key = (id(resource_observer), provenance.source.value, provenance.scenario_id)
     ttl = _memory_snapshot_cache_ttl_s() if max_age_s is None else max(0.0, float(max_age_s))
     now = time.monotonic()
     if not force_refresh and ttl > 0.0:
         with _SNAPSHOT_CACHE_LOCK:
             cached = _SNAPSHOT_CACHE
-        if cached is not None and (now - cached[0]) <= ttl:
-            return cached[1]
+        if cached is not None and cached[1] == cache_key and (now - cached[0]) <= ttl:
+            return cached[2]
 
-    vm = psutil.virtual_memory()
-    total_gb = float(getattr(vm, "total", 0) or 0) / float(1024**3)
-    available_gb = float(getattr(vm, "available", 0) or 0) / float(1024**3)
-    pressure_pct = float(getattr(vm, "percent", 0.0) or 0.0)
+    memory = resource_observer.memory()
+    total_gb = float(memory.total_bytes) / float(1024**3)
+    available_gb = float(memory.available_bytes) / float(1024**3)
+    pressure_pct = float(memory.percent)
     if pressure_pct <= 0.0 and total_gb > 0.0:
         pressure_pct = max(0.0, min(100.0, (1.0 - (available_gb / total_gb)) * 100.0))
 
@@ -324,13 +243,17 @@ def get_memory_pressure_snapshot(
         1.0,
         _env_float("AURA_PROCESS_RSS_LIMIT_GB", process_rss_limit_default),
     )
-    try:
-        process_rss_gb = _process_tree_rss_gb()
-    except _MEMORY_MONITOR_RECOVERABLE_ERRORS:
-        process_rss_gb = 0.0
+    process_rss_gb = float(memory.process_tree_rss_bytes) / _GIB
+    if provenance.source in {ObservationSource.HOST, ObservationSource.LIVE_PRESSURE}:
+        try:
+            process_rss_gb = max(process_rss_gb, _process_tree_rss_gb())
+        except _MEMORY_MONITOR_RECOVERABLE_ERRORS:
+            pass
 
     system_level = "normal"
-    if pressure_pct >= emergency_pct or available_gb < max(1.0, min_available_gb / 2.0):
+    if not memory.available:
+        system_level = "emergency"
+    elif pressure_pct >= emergency_pct or available_gb < max(1.0, min_available_gb / 2.0):
         system_level = "emergency"
     elif pressure_pct >= critical_pct or available_gb < min_available_gb:
         system_level = "critical"
@@ -353,6 +276,10 @@ def get_memory_pressure_snapshot(
     level = max((system_level, process_level), key=lambda item: level_rank[item])
 
     reason_parts: list[str] = []
+    if not memory.available:
+        reason_parts.append(
+            f"memory_observation_unavailable:{memory.error or 'unknown'}"
+        )
     if system_level != "normal":
         reason_parts.append(
             f"memory_pressure:{pressure_pct:.1f}%/{available_gb:.1f}GB "
@@ -379,10 +306,15 @@ def get_memory_pressure_snapshot(
         min_available_gb=min_available_gb,
         level=level,
         reason=reason,
+        observation_source=provenance.source.value,
+        observation_scenario_id=provenance.scenario_id,
+        host_observed=provenance.host_observed,
+        qualifies_as_live_pressure=provenance.qualifies_as_live_pressure,
+        observation_available=bool(memory.available),
     )
     if ttl > 0.0:
         with _SNAPSHOT_CACHE_LOCK:
-            _SNAPSHOT_CACHE = (now, snapshot)
+            _SNAPSHOT_CACHE = (now, cache_key, snapshot)
     return snapshot
 
 
@@ -392,21 +324,28 @@ class AppleSiliconMemoryMonitor:
     Aura uses this to throttle background reasoning (ReasoningQueue)
     when memory pressure is high to avoid system swap lag.
     """
-    def __init__(self, interval: float = 2.0, threshold: int = 85):
+    def __init__(
+        self,
+        interval: float = 2.0,
+        threshold: int = 85,
+        *,
+        observer: ResourceObserver | None = None,
+    ):
         self.interval = interval
         self.threshold = threshold
+        self._observer = observer
         self.is_running = False
         self._pressure = 0
         self._loop_task = None
 
-    async def start(self):
+    async def start(self) -> None:
         self.is_running = True
         # Use our new task tracker helper (hoisted from Part 5)
         from .task_tracker import fire_and_track
         self._loop_task = fire_and_track(self._monitor_loop(), name="MemoryMonitor")
         logger.info("Apple Silicon Memory Monitor active.")
 
-    async def stop(self):
+    async def stop(self) -> None:
         self.is_running = False
         if self._loop_task:
             self._loop_task.cancel()
@@ -418,7 +357,7 @@ class AppleSiliconMemoryMonitor:
         """Returns 0-100 indicating memory pressure."""
         return self._pressure
 
-    async def _monitor_loop(self):
+    async def _monitor_loop(self) -> None:
         import gc as _gc
         last_gc_at = 0.0
         last_purge_at = 0.0
@@ -458,19 +397,20 @@ class AppleSiliconMemoryMonitor:
                 await asyncio.sleep(5)
 
     def _get_pressure_sysctl(self) -> int:
-        """Return a safe system memory pressure sample using psutil."""
+        """Return a safe, attributable system memory pressure sample."""
         try:
-            mem = psutil.virtual_memory()
-            percent = getattr(mem, "percent", None)
-            if percent is not None:
-                return _clamp_pressure(float(percent))
+            mem = (self._observer or get_resource_observer()).memory()
+            if not mem.available:
+                raise RuntimeError(mem.error or "memory observation unavailable")
+            if mem.percent > 0.0:
+                return _clamp_pressure(float(mem.percent))
 
-            total = int(getattr(mem, "total", 0) or 0)
-            available = int(getattr(mem, "available", 0) or 0)
+            total = int(mem.total_bytes)
+            available = int(mem.available_bytes)
             if total > 0:
                 return _clamp_pressure((1.0 - (available / total)) * 100.0)
             return 0
         except _MEMORY_MONITOR_RECOVERABLE_ERRORS as exc:
             record_degradation("memory_monitor", exc)
             logger.debug("Memory pressure sample failed: %s", exc)
-            return 0
+            return 100

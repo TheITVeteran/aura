@@ -8,16 +8,15 @@ and produces action envelopes that other subsystems can obey.
 """
 from __future__ import annotations
 
-
 import json
 import os
-import resource
-import shutil
 import sqlite3
 import time
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+
+from core.runtime.resource_observation import ResourceObserver, get_resource_observer
 
 
 @dataclass(frozen=True)
@@ -27,17 +26,33 @@ class ResourceSnapshot:
     memory_rss_mb: float
     free_disk_mb: float
     process_id: int
+    observation_source: str = "unavailable"
+    observation_scenario_id: str = ""
 
     @classmethod
-    def capture(cls, path: str | os.PathLike[str] = ".") -> "ResourceSnapshot":
-        usage = resource.getrusage(resource.RUSAGE_SELF)
-        disk = shutil.disk_usage(path)
+    def capture(
+        cls,
+        path: str | os.PathLike[str] = ".",
+        *,
+        observer: ResourceObserver | None = None,
+    ) -> ResourceSnapshot:
+        resource_observer = observer or get_resource_observer()
+        disk = resource_observer.disk(path)
+        memory = resource_observer.memory()
+        process = resource_observer.process(os.getpid())
+        provenance = resource_observer.provenance
         return cls(
             timestamp=time.time(),
-            cpu_seconds=float(usage.ru_utime + usage.ru_stime),
-            memory_rss_mb=_rss_to_mb(float(usage.ru_maxrss)),
-            free_disk_mb=float(disk.free / (1024 * 1024)),
+            cpu_seconds=(
+                0.0
+                if process is None
+                else float(process.cpu_user_seconds + process.cpu_system_seconds)
+            ),
+            memory_rss_mb=float(memory.process_rss_bytes) / float(1024**2),
+            free_disk_mb=float(disk.free_bytes) / float(1024**2),
             process_id=os.getpid(),
+            observation_source=provenance.source.value,
+            observation_scenario_id=provenance.scenario_id,
         )
 
 
@@ -85,8 +100,10 @@ class ResourceStakesLedger:
         db_path: str | os.PathLike[str] | None = None,
         *,
         initial: ViabilityState | None = None,
+        observer: ResourceObserver | None = None,
     ) -> None:
         self.db_path = Path(db_path or "data/resource_stakes.sqlite3")
+        self._observer = observer
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
         if initial is not None and self._load_state() is None:
@@ -109,7 +126,10 @@ class ResourceStakesLedger:
         return loaded
 
     def observe(self, snapshot: ResourceSnapshot | None = None) -> ViabilityState:
-        snapshot = snapshot or ResourceSnapshot.capture(self.db_path.parent)
+        snapshot = snapshot or ResourceSnapshot.capture(
+            self.db_path.parent,
+            observer=self._observer,
+        )
         state = self.state()
         penalties: dict[str, float] = {}
         if snapshot.free_disk_mb < 512:
@@ -376,14 +396,6 @@ def _state_dict(state: ViabilityState) -> dict[str, object]:
         "degradation_events": state.degradation_events,
         "viability": state.viability,
     }
-
-
-def _rss_to_mb(raw: float) -> float:
-    # Linux reports ru_maxrss in KiB; macOS reports bytes.  The threshold below
-    # keeps small test processes sensible on both platforms.
-    if raw > 10_000_000:
-        return raw / (1024 * 1024)
-    return raw / 1024
 
 
 def _clamp01(value: float) -> float:

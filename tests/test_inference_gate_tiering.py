@@ -2935,7 +2935,10 @@ def test_secondary_headroom_snapshot_blocks_64gb_solver_envelope_by_default(monk
 def test_foreground_headroom_probe_failure_is_not_admitted_without_override(monkeypatch):
     monkeypatch.delenv("AURA_FORCE_FOREGROUND_HEADROOM_ON_PROBE_FAILURE", raising=False)
     memory_probe = CallProbe(side_effect=OSError("sysctl unavailable"))
-    monkeypatch.setattr("core.brain.inference_gate.psutil.virtual_memory", memory_probe)
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        memory_probe,
+    )
 
     snapshot = InferenceGate._headroom_snapshot("secondary")
 
@@ -2947,7 +2950,10 @@ def test_foreground_headroom_probe_failure_is_not_admitted_without_override(monk
 def test_foreground_headroom_probe_failure_requires_explicit_override(monkeypatch):
     monkeypatch.setenv("AURA_FORCE_FOREGROUND_HEADROOM_ON_PROBE_FAILURE", "1")
     memory_probe = CallProbe(side_effect=OSError("sysctl unavailable"))
-    monkeypatch.setattr("core.brain.inference_gate.psutil.virtual_memory", memory_probe)
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        memory_probe,
+    )
 
     snapshot = InferenceGate._headroom_snapshot("secondary")
 

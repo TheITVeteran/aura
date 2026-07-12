@@ -7,8 +7,8 @@ process itself, macOS suspends/thrashes the whole process — including
 every watchdog thread inside it. Protection must live OUTSIDE the
 process being protected.
 
-This sentinel is a tiny standalone process (stdlib + psutil only, no
-Aura imports) spawned at boot. It samples the target process tree's
+This sentinel is a tiny standalone process with only the lightweight canonical
+resource observer and process-action dependencies. It samples the target process tree's
 RSS on a tight interval and, past the lethal ceiling, SIGKILLs the
 entire tree — no cooperation from the dying process required. Every
 sample lands in a ring file so the next post-mortem has data even if
@@ -34,147 +34,71 @@ from pathlib import Path
 
 import psutil
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.process_footprint import (  # noqa: E402
+    DarwinRUsageInfoV4,
+    current_darwin_footprint_bytes,
+    darwin_phys_footprint_bytes,
+)
+from core.runtime.resource_observation import (  # noqa: E402
+    HostResourceObserver,
+    ObservationSource,
+)
+
+_RUsageV4 = DarwinRUsageInfoV4
+current_phys_footprint_bytes = current_darwin_footprint_bytes
+
+_OBSERVER = HostResourceObserver(
+    source=ObservationSource.HOST,
+    scenario_id="external-memory-sentinel",
+)
+
 RING_MAX_LINES = 600  # ~20 minutes at 2s
 IMMEDIATE_KILL_OVERSHOOT = 1.15
 
-# macOS killed Aura as 'largest compressed process Python 78557 MB'
-# while RSS read 20GB: compressed pages leave RSS but live in
-# phys_footprint. Every guard must watch footprint, not RSS alone.
-try:
-    import ctypes
-
-    class _RUsageV4(ctypes.Structure):
-        _fields_ = [
-            ("ri_uuid", ctypes.c_uint8 * 16),
-            ("ri_user_time", ctypes.c_uint64),
-            ("ri_system_time", ctypes.c_uint64),
-            ("ri_pkg_idle_wkups", ctypes.c_uint64),
-            ("ri_interrupt_wkups", ctypes.c_uint64),
-            ("ri_pageins", ctypes.c_uint64),
-            ("ri_wired_size", ctypes.c_uint64),
-            ("ri_resident_size", ctypes.c_uint64),
-            ("ri_phys_footprint", ctypes.c_uint64),
-            ("ri_proc_start_abstime", ctypes.c_uint64),
-            ("ri_proc_exit_abstime", ctypes.c_uint64),
-            ("ri_child_user_time", ctypes.c_uint64),
-            ("ri_child_system_time", ctypes.c_uint64),
-            ("ri_child_pkg_idle_wkups", ctypes.c_uint64),
-            ("ri_child_interrupt_wkups", ctypes.c_uint64),
-            ("ri_child_pageins", ctypes.c_uint64),
-            ("ri_child_elapsed_abstime", ctypes.c_uint64),
-            ("ri_diskio_bytesread", ctypes.c_uint64),
-            ("ri_diskio_byteswritten", ctypes.c_uint64),
-            ("ri_cpu_time_qos_default", ctypes.c_uint64),
-            ("ri_cpu_time_qos_maintenance", ctypes.c_uint64),
-            ("ri_cpu_time_qos_background", ctypes.c_uint64),
-            ("ri_cpu_time_qos_utility", ctypes.c_uint64),
-            ("ri_cpu_time_qos_legacy", ctypes.c_uint64),
-            ("ri_cpu_time_qos_user_initiated", ctypes.c_uint64),
-            ("ri_cpu_time_qos_user_interactive", ctypes.c_uint64),
-            ("ri_billed_system_time", ctypes.c_uint64),
-            ("ri_serviced_system_time", ctypes.c_uint64),
-            ("ri_logical_writes", ctypes.c_uint64),
-            ("ri_lifetime_max_phys_footprint", ctypes.c_uint64),
-            ("ri_instructions", ctypes.c_uint64),
-            ("ri_cycles", ctypes.c_uint64),
-            ("ri_billed_energy", ctypes.c_uint64),
-            ("ri_serviced_energy", ctypes.c_uint64),
-            # Full rusage_info_v4 is 304 bytes; truncating here at 280 let
-            # the kernel write 24 bytes past the buffer on every snapshot.
-            ("ri_interval_max_phys_footprint", ctypes.c_uint64),
-            ("ri_runnable_time", ctypes.c_uint64),
-            ("ri_flags", ctypes.c_uint64),
-            # Spare capacity so a future flavor bump can never overrun.
-            ("_ri_spare", ctypes.c_uint64 * 16),
-        ]
-
-    _LIBPROC = ctypes.CDLL("/usr/lib/libproc.dylib")
-    _LIBPROC.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
-    _LIBPROC.proc_pid_rusage.restype = ctypes.c_int
-    _LIBPROC.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
-    _LIBPROC.proc_listchildpids.restype = ctypes.c_int
-except (OSError, AttributeError):  # non-macOS or restricted
-    _LIBPROC = None
-
-
-def current_phys_footprint_bytes(usage: _RUsageV4) -> int:
-    """Return current footprint; the lifetime maximum is telemetry, not usage."""
-    current = int(getattr(usage, "ri_phys_footprint", 0) or 0)
-    if current > 0:
-        return current
-    return int(getattr(usage, "ri_resident_size", 0) or 0)
-
-
 def phys_footprint_mb(pid: int) -> float:
     """Current RSS + compressed + IOKit-mapped footprint."""
-    if _LIBPROC is None:
-        return 0.0
-    ru = _RUsageV4()
-    if _LIBPROC.proc_pid_rusage(int(pid), 4, ctypes.byref(ru)) != 0:
-        return 0.0
-    return current_phys_footprint_bytes(ru) / (1024 * 1024)
+    return darwin_phys_footprint_bytes(pid) / (1024 * 1024)
 
 
 def child_pids(root_pid: int, *, recursive: bool = True, max_children: int = 128) -> list[int]:
-    """Return child pids without relying on psutil's recursive ppid map."""
+    """Return observed descendants of one protected root."""
 
-    if sys.platform == "darwin" and _LIBPROC is not None:
-        seen: set[int] = set()
-        frontier = [int(root_pid)]
-        deadline = time.monotonic() + 1.0
-        while frontier and len(seen) < max_children and time.monotonic() < deadline:
-            parent = frontier.pop(0)
-            try:
-                buffer = (ctypes.c_int * max_children)()
-                count = int(
-                    _LIBPROC.proc_listchildpids(
-                        int(parent),
-                        ctypes.byref(buffer),
-                        ctypes.sizeof(buffer),
-                    )
-                )
-            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-                break
-            if count <= 0:
-                break
-            for raw_pid in list(buffer)[: min(count, max_children)]:
-                pid = int(raw_pid)
-                if pid <= 0:
-                    continue
-                if pid in seen:
-                    continue
-                seen.add(pid)
-                if recursive and len(seen) < max_children:
-                    frontier.append(pid)
-        return list(seen)
-
-    try:
-        return [child.pid for child in psutil.Process(root_pid).children(recursive=recursive)]
-    except psutil.Error:
+    table = _OBSERVER.process_table()
+    if not table.available:
         return []
+    direct = [process.pid for process in table.processes if process.ppid == root_pid]
+    if not recursive:
+        return direct[:max_children]
+    return [
+        process.pid
+        for process in table.processes
+        if root_pid in process.ancestor_pids
+    ][:max_children]
 
 
-def tree_rss_mb(root: psutil.Process) -> tuple[float, float, int, float]:
+def tree_rss_mb(root_pid: int) -> tuple[float, float, int, float]:
+    table = _OBSERVER.process_table()
+    if not table.available:
+        return 0.0, 0.0, 0, 0.0
+    root = next((process for process in table.processes if process.pid == root_pid), None)
+    if root is None:
+        return 0.0, 0.0, 0, 0.0
+    descendants = [
+        process for process in table.processes if root_pid in process.ancestor_pids
+    ]
     core = 0.0
     children = 0.0
     count = 1
     footprint = phys_footprint_mb(root.pid)
-    try:
-        core = root.memory_info().rss / (1024 * 1024)
-    except psutil.Error:
-        return 0.0, 0.0, 0, footprint
-    try:
-        kids = child_pids(root.pid, recursive=True)
-        count += len(kids)
-        for child_pid in kids:
-            try:
-                child = psutil.Process(child_pid)
-                children += child.memory_info().rss / (1024 * 1024)
-                footprint += phys_footprint_mb(child.pid)
-            except psutil.Error:
-                continue
-    except psutil.Error:
-        pass
+    core = root.rss_bytes / (1024 * 1024)
+    count += len(descendants)
+    for child in descendants:
+        children += child.rss_bytes / (1024 * 1024)
+        footprint += phys_footprint_mb(child.pid)
     return core, children, count, footprint
 
 
@@ -192,15 +116,18 @@ def write_ring(path: Path, entry: dict) -> None:
         pass  # The sentinel must never die from bookkeeping.
 
 
-def kill_tree(root: psutil.Process) -> list[int]:
+def kill_tree(root_pid: int) -> list[int]:
     killed: list[int] = []
     procs: list[psutil.Process] = []
-    for pid in child_pids(root.pid, recursive=True):
+    for pid in child_pids(root_pid, recursive=True):
         try:
             procs.append(psutil.Process(pid))
         except psutil.Error:
             continue
-    procs.append(root)
+    try:
+        procs.append(psutil.Process(root_pid))
+    except psutil.Error:
+        pass
     for proc in procs:
         try:
             proc.kill()  # SIGKILL: a suspended process cannot handle anything gentler.
@@ -241,9 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    try:
-        target = psutil.Process(args.pid)
-    except psutil.Error:
+    if _OBSERVER.process(args.pid) is None:
         return 0  # Already gone; nothing to guard.
 
     # Die quietly if our own parent re-execs; we re-attach by pid anyway.
@@ -272,8 +197,10 @@ def main(argv: list[str] | None = None) -> int:
     consecutive_over = 0
     # Bounded by the target's own lifetime: the sentinel exists exactly
     # as long as the process it guards.
-    while target.is_running():
-        core_mb, child_mb, proc_count, footprint_mb = tree_rss_mb(target)
+    while (target := _OBSERVER.process(args.pid)) is not None:
+        if target.status.lower() in {"dead", "zombie"}:
+            break
+        core_mb, child_mb, proc_count, footprint_mb = tree_rss_mb(args.pid)
         # memorystatus kills on footprint (RSS + compressed); guard on
         # whichever view is larger so compression cannot hide a runaway.
         managed = max(core_mb + child_mb, footprint_mb)
@@ -284,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
             "footprint_mb": round(footprint_mb, 1),
             "managed_mb": round(managed, 1),
             "procs": proc_count,
+            "observation_source": _OBSERVER.provenance.source.value,
+            "observation_scenario_id": _OBSERVER.provenance.scenario_id,
         }
         write_ring(args.ring, entry)
 
@@ -302,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
             lethal_mb=args.lethal_mb,
             consecutive_over=consecutive_over,
         ):
-            killed = kill_tree(target)
+            killed = kill_tree(args.pid)
             tombstone = {
                 "schema": "aura.memory_sentinel.tombstone.v1",
                 "reason": "external sentinel killed process tree at lethal ceiling",

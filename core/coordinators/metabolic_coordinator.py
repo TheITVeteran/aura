@@ -194,7 +194,7 @@ class MetabolicCoordinator:
         in the live/proof path without fixing the underlying load.
         """
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             mem = psutil.virtual_memory().percent
             disk = psutil.disk_usage("/").percent
             return mem > 90 or disk > 95
@@ -255,7 +255,7 @@ class MetabolicCoordinator:
             if volition > 0:
                 # Level 1-3 allows higher thresholds (95% mem instead of 90%)
                 try:
-                    import psutil
+                    from core.runtime import resource_psutil as psutil
                     mem = psutil.virtual_memory().percent
                     if mem > (90 + volition): # Level 3 allows up to 93%
                          logger.warning("Metabolism: Throttling. System saturated.")
@@ -448,7 +448,7 @@ class MetabolicCoordinator:
             if orch.status.cycle_count % 1000 == 0:
                 logger.info("Alive: Cycle %s", orch.status.cycle_count)
                 try:
-                    import psutil
+                    from core.runtime import resource_psutil as psutil
                     mem_percent = psutil.virtual_memory().percent
                     # Use status.volition_level (likely intended) instead of undefined variable
                     volition = getattr(orch.status, 'volition_level', 0)
@@ -462,7 +462,7 @@ class MetabolicCoordinator:
                     logger.debug("Dependency missing for memory check, skipping RL training: %s", e)
             if orch.status.cycle_count % 5000 == 0:
                 try:
-                    import psutil
+                    from core.runtime import resource_psutil as psutil
                     mem_percent = psutil.virtual_memory().percent
                     volition = getattr(orch.status, 'volition_level', 0)
                     # Level 3 required for background Self-Update
@@ -1121,7 +1121,7 @@ class MetabolicCoordinator:
         # ZENITH LOCKDOWN: Periodic Garbage Collection
         if orch.status.cycle_count % 500 == 0:
             try:
-                import psutil
+                from core.runtime import resource_psutil as psutil
                 mem_percent = psutil.virtual_memory().percent
                 # Proactive GC if RAM > 85% or every 30s-ish
                 if mem_percent > 85 or (time.time() - self._last_gc_time > 30):

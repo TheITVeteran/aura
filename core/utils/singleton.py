@@ -10,6 +10,7 @@ from typing import Any
 
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import get_resource_observer
 
 logger = logging.getLogger("Aura.Utils.Singleton")
 _PROCESS_METADATA_ERRORS = (AttributeError, ImportError, OSError, RuntimeError, ValueError)
@@ -88,14 +89,16 @@ def _current_process_metadata(lock_name: str, pid: int) -> dict[str, Any]:
         "cmdline": list(sys.argv),
     }
     try:
-        import psutil
-
-        proc = psutil.Process(pid)
+        process = get_resource_observer().process(pid)
+        if process is None:
+            raise RuntimeError("process_identity_unavailable")
         metadata.update(
             {
-                "create_time": float(proc.create_time()),
-                "ppid": int(proc.ppid()),
-                "username": str(proc.username()),
+                "create_time": process.create_time,
+                "ppid": process.ppid,
+                "username": process.username,
+                "observation_source": process.provenance.source.value,
+                "observation_scenario_id": process.provenance.scenario_id,
             }
         )
     except _PROCESS_METADATA_ERRORS as exc:  # pragma: no cover - optional diagnostic metadata

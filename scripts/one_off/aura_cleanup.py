@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.runtime.resource_observation import get_resource_observer  # noqa: E402
 from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 from core.utils.singleton import read_instance_lock_metadata, read_instance_lock_pid  # noqa: E402
 
@@ -44,31 +45,20 @@ def _verified_live_runtime_pid() -> int | None:
     pid = read_instance_lock_pid("orchestrator")
     if not pid or pid <= 0:
         return None
-    try:
-        import psutil
-    except ImportError:
+    process = get_resource_observer().process(pid)
+    if process is None or process.status.lower() in {"dead", "zombie"}:
         return None
+    command = " ".join(process.cmdline).lower()
+    metadata = read_instance_lock_metadata("orchestrator")
+    expected_cwd = str(metadata.get("cwd") or "")
     try:
-        proc = psutil.Process(pid)
-        if not proc.is_running() or proc.status() == psutil.STATUS_ZOMBIE:
-            return None
-        command = " ".join(proc.cmdline() or []).lower()
-        metadata = read_instance_lock_metadata("orchestrator")
-        expected_cwd = str(metadata.get("cwd") or "")
-        cwd_matches = not expected_cwd or Path(proc.cwd()).resolve() == Path(expected_cwd).resolve()
-        if cwd_matches and "aura_main.py" in command:
-            return pid
-    except (
-        OSError,
-        ProcessLookupError,
-        RuntimeError,
-        TypeError,
-        ValueError,
-        psutil.AccessDenied,
-        psutil.NoSuchProcess,
-        psutil.ZombieProcess,
-    ):
-        return None
+        cwd_matches = not expected_cwd or Path(process.cwd).resolve() == Path(
+            expected_cwd
+        ).resolve()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        cwd_matches = False
+    if cwd_matches and "aura_main.py" in command:
+        return pid
     return None
 
 
@@ -100,9 +90,12 @@ def _kill_stale_processes() -> None:
 def _is_native_launcher_process(proc) -> bool:
     try:
         info = getattr(proc, "info", {}) or {}
-        exe = str(info.get("exe") or "")
-        cmdline = [str(item) for item in (info.get("cmdline") or [])]
-        name = str(info.get("name") or "")
+        exe = str(info.get("exe") or getattr(proc, "exe", "") or "")
+        cmdline = [
+            str(item)
+            for item in (info.get("cmdline") or getattr(proc, "cmdline", ()) or ())
+        ]
+        name = str(info.get("name") or getattr(proc, "name", "") or "")
     except (AttributeError, TypeError, ValueError):
         return False
     first_arg = cmdline[0] if cmdline else ""
@@ -116,10 +109,6 @@ def _is_native_launcher_process(proc) -> bool:
 def _kill_stale_native_launchers() -> None:
     """Terminate stale native launchers without killing the caller's launcher UI."""
 
-    try:
-        import psutil
-    except ImportError:
-        return
     if not _truthy_env("AURA_CLEANUP_FORCE") and _verified_live_runtime_pid() is not None:
         logger.info(
             "Verified live Aura runtime detected; preserving native Aura.app launcher bridge."
@@ -130,27 +119,40 @@ def _kill_stale_native_launchers() -> None:
     parent_pid = os.getppid()
     grace_s = _recent_grace_seconds()
     now = time.time()
+    table = get_resource_observer().process_table()
+    if not table.available:
+        logger.warning(
+            "Process table unavailable; preserving native launchers: %s",
+            table.error or "unknown error",
+        )
+        return
+    candidate_pids: list[int] = []
+    for process in table.processes:
+        pid = process.pid
+        if pid in {current_pid, parent_pid}:
+            continue
+        if not _is_native_launcher_process(process):
+            continue
+        age_s = now - process.create_time
+        if not _truthy_env("AURA_CLEANUP_FORCE") and age_s < grace_s:
+            logger.info(
+                "Preserving recent Aura native launcher PID %s (age %.1fs < %.1fs).",
+                pid,
+                age_s,
+                grace_s,
+            )
+            continue
+        candidate_pids.append(pid)
+
+    try:
+        import psutil
+    except ImportError:
+        return
     candidates = []
-    for proc in psutil.process_iter(["pid", "exe", "cmdline", "name"]):
+    for pid in candidate_pids:
         try:
-            pid = int(proc.info.get("pid") or proc.pid)
-            if pid in {current_pid, parent_pid}:
-                continue
-            if _is_native_launcher_process(proc):
-                try:
-                    age_s = now - float(proc.create_time())
-                except (psutil.Error, OSError, TypeError, ValueError):
-                    age_s = grace_s + 1.0
-                if not _truthy_env("AURA_CLEANUP_FORCE") and age_s < grace_s:
-                    logger.info(
-                        "Preserving recent Aura native launcher PID %s (age %.1fs < %.1fs).",
-                        pid,
-                        age_s,
-                        grace_s,
-                    )
-                    continue
-                candidates.append(proc)
-        except (psutil.Error, OSError, TypeError, ValueError):
+            candidates.append(psutil.Process(pid))
+        except psutil.Error:
             continue
 
     for proc in candidates:

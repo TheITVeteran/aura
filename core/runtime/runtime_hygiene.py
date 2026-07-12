@@ -20,6 +20,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
+from core.runtime.resource_observation import (
+    ResourceObserver,
+    get_resource_observer,
+)
 from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.utils.task_tracker import (
     begin_shutdown_task_creation_scope,
@@ -91,8 +96,6 @@ def _env_int(name: str, default: int, *, low: int, high: int) -> int:
 def _declared_float(name: str, default: float, description: str) -> float:
     """Read a float knob through the typed flag layer (C1 discipline)."""
     try:
-        from core.runtime.flags import FlagKind, declare
-
         return float(
             declare(
                 name,
@@ -108,14 +111,18 @@ def _declared_float(name: str, default: float, description: str) -> float:
 
 def _process_cmdline(proc: Any) -> list[str]:
     try:
-        return [str(part) for part in (proc.cmdline() or [])]
+        value = getattr(proc, "cmdline", ())
+        raw = value() if callable(value) else value
+        return [str(part) for part in (raw or [])]
     except _PROCESS_INTROSPECTION_ERRORS:
         return []
 
 
 def _process_name(proc: Any) -> str:
     try:
-        return str(proc.name() or "")
+        value = getattr(proc, "name", "")
+        raw = value() if callable(value) else value
+        return str(raw or "")
     except _PROCESS_INTROSPECTION_ERRORS:
         return ""
 
@@ -161,8 +168,10 @@ def _process_pid(proc: Any) -> int:
 
 def _process_ppid(proc: Any) -> int:
     try:
-        if hasattr(proc, "ppid"):
-            return int(proc.ppid() or 0)
+        value = getattr(proc, "ppid", 0)
+        if value:
+            raw = value() if callable(value) else value
+            return int(raw or 0)
     except _PROCESS_INTROSPECTION_ERRORS:
         return 0
     info = getattr(proc, "info", None) or {}
@@ -180,6 +189,8 @@ class MemorySample:
     task_count: int
     thread_count: int
     child_process_count: int
+    observation_source: str = "unavailable"
+    observation_scenario_id: str = ""
 
 
 @dataclass
@@ -239,7 +250,8 @@ class ShutdownResourceRecord:
 class RuntimeHygieneManager:
     """Tracks tasks, threads, child processes, and memory growth across the runtime."""
 
-    def __init__(self):
+    def __init__(self, *, observer: ResourceObserver | None = None):
+        self._observer = observer
         self._running = False
         self._thread_records: dict[int, ThreadRecord] = {}
         self._thread_refs: dict[int, threading.Thread] = {}
@@ -309,6 +321,10 @@ class RuntimeHygieneManager:
         self._original_new_event_loop = None
 
         self._proc = psutil.Process(os.getpid()) if _HAS_PSUTIL else None
+
+    @property
+    def resource_observer(self) -> ResourceObserver:
+        return self._observer or get_resource_observer()
 
     async def start(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
         try:
@@ -563,13 +579,9 @@ class RuntimeHygieneManager:
         self._stop_lock = asyncio.Lock()
 
     def capture_sample(self) -> MemorySample:
-        rss_bytes = 0
-        if self._proc is not None:
-            try:
-                rss_bytes = int(self._proc.memory_info().rss)
-            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('runtime_hygiene', exc)
-                logger.debug("RuntimeHygiene: failed to read RSS: %s", exc)
+        memory = self.resource_observer.memory()
+        rss_bytes = int(memory.process_rss_bytes)
+        provenance = memory.provenance
         traced_bytes = 0
         try:
             if tracemalloc.is_tracing():
@@ -586,6 +598,8 @@ class RuntimeHygieneManager:
             task_count=int(task_stats.get("active", 0)),
             thread_count=len(threading.enumerate()),
             child_process_count=self._count_child_processes(),
+            observation_source=provenance.source.value,
+            observation_scenario_id=provenance.scenario_id,
         )
         self._samples.append(sample)
         return sample
@@ -1007,27 +1021,17 @@ class RuntimeHygieneManager:
             logger.debug("RuntimeHygiene: tracemalloc start failed: %s", exc)
 
     def _adopt_active_child_processes(self) -> None:
-        if self._proc is None:
-            return
         try:
-            children = list(self._proc.children(recursive=True))
+            parent_pid = int(os.getpid())
+            children = [
+                process
+                for process in self.resource_observer.processes()
+                if process.ppid == parent_pid or parent_pid in process.ancestor_pids
+            ]
         except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
             record_degradation('runtime_hygiene', exc)
             logger.debug("RuntimeHygiene: existing child adoption skipped: %s", exc)
             return
-
-        if not children and _HAS_PSUTIL:
-            try:
-                parent_pid = int(os.getpid())
-                children = [
-                    proc
-                    for proc in psutil.process_iter(["pid", "ppid", "name", "cmdline", "status"])
-                    if int((proc.info or {}).get("ppid") or 0) == parent_pid
-                ]
-            except _PROCESS_INTROSPECTION_ERRORS + (ConnectionError, TimeoutError) as exc:
-                record_degradation('runtime_hygiene', exc)
-                logger.debug("RuntimeHygiene: process_iter child adoption skipped: %s", exc)
-                children = []
 
         tracked_pids = {
             int(record.pid)
@@ -1054,7 +1058,11 @@ class RuntimeHygieneManager:
                 command=" ".join(str(part) for part in command_parts)[:240] or name,
                 pid=pid or None,
             )
-            self._process_refs[key] = child
+            if self.resource_observer.provenance.host_observed and _HAS_PSUTIL:
+                try:
+                    self._process_refs[key] = psutil.Process(pid)
+                except _PROCESS_INTROSPECTION_ERRORS:
+                    pass
             if pid:
                 tracked_pids.add(pid)
 
@@ -1253,46 +1261,35 @@ class RuntimeHygieneManager:
         }
 
     def _native_resource_summary(self) -> dict[str, Any]:
-        if self._proc is None:
-            return {
-                "available": False,
-                "open_file_count": 0,
-                "connection_count": 0,
-                "listening_socket_count": 0,
-                "open_files": [],
-                "connections": [],
-            }
-        try:
-            open_files = list(self._proc.open_files())
-        except _PROCESS_INTROSPECTION_ERRORS:
-            open_files = []
-        try:
-            connections = list(self._proc.net_connections(kind="all"))
-        except _PROCESS_INTROSPECTION_ERRORS:
-            connections = []
+        observer = self.resource_observer
+        open_files = list(observer.open_files(pid=os.getpid()))
+        connections = [
+            connection
+            for connection in observer.connections(kind="all")
+            if connection.pid == os.getpid()
+        ]
         owned_connections = [
             connection
             for connection in connections
-            if int(getattr(connection, "fd", -1)) >= 0
+            if int(connection.fd) >= 0
         ]
-
-        def _address(value: Any) -> object:
-            if not value:
-                return None
-            if hasattr(value, "ip") and hasattr(value, "port"):
-                return {"host": str(value.ip), "port": int(value.port)}
-            if isinstance(value, tuple) and len(value) >= 2:
-                return {"host": str(value[0]), "port": int(value[1])}
-            return str(value)
 
         connection_samples = [
             {
-                "fd": int(getattr(connection, "fd", -1)),
-                "family": str(getattr(connection, "family", "")),
-                "type": str(getattr(connection, "type", "")),
-                "status": str(getattr(connection, "status", "")),
-                "local": _address(getattr(connection, "laddr", None)),
-                "remote": _address(getattr(connection, "raddr", None)),
+                "fd": connection.fd,
+                "family": connection.family,
+                "type": connection.socket_type,
+                "status": connection.status,
+                "local": (
+                    {"host": connection.local_host, "port": connection.local_port}
+                    if connection.local_port
+                    else None
+                ),
+                "remote": (
+                    {"host": connection.remote_host, "port": connection.remote_port}
+                    if connection.remote_port
+                    else None
+                ),
             }
             for connection in owned_connections[:20]
         ]
@@ -1303,10 +1300,12 @@ class RuntimeHygieneManager:
             "listening_socket_count": sum(
                 1
                 for connection in owned_connections
-                if str(getattr(connection, "status", "")).upper() == "LISTEN"
+                if connection.status.upper() == "LISTEN"
             ),
-            "open_files": [str(getattr(item, "path", "")) for item in open_files[:20]],
+            "open_files": open_files[:20],
             "connections": connection_samples,
+            "observation_source": observer.provenance.source.value,
+            "observation_scenario_id": observer.provenance.scenario_id,
         }
 
     def register_process_handle(
@@ -1523,13 +1522,18 @@ class RuntimeHygieneManager:
         rogue_children = 0
         owned_descendants = 0
         rogue_samples: list[dict[str, Any]] = []
-        if self._proc is not None:
-            try:
-                active_children = list(self._proc.children(recursive=True))
-            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
-                record_degradation('runtime_hygiene', exc)
-                logger.debug("RuntimeHygiene: child process scan failed: %s", exc)
-                active_children = []
+        try:
+            parent_pid = int(os.getpid())
+            active_children = [
+                process
+                for process in self.resource_observer.processes()
+                if process.ppid == parent_pid or parent_pid in process.ancestor_pids
+            ]
+        except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
+            record_degradation('runtime_hygiene', exc)
+            logger.debug("RuntimeHygiene: child process scan failed: %s", exc)
+            active_children = []
+        if active_children:
             child_by_pid = {
                 pid: child
                 for child in active_children
@@ -1723,10 +1727,13 @@ class RuntimeHygieneManager:
         return active
 
     def _count_child_processes(self) -> int:
-        if self._proc is None:
-            return 0
         try:
-            return len(self._proc.children(recursive=True))
+            parent_pid = int(os.getpid())
+            return sum(
+                1
+                for process in self.resource_observer.processes()
+                if process.ppid == parent_pid or parent_pid in process.ancestor_pids
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
             record_degradation('runtime_hygiene', exc)
             logger.debug("RuntimeHygiene: child process scan failed: %s", exc)

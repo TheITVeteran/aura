@@ -1,15 +1,14 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
-from core.runtime.atomic_writer import async_atomic_write_text, atomic_write_text
 
 import asyncio
 import logging
-import os
-import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List
+
+from core.runtime.atomic_writer import async_atomic_write_text
+from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import get_resource_observer
 
 logger = logging.getLogger("Aura.StartupValidator")
 
@@ -227,17 +226,22 @@ class StartupValidator:
 
     async def _check_sys_01(self, c: ValidationCheck):
         try:
-            import psutil
-            mem = psutil.virtual_memory()
-            if mem.available < 500 * 1024 * 1024: # 500MB
+            memory = get_resource_observer().memory()
+            if not memory.available:
                 c.passed = False
-                c.message = f"Low memory available: {mem.available // 1024 // 1024}MB"
+                c.message = f"Memory observation unavailable: {memory.error or 'unknown error'}"
+            elif memory.available_bytes < 500 * 1024 * 1024:  # 500MB
+                c.passed = False
+                c.message = f"Low memory available: {memory.available_bytes // 1024 // 1024}MB"
             else:
                 c.passed = True
-                c.message = f"Memory OK: {mem.available // 1024 // 1024}MB available."
+                c.message = (
+                    f"Memory OK: {memory.available_bytes // 1024 // 1024}MB available "
+                    f"({memory.provenance.source.value})."
+                )
         except (ImportError, AttributeError, RuntimeError):
-            c.passed = True
-            c.message = "psutil missing, skipping mem check."
+            c.passed = False
+            c.message = "Memory observation failed."
 
     async def _check_sys_02(self, c: ValidationCheck):
         try:
@@ -255,22 +259,25 @@ class StartupValidator:
     async def _check_sys_03(self, c: ValidationCheck):
         """Scans for and reaps orphaned mlx_worker processes."""
         try:
-            import psutil
             import os
             import signal
-            
+
+            table = get_resource_observer().process_table()
+            if not table.available:
+                raise RuntimeError(f"process_table_unavailable:{table.error}")
+
             reaped_count = 0
-            for proc in psutil.process_iter(['pid', 'ppid', 'name', 'cmdline']):
+            for process in table.processes:
                 try:
-                    cmdline = " ".join(proc.info['cmdline'] or [])
+                    cmdline = " ".join(process.cmdline)
                     # Orphaned if PPID is 1 or parent PID is not running
-                    is_orphaned = proc.info['ppid'] == 1
+                    is_orphaned = process.ppid == 1
                     
                     if "mlx_worker" in cmdline and is_orphaned:
-                        logger.warning("💉 [REAPER] Reaping orphaned MLX worker (PID: %d)", proc.info['pid'])
-                        os.kill(proc.info['pid'], signal.SIGKILL)
+                        logger.warning("💉 [REAPER] Reaping orphaned MLX worker (PID: %d)", process.pid)
+                        os.kill(process.pid, signal.SIGKILL)
                         reaped_count += 1
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                except (ProcessLookupError, PermissionError):
                     continue
             
             c.passed = True
@@ -281,7 +288,7 @@ class StartupValidator:
                 
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('startup_validator', e)
-            c.passed = True # Non-critical
+            c.passed = False
             c.message = f"Reaper skipped: {e}"
 
     # ── UI ────────────────────────────────────────────────────────────────────

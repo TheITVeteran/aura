@@ -20,7 +20,6 @@ from datetime import UTC, datetime
 from typing import Any, cast
 
 import fastapi.responses as fastapi_responses
-import psutil
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -28,6 +27,7 @@ from core.config import config
 from core.container import ServiceContainer
 from core.health.boot_status import build_boot_health_snapshot
 from core.health.conversation_lane import conversation_lane_is_busy
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.runtime.health_contract import (
     REQUIRED_HEALTH_PROBE_GROUPS,

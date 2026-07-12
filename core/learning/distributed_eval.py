@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
-import os
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import get_resource_observer
 
 logger = logging.getLogger("Aura.DistributedEval")
 
@@ -46,7 +46,7 @@ class DistributedEvalResult:
 
 def _available_memory_mb() -> float | None:
     try:
-        import psutil  # type: ignore
+        from core.runtime import resource_psutil as psutil
 
         return float(psutil.virtual_memory().available / (1024 * 1024))
     except (ImportError, AttributeError, RuntimeError) as exc:
@@ -56,7 +56,7 @@ def _available_memory_mb() -> float | None:
 
 
 def safe_worker_count(config: DistributedEvalConfig) -> int:
-    cpus = os.cpu_count() or 1
+    cpus = max(1, int(get_resource_observer().compute().cpu_count))
     cpu_cap = max(1, cpus - 1) if config.preserve_one_core else max(1, cpus)
     requested = max(1, int(config.requested_workers))
     cap = max(1, min(int(config.max_workers), cpu_cap, requested))

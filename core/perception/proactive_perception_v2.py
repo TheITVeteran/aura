@@ -1,11 +1,9 @@
 import asyncio
 import logging
 import time
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import numpy as np
-import psutil
 from pydantic import BaseModel, ConfigDict
 
 from core.container import ServiceContainer
@@ -13,6 +11,7 @@ from core.media.safe_imports import cv2_main_process_blocked
 from core.runtime.boot_safety import main_process_camera_policy
 from core.runtime.errors import record_degradation
 from core.runtime.permission_gates import camera_allowed
+from core.runtime.resource_observation import get_resource_observer
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.ProactivePerception")
@@ -107,8 +106,12 @@ class ProactivePerceptionV2:
                     await asyncio.to_thread(self.cap.set, cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
                 # 1. Throttle if battery is low
-                battery = psutil.sensors_battery()
-                if battery and battery.percent < self.config.battery_critical_level and not battery.power_plugged:
+                power = get_resource_observer().power()
+                if (
+                    power.available
+                    and power.battery_percent < self.config.battery_critical_level
+                    and not power.plugged
+                ):
                     await asyncio.sleep(self.config.camera_interval * 4)
                     continue
 

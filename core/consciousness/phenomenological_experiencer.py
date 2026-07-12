@@ -1472,7 +1472,7 @@ class PhenomenologicalExperiencer:
 
                 under_memory_pressure = False
                 try:
-                    import psutil
+                    from core.runtime import resource_psutil as psutil
 
                     under_memory_pressure = (
                         psutil.virtual_memory().percent >= HIGH_MEMORY_PRESSURE_PCT

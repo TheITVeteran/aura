@@ -334,7 +334,7 @@ def _collect_system_state() -> SystemState:
     state.timestamp = time.time()
 
     try:
-        import psutil
+        from core.runtime import resource_psutil as psutil
         state.cpu_percent = psutil.cpu_percent(interval=0)
         mem = psutil.virtual_memory()
         state.memory_percent = mem.percent

@@ -61,6 +61,7 @@ def test_reading_is_cached(monkeypatch):
     assert len(calls) == 1
 
 
+@pytest.mark.host_observation
 def test_live_reading_on_this_host_is_not_blind():
     """On macOS or Linux, at least one real source must answer."""
     reading = thermal_state()
@@ -68,25 +69,19 @@ def test_live_reading_on_this_host_is_not_blind():
     assert not reading.blind, f"host has no working thermal source: {reading}"
 
 
-def test_background_policy_defers_on_serious_heat(monkeypatch):
+def test_background_policy_defers_on_serious_heat(resource_observer):
     from core.runtime import background_policy
 
-    monkeypatch.setattr(
-        thermal, "_read_nsprocessinfo", lambda: ThermalReading(3, "nsprocessinfo")
-    )
-    reset_thermal_cache()
+    resource_observer.configure_thermal(3, provider="nsprocessinfo")
     reason = background_policy._read_compute_pressure_reason()
     assert reason.startswith("thermal_pressure_level_3"), (
         f"critical heat must gate background work, got {reason!r}"
     )
 
 
-def test_background_policy_allows_nominal_heat(monkeypatch):
+def test_background_policy_allows_nominal_heat(resource_observer):
     from core.runtime import background_policy
 
-    monkeypatch.setattr(
-        thermal, "_read_nsprocessinfo", lambda: ThermalReading(0, "nsprocessinfo")
-    )
-    reset_thermal_cache()
+    resource_observer.configure_thermal(0, provider="nsprocessinfo")
     reason = background_policy._read_compute_pressure_reason()
     assert not reason.startswith("thermal"), f"nominal heat must not gate: {reason!r}"

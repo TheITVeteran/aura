@@ -20,8 +20,8 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from core.runtime.base_module import AuraBaseModule
 from core.container import ServiceContainer
+from core.runtime.base_module import AuraBaseModule
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.utils.task_tracker import get_task_tracker
 
@@ -389,7 +389,7 @@ class AgentDelegator(AuraBaseModule):
 
     async def _repair_scavenger_failure(self, error: BaseException) -> None:
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
 
             if psutil.virtual_memory().percent < 90:
                 from core.runtime.self_healing import get_healer

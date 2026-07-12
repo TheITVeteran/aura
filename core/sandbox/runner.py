@@ -217,13 +217,11 @@ async def _communicate_process(
 
 def _process_rss_bytes(pid: int) -> int | None:
     try:
-        import psutil
-    except ImportError as exc:
-        record_degradation("sandbox_runner", exc)
-        return None
-    try:
-        return int(psutil.Process(pid).memory_info().rss)
-    except (psutil.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
+        from core.runtime.resource_observation import get_resource_observer
+
+        process = get_resource_observer().process(pid)
+        return int(process.rss_bytes) if process is not None else None
+    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation("sandbox_runner", exc)
         return None
 

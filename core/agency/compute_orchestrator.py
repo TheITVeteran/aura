@@ -243,7 +243,7 @@ class ComputeOrchestrator:
 
     async def _sample_resources(self) -> tuple[float, float, float | None]:
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
         except ImportError as exc:
             self._last_resource_sample_error = f"{type(exc).__name__}: {exc}"
             _record_compute_degradation(

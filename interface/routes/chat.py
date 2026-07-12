@@ -23,7 +23,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import psutil
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -32,6 +31,7 @@ from core.brain.live_mind_contract import normalize_live_mind_surface_control_re
 from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.container import ServiceContainer
 from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
+from core.runtime import resource_psutil as psutil
 from core.runtime.desktop_objective_intent import (
     looks_like_desktop_objective as _shared_looks_like_desktop_objective,
 )
@@ -9458,8 +9458,7 @@ def _build_self_diagnostic_reply(user_message: str) -> str:
 
     ram_pct = None
     try:
-        import psutil
-
+        from core.runtime import resource_psutil as psutil
         ram_pct = float(psutil.virtual_memory().percent or 0.0)
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation('chat', exc)

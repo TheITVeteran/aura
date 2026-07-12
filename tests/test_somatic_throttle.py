@@ -5,8 +5,6 @@ Verifies parameter cuts occur under real or coupled hardware stress.
 from pathlib import Path
 from types import SimpleNamespace
 
-import psutil
-
 import core.brain.llm.somatic_throttle as throttle_module
 from core.brain.llm.somatic_throttle import SomaticComputeSentinel
 
@@ -15,21 +13,38 @@ def _governor(throttle: float = 1.0) -> SimpleNamespace:
     return SimpleNamespace(get_throttle_factor=lambda: throttle)
 
 
-def _install_probe_readings(monkeypatch, *, arousal: float, cpu_percent: float, memory_percent: float):
+def _install_probe_readings(
+    monkeypatch,
+    resource_observer,
+    *,
+    arousal: float,
+    cpu_percent: float,
+    memory_percent: float,
+):
     affect = SimpleNamespace(current=SimpleNamespace(arousal=arousal))
-    monkeypatch.setattr(throttle_module, "resolve_affect_engine", lambda: affect)
+    monkeypatch.setattr(
+        throttle_module,
+        "resolve_affect_engine",
+        lambda default=None: affect,
+    )
     monkeypatch.setattr(
         "research.protocols.resource_quotas.get_compute_governor",
         lambda: _governor(),
     )
-    monkeypatch.setattr(psutil, "cpu_percent", lambda interval=None: cpu_percent)
-    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(percent=memory_percent))
+    resource_observer.configure_compute(cpu_percent=cpu_percent)
+    resource_observer.configure_memory(percent=memory_percent)
     return affect
 
 
-def test_somatic_throttle_normal(monkeypatch):
+def test_somatic_throttle_normal(monkeypatch, resource_observer):
     # Normal/unstressed parameters remain unchanged.
-    _install_probe_readings(monkeypatch, arousal=0.2, cpu_percent=15.0, memory_percent=40.0)
+    _install_probe_readings(
+        monkeypatch,
+        resource_observer,
+        arousal=0.2,
+        cpu_percent=15.0,
+        memory_percent=40.0,
+    )
     sentinel = SomaticComputeSentinel()
     opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_depth": 0.8}
     adjusted = sentinel.adjust_generation_options(opts.copy())
@@ -39,9 +54,15 @@ def test_somatic_throttle_normal(monkeypatch):
     assert adjusted["recurrent_depth"] == 0.8
 
 
-def test_somatic_throttle_resource_stressed(monkeypatch):
+def test_somatic_throttle_resource_stressed(monkeypatch, resource_observer):
     # Stressed hardware caps max_tokens and adjusts temp/lane depth.
-    _install_probe_readings(monkeypatch, arousal=0.2, cpu_percent=50.0, memory_percent=89.0)
+    _install_probe_readings(
+        monkeypatch,
+        resource_observer,
+        arousal=0.2,
+        cpu_percent=50.0,
+        memory_percent=89.0,
+    )
     sentinel = SomaticComputeSentinel()
     opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_depth": 0.8}
     adjusted = sentinel.adjust_generation_options(opts.copy())
@@ -51,9 +72,15 @@ def test_somatic_throttle_resource_stressed(monkeypatch):
     assert adjusted["recurrent_depth"] == 0.4
 
 
-def test_somatic_throttle_critical(monkeypatch):
+def test_somatic_throttle_critical(monkeypatch, resource_observer):
     # Critical parameters restrict max_tokens to 128.
-    _install_probe_readings(monkeypatch, arousal=0.95, cpu_percent=95.0, memory_percent=95.0)
+    _install_probe_readings(
+        monkeypatch,
+        resource_observer,
+        arousal=0.95,
+        cpu_percent=95.0,
+        memory_percent=95.0,
+    )
     sentinel = SomaticComputeSentinel()
     opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_lane_depth": 0.8}
     adjusted = sentinel.adjust_generation_options(opts.copy())
@@ -63,8 +90,17 @@ def test_somatic_throttle_critical(monkeypatch):
     assert adjusted["recurrent_lane_depth"] == 0.2
 
 
-def test_somatic_throttle_high_arousal_without_resource_pressure_is_not_critical(monkeypatch):
-    _install_probe_readings(monkeypatch, arousal=0.97, cpu_percent=12.0, memory_percent=60.0)
+def test_somatic_throttle_high_arousal_without_resource_pressure_is_not_critical(
+    monkeypatch,
+    resource_observer,
+):
+    _install_probe_readings(
+        monkeypatch,
+        resource_observer,
+        arousal=0.97,
+        cpu_percent=12.0,
+        memory_percent=60.0,
+    )
     sentinel = SomaticComputeSentinel()
     opts = {"max_tokens": 512, "temperature": 0.7, "recurrent_depth": 0.8}
     adjusted = sentinel.adjust_generation_options(opts.copy())
@@ -101,7 +137,7 @@ def test_mlx_generation_throttle_hook_uses_typed_boundary():
     assert "continued generation without somatic parameter throttle" in throttle_block
 
 
-def test_somatic_throttle_records_expected_probe_failures(monkeypatch):
+def test_somatic_throttle_records_expected_probe_failures(monkeypatch, resource_observer):
     records = []
 
     class FailingAffectResolver:
@@ -124,8 +160,8 @@ def test_somatic_throttle_records_expected_probe_failures(monkeypatch):
         "research.protocols.resource_quotas.get_compute_governor",
         lambda: _governor(),
     )
-    monkeypatch.setattr(psutil, "cpu_percent", lambda interval=None: 5.0)
-    monkeypatch.setattr(psutil, "virtual_memory", lambda: SimpleNamespace(percent=20.0))
+    resource_observer.configure_compute(cpu_percent=5.0)
+    resource_observer.configure_memory(percent=20.0)
 
     adjusted = SomaticComputeSentinel().adjust_generation_options({"max_tokens": 512})
 

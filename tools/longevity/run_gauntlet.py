@@ -34,10 +34,20 @@ import asyncio
 import csv
 import json
 import logging
+import sys
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.resource_observation import (  # noqa: E402
+    ResourceObserver,
+    get_resource_observer,
+)
 
 logger = logging.getLogger("Aura.Longevity")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -99,19 +109,22 @@ def _write_summary(run_dir: Path, *, run_id: str, profile_name: str, duration_s:
             fh.write(f"unique continuity hashes: {len(unique_hashes)}\n")
 
 
-async def _tick_snapshot(run_dir: Path) -> dict[str, Any]:
+async def _tick_snapshot(
+    run_dir: Path,
+    *,
+    observer: ResourceObserver | None = None,
+) -> dict[str, Any]:
     out: dict[str, Any] = {"when": time.time()}
-    try:
-        import psutil
-
-        out["cpu_pct"] = psutil.cpu_percent(interval=None)
-        out["ram_pct"] = psutil.virtual_memory().percent
-        try:
-            out["disk_pct"] = psutil.disk_usage("/").percent
-        except OSError:
-            out["disk_pct"] = 0.0
-    except ImportError:
-        out["resource_probe"] = "psutil_unavailable"
+    observer = observer or get_resource_observer()
+    compute = observer.compute()
+    memory = observer.memory()
+    disk = observer.disk("/")
+    out["resource_observation"] = observer.provenance.to_dict()
+    out["cpu_pct"] = compute.cpu_percent if compute.available else 100.0
+    out["ram_pct"] = memory.percent if memory.available else 100.0
+    out["disk_pct"] = disk.percent if disk.available else 100.0
+    if not (compute.available and memory.available and disk.available):
+        out["resource_probe"] = "observation_unavailable"
     try:
         from core.identity.self_object import get_self
 

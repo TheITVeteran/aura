@@ -547,25 +547,22 @@ class TerminalFallbackChat:
     def _is_main_ui_open(self) -> bool:
         """True if the main Aura UI / WebSocket server process is running."""
         try:
-            import psutil
+            from core.runtime.resource_observation import get_resource_observer
 
-            for proc in psutil.process_iter(["cmdline"]):
-                try:
-                    cmdline = " ".join(proc.info.get("cmdline") or [])
-                    if any(
-                        kw in cmdline
-                        for kw in [
-                            "aura_main",
-                            "aura.server",
-                            "uvicorn",
-                            "gunicorn",
-                            "Aura.app",
-                            "aura_app",
-                        ]
-                    ):
-                        return True
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
+            for process in get_resource_observer().processes():
+                cmdline = " ".join(process.cmdline)
+                if any(
+                    keyword in cmdline
+                    for keyword in [
+                        "aura_main",
+                        "aura.server",
+                        "uvicorn",
+                        "gunicorn",
+                        "Aura.app",
+                        "aura_app",
+                    ]
+                ):
+                    return True
         except (ImportError, AttributeError, RuntimeError) as exc:
             _record_terminal_degradation(
                 exc,

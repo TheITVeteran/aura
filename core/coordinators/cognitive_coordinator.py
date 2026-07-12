@@ -314,7 +314,7 @@ class CognitiveCoordinator:
         if origin != "user":
             return False
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             mem = psutil.virtual_memory()
             if mem.percent > 85 and len(message) < 100:
                 logger.info("⚡ VORTEX OVERRIDE: High Memory (%s%%) - Forcing Fast-Path for performance.", mem.percent)

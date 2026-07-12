@@ -31,16 +31,10 @@ import hashlib
 import json
 import os
 import random
-import shutil
 import sys
 import time
 from pathlib import Path
 from typing import Any
-
-try:
-    import psutil
-except ImportError:  # pragma: no cover - production requirements include psutil.
-    psutil = None  # type: ignore[assignment]
 
 TRAINING_DIR = Path(__file__).parent
 REPO_DIR = TRAINING_DIR.parent
@@ -50,6 +44,10 @@ if str(REPO_DIR) not in sys.path:
 from core.runtime.model_lane_control import (  # noqa: E402
     LaneClaim,
     estimate_model_job_footprint_gb,
+)
+from core.runtime.resource_observation import (  # noqa: E402
+    ResourceObserver,
+    get_resource_observer,
 )
 from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
@@ -470,33 +468,34 @@ def _default_training_headroom_gb(size_tag: str, *, skip_train: bool) -> tuple[f
     return (12.0, 40.0) if not skip_train else (8.0, 25.0)
 
 
-def _live_aura_processes() -> list[dict[str, Any]]:
-    if psutil is None:
-        return []
+def _live_aura_processes(
+    *,
+    observer: ResourceObserver | None = None,
+) -> list[dict[str, Any]]:
+    table = (observer or get_resource_observer()).process_table()
+    if not table.available:
+        raise RuntimeError(f"process_table_unavailable:{table.error or 'unknown'}")
     current_pid = os.getpid()
     found: list[dict[str, Any]] = []
-    try:
-        iterator = psutil.process_iter(["pid", "name", "cmdline"])
-    except (AttributeError, RuntimeError, TypeError, ValueError):
-        return found
-    for proc in iterator:
-        try:
-            info = getattr(proc, "info", {}) or {}
-            pid = int(info.get("pid") or proc.pid)
-            if pid == current_pid:
-                continue
-            cmdline = info.get("cmdline") or []
-            if isinstance(cmdline, str):
-                cmdline = [cmdline]
-            cmd = " ".join(str(part) for part in cmdline)
-            if any(marker in cmd for marker in _LIVE_AURA_CMD_MARKERS):
-                found.append({"pid": pid, "name": info.get("name"), "cmdline": cmd[:500]})
-        except (psutil.Error, AttributeError, RuntimeError, TypeError, ValueError):
+    for process in table.processes:
+        if process.pid == current_pid:
             continue
+        cmd = " ".join(process.cmdline)
+        if any(marker in cmd for marker in _LIVE_AURA_CMD_MARKERS):
+            found.append(
+                {"pid": process.pid, "name": process.name, "cmdline": cmd[:500]}
+            )
     return found
 
 
-def training_preflight(*, base_model: Path, skip_train: bool, crsm_delta: bool = False) -> dict[str, Any]:
+def training_preflight(
+    *,
+    base_model: Path,
+    skip_train: bool,
+    crsm_delta: bool = False,
+    observer: ResourceObserver | None = None,
+) -> dict[str, Any]:
+    observer = observer or get_resource_observer()
     size_tag = _model_size_tag(base_model)
     default_min_available_gb, default_min_free_disk_gb = _default_training_headroom_gb(
         size_tag,
@@ -507,31 +506,43 @@ def training_preflight(*, base_model: Path, skip_train: bool, crsm_delta: bool =
     max_memory_percent = _env_float("AURA_TRAINING_MAX_MEMORY_PERCENT", 82.0)
 
     blockers: list[str] = []
-    memory: dict[str, Any] = {"available_gb": None, "percent": None}
-    if psutil is None:
-        blockers.append("psutil_unavailable")
+    memory_observation = observer.memory()
+    memory: dict[str, Any] = {
+        "available_gb": None,
+        "percent": None,
+        "observation": memory_observation.provenance.to_dict(),
+    }
+    if not memory_observation.available:
+        blockers.append(f"memory_probe_failed:{memory_observation.error or 'unavailable'}")
     else:
-        try:
-            vm = psutil.virtual_memory()
-            available_gb = float(getattr(vm, "available", 0) or 0) / _GIB
-            percent = float(getattr(vm, "percent", 100.0) or 100.0)
-            memory = {"available_gb": round(available_gb, 2), "percent": round(percent, 1)}
-            if available_gb < min_available_gb:
-                blockers.append(
-                    f"available_memory:{available_gb:.1f}GB < required {min_available_gb:.1f}GB"
-                )
-            if percent > max_memory_percent:
-                blockers.append(f"memory_pressure:{percent:.1f}% > {max_memory_percent:.1f}%")
-        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            blockers.append(f"memory_probe_failed:{type(exc).__name__}")
+        available_gb = memory_observation.available_bytes / _GIB
+        percent = float(memory_observation.percent)
+        memory.update(
+            {"available_gb": round(available_gb, 2), "percent": round(percent, 1)}
+        )
+        if available_gb < min_available_gb:
+            blockers.append(
+                f"available_memory:{available_gb:.1f}GB < required {min_available_gb:.1f}GB"
+            )
+        if percent > max_memory_percent:
+            blockers.append(f"memory_pressure:{percent:.1f}% > {max_memory_percent:.1f}%")
 
     disk_path = FUSED_BASE_DIR if FUSED_BASE_DIR.exists() else FUSED_BASE_DIR.parent
-    disk_usage = shutil.disk_usage(disk_path)
-    free_disk_gb = disk_usage.free / _GIB
-    if free_disk_gb < min_free_disk_gb:
-        blockers.append(f"free_disk:{free_disk_gb:.1f}GB < required {min_free_disk_gb:.1f}GB")
+    disk_observation = observer.disk(disk_path)
+    free_disk_gb = disk_observation.free_bytes / _GIB if disk_observation.available else 0.0
+    if not disk_observation.available:
+        blockers.append(f"disk_probe_failed:{disk_observation.error or 'unavailable'}")
+    elif free_disk_gb < min_free_disk_gb:
+        blockers.append(
+            f"free_disk:{free_disk_gb:.1f}GB < required {min_free_disk_gb:.1f}GB"
+        )
 
-    live_processes = [] if _env_flag("AURA_TRAINING_ALLOW_LIVE_AURA") else _live_aura_processes()
+    live_processes: list[dict[str, Any]] = []
+    if not _env_flag("AURA_TRAINING_ALLOW_LIVE_AURA"):
+        try:
+            live_processes = _live_aura_processes(observer=observer)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            blockers.append(f"process_table_probe_failed:{type(exc).__name__}:{exc}")
     if live_processes:
         blockers.append(f"live_aura_processes:{len(live_processes)}")
 
@@ -553,7 +564,12 @@ def training_preflight(*, base_model: Path, skip_train: bool, crsm_delta: bool =
             "block_live_aura": not _env_flag("AURA_TRAINING_ALLOW_LIVE_AURA"),
         },
         "memory": memory,
-        "disk": {"path": str(disk_path), "free_gb": round(free_disk_gb, 2)},
+        "disk": {
+            "path": str(disk_path),
+            "free_gb": round(free_disk_gb, 2),
+            "observation": disk_observation.provenance.to_dict(),
+        },
+        "resource_observation": observer.provenance.to_dict(),
         "live_aura_processes": live_processes,
         "blockers": blockers,
     }

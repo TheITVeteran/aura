@@ -7,13 +7,14 @@ Managed Task Supervisor.
 - exposes memory-based protective hooks to cancel/evict optional work when memory high
 """
 
-from core.runtime.errors import record_degradation
-from core.runtime.task_ownership import close_awaitable, create_owned_asyncio_task
 import asyncio
 import logging
 import time
-from typing import Any, Callable, Dict, Optional, Set
-import psutil
+from typing import Dict, Optional, Set
+
+from core.runtime import resource_psutil as psutil
+from core.runtime.errors import record_degradation
+from core.runtime.task_ownership import close_awaitable, create_owned_asyncio_task
 
 logger = logging.getLogger("aura.supervisor")
 

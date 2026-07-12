@@ -19,9 +19,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-import psutil
-
 from core.container import ServiceContainer
+from core.runtime import resource_psutil as psutil
 from core.runtime.background_policy import (
     background_loop_start_reason,
     constitutive_compute_budget,

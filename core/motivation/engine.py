@@ -4,21 +4,20 @@ The "Digital Metabolism" version: Merges resource budgets, boredom
 triggers, and autonomous intention generation into a single system.
 """
 
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import random
 import time
-import psutil
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from core.container import ServiceContainer
-from core.runtime.background_policy import background_activity_allowed
-from core.runtime.proposal_governance import queue_governed_initiative
 from core.motivation.constants import MOTIVATION_BUDGET_DEFAULTS
 from core.motivation.intention import DriveType, Intention
+from core.runtime.background_policy import background_activity_allowed
+from core.runtime.errors import record_degradation
+from core.runtime.proposal_governance import queue_governed_initiative
 from core.utils.task_tracker import task_tracker
 
 logger = logging.getLogger("Aura.Motivation")

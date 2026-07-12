@@ -20,7 +20,6 @@ import hashlib
 import logging
 import os
 import py_compile
-import resource
 import shutil
 import subprocess
 import sys
@@ -31,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.resource_observation import get_resource_observer
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.self_modification.distributed_sandbox_gateway import (
     DistributedSandboxGateway,
@@ -568,17 +568,11 @@ class SafeModificationHarness:
 
     def _current_rss_mb(self) -> float:
         try:
-            import psutil
-
-            return float(psutil.Process(os.getpid()).memory_info().rss) / (1024 * 1024)
-        except (ImportError, AttributeError, RuntimeError):
-            try:
-                usage = resource.getrusage(resource.RUSAGE_SELF)
-                if os.name == "darwin":
-                    return float(usage.ru_maxrss) / (1024 * 1024)
-                return float(usage.ru_maxrss) / 1024
-            except (RuntimeError, AttributeError, TypeError, ValueError):
-                return 0.0
+            process = get_resource_observer().process(os.getpid())
+            if process is not None:
+                return float(process.rss_bytes) / (1024 * 1024)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            return 0.0
 
     def _check_resource_delta(self, baseline_rss_mb: float = 0.0) -> tuple[bool, list[str]]:
         """Check proof execution did not create a large incremental RSS jump."""

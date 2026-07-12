@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from core.runtime.resource_observation import ResourceObserver, get_resource_observer
 
 logger = logging.getLogger("Aura.ModelLifecycle")
 
@@ -152,12 +153,14 @@ class ModelLifecycleManager:
         resolver: Callable[[str], str] | None = None,
         repo_map: dict[str, str] | None = None,
         base_dir: Path | str | None = None,
+        observer: ResourceObserver | None = None,
     ):
         self._plan = plan or self._default_plan()
         self._resolver = resolver or self._default_resolver()
         self._repo_map = dict(repo_map or DEFAULT_REPO_MAP)
         self._base_dir = Path(base_dir) if base_dir is not None else self._default_base_dir()
         self._models_dir = self._base_dir / "models"
+        self._observer = observer
 
     # ---- defaults pulled lazily from the registry (kept injectable for tests) ----
 
@@ -263,8 +266,9 @@ class ModelLifecycleManager:
         while not anchor.exists() and anchor != anchor.parent:
             anchor = anchor.parent
         try:
-            free = shutil.disk_usage(anchor).free
-        except OSError:
+            disk = (self._observer or get_resource_observer()).disk(anchor)
+            free = disk.free_bytes if disk.available else 0
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             free = 0
         return DiskPreflight(target=str(probe), free_bytes=int(free), required_bytes=int(required))
 

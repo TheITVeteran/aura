@@ -227,7 +227,7 @@ class MetricsCollector:
 
         # Memory (RSS)
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             process = psutil.Process()
             mem_info = process.memory_info()
             samples.append(MetricSample(
@@ -252,7 +252,7 @@ class MetricsCollector:
 
         # CPU
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             samples.append(MetricSample(
                 name="aura_cpu_percent",
                 value=float(psutil.cpu_percent(interval=0)),

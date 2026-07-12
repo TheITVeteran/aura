@@ -12761,30 +12761,6 @@
       "scope": "<module>.SignatureRepairRegistry._repair_port_conflict"
     },
     {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/resilience/substrate_monitor.py",
-      "scope": "<module>._darwin_thermal_level"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/resilience/substrate_monitor.py",
-      "scope": "<module>._windows_thermal"
-    },
-    {
-      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
-      "canonical_owner": false,
-      "category": "subprocess_gateway",
-      "count": 1,
-      "path": "core/resource/resource_governor.py",
-      "scope": "<module>.ResourceGovernor._read_thermal_state"
-    },
-    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
       "canonical_owner": true,
       "category": "subprocess_gateway",
@@ -13594,6 +13570,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "461f666e79bd07f3f00ebb2e1b9edfb85702e0bf465ec4d1538bf2027cff0848",
+  "inventory_sha256": "6a82abfc3708be6bdfcb4809d79f2c705a0ed1c509aba9db7ea81d5d2da02d74",
   "schema_version": 1
 }

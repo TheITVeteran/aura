@@ -27,8 +27,6 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, cast
 
-import psutil
-
 from core.brain.lane_admission import (
     ActiveLane,
     LaneAdmissionController,
@@ -41,6 +39,7 @@ from core.runtime.atomic_writer import (
     read_json_envelope,
 )
 from core.runtime.flags import FlagKind, declare
+from core.runtime.resource_observation import ResourceObserver, get_resource_observer
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 
 logger = logging.getLogger("Aura.ModelLaneControl")
@@ -108,26 +107,40 @@ class ProcessIdentity:
         return {"pid": int(self.pid), "started_at": float(self.started_at)}
 
     @classmethod
-    def current(cls) -> ProcessIdentity:
-        return process_identity_for_pid(os.getpid())
+    def current(cls, *, observer: ResourceObserver | None = None) -> ProcessIdentity:
+        return process_identity_for_pid(os.getpid(), observer=observer)
 
 
-def process_identity_for_pid(pid: int) -> ProcessIdentity:
+def process_identity_for_pid(
+    pid: int,
+    *,
+    observer: ResourceObserver | None = None,
+) -> ProcessIdentity:
     pid = int(pid)
     if pid <= 0:
         return ProcessIdentity(0, 0.0)
     try:
-        return ProcessIdentity(pid, float(psutil.Process(pid).create_time()))
-    except (psutil.Error, OSError, ValueError):
-        return ProcessIdentity(pid, 0.0)
+        process = (observer or get_resource_observer()).process(pid)
+        if process is not None:
+            return ProcessIdentity(pid, float(process.create_time))
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        pass
+    return ProcessIdentity(pid, 0.0)
 
 
-def _default_process_alive(identity: ProcessIdentity) -> bool:
+def _default_process_alive(
+    identity: ProcessIdentity,
+    *,
+    observer: ResourceObserver | None = None,
+) -> bool:
     if identity.pid <= 0 or identity.started_at <= 0.0:
         return False
     try:
-        observed = float(psutil.Process(identity.pid).create_time())
-    except (psutil.Error, OSError, ValueError):
+        process = (observer or get_resource_observer()).process(identity.pid)
+        if process is None:
+            return False
+        observed = float(process.create_time)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
         return False
     return abs(observed - identity.started_at) <= 0.5
 
@@ -136,6 +149,7 @@ def managed_process_group_alive(
     process_group_id: int,
     *,
     root_started_at: float = 0.0,
+    observer: ResourceObserver | None = None,
 ) -> bool:
     """Return whether an isolated managed group still has a live member."""
 
@@ -143,20 +157,17 @@ def managed_process_group_alive(
     if pgid <= 0 or pgid == os.getpgrp():
         return False
     earliest_member = max(0.0, float(root_started_at) - 1.0)
-    for process in psutil.process_iter(["pid", "create_time", "status"]):
+    for process in (observer or get_resource_observer()).processes():
         try:
-            pid = int(process.info.get("pid") or 0)
+            pid = int(process.pid)
             if pid <= 0 or pid == os.getpid() or os.getpgid(pid) != pgid:
                 continue
-            started_at = float(
-                process.info.get("create_time") or process.create_time()
-            )
+            started_at = float(process.create_time)
             if earliest_member and started_at < earliest_member:
                 continue
-            status = str(process.info.get("status") or process.status())
-            if status != psutil.STATUS_ZOMBIE:
+            if str(process.status).lower() != "zombie":
                 return True
-        except (psutil.Error, OSError, ProcessLookupError, ValueError):
+        except (OSError, ProcessLookupError, RuntimeError, TypeError, ValueError):
             continue
     return False
 
@@ -232,6 +243,9 @@ class LaneTransactionDecision:
     committed_gb: float
     reserved_gb: float
     budget_gb: float
+    observation_source: str = "unavailable"
+    observation_scenario_id: str = ""
+    resource_observation_available: bool = False
     evict_owner_ids: tuple[str, ...] = ()
     evicted_owner_ids: tuple[str, ...] = ()
     receipt_id: str = ""
@@ -561,6 +575,8 @@ def infer_model_process_claim(
 
 def discover_external_model_processes(
     known_owners: Iterable[LaneOwnerObservation],
+    *,
+    observer: ResourceObserver | None = None,
 ) -> list[LaneOwnerObservation]:
     """Conservatively account for model jobs not registered by this controller."""
 
@@ -573,14 +589,13 @@ def discover_external_model_processes(
     }
     managed_groups.discard(0)
     observations: list[LaneOwnerObservation] = []
-    for process in psutil.process_iter(
-        ["pid", "create_time", "cmdline", "name", "memory_info"]
-    ):
+    resource_observer = observer or get_resource_observer()
+    for process in resource_observer.processes():
         try:
-            pid = int(process.info.get("pid") or 0)
+            pid = int(process.pid)
             if pid <= 0 or pid == os.getpid() or pid in known_pids:
                 continue
-            command = tuple(str(part) for part in (process.info.get("cmdline") or ()))
+            command = tuple(str(part) for part in process.cmdline)
             descriptor = _model_command_descriptor(command)
             if not descriptor.recognized:
                 continue
@@ -590,11 +605,8 @@ def discover_external_model_processes(
                 process_group_id = 0
             if process_group_id > 0 and process_group_id in managed_groups:
                 continue
-            started_at = float(process.info.get("create_time") or process.create_time())
-            memory_info = process.info.get("memory_info")
-            observed_gb = (
-                float(getattr(memory_info, "rss", 0) or 0) / float(1024**3)
-            )
+            started_at = float(process.create_time)
+            observed_gb = float(process.rss_bytes) / float(1024**3)
             model_paths = descriptor.model_paths
             if model_paths:
                 model_path = model_paths[0]
@@ -605,9 +617,9 @@ def discover_external_model_processes(
                 identity_status = "resolved"
             else:
                 model_path = f"unresolved:model-process:{pid}"
-                declared_gb = lane_budget_gb()
+                declared_gb = lane_budget_gb(observer=resource_observer)
                 identity_status = "unresolved_fail_closed"
-            ancestor_pids = {parent.pid for parent in process.parents()}
+            ancestor_pids = set(process.ancestor_pids)
             parent_owner = next(
                 (owner for owner in known if owner.process.pid in ancestor_pids),
                 None,
@@ -630,7 +642,7 @@ def discover_external_model_processes(
                         "externally_discovered": True,
                         "model_identity_status": identity_status,
                         "command_name": Path(command[0]).name if command else str(
-                            process.info.get("name") or "unknown"
+                            process.name or "unknown"
                         ),
                         "command_sha256": command_digest,
                         "process_group_id": process_group_id,
@@ -641,7 +653,7 @@ def discover_external_model_processes(
                     },
                 )
             )
-        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
+        except (OSError, RuntimeError, TypeError, ValueError):
             continue
     return observations
 
@@ -714,6 +726,7 @@ async def wait_for_model_job_headroom(
     claim: LaneClaim,
     *,
     timeout_s: float = 20.0,
+    observer: ResourceObserver | None = None,
 ) -> bool:
     """Re-observe physical RAM after policy admission and any eviction."""
 
@@ -721,10 +734,14 @@ async def wait_for_model_job_headroom(
     deadline = time.monotonic() + bounded_timeout_s
     max_observations = max(1, int(bounded_timeout_s / 0.25) + 2)
     available_gb = 0.0
+    resource_observer = observer or get_resource_observer()
     for _attempt in range(max_observations):
         try:
-            available_gb = float(psutil.virtual_memory().available) / float(1024**3)
-        except (psutil.Error, OSError, ValueError):
+            memory = resource_observer.memory()
+            if not memory.available:
+                return False
+            available_gb = float(memory.available_bytes) / float(1024**3)
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             return False
         if available_gb >= float(claim.request_gb):
             return True
@@ -799,6 +816,15 @@ async def prepare_model_lane_claim(
     """Reserve and synchronously satisfy every pre-spawn model-lane obligation."""
 
     lane_controller = controller or get_model_lane_controller()
+    reclaim_callback: ReclaimCallback = reclaim
+    if reclaim is wait_for_model_job_headroom:
+        async def _reclaim_with_controller_observer(candidate: LaneClaim) -> bool:
+            return await wait_for_model_job_headroom(
+                candidate,
+                observer=lane_controller.resource_observer,
+            )
+
+        reclaim_callback = _reclaim_with_controller_observer
     from core.utils.task_tracker import get_task_tracker
 
     reserve_task = get_task_tracker().create_task(
@@ -828,14 +854,14 @@ async def prepare_model_lane_claim(
                 decision,
                 evict=evict,
                 observe=lambda: asyncio.to_thread(lane_controller.owner_observations),
-                reclaim=reclaim,
+                reclaim=reclaim_callback,
                 compensate=compensate,
             )
         if not decision.ready_to_spawn:
             raise ModelLaneControlError(
                 f"model_lane_admission_cancelled:{decision.reason}:receipt={decision.receipt_id}"
             )
-        if not await lane_controller._call_bool(reclaim, claim):
+        if not await lane_controller._call_bool(reclaim_callback, claim):
             cancelled = await lane_controller.cancel(
                 decision,
                 reason="physical_model_headroom_unavailable",
@@ -875,19 +901,42 @@ class ModelLaneController:
         process_alive: ProcessAliveProbe | None = None,
         process_discovery: ProcessDiscoveryProbe | None = discover_external_model_processes,
         policy: LaneAdmissionController | None = None,
+        observer: ResourceObserver | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
+        configured_state_path = str(
+            os.environ.get("AURA_MODEL_LANE_STATE_PATH", "") or ""
+        ).strip()
         self.state_path = Path(
-            state_path or (Path.home() / ".aura" / "run" / "model_lane_control.json")
+            state_path
+            or configured_state_path
+            or (Path.home() / ".aura" / "run" / "model_lane_control.json")
         )
         self.lock_path = self.state_path.with_suffix(self.state_path.suffix + ".lock")
         self._receipt_store = receipt_store
-        self._process_alive = process_alive or _default_process_alive
-        self._process_discovery = process_discovery
-        self._policy = policy or LaneAdmissionController()
+        self._observer = observer
+        self._process_alive = process_alive or (
+            lambda identity: _default_process_alive(
+                identity,
+                observer=self.resource_observer,
+            )
+        )
+        self._process_discovery: ProcessDiscoveryProbe | None
+        if process_discovery is discover_external_model_processes:
+            self._process_discovery = lambda known: discover_external_model_processes(
+                known,
+                observer=self.resource_observer,
+            )
+        else:
+            self._process_discovery = process_discovery
+        self._policy = policy or LaneAdmissionController(observer=observer)
         self._clock = clock
         self._thread_lock = threading.RLock()
         self._last_discovery_monotonic = 0.0
+
+    @property
+    def resource_observer(self) -> ResourceObserver:
+        return self._observer or get_resource_observer()
 
     def _refresh_external_owners(self, *, force: bool = False) -> None:
         if self._process_discovery is None:
@@ -911,7 +960,7 @@ class ModelLaneController:
             ]
         try:
             discovered = list(self._process_discovery(known))
-        except (OSError, RuntimeError, TypeError, ValueError, psutil.Error) as exc:
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
             with self._thread_lock:
                 self._last_discovery_monotonic = 0.0
             raise ModelLaneControlError(
@@ -1023,6 +1072,7 @@ class ModelLaneController:
             and managed_process_group_alive(
                 int(metadata.get("process_group_id") or 0),
                 root_started_at=identity.started_at,
+                observer=self.resource_observer,
             )
         )
 
@@ -1294,6 +1344,11 @@ class ModelLaneController:
             committed_gb=float(record.get("committed_gb") or 0.0),
             reserved_gb=float(record.get("reserved_gb") or 0.0),
             budget_gb=float(record.get("budget_gb") or 0.0),
+            observation_source=str(record.get("observation_source") or "unavailable"),
+            observation_scenario_id=str(record.get("observation_scenario_id") or ""),
+            resource_observation_available=bool(
+                record.get("resource_observation_available", False)
+            ),
             evict_owner_ids=tuple(str(item) for item in record.get("evict_owner_ids") or ()),
             evicted_owner_ids=tuple(str(item) for item in record.get("evicted_owner_ids") or ()),
             receipt_id=str(record.get("terminal_receipt_id") or ""),
@@ -1338,6 +1393,15 @@ class ModelLaneController:
                 "committed_gb": float(record.get("committed_gb") or 0.0),
                 "reserved_gb": float(record.get("reserved_gb") or 0.0),
                 "request_gb": float(record.get("request_gb") or 0.0),
+                "observation_source": str(
+                    record.get("observation_source") or "unavailable"
+                ),
+                "observation_scenario_id": str(
+                    record.get("observation_scenario_id") or ""
+                ),
+                "resource_observation_available": bool(
+                    record.get("resource_observation_available", False)
+                ),
             },
             metadata={
                 **dict(record.get("metadata") or {}),
@@ -1389,6 +1453,12 @@ class ModelLaneController:
             pressure={
                 "declared_gb": owner.declared_gb,
                 "observed_gb": owner.observed_gb,
+                "observation_source": str(
+                    reservation.get("observation_source") or "unavailable"
+                ),
+                "observation_scenario_id": str(
+                    reservation.get("observation_scenario_id") or ""
+                ),
             },
             metadata={
                 "candidate_owner_id": str(reservation.get("owner_id") or ""),
@@ -1502,7 +1572,9 @@ class ModelLaneController:
                         "token": claim_token,
                         "claimed_at": now,
                         "expires_at": now + 30.0,
-                        "claimant_process": ProcessIdentity.current().to_dict(),
+                        "claimant_process": ProcessIdentity.current(
+                            observer=self.resource_observer
+                        ).to_dict(),
                     }
                     self._append_event(
                         state,
@@ -1800,13 +1872,20 @@ class ModelLaneController:
                     "request_gb": float(claim.request_gb),
                     "committed_gb": committed,
                     "reserved_gb": reserved,
-                    "budget_gb": lane_budget_gb(),
+                    "budget_gb": arithmetic.budget_gb,
+                    "observation_source": arithmetic.observation_source,
+                    "observation_scenario_id": arithmetic.observation_scenario_id,
+                    "resource_observation_available": (
+                        arithmetic.resource_observation_available
+                    ),
                     "evict_owner_ids": list(evict_owner_ids if admitted else ()),
                     "evicted_owner_ids": [],
                     "evicted_owners": {},
                     "eviction_receipt_ids": {},
                     "compensation": {},
-                    "controller_process": ProcessIdentity.current().to_dict(),
+                    "controller_process": ProcessIdentity.current(
+                        observer=self.resource_observer
+                    ).to_dict(),
                     "created_at": now,
                     "expires_at": now + self._reservation_ttl(claim),
                     "owner_lease_ttl_s": self._owner_lease_ttl(claim),
@@ -2015,7 +2094,10 @@ class ModelLaneController:
                 exclude_owner_id=decision.owner_id,
                 exclude_request_id=decision.request_id,
             )
-            if committed + reserved + decision.request_gb > lane_budget_gb():
+            observer = self.resource_observer
+            budget_gb = lane_budget_gb(observer=observer)
+            provenance = observer.provenance
+            if committed + reserved + decision.request_gb > budget_gb:
                 over_budget = True
             else:
                 over_budget = False
@@ -2023,7 +2105,12 @@ class ModelLaneController:
                 record["reason"] = "required_evictions_reclaimed" if evicted else "capacity_reserved"
                 record["committed_gb"] = committed
                 record["reserved_gb"] = reserved
-                record["budget_gb"] = lane_budget_gb()
+                record["budget_gb"] = budget_gb
+                record["observation_source"] = provenance.source.value
+                record["observation_scenario_id"] = provenance.scenario_id
+                record["resource_observation_available"] = bool(
+                    observer.memory().available
+                )
                 record["ready_at"] = now
                 self._append_event(
                     state,
@@ -2476,7 +2563,9 @@ class ModelLaneController:
                 "token_sha256": token_sha256,
                 "issued_at": now,
                 "expires_at": now + max(5.0, float(ttl_s)),
-                "parent_process": ProcessIdentity.current().to_dict(),
+                "parent_process": ProcessIdentity.current(
+                    observer=self.resource_observer
+                ).to_dict(),
                 "consumed_at": 0.0,
                 "consumed_process": ProcessIdentity(0, 0.0).to_dict(),
             }
@@ -2530,7 +2619,10 @@ class ModelLaneController:
             ).hexdigest()
             if not expected_digest or not hmac.compare_digest(expected_digest, supplied_digest):
                 return False
-            child_identity = process_identity_for_pid(child_pid)
+            child_identity = process_identity_for_pid(
+                child_pid,
+                observer=self.resource_observer,
+            )
             consumed_identity = self._identity_from_record(
                 delegation,
                 key="consumed_process",
@@ -2548,8 +2640,11 @@ class ModelLaneController:
             if not self._process_alive(child_identity):
                 return False
             try:
-                observed_parent_pid = int(psutil.Process(int(child_pid)).ppid())
-            except (psutil.Error, OSError, ValueError):
+                child_process = self.resource_observer.process(int(child_pid))
+                if child_process is None:
+                    return False
+                observed_parent_pid = int(child_process.ppid)
+            except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
                 return False
             if observed_parent_pid != int(parent_pid):
                 return False
@@ -2585,7 +2680,9 @@ class ModelLaneController:
             return {
                 "schema": _SCHEMA_NAME,
                 "generation": int(state.get("generation") or 0),
-                "budget_gb": lane_budget_gb(),
+                "budget_gb": lane_budget_gb(observer=self.resource_observer),
+                "observation_source": self.resource_observer.provenance.source.value,
+                "observation_scenario_id": self.resource_observer.provenance.scenario_id,
                 "committed_gb": committed,
                 "reserved_gb": reserved,
                 "owners": list(state["owners"].values()),
@@ -2799,8 +2896,11 @@ def acquire_synchronous_in_process_model_lane(
             f"sync_in_process_model_admission_cancelled:{cancelled.reason}:receipt={cancelled.receipt_id}"
         )
     try:
-        available_gb = float(psutil.virtual_memory().available) / float(1024**3)
-    except (psutil.Error, OSError, ValueError) as exc:
+        memory = lane_controller.resource_observer.memory()
+        if not memory.available:
+            raise RuntimeError(memory.error or "memory observation unavailable")
+        available_gb = float(memory.available_bytes) / float(1024**3)
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
         lane_controller.cancel_sync(decision, reason="sync_model_headroom_unobservable")
         raise ModelLaneControlError("sync_in_process_model_headroom_unobservable") from exc
     if available_gb < claim.request_gb:
@@ -2814,7 +2914,7 @@ def acquire_synchronous_in_process_model_lane(
     try:
         committed = lane_controller.commit_sync(
             decision,
-            process=ProcessIdentity.current(),
+            process=ProcessIdentity.current(observer=lane_controller.resource_observer),
             metadata={
                 "lease_mode": "heartbeat",
                 "in_process_model_owner": True,
@@ -2887,14 +2987,20 @@ async def acquire_in_process_model_lane(
             decision,
             evict=evict_registered_model_owner,
             observe=lambda: asyncio.to_thread(lane_controller.owner_observations),
-            reclaim=wait_for_model_job_headroom,
+            reclaim=lambda candidate: wait_for_model_job_headroom(
+                candidate,
+                observer=lane_controller.resource_observer,
+            ),
             compensate=compensate_registered_model_owner,
         )
     if not decision.ready_to_spawn:
         raise ModelLaneControlError(
             f"in_process_model_admission_cancelled:{decision.reason}:receipt={decision.receipt_id}"
         )
-    if not await wait_for_model_job_headroom(claim):
+    if not await wait_for_model_job_headroom(
+        claim,
+        observer=lane_controller.resource_observer,
+    ):
         cancelled = await lane_controller.cancel(
             decision,
             reason="in_process_model_headroom_unavailable",
@@ -2906,7 +3012,7 @@ async def acquire_in_process_model_lane(
     try:
         committed = await lane_controller.commit(
             decision,
-            process=ProcessIdentity.current(),
+            process=ProcessIdentity.current(observer=lane_controller.resource_observer),
             metadata={"lease_mode": "heartbeat", "in_process_model_owner": True},
         )
     except (OSError, RuntimeError, AttributeError, TypeError, ValueError):
@@ -3053,7 +3159,10 @@ def acquire_standalone_model_lane(
                 decision,
                 evict=evict_registered_model_owner,
                 observe=lambda: asyncio.to_thread(lane_controller.owner_observations),
-                reclaim=wait_for_model_job_headroom,
+                reclaim=lambda candidate: wait_for_model_job_headroom(
+                    candidate,
+                    observer=lane_controller.resource_observer,
+                ),
                 compensate=compensate_registered_model_owner,
             )
         )
@@ -3061,7 +3170,12 @@ def acquire_standalone_model_lane(
         raise ModelLaneControlError(
             f"standalone_model_admission_cancelled:{decision.reason}:receipt={decision.receipt_id}"
         )
-    if not _run_standalone_async(wait_for_model_job_headroom(claim)):
+    if not _run_standalone_async(
+        wait_for_model_job_headroom(
+            claim,
+            observer=lane_controller.resource_observer,
+        )
+    ):
         cancelled = lane_controller.cancel_sync(
             decision,
             reason="standalone_model_headroom_unavailable",
@@ -3071,7 +3185,7 @@ def acquire_standalone_model_lane(
         )
     committed = lane_controller.commit_sync(
         decision,
-        process=ProcessIdentity.current(),
+        process=ProcessIdentity.current(observer=lane_controller.resource_observer),
         metadata={"standalone_model_tool": True, "lease_mode": "process"},
     )
     return StandaloneModelLaneLease(
@@ -3101,6 +3215,17 @@ def get_model_lane_controller() -> ModelLaneController:
             if _CONTROLLER is None:
                 _CONTROLLER = ModelLaneController()
     return _CONTROLLER
+
+
+def reset_model_lane_controller_for_test() -> None:
+    """Clear process-local lane ownership between hermetic tests."""
+
+    global _CONTROLLER
+    with _CONTROLLER_LOCK:
+        _CONTROLLER = None
+    with _LOCAL_OWNER_ADAPTERS_LOCK:
+        _LOCAL_OWNER_ADAPTERS.clear()
+        _LOCAL_OWNER_COMPENSATORS.clear()
 
 
 def reset_model_lane_controller() -> None:
@@ -3133,6 +3258,7 @@ __all__ = [
     "managed_process_group_alive",
     "prepare_model_lane_claim",
     "process_identity_for_pid",
+    "reset_model_lane_controller_for_test",
     "reset_model_lane_controller",
     "register_model_lane_owner_adapter",
     "run_owned_model_thread_call",

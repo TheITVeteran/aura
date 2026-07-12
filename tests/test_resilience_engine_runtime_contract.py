@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from types import SimpleNamespace
 
 import pytest
 
@@ -10,21 +8,10 @@ from core.soma import resilience_engine as resilience_module
 from core.soma.resilience_engine import ResilienceEngine
 
 
-class FakeVirtualMemory:
-    percent = 82.0
-
-
-class FakeThermalEntry:
-    current = 83.0
-
-
-def test_pulse_uses_host_resource_telemetry(monkeypatch):
-    fake_psutil = SimpleNamespace(
-        cpu_percent=lambda interval=None: 77.0,
-        virtual_memory=lambda: FakeVirtualMemory(),
-        sensors_temperatures=lambda: {"cpu": [FakeThermalEntry()]},
-    )
-    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
+def test_pulse_uses_attributable_resource_telemetry(resource_observer):
+    resource_observer.configure_compute(cpu_percent=77.0)
+    resource_observer.configure_memory(percent=82.0)
+    resource_observer.configure_thermal(2, provider="simulated-hot")
 
     engine = ResilienceEngine()
 
@@ -32,18 +19,15 @@ def test_pulse_uses_host_resource_telemetry(monkeypatch):
 
     assert pulse["cpu_pressure"] == pytest.approx(0.77)
     assert pulse["ram_pressure"] == pytest.approx(0.82)
-    assert pulse["thermal_load"] == pytest.approx((83.0 - 45.0) / 55.0)
+    assert pulse["thermal_load"] == pytest.approx((82.0 - 45.0) / 55.0)
     assert pulse["resource_anxiety"] == pytest.approx(0.82)
     assert all(0.0 <= value <= 1.0 for value in pulse.values())
 
 
-def test_body_snapshot_exposes_resource_pressure(monkeypatch):
-    fake_psutil = SimpleNamespace(
-        cpu_percent=lambda interval=None: 40.0,
-        virtual_memory=lambda: SimpleNamespace(percent=92.0),
-        sensors_temperatures=lambda: {},
-    )
-    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
+def test_body_snapshot_exposes_resource_pressure(resource_observer):
+    resource_observer.configure_compute(cpu_percent=40.0)
+    resource_observer.configure_memory(percent=92.0)
+    resource_observer.configure_thermal(0)
 
     engine = ResilienceEngine()
 

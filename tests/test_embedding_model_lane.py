@@ -18,10 +18,6 @@ from core.runtime.shutdown_coordinator import clear_shutdown_request
 
 def _controller(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ModelLaneController:
     monkeypatch.setenv("AURA_LANE_BUDGET_GB", "46")
-    monkeypatch.setattr(
-        "core.runtime.model_lane_control.psutil.virtual_memory",
-        lambda: SimpleNamespace(available=64 * 1024**3),
-    )
     return ModelLaneController(
         state_path=tmp_path / "model_lanes.json",
         receipt_store=ReceiptStore(tmp_path / "receipts"),

@@ -33,9 +33,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-import psutil
-
 from core.cognition.cognitive_kernel import CognitiveBrief, InputDomain, ResponseStrategy
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import Severity, record_degradation
 
 logger = logging.getLogger("Aura.InnerMonologue")

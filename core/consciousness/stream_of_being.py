@@ -1102,7 +1102,7 @@ class StreamOfBeing:
             return False
 
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             if psutil.virtual_memory().percent >= HIGH_MEMORY_PRESSURE_PCT:
                 return False
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:

@@ -27,7 +27,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-
 AUTHORIZED_SCOPES = frozenset(
     {
         "open_source",
@@ -2635,7 +2634,21 @@ def reconstructed(case):
         memory contents, credentials, packet payloads, or private app internals.
         """
 
+        from core.runtime.resource_observation import get_resource_observer
+
         evidence: list[ProgramDNAEvidence] = []
+        observer = get_resource_observer()
+        provenance = observer.provenance
+        if not provenance.host_observed:
+            self._record_degradation(
+                "program_dna_reconstruction.host_snapshot",
+                RuntimeError(
+                    "live host snapshot refused non-host observation "
+                    f"source={provenance.source.value}"
+                ),
+                severity="debug",
+            )
+            return evidence
         try:
             psutil = importlib.import_module("psutil")
         except ImportError as exc:
@@ -2644,32 +2657,31 @@ def reconstructed(case):
 
         processes: list[dict[str, Any]] = []
         try:
-            for proc in psutil.process_iter(["pid", "name", "cmdline", "username"]):
-                try:
-                    info = proc.info or {}
-                except (psutil.Error, RuntimeError, TypeError, ValueError):
-                    continue
-                cmdline = " ".join(str(part) for part in (info.get("cmdline") or [])[:8])
+            for process in observer.processes():
+                cmdline = " ".join(str(part) for part in process.cmdline[:8])
                 processes.append(
                     {
-                        "pid": info.get("pid"),
-                        "name": info.get("name"),
-                        "username": info.get("username"),
+                        "pid": process.pid,
+                        "name": process.name,
+                        "username": process.username,
                         "cmdline_hint": cmdline[:240],
                     }
                 )
                 if len(processes) >= 40:
                     break
-        except (psutil.Error, RuntimeError, TypeError, ValueError) as exc:
+        except (OSError, RuntimeError, TypeError, ValueError) as exc:
             self._record_degradation("program_dna_reconstruction.process_snapshot", exc, severity="debug")
         if processes:
             evidence.append(
                 ProgramDNAEvidence(
                     kind="process_observation",
-                    source="live_host_snapshot:processes",
+                    source=f"{provenance.source.value}_host_snapshot:processes",
                     summary=f"Bounded process snapshot captured {len(processes)} visible process record(s).",
                     confidence=0.58,
-                    details={"processes": processes},
+                    details={
+                        "processes": processes,
+                        "observation": provenance.to_dict(),
+                    },
                 )
             )
 
@@ -2695,10 +2707,13 @@ def reconstructed(case):
             evidence.append(
                 ProgramDNAEvidence(
                     kind="network_observation",
-                    source="live_host_snapshot:inet_connections",
+                    source=f"{provenance.source.value}_host_snapshot:inet_connections",
                     summary=f"Bounded network socket snapshot captured {len(connections)} visible connection record(s).",
                     confidence=0.54,
-                    details={"connections": connections},
+                    details={
+                        "connections": connections,
+                        "observation": provenance.to_dict(),
+                    },
                 )
             )
         return evidence

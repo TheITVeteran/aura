@@ -261,7 +261,6 @@ class FlightRecorder:
         self._last_death_report: dict[str, Any] | None = None
         self._cached_conditions: dict[str, str] = {}
         self._cached_degradations = 0
-        self._process: Any = None
         self._last_error_at = 0.0
         self._last_tick = 0
 
@@ -545,11 +544,10 @@ class FlightRecorder:
 
     def _sample_rss_mb(self) -> float:
         try:
-            if self._process is None:
-                import psutil
+            from core.runtime.resource_observation import get_resource_observer
 
-                self._process = psutil.Process()
-            return float(self._process.memory_info().rss) / (1024.0 * 1024.0)
+            memory = get_resource_observer().memory()
+            return float(memory.process_rss_bytes) / (1024.0 * 1024.0)
         except (ImportError, OSError, RuntimeError, AttributeError):
             return 0.0
 

@@ -8,18 +8,17 @@ try:
 except ImportError:
     def capture_and_log(e, ctx=None):
         logging.getLogger("Aura.IntegrityMonitor").error(f"Integrity Error: {e} | Context: {ctx}")
-from core.runtime.errors import record_degradation
-from core.runtime.flags import FlagKind, declare
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
 import os
 import sqlite3
 import time
 from pathlib import Path
-from typing import Optional
 
 from core.resilience.substrate_monitor import SubstrateMonitor
+from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.IntegrityMonitor")
 
@@ -69,15 +68,15 @@ class SystemIntegrityMonitor:
         self._data_dir = Path(data_dir)
         self._interval = interval
         self._running = False
-        self._task: Optional[asyncio.Task] = None
-        self._last_report: Optional[IntegrityReport] = None
+        self._task: asyncio.Task | None = None
+        self._last_report: IntegrityReport | None = None
         self._check_count = 0
         self._last_db_checks: dict[str, str] = {}
         self._last_db_errors: list[str] = []
         self._proc = None
         self._substrate_monitor = SubstrateMonitor()
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             self._proc = psutil.Process(os.getpid())
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('integrity_monitor', e)
@@ -172,7 +171,7 @@ class SystemIntegrityMonitor:
         critical_override = os.getenv("AURA_INTEGRITY_MEMORY_CRITICAL_MB")
 
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             total_mb = int(psutil.virtual_memory().total / (1024 * 1024))
         except (ImportError, AttributeError, RuntimeError):
             total_mb = 0

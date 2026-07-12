@@ -2,29 +2,33 @@
 from __future__ import annotations
 
 import json
-from types import SimpleNamespace
 
 from training import resume_training, run_unattended, train_and_fuse
 
 GIB = 1024**3
 
 
-def _patch_resources(monkeypatch, *, available_gb=40.0, percent=50.0, free_disk_gb=200.0):
-    monkeypatch.setattr(
-        train_and_fuse.psutil,
-        "virtual_memory",
-        lambda: SimpleNamespace(available=int(available_gb * GIB), percent=percent),
+def _patch_resources(
+    resource_observer,
+    *,
+    available_gb=40.0,
+    percent=50.0,
+    free_disk_gb=200.0,
+):
+    resource_observer.configure_memory(
+        total_bytes=64 * GIB,
+        available_bytes=int(available_gb * GIB),
+        percent=percent,
     )
-    monkeypatch.setattr(
-        train_and_fuse.shutil,
-        "disk_usage",
-        lambda _path: SimpleNamespace(free=int(free_disk_gb * GIB)),
+    resource_observer.configure_disk(
+        total_bytes=512 * GIB,
+        free_bytes=int(free_disk_gb * GIB),
     )
 
 
-def test_training_preflight_passes_with_headroom(monkeypatch, tmp_path):
-    _patch_resources(monkeypatch)
-    monkeypatch.setattr(train_and_fuse, "_live_aura_processes", lambda: [])
+def test_training_preflight_passes_with_headroom(monkeypatch, tmp_path, resource_observer):
+    _patch_resources(resource_observer)
+    monkeypatch.setattr(train_and_fuse, "_live_aura_processes", lambda **_kwargs: [])
 
     report = train_and_fuse.training_preflight(base_model=tmp_path / "Qwen2.5-32B-Instruct-4bit", skip_train=False)
 
@@ -33,9 +37,9 @@ def test_training_preflight_passes_with_headroom(monkeypatch, tmp_path):
     assert report["requirements"]["min_available_gb"] == 28.0
 
 
-def test_training_preflight_reports_crsm_delta_mode(monkeypatch, tmp_path):
-    _patch_resources(monkeypatch)
-    monkeypatch.setattr(train_and_fuse, "_live_aura_processes", lambda: [])
+def test_training_preflight_reports_crsm_delta_mode(monkeypatch, tmp_path, resource_observer):
+    _patch_resources(resource_observer)
+    monkeypatch.setattr(train_and_fuse, "_live_aura_processes", lambda **_kwargs: [])
 
     report = train_and_fuse.training_preflight(
         base_model=tmp_path / "Qwen2.5-32B-Instruct-4bit",
@@ -47,9 +51,9 @@ def test_training_preflight_reports_crsm_delta_mode(monkeypatch, tmp_path):
     assert report["mode"] == "crsm_delta_train_fuse_publish"
 
 
-def test_training_preflight_blocks_low_memory(monkeypatch, tmp_path):
-    _patch_resources(monkeypatch, available_gb=9.0, percent=91.0)
-    monkeypatch.setattr(train_and_fuse, "_live_aura_processes", lambda: [])
+def test_training_preflight_blocks_low_memory(monkeypatch, tmp_path, resource_observer):
+    _patch_resources(resource_observer, available_gb=9.0, percent=91.0)
+    monkeypatch.setattr(train_and_fuse, "_live_aura_processes", lambda **_kwargs: [])
 
     report = train_and_fuse.training_preflight(base_model=tmp_path / "Qwen2.5-32B-Instruct-4bit", skip_train=False)
 
@@ -58,9 +62,17 @@ def test_training_preflight_blocks_low_memory(monkeypatch, tmp_path):
     assert any("memory_pressure" in blocker for blocker in report["blockers"])
 
 
-def test_training_preflight_blocks_live_aura_unless_explicitly_allowed(monkeypatch, tmp_path):
-    _patch_resources(monkeypatch)
-    monkeypatch.setattr(train_and_fuse, "_live_aura_processes", lambda: [{"pid": 123, "cmdline": "aura_main.py"}])
+def test_training_preflight_blocks_live_aura_unless_explicitly_allowed(
+    monkeypatch,
+    tmp_path,
+    resource_observer,
+):
+    _patch_resources(resource_observer)
+    monkeypatch.setattr(
+        train_and_fuse,
+        "_live_aura_processes",
+        lambda **_kwargs: [{"pid": 123, "cmdline": "aura_main.py"}],
+    )
 
     blocked = train_and_fuse.training_preflight(base_model=tmp_path / "Qwen2.5-32B-Instruct-4bit", skip_train=False)
     assert blocked["passed"] is False
@@ -222,11 +234,11 @@ def test_run_unattended_memory_guard_blocks_process_tree_rss(monkeypatch):
     assert reason == "process_tree_rss:12.5GB/12.0GB"
 
 
-def test_run_unattended_memory_guard_blocks_host_pressure(monkeypatch):
+def test_run_unattended_memory_guard_blocks_host_pressure(monkeypatch, resource_observer):
     monkeypatch.setenv("AURA_TRAINING_MAX_PROCESS_TREE_RSS_GB", "80")
     monkeypatch.setenv("AURA_TRAINING_MAX_HOST_MEMORY_PERCENT", "90")
     monkeypatch.setattr(run_unattended, "_process_tree_rss_gb", lambda _pid: 10.0)
-    monkeypatch.setattr(run_unattended.psutil, "virtual_memory", lambda: SimpleNamespace(percent=93.0))
+    resource_observer.configure_memory(percent=93.0)
 
     reason = run_unattended._memory_guard_reason(123)
 

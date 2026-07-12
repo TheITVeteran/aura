@@ -1,23 +1,23 @@
 """Toggle Senses Skill
 Enables or Disables sensory perception services (Vision/Hearing).
 """
-from core.runtime.errors import record_degradation
 import logging
 import os
 import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from core.config import config
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.resource_observation import get_resource_observer
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.skills.base_skill import BaseSkill
 from core.thought_stream import get_emitter
-import subprocess
-
-from core.config import config
-from core.runtime.file_write_gateway import get_file_write_gateway
-from core.runtime.subprocess_gateway import get_subprocess_gateway
 
 logger = logging.getLogger("Skills.ToggleSenses")
 
@@ -184,16 +184,15 @@ class ToggleSensesSkill(BaseSkill):
         """
         import asyncio
 
-        import psutil
-
         deadline = asyncio.get_running_loop().time() + timeout_s
         while asyncio.get_running_loop().time() < deadline:
-            try:
-                if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
-                    return True  # exited; parent has not reaped it yet
-            except psutil.NoSuchProcess:
+            table = get_resource_observer().process_table()
+            if not table.available:
+                return False
+            process = next((item for item in table.processes if item.pid == pid), None)
+            if process is None:
                 return True
-            except psutil.AccessDenied:
-                return False  # alive but not ours
+            if process.status.lower() in {"dead", "zombie"}:
+                return True
             await asyncio.sleep(0.1)
         return False

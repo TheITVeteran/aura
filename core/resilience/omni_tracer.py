@@ -13,19 +13,19 @@ cascade (like the [REAPER] or SEPSIS crash) occurs during chat, the exact
 root causes are preserved in one place.
 """
 
+import asyncio
+import json
+import logging
+import os
 import sys
 import threading
-import asyncio
-import logging
-import json
 import time
-import os
 import traceback
-import psutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from core.governance_context import local_internal_governed_scope
+from core.runtime import resource_psutil as psutil
 from core.runtime.file_write_gateway import get_file_write_gateway
 
 _TRACE_FILE = Path.home() / ".aura" / "run" / "omni_trace.jsonl"

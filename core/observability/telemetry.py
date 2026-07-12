@@ -1,9 +1,8 @@
-import time
-import json
 import logging
-import psutil
+import time
 from typing import Any, Dict
-from core.container import ServiceContainer
+
+from core.runtime import resource_psutil as psutil
 
 logger = logging.getLogger("Aura.Telemetry")
 

@@ -20,6 +20,7 @@ import psutil
 
 from core.observability.metrics import get_metrics
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.resource_observation import get_resource_observer
 from core.runtime.task_ownership import create_tracked_task
 from core.utils.task_tracker import mark_task_protected
 
@@ -190,18 +191,25 @@ class LymphaticReaper:
     def _hunt_orphans(self) -> int:
         """Reap zombies; optionally terminate long-lived children when explicitly enabled."""
         count = 0
-        current_proc = psutil.Process()
-        for child in current_proc.children(recursive=True):
+        table = get_resource_observer().process_table()
+        if not table.available:
+            raise RuntimeError(f"process_table_unavailable:{table.error}")
+        children = [
+            process
+            for process in table.processes
+            if os.getpid() in process.ancestor_pids
+        ]
+        for child in children:
             try:
-                status = child.status()
-                if status == psutil.STATUS_ZOMBIE:
-                    child.wait(timeout=0)
+                handle = psutil.Process(child.pid)
+                if child.status.lower() == "zombie":
+                    handle.wait(timeout=0)
                     count += 1
                     continue
 
-                age_s = time.time() - child.create_time()
+                age_s = time.time() - child.create_time
                 if age_s > LONG_CHILD_AGE_S and self._terminate_long_children:
-                    child.terminate()
+                    handle.terminate()
                     count += 1
                 elif age_s > LONG_CHILD_AGE_S:
                     logger.debug("Long-lived child retained by policy: pid=%s age_s=%.1f", child.pid, age_s)

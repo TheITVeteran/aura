@@ -21,6 +21,8 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.runtime.resource_observation import get_resource_observer  # noqa: E402
+
 _LIVE_SOAK_RECOVERABLE_ERRORS = (
     AttributeError,
     ImportError,
@@ -36,17 +38,11 @@ _LIVE_SOAK_RECOVERABLE_ERRORS = (
 
 def _rss_mb() -> float:
     try:
-        import psutil
-        return float(psutil.Process(os.getpid()).memory_info().rss) / (1024 * 1024)
-    except (ImportError, RuntimeError, OSError, AttributeError):
-        try:
-            import resource
-            value = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
-            if sys.platform == "darwin":
-                return value / (1024 * 1024)
-            return value / 1024
-        except (ImportError, RuntimeError, OSError, AttributeError):
-            return 0.0
+        memory = get_resource_observer().memory(root_pid=os.getpid())
+        if memory.available:
+            return memory.process_rss_bytes / (1024 * 1024)
+    except (RuntimeError, OSError, AttributeError):
+        return 0.0
 
 
 def _queue_depths() -> dict[str, int]:
@@ -101,9 +97,9 @@ async def async_main(argv: list[str] | None = None) -> int:
 
     os.environ.setdefault("AURA_PROOF_RUN", "1")
     from aura_main import boot_aura_runtime
+    from core.brain.llm.llm_router import get_llm_router
     from core.governance.will import ActionDomain, get_will
     from core.runtime.action_executor import ActionExecutor
-    from core.brain.llm.llm_router import get_llm_router
     from tools.agi.run_dnu_agi_proof_battery import shutdown_proof_runtime
     from tools.receipt_material import signed_will_receipt_entry
 

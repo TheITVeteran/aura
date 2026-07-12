@@ -323,7 +323,7 @@ class ActorBus:
                 await asyncio.sleep(0)
             except (_ACTOR_BUS_SEND_ERRORS + (asyncio.QueueEmpty,)) as e:
                 try:
-                    import psutil
+                    from core.runtime import resource_psutil as psutil
                     if psutil.virtual_memory().percent < 90:
                         from core.runtime.self_healing import get_healer
                         logger.warning("Active repair triggered for telemetry broadcast error: %s", e)

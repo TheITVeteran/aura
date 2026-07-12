@@ -1,12 +1,11 @@
-from core.utils.task_tracker import get_task_tracker
-import asyncio
-import time
 import logging
-from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional
-from pathlib import Path
-import psutil
 import os
+import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+from core.runtime import resource_psutil as psutil
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("aura.meta_optimization")
 

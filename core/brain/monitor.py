@@ -1,11 +1,12 @@
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
-import logging
 # core/brain/monitor.py
 import asyncio
-import psutil
-import time
+import logging
 from typing import Callable, Optional
+
+from core.runtime import resource_psutil as psutil
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
+
 
 class SelfMonitor:
     """

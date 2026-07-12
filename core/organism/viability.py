@@ -369,7 +369,7 @@ def _sample_from_container() -> ViabilitySample:
     broken = 0
     runtime_uptime = 0.0
     try:
-        import psutil
+        from core.runtime import resource_psutil as psutil
         cpu = psutil.cpu_percent(interval=None)
         ram = psutil.virtual_memory().percent
         try:

@@ -192,11 +192,11 @@ def _resident_bridge_process_running(executable: Path | None = None) -> bool:
     except OSError:
         executable_resolved = executable
     try:
-        import psutil  # type: ignore
+        from core.runtime.resource_observation import get_resource_observer
 
-        for proc in psutil.process_iter(["exe", "cmdline", "name"]):
+        for process in get_resource_observer().processes():
             try:
-                proc_exe = proc.info.get("exe")
+                proc_exe = process.exe
                 if proc_exe:
                     try:
                         if Path(proc_exe).resolve() == executable_resolved:
@@ -204,7 +204,7 @@ def _resident_bridge_process_running(executable: Path | None = None) -> bool:
                     except OSError:
                         if Path(proc_exe) == executable:
                             return True
-                cmdline = proc.info.get("cmdline") or []
+                cmdline = process.cmdline
                 if cmdline:
                     try:
                         if Path(str(cmdline[0])).resolve() == executable_resolved:
@@ -212,7 +212,7 @@ def _resident_bridge_process_running(executable: Path | None = None) -> bool:
                     except OSError:
                         if Path(str(cmdline[0])) == executable:
                             return True
-            except (psutil.Error, OSError, TypeError, ValueError):
+            except (OSError, TypeError, ValueError):
                 continue
     except (ImportError, OSError, RuntimeError, TypeError, ValueError):
         return False

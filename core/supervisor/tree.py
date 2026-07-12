@@ -15,6 +15,7 @@ from typing import Any, ClassVar, Protocol, cast
 from core.bus.pipe_control import send_supervisor_stop
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
+from core.runtime.resource_observation import get_resource_observer
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker
 
@@ -239,18 +240,11 @@ class SupervisionTree:
         pid = getattr(process, "pid", None)
         if not pid:
             return True
-        try:
-            import psutil
-
-            proc = psutil.Process(pid)
-            if proc.status() == psutil.STATUS_ZOMBIE:
+        table = get_resource_observer().process_table()
+        if table.available:
+            observed = next((item for item in table.processes if item.pid == pid), None)
+            if observed is None or observed.status.lower() in {"dead", "zombie"}:
                 return False
-            return bool(proc.is_running())
-        except ImportError:
-            pass
-        except (psutil.NoSuchProcess, ProcessLookupError):
-            return False
-        except (psutil.Error, RuntimeError, AttributeError, TypeError, ValueError):
             return True
         try:
             os.kill(pid, 0)

@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
+from core.runtime.resource_observation import get_resource_observer
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 
@@ -244,13 +245,26 @@ class SovereignSupervisor:
             return
 
         try:
-            parent = psutil.Process(pid)
-            children = parent.children(recursive=True)
-            for child in children:
-                child.terminate()
-            parent.terminate()
-            
-            _gone, alive = psutil.wait_procs(children + [parent], timeout=3)
+            table = get_resource_observer().process_table()
+            target_pids = (
+                [
+                    process.pid
+                    for process in table.processes
+                    if process.pid == pid or pid in process.ancestor_pids
+                ]
+                if table.available
+                else [pid]
+            )
+            handles = []
+            for target_pid in reversed(target_pids):
+                try:
+                    handles.append(psutil.Process(target_pid))
+                except psutil.NoSuchProcess:
+                    continue
+            for handle in handles:
+                handle.terminate()
+
+            _gone, alive = psutil.wait_procs(handles, timeout=3)
             for p in alive:
                 p.kill()
         except psutil.NoSuchProcess as exc:

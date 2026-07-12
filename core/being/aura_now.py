@@ -4,9 +4,10 @@ import hashlib
 import json
 import math
 import os
-import shutil
 from dataclasses import asdict, dataclass, field
 from typing import Any
+
+from core.runtime.resource_observation import get_resource_observer
 
 
 def _bounded(value: Any, default: float = 0.0, *, low: float = 0.0, high: float = 1.0) -> float:
@@ -60,10 +61,12 @@ class BodyState:
         latency_pressure = _bounded(thought_ms / 5000.0)
 
         try:
-            usage = shutil.disk_usage(os.getcwd())
-            disk = _bounded(usage.used / max(1, usage.total))
-            sources.append("disk_usage")
-        except OSError:
+            observation = get_resource_observer().disk(os.getcwd())
+            disk = _bounded(observation.used_bytes / max(1, observation.total_bytes))
+            sources.append(
+                f"disk_usage:{observation.provenance.source.value}"
+            )
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             disk = 0.0
 
         working_count = len(getattr(cognition, "working_memory", []) or [])

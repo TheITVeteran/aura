@@ -1084,8 +1084,8 @@ class LiquidSubstrate:
 
             # 2. STDP reward-modulated learning (from BrainCog research)
             try:
-                from core.container import ServiceContainer
                 from core.consciousness.stdp_learning import get_stdp_engine
+                from core.container import ServiceContainer
 
                 substrate_neurons = int(np.asarray(self.x).size)
                 stdp = (
@@ -1523,15 +1523,18 @@ class LiquidSubstrate:
           - 10min idle: 5Hz
           - 30min+ idle: pause loop entirely, compute decay on resume
         """
-        import psutil
-
         dt = self.config.time_constant
         multiplier = 1.0
 
         try:
-            battery = psutil.sensors_battery()
-            if battery and not battery.power_plugged:
-                multiplier = max(multiplier, 4.0 if battery.percent < 20 else 2.0)
+            from core.runtime.resource_observation import get_resource_observer
+
+            power = get_resource_observer().power()
+            if power.available and not power.plugged:
+                multiplier = max(
+                    multiplier,
+                    4.0 if power.battery_percent < 20 else 2.0,
+                )
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
             record_degradation("liquid_substrate", exc)
             logger.debug("Battery throttling power-state read failed: %s", exc)

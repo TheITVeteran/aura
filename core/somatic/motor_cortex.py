@@ -213,7 +213,7 @@ async def _reflex_screen_capture(payload: dict[str, Any]) -> dict[str, Any]:
 async def _reflex_health_check(payload: dict[str, Any]) -> dict[str, Any]:
     """Quick health telemetry sample and throttle if needed."""
     try:
-        import psutil
+        from core.runtime import resource_psutil as psutil
 
         cpu = psutil.cpu_percent(interval=0)
         mem = psutil.virtual_memory()
@@ -304,7 +304,7 @@ async def _reflex_file_reaction(payload: dict[str, Any]) -> dict[str, Any]:
 async def _reflex_metric_sample(payload: dict[str, Any]) -> dict[str, Any]:
     """Quick telemetry snapshot for the proprioceptive loop."""
     try:
-        import psutil
+        from core.runtime import resource_psutil as psutil
 
         return {
             "success": True,

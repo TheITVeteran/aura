@@ -10,18 +10,19 @@ from __future__ import annotations
 
 import json
 import socket
-import subprocess
 import sys
 from collections import namedtuple
 from pathlib import Path
 
 import pytest
 
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from tools.runtime_preflight import (
     FAIL,
     INFO,
     OK,
     WARN,
+    Check,
     check_disk,
     check_env_file,
     check_lock_drift,
@@ -29,6 +30,7 @@ from tools.runtime_preflight import (
     check_models,
     check_port,
     check_python,
+    check_ram,
     main,
 )
 
@@ -53,6 +55,49 @@ class TestDisk:
             raise OSError("gone")
 
         assert check_disk(tmp_path, usage_fn=boom).status == FAIL
+
+    def test_canonical_observer_path_records_provenance(self, tmp_path):
+        from core.runtime.resource_observation import SimulatedResourceObserver
+
+        observer = SimulatedResourceObserver(
+            scenario_id="runtime-preflight-disk",
+            disk_total_bytes=100_000_000_000,
+            disk_free_bytes=90_000_000_000,
+        )
+        check = check_disk(tmp_path, observer=observer)
+
+        assert check.status == OK
+        assert "source=simulated" in check.detail
+
+
+class TestRam:
+    def test_warns_on_low_canonical_observation(self):
+        from core.runtime.resource_observation import SimulatedResourceObserver
+
+        observer = SimulatedResourceObserver(
+            scenario_id="runtime-preflight-low-memory",
+            total_memory_bytes=64_000_000_000,
+            available_memory_bytes=4_000_000_000,
+        )
+        check = check_ram(observer=observer)
+
+        assert check.status == WARN
+        assert "source=simulated" in check.detail
+
+    def test_unavailable_observation_fails_visible(self):
+        class _UnavailableObserver:
+            @staticmethod
+            def memory():
+                return type(
+                    "UnavailableMemory",
+                    (),
+                    {"available": False, "error": "probe denied"},
+                )()
+
+        check = check_ram(observer=_UnavailableObserver())
+
+        assert check.status == FAIL
+        assert "probe denied" in check.detail
 
 
 class TestEnvFile:
@@ -191,6 +236,10 @@ class TestMain:
         (tmp_path / ".env").write_text("AURA_API_TOKEN=x\n")
         (tmp_path / "models").mkdir()
         monkeypatch.setenv("AURA_LOG_DIR", str(tmp_path / "logs"))
+        monkeypatch.setattr(
+            "tools.runtime_preflight.check_python",
+            lambda: Check("python", OK, "supported interpreter supplied by assembly test"),
+        )
         return tmp_path
 
     def _free_port(self) -> int:
@@ -220,15 +269,44 @@ class TestMain:
         assert rc == 1
 
     def test_stdlib_only_import(self):
-        """The tool must import with stdlib alone (psutil is optional at
-        call time) — a broken venv is exactly when preflight must run."""
+        """Core runtime dependencies are loaded only when checks execute."""
         code = (
             "import sys; sys.modules['psutil'] = None; "
             "import tools.runtime_preflight"
         )
-        proc = subprocess.run(
+        proc = get_subprocess_gateway().run(
             [sys.executable, "-c", code],
-            capture_output=True, text=True, timeout=30,
+            timeout=30,
             cwd=str(Path(__file__).resolve().parents[1]),
+            offline_tooling=True,
+            source="certification_tooling:runtime_preflight.stdlib_import",
         )
         assert proc.returncode == 0, proc.stderr
+
+    def test_direct_script_resolves_canonical_resource_observer(self, healthy_root):
+        script = Path(__file__).resolve().parents[1] / "tools" / "runtime_preflight.py"
+        proc = get_subprocess_gateway().run(
+            [
+                sys.executable,
+                str(script),
+                "--root",
+                str(healthy_root),
+                "--json",
+                "--port",
+                str(self._free_port()),
+            ],
+            timeout=30,
+            offline_tooling=True,
+            source="certification_tooling:runtime_preflight.direct_script",
+        )
+        report = json.loads(proc.stdout)
+        resource_checks = {
+            check["name"]: check for check in report["checks"] if check["name"] in {"disk", "ram"}
+        }
+
+        assert set(resource_checks) == {"disk", "ram"}
+        assert all(
+            "resource observer unavailable" not in check["detail"]
+            for check in resource_checks.values()
+        ), proc.stderr
+        assert all("source=host" in check["detail"] for check in resource_checks.values())

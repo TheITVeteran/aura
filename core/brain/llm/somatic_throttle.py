@@ -8,8 +8,7 @@ thermal throttling or out-of-memory (OOM) crashes.
 import logging
 from typing import Any
 
-import psutil
-
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.runtime.service_access import resolve_affect_engine
 

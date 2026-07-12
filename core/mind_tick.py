@@ -1728,9 +1728,10 @@ class MindTick:
                     logger.debug("MindTick: PID check failed (likely stale/malformed): %s", e)
 
             # 2. Resource Leak Probe (Memory)
-            import psutil
-            process = psutil.Process()
-            mem_pct = process.memory_percent()
+            from core.runtime.resource_observation import get_resource_observer
+
+            process = get_resource_observer().process(os.getpid())
+            mem_pct = process.memory_percent if process is not None else 100.0
             if mem_pct > 25.0: # Trigger cleanup if one process exceeds 25% RAM
                 logger.warning("💉 [IMMUNE] Pulse Audit: High memory usage detected (%.1f%%). Triggering conservative sweep.", mem_pct)
                 # Proactive cleanup trigger

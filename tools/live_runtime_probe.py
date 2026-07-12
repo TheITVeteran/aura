@@ -25,6 +25,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -32,8 +33,17 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import psutil
 import websockets
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.resource_observation import (  # noqa: E402
+    ProcessObservation,
+    ResourceObserver,
+    get_resource_observer,
+)
 
 BANNED_REPLY_RE = re.compile(
     r"(say that again|try (?:again|me again|that again)|ask me again|"
@@ -104,6 +114,7 @@ class LiveRuntimeProbe:
         selected_probes: tuple[str, ...] | None = None,
         skipped_probes: tuple[str, ...] = (),
         max_rss_mb: float | None = None,
+        observer: ResourceObserver | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.timeout_s = timeout_s
@@ -112,6 +123,7 @@ class LiveRuntimeProbe:
         self.selected_probes = selected_probes
         self.skipped_probes = set(skipped_probes)
         self.max_rss_mb = float(max_rss_mb or 0.0)
+        self.resource_observer = observer or get_resource_observer()
         self.events: list[dict[str, Any]] = []
         self.results: list[ProbeResult] = []
         self.headers: dict[str, str] = {}
@@ -169,29 +181,31 @@ class LiveRuntimeProbe:
             if name not in self.skipped_probes
         ]
 
-    def _aura_processes(self) -> list[psutil.Process]:
-        matches: list[psutil.Process] = []
-        for proc in psutil.process_iter(["pid", "cmdline"]):
-            try:
-                cmdline = " ".join(proc.info.get("cmdline") or [])
-            except (psutil.Error, TypeError):
-                continue
-            if "aura_main.py" in cmdline:
-                matches.append(proc)
-        return matches
+    def _aura_processes(self) -> list[ProcessObservation]:
+        table = self.resource_observer.process_table()
+        if not table.available:
+            raise RuntimeError(f"process table observation unavailable: {table.error}")
+        return [
+            process
+            for process in table.processes
+            if "aura_main.py" in " ".join(process.cmdline)
+        ]
 
     def _aura_rss_mb(self) -> float:
-        total = 0
-        for proc in self._aura_processes():
-            try:
-                processes = [proc, *proc.children(recursive=True)]
-            except psutil.Error:
-                processes = [proc]
-            for candidate in processes:
-                try:
-                    total += candidate.memory_info().rss
-                except psutil.Error:
-                    continue
+        table = self.resource_observer.process_table()
+        if not table.available:
+            raise RuntimeError(f"process table observation unavailable: {table.error}")
+        root_pids = {
+            process.pid
+            for process in table.processes
+            if "aura_main.py" in " ".join(process.cmdline)
+        }
+        total = sum(
+            process.rss_bytes
+            for process in table.processes
+            if process.pid in root_pids
+            or any(ancestor in root_pids for ancestor in process.ancestor_pids)
+        )
         return total / (1024 * 1024)
 
     def _guard_rss(self, probe_name: str) -> None:
@@ -608,7 +622,7 @@ class LiveRuntimeProbe:
         if body.get("passed_cases") != body.get("held_out_cases") or body.get("equivalence") != 1.0:
             raise AssertionError(f"program_dna_equivalence_battery failed held-out equivalence: {result}")
         artifact = Path(str(result.get("artifact") or out_path))
-        if not artifact.exists():
+        if not await asyncio.to_thread(artifact.exists):
             raise AssertionError(f"program_dna_equivalence_battery did not write artifact: {artifact}")
         return (
             "program DNA hidden-source behavioral equivalence battery passed through live skill lane",
@@ -1047,6 +1061,7 @@ return "dismissed"
             "probe_timeout_s": self.probe_timeout_s,
             "selected_probes": [result.name for result in self.results],
             "max_rss_mb": self.max_rss_mb,
+            "resource_observation": self.resource_observer.provenance.to_dict(),
             "events_collected": len(self.events),
             "recent_event_types": [
                 str(event.get("type") or "") for event in self.events[-80:]

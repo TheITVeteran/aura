@@ -1,9 +1,10 @@
+import asyncio
+import logging
+
+from core.container import ServiceContainer
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
-import asyncio
-import psutil
-import logging
-from core.container import ServiceContainer
 
 logger = logging.getLogger("Aura.Guardian")
 

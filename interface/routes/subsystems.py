@@ -17,8 +17,8 @@ from fastapi.responses import JSONResponse
 
 from core.config import config
 from core.container import ServiceContainer
-from core.runtime.service_access import optional_service
 from core.runtime.errors import record_degradation
+from core.runtime.service_access import optional_service
 from interface.auth import _require_internal, _restore_owner_session_from_request, _verify_token
 
 logger = logging.getLogger("Aura.Server.Subsystems")
@@ -724,7 +724,8 @@ async def api_mycelial_graph():
                     break
 
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
+
             ram_usage = psutil.virtual_memory().percent
             cpu_usage = psutil.cpu_percent()
         except ImportError:

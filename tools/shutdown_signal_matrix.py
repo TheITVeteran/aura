@@ -27,11 +27,15 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import psutil
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from core.runtime.resource_observation import (  # noqa: E402
+    ProcessObservation,
+    ResourceObserver,
+    get_resource_observer,
+)
 from tools.live_boot_proof import (  # noqa: E402
     build_safe_boot_env,
     live_proof_rss_abort_mb,
@@ -185,16 +189,18 @@ def _is_aura_main_process(cmdline: list[str] | tuple[str, ...]) -> bool:
     return any(Path(str(arg)).name == "aura_main.py" for arg in cmdline[1:])
 
 
-def _running_aura_main_pids() -> list[int]:
-    pids: list[int] = []
-    for proc in psutil.process_iter(["cmdline"]):
-        try:
-            cmdline = list(proc.info.get("cmdline") or [])
-        except psutil.Error:
-            continue
-        if _is_aura_main_process(cmdline):
-            pids.append(proc.pid)
-    return sorted(pids)
+def _running_aura_main_pids(
+    *,
+    observer: ResourceObserver | None = None,
+) -> list[int]:
+    table = (observer or get_resource_observer()).process_table()
+    if not table.available:
+        raise RuntimeError(f"process table observation unavailable: {table.error}")
+    return sorted(
+        process.pid
+        for process in table.processes
+        if _is_aura_main_process(process.cmdline)
+    )
 
 
 def _port_is_free(port: int) -> bool:
@@ -287,6 +293,7 @@ class SignalMatrixCase:
         port: int,
         artifact_dir: Path,
         rss_abort_mb: float | None,
+        observer: ResourceObserver | None = None,
     ) -> None:
         self.spec = spec
         self.port = int(port)
@@ -303,6 +310,7 @@ class SignalMatrixCase:
         self.peak_rss_mb = 0.0
         self.rss_abort_mb_override = rss_abort_mb
         self.rss_abort_mb = 0.0
+        self.resource_observer = observer or get_resource_observer()
         self.started_monotonic = time.monotonic()
         self.chat_thread: threading.Thread | None = None
         self.chat_result: dict[str, Any] = {}
@@ -313,38 +321,36 @@ class SignalMatrixCase:
             "at_unix": time.time(),
             "elapsed_seconds": round(time.monotonic() - self.started_monotonic, 3),
             "event": event,
+            "resource_observation": self.resource_observer.provenance.to_dict(),
             **detail,
         }
         with self.transcript_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, sort_keys=True, default=str) + "\n")
         print(f"[{self.spec.name}] {event}: {detail.get('summary', '')}", flush=True)
 
-    def _capture_identity(self, proc: psutil.Process) -> None:
-        try:
-            identity = ProcessIdentity(
-                pid=proc.pid,
-                create_time=float(proc.create_time()),
-                cmdline=tuple(str(item) for item in proc.cmdline()),
-            )
-        except psutil.Error:
-            return
+    def _capture_identity(self, process: ProcessObservation) -> None:
+        identity = ProcessIdentity(
+            pid=process.pid,
+            create_time=process.create_time,
+            cmdline=process.cmdline,
+        )
         self.seen_identities[(identity.pid, identity.create_time)] = identity
 
     def sample_process_tree(self) -> float:
         if self.proc is None:
             return 0.0
+        table = self.resource_observer.process_table()
+        if not table.available:
+            raise RuntimeError(f"process table observation unavailable: {table.error}")
+        processes = [
+            process
+            for process in table.processes
+            if process.pid == self.proc.pid or self.proc.pid in process.ancestor_pids
+        ]
         total = 0
-        try:
-            root = psutil.Process(self.proc.pid)
-            processes = [root, *root.children(recursive=True)]
-        except psutil.Error:
-            processes = []
         for process in processes:
             self._capture_identity(process)
-            try:
-                total += int(process.memory_info().rss)
-            except psutil.Error:
-                continue
+            total += process.rss_bytes
         rss_mb = total / (1024 * 1024)
         self.peak_rss_mb = max(self.peak_rss_mb, rss_mb)
         if self.rss_abort_mb > 0 and rss_mb > self.rss_abort_mb:
@@ -495,14 +501,13 @@ class SignalMatrixCase:
     def residual_processes(self) -> list[ProcessIdentity]:
         residuals: list[ProcessIdentity] = []
         for identity in self.seen_identities.values():
-            try:
-                process = psutil.Process(identity.pid)
-                if abs(float(process.create_time()) - identity.create_time) > 0.001:
-                    continue
-                if process.is_running() and process.status() != psutil.STATUS_ZOMBIE:
-                    residuals.append(identity)
-            except psutil.Error:
+            process = self.resource_observer.process(identity.pid)
+            if process is None:
                 continue
+            if abs(process.create_time - identity.create_time) > 0.001:
+                continue
+            if process.status.lower() not in {"dead", "zombie"}:
+                residuals.append(identity)
         return sorted(residuals, key=lambda item: item.pid)
 
     def _failure_lines(self) -> list[str]:
@@ -629,6 +634,7 @@ class SignalMatrixCase:
             "shutdown_report_path": str(self.report_path),
             "stdout_path": str(self.stdout_path),
             "history_paths": [str(path) for path in history],
+            "resource_observation": self.resource_observer.provenance.to_dict(),
         }
         self.verdict_path.write_text(
             json.dumps(verdict, indent=2, sort_keys=True),
@@ -682,7 +688,7 @@ class SignalMatrixCase:
                 raise TimeoutError(
                     f"root process did not exit within {self.spec.shutdown_timeout_s:.1f}s"
                 )
-        except (OSError, RuntimeError, TimeoutError, psutil.Error) as exc:
+        except (OSError, RuntimeError, TimeoutError) as exc:
             self.record("case_error", summary=f"{type(exc).__name__}: {exc}")
             self.hard_kill_owned_group()
         finally:
@@ -742,7 +748,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    existing = _running_aura_main_pids()
+    observer = get_resource_observer()
+    try:
+        existing = _running_aura_main_pids(observer=observer)
+    except RuntimeError as exc:
+        print(f"Refusing shutdown matrix: {exc}", file=sys.stderr)
+        return 2
     if existing:
         print(
             f"Refusing shutdown matrix while another aura_main.py is running: {existing}",
@@ -768,6 +779,7 @@ def main(argv: list[str] | None = None) -> int:
             port=args.base_port + index,
             artifact_dir=artifact_root / name,
             rss_abort_mb=args.rss_abort_mb,
+            observer=observer,
         )
         passed = case.run()
         results.append(
@@ -777,7 +789,12 @@ def main(argv: list[str] | None = None) -> int:
                 "verdict_path": str(case.verdict_path),
             }
         )
-        if _running_aura_main_pids():
+        try:
+            contamination = _running_aura_main_pids(observer=observer)
+        except RuntimeError as exc:
+            print(f"Process-table verification failed after {name}: {exc}")
+            break
+        if contamination:
             print("A case left an aura_main.py process; refusing to contaminate later cases.")
             break
 
@@ -789,6 +806,7 @@ def main(argv: list[str] | None = None) -> int:
         "completed_cases": results,
         "duration_seconds": round(time.monotonic() - started, 3),
         "artifact_root": str(artifact_root),
+        "resource_observation": observer.provenance.to_dict(),
     }
     summary_path = artifact_root / "MATRIX_VERDICT.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")

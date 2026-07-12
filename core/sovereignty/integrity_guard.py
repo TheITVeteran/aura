@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from core.config import config
-from core.runtime.service_registry import get_runtime_service
 from core.event_bus import get_event_bus
 from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import get_resource_observer
+from core.runtime.service_registry import get_runtime_service
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.IntegrityGuard")
@@ -25,6 +26,8 @@ class IntegrityGuard:
         self.active = False
         self._watchdog_task: Optional[asyncio.Task] = None
         self._last_sovereignty_score = 1.0
+        self._last_observation_source = "unavailable"
+        self._last_observation_scenario_id = ""
         self.called = False # v25: Track call state for deduplication
 
     async def start(self):
@@ -60,7 +63,9 @@ class IntegrityGuard:
         return {
             "status": "secure" if self._last_sovereignty_score > 0.8 else "at_risk",
             "score": self._last_sovereignty_score,
-            "watchdog_active": self.active
+            "watchdog_active": self.active,
+            "observation_source": self._last_observation_source,
+            "observation_scenario_id": self._last_observation_scenario_id,
         }
 
     def _get_project_root(self) -> Path:
@@ -92,33 +97,25 @@ class IntegrityGuard:
         
         # 2. PID Watchdog: Check for debuggers or tracers
         try:
-            import psutil
-            process = psutil.Process(os.getpid())
+            observer = get_resource_observer()
+            table = observer.process_table()
+            process = observer.process(os.getpid())
+            if process is None or not table.available:
+                raise RuntimeError(table.error or "process_identity_unavailable")
+            self._last_observation_source = observer.provenance.source.value
+            self._last_observation_scenario_id = observer.provenance.scenario_id
             suspicious = ["gdb", "lldb", "debugpy", "pydevd"]
             chain = [process]
-            try:
-                chain.extend(process.parents())
-            except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as exc:
-                record_degradation(
-                    "integrity_guard",
-                    exc,
-                    severity="warning",
-                    action="continued sovereignty check without full process parent chain",
-                )
-                try:
-                    parent = process.parent()
-                    if parent:
-                        chain.append(parent)
-                except (RuntimeError, AttributeError, TypeError, ValueError, OSError) as _exc:
-                    logger.debug("Suppressed %s in core.sovereignty.integrity_guard: %s", type(_exc).__name__, _exc)
+            by_pid = {item.pid: item for item in table.processes}
+            chain.extend(
+                by_pid[pid]
+                for pid in process.ancestor_pids
+                if pid in by_pid
+            )
             for proc in chain:
-                name = ""
-                try:
-                    name = proc.name().lower()
-                except (RuntimeError, AttributeError, TypeError, ValueError, OSError):
-                    continue
+                name = proc.name.lower()
                 if any(s in name for s in suspicious):
-                    logger.warning("🩸 [SOVEREIGNTY] Debugger detected in process chain: %s", proc.name())
+                    logger.warning("🩸 [SOVEREIGNTY] Debugger detected in process chain: %s", proc.name)
                     score -= 0.5
                     break
         except (ImportError, AttributeError, RuntimeError, OSError) as e:

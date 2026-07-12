@@ -27,14 +27,15 @@ class TestUnifiedRuntimePressure:
         assert isinstance(snap["red_zones"], list)
 
     def test_red_zone_memory_makes_it_not_alive(self, monkeypatch):
-        pressure = UnifiedRuntimePressure()
+        from core.runtime.resource_observation import SimulatedResourceObserver
 
-        class _FakeVM:
-            percent = 97.0
-
-        fake_psutil = SimpleNamespace(virtual_memory=lambda: _FakeVM())
-        monkeypatch.setitem(__import__("sys").modules, "psutil", fake_psutil)
+        observer = SimulatedResourceObserver(
+            scenario_id="critical-memory",
+            memory_percent=97.0,
+        )
+        pressure = UnifiedRuntimePressure(observer=observer)
         assert pressure.is_alive() is False
+        assert pressure.get_status()["observation_source"] == "simulated"
         snap = pressure.get_status()
         assert any(zone.startswith("memory_") for zone in snap["red_zones"])
 

@@ -20,10 +20,11 @@ LLM parameter mapping:
   Low valence   → higher rep_penalty (avoids rumination spirals)
   High arousal  → higher rep_penalty floor (prevents excited mantra loops)
 """
-from core.runtime.errors import record_degradation
 import logging
 import time
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.AffectiveCircumplex")
 
@@ -239,7 +240,7 @@ class AffectiveCircumplex:
 
         # Swap pressure (if psutil available) — elevated swap = RAM duress
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             swap = psutil.swap_memory()
             swap_ratio = swap.percent / 100.0 if swap.total > 0 else 0.0
         except (ImportError, AttributeError, RuntimeError):
@@ -324,7 +325,7 @@ class AffectiveCircumplex:
 
         cpu_note = ""
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             cpu = psutil.cpu_percent()
             if cpu > 85:
                 cpu_note = f" (CPU at {cpu:.0f}% — carrying heavy load)"

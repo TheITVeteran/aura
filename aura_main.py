@@ -30,6 +30,7 @@ import httpx
 
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import get_resource_observer
 from core.runtime.root_signal_owner import RootShutdownSignalOwner
 from core.runtime.shutdown_coordinator import is_shutdown_requested, request_shutdown
 from core.runtime.subprocess_gateway import get_subprocess_gateway
@@ -617,6 +618,8 @@ def kill_port(port: int, pattern: str = "aura"):
     """
     try:
         import psutil
+
+        from core.runtime.resource_observation import get_resource_observer
     except ImportError:
         logger.warning("psutil missing - skipping advanced port cleanup.")
         return
@@ -631,43 +634,44 @@ def kill_port(port: int, pattern: str = "aura"):
             pattern,
         )
 
-    for proc in psutil.process_iter(['pid', 'name']):
+    observer = get_resource_observer()
+    process_table = {process.pid: process for process in observer.processes()}
+    for connection in observer.connections(kind="inet"):
         try:
-            for conn in proc.net_connections(kind='inet'):
-                if conn.laddr.port == port:
-                    pid = proc.pid
-                    name = proc.info.get("name") or ""
-                    cmd_str = ""
-                    try:
-                        cmd_str = " ".join(proc.cmdline() or []).lower()
-                    except (psutil.Error, PermissionError, SystemError, OSError) as exc:
-                        logger.debug("Skipping cmdline inspection for PID %s during port cleanup: %s", pid, exc)
+            if connection.local_port != port or connection.pid <= 0:
+                continue
+            observed = process_table.get(connection.pid)
+            pid = int(connection.pid)
+            name = observed.name if observed is not None else ""
+            cmd_str = (
+                " ".join(observed.cmdline).lower() if observed is not None else ""
+            )
+            should_kill = force_all or (pattern in cmd_str or pattern in name.lower())
 
-                    should_kill = force_all or (pattern in cmd_str or pattern in name.lower())
-                    
-                    if should_kill:
-                        if force_all:
-                            logger.warning(
-                                "Force-clearing Aura-private port %s by terminating PID %s (%s): %s",
-                                port,
-                                pid,
-                                name,
-                                cmd_str[:200],
-                            )
-                        logger.info("Terminating process %s (%s) on port %s...", pid, name, port)
-                        try:
-                            proc.terminate()
-                            proc.wait(timeout=3)
-                        except psutil.TimeoutExpired:
-                            logger.warning("Process %s resistant to SIGTERM. Sending SIGKILL.", pid)
-                            proc.kill()
-                    else:
-                        logger.warning(
-                            "Leaving non-Aura process %s (%s) on shared port %s untouched.",
-                            pid,
-                            name,
-                            port,
-                        )
+            if should_kill:
+                if force_all:
+                    logger.warning(
+                        "Force-clearing Aura-private port %s by terminating PID %s (%s): %s",
+                        port,
+                        pid,
+                        name,
+                        cmd_str[:200],
+                    )
+                logger.info("Terminating process %s (%s) on port %s...", pid, name, port)
+                action_process = psutil.Process(pid)
+                try:
+                    action_process.terminate()
+                    action_process.wait(timeout=3)
+                except psutil.TimeoutExpired:
+                    logger.warning("Process %s resistant to SIGTERM. Sending SIGKILL.", pid)
+                    action_process.kill()
+            else:
+                logger.warning(
+                    "Leaving non-Aura process %s (%s) on shared port %s untouched.",
+                    pid,
+                    name,
+                    port,
+                )
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, PermissionError, SystemError, OSError) as exc:
             logger.debug("Skipping process during port cleanup: %s", exc)
 
@@ -1258,12 +1262,8 @@ class _ExternalMemorySentinelStatus:
             return False
         if self.proc.poll() is not None:
             return False
-        try:
-            import psutil
-
-            return psutil.pid_exists(self.pid)
-        except (ImportError, OSError, RuntimeError, TypeError, ValueError):
-            return True
+        observed = get_resource_observer().process(self.pid)
+        return observed is not None and observed.status.lower() not in {"dead", "zombie"}
 
     def rearm(self) -> bool:
         """Respawn a dead sentinel. Returns True when armed after the call.
@@ -1401,9 +1401,9 @@ def _install_systemwide_memory_protection() -> None:
     import resource
 
     try:
-        import psutil
+        from core.runtime.resource_observation import get_resource_observer
 
-        total_mb = psutil.virtual_memory().total / (1024 * 1024)
+        total_mb = get_resource_observer().memory().total_bytes / (1024 * 1024)
     except (ImportError, OSError, AttributeError):
         total_mb = 65536.0
 
@@ -3022,24 +3022,8 @@ def _pid_still_runnable(pid: int) -> bool:
     """
     if pid <= 0:
         return False
-    try:
-        import psutil
-
-        proc = psutil.Process(pid)
-        if not proc.is_running():
-            return False
-        try:
-            return proc.status() != psutil.STATUS_ZOMBIE
-        except (psutil.Error, RuntimeError, ValueError):
-            return False
-    except ImportError:
-        try:
-            os.kill(pid, 0)
-            return True
-        except OSError:
-            return False
-    except (psutil.Error, RuntimeError, ValueError):
-        return False
+    process = get_resource_observer().process(pid)
+    return process is not None and process.status.lower() not in {"dead", "zombie"}
 
 
 def _wait_for_reaped_pids(stale_pids: list[int], timeout_s: float = 6.0) -> set[int]:
@@ -3190,12 +3174,8 @@ def _is_python_multiprocessing_spawn_command(command: str) -> bool:
 
 
 def _pid_cwd_matches_project(pid: int) -> bool:
-    try:
-        import psutil
-
-        return _same_path(psutil.Process(pid).cwd(), PROJECT_ROOT)
-    except (ImportError, OSError, RuntimeError, TypeError, ValueError):
-        return False
+    process = get_resource_observer().process(pid)
+    return process is not None and bool(process.cwd) and _same_path(process.cwd, PROJECT_ROOT)
 
 
 def _reap_orphaned_aura_processes() -> int:
@@ -3220,39 +3200,20 @@ def _reap_orphaned_aura_processes() -> int:
     me = os.getpid()
     parent = os.getppid()
     killed = 0
-    try:
-        from core.governance_context import GovernanceViolation
-        from core.runtime.subprocess_gateway import get_subprocess_gateway
-
-        # Reading the process table is pure read-only introspection — it must
-        # use the read_only lane, not the offline_tooling bypass (which is for
-        # spawning Aura-orchestrating child jobs and is correctly refused once
-        # runtime governance reports active). The old offline_tooling path
-        # crashed the ENTIRE boot with GovernanceViolation when governance
-        # read active during bootstrap. Boot hygiene must never be fatal.
-        proc = get_subprocess_gateway().run(
-            ["ps", "-axo", "pid=,user=,command="],
-            timeout=5,
-            source="maintenance_tooling:process_reaper",
-            read_only=True,
+    observer = get_resource_observer()
+    table = observer.process_table()
+    if not table.available:
+        logger.warning(
+            "Unable to inspect process table for stale Aura processes: %s",
+            table.error or "observation unavailable",
         )
-        out = proc.stdout
-    except (subprocess.SubprocessError, OSError, GovernanceViolation, ValueError) as exc:
-        record_degradation("aura_main", exc)
-        logger.warning("Unable to inspect process table for stale Aura processes: %s", exc)
         return 0
     current_user = os.environ.get("USER") or ""
     stale_pids: list[int] = []
-    for line in out.splitlines():
-        parts = line.strip().split(None, 2)
-        if len(parts) < 3:
-            continue
-        try:
-            pid = int(parts[0])
-        except ValueError:
-            continue
-        user = parts[1]
-        cmd = parts[2]
+    for observed in table.processes:
+        pid = observed.pid
+        user = observed.username
+        cmd = " ".join(observed.cmdline)
         if pid in (me, parent):
             continue
         if current_user and user != current_user:
@@ -3261,7 +3222,7 @@ def _reap_orphaned_aura_processes() -> int:
         # macOS keep-awake assertion, and cwd-verified orphaned multiprocessing
         # workers owned by this checkout.
         if _is_python_multiprocessing_spawn_command(cmd):
-            if not _pid_cwd_matches_project(pid):
+            if not observed.cwd or not _same_path(observed.cwd, PROJECT_ROOT):
                 continue
         elif not _is_reapable_aura_process_command(cmd):
             continue
@@ -3275,17 +3236,19 @@ def _reap_orphaned_aura_processes() -> int:
         psutil = None
 
     if psutil:
-        for pid in stale_pids:
+        stale_set = set(stale_pids)
+        target_processes = [
+            observed
+            for observed in table.processes
+            if observed.pid in stale_set
+            or any(ancestor in stale_set for ancestor in observed.ancestor_pids)
+        ]
+        target_processes.sort(key=lambda item: len(item.ancestor_pids), reverse=True)
+        for observed in target_processes:
             try:
-                parent_proc = psutil.Process(pid)
-                # Terminate children recursively first to prevent orphans
-                for child in parent_proc.children(recursive=True):
-                    try:
-                        child.terminate()
-                    except psutil.Error:
-                        continue
-                parent_proc.terminate()
-                killed += 1
+                psutil.Process(observed.pid).terminate()
+                if observed.pid in stale_set:
+                    killed += 1
             except psutil.Error:
                 continue
     else:
@@ -3301,17 +3264,30 @@ def _reap_orphaned_aura_processes() -> int:
     if stale_pids:
         time.sleep(1.5)
         if psutil:
-            for pid in stale_pids:
+            refreshed = observer.process_table()
+            remaining_observed = (
+                refreshed.processes
+                if refreshed.available
+                else tuple(
+                    process
+                    for pid in stale_pids
+                    if (process := observer.process(pid)) is not None
+                )
+            )
+            stale_set = set(stale_pids)
+            hard_kill_targets = [
+                process
+                for process in remaining_observed
+                if process.pid in stale_set
+                or any(ancestor in stale_set for ancestor in process.ancestor_pids)
+            ]
+            hard_kill_targets.sort(
+                key=lambda item: len(item.ancestor_pids),
+                reverse=True,
+            )
+            for observed in hard_kill_targets:
                 try:
-                    parent_proc = psutil.Process(pid)
-                    for child in parent_proc.children(recursive=True):
-                        try:
-                            if child.is_running():
-                                child.kill()
-                        except psutil.Error:
-                            continue
-                    if parent_proc.is_running():
-                        parent_proc.kill()
+                    psutil.Process(observed.pid).kill()
                 except psutil.Error:
                     continue
         else:
@@ -3372,20 +3348,15 @@ def _same_path(left: str | Path, right: str | Path) -> bool:
 
 def _lock_pid_matches_aura_runtime(pid: int, metadata: dict[str, Any]) -> tuple[bool, str]:
     """Verify a lock PID is the runtime that wrote it before sending signals."""
-    try:
-        import psutil
-
-        proc = psutil.Process(pid)
-        cmdline = [str(part) for part in (proc.cmdline() or [])]
-        command = " ".join(cmdline).lower()
-        cwd = proc.cwd()
-        actual_create_time = float(proc.create_time())
-    except ImportError:
-        return True, "psutil_unavailable_legacy_signal_check"
-    except psutil.NoSuchProcess:
+    process = get_resource_observer().process(pid)
+    if process is None:
         return False, "pid_not_running"
-    except (psutil.AccessDenied, psutil.ZombieProcess, OSError, RuntimeError, TypeError, ValueError) as exc:
-        return False, f"pid_identity_unavailable:{type(exc).__name__}"
+    cmdline = list(process.cmdline)
+    command = " ".join(cmdline).lower()
+    cwd = process.cwd
+    actual_create_time = process.create_time
+    if not cwd:
+        return False, "pid_identity_unavailable:cwd"
 
     expected_pid = metadata.get("pid") if metadata else None
     if expected_pid is not None:
@@ -3449,16 +3420,16 @@ def stop_aura():
         parent_pid = os.getppid()
         stopped: list[int] = []
         candidates = []
-        for proc in psutil.process_iter(["pid", "exe", "cmdline", "name"]):
+        for observed in get_resource_observer().processes():
             try:
-                pid = int(proc.info.get("pid") or proc.pid)
+                pid = int(observed.pid)
                 if pid in {current_pid, parent_pid}:
                     continue
-                exe = str(proc.info.get("exe") or "")
-                cmdline = [str(item) for item in (proc.info.get("cmdline") or [])]
+                exe = observed.exe
+                cmdline = list(observed.cmdline)
                 first_arg = cmdline[0] if cmdline else ""
                 cmdline_text = " ".join(cmdline)
-                name = str(proc.info.get("name") or "")
+                name = observed.name
                 is_native_launcher = (
                     exe.endswith(launcher_suffix)
                     or first_arg.endswith(launcher_suffix)
@@ -3473,7 +3444,7 @@ def stop_aura():
                     print(f"Preserving resident Aura.app launcher bridge PID {pid} for runtime replacement.")
                     continue
                 if is_native_launcher or is_native_child:
-                    candidates.append(proc)
+                    candidates.append(psutil.Process(pid))
             except (psutil.Error, OSError, TypeError, ValueError):
                 continue
 
@@ -3589,15 +3560,27 @@ def stop_aura():
             print("Aura is stubborn. Sending SIGKILL...")
             if psutil:
                 try:
-                    p = psutil.Process(pid)
-                    for child in p.children(recursive=True):
+                    table = get_resource_observer().process_table()
+                    targets = (
+                        [
+                            process
+                            for process in table.processes
+                            if process.pid == pid or pid in process.ancestor_pids
+                        ]
+                        if table.available
+                        else []
+                    )
+                    targets.sort(
+                        key=lambda item: len(item.ancestor_pids),
+                        reverse=True,
+                    )
+                    for process in targets:
                         try:
-                            if child.is_running():
-                                child.kill()
+                            psutil.Process(process.pid).kill()
                         except psutil.Error:
                             pass
-                    if p.is_running():
-                        p.kill()
+                    if not targets:
+                        psutil.Process(pid).kill()
                 except psutil.Error:
                     pass
             else:

@@ -10,6 +10,7 @@ from core.config import config
 from core.container import ServiceContainer
 from core.mind_tick import MindTick
 from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import get_resource_observer
 from core.state.state_repository import StateRepository
 from core.utils.concurrency import LOCK_SENTINEL, RobustLock
 from core.utils.task_tracker import get_task_tracker
@@ -231,7 +232,6 @@ class BootResilienceMixin:
 
     def _async_init_threading(self):
         """Initialize asyncio objects within the running event loop."""
-        import os as _os
         from concurrent.futures import ThreadPoolExecutor
 
         # v51: We isolate cognitive I/O from system I/O to prevent starvation.
@@ -243,7 +243,9 @@ class BootResilienceMixin:
         # 104-thread pile-up, with this pool's workers running heavyweight
         # deferred tasks simultaneously. Bounded width makes overload queue
         # (bounded memory) instead of fan out (unbounded memory).
-        _cog_workers = max(4, min(16, int(_os.environ.get("AURA_COGNITION_POOL_WORKERS", "0") or 0) or ((_os.cpu_count() or 8) + 4)))
+        configured_workers = int(os.environ.get("AURA_COGNITION_POOL_WORKERS", "0") or 0)
+        observed_cpus = max(1, int(get_resource_observer().compute().cpu_count))
+        _cog_workers = max(4, min(16, configured_workers or (observed_cpus + 4)))
         cog_executor = ThreadPoolExecutor(
             max_workers=_cog_workers, thread_name_prefix="Aura_Cognition"
         )

@@ -101,17 +101,31 @@ async def test_llm_router_uses_substrate_before_transformer(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_online_lora_governor_blocks_when_training_is_running(tmp_path):
+async def test_online_lora_governor_blocks_when_training_is_running(
+    tmp_path,
+    resource_observer,
+):
     from core.adaptation.online_lora_governor import OnlineLoRAGovernor
+    from core.runtime.resource_observation import ProcessObservation
 
-    fake_proc = SimpleNamespace(
-        info={
-            "pid": 123,
-            "cmdline": ["python", "-m", "mlx_lm", "lora", "--train"],
-            "name": "python",
-        }
+    resource_observer.configure_processes(
+        [
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=123,
+                ppid=1,
+                create_time=1.0,
+                status="running",
+                name="python",
+                cmdline=("python", "-m", "mlx_lm", "lora", "--train"),
+                rss_bytes=1024,
+            )
+        ]
     )
-    governor = OnlineLoRAGovernor(receipt_path=tmp_path / "receipts.jsonl", process_iter=lambda attrs: [fake_proc])
+    governor = OnlineLoRAGovernor(
+        receipt_path=tmp_path / "receipts.jsonl",
+        observer=resource_observer,
+    )
 
     receipt = await governor.maybe_update_from_reflection("I noticed a repair pattern.")
 
@@ -120,12 +134,19 @@ async def test_online_lora_governor_blocks_when_training_is_running(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_online_lora_governor_collects_without_false_update_status(tmp_path):
+async def test_online_lora_governor_collects_without_false_update_status(
+    tmp_path,
+    resource_observer,
+):
     from core.adaptation.online_lora_governor import OnlineLoRAGovernor
     from core.container import ServiceContainer
 
     ServiceContainer.clear()
-    governor = OnlineLoRAGovernor(receipt_path=tmp_path / "receipts.jsonl", process_iter=lambda attrs: [])
+    resource_observer.configure_processes([])
+    governor = OnlineLoRAGovernor(
+        receipt_path=tmp_path / "receipts.jsonl",
+        observer=resource_observer,
+    )
 
     receipt = await governor.maybe_update_from_reflection("I noticed a repair pattern.")
 

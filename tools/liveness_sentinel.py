@@ -33,13 +33,23 @@ import argparse
 import json
 import os
 import signal
+import sys
 import time
 from pathlib import Path
 
-try:
-    import psutil
-except ImportError:  # pragma: no cover - sentinel must degrade, not crash
-    psutil = None
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from core.runtime.resource_observation import (  # noqa: E402
+    HostResourceObserver,
+    ObservationSource,
+)
+
+_OBSERVER = HostResourceObserver(
+    source=ObservationSource.HOST,
+    scenario_id="external-liveness-sentinel",
+)
 
 RING_MAX_LINES = 500
 
@@ -101,21 +111,19 @@ def read_heartbeat_state(path: Path) -> str:
 
 
 def child_pids(root_pid: int, *, max_children: int = 256) -> list[int]:
-    if psutil is None:
+    table = _OBSERVER.process_table()
+    if not table.available:
         return []
-    seen: set[int] = set()
-    frontier = [root_pid]
-    deadline = time.monotonic() + 2.0
-    while frontier and len(seen) < max_children and time.monotonic() < deadline:
-        pid = frontier.pop()
-        try:
-            for child in psutil.Process(pid).children(recursive=False):
-                if child.pid not in seen:
-                    seen.add(child.pid)
-                    frontier.append(child.pid)
-        except psutil.Error:
-            continue
-    return list(seen)
+    descendants = [
+        process
+        for process in table.processes
+        if root_pid in process.ancestor_pids
+    ]
+    descendants.sort(
+        key=lambda process: (process.ancestor_pids.index(root_pid), process.pid),
+        reverse=True,
+    )
+    return [process.pid for process in descendants[:max_children]]
 
 
 def kill_tree(root_pid: int) -> list[int]:
@@ -261,12 +269,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if psutil is None:
-        return 0  # Cannot guard without psutil; degrade silently.
-
-    try:
-        target = psutil.Process(args.pid)
-    except psutil.Error:
+    if _OBSERVER.process(args.pid) is None:
         return 0  # Already gone.
 
     signal.signal(signal.SIGHUP, signal.SIG_IGN)  # survive parent re-exec
@@ -284,7 +287,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # started_at uses monotonic for the grace window; staleness uses wall clock
     # because the heartbeat timestamps are wall clock.
-    while target.is_running():
+    while _OBSERVER.process(args.pid) is not None:
         now = time.time()
         last_loop_run, written_at, file_mtime = read_heartbeat(args.heartbeat)
         last_service_progress = read_runtime_service_progress(args.heartbeat)

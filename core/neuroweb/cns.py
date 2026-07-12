@@ -1,16 +1,15 @@
-from core.runtime.errors import record_degradation
 import asyncio
 import json
 import logging
 import re
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from core.brain.cognitive_engine import CognitiveEngine
 from core.capability_engine import CapabilityEngine as RobustSkillRegistry
+from core.runtime.errors import record_degradation
 
 from .glue_factory import GlueFactory
-from .structures import Intent, Neuron, Synapse
+from .structures import Intent, Neuron
 
 logger = logging.getLogger("NeuroWeb.CNS")
 
@@ -72,7 +71,7 @@ class CentralNervousSystem:
         """
         
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             mem = psutil.virtual_memory()
             
             # Phase 27: Aggressive Memory Override

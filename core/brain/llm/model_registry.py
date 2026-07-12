@@ -519,6 +519,15 @@ _LANE_AUDIT_CACHE_LOCK = threading.Lock()
 _LANE_AUDIT_CACHE: dict[str, Any] = {"key": None, "at": 0.0, "result": None}
 
 
+def reset_model_registry_caches_for_test() -> None:
+    global _EXTERNAL_CORTEX_QUERIED, _cortex_path_cache
+    _EXTERNAL_CORTEX_QUERIED = False
+    _cortex_path_cache = None
+    get_model_context_window.cache_clear()
+    with _LANE_AUDIT_CACHE_LOCK:
+        _LANE_AUDIT_CACHE.update(key=None, at=0.0, result=None)
+
+
 def _lane_audit_cache_ttl_s() -> float:
     try:
         return max(0.0, float(os.getenv("AURA_LANE_AUDIT_CACHE_TTL_S", "30") or 30))

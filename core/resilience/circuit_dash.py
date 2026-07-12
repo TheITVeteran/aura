@@ -1,18 +1,18 @@
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import time
-from rich.live import Live
-from rich.table import Table
-from rich.panel import Panel
-from rich.layout import Layout
+
 from rich.console import Console
-from rich.progress import BarColumn, Progress, TextColumn
-from rich.text import Text
-import psutil
+from rich.layout import Layout
+from rich.live import Live
+from rich.panel import Panel
+from rich.table import Table
+
+from core.runtime import resource_psutil as psutil
+from core.utils.task_tracker import get_task_tracker
 
 # Import metrics if possible
 try:
-    from core.resilience.resilience import SmartCircuitBreaker, PROMETHEUS_AVAILABLE
+    from core.resilience.resilience import PROMETHEUS_AVAILABLE
 except ImportError:
     PROMETHEUS_AVAILABLE = False
 

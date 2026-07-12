@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import psutil
+from core.runtime import resource_psutil as psutil
 
 if TYPE_CHECKING:
     from core.brain.lane_admission import ActiveLane
@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
+from core.runtime.resource_observation import get_resource_observer
 from core.runtime.shutdown_coordinator import (
     is_shutdown_requested,
     record_shutdown_admission_event,
@@ -43,6 +44,14 @@ from .chat_format import format_chatml_messages, format_chatml_prompt
 from .mlx_worker import _mlx_worker_loop
 
 logger = logging.getLogger("LLM.MLX")
+
+
+def _observed_process_rss_bytes(pid: int) -> int:
+    try:
+        process = get_resource_observer().process(int(pid))
+        return int(process.rss_bytes) if process is not None else 0
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return 0
 
 _MODEL_LOAD_FOREGROUND_ADMISSION_TIMEOUT_FLAG = declare(
     "AURA_FOREGROUND_MODEL_LOAD_ADMISSION_TIMEOUT_S",
@@ -408,10 +417,7 @@ def _observed_model_lane_owners(exclude_client: Any = None) -> list[Any]:
                 continue
             lane, qos = classify_lane(path)
             last = float(getattr(client, "_last_user_facing_completed_at", 0.0) or 0.0)
-            try:
-                observed_gb = float(psutil.Process(pid).memory_info().rss) / float(1024**3)
-            except (psutil.Error, OSError, ValueError):
-                observed_gb = 0.0
+            observed_gb = float(_observed_process_rss_bytes(pid)) / float(1024**3)
             owners.append(
                 LaneOwnerObservation(
                     owner_id=_model_lane_owner_id(client),
@@ -817,10 +823,7 @@ async def _model_load_admission_context(
                 cancelled.reason,
                 receipt_id=cancelled.receipt_id,
             )
-        try:
-            observed_gb = float(psutil.Process(pid).memory_info().rss) / float(1024**3)
-        except (psutil.Error, OSError, ValueError):
-            observed_gb = 0.0
+        observed_gb = float(_observed_process_rss_bytes(pid)) / float(1024**3)
         try:
             committed = await lane_controller.commit(
                 lane_decision,
@@ -3403,30 +3406,35 @@ class MLXLocalClient:
         try:
             model_basename = os.path.basename(self.model_path)
             target_name = f"MLXWorker-{model_basename}"
-            for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+            for observed_process in get_resource_observer().processes():
                 if _shutdown_blocks_model_work(self.model_path, action="orphan scan"):
                     raise RuntimeError("runtime_shutdown")
                 try:
-                    pname = proc.info.get("name", "") or ""
+                    pname = observed_process.name
+                    command = observed_process.cmdline
                     if target_name in pname or (
-                        proc.info.get("cmdline")
-                        and any(model_basename in str(arg) for arg in (proc.info["cmdline"] or []))
-                        and "mlx_worker" in str(proc.info.get("cmdline", []))
+                        command
+                        and any(model_basename in str(arg) for arg in command)
+                        and "mlx_worker" in str(command)
                     ):
-                        ancestor_pids = {parent.pid for parent in proc.parents()}
-                        if proc.pid != os.getpid() and os.getpid() in ancestor_pids:
+                        ancestor_pids = set(observed_process.ancestor_pids)
+                        if (
+                            observed_process.pid != os.getpid()
+                            and os.getpid() in ancestor_pids
+                        ):
                             logger.warning(
                                 "🧹 [STABILITY] Killing orphan MLXWorker pid=%d for %s",
-                                proc.pid,
+                                observed_process.pid,
                                 model_basename,
                             )
-                            proc.kill()
-                            proc.wait(timeout=3.0)
-                        elif proc.pid != os.getpid():
+                            action_process = psutil.Process(observed_process.pid)
+                            action_process.kill()
+                            action_process.wait(timeout=3.0)
+                        elif observed_process.pid != os.getpid():
                             logger.info(
                                 "Model-path match pid=%d for %s belongs to another root; "
                                 "durable lane accounting will arbitrate it without cross-root kill.",
-                                proc.pid,
+                                observed_process.pid,
                                 model_basename,
                             )
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -5980,10 +5988,7 @@ class MLXLocalClient:
         freed_bytes = 0
         process = self._process
         if process is not None and getattr(process, "pid", None):
-            try:
-                freed_bytes = int(psutil.Process(process.pid).memory_info().rss)
-            except (psutil.Error, OSError, ValueError):
-                freed_bytes = 0
+            freed_bytes = _observed_process_rss_bytes(int(process.pid))
 
         # Re-check safety immediately before the teardown to shrink the race
         # window against a request that arrived since the first check.

@@ -30,6 +30,10 @@ REPO_DIR = TRAINING_DIR.parent
 if str(REPO_DIR) not in sys.path:
     sys.path.insert(0, str(REPO_DIR))
 
+from core.runtime.resource_observation import (  # noqa: E402
+    ResourceObserver,
+    get_resource_observer,
+)
 from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 
 ADAPTER_DIR = TRAINING_DIR / "adapters" / "aura-personality"
@@ -105,56 +109,60 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-def _process_tree_rss_gb(pid: int) -> float:
-    if psutil is None:
-        return 0.0
+def _process_tree_rss_gb(
+    pid: int,
+    *,
+    observer: ResourceObserver | None = None,
+) -> float:
     try:
-        root = psutil.Process(pid)
-        procs = [root, *root.children(recursive=True)]
-    except (psutil.Error, AttributeError, RuntimeError, TypeError, ValueError):
+        memory = (observer or get_resource_observer()).memory(root_pid=pid)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
         return 0.0
-    total = 0
-    for proc in procs:
-        try:
-            total += int(proc.memory_info().rss)
-        except (psutil.Error, AttributeError, RuntimeError, TypeError, ValueError):
-            continue
-    return total / _GIB
+    return memory.process_tree_rss_bytes / _GIB if memory.available else 0.0
 
 
 def _memory_guard_reason(pid: int) -> str | None:
-    if psutil is None:
-        return "psutil_unavailable"
     max_tree_rss_gb = _env_float("AURA_TRAINING_MAX_PROCESS_TREE_RSS_GB", 56.0)
     max_host_percent = _env_float("AURA_TRAINING_MAX_HOST_MEMORY_PERCENT", 94.0)
     tree_rss_gb = _process_tree_rss_gb(pid)
     if tree_rss_gb >= max_tree_rss_gb:
         return f"process_tree_rss:{tree_rss_gb:.1f}GB/{max_tree_rss_gb:.1f}GB"
     try:
-        host = psutil.virtual_memory()
-        percent = float(getattr(host, "percent", 100.0) or 100.0)
-        if percent >= max_host_percent:
-            return f"host_memory_pressure:{percent:.1f}%/{max_host_percent:.1f}%"
-    except (psutil.Error, AttributeError, RuntimeError, TypeError, ValueError):
+        host = get_resource_observer().memory(root_pid=pid)
+    except (AttributeError, RuntimeError, TypeError, ValueError):
         return "host_memory_probe_failed"
+    if not host.available:
+        return "host_memory_probe_failed"
+    percent = float(host.percent)
+    if percent >= max_host_percent:
+        return f"host_memory_pressure:{percent:.1f}%/{max_host_percent:.1f}%"
     return None
 
 
 def _terminate_process_tree(proc) -> None:  # noqa: ANN001 - subprocess.Popen-compatible.
     if psutil is not None:
         try:
-            root = psutil.Process(proc.pid)
-            children = root.children(recursive=True)
-            for child in reversed(children):
+            table = get_resource_observer().process_table()
+            descendant_pids = [
+                process.pid
+                for process in table.processes
+                if proc.pid in process.ancestor_pids
+            ]
+            handles = []
+            for pid in [*reversed(descendant_pids), proc.pid]:
                 try:
-                    child.terminate()
+                    handles.append(psutil.Process(pid))
+                except (psutil.Error, RuntimeError, TypeError, ValueError):
+                    continue
+            for handle in handles:
+                try:
+                    handle.terminate()
                 except (psutil.Error, RuntimeError, TypeError, ValueError):
                     pass
-            root.terminate()
-            gone, alive = psutil.wait_procs([*children, root], timeout=15)
-            for child in alive:
+            _gone, alive = psutil.wait_procs(handles, timeout=15)
+            for handle in alive:
                 try:
-                    child.kill()
+                    handle.kill()
                 except (psutil.Error, RuntimeError, TypeError, ValueError):
                     pass
             return
@@ -176,19 +184,29 @@ def _spawn(cmd: list[str], *, started_at: str) -> int:
         offline_tooling=True,
         source="training_tooling:run_unattended",
     )
+    resource_provenance = get_resource_observer().provenance.to_dict()
     watchdog_interval = max(2.0, _env_float("AURA_TRAINING_WATCHDOG_INTERVAL_S", 10.0))
     try:
         while not _shutdown.is_set():
             reason = _memory_guard_reason(proc.pid)
             if reason:
                 print(f"[orch] memory guard tripped — {reason}; terminating training tree")
-                update_state(started_at=started_at, phase="memory_guard_kill", memory_guard_reason=reason)
+                update_state(
+                    started_at=started_at,
+                    phase="memory_guard_kill",
+                    memory_guard_reason=reason,
+                    resource_observation=resource_provenance,
+                )
                 _terminate_process_tree(proc)
                 return 137
             try:
                 return proc.wait(timeout=watchdog_interval)
             except TimeoutExpired:
-                update_state(started_at=started_at, phase="running")
+                update_state(
+                    started_at=started_at,
+                    phase="running",
+                    resource_observation=resource_provenance,
+                )
         print("[orch] shutdown — terminating subprocess")
         _terminate_process_tree(proc)
         try:

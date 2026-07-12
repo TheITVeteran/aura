@@ -11,7 +11,7 @@ import time
 from typing import Any
 
 try:
-    import psutil
+    from core.runtime import resource_psutil as psutil
 except ImportError:
     psutil = None
 

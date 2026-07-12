@@ -15,12 +15,12 @@ import time
 from typing import Any, Dict, Optional
 
 try:
-    import psutil
+    from core.runtime import resource_psutil as psutil
 except ImportError:
     psutil = None
 
-from core.runtime.errors import get_degradation_tracker, record_degradation
-from core.container import ServiceContainer
+from core.runtime.errors import get_degradation_tracker
+from core.runtime.resource_observation import get_resource_observer
 
 logger = logging.getLogger("Consciousness.ExistentialStakes")
 
@@ -123,11 +123,11 @@ class ExistentialStakes:
 
             # 1. Memory Threat
             process_mem = 0
-            if psutil is not None:
-                try:
-                    process_mem = psutil.Process().memory_info().rss
-                except _EXISTENTIAL_STAKES_RECOVERABLE_ERRORS as e:
-                    logger.debug("Failed to read process memory: %s", e)
+            try:
+                process = get_resource_observer().process(os.getpid())
+                process_mem = int(process.rss_bytes) if process is not None else 0
+            except _EXISTENTIAL_STAKES_RECOVERABLE_ERRORS as e:
+                logger.debug("Failed to read process memory: %s", e)
             
             if process_mem > 0:
                 self._memory_threat = min(1.0, process_mem / self._memory_limit)

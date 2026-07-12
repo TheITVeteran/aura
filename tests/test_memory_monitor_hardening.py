@@ -1,12 +1,12 @@
 from types import SimpleNamespace
 
-import psutil
-
 from core.utils.memory_monitor import AppleSiliconMemoryMonitor
 
 
 def test_memory_monitor_clamps_psutil_percent(monkeypatch):
-    monitor = AppleSiliconMemoryMonitor()
+    from core.runtime.resource_observation import HostResourceObserver
+
+    monitor = AppleSiliconMemoryMonitor(observer=HostResourceObserver())
     monkeypatch.setattr(
         "core.utils.memory_monitor.psutil.virtual_memory",
         lambda: SimpleNamespace(percent=132.4),
@@ -16,7 +16,9 @@ def test_memory_monitor_clamps_psutil_percent(monkeypatch):
 
 
 def test_memory_monitor_uses_available_total_when_percent_missing(monkeypatch):
-    monitor = AppleSiliconMemoryMonitor()
+    from core.runtime.resource_observation import HostResourceObserver
+
+    monitor = AppleSiliconMemoryMonitor(observer=HostResourceObserver())
     monkeypatch.setattr(
         "core.utils.memory_monitor.psutil.virtual_memory",
         lambda: SimpleNamespace(percent=None, total=1_000, available=250),
@@ -25,15 +27,13 @@ def test_memory_monitor_uses_available_total_when_percent_missing(monkeypatch):
     assert monitor._get_pressure_sysctl() == 75
 
 
-def test_memory_monitor_returns_zero_on_sampling_error(monkeypatch):
-    monitor = AppleSiliconMemoryMonitor()
-    calls = []
+def test_memory_monitor_fails_closed_on_sampling_error():
+    observer = SimpleNamespace(
+        memory=lambda: SimpleNamespace(
+            available=False,
+            error="sample failed",
+        )
+    )
+    monitor = AppleSiliconMemoryMonitor(observer=observer)
 
-    def sampler():
-        calls.append("called")
-        raise psutil.Error("sample failed")
-
-    monkeypatch.setattr("core.utils.memory_monitor.psutil.virtual_memory", sampler)
-
-    assert monitor._get_pressure_sysctl() == 0
-    assert calls == ["called"]
+    assert monitor._get_pressure_sysctl() == 100

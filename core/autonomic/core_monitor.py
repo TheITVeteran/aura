@@ -1,11 +1,11 @@
-from core.runtime.errors import record_degradation
 import asyncio
-import logging
-import psutil
-import time
-import os
 import gc
-from typing import Dict, Any
+import logging
+import time
+from typing import Any, Dict
+
+from core.runtime import resource_psutil as psutil
+from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.AutonomicCore")
@@ -233,7 +233,7 @@ class AutonomicCore:
             if getattr(self, '_idle_swap_done', False):
                 return
 
-            import psutil
+            from core.runtime import resource_psutil as psutil
             ram_pct = psutil.virtual_memory().percent
             # Only swap if RAM is above 70% — if plenty of room, let the model stay warm
             if ram_pct < 70.0:

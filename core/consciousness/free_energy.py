@@ -29,8 +29,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-import psutil
-
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 
 _FREE_ENERGY_RECOVERABLE_ERRORS = (

@@ -19,8 +19,6 @@ ARCHITECTURE:
 All LLM calls route through CognitiveEngine -> MLX (fully local).
 """
 
-from core.runtime.errors import record_degradation
-from core.utils.exceptions import capture_and_log
 import asyncio
 import logging
 import time
@@ -29,6 +27,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 import numpy as np
+
+from core.runtime.errors import record_degradation
+from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Consciousness.CEL")
 
@@ -402,7 +403,7 @@ class ConstitutiveExpressionLayer:
                 logger.debug("Suppressed Exception: %s", _exc)
 
             try:
-                import psutil
+                from core.runtime import resource_psutil as psutil
                 if psutil.virtual_memory().percent >= HIGH_MEMORY_PRESSURE_PCT:
                     return self._fallback_expression(user_content)
             except (ImportError, AttributeError, RuntimeError) as _exc:
@@ -571,8 +572,8 @@ class CELBridge:
     async def _on_expression(self, se: StateExpression):
         """Publish the expression to GlobalWorkspace as a candidate."""
         try:
-            from core.container import ServiceContainer
             from core.consciousness.global_workspace import CognitiveCandidate
+            from core.container import ServiceContainer
 
             ws = ServiceContainer.get("global_workspace", default=None)
             if ws:

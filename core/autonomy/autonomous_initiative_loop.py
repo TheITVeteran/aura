@@ -4,10 +4,9 @@ import os
 import time
 from typing import Any
 
-import psutil
-
 from core.container import ServiceContainer as ServiceContainer  # noqa: F401
 from core.health.degraded_events import get_unified_failure_state, record_degraded_event
+from core.runtime import resource_psutil as psutil
 from core.runtime.background_policy import background_activity_allowed, background_activity_reason
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.runtime.service_access import (

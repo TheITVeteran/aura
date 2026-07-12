@@ -4,18 +4,18 @@ Unified facade for Aura's multi-layered memory systems.
 Implements pruning, consolidation, and retrieval-confidence gating.
 """
 
-from core.runtime.errors import record_degradation
 import asyncio
 import logging
 import time
 from typing import Any, Dict, List, Optional
 
+from core.health.degraded_events import record_degraded_event
+from core.runtime.errors import record_degradation
 from core.runtime.service_registry import (
     get_runtime_service,
     has_runtime_service,
     is_runtime_registration_locked,
 )
-from core.health.degraded_events import record_degraded_event
 from core.utils.exceptions import capture_and_log
 
 logger = logging.getLogger("Aura.MemoryManager")
@@ -35,7 +35,7 @@ class MemoryManager:
     def _is_pressure_high(self) -> bool:
         """v29 Hardening: Check for memory pressure."""
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             return psutil.virtual_memory().percent > self._pressure_threshold
         except ImportError:
             return False

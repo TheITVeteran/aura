@@ -441,7 +441,7 @@ class ResourceGovernor:
         result: dict[str, Any] = {"status": "unknown"}
 
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
         except ImportError:
             result["status"] = "psutil_unavailable"
             return result

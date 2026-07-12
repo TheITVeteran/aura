@@ -30,16 +30,12 @@ def _env_float(name: str, default: float, *, low: float, high: float) -> float:
 
 def physical_ram_gb() -> float:
     try:
-        import psutil
+        from core.runtime.resource_observation import get_resource_observer
 
-        return float(psutil.virtual_memory().total) / (1024**3)
+        memory = get_resource_observer().memory()
+        return float(memory.total_bytes) / (1024**3) if memory.available else 16.0
     except (ImportError, RuntimeError, OSError, AttributeError, ValueError):
-        try:
-            pages = float(os.sysconf("SC_PHYS_PAGES"))
-            page_size = float(os.sysconf("SC_PAGE_SIZE"))
-            return (pages * page_size) / (1024**3)
-        except (RuntimeError, OSError, AttributeError, ValueError):
-            return 16.0
+        return 16.0
 
 
 @dataclass(frozen=True)

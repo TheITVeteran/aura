@@ -19,7 +19,7 @@ from typing import Any
 from core.runtime.errors import DependencyUnavailable, Severity, record_degradation
 
 try:
-    import psutil
+    from core.runtime import resource_psutil as psutil
 except ImportError:
     psutil = None
 

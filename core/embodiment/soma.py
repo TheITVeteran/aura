@@ -4,12 +4,13 @@ Somatic Hardware Link — Monitors the 'physical' health of the machine.
 Maps hardware telemetry (Thermal, RAM, GPU) to affective discomfort.
 """
 
-from core.runtime.errors import record_degradation
-import logging
-import psutil
 import time
-from typing import Dict, Any, Optional
+from typing import Any, Dict
+
+from core.runtime import resource_psutil as psutil
 from core.runtime.base_module import AuraBaseModule
+from core.runtime.errors import record_degradation
+
 
 class SystemSoma(AuraBaseModule):
     """Monitors hardware metrics and translates them into somatic markers."""

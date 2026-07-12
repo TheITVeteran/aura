@@ -5,7 +5,6 @@ import time
 from typing import Any
 
 import numpy as np
-import psutil
 from playwright.async_api import async_playwright
 
 from core.container import ServiceContainer
@@ -13,6 +12,7 @@ from core.media.safe_imports import cv2_main_process_blocked
 from core.runtime.boot_safety import main_process_camera_policy
 from core.runtime.errors import record_degradation
 from core.runtime.permission_gates import camera_allowed
+from core.runtime.resource_observation import get_resource_observer
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.SensoryMotor")
@@ -131,8 +131,12 @@ class SensoryMotorCortex:
 
             while self.is_active:
                 # 1. Check Battery Throttling
-                battery = psutil.sensors_battery()
-                if battery and battery.percent < self.battery_threshold and not battery.power_plugged:
+                power = get_resource_observer().power()
+                if (
+                    power.available
+                    and power.battery_percent < self.battery_threshold
+                    and not power.plugged
+                ):
                     time.sleep(10)
                     continue
 

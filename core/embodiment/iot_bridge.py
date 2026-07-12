@@ -325,7 +325,7 @@ def _read_substrate() -> dict[str, Any]:
     except (ImportError, AttributeError, RuntimeError):
         pass  # no-op: intentional
     try:
-        import psutil
+        from core.runtime import resource_psutil as psutil
         out["cpu_pct"] = psutil.cpu_percent(interval=None)
         out["ram_pct"] = psutil.virtual_memory().percent
     except (ImportError, AttributeError, RuntimeError):

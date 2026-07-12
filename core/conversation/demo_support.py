@@ -10,8 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-import psutil
-
+from core.runtime import resource_psutil as psutil
 from core.runtime.atomic_writer import atomic_write_text
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 

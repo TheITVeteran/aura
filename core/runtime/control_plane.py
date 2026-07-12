@@ -21,9 +21,10 @@ import threading
 import time
 import uuid
 from collections import deque
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from enum import IntEnum, StrEnum
-from typing import Any, Awaitable, Callable, Mapping
+from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.flags import FlagKind, declare
@@ -92,25 +93,48 @@ class ObservedServiceState(StrEnum):
 @dataclass(frozen=True)
 class PressureSnapshot:
     captured_at: float = field(default_factory=time.time)
+    observation_source: str = "unavailable"
+    observation_scenario_id: str = ""
+    host_observed: bool = False
+    qualifies_as_live_pressure: bool = False
+    resource_observation_available: bool = False
     memory_percent: float = 0.0
     memory_rss_mb: float = 0.0
+    process_tree_rss_mb: float = 0.0
     thermal_level: int = 0
+    thermal_provider: str = "blind"
+    disk_percent: float = 0.0
+    disk_free_bytes: int = 0
     loop_lag_s: float = 0.0
     shutdown_requested: bool = False
     red_zones: tuple[str, ...] = ()
     suspended_capabilities: tuple[str, ...] = ()
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, Any] | None) -> "PressureSnapshot":
+    def from_mapping(cls, value: Mapping[str, Any] | None) -> PressureSnapshot:
         raw = dict(value or {})
         return cls(
             captured_at=float(raw.get("captured_at") or raw.get("at_unix") or time.time()),
+            observation_source=str(raw.get("observation_source") or "unavailable"),
+            observation_scenario_id=str(raw.get("observation_scenario_id") or ""),
+            host_observed=bool(raw.get("host_observed", False)),
+            qualifies_as_live_pressure=bool(raw.get("qualifies_as_live_pressure", False)),
+            resource_observation_available=bool(
+                raw.get("resource_observation_available", False)
+            ),
             memory_percent=max(
                 0.0,
                 float(raw.get("memory_percent") or raw.get("memory_pct") or 0.0),
             ),
             memory_rss_mb=max(0.0, float(raw.get("memory_rss_mb") or 0.0)),
+            process_tree_rss_mb=max(
+                0.0,
+                float(raw.get("process_tree_rss_mb") or 0.0),
+            ),
             thermal_level=max(0, int(raw.get("thermal_level") or 0)),
+            thermal_provider=str(raw.get("thermal_provider") or "blind"),
+            disk_percent=max(0.0, float(raw.get("disk_percent") or 0.0)),
+            disk_free_bytes=max(0, int(raw.get("disk_free_bytes") or 0)),
             loop_lag_s=max(0.0, float(raw.get("loop_lag_s") or 0.0)),
             shutdown_requested=bool(raw.get("shutdown_requested", False)),
             red_zones=tuple(str(item) for item in raw.get("red_zones") or ()),
@@ -336,7 +360,10 @@ class ResourceAdmissionController:
                 action="resource pressure sampling failed; background admission fails closed",
                 receipt_required=False,
             )
-            snapshot = PressureSnapshot(red_zones=("pressure_provider_unavailable",))
+            snapshot = PressureSnapshot(
+                observation_source="unavailable",
+                red_zones=("pressure_provider_unavailable",),
+            )
         with self._lock:
             self._last_pressure = snapshot
             self._last_pressure_at = time.monotonic()
@@ -366,7 +393,8 @@ class ResourceAdmissionController:
                 ),
                 message=(
                     f"memory={snapshot.memory_percent:.1f}% "
-                    f"thermal={snapshot.thermal_level} lag={snapshot.loop_lag_s:.3f}s"
+                    f"thermal={snapshot.thermal_level} lag={snapshot.loop_lag_s:.3f}s "
+                    f"source={snapshot.observation_source}"
                 ),
             )
             degraded = bool(

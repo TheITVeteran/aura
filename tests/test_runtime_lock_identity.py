@@ -1,5 +1,25 @@
 import os
 
+from core.runtime.resource_observation import ProcessObservation, ProcessTableObservation
+
+
+def _configure_current_process(resource_observer, *, create_time: float, cwd: str) -> None:
+    resource_observer.configure_processes(
+        [
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=os.getpid(),
+                ppid=os.getppid(),
+                create_time=create_time,
+                status="running",
+                name="python",
+                cmdline=("python", "aura_main.py"),
+                rss_bytes=1024,
+                cwd=cwd,
+            )
+        ]
+    )
+
 
 def test_instance_lock_writes_identity_sidecar(tmp_path, monkeypatch):
     from core.utils import singleton as singleton_module
@@ -19,15 +39,17 @@ def test_instance_lock_writes_identity_sidecar(tmp_path, monkeypatch):
         singleton_module.release_instance_lock()
 
 
-def test_stop_aura_rejects_stale_lock_identity():
-    import psutil
-
+def test_stop_aura_rejects_stale_lock_identity(resource_observer):
     from aura_main import PROJECT_ROOT, _lock_pid_matches_aura_runtime
 
-    proc = psutil.Process(os.getpid())
+    _configure_current_process(
+        resource_observer,
+        create_time=100.0,
+        cwd=str(PROJECT_ROOT),
+    )
     stale_metadata = {
         "pid": os.getpid(),
-        "create_time": proc.create_time() - 60.0,
+        "create_time": 40.0,
         "cwd": str(PROJECT_ROOT),
     }
 
@@ -37,15 +59,17 @@ def test_stop_aura_rejects_stale_lock_identity():
     assert reason == "pid_reused_or_stale"
 
 
-def test_stop_aura_accepts_current_lock_identity():
-    import psutil
-
+def test_stop_aura_accepts_current_lock_identity(resource_observer):
     from aura_main import PROJECT_ROOT, _lock_pid_matches_aura_runtime
 
-    proc = psutil.Process(os.getpid())
+    _configure_current_process(
+        resource_observer,
+        create_time=100.0,
+        cwd=str(PROJECT_ROOT),
+    )
     metadata = {
         "pid": os.getpid(),
-        "create_time": proc.create_time(),
+        "create_time": 100.0,
         "cwd": str(PROJECT_ROOT),
     }
 
@@ -116,29 +140,23 @@ def test_bootstrap_lock_does_not_reap_verified_live_runtime(monkeypatch):
     assert calls == ["acquire:orchestrator:False"]
 
 
-def test_reaper_survives_governance_denied_process_table_read(monkeypatch):
-    """Boot must never die because the process reaper couldn't read `ps`.
-
-    Regression: _reap_orphaned_aura_processes used the offline_tooling bypass,
-    which raises GovernanceViolation once runtime governance reads active
-    during bootstrap — crashing the ENTIRE boot. It now uses the read_only
-    lane and degrades on any subprocess/governance error instead of raising.
-    """
+def test_reaper_fails_safe_when_process_table_observation_is_unavailable(
+    monkeypatch,
+    resource_observer,
+):
+    """Boot hygiene must preserve processes when canonical observation is blind."""
     import aura_main
-    from core.governance_context import GovernanceViolation
-
-    class _DenyingGateway:
-        def run(self, *args, **kwargs):
-            # Prove the reaper no longer relies on the offline bypass, and that
-            # even a hard governance denial cannot escape.
-            assert kwargs.get("read_only") is True
-            assert "offline_tooling" not in kwargs
-            raise GovernanceViolation("bypass denied while live governance is active")
 
     monkeypatch.setattr(
-        "core.runtime.subprocess_gateway.get_subprocess_gateway",
-        lambda: _DenyingGateway(),
+        resource_observer,
+        "process_table",
+        lambda: ProcessTableObservation(
+            provenance=resource_observer.provenance,
+            processes=(),
+            available=False,
+            error="induced-denial",
+        ),
     )
+    monkeypatch.setattr(aura_main, "get_resource_observer", lambda: resource_observer)
 
-    # Must return 0 (reaped nothing), not propagate the violation.
     assert aura_main._reap_orphaned_aura_processes() == 0

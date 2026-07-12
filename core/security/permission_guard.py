@@ -7,9 +7,9 @@ import time
 from enum import Enum, auto
 from typing import Any
 
-from core.runtime.errors import record_degradation
-
 from core.runtime.base_module import AuraBaseModule
+from core.runtime.errors import record_degradation
+from core.runtime.resource_observation import get_resource_observer
 
 _PERMISSION_RECOVERABLE_ERRORS = (
     AttributeError,
@@ -422,11 +422,13 @@ class PermissionGuard(AuraBaseModule):
             except _PERMISSION_RECOVERABLE_ERRORS as exc:
                 self.logger.debug("Bundle identity lookup unavailable: %s", exc)
         try:
-            import psutil  # type: ignore
-
-            parent = psutil.Process(os.getppid())
-            payload["parent_name"] = parent.name()
-            payload["parent_executable"] = parent.exe()
+            parent = get_resource_observer().process(os.getppid())
+            if parent is None:
+                raise RuntimeError("parent_process_identity_unavailable")
+            payload["parent_name"] = parent.name
+            payload["parent_executable"] = parent.exe
+            payload["observation_source"] = parent.provenance.source.value
+            payload["observation_scenario_id"] = parent.provenance.scenario_id
         except _PERMISSION_RECOVERABLE_ERRORS as exc:
             self.logger.debug("Parent process identity lookup unavailable: %s", exc)
         return payload

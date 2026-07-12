@@ -11,6 +11,7 @@ from core.orchestrator.initializers import hardening
 from core.runtime.control_plane import reset_runtime_control_plane
 from core.runtime.errors import get_degradation_tracker
 from core.runtime.health_contract import RUNTIME_CONTRACT, ServiceTier
+from core.runtime.resource_observation import ProcessObservation
 
 
 class _Validator:
@@ -166,22 +167,31 @@ class _ChildProcess:
         self.wait_timeout = timeout
 
 
-class _CurrentProcess:
-    def __init__(self, children: list[_ChildProcess]) -> None:
-        self._children = children
-
-    def children(self, *, recursive: bool = False) -> list[_ChildProcess]:
-        assert recursive is True
-        return list(self._children)
-
-
-def test_lymphatic_reaper_retains_long_lived_children_without_opt_in(monkeypatch, tmp_path):
+def test_lymphatic_reaper_retains_long_lived_children_without_opt_in(
+    monkeypatch,
+    tmp_path,
+    resource_observer,
+):
     import core.ops.lymphatic_reaper as reaper_module
 
     monkeypatch.delenv("AURA_REAPER_TERMINATE_LONG_CHILDREN", raising=False)
     child = _ChildProcess("sleeping")
-    current = _CurrentProcess([child])
-    monkeypatch.setattr(reaper_module.psutil, "Process", lambda: current)
+    resource_observer.configure_processes(
+        [
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=child.pid,
+                ppid=os.getpid(),
+                create_time=0.0,
+                status="sleeping",
+                name="test-child",
+                cmdline=("test-child",),
+                rss_bytes=0,
+                ancestor_pids=(os.getpid(),),
+            )
+        ]
+    )
+    monkeypatch.setattr(reaper_module.psutil, "Process", lambda _pid: child)
     monkeypatch.setattr(reaper_module.time, "time", lambda: reaper_module.LONG_CHILD_AGE_S + 60.0)
 
     reaper = reaper_module.LymphaticReaper(data_dir=tmp_path)
@@ -191,12 +201,26 @@ def test_lymphatic_reaper_retains_long_lived_children_without_opt_in(monkeypatch
     assert child.waited is False
 
 
-def test_lymphatic_reaper_reaps_zombie_children(monkeypatch, tmp_path):
+def test_lymphatic_reaper_reaps_zombie_children(monkeypatch, tmp_path, resource_observer):
     import core.ops.lymphatic_reaper as reaper_module
 
     child = _ChildProcess(reaper_module.psutil.STATUS_ZOMBIE)
-    current = _CurrentProcess([child])
-    monkeypatch.setattr(reaper_module.psutil, "Process", lambda: current)
+    resource_observer.configure_processes(
+        [
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=child.pid,
+                ppid=os.getpid(),
+                create_time=0.0,
+                status="zombie",
+                name="test-zombie",
+                cmdline=("test-zombie",),
+                rss_bytes=0,
+                ancestor_pids=(os.getpid(),),
+            )
+        ]
+    )
+    monkeypatch.setattr(reaper_module.psutil, "Process", lambda _pid: child)
 
     reaper = reaper_module.LymphaticReaper(data_dir=tmp_path)
 

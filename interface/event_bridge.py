@@ -4,15 +4,14 @@ Extracted from server.py — EventBus → WebSocket bridge,
 telemetry broadcasting, and mycelial UI callback.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-from core.runtime.shutdown_coordinator import is_shutdown_requested
-
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any, Dict, Optional
+
+from core.runtime.errors import record_degradation
+from core.runtime.shutdown_coordinator import is_shutdown_requested
 
 logger = logging.getLogger("Aura.Server.EventBridge")
 
@@ -78,13 +77,12 @@ async def run_event_bridge(is_gui_proxy: bool = False) -> None:
     try:
         from core.event_bus import get_event_bus
         from core.schemas import (
-            TelemetryPayload,
-            CognitiveThoughtPayload,
-            WebsocketMessage,
+            ActionResultPayload,
+            AuraMessagePayload,
             ChatStreamChunkPayload,
             ChatThoughtChunkPayload,
-            AuraMessagePayload,
-            ActionResultPayload,
+            CognitiveThoughtPayload,
+            WebsocketMessage,
         )
 
         bus = get_event_bus()
@@ -94,8 +92,8 @@ async def run_event_bridge(is_gui_proxy: bool = False) -> None:
             bus._bus_id,
         )
 
-        # Initialize psutil for accurate non-blocking percent calculation
-        import psutil
+        # Prime the canonical observer's non-blocking CPU sample.
+        from core.runtime import resource_psutil as psutil
         psutil.cpu_percent(interval=None)
 
         if bus._use_redis and not bus._redis:

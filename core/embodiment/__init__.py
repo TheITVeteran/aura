@@ -4,15 +4,15 @@ Consolidates Thermodynamic (biological) and Embodied (physical) simulations.
 Aura's 'body' now exists in a unified metabolic and spatial context.
 """
 
-from core.runtime.errors import record_degradation
 import asyncio
 import copy
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
-import psutil
+from core.runtime import resource_psutil as psutil
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Embodiment")
 

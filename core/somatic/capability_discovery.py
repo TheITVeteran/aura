@@ -21,24 +21,19 @@ Design:
     - Registered in ServiceContainer as ``capability_discovery``.
 """
 
+import asyncio
+import logging
+import shutil
+import threading
+import time
+from typing import Any, Dict, List, Optional, Set
+
+from core.container import ServiceContainer
+from core.runtime import resource_psutil as psutil
+from core.runtime.base_module import AuraBaseModule
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.utils.task_tracker import get_task_tracker
-import asyncio
-import logging
-import os
-import platform
-import shutil
-import subprocess
-import threading
-import time
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
-
-import psutil
-
-from core.runtime.base_module import AuraBaseModule
-from core.container import ServiceContainer
 
 logger = logging.getLogger("Aura.Somatic.CapabilityDiscovery")
 
@@ -301,8 +296,9 @@ class CapabilityDiscoveryDaemon(AuraBaseModule):
 
     def _scan_sensors(self, body: Any) -> tuple:
         """Check whether sensor libraries are importable."""
-        from core.somatic.body_schema import Limb, LimbType
         import importlib.util
+
+        from core.somatic.body_schema import Limb, LimbType
 
         discoveries: List[str] = []
         losses: List[str] = []

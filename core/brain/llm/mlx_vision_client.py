@@ -14,8 +14,6 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
-import psutil
-
 from core.runtime.model_lane_control import (
     LaneClaim,
     LaneOwnerObservation,
@@ -27,6 +25,7 @@ from core.runtime.model_lane_control import (
     register_model_lane_owner_adapter,
     unregister_model_lane_owner_adapter,
 )
+from core.runtime.resource_observation import get_resource_observer
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.shutdown_execution import run_sync_shutdown_callable_blocking
 
@@ -301,8 +300,13 @@ class MLXVisionClient:
                     )
                     return False
                 try:
-                    observed_gb = float(psutil.Process(pid).memory_info().rss) / float(1024**3)
-                except (psutil.Error, OSError, ValueError):
+                    observed_process = get_resource_observer().process(pid)
+                    observed_gb = (
+                        float(observed_process.rss_bytes) / float(1024**3)
+                        if observed_process is not None
+                        else 0.0
+                    )
+                except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
                     observed_gb = 0.0
                 try:
                     committed = await lane_controller.commit(

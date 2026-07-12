@@ -29,16 +29,16 @@ The guard publishes per-window samples to the dashboard's "Performance"
 tab and to ``~/.aura/data/performance/samples.jsonl``.
 """
 from __future__ import annotations
+
 import asyncio
 import json
 import logging
-import os
 import statistics
 import time
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional
 
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.task_tracker import get_task_tracker
@@ -90,7 +90,7 @@ class PerformanceGuard:
 
     def _derive_concurrency_from_ram(self) -> None:
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             total_gb = psutil.virtual_memory().total / (1024 ** 3)
             if total_gb >= 48:
                 self.budgets.concurrent_heavy_lanes = 3

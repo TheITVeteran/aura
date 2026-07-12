@@ -4,22 +4,23 @@ Orchestrates on-device LoRA fine-tuning for Aura's internal Nucleus models.
 This allows Aura to update her own weights based on captured experiences.
 """
 
-from core.runtime.errors import record_degradation
+import asyncio
+import json
+import logging
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
 from core.container import ServiceContainer
+from core.runtime import resource_psutil as psutil
 from core.runtime.background_policy import background_activity_reason
+from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
-import os
-import json
-import logging
-import asyncio
-import time
-import sys
-import psutil
-from typing import Dict, Any, List, Optional
-from pathlib import Path
 
 logger = logging.getLogger("Aura.SelfOptimizer")
 
@@ -216,7 +217,7 @@ class SelfOptimizer:
             try:
                 import mlx.core as mx
                 try:
-                    from core.utils.gpu_sentinel import get_gpu_sentinel, GPUPriority
+                    from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
                     sentinel = get_gpu_sentinel()
                     if sentinel.acquire(priority=GPUPriority.REFLEX, timeout=5.0):
                         try:
@@ -317,7 +318,7 @@ _optimizer_instance = None
 def get_self_optimizer() -> SelfOptimizer:
     global _optimizer_instance
     if _optimizer_instance is None:
-        from core.brain.llm.model_registry import get_model_path, get_adapter_path, BASE_DIR
+        from core.brain.llm.model_registry import BASE_DIR, get_adapter_path, get_model_path
         from core.event_bus import get_event_bus
         
         base_path = get_model_path()

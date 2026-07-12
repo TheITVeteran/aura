@@ -24,6 +24,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.container import ServiceContainer
 from core.orchestrator import RobustOrchestrator
+from core.runtime.resource_observation import get_resource_observer
 
 PROBE_RECOVERABLE_ERRORS = (
     AttributeError,
@@ -130,9 +131,12 @@ async def main():
     
     # Resolve real system and cognitive metrics for the proving dashboard
 
-    import psutil
-    cpu_usage = psutil.cpu_percent()
-    mem_usage = psutil.virtual_memory().percent
+    resource_observer = get_resource_observer()
+    compute_observation = resource_observer.compute()
+    memory_observation = resource_observer.memory()
+    cpu_usage = compute_observation.cpu_percent if compute_observation.available else 100.0
+    mem_usage = memory_observation.percent if memory_observation.available else 100.0
+    resource_provenance = resource_observer.provenance.to_dict()
     
     # Query real registered skill surface size dynamically
     registered_skills = 56
@@ -336,6 +340,7 @@ async def main():
             "cognitive_subsystem_index": cpi,
             "will_probe_p50_ms": round(p50_latency, 2),
             "will_probe_p99_ms": round(p99_latency, 2),
+            "resource_observation": resource_provenance,
         },
         "hardware_environment": {
             "os": "macOS",

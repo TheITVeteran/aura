@@ -8,11 +8,7 @@ from typing import Any
 
 from core.health.degraded_events import get_unified_failure_state
 from core.runtime.errors import record_degradation
-
-try:  # module-local so tests and diagnostics can patch the exact host probe.
-    import psutil
-except ImportError:  # pragma: no cover - production hosts should carry psutil.
-    psutil = None  # type: ignore[assignment]
+from core.runtime.resource_observation import get_resource_observer
 
 logger = logging.getLogger(__name__)
 _PROCESS_STARTED_AT = time.time()
@@ -209,6 +205,8 @@ class _MemoryPressureSnapshot:
     pressure_pct: float
     reason: str
     refuse_heavy_local_generation: bool = False
+    observation_source: str = "unavailable"
+    observation_scenario_id: str = ""
 
 
 def _read_compute_pressure_reason() -> str:
@@ -223,58 +221,46 @@ def _read_compute_pressure_reason() -> str:
 
     if not _env_flag("AURA_BACKGROUND_HEAT_GUARD", True):
         return ""
-    if psutil is None:
-        return ""
+    observer = get_resource_observer()
+    provenance = observer.provenance
 
     try:
-        cpu_pct = float(psutil.cpu_percent(interval=None) or 0.0)
+        compute = observer.compute()
+        if not compute.available:
+            return f"compute_observation_unavailable_source_{provenance.source.value}"
+        cpu_pct = float(compute.cpu_percent)
         max_cpu_pct = _env_float("AURA_BACKGROUND_MAX_CPU_PERCENT", 88.0)
         if cpu_pct >= max_cpu_pct:
-            return f"cpu_pressure_{cpu_pct:.1f}"
+            return f"cpu_pressure_{cpu_pct:.1f}_source_{provenance.source.value}"
     except (AttributeError, RuntimeError, TypeError, ValueError):
-        pass
+        return f"compute_observation_unavailable_source_{provenance.source.value}"
 
     try:
-        load1 = float(os.getloadavg()[0])
-        cpu_count = int(psutil.cpu_count() or os.cpu_count() or 1)
-        load_per_core = load1 / max(1, cpu_count)
+        load_per_core = float(compute.load_1m) / max(1, int(compute.cpu_count))
         max_load_per_core = _env_float("AURA_BACKGROUND_MAX_LOAD_PER_CORE", 0.90)
         if load_per_core >= max_load_per_core:
-            return f"load_pressure_{load_per_core:.2f}"
-    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-        pass
+            return f"load_pressure_{load_per_core:.2f}_source_{provenance.source.value}"
+    except (AttributeError, RuntimeError, TypeError, ValueError):
+        return f"compute_observation_unavailable_source_{provenance.source.value}"
 
     try:
-        # psutil.sensors_temperatures does not exist on macOS — the primary
-        # deployment host — so the old gate here was a silent no-op while
-        # sustained background load cooked the machine. core.runtime.thermal
-        # reads NSProcessInfo.thermalState (canonical, no sudo) with pmset
-        # and psutil fallbacks for other platforms.
-        from core.runtime.thermal import thermal_state
-
-        reading = thermal_state()
+        reading = observer.thermal()
+        if not reading.available:
+            return f"thermal_observation_unavailable_source_{provenance.source.value}"
         max_level = int(_env_float("AURA_BACKGROUND_MAX_THERMAL_LEVEL", 2.0))
         if reading.level >= max_level:
-            return f"thermal_pressure_level_{reading.level}_{reading.source}"
-    except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
-        pass
+            return (
+                f"thermal_pressure_level_{reading.level}_{reading.provider}"
+                f"_source_{provenance.source.value}"
+            )
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+        return f"thermal_observation_unavailable_source_{provenance.source.value}"
 
     return ""
 
 
 def _read_memory_pressure_snapshot() -> _MemoryPressureSnapshot:
-    """Read host memory through the local probe and the richer runtime guard.
-
-    The module-local psutil probe is intentionally retained because background
-    policy is the fail-closed boundary for constitutive loops. If this direct
-    host probe fails, optional/background work must not continue on a stale
-    or untestable memory signal.
-    """
-
-    host_percent: float | None = None
-    if psutil is not None:
-        memory = psutil.virtual_memory()
-        host_percent = float(memory.percent)
+    """Read memory through the canonical attributable runtime guard."""
 
     try:
         from core.utils.memory_monitor import get_memory_pressure_snapshot
@@ -283,26 +269,26 @@ def _read_memory_pressure_snapshot() -> _MemoryPressureSnapshot:
         runtime_percent = float(getattr(runtime, "pressure_pct", 0.0) or 0.0)
         runtime_reason = str(getattr(runtime, "reason", "") or "")
         runtime_refuse = bool(getattr(runtime, "refuse_heavy_local_generation", False))
-        pressure = runtime_percent
         reason = runtime_reason or f"memory_pressure_{runtime_percent:.1f}"
-        refuse = runtime_refuse
-        if host_percent is not None and host_percent >= runtime_percent:
-            pressure = host_percent
-            if not runtime_refuse:
-                reason = f"memory_pressure_{host_percent:.1f}"
-            refuse = runtime_refuse or host_percent >= 92.0
         return _MemoryPressureSnapshot(
-            pressure_pct=pressure,
+            pressure_pct=runtime_percent,
             reason=reason,
-            refuse_heavy_local_generation=refuse,
+            refuse_heavy_local_generation=runtime_refuse,
+            observation_source=str(
+                getattr(runtime, "observation_source", "unavailable")
+            ),
+            observation_scenario_id=str(
+                getattr(runtime, "observation_scenario_id", "")
+            ),
         )
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-        if host_percent is None:
-            raise
+        provenance = get_resource_observer().provenance
         return _MemoryPressureSnapshot(
-            pressure_pct=host_percent,
-            reason=f"memory_pressure_{host_percent:.1f}",
-            refuse_heavy_local_generation=False,
+            pressure_pct=100.0,
+            reason="memory_observation_unavailable",
+            refuse_heavy_local_generation=True,
+            observation_source=provenance.source.value,
+            observation_scenario_id=provenance.scenario_id,
         )
 
 

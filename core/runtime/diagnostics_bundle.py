@@ -137,7 +137,7 @@ def collect_health() -> dict[str, Any]:
 
 def _basic_system_metrics() -> dict[str, Any]:
     try:
-        import psutil  # type: ignore
+        from core.runtime import resource_psutil as psutil
 
         proc = psutil.Process()
         return {

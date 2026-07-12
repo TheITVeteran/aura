@@ -1,9 +1,9 @@
-from core.runtime.errors import record_degradation
 import logging
 import os
 import time
 
-import psutil
+from core.runtime import resource_psutil as psutil
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Governor")
 

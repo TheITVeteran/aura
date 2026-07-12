@@ -15,13 +15,14 @@ Guards:
 
 This is what makes idle time productive instead of dead time.
 """
-from core.runtime.errors import record_degradation
-from core.runtime.service_registry import get_runtime_service
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
 import time
 from typing import Optional
+
+from core.runtime.errors import record_degradation
+from core.runtime.service_registry import get_runtime_service
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.SleepTrigger")
 
@@ -102,7 +103,7 @@ class AutonomousSleepTrigger:
 
         # Guard: CPU load — defer if system is busy with something else
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
             cpu = psutil.cpu_percent(interval=None)
             if cpu > _CPU_DEFER_THRESHOLD:
                 logger.debug("SleepTrigger: CPU %.0f%% > threshold, deferring.", cpu)

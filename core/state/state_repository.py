@@ -157,7 +157,7 @@ def get_state_shm_size_bytes() -> int:
             logger.warning("Invalid AURA_STATE_SHM_BYTES override: %r", override)
 
     try:
-        import psutil
+        from core.runtime import resource_psutil as psutil
 
         total_gb = psutil.virtual_memory().total / float(1024**3)
     except _STATE_BOUNDARY_ERRORS:

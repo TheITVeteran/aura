@@ -45,6 +45,11 @@ import psutil
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from core.runtime.resource_observation import (  # noqa: E402
+    ResourceObserver,
+    get_resource_observer,
+)
+
 PROOF_DIR = ROOT / "artifacts" / "live_proof"
 
 # Abort the whole proof if Aura's process tree exceeds this. The runtime should
@@ -157,6 +162,7 @@ def build_safe_boot_env(
     base_env: dict[str, str] | None = None,
     *,
     mode: str = "headless",
+    observer: ResourceObserver | None = None,
 ) -> dict[str, str]:
     """Return the bounded desktop environment used by live proof boots.
 
@@ -211,22 +217,29 @@ def build_safe_boot_env(
     env.setdefault("AURA_MLX_72B_PROCESS_RESERVE_GB", "5")
     env.setdefault("AURA_FOREGROUND_CHAT_MAX_TOKENS", "2048")
     env.setdefault("AURA_WATCHDOG_BOOT_GRACE_S", "240")
+    observer = observer or get_resource_observer()
 
     try:
         from core.runtime.desktop_boot_safety import compute_mlx_memory_limit
 
-        limit_bytes = compute_mlx_memory_limit(psutil.virtual_memory().total, env)
+        memory = observer.memory()
+        if not memory.available or memory.total_bytes <= 0:
+            raise RuntimeError(f"memory observation unavailable: {memory.error}")
+        limit_bytes = compute_mlx_memory_limit(memory.total_bytes, env)
         limit_gb = max(1.0, min(34.0, limit_bytes / float(1024 ** 3)))
-    except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
+    except (ImportError, RuntimeError, TypeError, ValueError, OSError):
         limit_gb = min(34.0, max(1.0, _env_float(env, "AURA_MLX_MEMORY_LIMIT_GB", 34.0)))
     env["AURA_MLX_MEMORY_LIMIT_GB"] = f"{limit_gb:.0f}"
 
     try:
         from core.runtime.desktop_boot_safety import compute_process_rss_limit
 
-        limit_bytes = compute_process_rss_limit(psutil.virtual_memory().total, env)
+        memory = observer.memory()
+        if not memory.available or memory.total_bytes <= 0:
+            raise RuntimeError(f"memory observation unavailable: {memory.error}")
+        limit_bytes = compute_process_rss_limit(memory.total_bytes, env)
         limit_gb = max(1.0, min(40.0, limit_bytes / float(1024 ** 3)))
-    except (ImportError, RuntimeError, TypeError, ValueError, OSError, psutil.Error):
+    except (ImportError, RuntimeError, TypeError, ValueError, OSError):
         limit_gb = min(40.0, max(1.0, _env_float(env, "AURA_PROCESS_RSS_LIMIT_GB", 40.0)))
     env["AURA_PROCESS_RSS_LIMIT_GB"] = f"{limit_gb:.0f}"
     return env
@@ -330,6 +343,7 @@ class LiveProof:
         restart_continuity: bool,
         conversation_soak_turns: int,
         proof_dir: Path | None = None,
+        observer: ResourceObserver | None = None,
     ):
         self.port = port
         self.mode = "desktop" if str(mode or "").strip().lower() == "desktop" else "headless"
@@ -351,6 +365,7 @@ class LiveProof:
         self.latest_verdict_path = self.proof_dir / "LATEST_VERDICT.json"
         self.stdout_path = self.proof_dir / f"live_proof_{stamp}_stdout.log"
         self.rss_abort_mb = DEFAULT_RSS_ABORT_MB
+        self.resource_observer = observer or get_resource_observer()
         self._stdout_handle = None
         self._boot_count = 0
         self.launch_python = resolve_launch_python()
@@ -364,6 +379,7 @@ class LiveProof:
             "step": step,
             "ok": bool(ok),
             "peak_rss_mb": round(self.peak_rss_mb, 1),
+            "resource_observation": self.resource_observer.provenance.to_dict(),
             **detail,
         }
         self.steps.append(entry)
@@ -379,21 +395,17 @@ class LiveProof:
     def tree_rss_mb(self) -> float:
         if self.proc is None:
             return 0.0
-        try:
-            from core.utils.memory_monitor import process_memory_bytes
-
-            root = psutil.Process(self.proc.pid)
-            total = process_memory_bytes(root.pid)
-            for child in root.children(recursive=True):
-                try:
-                    total += process_memory_bytes(child.pid)
-                except psutil.Error:
-                    continue
-            mb = total / (1024 * 1024)
-            self.peak_rss_mb = max(self.peak_rss_mb, mb)
-            return mb
-        except psutil.Error:
-            return 0.0
+        table = self.resource_observer.process_table()
+        if not table.available:
+            raise RuntimeError(f"process table observation unavailable: {table.error}")
+        total = sum(
+            process.rss_bytes
+            for process in table.processes
+            if process.pid == self.proc.pid or self.proc.pid in process.ancestor_pids
+        )
+        mb = total / (1024 * 1024)
+        self.peak_rss_mb = max(self.peak_rss_mb, mb)
+        return mb
 
     def guard_rss(self) -> None:
         mb = self.tree_rss_mb()
@@ -427,17 +439,15 @@ class LiveProof:
                 return True
         return False
 
-    @classmethod
-    def _running_aura_main_pids(cls) -> list[int]:
-        pids: list[int] = []
-        for proc in psutil.process_iter(["cmdline"]):
-            try:
-                cmdline = list(proc.info.get("cmdline") or [])
-            except psutil.Error:
-                continue
-            if cls._is_aura_main_process(cmdline):
-                pids.append(proc.pid)
-        return pids
+    def _running_aura_main_pids(self) -> list[int]:
+        table = self.resource_observer.process_table()
+        if not table.available:
+            raise RuntimeError(f"process table observation unavailable: {table.error}")
+        return [
+            process.pid
+            for process in table.processes
+            if self._is_aura_main_process(process.cmdline)
+        ]
 
     def boot(self) -> bool:
         if self.port_in_use():
@@ -457,7 +467,11 @@ class LiveProof:
                 f"refusing to double-boot",
             )
 
-        env = build_safe_boot_env(os.environ, mode=self.mode)
+        env = build_safe_boot_env(
+            os.environ,
+            mode=self.mode,
+            observer=self.resource_observer,
+        )
         self.rss_abort_mb = live_proof_rss_abort_mb(env)
         self._boot_count += 1
         if self._stdout_handle is not None:
@@ -1283,11 +1297,13 @@ class LiveProof:
             self._stdout_handle.flush()
             self._stdout_handle.close()
             self._stdout_handle = None
+        table = self.resource_observer.process_table()
+        orphan_scan_error = "" if table.available else table.error or "unavailable"
         orphans = [
-            p.pid
-            for p in psutil.process_iter(["cmdline"])
+            process.pid
+            for process in table.processes
             if any(
-                marker in " ".join(p.info.get("cmdline") or [])
+                marker in " ".join(process.cmdline)
                 for marker in ("aura_main.py", "mlx_worker.py")
             )
         ]
@@ -1301,14 +1317,16 @@ class LiveProof:
         within_budget = shutdown_duration_s <= shutdown_budget_s
         return self.record(
             step,
-            graceful and not orphans and port_free and within_budget,
+            graceful and not orphans and not orphan_scan_error and port_free and within_budget,
             summary=(
                 f"{stop_note}; graceful={graceful}; orphans={orphans or 'none'}; "
+                f"orphan_scan_error={orphan_scan_error or 'none'}; "
                 f"port_free={port_free}; duration={shutdown_duration_s:.1f}s/"
                 f"{shutdown_budget_s:.0f}s"
             ),
             graceful=graceful,
             orphans=orphans,
+            orphan_scan_error=orphan_scan_error,
             port_free=port_free,
             duration_s=round(shutdown_duration_s, 2),
             duration_budget_s=round(shutdown_budget_s, 2),
@@ -1373,6 +1391,7 @@ class LiveProof:
             "steps": self.steps,
             "transcript": artifact_display_path(self.transcript_path),
             "stdout_log": artifact_display_path(self.stdout_path),
+            "resource_observation": self.resource_observer.provenance.to_dict(),
         }
         verdict_json = json.dumps(verdict, indent=2, default=str)
         self.verdict_path.write_text(verdict_json)

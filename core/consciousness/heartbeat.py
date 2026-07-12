@@ -1047,7 +1047,7 @@ class CognitiveHeartbeat:
                 cpu_usage = float(stats.get("cpu_percent", 0.0) or 0.0)
                 ram_usage = float(stats.get("memory_percent", 0.0) or 0.0)
             try:
-                import psutil
+                from core.runtime import resource_psutil as psutil
 
                 system_ram = float(psutil.virtual_memory().percent)
                 if system_ram > 0.0:

@@ -4,9 +4,9 @@ import socket
 import time
 from typing import Any
 
-import psutil
 from prometheus_client import Counter, Gauge, start_http_server
 
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import FallbackClassification, Severity, record_degradation
 from core.runtime.shutdown_execution import run_sync_shutdown_callable
 from core.utils.task_tracker import get_task_tracker

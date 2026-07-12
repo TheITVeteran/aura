@@ -1,12 +1,10 @@
-from core.runtime.errors import record_degradation
-import logging
 import os
 import platform
 import socket
-from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
 from pathlib import Path
+from typing import Any, Dict
 
+from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
 
 
@@ -64,7 +62,8 @@ class EnvironmentSkill(BaseSkill):
         """
         detail: Dict[str, Any] = {}
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
+            from core.runtime.resource_observation import get_resource_observer
 
             vm = psutil.virtual_memory()
             detail["memory"] = {
@@ -80,8 +79,14 @@ class EnvironmentSkill(BaseSkill):
             }
             detail["cpu"] = {
                 "logical_cores": psutil.cpu_count(logical=True),
-                "load_avg_1m": round(os.getloadavg()[0], 2) if hasattr(os, "getloadavg") else None,
+                "load_avg_1m": round(
+                    get_resource_observer().compute().load_1m,
+                    2,
+                ),
             }
+            provenance = get_resource_observer().provenance
+            detail["observation_source"] = provenance.source.value
+            detail["observation_scenario_id"] = provenance.scenario_id
             import time
 
             boot_ts = psutil.boot_time()

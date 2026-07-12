@@ -183,7 +183,10 @@ class ProcessObservation:
     rss_bytes: int
     memory_percent: float = 0.0
     cpu_percent: float = 0.0
+    cpu_user_seconds: float = 0.0
+    cpu_system_seconds: float = 0.0
     num_threads: int = 0
+    num_fds: int = 0
     ancestor_pids: tuple[int, ...] = ()
     exe: str = ""
     username: str = ""
@@ -288,6 +291,12 @@ class ComputeObservation:
     cpu_percent: float
     cpu_count: int
     load_1m: float
+    load_5m: float = 0.0
+    load_15m: float = 0.0
+    boot_time: float = 0.0
+    cpu_user_seconds: float = 0.0
+    cpu_system_seconds: float = 0.0
+    cpu_idle_seconds: float = 0.0
     available: bool = True
     error: str = ""
 
@@ -415,9 +424,21 @@ class HostResourceObserver:
                 except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
                     cpu_percent = 0.0
                 try:
+                    cpu_times = process.cpu_times()
+                    cpu_user_seconds = float(getattr(cpu_times, "user", 0.0) or 0.0)
+                    cpu_system_seconds = float(getattr(cpu_times, "system", 0.0) or 0.0)
+                except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
+                    cpu_user_seconds = 0.0
+                    cpu_system_seconds = 0.0
+                try:
                     num_threads = int(process.num_threads() or 0)
                 except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
                     num_threads = 0
+                try:
+                    num_fds_reader = getattr(process, "num_fds", None)
+                    num_fds = int(num_fds_reader() or 0) if callable(num_fds_reader) else 0
+                except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
+                    num_fds = 0
                 try:
                     exe = str(process.exe() or "")
                 except (psutil.Error, OSError, RuntimeError, ValueError):
@@ -445,7 +466,10 @@ class HostResourceObserver:
                 rss_bytes=rss_bytes,
                 memory_percent=max(0.0, memory_percent),
                 cpu_percent=max(0.0, cpu_percent),
+                cpu_user_seconds=max(0.0, cpu_user_seconds),
+                cpu_system_seconds=max(0.0, cpu_system_seconds),
                 num_threads=max(0, num_threads),
+                num_fds=max(0, num_fds),
                 ancestor_pids=ancestors,
                 exe=exe,
                 username=username,
@@ -733,14 +757,24 @@ class HostResourceObserver:
         provenance = self.provenance
         try:
             try:
-                load_1m = float(os.getloadavg()[0])
+                load_1m, load_5m, load_15m = (float(value) for value in os.getloadavg())
             except (AttributeError, OSError):
-                load_1m = 0.0
+                load_1m = load_5m = load_15m = 0.0
+            cpu_times = psutil.cpu_times()
             return ComputeObservation(
                 provenance=provenance,
                 cpu_percent=float(psutil.cpu_percent(interval=None) or 0.0),
                 cpu_count=max(1, int(psutil.cpu_count() or os.cpu_count() or 1)),
                 load_1m=max(0.0, load_1m),
+                load_5m=max(0.0, load_5m),
+                load_15m=max(0.0, load_15m),
+                boot_time=max(0.0, float(psutil.boot_time() or 0.0)),
+                cpu_user_seconds=max(0.0, float(getattr(cpu_times, "user", 0.0) or 0.0)),
+                cpu_system_seconds=max(
+                    0.0,
+                    float(getattr(cpu_times, "system", 0.0) or 0.0),
+                ),
+                cpu_idle_seconds=max(0.0, float(getattr(cpu_times, "idle", 0.0) or 0.0)),
             )
         except (psutil.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
             return ComputeObservation(
@@ -826,6 +860,12 @@ class SimulatedResourceObserver:
         cpu_percent: float = 10.0,
         cpu_count: int = 8,
         load_1m: float = 0.5,
+        load_5m: float = 0.5,
+        load_15m: float = 0.5,
+        boot_time: float = 1_700_000_000.0,
+        cpu_user_seconds: float = 0.0,
+        cpu_system_seconds: float = 0.0,
+        cpu_idle_seconds: float = 0.0,
         battery_percent: float = 100.0,
         power_plugged: bool = True,
         battery_seconds_left: int = -2,
@@ -888,6 +928,12 @@ class SimulatedResourceObserver:
             cpu_percent=max(0.0, min(100.0, float(cpu_percent))),
             cpu_count=max(1, int(cpu_count)),
             load_1m=max(0.0, float(load_1m)),
+            load_5m=max(0.0, float(load_5m)),
+            load_15m=max(0.0, float(load_15m)),
+            boot_time=max(0.0, float(boot_time)),
+            cpu_user_seconds=max(0.0, float(cpu_user_seconds)),
+            cpu_system_seconds=max(0.0, float(cpu_system_seconds)),
+            cpu_idle_seconds=max(0.0, float(cpu_idle_seconds)),
         )
         self._power = PowerObservation(
             provenance=provenance,
@@ -1044,6 +1090,9 @@ class SimulatedResourceObserver:
         cpu_percent: float | None = None,
         cpu_count: int | None = None,
         load_1m: float | None = None,
+        load_5m: float | None = None,
+        load_15m: float | None = None,
+        boot_time: float | None = None,
     ) -> None:
         with self._lock:
             self._compute = replace(
@@ -1059,6 +1108,19 @@ class SimulatedResourceObserver:
                 ),
                 load_1m=(
                     self._compute.load_1m if load_1m is None else max(0.0, float(load_1m))
+                ),
+                load_5m=(
+                    self._compute.load_5m if load_5m is None else max(0.0, float(load_5m))
+                ),
+                load_15m=(
+                    self._compute.load_15m
+                    if load_15m is None
+                    else max(0.0, float(load_15m))
+                ),
+                boot_time=(
+                    self._compute.boot_time
+                    if boot_time is None
+                    else max(0.0, float(boot_time))
                 ),
             )
 
@@ -1153,12 +1215,15 @@ class SimulatedResourceObserver:
         pid: int | None = None,
     ) -> tuple[NetworkConnectionObservation, ...]:
         del kind
-        del pid
         with self._lock:
-            return tuple(
+            observed = tuple(
                 replace(connection, provenance=self.provenance)
                 for connection in self._connections
             )
+        if pid is None:
+            return observed
+        target_pid = int(pid)
+        return tuple(connection for connection in observed if connection.pid == target_pid)
 
     def connection_table(
         self,

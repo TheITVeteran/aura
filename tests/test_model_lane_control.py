@@ -6,7 +6,6 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -569,39 +568,35 @@ async def test_compensator_survives_owner_unregistration_for_failed_candidate() 
 
 def test_process_table_discovery_accounts_for_external_model_identity(
     monkeypatch: pytest.MonkeyPatch,
+    resource_observer,
 ) -> None:
+    from core.runtime.resource_observation import ProcessObservation
+
     external_pid = os.getpid() + 100_000
 
-    class FakeProcess:
-        info = {
-            "pid": external_pid,
-            "create_time": 1234.5,
-            "cmdline": [
+    resource_observer.configure_processes(
+        [
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=external_pid,
+                ppid=1,
+                create_time=1234.5,
+                status="running",
+                cmdline=(
                 "/usr/bin/python3",
                 "-m",
                 "mlx_lm.server",
                 "--model",
                 "/models/qwen-7b",
-            ],
-            "name": "python3",
-            "memory_info": SimpleNamespace(rss=3 * 1024**3),
-        }
-
-        @staticmethod
-        def create_time() -> float:
-            return 1234.5
-
-        @staticmethod
-        def parents() -> list[object]:
-            return []
-
-    monkeypatch.setattr(
-        "core.runtime.model_lane_control.psutil.process_iter",
-        lambda _attrs: [FakeProcess()],
+                ),
+                name="python3",
+                rss_bytes=3 * 1024**3,
+            )
+        ]
     )
     monkeypatch.setattr("core.runtime.model_lane_control.os.getpgid", lambda _pid: 44_001)
 
-    observations = discover_external_model_processes([])
+    observations = discover_external_model_processes([], observer=resource_observer)
 
     assert len(observations) == 1
     observed = observations[0]
@@ -615,26 +610,28 @@ def test_process_table_discovery_accounts_for_external_model_identity(
 
 def test_process_table_discovery_fails_closed_on_unknown_identity_and_marks_escape(
     monkeypatch: pytest.MonkeyPatch,
+    resource_observer,
 ) -> None:
+    from core.runtime.resource_observation import ProcessObservation
+
     parent_pid = os.getpid() + 300_000
     child_pid = parent_pid + 1
 
-    class FakeProcess:
-        info = {
-            "pid": child_pid,
-            "create_time": 4321.0,
-            "cmdline": ["/usr/bin/python3", "-m", "mlx_lm.server"],
-            "name": "python3",
-            "memory_info": SimpleNamespace(rss=2 * 1024**3),
-        }
-
-        @staticmethod
-        def create_time() -> float:
-            return 4321.0
-
-        @staticmethod
-        def parents() -> list[object]:
-            return [SimpleNamespace(pid=parent_pid)]
+    resource_observer.configure_processes(
+        [
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=child_pid,
+                ppid=parent_pid,
+                create_time=4321.0,
+                status="running",
+                cmdline=("/usr/bin/python3", "-m", "mlx_lm.server"),
+                name="python3",
+                rss_bytes=2 * 1024**3,
+                ancestor_pids=(parent_pid,),
+            )
+        ]
+    )
 
     known_parent = LaneOwnerObservation(
         owner_id="managed-parent",
@@ -643,13 +640,12 @@ def test_process_table_discovery_fails_closed_on_unknown_identity_and_marks_esca
         process=ProcessIdentity(parent_pid, 4000.0),
         metadata={"managed_model_process": True, "process_group_id": 41_000},
     )
-    monkeypatch.setattr(
-        "core.runtime.model_lane_control.psutil.process_iter",
-        lambda _attrs: [FakeProcess()],
-    )
     monkeypatch.setattr("core.runtime.model_lane_control.os.getpgid", lambda _pid: 42_000)
 
-    observations = discover_external_model_processes([known_parent])
+    observations = discover_external_model_processes(
+        [known_parent],
+        observer=resource_observer,
+    )
 
     assert len(observations) == 1
     observed = observations[0]
@@ -1006,10 +1002,12 @@ def test_live_in_process_owner_heartbeat_expiry_fails_closed_until_recovery(
 async def test_in_process_eviction_verifies_unload_without_root_process_death(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    resource_observer,
 ) -> None:
-    monkeypatch.setattr(
-        "core.runtime.model_lane_control.psutil.virtual_memory",
-        lambda: SimpleNamespace(available=64 * 1024**3),
+    resource_observer.configure_memory(
+        available_bytes=64 * 1024**3,
+        total_bytes=64 * 1024**3,
+        percent=0.0,
     )
     alive = AliveTable()
     controller = _controller(tmp_path, alive)

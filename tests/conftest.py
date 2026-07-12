@@ -5,9 +5,12 @@ import contextlib
 import inspect
 import os
 import shutil
+import socket
 import sys
 import tempfile
+import time
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -34,6 +37,211 @@ _CLEANUP_TIMEOUT_S = 2.0
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+
+@dataclass(frozen=True)
+class _ResourceLeakSnapshot:
+    child_identities: frozenset[tuple[int, float]]
+    listening_fds: frozenset[tuple[int, int, str, int]]
+    open_files: frozenset[str]
+
+
+class HermeticResourceSandbox:
+    """Per-test host leak detector; never used as resource-policy evidence."""
+
+    def __init__(self, *, root: Path):
+        from core.runtime.resource_observation import (
+            HostResourceObserver,
+            ObservationSource,
+        )
+
+        self.root = root
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.observer = HostResourceObserver(
+            source=ObservationSource.HOST,
+            scenario_id="pytest-leak-audit-not-proof",
+        )
+        self._leased_sockets: list[socket.socket] = []
+        self.baseline = self.snapshot()
+
+    def snapshot(self) -> _ResourceLeakSnapshot:
+        process_table = self.observer.process_table()
+        connection_table = self.observer.connection_table(kind="inet", pid=os.getpid())
+        open_files = self.observer.open_file_table(pid=os.getpid())
+        unavailable = [
+            detail
+            for available, detail in (
+                (process_table.available, process_table.error),
+                (connection_table.available, connection_table.error),
+                (open_files.available, open_files.error),
+            )
+            if not available
+        ]
+        if unavailable:
+            raise RuntimeError("host leak observation unavailable: " + "; ".join(unavailable))
+        children = frozenset(
+            (process.pid, process.create_time)
+            for process in process_table.processes
+            if os.getpid() in process.ancestor_pids
+            and process.status.lower() not in {"dead", "zombie"}
+        )
+        listeners = frozenset(
+            (
+                connection.pid,
+                connection.fd,
+                connection.local_host,
+                connection.local_port,
+            )
+            for connection in connection_table.connections
+            if connection.pid == os.getpid()
+            and connection.status.upper() == "LISTEN"
+        )
+        return _ResourceLeakSnapshot(
+            child_identities=children,
+            listening_fds=listeners,
+            open_files=frozenset(open_files.paths),
+        )
+
+    def leaks(self) -> dict[str, set[object]]:
+        current = self.snapshot()
+        return {
+            "children": set(current.child_identities - self.baseline.child_identities),
+            "listeners": set(current.listening_fds - self.baseline.listening_fds),
+            "open_files": set(current.open_files - self.baseline.open_files),
+        }
+
+    @contextlib.contextmanager
+    def listening_socket(self):
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        self._leased_sockets.append(listener)
+        try:
+            yield listener
+        finally:
+            with contextlib.suppress(OSError):
+                listener.close()
+            with contextlib.suppress(ValueError):
+                self._leased_sockets.remove(listener)
+
+    def close_and_assert_clean(self) -> None:
+        leaked_leases = [sock for sock in self._leased_sockets if sock.fileno() >= 0]
+        for listener in tuple(self._leased_sockets):
+            with contextlib.suppress(OSError):
+                listener.close()
+        self._leased_sockets.clear()
+
+        deadline = time.monotonic() + 0.75
+        leaks = self.leaks()
+        while leaks["children"] and time.monotonic() < deadline:
+            time.sleep(0.05)
+            leaks = self.leaks()
+
+        child_pids = sorted(int(identity[0]) for identity in leaks["children"])
+        if child_pids:
+            import psutil
+
+            handles = []
+            for pid in child_pids:
+                with contextlib.suppress(psutil.Error):
+                    handles.append(psutil.Process(pid))
+            for handle in handles:
+                with contextlib.suppress(psutil.Error):
+                    handle.terminate()
+            _gone, alive = psutil.wait_procs(handles, timeout=0.5)
+            for handle in alive:
+                with contextlib.suppress(psutil.Error):
+                    handle.kill()
+
+        listener_leaks = list(leaks["listeners"])
+        for pid, fd, _host, _port in listener_leaks:
+            if int(pid) == os.getpid() and int(fd) >= 0:
+                with contextlib.suppress(OSError):
+                    os.close(int(fd))
+
+        if leaked_leases or any(leaks.values()):
+            pytest.fail(
+                "hermetic resource leak detected: "
+                f"leased_sockets={len(leaked_leases)} leaks={leaks}"
+            )
+
+
+@pytest.fixture
+def hermetic_resource_sandbox(tmp_path):
+    sandbox = HermeticResourceSandbox(root=tmp_path / "resource-sandbox")
+    try:
+        yield sandbox
+    finally:
+        sandbox.close_and_assert_clean()
+
+
+@pytest.fixture(autouse=True)
+def resource_observer(request, monkeypatch, tmp_path):
+    """Keep ordinary tests independent from the developer host's pressure.
+
+    Tests that genuinely inspect hardware must opt in with ``host_observation``
+    (or an existing live/hardware marker).  The ordinary path installs a
+    process-wide deterministic observer so worker threads inherit the same
+    facts and every pressure result is labelled ``simulated``.
+    """
+
+    from core.runtime.resource_observation import (
+        HostResourceObserver,
+        ObservationSource,
+        SimulatedResourceObserver,
+        resource_observer_scope,
+    )
+    from core.runtime.thermal import reset_thermal_cache
+    from core.utils.memory_monitor import clear_memory_pressure_snapshot_cache
+
+    runtime_root = tmp_path / "aura-runtime"
+    monkeypatch.setenv(
+        "AURA_MODEL_LANE_STATE_PATH",
+        str(runtime_root / "model_lane_control.json"),
+    )
+    monkeypatch.setenv("AURA_RECEIPT_ROOT", str(runtime_root / "receipts"))
+    monkeypatch.setenv("AURA_MEMORY_SNAPSHOT_CACHE_TTL_S", "0")
+    monkeypatch.setenv("AURA_LANE_AUDIT_CACHE_TTL_S", "0")
+    monkeypatch.setenv("AURA_TEST_RUNTIME_ROOT", str(runtime_root))
+
+    def _reset_resource_singletons():
+        from core.brain.lane_admission import reset_lane_admission_controller_for_test
+        from core.brain.llm.model_registry import reset_model_registry_caches_for_test
+        from core.resource.resource_governor import reset_resource_governor_for_test
+        from core.runtime.control_plane import reset_runtime_control_plane
+        from core.runtime.model_lane_control import reset_model_lane_controller_for_test
+        from core.runtime.receipts import reset_receipt_store
+        from core.runtime.runtime_pressure import reset_unified_runtime_pressure_for_test
+
+        reset_runtime_control_plane()
+        reset_unified_runtime_pressure_for_test()
+        reset_lane_admission_controller_for_test()
+        reset_model_lane_controller_for_test()
+        reset_resource_governor_for_test()
+        reset_model_registry_caches_for_test()
+        reset_receipt_store()
+
+    host_markers = ("host_observation", "live", "hardware", "longrun")
+    host_backed = any(request.node.get_closest_marker(name) for name in host_markers)
+    if host_backed:
+        observer = HostResourceObserver(
+            source=ObservationSource.HOST,
+            scenario_id=f"pytest-host:{request.node.nodeid}",
+        )
+    else:
+        observer = SimulatedResourceObserver(
+            scenario_id=f"pytest:{request.node.nodeid}",
+        )
+
+    clear_memory_pressure_snapshot_cache()
+    reset_thermal_cache()
+    _reset_resource_singletons()
+    with resource_observer_scope(observer):
+        yield observer
+    _reset_resource_singletons()
+    clear_memory_pressure_snapshot_cache()
+    reset_thermal_cache()
 
 
 class _RecordedCall:

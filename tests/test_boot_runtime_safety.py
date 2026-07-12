@@ -249,12 +249,9 @@ async def test_sensory_motor_cortex_routes_idle_volition_into_autonomy():
     assert emit_spontaneous_message.calls == []
 
 
-def test_memory_monitor_uses_psutil_pressure_sample(monkeypatch):
+def test_memory_monitor_uses_resource_observer_pressure_sample(resource_observer):
     monitor = AppleSiliconMemoryMonitor()
-    monkeypatch.setattr(
-        "core.utils.memory_monitor.psutil.virtual_memory",
-        lambda: SimpleNamespace(percent=57.8),
-    )
+    resource_observer.configure_memory(percent=57.8)
 
     assert monitor._get_pressure_sysctl() == 57
 
@@ -435,15 +432,12 @@ def test_desktop_safe_boot_clamps_stale_floor_overrides(monkeypatch):
     assert compute_process_rss_limit(total) == 40 * 1024 ** 3
 
 
-def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
+def test_live_boot_proof_inherits_safe_desktop_mlx_limits(resource_observer):
     from tools.live_boot_proof import build_safe_boot_env, live_proof_rss_abort_mb
 
-    monkeypatch.setattr(
-        "tools.live_boot_proof.psutil.virtual_memory",
-        lambda: SimpleNamespace(total=64 * 1024 ** 3),
-    )
+    resource_observer.configure_memory(total_bytes=64 * 1024**3)
 
-    env = build_safe_boot_env({})
+    env = build_safe_boot_env({}, observer=resource_observer)
 
     assert env["AURA_LOCAL_BACKEND"] == "mlx"
     assert env["AURA_SAFE_BOOT_DESKTOP"] == "1"
@@ -473,15 +467,12 @@ def test_live_boot_proof_inherits_safe_desktop_mlx_limits(monkeypatch):
     assert live_proof_rss_abort_mb(env) == 42_000.0
 
 
-def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(monkeypatch):
+def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(resource_observer):
     from tools.live_boot_proof import build_safe_boot_env
 
-    monkeypatch.setattr(
-        "tools.live_boot_proof.psutil.virtual_memory",
-        lambda: SimpleNamespace(total=64 * 1024 ** 3),
-    )
+    resource_observer.configure_memory(total_bytes=64 * 1024**3)
 
-    env = build_safe_boot_env({}, mode="desktop")
+    env = build_safe_boot_env({}, mode="desktop", observer=resource_observer)
 
     assert env["AURA_LOCAL_BACKEND"] == "mlx"
     assert env["AURA_SAFE_BOOT_DESKTOP"] == "0"
@@ -500,34 +491,32 @@ def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(monkeypatch):
     assert env["AURA_AUTONOMIC_REFLECTION_INTERVAL_S"] == "30"
 
 
-def test_live_boot_proof_preserves_operator_mlx_limit(monkeypatch):
+def test_live_boot_proof_preserves_operator_mlx_limit(resource_observer):
     from tools.live_boot_proof import build_safe_boot_env
 
-    monkeypatch.setattr(
-        "tools.live_boot_proof.psutil.virtual_memory",
-        lambda: SimpleNamespace(total=64 * 1024 ** 3),
-    )
+    resource_observer.configure_memory(total_bytes=64 * 1024**3)
 
-    env = build_safe_boot_env({"AURA_MLX_MEMORY_LIMIT_GB": "28"})
+    env = build_safe_boot_env(
+        {"AURA_MLX_MEMORY_LIMIT_GB": "28"},
+        observer=resource_observer,
+    )
 
     assert env["AURA_SAFE_BOOT_DESKTOP"] == "1"
     assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "28"
 
 
-def test_live_boot_proof_clamps_unsafe_parent_memory_limits(monkeypatch):
+def test_live_boot_proof_clamps_unsafe_parent_memory_limits(resource_observer):
     from tools.live_boot_proof import build_safe_boot_env, live_proof_rss_abort_mb
 
-    monkeypatch.setattr(
-        "tools.live_boot_proof.psutil.virtual_memory",
-        lambda: SimpleNamespace(total=64 * 1024 ** 3),
-    )
+    resource_observer.configure_memory(total_bytes=64 * 1024**3)
 
     env = build_safe_boot_env(
         {
             "AURA_MLX_MEMORY_LIMIT_GB": "96",
             "AURA_PROCESS_RSS_LIMIT_GB": "120",
             "AURA_LIVE_PROOF_RSS_ABORT_MB": "90000",
-        }
+        },
+        observer=resource_observer,
     )
 
     assert env["AURA_MLX_MEMORY_LIMIT_GB"] == "34"

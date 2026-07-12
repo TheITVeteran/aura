@@ -596,7 +596,7 @@ def _repair_live_user_surface_operational_status(
     if not _job_needs_concrete_status_signal_guidance(job):
         return str(response_text or "")
     try:
-        import psutil
+        from core.runtime import resource_psutil as psutil
 
         memory = psutil.virtual_memory()
         available_gb = memory.available / (1024 ** 3)
@@ -609,8 +609,10 @@ def _repair_live_user_surface_operational_status(
     except (ImportError, OSError, RuntimeError, TypeError, ValueError, AttributeError):
         load_1m = 0.0
         try:
-            load_1m = float(os.getloadavg()[0])
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            from core.runtime.resource_observation import get_resource_observer
+
+            load_1m = float(get_resource_observer().compute().load_1m)
+        except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
             load_1m = 0.0
         return (
             "I am with you. One live runtime signal I can perceive is the host "
@@ -2279,7 +2281,7 @@ def _mlx_worker_loop(
     # VRAM Management
     if mx and device != "cpu":
         try:
-            import psutil
+            from core.runtime import resource_psutil as psutil
 
             total_ram = psutil.virtual_memory().total
             limit = compute_mlx_cache_limit(total_ram)
@@ -2833,7 +2835,7 @@ def _mlx_worker_loop(
                             # Proactive cache clearing under memory pressure
                             if mx and device != "cpu":
                                 try:
-                                    import psutil
+                                    from core.runtime import resource_psutil as psutil
                                     if psutil.virtual_memory().percent > 90:  # 64GB — don't panic at 85%
                                         logger.warning("⚠️ High memory pressure detected in worker. Clearing MLX cache.")
                                         mx.clear_cache()

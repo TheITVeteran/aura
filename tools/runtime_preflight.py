@@ -7,8 +7,9 @@ matters because every historical "won't boot" incident that wasn't a code
 defect was one of these (missing .env, no disk, stale model path, port
 squatter).
 
-Deliberately dependency-light: stdlib only, psutil optional. A preflight
-that cannot run when the environment is broken is useless — that is
+Deliberately dependency-light at import time: the canonical resource observer
+is loaded only when resource checks run. A preflight that cannot report an
+environment failure when the environment is broken is useless — that is
 exactly when it is needed.
 
 Fast (<5s), offline, loads no models, never prints secret values.
@@ -22,14 +23,13 @@ import argparse
 import json
 import os
 import re
-import shutil
 import socket
 import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 OK = "OK"
 INFO = "INFO"
@@ -44,6 +44,58 @@ class Check:
     name: str
     status: str
     detail: str
+
+
+def _resolve_resource_observer(observer: Any | None = None) -> tuple[Any | None, str]:
+    if observer is not None:
+        return observer, ""
+    try:
+        project_root = str(Path(__file__).resolve().parents[1])
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        from core.runtime.resource_observation import get_resource_observer
+
+        return get_resource_observer(), ""
+    except (AttributeError, ImportError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        return None, f"{type(exc).__name__}:{exc}"
+
+
+def _run_read_only_command(
+    argv: list[str],
+    *,
+    root: Path,
+    source: str,
+) -> tuple[Any | None, str]:
+    try:
+        project_root = str(Path(__file__).resolve().parents[1])
+        if project_root not in sys.path:
+            sys.path.insert(0, project_root)
+        from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+        completed = get_subprocess_gateway().run(
+            argv,
+            cwd=root,
+            timeout=10,
+            read_only=True,
+            source=source,
+        )
+        return completed, ""
+    except (
+        AttributeError,
+        ImportError,
+        OSError,
+        RuntimeError,
+        subprocess.SubprocessError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        return None, f"{type(exc).__name__}:{exc}"
+
+
+def _observation_source(observation: Any) -> str:
+    provenance = getattr(observation, "provenance", None)
+    source = getattr(provenance, "source", "unknown")
+    return str(getattr(source, "value", source) or "unknown")
 
 
 def check_python(expected: tuple[int, int] = (3, 12)) -> Check:
@@ -62,14 +114,32 @@ def check_disk(
     path: Path,
     fail_gb: float = 10.0,
     warn_gb: float = 30.0,
-    usage_fn: Callable[[Path], Any] = shutil.disk_usage,
+    usage_fn: Callable[[Path], Any] | None = None,
+    *,
+    observer: Any | None = None,
 ) -> Check:
-    try:
-        usage = usage_fn(path)
-    except OSError as exc:
-        return Check("disk", FAIL, f"cannot stat {path}: {exc}")
-    free_gb = usage.free / 1e9
-    detail = f"{free_gb:.1f}GB free on volume of {path}"
+    if usage_fn is not None:
+        try:
+            free_bytes = int(usage_fn(path).free)
+        except (AttributeError, OSError, TypeError, ValueError) as exc:
+            return Check("disk", FAIL, f"cannot stat {path}: {exc}")
+        source = "injected"
+    else:
+        resource_observer, error = _resolve_resource_observer(observer)
+        if resource_observer is None:
+            return Check("disk", FAIL, f"resource observer unavailable: {error}")
+        try:
+            observation = resource_observer.disk(str(path))
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return Check("disk", FAIL, f"disk observation failed: {type(exc).__name__}:{exc}")
+        if not bool(getattr(observation, "available", False)):
+            detail = str(getattr(observation, "error", "") or "unknown")
+            return Check("disk", FAIL, f"disk observation unavailable: {detail}")
+        free_bytes = int(getattr(observation, "free_bytes", 0) or 0)
+        source = _observation_source(observation)
+
+    free_gb = free_bytes / 1e9
+    detail = f"{free_gb:.1f}GB free on volume of {path} (source={source})"
     if free_gb < fail_gb:
         return Check("disk", FAIL, detail + f" (< {fail_gb:.0f}GB floor — model loads and "
                      "SQLite WAL writes will fail)")
@@ -78,14 +148,27 @@ def check_disk(
     return Check("disk", OK, detail)
 
 
-def check_ram(warn_available_gb: float = 8.0) -> Check:
+def check_ram(
+    warn_available_gb: float = 8.0,
+    *,
+    observer: Any | None = None,
+) -> Check:
+    resource_observer, error = _resolve_resource_observer(observer)
+    if resource_observer is None:
+        return Check("ram", FAIL, f"resource observer unavailable: {error}")
     try:
-        import psutil
-    except ImportError:
-        return Check("ram", INFO, "psutil unavailable — skipped")
-    vm = psutil.virtual_memory()
-    detail = f"{vm.available / 1e9:.1f}GB available of {vm.total / 1e9:.0f}GB"
-    if vm.available / 1e9 < warn_available_gb:
+        observation = resource_observer.memory()
+    except (AttributeError, OSError, RuntimeError, TypeError, ValueError) as exc:
+        return Check("ram", FAIL, f"memory observation failed: {type(exc).__name__}:{exc}")
+    if not bool(getattr(observation, "available", False)):
+        detail = str(getattr(observation, "error", "") or "unknown")
+        return Check("ram", FAIL, f"memory observation unavailable: {detail}")
+
+    available_gb = int(getattr(observation, "available_bytes", 0) or 0) / 1e9
+    total_gb = int(getattr(observation, "total_bytes", 0) or 0) / 1e9
+    source = _observation_source(observation)
+    detail = f"{available_gb:.1f}GB available of {total_gb:.0f}GB (source={source})"
+    if available_gb < warn_available_gb:
         return Check(
             "ram",
             WARN,
@@ -99,7 +182,7 @@ def check_port(port: int = 8000, host: str = "127.0.0.1") -> Check:
     try:
         with socket.create_connection((host, port), timeout=0.3):
             pass
-    except (ConnectionRefusedError, socket.timeout, OSError):
+    except (ConnectionRefusedError, TimeoutError, OSError):
         return Check("port", OK, f":{port} free")
     return Check(
         "port",
@@ -189,7 +272,7 @@ def check_lock_drift(lock_path: Path, max_listed: int = 8) -> Check:
 
     installed: dict[str, str] = {}
     for dist in metadata.distributions():
-        name = dist.metadata["Name"]
+        name = dist.metadata.get("Name")
         if name:
             installed[_normalize(name)] = dist.version
 
@@ -228,24 +311,28 @@ def check_logs_writable(log_dir: Path) -> Check:
 
 
 def check_git(root: Path) -> Check:
-    try:
-        head = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if head.returncode != 0:
-            return Check("git", INFO, "not a git checkout — source provenance unavailable")
-        dirty = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain"],
-            capture_output=True, text=True, timeout=10,
-        )
-        n_dirty = len([ln for ln in dirty.stdout.splitlines() if ln.strip()])
-        detail = f"commit {head.stdout.strip()}"
-        if n_dirty:
-            detail += f", {n_dirty} dirty files (running code differs from the commit)"
-        return Check("git", INFO, detail)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return Check("git", INFO, f"git probe failed: {exc}")
+    head, head_error = _run_read_only_command(
+        ["git", "rev-parse", "--short", "HEAD"],
+        root=root,
+        source="maintenance_tooling:runtime_preflight.git_head",
+    )
+    if head is None:
+        return Check("git", INFO, f"git probe failed: {head_error}")
+    if head.returncode != 0:
+        return Check("git", INFO, "not a git checkout — source provenance unavailable")
+
+    dirty, dirty_error = _run_read_only_command(
+        ["git", "status", "--porcelain"],
+        root=root,
+        source="maintenance_tooling:runtime_preflight.git_status",
+    )
+    if dirty is None:
+        return Check("git", INFO, f"git status probe failed: {dirty_error}")
+    n_dirty = len([line for line in dirty.stdout.splitlines() if line.strip()])
+    detail = f"commit {head.stdout.strip()}"
+    if n_dirty:
+        detail += f", {n_dirty} dirty files (running code differs from the commit)"
+    return Check("git", INFO, detail)
 
 
 def run_all(root: Path, port: int = 8000) -> list[Check]:

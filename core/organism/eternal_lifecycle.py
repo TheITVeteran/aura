@@ -1,10 +1,12 @@
-from core.runtime.errors import record_degradation
 import asyncio
-import time
-import psutil
-import mlx.core as mx
 import logging
+import time
+
+import mlx.core as mx
+
 from core.container import ServiceContainer
+from core.runtime import resource_psutil as psutil
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Eternal")
 
@@ -29,7 +31,7 @@ async def eternal_lifecycle():
                 logger.warning("⚠️ High memory pressure (%s%). Triggering emergency eviction.", mem)
                 await rt.state_manager.snapshot("thermal_emergency")
                 try:
-                    from core.utils.gpu_sentinel import get_gpu_sentinel, GPUPriority
+                    from core.utils.gpu_sentinel import GPUPriority, get_gpu_sentinel
                     sentinel = get_gpu_sentinel()
                     if sentinel.acquire(priority=GPUPriority.REFLEX, timeout=5.0):
                         try:
@@ -45,7 +47,6 @@ async def eternal_lifecycle():
                 
                 # Evict episodic memory if pressure persists
                 if mem > 92:
-                    from core.dual_memory import DualMemorySystem
                     mem_system = ServiceContainer.get("dual_memory", default=None)
                     if mem_system:
                         await mem_system.episodic.evict_oldest(0.3)

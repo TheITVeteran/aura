@@ -21,11 +21,6 @@ async def test_diffusion_pipeline_has_one_durable_lane_owner(
     from core.runtime import model_lane_control
 
     monkeypatch.setenv("AURA_LANE_BUDGET_GB", "46")
-    monkeypatch.setattr(
-        model_lane_control.psutil,
-        "virtual_memory",
-        lambda: SimpleNamespace(available=64 * 1024**3),
-    )
     controller = ModelLaneController(
         state_path=tmp_path / "model_lanes.json",
         receipt_store=ReceiptStore(tmp_path / "receipts"),

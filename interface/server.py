@@ -31,8 +31,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, cast
 
-import psutil
-
 # ── Third-party ───────────────────────────────────────────────
 import uvicorn
 from fastapi import (
@@ -46,6 +44,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
 
@@ -71,9 +70,9 @@ from core.observability.logging_config import setup_logging
 logger = setup_logging("Aura.Server")
 
 from core.health.boot_status import build_boot_health_snapshot
+from core.runtime.version import VERSION, version_string
 from core.tools.runtime_tools import get_runtime_state
 from core.utils.task_tracker import TaskTracker
-from core.runtime.version import VERSION, version_string
 
 PROJECT_ROOT = config.paths.project_root
 _server_task_tracker = TaskTracker(name="AuraServer", max_concurrent=128)

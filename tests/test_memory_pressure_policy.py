@@ -38,15 +38,15 @@ def _patch_process_rss(
     monkeypatch.setattr(memory_monitor, "_darwin_phys_footprint_bytes", lambda _pid: 0)
 
 
-def test_memory_pressure_snapshot_classifies_64gb_emergency(monkeypatch):
+def test_memory_pressure_snapshot_classifies_64gb_emergency(resource_observer):
     import core.utils.memory_monitor as memory_monitor
 
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: _vm(total_gb=64.0, available_gb=2.5, percent=96.0),
+    resource_observer.configure_memory(
+        total_bytes=64 * 1024**3,
+        available_bytes=int(2.5 * 1024**3),
+        percent=96.0,
+        process_tree_rss_bytes=2 * 1024**3,
     )
-    _patch_process_rss(monkeypatch, memory_monitor, 2.0)
 
     snapshot = memory_monitor.get_memory_pressure_snapshot()
 
@@ -55,17 +55,18 @@ def test_memory_pressure_snapshot_classifies_64gb_emergency(monkeypatch):
     assert snapshot.refuse_heavy_local_generation is True
     assert snapshot.max_token_cap == 32
     assert "memory_pressure:96.0%" in snapshot.reason
+    assert snapshot.observation_source == "simulated"
 
 
-def test_memory_pressure_snapshot_caps_but_does_not_refuse_high_pressure(monkeypatch):
+def test_memory_pressure_snapshot_caps_but_does_not_refuse_high_pressure(resource_observer):
     import core.utils.memory_monitor as memory_monitor
 
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: _vm(total_gb=64.0, available_gb=9.5, percent=86.0),
+    resource_observer.configure_memory(
+        total_bytes=64 * 1024**3,
+        available_bytes=int(9.5 * 1024**3),
+        percent=86.0,
+        process_tree_rss_bytes=2 * 1024**3,
     )
-    _patch_process_rss(monkeypatch, memory_monitor, 2.0)
 
     snapshot = memory_monitor.get_memory_pressure_snapshot()
 
@@ -74,16 +75,19 @@ def test_memory_pressure_snapshot_caps_but_does_not_refuse_high_pressure(monkeyp
     assert snapshot.max_token_cap == 192
 
 
-def test_memory_pressure_snapshot_refuses_when_aura_process_exceeds_rss_limit(monkeypatch):
+def test_memory_pressure_snapshot_refuses_when_aura_process_exceeds_rss_limit(
+    monkeypatch,
+    resource_observer,
+):
     import core.utils.memory_monitor as memory_monitor
 
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: _vm(total_gb=64.0, available_gb=24.0, percent=62.0),
+    resource_observer.configure_memory(
+        total_bytes=64 * 1024**3,
+        available_bytes=24 * 1024**3,
+        percent=62.0,
+        process_tree_rss_bytes=int(12.5 * 1024**3),
     )
     monkeypatch.setenv("AURA_PROCESS_RSS_LIMIT_GB", "12")
-    _patch_process_rss(monkeypatch, memory_monitor, 12.5)
 
     snapshot = memory_monitor.get_memory_pressure_snapshot()
 
@@ -95,16 +99,20 @@ def test_memory_pressure_snapshot_refuses_when_aura_process_exceeds_rss_limit(mo
     assert "process_tree_rss:12.5GB/12.0GB" in snapshot.reason
 
 
-def test_memory_pressure_snapshot_counts_child_inference_workers(monkeypatch):
+def test_memory_pressure_snapshot_counts_child_inference_workers(
+    monkeypatch,
+    resource_observer,
+):
     import core.utils.memory_monitor as memory_monitor
 
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: _vm(total_gb=64.0, available_gb=24.0, percent=62.0),
+    resource_observer.configure_memory(
+        total_bytes=64 * 1024**3,
+        available_bytes=24 * 1024**3,
+        percent=62.0,
+        process_rss_bytes=3 * 1024**3,
+        process_tree_rss_bytes=int(20.5 * 1024**3),
     )
     monkeypatch.setenv("AURA_PROCESS_RSS_LIMIT_GB", "18")
-    _patch_process_rss(monkeypatch, memory_monitor, 3.0, child_rss_gb=(15.5, 2.0))
 
     snapshot = memory_monitor.get_memory_pressure_snapshot()
 
@@ -130,7 +138,11 @@ def test_memory_pressure_snapshot_uses_darwin_footprint_when_larger_than_rss(mon
         lambda _pid: int(21.0 * 1024**3),
     )
 
-    snapshot = memory_monitor.get_memory_pressure_snapshot()
+    from core.runtime.resource_observation import HostResourceObserver
+
+    snapshot = memory_monitor.get_memory_pressure_snapshot(
+        observer=HostResourceObserver()
+    )
 
     assert snapshot.level == "emergency"
     assert snapshot.refuse_heavy_local_generation is True
@@ -162,17 +174,17 @@ def test_darwin_footprint_falls_back_to_current_resident_size():
 
 def test_background_policy_blocks_on_process_tree_rss_even_when_system_memory_is_low(
     monkeypatch,
+    resource_observer,
 ):
     import core.runtime.background_policy as background_policy
-    import core.utils.memory_monitor as memory_monitor
 
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: _vm(total_gb=64.0, available_gb=28.0, percent=56.0),
+    resource_observer.configure_memory(
+        total_bytes=64 * 1024**3,
+        available_bytes=28 * 1024**3,
+        percent=56.0,
+        process_tree_rss_bytes=20 * 1024**3,
     )
     monkeypatch.setenv("AURA_PROCESS_RSS_LIMIT_GB", "18")
-    _patch_process_rss(monkeypatch, memory_monitor, 20.0)
     monkeypatch.setattr(background_policy, "_foreground_activity_reason", lambda: "")
     monkeypatch.setattr(
         background_policy,
@@ -185,17 +197,19 @@ def test_background_policy_blocks_on_process_tree_rss_even_when_system_memory_is
     assert reason.startswith("process_tree_rss:20.0GB/18.0GB")
 
 
-def test_constitutive_compute_budget_throttles_on_process_tree_rss_pressure(monkeypatch):
+def test_constitutive_compute_budget_throttles_on_process_tree_rss_pressure(
+    monkeypatch,
+    resource_observer,
+):
     import core.runtime.background_policy as background_policy
-    import core.utils.memory_monitor as memory_monitor
 
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: _vm(total_gb=64.0, available_gb=28.0, percent=56.0),
+    resource_observer.configure_memory(
+        total_bytes=64 * 1024**3,
+        available_bytes=28 * 1024**3,
+        percent=56.0,
+        process_tree_rss_bytes=20 * 1024**3,
     )
     monkeypatch.setenv("AURA_PROCESS_RSS_LIMIT_GB", "18")
-    _patch_process_rss(monkeypatch, memory_monitor, 20.0)
     monkeypatch.setattr(background_policy, "_foreground_activity_reason", lambda: "")
     monkeypatch.setattr(
         background_policy,
@@ -214,25 +228,31 @@ def test_constitutive_compute_budget_throttles_on_process_tree_rss_pressure(monk
     assert budget.reason.startswith("process_tree_rss:20.0GB/18.0GB")
 
 
-def test_memory_pressure_snapshot_cache_prevents_repeated_process_tree_scans(monkeypatch):
+def test_memory_pressure_snapshot_cache_prevents_repeated_observer_reads(
+    monkeypatch,
+    resource_observer,
+):
     import core.utils.memory_monitor as memory_monitor
 
     monkeypatch.setenv("AURA_MEMORY_SNAPSHOT_CACHE_TTL_S", "30")
     monkeypatch.setenv("AURA_PROCESS_RSS_LIMIT_GB", "18")
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: _vm(total_gb=64.0, available_gb=40.0, percent=30.0),
+    resource_observer.configure_memory(
+        total_bytes=64 * 1024**3,
+        available_bytes=40 * 1024**3,
+        percent=30.0,
+        process_tree_rss_bytes=2 * 1024**3,
     )
     memory_monitor.clear_memory_pressure_snapshot_cache()
     calls = 0
 
+    original_memory = resource_observer.memory
+
     def _scan():
         nonlocal calls
         calls += 1
-        return 2.0
+        return original_memory()
 
-    monkeypatch.setattr(memory_monitor, "_process_tree_rss_gb", _scan)
+    monkeypatch.setattr(resource_observer, "memory", _scan)
 
     first = memory_monitor.get_memory_pressure_snapshot()
     second = memory_monitor.get_memory_pressure_snapshot()
@@ -242,7 +262,10 @@ def test_memory_pressure_snapshot_cache_prevents_repeated_process_tree_scans(mon
     memory_monitor.clear_memory_pressure_snapshot_cache()
 
 
-def test_background_policy_defers_optional_work_under_cpu_pressure(monkeypatch):
+def test_background_policy_defers_optional_work_under_cpu_pressure(
+    monkeypatch,
+    resource_observer,
+):
     import core.runtime.background_policy as background_policy
 
     monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
@@ -266,16 +289,17 @@ def test_background_policy_defers_optional_work_under_cpu_pressure(monkeypatch):
         "get_unified_failure_state",
         lambda: {"pressure": 0.0},
     )
-    monkeypatch.setattr(background_policy.psutil, "cpu_percent", lambda interval=None: 93.4)
-    monkeypatch.setattr(background_policy.psutil, "cpu_count", lambda: 18)
-    monkeypatch.setattr(background_policy.psutil, "sensors_temperatures", lambda: {}, raising=False)
+    resource_observer.configure_compute(cpu_percent=93.4, cpu_count=18, load_1m=0.0)
 
     reason = background_policy.background_activity_reason(allow_no_user_anchor=True)
 
-    assert reason == "cpu_pressure_93.4"
+    assert reason == "cpu_pressure_93.4_source_simulated"
 
 
-def test_constitutive_compute_budget_throttles_under_cpu_pressure(monkeypatch):
+def test_constitutive_compute_budget_throttles_under_cpu_pressure(
+    monkeypatch,
+    resource_observer,
+):
     import core.runtime.background_policy as background_policy
 
     monkeypatch.delenv("AURA_PROOF_RUN", raising=False)
@@ -299,9 +323,7 @@ def test_constitutive_compute_budget_throttles_under_cpu_pressure(monkeypatch):
         "get_unified_failure_state",
         lambda: {"pressure": 0.0},
     )
-    monkeypatch.setattr(background_policy.psutil, "cpu_percent", lambda interval=None: 91.2)
-    monkeypatch.setattr(background_policy.psutil, "cpu_count", lambda: 18)
-    monkeypatch.setattr(background_policy.psutil, "sensors_temperatures", lambda: {}, raising=False)
+    resource_observer.configure_compute(cpu_percent=91.2, cpu_count=18, load_1m=0.0)
 
     budget = background_policy.constitutive_compute_budget(
         "liquid_substrate",
@@ -311,20 +333,22 @@ def test_constitutive_compute_budget_throttles_under_cpu_pressure(monkeypatch):
     )
 
     assert budget.effective_hz == pytest.approx(1.0)
-    assert budget.reason == "cpu_pressure_91.2"
+    assert budget.reason == "cpu_pressure_91.2_source_simulated"
 
 
 @pytest.mark.asyncio
-async def test_mlx_client_refuses_heavy_generation_under_emergency_memory(monkeypatch):
-    import core.utils.memory_monitor as memory_monitor
+async def test_mlx_client_refuses_heavy_generation_under_emergency_memory(
+    monkeypatch,
+    resource_observer,
+):
     from core.brain.llm.mlx_client import MLXLocalClient
 
-    monkeypatch.setattr(
-        memory_monitor.psutil,
-        "virtual_memory",
-        lambda: _vm(total_gb=64.0, available_gb=2.0, percent=96.0),
+    resource_observer.configure_memory(
+        total_bytes=64 * 1024**3,
+        available_bytes=2 * 1024**3,
+        percent=96.0,
+        process_tree_rss_bytes=2 * 1024**3,
     )
-    _patch_process_rss(monkeypatch, memory_monitor, 2.0)
 
     client = MLXLocalClient("/models/Aura-Cortex-32B-MLX")
     request_lock_calls = 0

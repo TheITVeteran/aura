@@ -15,8 +15,7 @@ from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any
 
-import psutil
-
+from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("aura.model_manager")

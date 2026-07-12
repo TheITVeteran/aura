@@ -47,9 +47,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-import psutil
-
 from core.runtime.flags import FlagKind, declare
+from core.runtime.resource_observation import ResourceObserver, get_resource_observer
 
 logger = logging.getLogger("Aura.LaneAdmission")
 
@@ -139,6 +138,9 @@ class AdmissionDecision:
     budget_gb: float
     evict_first: tuple[str, ...] = ()
     enforced: bool = True
+    observation_source: str = "unavailable"
+    observation_scenario_id: str = ""
+    resource_observation_available: bool = False
     at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -152,18 +154,29 @@ class AdmissionDecision:
             "budget_gb": round(self.budget_gb, 2),
             "evict_first": list(self.evict_first),
             "enforced": self.enforced,
+            "observation_source": self.observation_source,
+            "observation_scenario_id": self.observation_scenario_id,
+            "resource_observation_available": self.resource_observation_available,
             "at": self.at,
         }
 
 
-def _host_total_gb() -> float:
-    try:
-        return float(psutil.virtual_memory().total) / float(1024**3)
-    except (AttributeError, OSError, RuntimeError, ValueError, psutil.Error):
-        return 64.0
+def _host_total_gb(observer: ResourceObserver | None = None) -> tuple[float, bool]:
+    memory = (observer or get_resource_observer()).memory()
+    if memory.available and memory.total_bytes > 0:
+        return float(memory.total_bytes) / float(1024**3), True
+    return 64.0, False
 
 
-def lane_budget_gb() -> float:
+def _budget_for_total_gb(host_total_gb: float) -> float:
+    absolute = float(_BUDGET_GB_FLAG.value())
+    if absolute > 0.0:
+        return absolute
+    fraction = max(0.30, min(0.95, float(_BUDGET_FRACTION_FLAG.value())))
+    return host_total_gb * fraction
+
+
+def lane_budget_gb(*, observer: ResourceObserver | None = None) -> float:
     """The total memory envelope all model lanes may jointly commit.
 
     Default: 72% of host RAM. On the 64 GB production host that is ~46 GB —
@@ -172,11 +185,8 @@ def lane_budget_gb() -> float:
     keep the remainder. Override with AURA_LANE_BUDGET_GB (absolute) or
     AURA_LANE_BUDGET_FRACTION.
     """
-    absolute = float(_BUDGET_GB_FLAG.value())
-    if absolute > 0.0:
-        return absolute
-    fraction = max(0.30, min(0.95, float(_BUDGET_FRACTION_FLAG.value())))
-    return _host_total_gb() * fraction
+    host_total_gb, _available = _host_total_gb(observer)
+    return _budget_for_total_gb(host_total_gb)
 
 
 def _eviction_shield_s() -> float:
@@ -196,7 +206,8 @@ class LaneAdmissionController:
     Thread-safe; safe to call from worker-spawn executor threads.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, observer: ResourceObserver | None = None) -> None:
+        self._observer = observer
         self._decisions: deque[AdmissionDecision] = deque(maxlen=_DECISION_RING_SIZE)
         self._lock = threading.Lock()
 
@@ -213,7 +224,10 @@ class LaneAdmissionController:
     ) -> AdmissionDecision:
         lane, qos = classify_lane(model_path, purpose=purpose)
         request_gb = max(0.0, float(request_gb))
-        budget = lane_budget_gb()
+        observer = self._observer or get_resource_observer()
+        provenance = observer.provenance
+        host_total, observation_available = _host_total_gb(observer)
+        budget = _budget_for_total_gb(host_total)
         # A lane replacing itself (worker recycle) must not double-count:
         # callers exclude the candidate's own lane from `active`.
         lanes = [active_lane for active_lane in active if active_lane.footprint_gb > 0.0]
@@ -229,6 +243,9 @@ class LaneAdmissionController:
                     request_gb=request_gb,
                     committed_gb=committed,
                     budget_gb=budget,
+                    observation_source=provenance.source.value,
+                    observation_scenario_id=provenance.scenario_id,
+                    resource_observation_available=observation_available,
                 )
             )
             return decision
@@ -282,6 +299,9 @@ class LaneAdmissionController:
                     evict_first=tuple(
                         c.model_path or c.lane for c in chosen
                     ),
+                    observation_source=provenance.source.value,
+                    observation_scenario_id=provenance.scenario_id,
+                    resource_observation_available=observation_available,
                 )
             )
             return decision
@@ -304,6 +324,9 @@ class LaneAdmissionController:
                 budget_gb=budget,
                 evict_first=tuple(c.model_path or c.lane for c in chosen),
                 enforced=enforced,
+                observation_source=provenance.source.value,
+                observation_scenario_id=provenance.scenario_id,
+                resource_observation_available=observation_available,
             )
         )
         return decision
@@ -322,13 +345,17 @@ class LaneAdmissionController:
         return decision
 
     def snapshot(self) -> dict[str, Any]:
+        observer = self._observer or get_resource_observer()
+        provenance = observer.provenance
         with self._lock:
             recent = [d.to_dict() for d in list(self._decisions)[-10:]]
         return {
             "alive": True,
             "ready": True,
-            "budget_gb": round(lane_budget_gb(), 2),
+            "budget_gb": round(lane_budget_gb(observer=observer), 2),
             "mode": enforcement_mode(),
+            "observation_source": provenance.source.value,
+            "observation_scenario_id": provenance.scenario_id,
             "recent_decisions": recent,
         }
 
@@ -353,3 +380,9 @@ def get_lane_admission_controller() -> LaneAdmissionController:
             if _CONTROLLER is None:
                 _CONTROLLER = LaneAdmissionController()
     return _CONTROLLER
+
+
+def reset_lane_admission_controller_for_test() -> None:
+    global _CONTROLLER
+    with _CONTROLLER_LOCK:
+        _CONTROLLER = None
