@@ -816,10 +816,16 @@ def _is_anaphoric_session_memory_pin_request(user_message: str) -> bool:
         "dont forget that",
         "don't forget that",
     )
-    if not any(
-        command_text == marker or command_text.startswith(f"{marker} ")
-        for marker in markers
-    ):
+    def _marker_bounded(candidate: str, marker: str) -> bool:
+        # The marker must end at a word boundary — a space OR sentence
+        # punctuation ("Hold this thought. And remember it." was refused
+        # because only "<marker> " matched, never "<marker>.").
+        if not candidate.startswith(marker):
+            return False
+        rest = candidate[len(marker):]
+        return rest == "" or rest[0] in " .,!;:"
+
+    if not any(_marker_bounded(command_text, marker) for marker in markers):
         return False
     # A follow-up question is a discourse anchor, not a memory-write command.
     if re.search(

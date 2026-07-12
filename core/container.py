@@ -538,7 +538,8 @@ class ServiceContainer:
     @classmethod
     def register_alias(cls, alias: str, target: str) -> None:
         """Register a legacy service alias that resolves to another service name."""
-        cls._assert_runtime_registration_allowed(alias)
+        if cls._runtime_registration_suppressed(alias):
+            return
         if cls._registration_locked:
             raise ContainerError(f"Registration locked: Cannot register alias '{alias}'")
         with cls._lock:
