@@ -44,3 +44,9 @@ tools/state_backup.py
 core/quantum/statevector.py
 core/quantum/algorithms.py
 core/skills/quantum_lab.py
+# Persistent simulation world (2026-07-12 capability corpus)
+core/worlds/physics.py
+core/worlds/generation.py
+core/worlds/embodied.py
+core/worlds/hosting.py
+core/skills/world_forge.py

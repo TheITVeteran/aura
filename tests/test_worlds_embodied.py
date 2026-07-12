@@ -3,11 +3,11 @@
 Raycasts are checked against analytic intersection distances; locomotion,
 navigation, grasping, and forking are checked by observable outcome.
 """
+
 from __future__ import annotations
 
 import math
 
-import numpy as np
 import pytest
 
 import core.worlds.hosting as hosting
@@ -23,9 +23,18 @@ from core.worlds.embodied import AGENT_RADIUS
 
 def _flat_world() -> PhysicsWorld:
     world = PhysicsWorld(dt=1.0 / 120.0)
-    world.add_body(Body(body_id="ground", shape="plane", position=(0, 0, 0),
-                        velocity=(0, 0, 0), mass=0.0, plane_height=0.0,
-                        restitution=0.1, friction=0.9))
+    world.add_body(
+        Body(
+            body_id="ground",
+            shape="plane",
+            position=(0, 0, 0),
+            velocity=(0, 0, 0),
+            mass=0.0,
+            plane_height=0.0,
+            restitution=0.1,
+            friction=0.9,
+        )
+    )
     return world
 
 
@@ -36,10 +45,19 @@ def _spawned(world=None) -> EmbodiedAgent:
 
 # ── Exact senses ─────────────────────────────────────────────────
 
+
 def test_raycast_sphere_distance_is_analytic():
     world = _flat_world()
-    world.add_body(Body(body_id="ball", shape="sphere", position=(5, 0, AGENT_RADIUS),
-                        velocity=(0, 0, 0), mass=1.0, radius=0.5))
+    world.add_body(
+        Body(
+            body_id="ball",
+            shape="sphere",
+            position=(5, 0, AGENT_RADIUS),
+            velocity=(0, 0, 0),
+            mass=1.0,
+            radius=0.5,
+        )
+    )
     agent = _spawned(world)
     hit = agent.raycast(direction=(1, 0, 0))
     assert hit is not None and hit.body_id == "ball"
@@ -48,8 +66,16 @@ def test_raycast_sphere_distance_is_analytic():
 
 def test_raycast_box_and_plane_distances():
     world = _flat_world()
-    world.add_body(Body(body_id="wall", shape="box", position=(0, 4, 1),
-                        velocity=(0, 0, 0), mass=0.0, half_extents=(3, 0.5, 1)))
+    world.add_body(
+        Body(
+            body_id="wall",
+            shape="box",
+            position=(0, 4, 1),
+            velocity=(0, 0, 0),
+            mass=0.0,
+            half_extents=(3, 0.5, 1),
+        )
+    )
     agent = _spawned(world)
     hit = agent.raycast(direction=(0, 1, 0))
     assert hit is not None and hit.body_id == "wall"
@@ -62,10 +88,26 @@ def test_raycast_box_and_plane_distances():
 
 def test_raycast_reports_nearest_and_misses_honestly():
     world = _flat_world()
-    world.add_body(Body(body_id="near", shape="sphere", position=(3, 0, AGENT_RADIUS),
-                        velocity=(0, 0, 0), mass=1.0, radius=0.4))
-    world.add_body(Body(body_id="far", shape="sphere", position=(8, 0, AGENT_RADIUS),
-                        velocity=(0, 0, 0), mass=1.0, radius=0.4))
+    world.add_body(
+        Body(
+            body_id="near",
+            shape="sphere",
+            position=(3, 0, AGENT_RADIUS),
+            velocity=(0, 0, 0),
+            mass=1.0,
+            radius=0.4,
+        )
+    )
+    world.add_body(
+        Body(
+            body_id="far",
+            shape="sphere",
+            position=(8, 0, AGENT_RADIUS),
+            velocity=(0, 0, 0),
+            mass=1.0,
+            radius=0.4,
+        )
+    )
     agent = _spawned(world)
     assert agent.raycast(direction=(1, 0, 0)).body_id == "near"
     assert agent.raycast(direction=(-1, 0, 0)) is None
@@ -75,16 +117,30 @@ def test_raycast_reports_nearest_and_misses_honestly():
 
 def test_look_returns_bearing_sweep():
     world = _flat_world()
-    world.add_body(Body(body_id="pillar", shape="box", position=(4, 0, 1),
-                        velocity=(0, 0, 0), mass=0.0, half_extents=(0.3, 0.3, 1)))
+    world.add_body(
+        Body(
+            body_id="pillar",
+            shape="box",
+            position=(4, 0, 1),
+            velocity=(0, 0, 0),
+            mass=0.0,
+            half_extents=(0.3, 0.3, 1),
+        )
+    )
     agent = _spawned(world)
     scan = agent.look(rays=9)
     assert len(scan) == 9
     hits = [entry for entry in scan if entry["hit"]]
     assert any(entry["hit"]["body_id"] == "pillar" for entry in hits)
 
+    with pytest.raises(PhysicsError, match=r"\[1, 64\]"):
+        agent.look(rays=0)
+    with pytest.raises(PhysicsError, match="finite"):
+        agent.raycast(direction=(float("nan"), 0.0, 0.0))
+
 
 # ── Proprioception + locomotion ──────────────────────────────────
+
 
 def test_agent_is_grounded_and_walks_where_told():
     agent = _spawned()
@@ -94,6 +150,11 @@ def test_agent_is_grounded_and_walks_where_told():
     assert state["position"][0] > 2.0
     assert abs(state["position"][1]) < 0.2
     assert state["speed"] <= 3.01  # walk speed cap holds
+
+    with pytest.raises(PhysicsError, match="walk ticks"):
+        agent.walk(ticks=6001)
+    with pytest.raises(PhysicsError, match="heading"):
+        agent.walk(heading=float("inf"))
 
 
 def test_jump_only_from_ground():
@@ -106,10 +167,19 @@ def test_jump_only_from_ground():
 
 # ── Grasp and throw ──────────────────────────────────────────────
 
+
 def test_grasp_carry_throw_cycle():
     world = _flat_world()
-    world.add_body(Body(body_id="rock", shape="sphere", position=(1.0, 0, 0.3),
-                        velocity=(0, 0, 0), mass=2.0, radius=0.3))
+    world.add_body(
+        Body(
+            body_id="rock",
+            shape="sphere",
+            position=(1.0, 0, 0.3),
+            velocity=(0, 0, 0),
+            mass=2.0,
+            radius=0.3,
+        )
+    )
     agent = _spawned(world)
     assert agent.grasp("rock") is True
     agent.walk(heading=0.0, ticks=120)
@@ -124,10 +194,26 @@ def test_grasp_carry_throw_cycle():
 
 def test_grasp_limits_are_enforced():
     world = _flat_world()
-    world.add_body(Body(body_id="anvil", shape="sphere", position=(1.0, 0, 0.5),
-                        velocity=(0, 0, 0), mass=500.0, radius=0.5))
-    world.add_body(Body(body_id="distant", shape="sphere", position=(9.0, 0, 0.3),
-                        velocity=(0, 0, 0), mass=1.0, radius=0.3))
+    world.add_body(
+        Body(
+            body_id="anvil",
+            shape="sphere",
+            position=(1.0, 0, 0.5),
+            velocity=(0, 0, 0),
+            mass=500.0,
+            radius=0.5,
+        )
+    )
+    world.add_body(
+        Body(
+            body_id="distant",
+            shape="sphere",
+            position=(9.0, 0, 0.3),
+            velocity=(0, 0, 0),
+            mass=1.0,
+            radius=0.3,
+        )
+    )
     agent = _spawned(world)
     with pytest.raises(PhysicsError):
         agent.grasp("anvil")  # too heavy
@@ -138,7 +224,33 @@ def test_grasp_limits_are_enforced():
         agent.throw()  # holding nothing
 
 
+def test_throw_and_navigation_bounds_are_rejected_not_clamped():
+    world = _flat_world()
+    world.add_body(
+        Body(
+            body_id="rock",
+            shape="sphere",
+            position=(1.0, 0, 0.3),
+            velocity=(0, 0, 0),
+            mass=2.0,
+            radius=0.3,
+        )
+    )
+    agent = _spawned(world)
+    assert agent.grasp("rock")
+    with pytest.raises(PhysicsError, match="throw speed"):
+        agent.throw(speed=26.0)
+
+    blueprint = generate_world(3, size=16, theme="plains")
+    navigator = EmbodiedAgent.spawn(blueprint.to_physics_world(), blueprint)
+    with pytest.raises(PhysicsError, match="world bounds"):
+        navigator.navigate_to((100.0, 0.0))
+    with pytest.raises(PhysicsError, match="max_ticks"):
+        navigator.navigate_to((1.0, 1.0), max_ticks=36_001)
+
+
 # ── Navigation ───────────────────────────────────────────────────
+
 
 def test_navigation_reaches_target_on_generated_terrain():
     blueprint = generate_world(21, size=24, theme="plains")
@@ -162,6 +274,7 @@ def test_navigation_reports_no_path_honestly():
 
 
 # ── Hosted embodiment + forking ──────────────────────────────────
+
 
 @pytest.fixture
 def host(tmp_path):
@@ -191,8 +304,7 @@ async def test_fork_intervene_compare(host):
 
     world = host.load_world("branch")
     movable = next(
-        key for key in sorted(world.physics.bodies)
-        if not world.physics.bodies[key].is_static
+        key for key in sorted(world.physics.bodies) if not world.physics.bodies[key].is_static
     )
     await host.apply_impulse("branch", movable, (6.0, 0.0, 3.0))
     await host.step_world("branch", 240)
@@ -205,6 +317,43 @@ async def test_fork_intervene_compare(host):
     # The fork remembers its origin.
     kinds = {event["kind"] for event in host.load_world("branch").journal}
     assert "forked_from" in kinds
+
+
+async def test_compare_detects_velocity_only_and_agent_state_divergence(host):
+    await host.create_world("source", seed=15, size=16, theme="arena")
+    await host.spawn_agent("source", "aura")
+    await host.fork_world("source", "branch-velocity")
+    branch = host.load_world("branch-velocity")
+    movable = next(
+        key
+        for key in sorted(branch.physics.bodies)
+        if not branch.physics.bodies[key].is_static and key != "aura"
+    )
+
+    await host.apply_impulse("branch-velocity", movable, (3.0, 0.0, 0.0))
+    report = host.compare_worlds("source", "branch-velocity")
+
+    assert report["identical"] is False
+    assert report["bodies_diverged"] >= 1
+    row = next(item for item in report["largest_divergences"] if item["body_id"] == movable)
+    assert row["position_delta"] == 0.0
+    assert row["velocity_delta"] > 0.0
+
+
+async def test_last_navigation_state_survives_host_restart(host, tmp_path):
+    await host.create_world("continuity", seed=19, size=16, theme="plains")
+    await host.spawn_agent("continuity", "aura")
+    outcome = await host.agent_command(
+        "continuity",
+        "aura",
+        "navigate",
+        target=(1.0, 1.0),
+        max_ticks=4000,
+    )
+    assert outcome["navigation"]["status"] in {"reached", "timed_out"}
+
+    reloaded = hosting.WorldHost(tmp_path / "worlds").load_world("continuity")
+    assert reloaded.agent("aura").state.last_navigation == outcome["navigation"]
 
 
 async def test_agent_actions_are_journaled(host):
@@ -222,21 +371,22 @@ async def test_world_forge_skill_embodiment_flow(host):
     from core.skills.world_forge import WorldForgeSkill
 
     skill = WorldForgeSkill()
-    assert (await skill.execute(
-        {"action": "create", "world_id": "quest", "seed": 4, "size": 16,
-         "theme": "plains"}, {}))["ok"]
-    assert (await skill.execute(
-        {"action": "spawn_agent", "world_id": "quest"}, {}))["ok"]
+    assert (
+        await skill.execute(
+            {"action": "create", "world_id": "quest", "seed": 4, "size": 16, "theme": "plains"}, {}
+        )
+    )["ok"]
+    assert (await skill.execute({"action": "spawn_agent", "world_id": "quest"}, {}))["ok"]
     walked = await skill.execute(
-        {"action": "agent", "world_id": "quest", "command": "walk",
-         "heading": 0.0, "ticks": 120}, {})
+        {"action": "agent", "world_id": "quest", "command": "walk", "heading": 0.0, "ticks": 120},
+        {},
+    )
     assert walked["ok"] and walked["position"][0] > 1.0
-    looked = await skill.execute(
-        {"action": "agent", "world_id": "quest", "command": "look"}, {})
+    looked = await skill.execute({"action": "agent", "world_id": "quest", "command": "look"}, {})
     assert looked["ok"] and len(looked["observations"]) > 0
-    forked = await skill.execute(
-        {"action": "fork", "world_id": "quest", "new_id": "quest-b"}, {})
+    forked = await skill.execute({"action": "fork", "world_id": "quest", "new_id": "quest-b"}, {})
     assert forked["ok"]
     compared = await skill.execute(
-        {"action": "compare", "world_id": "quest", "other_id": "quest-b"}, {})
+        {"action": "compare", "world_id": "quest", "other_id": "quest-b"}, {}
+    )
     assert compared["ok"] and compared["comparison"]["identical"] is True

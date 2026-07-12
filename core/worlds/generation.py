@@ -14,28 +14,39 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, TypedDict, cast
 
 import numpy as np
+from numpy.typing import NDArray
 
 from core.worlds.physics import Body, PhysicsError, PhysicsWorld
 
 MAX_WORLD_SIZE = 128
 MAX_ENTITIES = 256
 
-THEMES = {
+class ThemeConfig(TypedDict):
+    relief: float
+    prop_density: float
+    prop_kinds: tuple[str, ...]
+
+
+THEMES: dict[str, ThemeConfig] = {
     "plains": {"relief": 1.5, "prop_density": 0.02, "prop_kinds": ("rock", "crate")},
     "highlands": {"relief": 6.0, "prop_density": 0.03, "prop_kinds": ("rock", "boulder")},
     "arena": {"relief": 0.0, "prop_density": 0.05, "prop_kinds": ("crate", "ball", "pillar")},
 }
 
 
-def _value_noise(size: int, seed: int, *, octaves: int = 4) -> np.ndarray:
+def _value_noise(
+    size: int,
+    seed: int,
+    *,
+    octaves: int = 4,
+) -> NDArray[np.float64]:
     """Deterministic multi-octave value noise in [0, 1], shape (size, size)."""
     rng = np.random.default_rng(seed)
-    field_sum = np.zeros((size, size), dtype=np.float64)
+    field_sum: NDArray[np.float64] = np.zeros((size, size), dtype=np.float64)
     amplitude, total_amplitude = 1.0, 0.0
     for octave in range(octaves):
         lattice = max(2, 2 ** (octave + 1))
@@ -53,7 +64,7 @@ def _value_noise(size: int, seed: int, *, octaves: int = 4) -> np.ndarray:
         field_sum += amplitude * layer
         total_amplitude += amplitude
         amplitude *= 0.5
-    return field_sum / total_amplitude
+    return cast(NDArray[np.float64], field_sum / total_amplitude)
 
 
 @dataclass
@@ -95,7 +106,7 @@ class WorldBlueprint:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "WorldBlueprint":
+    def from_dict(cls, payload: dict[str, Any]) -> WorldBlueprint:
         return cls(
             seed=int(payload["seed"]),
             size=int(payload["size"]),
@@ -121,8 +132,8 @@ class WorldBlueprint:
         world.add_body(Body(
             body_id="ground",
             shape="plane",
-            position=(0.0, 0.0, 0.0),
-            velocity=(0.0, 0.0, 0.0),
+            position=np.zeros(3, dtype=np.float64),
+            velocity=np.zeros(3, dtype=np.float64),
             mass=0.0,
             plane_height=0.0,
             restitution=0.3,
@@ -141,14 +152,20 @@ class WorldBlueprint:
                 world.add_body(Body(
                     body_id=f"terrain_{i}_{j}",
                     shape="box",
-                    position=(
-                        (i + 0.5) * cell - self.size / 2.0,
-                        (j + 0.5) * cell - self.size / 2.0,
-                        height / 2.0,
+                    position=np.array(
+                        [
+                            (i + 0.5) * cell - self.size / 2.0,
+                            (j + 0.5) * cell - self.size / 2.0,
+                            height / 2.0,
+                        ],
+                        dtype=np.float64,
                     ),
-                    velocity=(0.0, 0.0, 0.0),
+                    velocity=np.zeros(3, dtype=np.float64),
                     mass=0.0,
-                    half_extents=(cell / 2.0, cell / 2.0, max(height / 2.0, 1e-3)),
+                    half_extents=np.array(
+                        [cell / 2.0, cell / 2.0, max(height / 2.0, 1e-3)],
+                        dtype=np.float64,
+                    ),
                     restitution=0.2,
                     friction=0.9,
                 ))
@@ -158,7 +175,7 @@ class WorldBlueprint:
                 body_id=str(entity["entity_id"]),
                 shape=shape,
                 position=entity["position"],
-                velocity=(0.0, 0.0, 0.0),
+                velocity=np.zeros(3, dtype=np.float64),
                 mass=float(entity.get("mass", 1.0)),
                 radius=float(entity.get("radius", 0.4)),
                 half_extents=entity.get("half_extents", (0.4, 0.4, 0.4)),

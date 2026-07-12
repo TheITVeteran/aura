@@ -8,49 +8,143 @@ props, deterministic rigid-body dynamics, an event journal that makes
 each world a place with a remembered history rather than a throwaway
 simulation.
 """
+
 from __future__ import annotations
 
-from typing import Any, Dict
+import math
+from typing import Any, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from core.skills.base_skill import BaseSkill
 
+WorldAction = Literal[
+    "create",
+    "list",
+    "inspect",
+    "step",
+    "impulse",
+    "spawn_agent",
+    "agent",
+    "fork",
+    "compare",
+]
+AgentCommand = Literal[
+    "proprioception",
+    "look",
+    "walk",
+    "jump",
+    "grasp",
+    "throw",
+    "navigate",
+]
+WorldTheme = Literal["plains", "highlands", "arena"]
+_ID_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 
-class WorldForgeSkill(BaseSkill):
+
+class WorldForgeInput(BaseModel):  # type: ignore[misc]
+    """Typed action contract for persistent world operations."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: WorldAction = "list"
+    world_id: str | None = Field(default=None, pattern=_ID_PATTERN)
+    name: str = Field(default="", max_length=120)
+    seed: int = Field(default=0, ge=0, le=(1 << 64) - 1)
+    size: int = Field(default=32, ge=8, le=128)
+    theme: WorldTheme = "plains"
+    ticks: int = Field(default=120, ge=1, le=10_000)
+    body_id: str | None = Field(default=None, pattern=_ID_PATTERN)
+    impulse: tuple[float, float, float] | None = None
+    agent_id: str = Field(default="agent", pattern=_ID_PATTERN)
+    command: AgentCommand = "proprioception"
+    heading: float | None = Field(default=None, allow_inf_nan=False)
+    rays: int = Field(default=8, ge=1, le=64)
+    max_distance: float = Field(default=30.0, gt=0.0, le=1_000.0, allow_inf_nan=False)
+    speed: float = Field(default=6.0, ge=0.0, le=25.0, allow_inf_nan=False)
+    pitch: float = Field(
+        default=0.35,
+        ge=-math.pi / 2.0,
+        le=math.pi / 2.0,
+        allow_inf_nan=False,
+    )
+    target: tuple[float, float] | None = None
+    tolerance: float = Field(default=1.0, gt=0.0, le=10.0, allow_inf_nan=False)
+    max_ticks: int = Field(default=12_000, ge=1, le=36_000)
+    new_id: str | None = Field(default=None, pattern=_ID_PATTERN)
+    other_id: str | None = Field(default=None, pattern=_ID_PATTERN)
+    top: int = Field(default=8, ge=1, le=64)
+    recent_events: int = Field(default=10, ge=0, le=500)
+
+    @field_validator("impulse", "target")  # type: ignore[untyped-decorator]
+    @classmethod
+    def vectors_must_be_finite(cls, value: tuple[float, ...] | None) -> tuple[float, ...] | None:
+        if value is not None and not all(math.isfinite(component) for component in value):
+            raise ValueError("vector components must be finite")
+        return value
+
+    @model_validator(mode="after")  # type: ignore[untyped-decorator]
+    def validate_action_requirements(self) -> WorldForgeInput:
+        if self.action != "list" and self.world_id is None:
+            raise ValueError(f"world_id is required for action {self.action!r}")
+        if self.action == "impulse" and (self.body_id is None or self.impulse is None):
+            raise ValueError("impulse action requires body_id and impulse")
+        if self.action == "fork" and self.new_id is None:
+            raise ValueError("fork action requires new_id")
+        if self.action == "compare" and self.other_id is None:
+            raise ValueError("compare action requires other_id")
+        if self.action == "agent" and self.command == "grasp" and self.body_id is None:
+            raise ValueError("agent grasp command requires body_id")
+        if self.action == "agent" and self.command == "navigate" and self.target is None:
+            raise ValueError("agent navigate command requires target")
+        if self.action == "agent" and self.command == "walk" and self.ticks > 6_000:
+            raise ValueError("agent walk command supports at most 6000 ticks")
+        return self
+
+
+_SIMULATION_SCOPE = (
+    "Bounded deterministic classical simulation with translational rigid-body dynamics and "
+    "rotational sphere dynamics; oriented-box rotation, a VR renderer, and physical-world "
+    "transfer are not yet implemented."
+)
+
+
+class WorldForgeSkill(BaseSkill):  # type: ignore[misc]
     name = "world_forge"
     description = (
-        "Create and inhabit persistent 3D physics worlds: procedural terrain, "
-        "rigid-body dynamics (gravity, collisions, friction), an embodied agent "
+        "Create and inhabit persistent spatial physics worlds: procedural terrain, "
+        "translational dynamics plus rotational sphere dynamics (gravity, collisions, "
+        "friction), an embodied agent "
         "body (walk, look via raycasts, jump, grasp, throw, navigate with A*), "
         "counterfactual world-forking, and a journal of what happened. Worlds "
         "survive restarts."
     )
     effect_scope = "state_mutation"
-    inputs = {
-        "action": (
-            "one of: create, list, inspect, step, impulse, spawn_agent, "
-            "agent, fork, compare"
-        ),
-        "world_id": "lowercase identifier of the world",
-        "seed": "create: generation seed (int)",
-        "size": "create: terrain size 8..128 (default 32)",
-        "theme": "create: plains | highlands | arena",
-        "ticks": "step/walk: physics ticks to advance",
-        "body_id": "impulse/grasp: target body",
-        "impulse": "impulse: [ix, iy, iz] Newton-seconds",
-        "agent_id": "agent actions: which agent (default 'agent')",
-        "command": "agent: proprioception|look|walk|jump|grasp|throw|navigate",
-        "heading": "walk: direction in radians",
-        "target": "navigate: [x, y] destination",
-        "new_id": "fork: identifier for the forked world",
-        "other_id": "compare: world to compare against",
-    }
+    input_model = WorldForgeInput
     output = "World summaries with state digests and journal excerpts"
+    execution_profile = "cpu"
+    memory_mb_estimate = 384
+    metabolic_cost = 2
+    timeout_seconds = 120.0
 
-    def match(self, goal: Dict[str, Any]) -> bool:
+    def match(self, goal: dict[str, Any]) -> bool:
         objective = str(goal.get("objective", "")).lower()
         keywords = (
-            "physics world", "simulate a world", "virtual world", "spatial world",
-            "world forge", "procedural world", "persistent world", "drop a ball",
+            "physics world",
+            "simulate a world",
+            "virtual world",
+            "spatial world",
+            "world forge",
+            "procedural world",
+            "persistent world",
+            "drop a ball",
             "rigid body",
         )
         return any(keyword in objective for keyword in keywords)
@@ -58,88 +152,162 @@ class WorldForgeSkill(BaseSkill):
     async def execute(self, params: Any, context: dict[str, Any]) -> dict[str, Any]:
         from core.worlds import PhysicsError, get_world_host
 
-        params = params if isinstance(params, dict) else {}
-        action = str(params.get("action", "list") or "list").strip().lower()
+        try:
+            request = (
+                params
+                if isinstance(params, WorldForgeInput)
+                else WorldForgeInput.model_validate(params if isinstance(params, dict) else {})
+            )
+        except ValidationError as exc:
+            return {"ok": False, "error": f"invalid world parameters: {exc}"}
+        values = request.model_dump(exclude_none=True)
+        action = request.action
         host = get_world_host()
         try:
             if action == "create":
                 summary = await host.create_world(
-                    str(params.get("world_id", "") or ""),
-                    seed=int(params.get("seed", 0) or 0),
-                    size=int(params.get("size", 32) or 32),
-                    theme=str(params.get("theme", "plains") or "plains"),
-                    name=str(params.get("name", "") or ""),
+                    request.world_id or "",
+                    seed=request.seed,
+                    size=request.size,
+                    theme=request.theme,
+                    name=request.name,
                 )
-                return {"ok": True, "action": action, "world": summary,
-                        "summary": f"Created world '{summary['world_id']}' "
-                                   f"({summary['bodies']} bodies, theme {summary['theme']})."}
+                return self._ok(
+                    action,
+                    durable=True,
+                    world=summary,
+                    summary=(
+                        f"Created world '{summary['world_id']}' "
+                        f"({summary['bodies']} bodies, theme {summary['theme']})."
+                    ),
+                )
             if action == "list":
                 worlds = host.list_worlds()
-                return {"ok": True, "action": action, "worlds": worlds,
-                        "summary": f"{len(worlds)} persistent world(s)."}
+                return self._ok(
+                    action,
+                    worlds=worlds,
+                    summary=f"{len(worlds)} persistent world(s).",
+                )
             if action == "inspect":
-                detail = host.inspect(str(params.get("world_id", "") or ""))
-                return {"ok": True, "action": action, "world": detail,
-                        "summary": f"World '{detail['world_id']}' at tick {detail['tick']}, "
-                                   f"energy {detail['kinetic_energy']}."}
+                detail = host.inspect(
+                    request.world_id or "",
+                    recent_events=request.recent_events,
+                )
+                return self._ok(
+                    action,
+                    world=detail,
+                    summary=(
+                        f"World '{detail['world_id']}' at tick {detail['tick']}, "
+                        f"energy {detail['kinetic_energy']}."
+                    ),
+                )
             if action == "step":
-                summary = await host.step_world(
-                    str(params.get("world_id", "") or ""),
-                    int(params.get("ticks", 120) or 120),
+                summary = await host.step_world(request.world_id or "", request.ticks)
+                return self._ok(
+                    action,
+                    durable=True,
+                    world=summary,
+                    summary=(
+                        f"Advanced '{summary['world_id']}' to tick {summary['tick']} "
+                        f"({summary['asleep']} bodies at rest)."
+                    ),
                 )
-                return {"ok": True, "action": action, "world": summary,
-                        "summary": f"Advanced '{summary['world_id']}' to tick "
-                                   f"{summary['tick']} ({summary['asleep']} bodies at rest)."}
             if action == "impulse":
-                impulse = params.get("impulse") or (0.0, 0.0, 0.0)
                 summary = await host.apply_impulse(
-                    str(params.get("world_id", "") or ""),
-                    str(params.get("body_id", "") or ""),
-                    tuple(float(x) for x in impulse),
+                    request.world_id or "",
+                    request.body_id or "",
+                    request.impulse or (0.0, 0.0, 0.0),
                 )
-                return {"ok": True, "action": action, "world": summary,
-                        "summary": f"Applied impulse to '{params.get('body_id')}' in "
-                                   f"'{summary['world_id']}'."}
+                return self._ok(
+                    action,
+                    durable=True,
+                    world=summary,
+                    summary=(f"Applied impulse to '{request.body_id}' in '{summary['world_id']}'."),
+                )
             if action == "spawn_agent":
                 body = await host.spawn_agent(
-                    str(params.get("world_id", "") or ""),
-                    str(params.get("agent_id", "agent") or "agent"),
+                    request.world_id or "",
+                    request.agent_id,
                 )
-                return {"ok": True, "action": action, "agent": body,
-                        "summary": f"Embodied agent '{body['agent_id']}' spawned at "
-                                   f"{body['position']}."}
+                return self._ok(
+                    action,
+                    durable=True,
+                    agent=body,
+                    summary=(f"Embodied agent '{body['agent_id']}' spawned at {body['position']}."),
+                )
             if action == "agent":
+                forwarded = {
+                    key: value
+                    for key, value in values.items()
+                    if key
+                    in {
+                        "heading",
+                        "ticks",
+                        "rays",
+                        "max_distance",
+                        "body_id",
+                        "speed",
+                        "pitch",
+                        "target",
+                        "tolerance",
+                        "max_ticks",
+                    }
+                }
                 result = await host.agent_command(
-                    str(params.get("world_id", "") or ""),
-                    str(params.get("agent_id", "agent") or "agent"),
-                    str(params.get("command", "proprioception") or "proprioception"),
-                    **{key: value for key, value in params.items()
-                       if key in {"heading", "ticks", "rays", "max_distance",
-                                  "body_id", "speed", "pitch", "target",
-                                  "tolerance", "max_ticks"}},
+                    request.world_id or "",
+                    request.agent_id,
+                    request.command,
+                    **forwarded,
                 )
-                return {"action": action, **result,
-                        "summary": f"Agent '{params.get('agent_id', 'agent')}' ran "
-                                   f"'{params.get('command')}' (ok={result.get('ok')})."}
+                mutating = request.command not in {"proprioception", "look"}
+                return {
+                    "action": action,
+                    "durable": mutating,
+                    "simulation_scope": _SIMULATION_SCOPE,
+                    **result,
+                    "summary": (
+                        f"Agent '{request.agent_id}' ran '{request.command}' "
+                        f"(ok={result.get('ok')})."
+                    ),
+                }
             if action == "fork":
                 summary = await host.fork_world(
-                    str(params.get("world_id", "") or ""),
-                    str(params.get("new_id", "") or ""),
+                    request.world_id or "",
+                    request.new_id or "",
                 )
-                return {"ok": True, "action": action, "world": summary,
-                        "summary": f"Forked '{params.get('world_id')}' into "
-                                   f"'{summary['world_id']}' for counterfactual runs."}
+                return self._ok(
+                    action,
+                    durable=True,
+                    world=summary,
+                    summary=(
+                        f"Forked '{request.world_id}' into '{summary['world_id']}' "
+                        "for counterfactual runs."
+                    ),
+                )
             if action == "compare":
                 report = host.compare_worlds(
-                    str(params.get("world_id", "") or ""),
-                    str(params.get("other_id", "") or ""),
+                    request.world_id or "",
+                    request.other_id or "",
+                    top=request.top,
                 )
-                return {"ok": True, "action": action, "comparison": report,
-                        "summary": (
-                            f"{report['bodies_diverged']} of "
-                            f"{report['bodies_compared']} bodies diverged; "
-                            f"identical={report['identical']}."
-                        )}
+                return self._ok(
+                    action,
+                    comparison=report,
+                    summary=(
+                        f"{report['bodies_diverged']} body states diverged across "
+                        f"{report['bodies_compared']} shared bodies; "
+                        f"identical={report['identical']}."
+                    ),
+                )
             return {"ok": False, "error": f"Unknown world_forge action '{action}'"}
-        except PhysicsError as exc:
+        except (OverflowError, PhysicsError, TypeError, ValueError) as exc:
             return {"ok": False, "error": str(exc)}
+
+    @staticmethod
+    def _ok(action: str, **payload: Any) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "action": action,
+            "simulation_scope": _SIMULATION_SCOPE,
+            **payload,
+        }

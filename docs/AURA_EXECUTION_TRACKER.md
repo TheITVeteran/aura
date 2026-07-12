@@ -86,7 +86,7 @@ Status rules:
 | `FRONTIER-001` | `OPEN` | Import useful fictional-AI mechanisms into real organs, enforce anti-pattern safeguards, and re-evaluate every requested fictional/nonfictional comparison from code and evidence without themed theater. | Fictional-AI scope; Matrix 17-18 |
 | `INTELLIGENCE-001` | `OPEN` | Measure whole-system uplift with base/tools/memory/substrate/planner/full ablations, external sealed benchmarks, confidence intervals, contamination controls, and matched cost/latency. | Matrix 4; Addendum 31 |
 | `LONGHORIZON-001` | `OPEN` | Build a domain-general partially observable long-horizon agency harness, then a non-scripted NetHack-compatible evaluation with crash-resume, transfer, hidden maps, and adversarial interruption. | Matrix 5; Addendum 31 |
-| `SIMWORLD-001` | `OPEN` | Build unit-aware multi-fidelity physics, full spatial/VR engine adapters, seeded real-time procedural generation, persistent dynamic worlds, hosting, replay, and inspectable UI without mistaking visual animation for physical correctness. | Capability Addendum 33, `CTX3-PHYS-*`, `CTX3-WORLD-*` |
+| `SIMWORLD-001` | `IN PROGRESS 2026-07-12` | Preserve the deterministic hosted-world core while completing unit-aware multi-fidelity physics, full spatial/VR engine adapters, validated procedural generation, replay/migration, multi-agent synchronization, and inspectable UI without mistaking visual animation for physical correctness. | Capability Addendum 33, `CTX3-PHYS-*`, `CTX3-WORLD-*` |
 | `MULTIMODAL-001` | `OPEN` | Make continuous synchronized vision/audio/spatial/body perception, consented lip-reading, and internal/external situational analysis causal to belief, uncertainty, planning, action, and repair under occlusion and sensor loss. | Capability Addendum 33, `CTX3-PERCEPT-*` |
 | `SOCIAL-001` | `OPEN` | Unify social judgment, theory of mind, emotional modeling, rapport, boundary respect, and relationship repair with calibrated uncertainty, cultural variance, anti-manipulation controls, and longitudinal live evidence. | Capability Addendum 33, `CTX3-SOCIAL-*` |
 | `MULTIAGENT-001` | `OPEN` | Generalize complex subagent management into typed delegation, scoped authority, budget/deadline ownership, shared-world coordination, conflict arbitration, cancellation, recovery, and end-to-end accountability. | Capability Addendum 33, `CTX3-SUBAGENT-*` |
@@ -907,7 +907,16 @@ evidence into a metaphysical, legal, or comparative claim.
 
    Simulation, space, and persistent worlds:
 
-   - `CTX3-PHYS-001`: build a canonical, unit-aware physics-model contract for
+   - `CTX3-PHYS-001` `[IN PROGRESS 2026-07-12]`: preserve the fixed-timestep,
+     deterministic classical core, canonical state digests, sphere/axis-aligned
+     box/plane contacts, restitution, friction, sleeping, rotational sphere
+     state, and tested linear/angular momentum exchange. Inputs are finite and
+     bounded, sphere orientation is a normalized quaternion, and the embodied
+     agent is explicitly rotation-locked. Still add named units/frames,
+     materials, forces, constraints, contact uncertainty, oriented-box and
+     general rigid-body rotation, solver adapters/provenance, and matched
+     validation against established engines before calling this general
+     physics. Build a canonical, unit-aware physics-model contract for
      bodies, frames, geometry, material properties, forces, constraints,
      contacts, uncertainty, boundary conditions, and solver provenance. Use
      proven physics engines behind adapters; do not present UI animation,
@@ -917,11 +926,24 @@ evidence into a metaphysical, legal, or comparative claim.
      locomotion contracts, sensor/head/hand pose, spatial audio, interaction,
      latency budgets, and engine synchronization. Simulator state must feed the
      same world model and action/effect spine as non-VR environments.
-   - `CTX3-WORLD-001`: implement seeded real-time procedural generation with
+   - `CTX3-WORLD-001` `[IN PROGRESS 2026-07-12]`: the seeded terrain/entity
+     generator is deterministic and bounded and emits replayable blueprints,
+     but still needs explicit grammar/constraint solving, solvability and
+     safety validation, novelty metrics, migration, and evaluator-leakage
+     controls. Implement seeded real-time procedural generation with
      explicit grammars/constraints, solvability and safety validation,
      deterministic replay, novelty metrics, bounded generation cost, and
      persistence/migration. Generated worlds may not encode evaluator answers.
-   - `CTX3-WORLD-002`: host dynamic virtual and operationally subjective worlds
+   - `CTX3-WORLD-002` `[IN PROGRESS 2026-07-12]`: hosted worlds now have bounded
+     versioned documents, identity/schema validation, restart continuity,
+     journals, deterministic forks, complete body-state comparison, read-only
+     WebGL inspection, per-world serialized mutation, race-safe create/fork,
+     and staged persist-before-publish transactions that stay disk/memory
+     consistent under write failure and cancellation. Agent navigation state
+     survives restart. Still add schema migrations, rollback/replay controls,
+     event-time authority, ownership/quotas, multi-process and multi-agent
+     synchronization, model-swap continuity evidence, and a validated
+     subjective-world bridge. Host dynamic virtual and operationally subjective worlds
      with versioned state, event time, ownership, save/resume, branching,
      rollback, multi-agent synchronization, UI inspection, and continuity
      across restart/model swap. "Subjective" is an operational self/world-model
@@ -11393,3 +11415,49 @@ Authoritative next work after this checkpoint:
 - Keep multi-hour and 24-72 hour soaks deferred until every remaining shorter
   static, bounded, fault-injection, GUI, clean-machine, and live-runtime gate is
   green.
+
+## Checkpoint 2026-07-12-35: Transactional Persistent Worlds
+
+This checkpoint advances `SIMWORLD-001`, `CTX3-PHYS-001`, and
+`CTX3-WORLD-001..002`; it does not close general physics, VR/spatial-engine,
+multi-fidelity, subjective-world, or physical-transfer claims.
+
+Implemented boundary:
+
+- Composed the fixed-step deterministic engine with rotational sphere dynamics,
+  normalized quaternion state, angular/linear contact exchange, bounded seeded
+  terrain generation, embodied sensing/action/navigation, deterministic world
+  forks, and the read-only WebGL inspection surface.
+- Made each world mutation a serialized persist-before-publish transaction.
+  Write failure cannot leak partial in-memory state; caller cancellation waits
+  for the shielded durable write and then publishes the same generation before
+  propagating. Create/fork identity reservation prevents duplicate races and
+  counts both disk and in-flight worlds against the configured cap.
+- Added bounded schema, size, identity, finite-number, action, and navigation
+  validation; restart persistence now includes the agent's latest navigation
+  result. World comparison covers complete serialized body state, including
+  velocity and angular state, plus added/removed bodies and bounded output.
+- Reconciled public capability language with the exact engine: sphere rotation
+  is implemented; oriented-box rotation, general constraints, VR rendering, and
+  physical-world transfer remain explicitly unsupported.
+
+Verification:
+
+- The world physics/embodiment/HTTP, quantum-adjacency, and strict-ratchet
+  matrix passed `88` tests after rebasing the rotational engine and WebGL
+  viewer (`84` behavioral plus `4` type-ratchet tests).
+- The strict MyPy ratchet grew from `34` to `39` files and passed; whole-surface
+  compile and Ruff gates passed; the live skill catalog matched exactly at
+  `75/75`; and all `37` production-readiness contract checks passed.
+
+Authoritative remaining work:
+
+- Add unit/frame/material/constraint contracts, established-engine adapters,
+  oriented and articulated body dynamics, uncertainty and solver provenance,
+  plus matched physical-validation controls before general-physics claims.
+- Add procedural solvability/safety/novelty validation, schema migration,
+  event-time and ownership authority, rollback/replay controls, multi-process
+  and multi-agent synchronization, model-swap continuity proof, and the
+  governed subjective-world bridge.
+- Keep multi-hour and 24-72 hour soaks deferred until all shorter static,
+  bounded, fault-injection, GUI, clean-machine, and live-runtime gates are green.

@@ -1,10 +1,11 @@
 """World engine verification: closed-form dynamics, conservation laws,
 determinism, generation reproducibility, and persistent hosting.
 """
+
 from __future__ import annotations
 
+import asyncio
 import json
-import math
 
 import numpy as np
 import pytest
@@ -19,19 +20,42 @@ from core.worlds import (
 from core.worlds.generation import WorldBlueprint
 
 
-def _sphere(body_id="ball", pos=(0, 0, 10.0), vel=(0, 0, 0), mass=1.0,
-            radius=0.5, restitution=0.5, friction=0.4):
-    return Body(body_id=body_id, shape="sphere", position=pos, velocity=vel,
-                mass=mass, radius=radius, restitution=restitution, friction=friction)
+def _sphere(
+    body_id="ball",
+    pos=(0, 0, 10.0),
+    vel=(0, 0, 0),
+    mass=1.0,
+    radius=0.5,
+    restitution=0.5,
+    friction=0.4,
+):
+    return Body(
+        body_id=body_id,
+        shape="sphere",
+        position=pos,
+        velocity=vel,
+        mass=mass,
+        radius=radius,
+        restitution=restitution,
+        friction=friction,
+    )
 
 
 def _plane():
-    return Body(body_id="ground", shape="plane", position=(0, 0, 0),
-                velocity=(0, 0, 0), mass=0.0, plane_height=0.0,
-                restitution=0.5, friction=0.6)
+    return Body(
+        body_id="ground",
+        shape="plane",
+        position=(0, 0, 0),
+        velocity=(0, 0, 0),
+        mass=0.0,
+        plane_height=0.0,
+        restitution=0.5,
+        friction=0.6,
+    )
 
 
 # ── Closed-form dynamics ─────────────────────────────────────────
+
 
 def test_projectile_matches_discrete_closed_form():
     world = PhysicsWorld(dt=1.0 / 120.0)
@@ -43,9 +67,7 @@ def test_projectile_matches_discrete_closed_form():
     dt = world.dt
     expected_velocity = v0 + steps * g * dt
     expected_position = (
-        np.array([0.0, 0.0, 100.0])
-        + steps * v0 * dt
-        + g * dt * dt * steps * (steps + 1) / 2.0
+        np.array([0.0, 0.0, 100.0]) + steps * v0 * dt + g * dt * dt * steps * (steps + 1) / 2.0
     )
     body = world.body("ball")
     np.testing.assert_allclose(body.velocity, expected_velocity, atol=1e-9)
@@ -90,6 +112,7 @@ def test_bounce_height_follows_e_squared():
 
 # ── Conservation laws ────────────────────────────────────────────
 
+
 def test_equal_mass_elastic_collision_exchanges_velocities():
     world = PhysicsWorld(gravity=0.0, dt=1.0 / 120.0)
     world.add_body(_sphere("a", pos=(-2, 0, 0), vel=(4, 0, 0), restitution=1.0))
@@ -119,6 +142,7 @@ def test_inelastic_collision_never_creates_energy():
 
 # ── Rest, sleep, containment ─────────────────────────────────────
 
+
 def test_dropped_sphere_comes_to_rest_on_plane():
     world = PhysicsWorld(dt=1.0 / 120.0)
     world.add_body(_plane())
@@ -132,9 +156,18 @@ def test_dropped_sphere_comes_to_rest_on_plane():
 
 def test_sphere_rests_on_static_box():
     world = PhysicsWorld(dt=1.0 / 120.0)
-    world.add_body(Body(body_id="table", shape="box", position=(0, 0, 0.5),
-                        velocity=(0, 0, 0), mass=0.0, half_extents=(1, 1, 0.5),
-                        restitution=0.2, friction=0.8))
+    world.add_body(
+        Body(
+            body_id="table",
+            shape="box",
+            position=(0, 0, 0.5),
+            velocity=(0, 0, 0),
+            mass=0.0,
+            half_extents=(1, 1, 0.5),
+            restitution=0.2,
+            friction=0.8,
+        )
+    )
     world.add_body(_sphere(pos=(0, 0, 2.5), restitution=0.2))
     world.step(2400)
     body = world.body("ball")
@@ -144,12 +177,19 @@ def test_sphere_rests_on_static_box():
 
 # ── Determinism ──────────────────────────────────────────────────
 
+
 def _demo_world() -> PhysicsWorld:
     world = PhysicsWorld(dt=1.0 / 120.0)
     world.add_body(_plane())
     for i in range(6):
-        world.add_body(_sphere(f"ball_{i}", pos=(i * 0.4 - 1.0, i * 0.3, 2.0 + i),
-                               vel=(0.5 * i, -0.2 * i, 0), restitution=0.4))
+        world.add_body(
+            _sphere(
+                f"ball_{i}",
+                pos=(i * 0.4 - 1.0, i * 0.3, 2.0 + i),
+                vel=(0.5 * i, -0.2 * i, 0),
+                restitution=0.4,
+            )
+        )
     return world
 
 
@@ -173,6 +213,7 @@ def test_serialization_roundtrip_preserves_trajectory():
 
 # ── Validation ───────────────────────────────────────────────────
 
+
 def test_invalid_bodies_rejected():
     with pytest.raises(PhysicsError):
         Body(body_id="x", shape="tetrahedron", position=(0, 0, 0), velocity=(0, 0, 0))
@@ -189,6 +230,7 @@ def test_invalid_bodies_rejected():
 
 
 # ── Procedural generation ────────────────────────────────────────
+
 
 def test_generation_is_seed_deterministic():
     a = generate_world(1234, size=32, theme="highlands")
@@ -218,12 +260,13 @@ def test_blueprint_roundtrip_and_realization():
     world = blueprint.to_physics_world()
     assert "ground" in world.bodies
     world.step(120)  # must simulate without error
-    assert float(np.sum(np.isfinite(
-        np.concatenate([world.bodies[k].position for k in world.bodies])
-    ))) == 3 * len(world.bodies)
+    assert float(
+        np.sum(np.isfinite(np.concatenate([world.bodies[k].position for k in world.bodies])))
+    ) == 3 * len(world.bodies)
 
 
 # ── Persistent hosting ───────────────────────────────────────────
+
 
 @pytest.fixture
 def host(tmp_path):
@@ -269,8 +312,7 @@ async def test_impulse_moves_bodies_and_is_journaled(host):
     await host.create_world("kicks", seed=11, size=16, theme="arena")
     world = host.load_world("kicks")
     movable = next(
-        key for key in sorted(world.physics.bodies)
-        if not world.physics.bodies[key].is_static
+        key for key in sorted(world.physics.bodies) if not world.physics.bodies[key].is_static
     )
     before = world.physics.bodies[movable].velocity.copy()
     await host.apply_impulse("kicks", movable, (5.0, 0.0, 2.0))
@@ -296,27 +338,157 @@ async def test_host_enforces_bounds(host):
         host.load_world("never-made")
 
 
+async def test_persistence_failure_does_not_publish_partial_world_state(
+    host,
+    tmp_path,
+    monkeypatch,
+):
+    await host.create_world("transactional", seed=8, size=16, theme="arena")
+    world = host.load_world("transactional")
+    movable = next(
+        key for key in sorted(world.physics.bodies) if not world.physics.bodies[key].is_static
+    )
+    before_digest = world.physics.state_digest()
+    before_journal = list(world.journal)
+
+    class _FailingGateway:
+        async def ensure_directory_async(self, *_args, **_kwargs):
+            return str(tmp_path / "worlds")
+
+        async def write_json_async(self, *_args, **_kwargs):
+            raise OSError("injected durable write failure")
+
+    monkeypatch.setattr(hosting, "get_file_write_gateway", lambda: _FailingGateway())
+
+    with pytest.raises(hosting.WorldPersistenceError, match="committed durably"):
+        await host.apply_impulse("transactional", movable, (5.0, 0.0, 0.0))
+
+    assert host.load_world("transactional") is world
+    assert world.physics.state_digest() == before_digest
+    assert world.journal == before_journal
+
+    reloaded = hosting.WorldHost(tmp_path / "worlds").load_world("transactional")
+    assert reloaded.physics.state_digest() == before_digest
+    assert reloaded.journal == before_journal
+
+
+async def test_same_world_mutations_serialize_and_persist_without_lost_updates(host, tmp_path):
+    await host.create_world("serialized", seed=14, size=16, theme="plains")
+
+    await asyncio.gather(
+        host.step_world("serialized", 40),
+        host.step_world("serialized", 60),
+        host.step_world("serialized", 25),
+    )
+
+    assert host.inspect("serialized")["tick"] == 125
+    reloaded = hosting.WorldHost(tmp_path / "worlds").load_world("serialized")
+    assert reloaded.physics.tick == 125
+    assert [event["ticks"] for event in reloaded.journal if event["kind"] == "stepped"] == [
+        40,
+        60,
+        25,
+    ]
+
+
+async def test_duplicate_world_creation_is_reserved_across_racing_calls(host):
+    outcomes = await asyncio.gather(
+        host.create_world("one-winner", seed=1, size=16),
+        host.create_world("one-winner", seed=2, size=16),
+        return_exceptions=True,
+    )
+
+    successes = [outcome for outcome in outcomes if isinstance(outcome, dict)]
+    failures = [outcome for outcome in outcomes if isinstance(outcome, PhysicsError)]
+    assert len(successes) == 1
+    assert len(failures) == 1
+    assert host.load_world("one-winner").blueprint.seed in {1, 2}
+
+
+async def test_cancellation_during_durable_write_finishes_commit_before_propagating(
+    host,
+    tmp_path,
+    monkeypatch,
+):
+    await host.create_world("cancel-safe", seed=4, size=16, theme="plains")
+    initial_tick = host.inspect("cancel-safe")["tick"]
+    real_gateway = hosting.get_file_write_gateway()
+    write_started = asyncio.Event()
+    allow_write = asyncio.Event()
+
+    class _DelayedGateway:
+        async def ensure_directory_async(self, *args, **kwargs):
+            return await real_gateway.ensure_directory_async(*args, **kwargs)
+
+        async def write_json_async(self, *args, **kwargs):
+            write_started.set()
+            await allow_write.wait()
+            await real_gateway.write_json_async(*args, **kwargs)
+
+    monkeypatch.setattr(hosting, "get_file_write_gateway", lambda: _DelayedGateway())
+    task = asyncio.create_task(host.step_world("cancel-safe", 10))
+    await asyncio.wait_for(write_started.wait(), timeout=2.0)
+    task.cancel()
+    allow_write.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert host.inspect("cancel-safe")["tick"] == initial_tick + 10
+    reloaded = hosting.WorldHost(tmp_path / "worlds").load_world("cancel-safe")
+    assert reloaded.physics.tick == initial_tick + 10
+
+
 # ── Skill facade ─────────────────────────────────────────────────
+
 
 async def test_world_forge_skill_end_to_end(host):
     from core.skills.world_forge import WorldForgeSkill
 
     skill = WorldForgeSkill()
     created = await skill.execute(
-        {"action": "create", "world_id": "skilltest", "seed": 5, "size": 16,
-         "theme": "arena"}, {})
+        {"action": "create", "world_id": "skilltest", "seed": 5, "size": 16, "theme": "arena"}, {}
+    )
     assert created["ok"], created
-    stepped = await skill.execute(
-        {"action": "step", "world_id": "skilltest", "ticks": 120}, {})
+    stepped = await skill.execute({"action": "step", "world_id": "skilltest", "ticks": 120}, {})
     assert stepped["ok"] and stepped["world"]["tick"] == 120
-    inspected = await skill.execute(
-        {"action": "inspect", "world_id": "skilltest"}, {})
+    inspected = await skill.execute({"action": "inspect", "world_id": "skilltest"}, {})
     assert inspected["ok"] and inspected["world"]["state_digest"]
     listed = await skill.execute({"action": "list"}, {})
-    assert listed["ok"] and any(
-        world["world_id"] == "skilltest" for world in listed["worlds"])
+    assert listed["ok"] and any(world["world_id"] == "skilltest" for world in listed["worlds"])
     bad = await skill.execute({"action": "create", "world_id": "skilltest", "seed": 5}, {})
     assert not bad["ok"]
+
+
+async def test_world_forge_typed_contract_rejects_shallow_or_silent_inputs(host):
+    from core.skills.world_forge import WorldForgeInput, WorldForgeSkill
+
+    schema = WorldForgeInput.model_json_schema()
+    assert schema["properties"]["ticks"]["type"] == "integer"
+    assert schema["properties"]["impulse"]["anyOf"][0]["type"] == "array"
+
+    skill = WorldForgeSkill()
+    missing_identity = await skill.execute({"action": "inspect"}, {})
+    unknown = await skill.execute({"action": "list", "surprise": True}, {})
+    silently_clamped = await skill.execute(
+        {"action": "agent", "world_id": "missing", "command": "walk", "ticks": 7000},
+        {},
+    )
+    nonfinite = await skill.execute(
+        {
+            "action": "impulse",
+            "world_id": "missing",
+            "body_id": "ball",
+            "impulse": [float("nan"), 0.0, 0.0],
+        },
+        {},
+    )
+
+    assert missing_identity["ok"] is False
+    assert unknown["ok"] is False
+    assert silently_clamped["ok"] is False
+    assert "at most 6000" in silently_clamped["error"]
+    assert nonfinite["ok"] is False
 
 
 def test_world_forge_is_discovered_by_the_skill_catalog():

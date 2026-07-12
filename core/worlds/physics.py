@@ -1,6 +1,6 @@
 """core/worlds/physics.py
 ───────────────────────
-Deterministic 3D rigid-body physics (translational v1).
+Deterministic 3D rigid-body physics (rotational-sphere v2).
 
 Engineering contract:
 - Fixed timestep, semi-implicit (symplectic) Euler integration. The
@@ -36,10 +36,12 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Iterable
+from typing import Any, cast
 
 import numpy as np
+from numpy.typing import NDArray
 
 _SLEEP_SPEED = 5e-3
 _SLEEP_TICKS = 30
@@ -55,13 +57,16 @@ class PhysicsError(ValueError):
     """Invalid body construction or world operation."""
 
 
-def _vec(value: Iterable[float], name: str) -> np.ndarray:
+type FloatArray = NDArray[np.float64]
+
+
+def _vec(value: Iterable[float], name: str) -> FloatArray:
     arr = np.asarray(tuple(value), dtype=np.float64)
     if arr.shape != (3,):
         raise PhysicsError(f"{name} must be a 3-vector")
     if not np.all(np.isfinite(arr)):
         raise PhysicsError(f"{name} must be finite")
-    return arr.copy()
+    return cast(FloatArray, arr.copy())
 
 
 @dataclass
@@ -164,7 +169,7 @@ class Body:
         }
 
     @classmethod
-    def from_dict(cls, row: dict[str, Any]) -> "Body":
+    def from_dict(cls, row: dict[str, Any]) -> Body:
         return cls(
             body_id=str(row["body_id"]),
             shape=str(row["shape"]),
@@ -497,7 +502,7 @@ class PhysicsWorld:
         }
 
     @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> "PhysicsWorld":
+    def from_dict(cls, payload: dict[str, Any]) -> PhysicsWorld:
         world = cls(gravity=float(payload["gravity"]), dt=float(payload["dt"]))
         world.tick = int(payload.get("tick", 0))
         for row in payload.get("bodies", []):
