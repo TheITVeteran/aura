@@ -75,6 +75,61 @@ LOG_DIR="${HOME}/.aura/logs"
 mkdir -p "$LOG_DIR"
 LAUNCH_LOG="${LOG_DIR}/desktop-launch.log"
 
+rotate_launch_log() {
+    # Every boot appends raw stdout here forever; without a bound the file
+    # reached 145MB. Rotate at boot past the size gate into a gzip'd ring.
+    local max_bytes=$((20 * 1024 * 1024))
+    local keep=5
+    [ -f "$LAUNCH_LOG" ] || return 0
+    local size
+    size=$(stat -f%z "$LAUNCH_LOG" 2>/dev/null || echo 0)
+    [ "$size" -ge "$max_bytes" ] || return 0
+    local i
+    for (( i=keep-1; i>=1; i-- )); do
+        [ -f "${LAUNCH_LOG}.${i}.gz" ] && mv -f "${LAUNCH_LOG}.${i}.gz" "${LAUNCH_LOG}.$((i+1)).gz"
+    done
+    mv -f "$LAUNCH_LOG" "${LAUNCH_LOG}.1"
+    gzip -f "${LAUNCH_LOG}.1" 2>/dev/null || true
+}
+
+backup_env_file() {
+    # .env carries the local shared secret (AURA_API_TOKEN) and was once
+    # destroyed with no recovery path. Keep a bounded backup ring; skip
+    # writes when content is unchanged. Values are never printed.
+    local env_file="${AURA_ROOT}/.env"
+    [ -e "$env_file" ] || return 0
+    local ring_dir="${HOME}/.aura/backups/env"
+    mkdir -p "$ring_dir" 2>/dev/null || return 0
+    chmod 700 "$ring_dir" 2>/dev/null || true
+    local newest
+    newest=$(ls -t "$ring_dir"/env-*.bak 2>/dev/null | head -1)
+    if [ -n "$newest" ] && cmp -s "$env_file" "$newest"; then
+        return 0
+    fi
+    local dest="${ring_dir}/env-$(date +%Y%m%d_%H%M%S)-$$.bak"
+    while [ -e "$dest" ]; do
+        dest="${ring_dir}/env-$(date +%Y%m%d_%H%M%S)-$$-${RANDOM}.bak"
+    done
+    cp -L "$env_file" "$dest" 2>/dev/null || return 0
+    chmod 600 "$dest" 2>/dev/null || true
+    ls -t "$ring_dir"/env-*.bak 2>/dev/null | tail -n +11 | while IFS= read -r old; do
+        rm -f "$old"
+    done
+}
+
+check_env_file() {
+    if [ ! -e "${AURA_ROOT}/.env" ]; then
+        echo "⚠️  No .env at ${AURA_ROOT}/.env — GUI and server share AURA_API_TOKEN via this file."
+        echo "   Recovery ring (if any): ${HOME}/.aura/backups/env/"
+    elif ! grep -q '^AURA_API_TOKEN=' "${AURA_ROOT}/.env" 2>/dev/null; then
+        echo "⚠️  .env present but AURA_API_TOKEN is missing — the desktop GUI may fail to authenticate."
+    fi
+}
+
+rotate_launch_log
+backup_env_file
+check_env_file
+
 resolve_launch_log() {
     if touch "$LAUNCH_LOG" 2>/dev/null; then
         echo "$LAUNCH_LOG"
