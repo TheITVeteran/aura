@@ -3,9 +3,8 @@
 Every assertion here has a closed-form quantum-mechanical answer; the
 simulator must reproduce it to numerical precision, not approximately.
 """
-from __future__ import annotations
 
-import math
+from __future__ import annotations
 
 import numpy as np
 import pytest
@@ -22,8 +21,8 @@ from core.quantum import (
 )
 from core.quantum.algorithms import qft_matrix
 
-
 # ── Elementary gate identities ───────────────────────────────────
+
 
 def test_h_twice_is_identity():
     sv = Statevector(1, seed=7).h(0).h(0)
@@ -52,6 +51,7 @@ def test_expectation_values_on_known_states():
 
 # ── Entanglement ─────────────────────────────────────────────────
 
+
 def test_bell_pair_amplitudes_and_correlations():
     sv = bell_pair(seed=3)
     assert sv.probability_of("00") == pytest.approx(0.5)
@@ -79,6 +79,7 @@ def test_ghz_state_structure():
 
 # ── Measurement semantics ────────────────────────────────────────
 
+
 def test_measurement_collapse_is_stable():
     sv = Statevector(1, seed=11).h(0)
     first = sv.measure(0)
@@ -104,15 +105,34 @@ def test_sampling_is_deterministic_with_seed():
     assert sum(counts_a.values()) == 1000
 
 
+def test_entropy_source_seeds_sampling_instead_of_being_ignored():
+    calls = []
+
+    def entropy():
+        calls.append(True)
+        return 0.125
+
+    counts_a = bell_pair(entropy_source=entropy).sample_counts(500)
+    counts_b = bell_pair(entropy_source=entropy).sample_counts(500)
+
+    assert len(calls) == 2
+    assert counts_a == counts_b
+    assert set(counts_a) <= {"00", "11"}
+
+
 # ── Canonical algorithms ─────────────────────────────────────────
 
-@pytest.mark.parametrize("alpha,beta", [
-    (1.0, 0.0),
-    (0.0, 1.0),
-    (1.0, 1.0),
-    (0.6, 0.8j),
-    (0.5 + 0.5j, 0.5 - 0.5j),
-])
+
+@pytest.mark.parametrize(
+    "alpha,beta",
+    [
+        (1.0, 0.0),
+        (0.0, 1.0),
+        (1.0, 1.0),
+        (0.6, 0.8j),
+        (0.5 + 0.5j, 0.5 - 0.5j),
+    ],
+)
 def test_teleportation_has_unit_fidelity(alpha, beta):
     for seed in range(8):
         result = teleport(alpha, beta, seed=seed)
@@ -131,9 +151,7 @@ def test_teleportation_exercises_all_correction_branches():
 def test_grover_matches_analytic_success_probability(num_qubits):
     marked = (1 << num_qubits) - 2
     result = grover_search(num_qubits, marked, seed=0)
-    assert result["success_probability"] == pytest.approx(
-        result["analytic_prediction"], abs=1e-9
-    )
+    assert result["success_probability"] == pytest.approx(result["analytic_prediction"], abs=1e-9)
     if num_qubits >= 3:
         assert result["success_probability"] > 0.9
 
@@ -151,6 +169,7 @@ def test_qft_circuit_reproduces_analytic_matrix(num_qubits):
 
 # ── Bounds and error handling ────────────────────────────────────
 
+
 def test_qubit_cap_enforced():
     with pytest.raises(QuantumCircuitError):
         Statevector(MAX_QUBITS + 1)
@@ -166,9 +185,32 @@ def test_invalid_operations_raise():
         sv.probability_of("0")
     with pytest.raises(QuantumCircuitError):
         sv.expectation_pauli("QQ")
+    with pytest.raises(QuantumCircuitError, match="not unitary"):
+        sv.apply_unitary(np.array([[1.0, 0.0], [0.0, 2.0]]), 0)
+    with pytest.raises(QuantumCircuitError, match="unique"):
+        Statevector(3).apply_unitary(np.eye(2), 2, controls=(0, 0))
+    with pytest.raises(QuantumCircuitError, match="integer"):
+        Statevector(2).apply_unitary(np.eye(2), 1, controls=([0],))
+    with pytest.raises(QuantumCircuitError, match="positive integer"):
+        Statevector(1).sample_counts(True)
+    with pytest.raises(QuantumCircuitError, match="positive integer"):
+        Statevector(1).sample_counts(1.5)  # type: ignore[arg-type]
+    with pytest.raises(QuantumCircuitError, match="positive integer"):
+        Statevector(True)  # type: ignore[arg-type]
+
+
+def test_fidelity_rejects_mismatched_or_unnormalized_states():
+    state = Statevector(1)
+    with pytest.raises(QuantumCircuitError, match="matching state shapes"):
+        state.fidelity(Statevector(2))
+    with pytest.raises(QuantumCircuitError, match="normalized"):
+        state.fidelity(np.array([1.0, 1.0], dtype=np.complex128))
+    with pytest.raises(QuantumCircuitError, match="finite"):
+        state.fidelity(np.array([np.nan, 0.0], dtype=np.complex128))
 
 
 # ── Skill facade (the causal wiring into cognition) ─────────────
+
 
 async def test_quantum_lab_skill_actions():
     from core.skills.quantum_lab import QuantumLabSkill
@@ -178,9 +220,7 @@ async def test_quantum_lab_skill_actions():
     assert bell["ok"] and set(bell["counts"]) <= {"00", "11"}
     assert bell["entropy_mode"] == "seeded_prng"
 
-    grover = await skill.execute(
-        {"action": "grover", "num_qubits": 5, "marked": 17, "seed": 1}, {}
-    )
+    grover = await skill.execute({"action": "grover", "num_qubits": 5, "marked": 17, "seed": 1}, {})
     assert grover["ok"] and grover["matches_theory"]
 
     tp = await skill.execute(
@@ -191,12 +231,122 @@ async def test_quantum_lab_skill_actions():
     qft = await skill.execute({"action": "qft_verify", "num_qubits": 3}, {})
     assert qft["ok"] and qft["verified"]
 
-    circuit = await skill.execute({
-        "action": "circuit", "num_qubits": 3, "seed": 3,
-        "gates": [["h", 0], ["cx", 0, 1], ["ccx", 0, 1, 2]],
-    }, {})
+    circuit = await skill.execute(
+        {
+            "action": "circuit",
+            "num_qubits": 3,
+            "seed": 3,
+            "gates": [["h", 0], ["cx", 0, 1], ["ccx", 0, 1, 2]],
+        },
+        {},
+    )
     assert circuit["ok"] and circuit["norm_preserved"]
     assert set(circuit["counts"]) <= {"000", "111"}
+
+
+async def test_quantum_lab_reports_actual_entropy_source(monkeypatch):
+    from core.skills import quantum_lab
+
+    class _FallbackBridge:
+        def __init__(self):
+            self.fallback_reads = 0
+
+        def get_stats(self):
+            return {
+                "quantum_reads": 0,
+                "fallback_reads": self.fallback_reads,
+            }
+
+        def get_quantum_float(self):
+            self.fallback_reads += 1
+            return 0.25
+
+    bridge = _FallbackBridge()
+    monkeypatch.setattr(
+        quantum_lab,
+        "_entropy_source",
+        lambda: quantum_lab._EntropyAudit(bridge),
+    )
+    skill = quantum_lab.QuantumLabSkill()
+
+    sampled = await skill.execute({"action": "bell", "shots": 64}, {})
+    deterministic = await skill.execute({"action": "grover", "num_qubits": 3}, {})
+
+    assert sampled["entropy_mode"] == "os_entropy_fallback"
+    assert sampled["entropy_provenance"]["bridge_draws"] == 1
+    assert sampled["entropy_provenance"]["fallback_reads"] == 1
+    assert deterministic["entropy_mode"] == "not_used"
+    assert deterministic["entropy_provenance"]["bridge_draws"] == 0
+
+    monkeypatch.setattr(quantum_lab, "_entropy_source", lambda: None)
+    unavailable_bridge = await skill.execute(
+        {"action": "qft_verify", "num_qubits": 2},
+        {},
+    )
+    assert unavailable_bridge["entropy_mode"] == "not_used"
+
+
+async def test_quantum_lab_entropy_failures_are_truthfully_attributed(monkeypatch):
+    from core.skills import quantum_lab
+
+    class _InvalidBridge:
+        def get_stats(self):
+            raise RuntimeError("statistics offline")
+
+        def get_quantum_float(self):
+            return float("nan")
+
+    monkeypatch.setattr(
+        quantum_lab,
+        "_entropy_source",
+        lambda: quantum_lab._EntropyAudit(_InvalidBridge()),
+    )
+
+    result = await quantum_lab.QuantumLabSkill().execute(
+        {"action": "bell", "shots": 64},
+        {},
+    )
+
+    assert result["ok"] is True
+    assert result["entropy_mode"] == "entropy_bridge_failed_to_prng"
+    assert result["sampling_rng"] == "os_seeded_prng_fallback"
+    assert result["entropy_provenance"]["stats_available"] is False
+    assert "statistics offline" in result["entropy_provenance"]["provenance_error"]
+
+
+async def test_quantum_lab_invalid_inputs_fail_closed():
+    from core.skills.quantum_lab import QuantumLabSkill
+
+    skill = QuantumLabSkill()
+    malformed = await skill.execute({"action": "bell", "shots": "many"}, {})
+    nonfinite = await skill.execute(
+        {"action": "teleport", "alpha_real": "nan", "beta_real": 1.0, "seed": 1},
+        {},
+    )
+    duplicate_controls = await skill.execute(
+        {
+            "action": "circuit",
+            "num_qubits": 3,
+            "seed": 1,
+            "gates": [["ccx", 0, 0, 2]],
+        },
+        {},
+    )
+    silently_clamped = await skill.execute(
+        {"action": "qft_verify", "num_qubits": 12},
+        {},
+    )
+    unknown_parameter = await skill.execute(
+        {"action": "bell", "undocumented": True},
+        {},
+    )
+
+    assert malformed["ok"] is False
+    assert nonfinite["ok"] is False
+    assert duplicate_controls["ok"] is False
+    assert silently_clamped["ok"] is False
+    assert "supports 1..8 qubits" in silently_clamped["error"]
+    assert unknown_parameter["ok"] is False
 
 
 def test_quantum_lab_skill_matches_quantum_goals():
@@ -216,3 +366,53 @@ def test_quantum_lab_is_discovered_by_the_skill_catalog():
     assert "quantum_lab" in names
     excluded = {declaration.name for declaration in catalog.excluded}
     assert "quantum_lab" not in excluded
+
+
+async def test_quantum_lab_executes_through_canonical_capability_engine(monkeypatch):
+    from core.capability_engine import CapabilityEngine
+    from core.runtime import CoreRuntime
+
+    def _pre_runtime_constitution(*_args, **_kwargs):
+        raise RuntimeError("constitutional runtime intentionally absent in isolated proof")
+
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        _pre_runtime_constitution,
+    )
+    monkeypatch.setattr(
+        CoreRuntime,
+        "get_sync",
+        classmethod(lambda _cls: (_ for _ in ()).throw(RuntimeError("proof runtime absent"))),
+    )
+    monkeypatch.setattr(
+        "core.capability_engine.ServiceContainer.has",
+        staticmethod(lambda *_args, **_kwargs: False),
+    )
+    monkeypatch.setattr(
+        "core.capability_engine.resolve_metabolic_monitor", lambda default=None: None
+    )
+    monkeypatch.setattr(
+        "core.capability_engine.resolve_state_repository", lambda default=None: None
+    )
+    monkeypatch.setattr("core.capability_engine.resolve_edi", lambda default=None: None)
+
+    engine = CapabilityEngine()
+    metadata = engine.skills["quantum_lab"]
+    schema = metadata.schema_def
+
+    assert schema["properties"]["shots"]["type"] == "integer"
+    assert schema["properties"]["gates"]["type"] == "array"
+    assert not schema.get("required")
+
+    result = await engine.execute(
+        "quantum_lab",
+        {"action": "bell", "seed": 11, "shots": 128},
+        {"origin": "test", "objective": "simulate a Bell state"},
+    )
+
+    assert result["ok"] is True
+    assert result["skill"] == "quantum_lab"
+    assert result["retries"] == 0
+    assert result["entropy_mode"] == "seeded_prng"
+    assert set(result["counts"]) <= {"00", "11"}
+    assert engine.instances["quantum_lab"].__class__.__name__ == "QuantumLabSkill"

@@ -73,7 +73,7 @@ def _strict_typecheck_status(makefile: str) -> tuple[bool, str]:
     )
     passed = (
         wired
-        and len(entries) >= 31
+        and len(entries) >= 34
         and len(entries) == len(set(entries))
         and not missing_anchors
         and not missing_files

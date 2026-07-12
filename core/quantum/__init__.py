@@ -10,17 +10,17 @@ QuantumEntropyBridge (physically quantum entropy), giving Aura
 measurements whose outcomes are genuinely non-deterministic while the
 unitary dynamics stay exactly reproducible.
 """
-from core.quantum.statevector import (
-    MAX_QUBITS,
-    QuantumCircuitError,
-    Statevector,
-)
 from core.quantum.algorithms import (
     bell_pair,
     ghz_state,
     grover_search,
     qft_circuit,
     teleport,
+)
+from core.quantum.statevector import (
+    MAX_QUBITS,
+    QuantumCircuitError,
+    Statevector,
 )
 
 __all__ = [

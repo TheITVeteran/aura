@@ -93,7 +93,7 @@ Status rules:
 | `DISTRIBUTED-001` | `OPEN` | Support governed distributed embodiment and execution across heterogeneous network devices with capability negotiation, identity/attestation, partition tolerance, idempotency, safety interlocks, compensation, and truthful degraded operation. | Capability Addendum 33, `CTX3-DIST-*` |
 | `VALUES-001` | `OPEN` | Turn preference/value formation, strategic modeling, and manipulation resistance into provenance-bearing, corrigible, constitutionally bounded, longitudinally stable causal mechanisms with conflict and rollback evidence. | Capability Addendum 33, `CTX3-VALUE-*` |
 | `NEUROSIM-001` | `OPEN` | Establish scientifically bounded high-fidelity neural simulation and connectome mapping/tuning with explicit model assumptions, measurable prediction/control objectives, causal ablations, safe optimization, and rollback. | Capability Addendum 33, `CTX3-NEURO-*` |
-| `QUANTUM-001` | `OPEN` | Add a real quantum-compute backend abstraction, simulator/hardware capability negotiation, hybrid task routing, verification, cost/noise accounting, and matched classical controls; prohibit advantage claims without evidence. | Capability Addendum 33, `CTX3-QUANTUM-*` |
+| `QUANTUM-001` | `IN PROGRESS 2026-07-12` | Preserve the bounded exact simulator and governed typed skill while adding a real quantum-compute backend abstraction, simulator/hardware capability negotiation, hybrid task routing, verification, cost/noise accounting, and matched classical controls; prohibit advantage claims without evidence. | Capability Addendum 33, `CTX3-QUANTUM-*` |
 | `EXTREME-001` | `OPEN` | Train and validate high-level navigation, diagnosis, repair, problem-solving, and assistance in hazardous/extreme simulated environments, then require governed digital-twin and hardware-transfer evidence before physical-world claims. | Capability Addendum 33, `CTX3-EXTREME-*` |
 | `COLLEAGUE-001` | `OPEN` | Validate the resident local synthetic-colleague contract through broad hidden day-in-the-life workflows, proactive precision, privacy, restart/update survival, honest degradation, and low correction burden. | Addendum 30 |
 | `UI-001` | `OPEN` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. | Pass F 11; Matrix 14 |
@@ -894,13 +894,16 @@ evidence into a metaphysical, legal, or comparative claim.
      `core/world_model/`, `core/memory/physics.py`, `core/multimodal/`,
      `core/brain/multimodal_orchestrator.py`, `core/social/`, `core/values/`,
      `core/embodiment/`, `core/security/device_pairing.py`,
+     `core/quantum/`, `core/skills/quantum_lab.py`,
      `core/self_modification/distributed_sandbox_gateway.py`,
      `core/consciousness/liquid_substrate.py`,
      `core/consciousness/neural_mesh.py`, `core/pneuma/neural_ode_flow.py`, and
      the NetHack environment are reuse candidates only. Current source search
      found no dedicated production lip-reading path, Isaac Sim/AirSim adapter,
-     quantum-compute execution backend, or empirically validated connectome
-     simulator.
+     quantum-hardware execution backend, or empirically validated connectome
+     simulator. The exact classical statevector backend and governed quantum
+     skill are partial quantum-module evidence, not hardware or advantage
+     evidence.
 
    Simulation, space, and persistent worlds:
 
@@ -971,11 +974,21 @@ evidence into a metaphysical, legal, or comparative claim.
      causal interventions, held-out behavioral predictions, drift detection,
      rollback, and human-inspectable diffs. Connectome changes must measurably
      affect the canonical mind path without corrupting identity or welfare.
-   - `CTX3-QUANTUM-001`: add a typed hybrid quantum backend for simulator and
-     authorized hardware targets, circuit/job lifecycle, credentials, queue and
-     cost budgets, noise/error metadata, result verification, cancellation,
-     retry/idempotency, and classical fallback. `quantum_entropy.py`, quantum
-     vocabulary, or random sampling is not quantum computational processing.
+   - `CTX3-QUANTUM-001` `[IN PROGRESS 2026-07-12]`: preserve the bounded exact
+     classical statevector simulator, analytic Bell/GHZ/teleportation/Grover/QFT
+     controls, governed typed `quantum_lab` skill, fail-closed schema/circuit/
+     unitary validation, non-clamping action bounds, source-attributed entropy,
+     and explicit no-hardware framing. The canonical `CapabilityEngine.execute`
+     path now proves catalog discovery, typed schema, lazy construction,
+     `BaseSkill.safe_execute`, bounded execution, and result propagation; bridge
+     fallback and deterministic no-entropy paths are distinguished in results.
+     The focused quantum/schema/readiness matrix passes 45/45, all 34 strict
+     files typecheck, and the 74-skill Rust/Python catalog has exact live parity.
+     Still add a typed hybrid backend for authorized hardware targets, circuit/job
+     lifecycle, credentials, queue and cost budgets, noise/error metadata,
+     result verification, cancellation, retry/idempotency, and classical
+     fallback. `quantum_entropy.py`, quantum vocabulary, or random sampling is
+     not quantum computational processing.
    - `CTX3-QUANTUM-002`: route only suitable workloads to quantum execution and
      benchmark them against sealed, optimized classical controls at matched
      correctness, latency, cost, and energy. Aura must not claim quantum
@@ -11372,7 +11385,7 @@ Verification and bounded live evidence:
 Authoritative next work after this checkpoint:
 
 - Reconcile and publish this checkpoint directly on `main`, preserving the
-  seventeen newer upstream commits and all active worktrees.
+  twenty-one newer upstream commits and all active worktrees.
 - Continue `MIND-001` and `STATE-001`: establish one boot-identified canonical
   self/state authority and an inspectable causal graph before verifier,
   adaptation, unified memory, conversation/tool, UI/operator, clean-machine,

@@ -40,3 +40,7 @@ core/persistence/db_maintenance.py
 # Maturity-pass tools
 tools/runtime_preflight.py
 tools/state_backup.py
+# Quantum computational module (2026-07-12 capability corpus)
+core/quantum/statevector.py
+core/quantum/algorithms.py
+core/skills/quantum_lab.py

@@ -14,9 +14,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ALLOWLIST = REPO_ROOT / "config" / "mypy_strict_files.txt"
 
-# Only grows. 10 (original curated set) + 21 (2026-07-12 maturity pass:
-# runtime spine + observability + persistence + maturity tools).
-MIN_STRICT_FILES = 31
+# Only grows. 10 original + 21 maturity-pass spine/tool files + 3 quantum
+# computational module files added from the capability corpus.
+MIN_STRICT_FILES = 34
 
 MYPY_FLAGS = ["--follow-imports=skip", "--explicit-package-bases"]
 

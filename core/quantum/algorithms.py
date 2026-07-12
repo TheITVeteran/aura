@@ -9,9 +9,11 @@ the simulation against ground truth rather than trusting it.
 from __future__ import annotations
 
 import math
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any, cast
 
 import numpy as np
+from numpy.typing import NDArray
 
 from core.quantum.statevector import (
     QuantumCircuitError,
@@ -52,6 +54,9 @@ def teleport(
 
     Returns the classical correction bits and the fidelity between the
     received qubit and the input state (analytically always 1.0)."""
+    components = (alpha.real, alpha.imag, beta.real, beta.imag)
+    if not all(math.isfinite(value) for value in components):
+        raise QuantumCircuitError("input state amplitudes must be finite")
     norm = math.sqrt(abs(alpha) ** 2 + abs(beta) ** 2)
     if norm <= 0.0:
         raise QuantumCircuitError("input state must have positive norm")
@@ -142,8 +147,14 @@ def qft_circuit(sv: Statevector) -> Statevector:
     return sv
 
 
-def qft_matrix(num_qubits: int) -> np.ndarray:
+def qft_matrix(num_qubits: int) -> NDArray[np.complex128]:
     """The analytic DFT matrix the circuit must reproduce."""
     size = 1 << num_qubits
-    j, k = np.meshgrid(np.arange(size), np.arange(size), indexing="ij")
-    return np.exp(2j * np.pi * j * k / size) / math.sqrt(size)
+    grids = cast(
+        list[NDArray[np.int64]],
+        np.meshgrid(np.arange(size), np.arange(size), indexing="ij"),
+    )
+    j: NDArray[np.int64] = grids[0]
+    k: NDArray[np.int64] = grids[1]
+    result: NDArray[np.complex128] = np.exp(2j * np.pi * j * k / size) / math.sqrt(size)
+    return result
