@@ -202,7 +202,13 @@ class HassTransport(IoTTransport):
         ):
             raise RuntimeError("hass_url_must_be_origin_only_http_or_https")
         if parsed.scheme == "http" and str(
-            os.getenv("AURA_HASS_ALLOW_HTTP", "")
+            __import__("core.runtime.flags", fromlist=["declare", "FlagKind"]).declare(
+                "AURA_HASS_ALLOW_HTTP",
+                kind=__import__("core.runtime.flags", fromlist=["FlagKind"]).FlagKind.STRING,
+                default="",
+                description="Permit plain-http Home Assistant URLs",
+                owner="core.embodiment.iot_bridge",
+            ).value()
         ).strip().lower() not in {"1", "true", "yes", "on"}:
             raise RuntimeError("hass_insecure_http_requires_explicit_opt_in")
 

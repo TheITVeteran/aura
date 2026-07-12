@@ -84,6 +84,27 @@ async def test_wake_async():
     s = ServiceContainer.get("async_srv")
     assert s.awake is True
 
+def test_registration_during_shutdown_suppresses_softly():
+    """Lived 2026-07-12: the shutdown-latch registration guard RAISED
+    ContainerError out of the aura_now telemetry republish INSIDE
+    kernel.shutdown(), aborting teardown before the vault closed — leaked
+    non-daemon aiosqlite worker threads held interpreter exit until the
+    chunk runner's silent 2400s timeout. Suppression must be a soft no-op:
+    recorded, logged, never raised into the path that touched it."""
+    from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
+
+    clear_shutdown_request()
+    try:
+        request_shutdown("unit-test-suppression")
+        # Must NOT raise — new registrations are silently refused.
+        ServiceContainer.register_instance("shutdown_probe_service", object())
+        assert ServiceContainer.get("shutdown_probe_service", default=None) is None
+        ServiceContainer.register("shutdown_probe_factory", lambda: object())
+        assert ServiceContainer.get("shutdown_probe_factory", default=None) is None
+    finally:
+        clear_shutdown_request()
+
+
 def test_zero_param_factory_with_declared_dependencies_boots():
     """Boot-regression pin (lived 2026-07-10): actor_supervision declared
     dependencies=['runtime_control_plane'] with a ZERO-parameter factory.

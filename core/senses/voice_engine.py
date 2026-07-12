@@ -900,7 +900,13 @@ class SovereignVoiceEngine:
             try:
                 start_timeout_s = max(
                     0.05,
-                    float(os.environ.get("AURA_MIC_START_TIMEOUT_S", "6.0")),
+                    float(__import__("core.runtime.flags", fromlist=["declare", "FlagKind"]).declare(
+                        "AURA_MIC_START_TIMEOUT_S",
+                        kind=__import__("core.runtime.flags", fromlist=["FlagKind"]).FlagKind.FLOAT,
+                        default=6.0,
+                        description="Microphone stream start budget",
+                        owner="core.senses.voice_engine",
+                    ).value()),
                 )
             except (TypeError, ValueError):
                 start_timeout_s = 6.0

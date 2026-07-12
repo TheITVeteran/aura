@@ -30,6 +30,21 @@ def _result_payload(result: WorldActionResult) -> dict[str, Any]:
     }
 
 
+
+def _hass_flag(name: str, description: str) -> str:
+    """Non-secret HASS knobs read through the typed flag layer (C1).
+    Tokens deliberately stay as raw env reads — credentials must never
+    surface in the declared-flags registry."""
+    try:
+        from core.runtime.flags import FlagKind, declare
+
+        return str(declare(
+            name, kind=FlagKind.STRING, default="",
+            description=description, owner="core.autonomic.iot_bridge",
+        ).value() or "")
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return ""
+
 class PhysicalActuator:
     """Legacy affect API backed by the governed environmental-change channel."""
 
@@ -39,7 +54,7 @@ class PhysicalActuator:
         )
         self._configured_url = str(
             home_assistant_url
-            or os.getenv("AURA_HASS_URL")
+            or _hass_flag("AURA_HASS_URL", "Home Assistant base URL")
             or os.getenv("HASS_URL")
             or ("https://homeassistant.local:8123" if token_configured else "")
         ).strip()
@@ -73,7 +88,7 @@ class PhysicalActuator:
         brightness = max(50, min(255, int(((arousal + 1.0) / 2.0) * 255)))
         color_temp = 500 if pleasure < 0 else 250
         target = str(
-            os.getenv("AURA_HASS_LIGHT_ENTITY")
+            _hass_flag("AURA_HASS_LIGHT_ENTITY", "Default affect light entity id")
             or os.getenv("HASS_LIGHT_ENTITY")
             or DEFAULT_LIGHT_ENTITY
         ).strip().lower()

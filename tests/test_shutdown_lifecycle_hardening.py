@@ -1137,13 +1137,19 @@ async def test_metrics_exporter_owns_http_server_and_thread(
     assert events == ["shutdown", "close"]
 
 
-def test_service_container_rejects_registration_after_shutdown_latch() -> None:
-    from core.container import ContainerError, ServiceContainer
+def test_service_container_suppresses_registration_after_shutdown_latch() -> None:
+    """Suppression is SOFT (lived 2026-07-12): the hard raise detonated the
+    aura_now telemetry republish INSIDE kernel.shutdown(), aborting teardown
+    before the vault closed — leaked non-daemon aiosqlite workers held
+    interpreter exit for the chunk runner's full 2400s, twice. Refusing new
+    work must never abort the teardown that refuses it: the registration is
+    recorded as suppressed and no-ops."""
+    from core.container import ServiceContainer
 
     shutdown_coordinator.request_shutdown("service-registration-test")
 
-    with pytest.raises(ContainerError, match="runtime shutdown"):
-        ServiceContainer.register_instance("late-service", object())
+    ServiceContainer.register_instance("late-service", object())
+    assert ServiceContainer.get("late-service", default=None) is None
 
     admission = shutdown_coordinator.shutdown_admission_snapshot()
     assert admission["counts"]["suppressed"] == 1

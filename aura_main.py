@@ -1584,7 +1584,13 @@ def _install_liveness_sentinel() -> None:
         desktop_foreground = (
             str(os.environ.get("AURA_DESKTOP_RESOURCE_GUARD", "")).strip().lower()
             in {"1", "true", "yes", "on"}
-            or str(os.environ.get("AURA_LAUNCHED_FROM_APP", "")).strip().lower()
+            or str(__import__("core.runtime.flags", fromlist=["declare", "FlagKind"]).declare(
+                "AURA_LAUNCHED_FROM_APP",
+                kind=__import__("core.runtime.flags", fromlist=["FlagKind"]).FlagKind.STRING,
+                default="",
+                description="Set by the desktop launcher for app-owned lifecycles",
+                owner="aura_main",
+            ).value()).strip().lower()
             in {"1", "true", "yes", "on"}
             or "--headless" in sys.argv
         )
@@ -2312,7 +2318,13 @@ async def run_server_async(
     try:
         graceful_shutdown_s = max(
             1,
-            int(float(os.environ.get("AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S", "8"))),
+            int(float(__import__("core.runtime.flags", fromlist=["declare", "FlagKind"]).declare(
+                "AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S",
+                kind=__import__("core.runtime.flags", fromlist=["FlagKind"]).FlagKind.FLOAT,
+                default=8.0,
+                description="Uvicorn graceful-shutdown budget",
+                owner="aura_main",
+            ).value())),
         )
     except (TypeError, ValueError):
         graceful_shutdown_s = 8
@@ -2465,7 +2477,13 @@ async def _wait_for_server_http(url: str, timeout_s: float = 60.0) -> bool:
 def _native_launcher_owns_gui() -> bool:
     return (
         os.environ.get("AURA_EXTERNAL_GUI_OWNER", "").strip() == "1"
-        or os.environ.get("AURA_LAUNCHED_FROM_APP", "").strip() == "1"
+        or str(__import__("core.runtime.flags", fromlist=["declare", "FlagKind"]).declare(
+                "AURA_LAUNCHED_FROM_APP",
+                kind=__import__("core.runtime.flags", fromlist=["FlagKind"]).FlagKind.STRING,
+                default="",
+                description="Set by the desktop launcher for app-owned lifecycles",
+                owner="aura_main",
+            ).value()).strip() == "1"
     )
 
 
@@ -2548,7 +2566,13 @@ async def run_desktop(
             try:
                 graceful_shutdown_s = max(
                     1,
-                    int(float(os.environ.get("AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S", "8"))),
+                    int(float(__import__("core.runtime.flags", fromlist=["declare", "FlagKind"]).declare(
+                "AURA_UVICORN_GRACEFUL_SHUTDOWN_TIMEOUT_S",
+                kind=__import__("core.runtime.flags", fromlist=["FlagKind"]).FlagKind.FLOAT,
+                default=8.0,
+                description="Uvicorn graceful-shutdown budget",
+                owner="aura_main",
+            ).value())),
                 )
             except (TypeError, ValueError):
                 graceful_shutdown_s = 8

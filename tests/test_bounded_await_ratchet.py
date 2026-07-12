@@ -87,6 +87,9 @@ ALLOWED_LEGACY_OFFENDERS: frozenset[tuple[str, str, str]] = frozenset(
         ("core/ops/daemon.py", "run", "wait"),
         ("core/ops/daemon.py", "stop", "wait_closed"),
         ("core/ops/graceful_shutdown.py", "wait_for_shutdown", "wait"),
+        # Designed-forever wait: the root signal owner blocks main until
+        # SIGTERM/SIGINT arrives — same class as wait_for_shutdown above.
+        ("core/runtime/root_signal_owner.py", "wait", "wait"),
         ("core/orchestrator/main.py", "_setup_event_listeners", "get"),
         ("core/orchestrator/main.py", "run", "wait"),
         ("core/resilience/database_coordinator.py", "_process_writes", "get"),

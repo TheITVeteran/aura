@@ -650,7 +650,11 @@ class RobustOrchestrator(
             self._voice_listener_task = task
 
         try:
-            boot_wait_s = float(os.environ.get("AURA_VOICE_BOOT_WAIT_S", "1.0"))
+            from core.runtime.flags import FlagKind, declare
+            boot_wait_s = float(declare(
+                "AURA_VOICE_BOOT_WAIT_S", kind=FlagKind.FLOAT, default=1.0,
+                description="Voice cortex boot settle wait", owner="core.orchestrator",
+            ).value())
         except (TypeError, ValueError):
             boot_wait_s = 1.0
         boot_wait_s = min(15.0, max(0.05, boot_wait_s))
@@ -747,13 +751,16 @@ class RobustOrchestrator(
             # Desktop launches install their own outer signal handler in aura_main;
             # letting this inner hook replace it makes SIGTERM tear down shared
             # services before the runtime owner can flush final state.
-            root_signal_owner = os.getenv("AURA_ROOT_SIGNAL_OWNER", "").strip().lower() in {
-                "1",
-                "true",
-                "yes",
-                "on",
-            }
-            desktop_signal_owner = root_signal_owner or os.getenv("AURA_LAUNCHED_FROM_APP", "").strip().lower() in {
+            from core.runtime.flags import FlagKind, declare
+
+            root_signal_owner = bool(declare(
+                "AURA_ROOT_SIGNAL_OWNER", kind=FlagKind.BOOL, default=False,
+                description="This process owns root signal handling", owner="core.orchestrator",
+            ).value())
+            desktop_signal_owner = root_signal_owner or str(declare(
+                "AURA_LAUNCHED_FROM_APP", kind=FlagKind.STRING, default="",
+                description="Set by the desktop launcher for app-owned lifecycles", owner="core.orchestrator",
+            ).value()).strip().lower() in {
                 "1",
                 "true",
                 "yes",

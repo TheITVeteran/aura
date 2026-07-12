@@ -266,7 +266,19 @@ class ServiceContainer:
             return statuses
 
     @classmethod
-    def _assert_runtime_registration_allowed(cls, name: str) -> None:
+    def _runtime_registration_suppressed(cls, name: str) -> bool:
+        """True when the shutdown latch suppresses this registration.
+
+        Suppression is SOFT — record the admission event and let the caller
+        no-op. The previous hard raise detonated whatever path touched the
+        container mid-teardown: the aura_now telemetry republish (fired per
+        Will sample) raised ContainerError INSIDE kernel.shutdown(), which
+        aborted teardown before the vault closed — leaking non-daemon
+        aiosqlite worker threads that held interpreter exit until the chunk
+        runner's 2400s timeout, twice, with zero failure evidence. Shutdown
+        philosophy is flush-as-much-as-possible; refusing new work must
+        never abort the teardown that refuses it.
+        """
         try:
             from core.runtime.shutdown_coordinator import (
                 is_shutdown_requested,
@@ -274,18 +286,20 @@ class ServiceContainer:
             )
 
             if not is_shutdown_requested():
-                return
+                return False
             record_shutdown_admission_event(
                 f"service_container.register:{name}",
                 resource_kind="service",
                 outcome="suppressed",
                 detail="shutdown_latch",
             )
-            raise ContainerError(
-                f"runtime shutdown is active: cannot register service '{name}'"
+            logger.debug(
+                "Service registration '%s' suppressed: runtime shutdown is active.",
+                name,
             )
+            return True
         except ImportError:
-            return
+            return False
 
     @classmethod
     def _assert_runtime_initialization_allowed(cls, name: str) -> None:
@@ -332,7 +346,8 @@ class ServiceContainer:
         failure_policy: str | None = None,
     ) -> None:
         """Register a service factory."""
-        cls._assert_runtime_registration_allowed(name)
+        if cls._runtime_registration_suppressed(name):
+            return
         cls._begin_new_lifecycle_epoch_if_needed()
         if cls._registration_locked:
             raise ContainerError(f"Registration locked: Cannot register '{name}'")
@@ -437,7 +452,8 @@ class ServiceContainer:
         subsystems that boot asynchronously (final_engines, affective_circumplex,
         architecture_index, etc.) can complete their setup without crashing.
         """
-        cls._assert_runtime_registration_allowed(name)
+        if cls._runtime_registration_suppressed(name):
+            return
         cls._begin_new_lifecycle_epoch_if_needed()
         with cls._lock:
             resolved_name = cls._resolve_name(name)
