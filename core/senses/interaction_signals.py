@@ -4,6 +4,7 @@ import asyncio
 import base64
 import logging
 import math
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any
@@ -76,6 +77,7 @@ class VisionSignalState:
     eyes_detected: int = 0
     mouth_motion_score: float = 0.0
     speaking_likelihood: float = 0.0
+    speaking_active: bool = False
     method: str = "haar_cascade_pupil_threshold"
     reliability: str = "rough_attention_indicator"
 
@@ -120,6 +122,12 @@ class InteractionSignalsEngine:
         self._vision_backend_ready = False
         self._vision_backend_reason = ""
         self._previous_mouth_roi = None
+        # Calibrated visual-speech channel (syllabic band-pass + hysteresis)
+        # replacing the raw mouth-diff heuristic. The face box detected by
+        # this engine's cascade is injected through the holder, so the
+        # pipeline never runs its own detector here.
+        self._visual_speech_face_holder: dict[str, Any] = {"box": None}
+        self._visual_speech_pipeline = None
 
     async def ensure_started(self) -> None:
         if self._started:
@@ -386,6 +394,7 @@ class InteractionSignalsEngine:
                 _clamp01(_safe_float(payload.get("speaking_likelihood"), 0.0)),
                 4,
             ),
+            speaking_active=bool(payload.get("speaking_active", False)),
             method=str(payload.get("method") or "haar_cascade_pupil_threshold"),
             reliability=str(payload.get("reliability") or "rough_attention_indicator"),
         )
@@ -514,6 +523,20 @@ class InteractionSignalsEngine:
             self._vision_backend_reason = str(exc)
             return False
 
+    def _visual_speech_observation(self, gray, face_box):
+        """Run the calibrated visual-speech pipeline on this engine's own
+        detected face box (detector injected via the holder)."""
+        from core.senses.visual_speech import VisualSpeechPipeline
+
+        if self._visual_speech_pipeline is None:
+            fps = _safe_float(os.environ.get("AURA_VISION_SIGNAL_FPS", "10"), 10.0)
+            self._visual_speech_pipeline = VisualSpeechPipeline(
+                fps=max(2.0, min(fps, 60.0)),
+                face_detector=lambda _gray: self._visual_speech_face_holder["box"],
+            )
+        self._visual_speech_face_holder["box"] = face_box
+        return self._visual_speech_pipeline.process_frame(gray)
+
     def _analyze_vision_frame_sync(self, jpeg_bytes: bytes, metadata: dict[str, Any]) -> dict[str, Any]:
         if not jpeg_bytes:
             return {"updated_at": time.time()}
@@ -551,6 +574,11 @@ class InteractionSignalsEngine:
             )
             if len(faces) == 0:
                 self._previous_mouth_roi = None
+                # Keep the visual-speech temporal window honest: an absent
+                # face resets its motion history.
+                self._visual_speech_face_holder["box"] = None
+                if self._visual_speech_pipeline is not None:
+                    self._visual_speech_pipeline.process_frame(gray)
                 return {
                     "updated_at": time.time(),
                     "face_present": False,
@@ -567,19 +595,9 @@ class InteractionSignalsEngine:
             x, y, w, h = max(faces, key=lambda item: int(item[2]) * int(item[3]))
             face_roi = gray[y : y + h, x : x + w]
             upper_face = face_roi[: max(1, int(h * 0.62)), :]
-            lower_face = face_roi[max(0, int(h * 0.55)) :, :]
-            mouth_motion_score = 0.0
-            if lower_face.size:
-                mouth_roi = cv2.resize(lower_face, (64, 32))
-                previous_mouth = self._previous_mouth_roi
-                if previous_mouth is not None and previous_mouth.shape == mouth_roi.shape:
-                    mouth_motion_score = float(
-                        cv2.absdiff(previous_mouth, mouth_roi).mean() / 255.0
-                    )
-                self._previous_mouth_roi = mouth_roi
-            speaking_likelihood = _clamp01(
-                max(0.0, mouth_motion_score - 0.012) / 0.10
-            )
+            speech_obs = self._visual_speech_observation(gray, (int(x), int(y), int(w), int(h)))
+            mouth_motion_score = float(speech_obs.motion_energy)
+            speaking_likelihood = _clamp01(float(speech_obs.speaking_probability))
             eyes = self._eye_cascade.detectMultiScale(
                 upper_face,
                 scaleFactor=1.12,
@@ -659,9 +677,11 @@ class InteractionSignalsEngine:
                 "eyes_detected": int(len(eyes)),
                 "mouth_motion_score": round(_clamp01(mouth_motion_score), 4),
                 "speaking_likelihood": round(speaking_likelihood, 4),
+                "speaking_active": bool(speech_obs.speaking),
+                "viseme_features": speech_obs.viseme_features,
                 "width": int(metadata.get("width") or frame_w),
                 "height": int(metadata.get("height") or frame_h),
-                "method": "haar_cascade_pupil_threshold",
+                "method": "haar_cascade_pupil_threshold+visual_speech_bandpass",
                 "reliability": "rough_attention_indicator",
             }
         except (ImportError, AttributeError, RuntimeError) as exc:
