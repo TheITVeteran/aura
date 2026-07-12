@@ -19,19 +19,30 @@ class WorldForgeSkill(BaseSkill):
     name = "world_forge"
     description = (
         "Create and inhabit persistent 3D physics worlds: procedural terrain, "
-        "rigid-body dynamics (gravity, collisions, friction), impulses on "
-        "objects, and a journal of what happened. Worlds survive restarts."
+        "rigid-body dynamics (gravity, collisions, friction), an embodied agent "
+        "body (walk, look via raycasts, jump, grasp, throw, navigate with A*), "
+        "counterfactual world-forking, and a journal of what happened. Worlds "
+        "survive restarts."
     )
     effect_scope = "state_mutation"
     inputs = {
-        "action": "one of: create, list, inspect, step, impulse",
+        "action": (
+            "one of: create, list, inspect, step, impulse, spawn_agent, "
+            "agent, fork, compare"
+        ),
         "world_id": "lowercase identifier of the world",
         "seed": "create: generation seed (int)",
         "size": "create: terrain size 8..128 (default 32)",
         "theme": "create: plains | highlands | arena",
-        "ticks": "step: physics ticks to advance (1..10000)",
-        "body_id": "impulse: target body",
+        "ticks": "step/walk: physics ticks to advance",
+        "body_id": "impulse/grasp: target body",
         "impulse": "impulse: [ix, iy, iz] Newton-seconds",
+        "agent_id": "agent actions: which agent (default 'agent')",
+        "command": "agent: proprioception|look|walk|jump|grasp|throw|navigate",
+        "heading": "walk: direction in radians",
+        "target": "navigate: [x, y] destination",
+        "new_id": "fork: identifier for the forked world",
+        "other_id": "compare: world to compare against",
     }
     output = "World summaries with state digests and journal excerpts"
 
@@ -89,6 +100,46 @@ class WorldForgeSkill(BaseSkill):
                 return {"ok": True, "action": action, "world": summary,
                         "summary": f"Applied impulse to '{params.get('body_id')}' in "
                                    f"'{summary['world_id']}'."}
+            if action == "spawn_agent":
+                body = await host.spawn_agent(
+                    str(params.get("world_id", "") or ""),
+                    str(params.get("agent_id", "agent") or "agent"),
+                )
+                return {"ok": True, "action": action, "agent": body,
+                        "summary": f"Embodied agent '{body['agent_id']}' spawned at "
+                                   f"{body['position']}."}
+            if action == "agent":
+                result = await host.agent_command(
+                    str(params.get("world_id", "") or ""),
+                    str(params.get("agent_id", "agent") or "agent"),
+                    str(params.get("command", "proprioception") or "proprioception"),
+                    **{key: value for key, value in params.items()
+                       if key in {"heading", "ticks", "rays", "max_distance",
+                                  "body_id", "speed", "pitch", "target",
+                                  "tolerance", "max_ticks"}},
+                )
+                return {"action": action, **result,
+                        "summary": f"Agent '{params.get('agent_id', 'agent')}' ran "
+                                   f"'{params.get('command')}' (ok={result.get('ok')})."}
+            if action == "fork":
+                summary = await host.fork_world(
+                    str(params.get("world_id", "") or ""),
+                    str(params.get("new_id", "") or ""),
+                )
+                return {"ok": True, "action": action, "world": summary,
+                        "summary": f"Forked '{params.get('world_id')}' into "
+                                   f"'{summary['world_id']}' for counterfactual runs."}
+            if action == "compare":
+                report = host.compare_worlds(
+                    str(params.get("world_id", "") or ""),
+                    str(params.get("other_id", "") or ""),
+                )
+                return {"ok": True, "action": action, "comparison": report,
+                        "summary": (
+                            f"{report['bodies_diverged']} of "
+                            f"{report['bodies_compared']} bodies diverged; "
+                            f"identical={report['identical']}."
+                        )}
             return {"ok": False, "error": f"Unknown world_forge action '{action}'"}
         except PhysicsError as exc:
             return {"ok": False, "error": str(exc)}

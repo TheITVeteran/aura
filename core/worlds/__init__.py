@@ -19,12 +19,15 @@ declared limitation, not an approximation smuggled in as realism.
 """
 from core.worlds.physics import Body, PhysicsWorld, PhysicsError
 from core.worlds.generation import WorldBlueprint, generate_world
+from core.worlds.embodied import EmbodiedAgent, RayHit
 from core.worlds.hosting import WorldHost, get_world_host
 
 __all__ = [
     "Body",
     "PhysicsWorld",
     "PhysicsError",
+    "EmbodiedAgent",
+    "RayHit",
     "WorldBlueprint",
     "generate_world",
     "WorldHost",

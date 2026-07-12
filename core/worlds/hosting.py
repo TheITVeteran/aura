@@ -27,6 +27,7 @@ from core.config import get_config
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.worlds.embodied import EmbodiedAgent
 from core.worlds.generation import WorldBlueprint, generate_world
 from core.worlds.physics import PhysicsError, PhysicsWorld
 
@@ -52,6 +53,13 @@ class HostedWorld:
         self.journal: list[dict[str, Any]] = list(journal or [])
         self.created_at = created_at if created_at is not None else time.time()
         self.updated_at = self.created_at
+        self.agents: dict[str, EmbodiedAgent] = {}
+
+    def agent(self, agent_id: str) -> EmbodiedAgent:
+        agent = self.agents.get(str(agent_id))
+        if agent is None:
+            raise PhysicsError(f"no agent '{agent_id}' in world '{self.world_id}'")
+        return agent
 
     def record(self, kind: str, detail: dict[str, Any]) -> None:
         self.journal.append({
@@ -79,6 +87,7 @@ class HostedWorld:
             "dynamic_bodies": dynamic,
             "asleep": sleeping,
             "kinetic_energy": round(self.physics.total_kinetic_energy(), 6),
+            "agents": sorted(self.agents),
             "state_digest": self.physics.state_digest(),
             "journal_entries": len(self.journal),
             "created_at": self.created_at,
@@ -92,6 +101,13 @@ class HostedWorld:
             "blueprint": self.blueprint.to_dict(),
             "physics": self.physics.to_dict(),
             "journal": self.journal,
+            "agents": {
+                agent_id: {
+                    "yaw": agent.state.yaw,
+                    "held_body": agent.state.held_body,
+                }
+                for agent_id, agent in self.agents.items()
+            },
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -107,6 +123,11 @@ class HostedWorld:
             created_at=float(payload.get("created_at", time.time())),
         )
         world.updated_at = float(payload.get("updated_at", world.created_at))
+        for agent_id, row in (payload.get("agents") or {}).items():
+            agent = EmbodiedAgent(world.physics, world.blueprint, str(agent_id))
+            agent.state.yaw = float(row.get("yaw", 0.0))
+            agent.state.held_body = row.get("held_body")
+            world.agents[str(agent_id)] = agent
         return world
 
 
@@ -189,6 +210,8 @@ class WorldHost:
         notable_hits = 0
         for _ in range(ticks):
             world.physics.step()
+            for agent in world.agents.values():
+                agent._carry_held_body()
             for contact in world.physics.last_contacts:
                 if contact.impulse >= _IMPULSE_JOURNAL_THRESHOLD:
                     notable_hits += 1
@@ -230,6 +253,124 @@ class WorldHost:
         world.updated_at = time.time()
         await self._persist(world)
         return world.summary()
+
+    # ── embodiment ─────────────────────────────────────────────
+
+    async def spawn_agent(self, world_id: str, agent_id: str = "agent") -> dict[str, Any]:
+        world = self.load_world(world_id)
+        agent_id = str(agent_id or "agent").strip().lower()
+        if agent_id in world.agents:
+            raise PhysicsError(f"agent '{agent_id}' already exists")
+        agent = EmbodiedAgent.spawn(world.physics, world.blueprint, agent_id=agent_id)
+        world.agents[agent_id] = agent
+        world.record("agent_spawned", {"agent": agent_id,
+                                       "position": agent.proprioception()["position"]})
+        world.updated_at = time.time()
+        await self._persist(world)
+        return agent.proprioception()
+
+    async def agent_command(
+        self, world_id: str, agent_id: str, command: str, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Execute one embodied action and journal it. Commands:
+        proprioception | look | walk | jump | grasp | throw | navigate."""
+        world = self.load_world(world_id)
+        agent = world.agent(agent_id)
+        command = str(command or "").strip().lower()
+        result: dict[str, Any]
+        if command == "proprioception":
+            return {"ok": True, **agent.proprioception()}
+        if command == "look":
+            return {"ok": True, "observations": agent.look(
+                rays=int(kwargs.get("rays", 8)),
+                max_distance=float(kwargs.get("max_distance", 30.0)),
+            )}
+        if command == "walk":
+            heading = kwargs.get("heading")
+            agent.walk(
+                heading=float(heading) if heading is not None else None,
+                ticks=max(1, min(int(kwargs.get("ticks", 60)), 6000)),
+            )
+            result = {"ok": True, **agent.proprioception()}
+        elif command == "jump":
+            result = {"ok": agent.jump(), **agent.proprioception()}
+        elif command == "grasp":
+            grabbed = agent.grasp(str(kwargs.get("body_id", "") or ""))
+            result = {"ok": grabbed, **agent.proprioception()}
+        elif command == "throw":
+            released = agent.throw(
+                speed=float(kwargs.get("speed", 6.0)),
+                pitch=float(kwargs.get("pitch", 0.35)),
+            )
+            result = {"ok": True, "released": released, **agent.proprioception()}
+        elif command == "navigate":
+            target = kwargs.get("target") or (0.0, 0.0)
+            outcome = agent.navigate_to(
+                (float(target[0]), float(target[1])),
+                tolerance=float(kwargs.get("tolerance", 1.0)),
+                max_ticks=int(kwargs.get("max_ticks", 12000)),
+            )
+            result = {"ok": outcome["status"] == "reached", "navigation": outcome,
+                      **agent.proprioception()}
+        else:
+            raise PhysicsError(f"unknown agent command '{command}'")
+        world.record("agent_action", {
+            "agent": agent_id, "command": command,
+            "ok": bool(result.get("ok")),
+        })
+        world.updated_at = time.time()
+        await self._persist(world)
+        return result
+
+    # ── counterfactual forking ─────────────────────────────────
+
+    async def fork_world(self, source_id: str, new_id: str) -> dict[str, Any]:
+        """Copy a world's exact state into a new world — the substrate for
+        counterfactual reasoning: fork, intervene, compare."""
+        source = self.load_world(source_id)
+        new_id = self._validate_id(new_id)
+        with self._lock:
+            if new_id in self._worlds or self._path(new_id).exists():
+                raise PhysicsError(f"world '{new_id}' already exists")
+            if len(self._worlds) >= MAX_WORLDS:
+                raise PhysicsError(f"world cap ({MAX_WORLDS}) reached")
+        document = source.to_document()
+        document["world_id"] = new_id
+        fork = HostedWorld.from_document(document)
+        fork.world_id = new_id
+        fork.record("forked_from", {
+            "source": source_id,
+            "source_tick": source.physics.tick,
+            "source_digest": source.physics.state_digest(),
+        })
+        with self._lock:
+            self._worlds[new_id] = fork
+        await self._persist(fork)
+        return fork.summary()
+
+    def compare_worlds(self, id_a: str, id_b: str, *, top: int = 8) -> dict[str, Any]:
+        """Divergence report between two worlds (typically a fork pair)."""
+        world_a, world_b = self.load_world(id_a), self.load_world(id_b)
+        shared = sorted(
+            set(world_a.physics.bodies) & set(world_b.physics.bodies)
+        )
+        deltas = []
+        for key in shared:
+            delta = float(np.linalg.norm(
+                world_a.physics.bodies[key].position
+                - world_b.physics.bodies[key].position
+            ))
+            if delta > 1e-9:
+                deltas.append({"body_id": key, "position_delta": round(delta, 6)})
+        deltas.sort(key=lambda row: -row["position_delta"])
+        return {
+            "identical": world_a.physics.state_digest() == world_b.physics.state_digest(),
+            "tick_a": world_a.physics.tick,
+            "tick_b": world_b.physics.tick,
+            "bodies_compared": len(shared),
+            "bodies_diverged": len(deltas),
+            "largest_divergences": deltas[:max(1, top)],
+        }
 
     def inspect(self, world_id: str, *, recent_events: int = 10) -> dict[str, Any]:
         world = self.load_world(world_id)
