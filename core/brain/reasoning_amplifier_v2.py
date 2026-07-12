@@ -598,8 +598,17 @@ class ReasoningAmplifierV2:
                 problem, guard_text, sample_budget, deadline, mode, request.context, fallbacks
             )
 
-        verifier_ok = bool(getattr(verdict, "ok", True)) if verdict is not None else True
+        # Verified-answer semantics, fail-closed (July external review): a
+        # verdict of None means the verifier CRASHED or never ran — that is
+        # not a pass. verifier_ok = "the verifier did not object";
+        # verifier_checked = "the verifier actually evaluated something".
+        # Only ok AND checked may ever be presented as *verified*: a vacuous
+        # pass (prose with nothing to evaluate) is unverified by definition.
+        verifier_ok = bool(getattr(verdict, "ok", False)) if verdict is not None else False
+        verifier_checked = bool(getattr(verdict, "checked", False))
         verifier_issues = list(getattr(verdict, "issues", []) or []) if verdict is not None else []
+        if verdict is None:
+            verifier_issues.append("verifier_unavailable")
         verifiers_run = (getattr(verdict, "engine", "") or "").split("+") if verdict is not None else []
 
         # 8b. Tier escalation — verifier-of-last-resort. If the local pipeline finished
@@ -645,11 +654,18 @@ class ReasoningAmplifierV2:
         evidence = list(problem.required_evidence) + list(request.context.get("evidence", []) or [])
         calibrated_answer, calibration = self._calibrate(answer, verdict, evidence, verifier_ok)
 
-        # PROOF mode refuses to answer if nothing survived verification.
-        if mode is ReasoningMode.PROOF and not verifier_ok:
+        # PROOF mode refuses to answer unless something ACTUALLY survived
+        # verification: a crashed verifier or a vacuous pass (nothing
+        # checkable) is not proof. Refusal-on-unverifiable is the feature.
+        if mode is ReasoningMode.PROOF and not (verifier_ok and verifier_checked):
+            if verdict is None:
+                reason = "the verifier was unavailable"
+            elif not verifier_checked:
+                reason = "nothing in the answer was mechanically checkable"
+            else:
+                reason = "; ".join(verifier_issues[:2]) or "no verifier-clean candidate"
             calibrated_answer = (
-                "I can't assert an answer here: it did not survive verification "
-                f"({'; '.join(verifier_issues[:2]) or 'no verifier-clean candidate'})."
+                f"I can't assert an answer here: it did not survive verification ({reason})."
             )
             fallbacks.append("proof_refused_unverified")
 
@@ -660,7 +676,6 @@ class ReasoningAmplifierV2:
         # (verdict.checked). A vacuous pass (ok=True, checked=False — e.g. prose with no
         # arithmetic to evaluate) must never be cached, or a wrong answer gets served as
         # truth forever. The hard bench caught exactly this poisoning.
-        verifier_checked = bool(getattr(verdict, "checked", False))
         if "solved_cache_hit" not in fallbacks:
             if verifier_ok and verifier_checked:
                 # Memoize verifier-clean source-independent derivations for instant re-use.
@@ -744,7 +759,9 @@ class ReasoningAmplifierV2:
         return AmplifiedAnswer(
             answer=calibrated_answer,
             confidence=confidence,
-            verified=verifier_ok,
+            # "verified" is a claim to the user: only ok AND actually-checked
+            # earns it. "The verifier had no objection to prose" does not.
+            verified=verifier_ok and verifier_checked,
             calibrated=(calibration.downgraded > 0 or calibration.flagged_impossible > 0),
             receipt=receipt,
         )

@@ -114,3 +114,86 @@ async def test_registry_always_runs_logic():
     reg = get_verifier_registry()
     verifiers = reg.select("generic")
     assert any(getattr(v, "name", "") == "logic" for v in verifiers)
+
+
+# ── Citation engine: self-fetching evidence (July capability raise) ──────
+
+
+class _FakeCorpusStore:
+    def __init__(self, hits):
+        self._hits = hits
+
+    def search(self, query, limit=5):
+        return self._hits[:limit]
+
+
+class _FakeHit:
+    def __init__(self, title, snippet):
+        self.title = title
+        self.snippet = snippet
+
+
+@pytest.mark.asyncio
+async def test_citation_engine_checks_caller_evidence():
+    from core.brain.verifiers.citation_engine import CitationEngine
+
+    result = await CitationEngine().verify(
+        "The retry budget is unlimited and reboots forever.",
+        context={"evidence": ["The retry budget is three attempts, then it fails closed."]},
+    )
+    assert result.checked
+    assert not result.ok, "an absolute claim against a bounded fact must fail"
+
+
+@pytest.mark.asyncio
+async def test_citation_engine_self_fetches_when_caller_brings_nothing(monkeypatch):
+    """The capability raise: no evidence pack → the engine pulls its own
+    receipts from the local corpus and still catches contradictions."""
+    from core.brain.verifiers import citation_engine
+    from core.knowledge import local_corpus
+
+    hits = [_FakeHit("retry policy", "The retry budget is three attempts, then it fails closed.")]
+    monkeypatch.setattr(
+        local_corpus, "get_local_corpus_store", lambda *a, **k: _FakeCorpusStore(hits)
+    )
+    result = await citation_engine.CitationEngine().verify(
+        "The retry budget is unlimited and reboots forever.",
+        context={"objective": "what is the retry budget policy"},
+    )
+    assert result.detail["self_fetched_evidence"] is True
+    assert result.checked
+    assert not result.ok, "self-fetched contradiction is a hard fail"
+
+
+@pytest.mark.asyncio
+async def test_self_fetched_absence_of_mention_is_not_wrongness(monkeypatch):
+    """Partial-corpus semantics: a true claim the corpus never ingested
+    must NOT fail — only contradictions do."""
+    from core.brain.verifiers import citation_engine
+    from core.knowledge import local_corpus
+
+    hits = [_FakeHit("retry policy", "The retry budget is three attempts before backing off.")]
+    monkeypatch.setattr(
+        local_corpus, "get_local_corpus_store", lambda *a, **k: _FakeCorpusStore(hits)
+    )
+    result = await citation_engine.CitationEngine().verify(
+        "The retry budget is three attempts. Jupiter is the largest planet.",
+        context={"objective": "retry budget"},
+    )
+    assert result.ok, "unmentioned-but-unrelated claims are advisories, not failures"
+    assert any("unconfirmed by local corpus" in issue for issue in result.issues)
+
+
+@pytest.mark.asyncio
+async def test_no_evidence_anywhere_stays_advisory(monkeypatch):
+    from core.brain.verifiers import citation_engine
+    from core.knowledge import local_corpus
+
+    monkeypatch.setattr(
+        local_corpus, "get_local_corpus_store", lambda *a, **k: _FakeCorpusStore([])
+    )
+    result = await citation_engine.CitationEngine().verify(
+        "The retry budget is unlimited.",
+        context={"objective": "retry budget"},
+    )
+    assert result.ok and not result.checked, "nothing to check against → advise only"

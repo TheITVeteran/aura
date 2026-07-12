@@ -6,9 +6,18 @@ load-bearing factual sentences are actually supported by that evidence pack, and
 flags ungrounded confident assertions. It is deliberately conservative: it lowers
 score and surfaces issues rather than hard-failing, because absence of a citation
 is weaker than a provable contradiction.
+
+When the caller supplies NO evidence, the engine no longer shrugs — it fetches
+its own receipts from the local corpus (BM25 over ingested knowledge) and checks
+against those. Self-fetched semantics are asymmetric on purpose: a CONTRADICTION
+against locally-known facts is a hard fail (polarity flip on a shared subject is
+real signal), but absence-of-mention is NOT — the corpus is partial, so a true
+claim it never ingested must not be punished. ``checked`` is claimed only when
+at least one confident sentence actually had overlapping evidence to test.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
@@ -87,29 +96,48 @@ class CitationEngine:
         evidence_items = ctx.get("required_evidence") or ctx.get("evidence") or []
         if isinstance(evidence_items, str):
             evidence_items = [evidence_items]
+        self_fetched = False
+        if not "\n".join(str(e) for e in evidence_items).strip():
+            evidence_items = await self._fetch_local_evidence(candidate, ctx)
+            self_fetched = bool(evidence_items)
         evidence_blob = "\n".join(str(e) for e in evidence_items)
         if not evidence_blob.strip():
-            # No evidence pack provided → nothing to check against; advise only.
+            # No evidence anywhere (caller OR local corpus) → advise only.
             return VerificationResult(domain="citation", ok=True, checked=False, engine=self.name)
 
         ungrounded: list[str] = []
         contradictions: list[str] = []
         confident_total = 0
+        examined = 0
         for sent in _sentences(candidate):
             if _HEDGE_RE.search(sent):
                 continue  # appropriately hedged claims are not penalised
             if _CONFIDENT_FACT_RE.search(sent):
                 confident_total += 1
+                overlaps = any(
+                    len(_content_words(sent) & _content_words(str(ev))) >= 2
+                    for ev in evidence_items
+                )
+                if overlaps:
+                    examined += 1
                 if _contradicts(sent, evidence_items):
                     contradictions.append(sent[:120])
                 elif not _grounded(sent, evidence_blob):
                     ungrounded.append(sent[:120])
 
         issues = [f"contradicts evidence: {s}" for s in contradictions[:6]]
-        issues += [f"ungrounded confident claim: {s}" for s in ungrounded[:6]]
+        if self_fetched:
+            # Partial-corpus semantics: absence of mention is not wrongness.
+            # Report ungrounded claims as advisories, never as failures.
+            issues += [f"unconfirmed by local corpus: {s}" for s in ungrounded[:6]]
+            ok = not contradictions
+            checked = examined > 0
+        else:
+            issues += [f"ungrounded confident claim: {s}" for s in ungrounded[:6]]
+            ok = not contradictions and not ungrounded
+            checked = confident_total > 0
         # A contradiction is a hard fail; bare ungroundedness lowers score but is softer.
-        ok = not contradictions and not ungrounded
-        bad = len(contradictions) + len(ungrounded)
+        bad = len(contradictions) + (0 if self_fetched else len(ungrounded))
         ratio = 1.0 - (bad / max(1, confident_total))
         score = max(0.1, 0.5 + 0.45 * ratio)
         if contradictions:
@@ -117,11 +145,45 @@ class CitationEngine:
         return VerificationResult(
             domain="citation",
             ok=ok,
-            checked=confident_total > 0,
+            checked=checked,
             score=round(score, 4),
             engine=self.name,
             issues=issues,
-            evidence=[f"evidence pack: {len(evidence_items)} item(s)"],
+            evidence=[
+                f"evidence pack: {len(evidence_items)} item(s)"
+                + (" (self-fetched from local corpus)" if self_fetched else "")
+            ],
             detail={"confident_claims": confident_total, "ungrounded": len(ungrounded),
-                    "contradictions": len(contradictions)},
+                    "contradictions": len(contradictions),
+                    "self_fetched_evidence": self_fetched, "examined": examined},
         )
+
+    @staticmethod
+    async def _fetch_local_evidence(candidate: str, ctx: dict[str, Any]) -> list[str]:
+        """Pull receipts from the local corpus when the caller brought none.
+
+        Query = the objective (what was asked) when available, else the
+        candidate's first confident sentence. Bounded, read-only, off-loop
+        (SQLite in a thread), and silent on any miss — an evidence fetch
+        must never break verification.
+        """
+        query = str(ctx.get("objective", "") or "").strip()
+        if not query:
+            confident = [
+                s for s in _sentences(candidate) if _CONFIDENT_FACT_RE.search(s)
+            ]
+            query = confident[0] if confident else ""
+        if len(query) < 12:
+            return []
+        try:
+            from core.knowledge.local_corpus import get_local_corpus_store
+
+            store = get_local_corpus_store()
+            hits = await asyncio.wait_for(
+                asyncio.to_thread(store.search, query, 4), timeout=3.0
+            )
+            return [
+                f"{hit.title}: {hit.snippet}" for hit in (hits or []) if hit.snippet
+            ]
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError, asyncio.TimeoutError):
+            return []

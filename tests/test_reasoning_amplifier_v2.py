@@ -149,3 +149,77 @@ async def test_deep_mode_prose_uses_courtroom(tmp_path):
     out = await amp.amplify(req)
     assert out.receipt.mode == "deep"
     assert out.receipt.strategy_used in {"courtroom", "self_consistency", "direct"}
+
+
+# ── Verified-answer semantics, fail-closed (July external review) ────────
+
+
+class _CrashingVerifier:
+    async def verify(self, candidate, *, task_type=None, context=None):
+        raise RuntimeError("verifier backend unavailable")
+
+
+class _VacuousVerifier:
+    """ok=True but checked=False — 'no objection' without an actual check."""
+
+    async def verify(self, candidate, *, task_type=None, context=None):
+        from core.brain.verifiers.base import VerificationResult
+
+        return VerificationResult(domain="generic", ok=True, checked=False, engine="vacuous")
+
+
+def _amp_with_verifier(generate, verifier, tmp_path: Path) -> ReasoningAmplifierV2:
+    return ReasoningAmplifierV2(
+        generate,
+        verifier=verifier,
+        calibration=CalibrationGate(),
+        memory=ReasoningMemory(path=tmp_path / "refl.jsonl"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_crashed_verifier_never_yields_verified(tmp_path):
+    """A verdict of None (verifier crashed) is NOT a pass. verified=True was
+    the old behavior — the exact 'verified-answer semantics' defect."""
+    amp = _amp_with_verifier(_gen("The answer is 4."), _CrashingVerifier(), tmp_path)
+    out = await amp.amplify(
+        AmplificationRequest(objective="what is 2 + 2", mode=ReasoningMode.FAST)
+    )
+    assert out.answer
+    assert out.verified is False
+    assert out.confidence <= 0.55, "unverified answers keep the honest confidence cap"
+
+
+@pytest.mark.asyncio
+async def test_vacuous_pass_is_not_verified(tmp_path):
+    """ok=True/checked=False means nothing was actually evaluated — the
+    answer may be fine, but 'verified' may not be claimed."""
+    amp = _amp_with_verifier(_gen("Prose with nothing checkable."), _VacuousVerifier(), tmp_path)
+    out = await amp.amplify(
+        AmplificationRequest(objective="describe the weather", mode=ReasoningMode.FAST)
+    )
+    assert out.answer
+    assert out.verified is False
+
+
+@pytest.mark.asyncio
+async def test_proof_mode_refuses_when_verifier_unavailable(tmp_path):
+    """PROOF with a crashed verifier must REFUSE, not assert. Refusal-on-
+    unverifiable is the feature."""
+    amp = _amp_with_verifier(_gen("The answer is 4."), _CrashingVerifier(), tmp_path)
+    out = await amp.amplify(
+        AmplificationRequest(objective="what is 2 + 2", mode=ReasoningMode.PROOF)
+    )
+    assert "can't assert" in out.answer
+    assert "verifier was unavailable" in out.answer
+    assert "proof_refused_unverified" in out.receipt.fallbacks_used
+
+
+@pytest.mark.asyncio
+async def test_proof_mode_refuses_on_vacuous_pass(tmp_path):
+    amp = _amp_with_verifier(_gen("Prose with nothing checkable."), _VacuousVerifier(), tmp_path)
+    out = await amp.amplify(
+        AmplificationRequest(objective="describe the weather", mode=ReasoningMode.PROOF)
+    )
+    assert "can't assert" in out.answer
+    assert "mechanically checkable" in out.answer
