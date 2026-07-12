@@ -3,7 +3,7 @@
 Chaos injection — break things deliberately and prove repair works.
 
 Catalogue (every entry here is registered — pinned by
-tests/test_chaos_injector.py; a fault documented but not implemented is a
+tests/test_chaos_injector.py; documenting a fault the registry lacks is a
 false capability claim):
 
   induce_event_loop_lag    — sleep on the event loop for ~1.2s
@@ -13,8 +13,8 @@ false capability claim):
   fill_disk                — write bounded disk-pressure files in a safe temp target
   sever_network            — block outbound connections via local proxy
 
-Roadmap (deliberately NOT implemented yet — each needs a live kernel and
-blast-radius design): kill_subprocess, corrupt_sqlite_row,
+Roadmap (deliberately absent for now — each needs a live kernel and
+blast-radius design first): kill_subprocess, corrupt_sqlite_row,
 break_memory_facade, break_agency_pathway.
 
 All faults self-restore; AURA_CHAOS_RESTORE_SECONDS overrides every
