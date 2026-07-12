@@ -118,6 +118,13 @@ ALLOW_SUBPROCESS = {
     # sub-interpreter to verify a pristine clone installs — subprocess
     # orchestration is the whole point.
     "tools/clean_env_install_proof.py",
+    # Runtime preflight: stdlib-only BY CONTRACT (must diagnose a broken
+    # venv, so it cannot import the subprocess gateway); its only child
+    # processes are read-only `git rev-parse`/`git status` provenance probes.
+    "tools/runtime_preflight.py",
+    # Preflight contract test: spawns a pristine sub-interpreter to PROVE the
+    # stdlib-only import property — subprocess is the point.
+    "tests/test_runtime_preflight.py",
     # Recovery test: spawns a sub-interpreter that deliberately wedges its own
     # event loop to prove the StallWatchdog force-exits the process with the
     # supervisor-restart code. A real os._exit in a child is the only way to
