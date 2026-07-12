@@ -49,9 +49,27 @@ def run_proof(*, max_tokens: int = 12) -> dict:
     from core.brain.nonparametric_generation import MLXEncoder
     from core.brain.nonparametric_memory import NonParametricMemory
     from core.brain.nonparametric_worker import cached_generate_with_memory
+    from core.runtime.model_lane_control import standalone_model_lane
 
     started = time.time()
     model_path = _resolve_reflex_path()
+    # Even the 1.5B reflex loads under the atomic ownership seam: an
+    # unguarded standalone load beside a live 32B is the memory-doubling
+    # class the model-lane contract exists to prevent.
+    with standalone_model_lane(
+        owner_id="nonparametric-proof",
+        model_path=model_path,
+        purpose="proof",
+        metadata={"tool": "nonparametric_proof"},
+    ):
+        return _run_proof_with_lane(model_path, load, MLXEncoder,
+                                    NonParametricMemory,
+                                    cached_generate_with_memory,
+                                    started, max_tokens)
+
+
+def _run_proof_with_lane(model_path, load, MLXEncoder, NonParametricMemory,
+                         cached_generate_with_memory, started, max_tokens) -> dict:
     model, tokenizer = load(model_path)
     encoder = MLXEncoder(model, tokenizer)
 

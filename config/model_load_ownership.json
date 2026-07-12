@@ -1,109 +1,12 @@
 {
   "entries": [
     {
-      "expected_load_references": 3,
-      "guard_symbol": "acquire_in_process_model_lane",
-      "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
-      "ownership_mode": "in_process_heartbeat",
-      "path": "core/learning/live_learner.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "acquire_in_process_model_lane",
-      "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
-      "ownership_mode": "in_process_heartbeat",
-      "path": "core/brain/reasoning_background.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "acquire_in_process_model_lane",
-      "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
-      "ownership_mode": "in_process_heartbeat",
-      "path": "core/adaptation/post_training_validator.py"
-    },
-    {
-      "expected_load_references": 2,
-      "guard_symbol": "acquire_in_process_model_lane",
-      "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
-      "ownership_mode": "in_process_heartbeat",
-      "path": "core/brain/llm/nucleus_manager.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "acquire_in_process_model_lane",
-      "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
-      "ownership_mode": "in_process_heartbeat",
-      "path": "core/brain/llm/local_code_model.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "acquire_synchronous_in_process_model_lane",
-      "min_guard_sites": 1,
-      "modules": ["sentence_transformers"],
-      "ownership_mode": "in_process_sync_heartbeat",
-      "path": "core/memory/vector_memory_engine.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "acquire_synchronous_in_process_model_lane",
-      "min_guard_sites": 1,
-      "modules": ["sentence_transformers"],
-      "ownership_mode": "in_process_sync_heartbeat",
-      "path": "core/brain/semantic_memory.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "acquire_in_process_model_lane",
-      "min_guard_sites": 1,
-      "modules": ["from_pretrained"],
-      "ownership_mode": "in_process_heartbeat",
-      "path": "core/skills/image_gen.py"
-    },
-    {
-      "expected_load_references": 4,
-      "guard_symbol": "_acquire_voice_model_lane",
-      "min_guard_sites": 4,
-      "modules": ["coqui_tts", "faster_whisper", "piper"],
-      "ownership_mode": "in_process_sync_heartbeat",
-      "path": "core/senses/voice_engine.py"
-    },
-    {
-      "expected_load_references": 4,
-      "guard_path": "core/brain/llm/mlx_client.py",
-      "guard_symbol": "_model_load_admission_context",
-      "modules": ["mlx_lm"],
-      "ownership_mode": "worker_process",
-      "path": "core/brain/llm/mlx_worker.py",
-      "worker_entrypoint": "_mlx_worker_loop"
-    },
-    {
-      "allowed_importers": ["core/brain/llm/mlx_worker.py"],
-      "expected_load_references": 1,
-      "guard_path": "core/brain/llm/mlx_client.py",
-      "guard_symbol": "_model_load_admission_context",
-      "modules": ["mlx_lm"],
-      "ownership_mode": "worker_component",
-      "path": "core/brain/llm/contrastive_decoding.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_path": "core/brain/llm/mlx_vision_client.py",
-      "guard_symbol": "prepare_model_lane_claim",
-      "modules": ["mlx_vlm"],
-      "ownership_mode": "worker_process",
-      "path": "core/brain/llm/mlx_vision_worker.py",
-      "worker_entrypoint": "_mlx_vision_worker_loop"
-    },
-    {
       "expected_load_references": 1,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
+      "modules": [
+        "mlx_lm"
+      ],
       "ownership_mode": "standalone_process",
       "path": "aura_bench/nonparametric_probe.py"
     },
@@ -111,7 +14,9 @@
       "expected_load_references": 1,
       "guard_symbol": "acquire_standalone_model_lane",
       "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
+      "modules": [
+        "mlx_lm"
+      ],
       "ownership_mode": "standalone_process",
       "path": "aura_bench/reasoning_delta.py"
     },
@@ -119,15 +24,146 @@
       "expected_load_references": 1,
       "guard_symbol": "acquire_in_process_model_lane",
       "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
+      "modules": [
+        "mlx_lm"
+      ],
       "ownership_mode": "in_process_heartbeat",
       "path": "benchmarks/reasoning/run.py"
     },
     {
       "expected_load_references": 1,
+      "guard_symbol": "acquire_in_process_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "in_process_heartbeat",
+      "path": "core/adaptation/post_training_validator.py"
+    },
+    {
+      "allowed_importers": [
+        "core/brain/llm/mlx_worker.py"
+      ],
+      "expected_load_references": 1,
+      "guard_path": "core/brain/llm/mlx_client.py",
+      "guard_symbol": "_model_load_admission_context",
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "worker_component",
+      "path": "core/brain/llm/contrastive_decoding.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "acquire_in_process_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "in_process_heartbeat",
+      "path": "core/brain/llm/local_code_model.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_path": "core/brain/llm/mlx_vision_client.py",
+      "guard_symbol": "prepare_model_lane_claim",
+      "modules": [
+        "mlx_vlm"
+      ],
+      "ownership_mode": "worker_process",
+      "path": "core/brain/llm/mlx_vision_worker.py",
+      "worker_entrypoint": "_mlx_vision_worker_loop"
+    },
+    {
+      "expected_load_references": 4,
+      "guard_path": "core/brain/llm/mlx_client.py",
+      "guard_symbol": "_model_load_admission_context",
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "worker_process",
+      "path": "core/brain/llm/mlx_worker.py",
+      "worker_entrypoint": "_mlx_worker_loop"
+    },
+    {
+      "expected_load_references": 2,
+      "guard_symbol": "acquire_in_process_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "in_process_heartbeat",
+      "path": "core/brain/llm/nucleus_manager.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "acquire_in_process_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "in_process_heartbeat",
+      "path": "core/brain/reasoning_background.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "acquire_synchronous_in_process_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "sentence_transformers"
+      ],
+      "ownership_mode": "in_process_sync_heartbeat",
+      "path": "core/brain/semantic_memory.py"
+    },
+    {
+      "expected_load_references": 3,
+      "guard_symbol": "acquire_in_process_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "in_process_heartbeat",
+      "path": "core/learning/live_learner.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "acquire_synchronous_in_process_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "sentence_transformers"
+      ],
+      "ownership_mode": "in_process_sync_heartbeat",
+      "path": "core/memory/vector_memory_engine.py"
+    },
+    {
+      "expected_load_references": 4,
+      "guard_symbol": "_acquire_voice_model_lane",
+      "min_guard_sites": 4,
+      "modules": [
+        "coqui_tts",
+        "faster_whisper",
+        "piper"
+      ],
+      "ownership_mode": "in_process_sync_heartbeat",
+      "path": "core/senses/voice_engine.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "acquire_in_process_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "from_pretrained"
+      ],
+      "ownership_mode": "in_process_heartbeat",
+      "path": "core/skills/image_gen.py"
+    },
+    {
+      "expected_load_references": 1,
       "guard_symbol": "acquire_standalone_model_lane",
       "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
+      "modules": [
+        "mlx_lm"
+      ],
       "ownership_mode": "standalone_process",
       "path": "scripts/generate_steering_vectors.py"
     },
@@ -135,7 +171,9 @@
       "expected_load_references": 2,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,
-      "modules": ["from_pretrained"],
+      "modules": [
+        "from_pretrained"
+      ],
       "ownership_mode": "standalone_process",
       "path": "scripts/run_finetune_gpt2.py"
     },
@@ -143,7 +181,9 @@
       "expected_load_references": 1,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,
-      "modules": ["from_pretrained"],
+      "modules": [
+        "from_pretrained"
+      ],
       "ownership_mode": "standalone_process",
       "path": "scripts/self_update.py"
     },
@@ -151,55 +191,19 @@
       "expected_load_references": 1,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
+      "modules": [
+        "mlx_lm"
+      ],
       "ownership_mode": "standalone_process",
       "path": "scripts/train_with_recurrent_depth.py"
     },
     {
-      "expected_load_references": 1,
-      "guard_symbol": "standalone_model_lane",
-      "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
-      "ownership_mode": "standalone_process",
-      "path": "training/extract_steering_vectors.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "run_model_blocking",
-      "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
-      "ownership_mode": "delegated_worker_process",
-      "path": "training/train_and_fuse.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "standalone_model_lane",
-      "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
-      "ownership_mode": "standalone_process",
-      "path": "tools/heldout_eval.py"
-    },
-    {
-      "expected_load_references": 1,
-      "guard_symbol": "standalone_model_lane",
-      "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
-      "ownership_mode": "standalone_process",
-      "path": "tools/selfplay_harvest.py"
-    },
-    {
-      "expected_load_references": 2,
-      "guard_symbol": "standalone_model_lane",
-      "min_guard_sites": 2,
-      "modules": ["mlx_lm"],
-      "ownership_mode": "standalone_process",
-      "path": "tools/generate_lora_consolidation_proof.py"
-    },
-    {
       "expected_load_references": 2,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
+      "modules": [
+        "mlx_lm"
+      ],
       "ownership_mode": "standalone_process",
       "path": "tools/bench_speculative_decoding.py"
     },
@@ -207,17 +211,81 @@
       "expected_load_references": 1,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
+      "modules": [
+        "mlx_lm"
+      ],
       "ownership_mode": "standalone_process",
       "path": "tools/front_door_demo.py"
+    },
+    {
+      "expected_load_references": 2,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 2,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/generate_lora_consolidation_proof.py"
     },
     {
       "expected_load_references": 1,
       "guard_symbol": "standalone_model_lane",
       "min_guard_sites": 1,
-      "modules": ["mlx_lm"],
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/heldout_eval.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/nonparametric_proof.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
       "ownership_mode": "standalone_process",
       "path": "tools/proof/probe_nonparametric_memory.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "tools/selfplay_harvest.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "standalone_model_lane",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "standalone_process",
+      "path": "training/extract_steering_vectors.py"
+    },
+    {
+      "expected_load_references": 1,
+      "guard_symbol": "run_model_blocking",
+      "min_guard_sites": 1,
+      "modules": [
+        "mlx_lm"
+      ],
+      "ownership_mode": "delegated_worker_process",
+      "path": "training/train_and_fuse.py"
     }
   ],
   "schema": "aura.model_load_ownership.v1"
