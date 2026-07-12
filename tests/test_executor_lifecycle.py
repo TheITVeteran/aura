@@ -65,3 +65,22 @@ def test_runtime_pool_registers_before_work(
 
     assert asyncio.run(executors.run_blocking_io(lambda: "ok")) == "ok"
     assert names == ["blocking_io_thread_pool"]
+
+
+@pytest.mark.asyncio
+async def test_pools_self_heal_after_external_shutdown():
+    """The order-dependence family of 2026-07-12 (attention gates, lag
+    budgets, this file): shutdown hygiene closed the module-level pools as
+    registered resources, and every later client in the process died with
+    'cannot schedule new futures after shutdown'. A shut-down pool in a
+    process that continues serving earns a rebuilt one; real shutdown is
+    still refused by the latch check in _register_pool."""
+    from core.runtime import executors
+
+    assert await executors.run_blocking_io(lambda: "io", timeout_s=3.0) == "io"
+    executors.BLOCKING_IO_POOL.shutdown(wait=False, cancel_futures=True)
+    assert await executors.run_blocking_io(lambda: "io2", timeout_s=3.0) == "io2"
+
+    assert await executors.run_heavy_cpu(lambda: "cpu", timeout_s=3.0) == "cpu"
+    executors.HEAVY_CPU_POOL.shutdown(wait=False, cancel_futures=True)
+    assert await executors.run_heavy_cpu(lambda: "cpu2", timeout_s=3.0) == "cpu2"

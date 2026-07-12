@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -48,6 +49,45 @@ BLOCKING_IO_POOL = ThreadPoolExecutor(
     max_workers=4,
     thread_name_prefix="aura-blocking-io",
 )
+
+_POOL_REBUILD_LOCK = threading.Lock()
+
+
+def _live_pool(kind: str) -> ThreadPoolExecutor:
+    """Return the shared pool for *kind*, rebuilding it if it was shut down.
+
+    The pools are process-lifetime resources, but shutdown hygiene closes
+    them as registered resources. When the process then CONTINUES serving
+    (an aborted shutdown; hermetic tests that drive hygiene teardown), every
+    later client died with 'cannot schedule new futures after shutdown' —
+    the order-dependence family across the attention gates, lag budgets,
+    and executor lifecycle (2026-07-12). A shut-down pool in a process that
+    keeps running earns a fresh pool; real shutdown is still refused by the
+    latch check in _register_pool.
+    """
+    global HEAVY_CPU_POOL, BLOCKING_IO_POOL
+    pool = HEAVY_CPU_POOL if kind == "heavy_cpu" else BLOCKING_IO_POOL
+    if not getattr(pool, "_shutdown", False):
+        return pool
+    with _POOL_REBUILD_LOCK:
+        pool = HEAVY_CPU_POOL if kind == "heavy_cpu" else BLOCKING_IO_POOL
+        if getattr(pool, "_shutdown", False):
+            if kind == "heavy_cpu":
+                HEAVY_CPU_POOL = ThreadPoolExecutor(
+                    max_workers=2, thread_name_prefix="aura-heavy-cpu"
+                )
+                pool = HEAVY_CPU_POOL
+            else:
+                BLOCKING_IO_POOL = ThreadPoolExecutor(
+                    max_workers=4, thread_name_prefix="aura-blocking-io"
+                )
+                pool = BLOCKING_IO_POOL
+            logger.warning(
+                "Rebuilt %s pool after external shutdown while the process "
+                "continued serving.",
+                kind,
+            )
+    return pool
 
 
 def _register_pool(pool: ThreadPoolExecutor, *, name: str) -> None:
@@ -90,7 +130,8 @@ async def run_heavy_cpu[T](
     label : str
         Optional human-readable label for logging.
     """
-    _register_pool(HEAVY_CPU_POOL, name="heavy_cpu_thread_pool")
+    pool = _live_pool("heavy_cpu")
+    _register_pool(pool, name="heavy_cpu_thread_pool")
     loop = asyncio.get_running_loop()
     tag = label or getattr(fn, "__qualname__", str(fn))
 
@@ -98,7 +139,7 @@ async def run_heavy_cpu[T](
     try:
         result = await asyncio.wait_for(
             loop.run_in_executor(
-                HEAVY_CPU_POOL,
+                pool,
                 functools.partial(fn, *args, **kwargs),
             ),
             timeout=timeout_s,
@@ -137,7 +178,8 @@ async def run_blocking_io[T](
     label : str
         Optional human-readable label for logging.
     """
-    _register_pool(BLOCKING_IO_POOL, name="blocking_io_thread_pool")
+    pool = _live_pool("blocking_io")
+    _register_pool(pool, name="blocking_io_thread_pool")
     loop = asyncio.get_running_loop()
     tag = label or getattr(fn, "__qualname__", str(fn))
 
@@ -145,7 +187,7 @@ async def run_blocking_io[T](
     try:
         result = await asyncio.wait_for(
             loop.run_in_executor(
-                BLOCKING_IO_POOL,
+                pool,
                 functools.partial(fn, *args, **kwargs),
             ),
             timeout=timeout_s,
