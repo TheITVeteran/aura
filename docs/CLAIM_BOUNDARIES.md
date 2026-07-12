@@ -43,7 +43,27 @@ The following claims are classified as **not proven** due to local environment o
 
 ### D. Mature RSI (Recursive Self-Improvement)
 * **Status**: `not proven`
-* **Blocker**: Recursive self-improvement requires repeated autonomous capability gains under hidden validation. Aura's current self-modification path is intentionally constrained to quarantined proposals, branch-aware promotion, supervised validation, and sandboxed skill patches.
+* **Blocker**: Recursive self-improvement requires repeated autonomous capability gains under hidden validation. Aura's current self-modification path is intentionally constrained to quarantined proposals, branch-aware promotion, supervised validation, and sandboxed skill patches. Open-ended, unconstrained RSI is not claimed and not sought.
+
+### E. Concurrent Model-Lane Residency
+* **Status**: `strictly bounded — never all lanes at once`
+* **Boundary**: The 64 GB production host holds the resident 32B cortex plus at most one smaller warm lane inside the declared lane budget (`core/brain/lane_admission.py`). "All model lanes concurrently resident" is architecturally refused by admission control, not merely unproven — the degradation ladder swaps lanes; it never stacks them.
+
+### F. Corpus Coverage vs Answer Quality
+* **Status**: `presence demonstrated; encyclopedic answer quality not claimed`
+* **Boundary**: A ~6.6M-document offline corpus is physically present and BM25-retrievable (claims-matrix row 26). That demonstrates storage and retrieval, NOT that any specific reference work is complete, current, or that answers synthesized from it reach encyclopedic accuracy.
+
+### G. Recurrent-Depth Intelligence Gain
+* **Status**: `not proven`
+* **Blocker**: The 2026-07-12 A/B on the reflex model measured identical sealed-battery accuracy at loops=1 and loops=2 (claims-matrix row 27). The 32B configuration remains untested locally; no intelligence gain from recurrent depth is claimed.
+
+### H. Arbitrary Reverse Engineering
+* **Status**: `strictly bounded`
+* **Blocker**: Program DNA reconstruction operates on functions with behavioral check batteries inside a curated-import sandbox. Reconstruction of arbitrary programs or binaries is not claimed, and the sandbox refuses the imports it would require.
+
+### I. Universal External-Capability Readiness
+* **Status**: `not claimed`
+* **Boundary**: External capabilities (reach, network, third-party services) are policy-gated and individually receipted; some remain dormant until their environment variables and authorizations exist. No claim of universal operational readiness of every external capability is made — the capability inventory answers per-capability, with receipts.
 
 ---
 
