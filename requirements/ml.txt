@@ -4,6 +4,7 @@ numpy>=1.26,<3.0
 scipy>=1.13
 torch>=2.3           # CPU build; GPU: follow PyTorch install guide
 transformers>=4.41
+sentence-transformers>=3.0   # dense semantic retrieval (hybrid RAG, EmbeddingEngine)
 diffusers>=0.27
 huggingface_hub>=0.23
 accelerate>=0.30

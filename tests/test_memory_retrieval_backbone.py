@@ -199,3 +199,89 @@ class TestOneShotIsHippocampalBinding:
         # a PARTIAL cue set reinstates the whole episode (CA3 pattern completion)
         completed = index.pattern_complete(["crow", "storm"], limit=5)
         assert any(eid == "episode-1" for eid, _ in completed)
+
+
+# ── Hybrid semantic retrieval (July capability raise) ─────────────────────
+
+
+class _FakeDenseEngine:
+    """Deterministic 'semantic' backend: axis per known concept."""
+
+    _AXES = {"feline": 0, "cat": 0, "kitten": 0, "finance": 1, "budget": 1}
+
+    def _vec(self, text):
+        import numpy as np
+
+        v = np.zeros(4, dtype=np.float32)
+        for word, axis in self._AXES.items():
+            if word in text.lower():
+                v[axis] += 1.0
+        if not v.any():
+            v[3] = 1.0
+        return v
+
+    _model = object()  # non-None → "real backend up"
+
+    def embed(self, text):
+        return self._vec(text)
+
+    def embed_batch(self, texts):
+        return [self._vec(t) for t in texts]
+
+
+@pytest.fixture
+def semantic_rag(monkeypatch):
+    from core.memory import rag
+
+    rag.reset_semantic_state_for_test()
+    monkeypatch.setenv("AURA_SEMANTIC_RAG", "1")
+    monkeypatch.setattr(rag, "_get_embed_engine", lambda: _FakeDenseEngine())
+    yield rag
+    rag.reset_semantic_state_for_test()
+
+
+def test_semantic_match_outranks_lexical_overlap(semantic_rag):
+    """The claim the vault's vocabulary always made: MEANING retrieves,
+    not just shared tokens. 'kitten' shares zero tokens with 'cat' but
+    must outrank a lexically-overlapping but unrelated memory."""
+    memories = [
+        {"text": "the cat sat by the feline door", "id": "about-cats"},
+        {"text": "my monthly budget review is due", "id": "about-money"},
+    ]
+    results = semantic_rag.retrieve_memories("kitten photos", memories, top_k=2)
+    assert results, "hybrid retrieval returned nothing"
+    assert results[0]["id"] == "about-cats"
+    assert results[0]["retrieval"] == "hybrid_semantic"
+
+
+def test_tfidf_fallback_when_backend_down(monkeypatch):
+    from core.memory import rag
+
+    rag.reset_semantic_state_for_test()
+    monkeypatch.setenv("AURA_SEMANTIC_RAG", "0")
+    memories = [{"text": "the retry budget is three attempts", "id": "m1"}]
+    results = rag.retrieve_memories("retry budget", memories, top_k=1)
+    assert results and results[0]["retrieval"] == "tfidf"
+    rag.reset_semantic_state_for_test()
+
+
+def test_too_many_cold_texts_defers_to_background_warm(semantic_rag, monkeypatch):
+    """Bounded work: a query over a huge cold corpus must not stall — it
+    falls back to TF-IDF and warms the cache for the next query."""
+    from core.memory import rag
+
+    monkeypatch.setattr(rag, "_SEMANTIC_MAX_UNCACHED", 3)
+    memories = [{"text": f"memory number {i} about topic {i}", "id": str(i)} for i in range(10)]
+    results = semantic_rag.retrieve_memories("memory number 4", memories, top_k=3)
+    assert results
+    assert all(r["retrieval"] == "tfidf" for r in results), "cold corpus → lexical this query"
+
+
+def test_semantic_cache_is_bounded(semantic_rag, monkeypatch):
+    from core.memory import rag
+
+    monkeypatch.setattr(rag, "_SEMANTIC_CACHE_MAX", 5)
+    memories = [{"text": f"unique text {i}", "id": str(i)} for i in range(4)]
+    for query in ("cat", "budget", "kitten"):
+        semantic_rag.retrieve_memories(query, memories, top_k=2)
+    assert len(rag._SEMANTIC_CACHE) <= 5

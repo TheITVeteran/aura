@@ -1,6 +1,148 @@
 from __future__ import annotations
 
+import hashlib
+import logging
+import os
+import threading
+from collections import OrderedDict
 from typing import Any
+
+logger = logging.getLogger("Aura.RAG")
+
+# ── Semantic layer (July capability raise) ────────────────────────────────
+# Real dense embeddings (sentence-transformers MiniLM via the existing
+# EmbeddingEngine) blended with TF-IDF. The fallback chain is honest:
+# semantic+lexical hybrid → TF-IDF cosine → never substring again.
+# Bounded: per-text vectors are LRU-cached; a query never embeds more than
+# _SEMANTIC_MAX_UNCACHED cold texts synchronously (beyond that, this query
+# uses TF-IDF while a background thread warms the cache for the next one).
+
+_SEMANTIC_CACHE: OrderedDict[str, Any] = OrderedDict()
+_SEMANTIC_CACHE_MAX = 4096
+_SEMANTIC_MAX_UNCACHED = 128
+_SEMANTIC_LOCK = threading.Lock()
+_EMBED_ENGINE: Any = None
+_EMBED_ENGINE_FAILED = False
+_WARM_INFLIGHT = False
+
+
+def _semantic_enabled() -> bool:
+    return str(os.getenv("AURA_SEMANTIC_RAG", "1")).strip().lower() not in {"0", "false", "off", "no"}
+
+
+def _get_embed_engine() -> Any:
+    """The real dense embedder, or None. Never raises; one failure latches."""
+    global _EMBED_ENGINE, _EMBED_ENGINE_FAILED
+    if _EMBED_ENGINE_FAILED or not _semantic_enabled():
+        return None
+    if _EMBED_ENGINE is not None:
+        return _EMBED_ENGINE
+    with _SEMANTIC_LOCK:
+        if _EMBED_ENGINE is not None or _EMBED_ENGINE_FAILED:
+            return _EMBED_ENGINE
+        try:
+            from core.memory.vector_memory_engine import EmbeddingEngine
+
+            engine = EmbeddingEngine()
+            probe = engine.embed("semantic backend probe")
+            if getattr(engine, "_model", None) is None or probe is None:
+                _EMBED_ENGINE_FAILED = True
+                logger.info("Semantic RAG backend unavailable; TF-IDF only.")
+                return None
+            _EMBED_ENGINE = engine
+            return engine
+        except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
+            _EMBED_ENGINE_FAILED = True
+            logger.info("Semantic RAG backend failed to initialize (%s); TF-IDF only.", exc)
+            return None
+
+
+def _text_key(text: str) -> str:
+    return hashlib.blake2b(text.encode("utf-8", "replace"), digest_size=16).hexdigest()
+
+
+def _cached_vector(text: str) -> Any:
+    key = _text_key(text)
+    with _SEMANTIC_LOCK:
+        vec = _SEMANTIC_CACHE.get(key)
+        if vec is not None:
+            _SEMANTIC_CACHE.move_to_end(key)
+        return vec
+
+
+def _store_vectors(texts: list[str], vectors: Any) -> None:
+    with _SEMANTIC_LOCK:
+        for text, vec in zip(texts, vectors):
+            _SEMANTIC_CACHE[_text_key(text)] = vec
+            _SEMANTIC_CACHE.move_to_end(_text_key(text))
+        while len(_SEMANTIC_CACHE) > _SEMANTIC_CACHE_MAX:
+            _SEMANTIC_CACHE.popitem(last=False)
+
+
+def _warm_cache_in_background(texts: list[str]) -> None:
+    """One background warm at a time; the NEXT query gets the semantic path."""
+    global _WARM_INFLIGHT
+    with _SEMANTIC_LOCK:
+        if _WARM_INFLIGHT:
+            return
+        _WARM_INFLIGHT = True
+
+    def _warm() -> None:
+        global _WARM_INFLIGHT
+        try:
+            engine = _get_embed_engine()
+            if engine is not None and texts:
+                vectors = engine.embed_batch(texts)
+                _store_vectors(texts, list(vectors))
+        except (RuntimeError, AttributeError, ValueError, TypeError, OSError) as exc:
+            logger.debug("Semantic cache warm failed: %s", exc)
+        finally:
+            _WARM_INFLIGHT = False
+
+    threading.Thread(target=_warm, name="SemanticRagWarm", daemon=True).start()
+
+
+def _semantic_scores(query: str, texts: list[str]) -> list[float] | None:
+    """Dense cosine per text, or None when the semantic path must sit out."""
+    engine = _get_embed_engine()
+    if engine is None or not texts:
+        return None
+    try:
+        import numpy as np
+
+        uncached = [t for t in dict.fromkeys(texts) if _cached_vector(t) is None]
+        if len(uncached) > _SEMANTIC_MAX_UNCACHED:
+            _warm_cache_in_background(uncached)
+            return None
+        if uncached:
+            vectors = engine.embed_batch(uncached)
+            _store_vectors(uncached, list(vectors))
+        qvec = np.asarray(engine.embed(query), dtype=np.float32)
+        qn = float(np.linalg.norm(qvec))
+        if qn <= 1e-8:
+            return None
+        scores: list[float] = []
+        for text in texts:
+            vec = _cached_vector(text)
+            if vec is None:
+                scores.append(0.0)
+                continue
+            v = np.asarray(vec, dtype=np.float32)
+            vn = float(np.linalg.norm(v))
+            scores.append(float(np.dot(qvec, v) / (qn * vn)) if vn > 1e-8 else 0.0)
+        return scores
+    except (RuntimeError, AttributeError, ValueError, TypeError, OSError) as exc:
+        logger.debug("Semantic scoring failed; TF-IDF only for this query: %s", exc)
+        return None
+
+
+def reset_semantic_state_for_test() -> None:
+    global _EMBED_ENGINE, _EMBED_ENGINE_FAILED, _WARM_INFLIGHT
+    with _SEMANTIC_LOCK:
+        _SEMANTIC_CACHE.clear()
+    _EMBED_ENGINE = None
+    _EMBED_ENGINE_FAILED = False
+    _WARM_INFLIGHT = False
 
 
 def tokenize(text: str) -> list[str]:
@@ -59,15 +201,18 @@ def retrieve_memories(
     threshold: float = 0.01,
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
-    """TF-IDF cosine retrieval over memory texts.
+    """Hybrid semantic + lexical retrieval over memory texts.
 
-    This was a bare substring match while ``compute_term_freq`` and
-    ``compute_cosine_similarity`` sat unused directly above it — the exact
-    'memory retrieval backbone undercuts the amplifiers' finding from the
-    July 2026 external review. Scoring is now real: term-frequency vectors
-    weighted by smoothed IDF over the candidate set, cosine-compared, with a
-    bounded bonus when the memory contains the query as an exact phrase
-    (verbatim evidence should outrank thematic overlap at equal cosine).
+    History (July 2026 external review): this was a bare substring match
+    while ``compute_term_freq`` and ``compute_cosine_similarity`` sat unused
+    directly above it. First fix made TF-IDF real; this revision adds the
+    semantic layer the vault's vocabulary always promised: dense-embedding
+    cosine (MiniLM via EmbeddingEngine) blended 60/40 with the lexical
+    TF-IDF score, plus a bounded exact-phrase bonus (verbatim evidence
+    outranks thematic overlap at equal similarity). Fallback chain is
+    honest and bounded: hybrid → TF-IDF (backend down, or too many cold
+    texts for one query — a background warm fixes the next one) — never
+    substring.
     """
     import math
 
@@ -86,15 +231,27 @@ def retrieve_memories(
     query_vec = weigh(compute_term_freq(query_tokens))
     query_lower = (query or "").lower().strip()
 
+    # Semantic layer: dense-embedding cosine per memory when the real
+    # backend is up and the cache admits this query's texts (bounded work).
+    texts = [str(m.get("text", "")) for m in memories]
+    dense = _semantic_scores(query, texts)
+
     scored: list[dict[str, Any]] = []
-    for memory, tokens in zip(memories, doc_tokens):
+    for position, (memory, tokens) in enumerate(zip(memories, doc_tokens)):
         doc_vec = weigh(compute_term_freq(tokens))
-        score = compute_cosine_similarity(query_vec, doc_vec)
+        lexical = compute_cosine_similarity(query_vec, doc_vec)
+        if dense is not None:
+            # Hybrid: meaning first, exact terms still matter. Dense cosine
+            # is clamped at 0 (negative similarity is just 'unrelated').
+            score = 0.6 * max(0.0, dense[position]) + 0.4 * lexical
+        else:
+            score = lexical
         if query_lower and query_lower in str(memory.get("text", "")).lower():
             score = min(1.0, score + 0.25)
         if score >= threshold:
             item = dict(memory)
             item["score"] = round(float(score), 6)
+            item["retrieval"] = "hybrid_semantic" if dense is not None else "tfidf"
             scored.append(item)
     scored.sort(key=lambda x: float(x.get("score", 0.0)), reverse=True)
     return scored[:top_k]

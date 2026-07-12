@@ -41,7 +41,10 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
 
 class BlackHoleVault:
     """The central unified interface replacing VectorMemory.
-    Uses TF-IDF RAG for search, Horcrux for keys, and Black Hole algorithms for storage.
+
+    Search is hybrid semantic + lexical RAG (dense MiniLM cosine blended
+    with TF-IDF — see core/memory/rag.py), Horcrux for keys, and Black
+    Hole algorithms for storage.
     """
     def __init__(self, data_dir: str = "~/.aura/vault"):
         self.data_dir = os.path.expanduser(data_dir)

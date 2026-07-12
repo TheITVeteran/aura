@@ -31,6 +31,11 @@ os.environ.setdefault(
 # environment; targeted tests opt back in and inject their own snapshots.
 os.environ.setdefault("AURA_FIRST_TOKEN_PRESSURE_ADAPT", "0")
 
+# Determinism: hybrid semantic retrieval would load a real MiniLM backend
+# and make ranking assertions environment-dependent. Pin it off; the
+# targeted rag tests opt back in with an injected fake engine.
+os.environ.setdefault("AURA_SEMANTIC_RAG", "0")
+
 _CLEANUP_TIMEOUT_S = 2.0
 
 # Ensure the project root is on sys.path so `core.*` imports work
