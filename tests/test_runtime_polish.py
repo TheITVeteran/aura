@@ -1871,3 +1871,17 @@ def test_desktop_access_does_not_promote_oneshot_probe_to_live_readiness():
     assert "same_signed_bridge_one_shot_has_stronger_tcc_grants" not in bridge
     assert "bridge_transport\") == \"one_shot_subprocess\"" in guard
     assert "and not force_one_shot" in guard
+
+
+def test_gui_actor_connects_over_a_working_conversation_lane():
+    """A mind actively ANSWERING (conversation_working: ready=True,
+    conversation_busy=True, conversation_ready=False) must open the real
+    UI — re-deriving from conversation_ready alone pinned the desktop on
+    'Connecting to runtime' over a serving runtime (2026-07-12)."""
+    import inspect
+
+    from interface import gui_actor
+
+    src = inspect.getsource(gui_actor)
+    assert 'payload.get("ready") is True' in src
+    assert '"working"' in src and '"degraded"' in src

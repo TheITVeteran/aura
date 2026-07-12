@@ -319,8 +319,19 @@ def gui_actor_entry(port: int, token: str = None):
                             if isinstance(raw, (bytes, bytearray)):
                                 raw = raw.decode("utf-8", "replace")
                             payload = json.loads(raw) if raw else {}
+                            # Trust the boot contract's own user-facing verdict:
+                            # `ready` is True whenever the surface should
+                            # connect — including conversation_working, where
+                            # the lane is BUSY serving turns and
+                            # conversation_ready flips False. Re-deriving from
+                            # conversation_ready alone pinned the desktop on
+                            # "Connecting to runtime" over a mind that was
+                            # actively answering (2026-07-12, during a soak).
                             conversation_ready = bool(
                                 payload.get("conversation_ready") is True
+                                or payload.get("ready") is True
+                                or str(payload.get("status") or "")
+                                in {"ready", "working", "degraded"}
                             )
                         except (OSError, RuntimeError, TimeoutError, TypeError, ValueError):
                             conversation_ready = False
