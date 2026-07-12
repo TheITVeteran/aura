@@ -164,6 +164,7 @@ class WorldBlueprint:
                 half_extents=entity.get("half_extents", (0.4, 0.4, 0.4)),
                 restitution=float(entity.get("restitution", 0.4)),
                 friction=float(entity.get("friction", 0.5)),
+                rolling_resistance=float(entity.get("rolling_resistance", 0.0)),
             )
             world.add_body(body)
         return world
@@ -211,6 +212,7 @@ def generate_world(
                 "mass": float(np.round(4.19 * radius ** 3, 4)),
                 "position": [round(x, 4), round(y, 4), round(surface + radius + 0.5, 4)],
                 "restitution": 0.55 if kind == "ball" else 0.25,
+                "rolling_resistance": 0.02,
             })
         elif kind == "boulder":
             radius = float(np.round(rng.uniform(0.6, 1.4), 4))
@@ -222,6 +224,7 @@ def generate_world(
                 "mass": float(np.round(8.0 * radius ** 3, 4)),
                 "position": [round(x, 4), round(y, 4), round(surface + radius + 0.5, 4)],
                 "restitution": 0.15,
+                "rolling_resistance": 0.03,
             })
         else:  # crate / pillar → boxes
             half = 0.4 if kind == "crate" else 0.3

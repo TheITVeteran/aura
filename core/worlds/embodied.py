@@ -83,6 +83,9 @@ class EmbodiedAgent:
             body_id=agent_id, shape="sphere", position=position,
             velocity=(0.0, 0.0, 0.0), mass=AGENT_MASS, radius=AGENT_RADIUS,
             restitution=0.0, friction=0.9,
+            # A body, not a ball: the agent walks; it must not spin up
+            # and roll away under contact friction.
+            angular_locked=True,
         ))
         return cls(world, blueprint, agent_id)
 
