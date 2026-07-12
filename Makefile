@@ -370,14 +370,12 @@ diagnostic-bundle:
 	@echo "✅ Diagnostic bundle written to /tmp/aura_diagnostics/"
 
 backup:
-	@echo "💾 Creating state backup..."
-	@mkdir -p ~/.aura/backups
-	@BACKUP_NAME="aura_backup_$$(date +%Y%m%d_%H%M%S)"; \
-	tar czf ~/.aura/backups/$$BACKUP_NAME.tar.gz \
-		--exclude='*.pyc' --exclude='__pycache__' \
-		--exclude='data/training' --exclude='data/error_logs' \
-		data/ storage/ .aura_runtime/ .aura_snapshots/ 2>/dev/null || true; \
-	echo "✅ Backup written to ~/.aura/backups/$$BACKUP_NAME.tar.gz"
+	@echo "💾 Creating verified state backup..."
+	@$(PYTHON) tools/state_backup.py create
+
+backup-verify:
+	@echo "🔬 Restore-verifying newest backup archive..."
+	@$(PYTHON) tools/state_backup.py verify
 
 restore:
 	@echo "📂 Restoring from backup..."
