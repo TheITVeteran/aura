@@ -167,6 +167,7 @@ class AutonomousInitiativeLoop:
         self._last_reddit_check = 0.0
         self._recent_email_uids: dict[str, float] = {}
         self._recent_reddit_urls: dict[str, float] = {}
+        self._covenant_announced: dict[str, float] = {}
         self._lifecycle_lock = asyncio.Lock()
 
     async def start(self):
@@ -484,9 +485,41 @@ class AutonomousInitiativeLoop:
                 )
                 logger.debug("Initiative event listener recovered from event error: %s", e)
 
+    def _covenant_obligation_check(self) -> None:
+        """Surface due Ulysses-covenant obligations into the awareness feed.
+
+        REQUIRE contracts are promises with deadlines; letting one lapse is a
+        recorded breach against integrity, so due obligations get a periodic
+        pulse here (re-announced at most hourly per contract).  Maintenance
+        also runs, so expiry/lapse advance even without Will traffic.
+        """
+        try:
+            covenant = ServiceContainer.get("ulysses_covenant", default=None)
+            if covenant is None:
+                return
+            covenant.maintenance_tick()
+            now = time.time()
+            for contract in covenant.due_obligations():
+                last = self._covenant_announced.get(contract.contract_id, 0.0)
+                if now - last < 3600.0:
+                    continue
+                self._covenant_announced[contract.contract_id] = now
+                self._emit_feed(
+                    "Covenant Obligation Due",
+                    f"I owe this to myself: '{contract.title}' — {contract.rationale[:160]}",
+                    category="Covenant",
+                )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_initiative_degradation(
+                exc,
+                action="continued world watcher without covenant obligation check",
+                severity="warning",
+            )
+
     async def _world_watcher_loop(self):
         """Periodically checks RSS feeds for real-time reactivity."""
         while self.running:
+            self._covenant_obligation_check()
             try:
                 from core.utils.rss_feed import parse_feed_url
 

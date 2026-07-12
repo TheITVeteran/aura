@@ -4193,6 +4193,22 @@
       "scope": "<module>.MigrationOrchestrator._record"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/sovereignty/ulysses.py",
+      "scope": "<module>.UlyssesCovenant._ensure_root"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/sovereignty/ulysses.py",
+      "scope": "<module>.UlyssesCovenant._persist_event"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -13546,6 +13562,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "cc155d5bbb3de66e8768eb99c457d547887aca556ada9741344df706e6840062",
+  "inventory_sha256": "07b539c2cde74b7147c98ee85290937d2f2dc43f03bb83b523fc9685a038ad2e",
   "schema_version": 1
 }

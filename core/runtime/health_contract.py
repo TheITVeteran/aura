@@ -228,6 +228,14 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         liveness_check="is_alive",
     ),
     ServiceRequirement(
+        "Ulysses Covenant",
+        "ulysses_covenant",
+        ServiceTier.IMPORTANT,
+        "Volitional self-binding registry enforced at the Will. Without it, "
+        "precommitments against known failure modes stop holding.",
+        liveness_check="is_alive",
+    ),
+    ServiceRequirement(
         "Cognitive Engine",
         "cognitive_engine",
         ServiceTier.IMPORTANT,

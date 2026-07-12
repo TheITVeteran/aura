@@ -668,6 +668,18 @@ class UnifiedWill:
             reason = "permission_model_check_failed"
             constraints.append("permission_model_failure")
 
+        # ── 9d. ULYSSES COVENANT: bindings signed by a calmer self ──
+        outcome, reason, constraints = self._consult_ulysses_covenant(
+            outcome=outcome,
+            reason=reason,
+            constraints=constraints,
+            domain=domain,
+            source=source,
+            content=content,
+            context=context,
+            receipt_id=receipt_id,
+        )
+
         decision = WillDecision(
             receipt_id=receipt_id,
             outcome=outcome,
@@ -950,6 +962,66 @@ class UnifiedWill:
             record_degradation('will', e)
             logger.debug("Will: scar check failed (degraded): %s", e)
             return []
+
+    def _consult_ulysses_covenant(
+        self,
+        *,
+        outcome: WillOutcome,
+        reason: str,
+        constraints: list[str],
+        domain: ActionDomain,
+        source: str,
+        content: str,
+        context: dict[str, Any],
+        receipt_id: str,
+    ) -> tuple[WillOutcome, str, list[str]]:
+        """Section 9d: the Ulysses Covenant — self-bindings signed by a calmer
+        self (core/sovereignty/ulysses.py).
+
+        A matching REFRAIN escalates to REFUSE, DEFER to DEFER, ADVISORY to
+        CONSTRAIN; an outcome that is already at least as strict keeps its
+        original reason and only gains the covenant constraint tags.  Safety-
+        critical actions never reach this check (CRITICAL_PASS returns before
+        it), and the covenant refuses at sign time to bind stabilization,
+        reflection, or response domains.
+        """
+        if not self._is_consequential_domain(domain):
+            return outcome, reason, constraints
+        try:
+            covenant = ServiceContainer.get("ulysses_covenant", default=None)
+            if covenant is None:
+                return outcome, reason, constraints
+            verdict = covenant.evaluate(
+                domain=domain.value, source=source, content=content, context=context
+            )
+            if not verdict.matched:
+                return outcome, reason, constraints
+            constraints = list(constraints) + verdict.constraint_tags()
+            if verdict.action == "forbid":
+                if outcome != WillOutcome.REFUSE:
+                    outcome = WillOutcome.REFUSE
+                    reason = f"ulysses_covenant: bound by my calmer self — {verdict.reason}"
+            elif verdict.action == "defer":
+                if outcome in (WillOutcome.PROCEED, WillOutcome.CONSTRAIN):
+                    outcome = WillOutcome.DEFER
+                    reason = f"ulysses_covenant_cooling: {verdict.reason}"
+            elif verdict.action == "advise":
+                if outcome == WillOutcome.PROCEED:
+                    outcome = WillOutcome.CONSTRAIN
+                    reason = f"ulysses_advisory: {verdict.reason}"
+            if verdict.binding and outcome in (WillOutcome.REFUSE, WillOutcome.DEFER):
+                covenant.record_enforcement(
+                    verdict, receipt_id=receipt_id, domain=domain.value, source=source
+                )
+            return outcome, reason, constraints
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "will.ulysses_covenant",
+                exc,
+                severity="warning",
+                action="continued decision without covenant consultation",
+            )
+            return outcome, reason, constraints
 
     def _check_memory_relevance(
         self, content: str, context: dict[str, Any]

@@ -1081,6 +1081,22 @@ async def _boot_runtime_orchestrator(
         record_degradation("aura_main", exc)
         logger.debug("online_lora_governor registration skipped: %s", exc)
 
+    if _env_flag("AURA_ENABLE_ULYSSES_COVENANT", True):
+        try:
+            from core.sovereignty.ulysses import boot_ulysses_covenant
+
+            covenant = boot_ulysses_covenant()
+            status = covenant.status()
+            logger.info(
+                "⚓ Ulysses Covenant online — %d active bindings (%d hard), "
+                "integrity %.2f, chain length %d.",
+                status["active_contracts"], status["hard"],
+                status["integrity"], status["chain_length"],
+            )
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            record_degradation("aura_main", exc)
+            logger.warning("Ulysses Covenant boot failed: %s", exc)
+
     if not _foreground_only_runtime() and _env_flag("AURA_ENABLE_SENSORIMOTOR_GROUNDING", True):
         try:
             from core.brain.llm.sensorimotor_grounding import SensorimotorGroundingBridge
