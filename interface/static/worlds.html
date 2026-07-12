@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aura — Worlds</title>
+<style>
+  :root { --bg:#0b0e14; --panel:#131826cc; --ink:#e6e9f2; --dim:#8b93a7;
+          --accent:#7c9eff; --line:#232a3d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); overflow:hidden;
+         font:14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #scene { position:fixed; inset:0; }
+  #hud { position:fixed; top:12px; left:12px; background:var(--panel);
+         border:1px solid var(--line); border-radius:12px; padding:12px 14px;
+         backdrop-filter: blur(8px); max-width: 320px; }
+  select, button { background:#0d1120; color:var(--ink); border:1px solid var(--line);
+         border-radius:8px; padding:7px 10px; font-size:13px; margin:2px 4px 2px 0; }
+  button { cursor:pointer; } button:hover { border-color: var(--accent); }
+  #meta { color:var(--dim); font-size:12px; margin-top:6px; white-space:pre-line; }
+  #err { color:#f87171; font-size:12px; margin-top:4px; }
+</style>
+</head>
+<body>
+<div id="scene"></div>
+<div id="hud">
+  <div>
+    <select id="world-select"></select>
+    <button id="step-btn" title="Advance 120 physics ticks">Step 1s</button>
+    <button id="live-btn">Live: off</button>
+  </div>
+  <div id="meta">No world loaded.</div>
+  <div id="err"></div>
+</div>
+<script src="/static/vendor/three.min.js"></script>
+<script>
+(() => {
+  const err = (m) => { document.getElementById("err").textContent = m || ""; };
+  if (typeof THREE === "undefined") { err("three.js failed to load"); return; }
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0b0e14);
+  scene.fog = new THREE.Fog(0x0b0e14, 40, 140);
+  const camera = new THREE.PerspectiveCamera(55, innerWidth/innerHeight, 0.1, 500);
+  camera.position.set(18, -22, 14);
+  camera.up.set(0, 0, 1);           // the engine is Z-up
+  camera.lookAt(0, 0, 0);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  document.getElementById("scene").appendChild(renderer.domElement);
+  addEventListener("resize", () => {
+    camera.aspect = innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+
+  scene.add(new THREE.AmbientLight(0x8899bb, 0.7));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.9);
+  sun.position.set(30, -20, 50);
+  scene.add(sun);
+
+  // Simple drag-orbit around the origin.
+  let theta = -0.9, phi = 0.55, dist = 32, dragging = false, px = 0, py = 0;
+  const applyCam = () => {
+    camera.position.set(
+      dist * Math.cos(phi) * Math.cos(theta),
+      dist * Math.cos(phi) * Math.sin(theta),
+      dist * Math.sin(phi));
+    camera.lookAt(0, 0, 0);
+  };
+  applyCam();
+  const el = renderer.domElement;
+  const down = (x, y) => { dragging = true; px = x; py = y; };
+  const move = (x, y) => {
+    if (!dragging) return;
+    theta -= (x - px) * 0.008; phi = Math.min(1.5, Math.max(0.05, phi + (y - py) * 0.008));
+    px = x; py = y; applyCam();
+  };
+  el.addEventListener("mousedown", (e) => down(e.clientX, e.clientY));
+  el.addEventListener("mousemove", (e) => move(e.clientX, e.clientY));
+  addEventListener("mouseup", () => { dragging = false; });
+  el.addEventListener("touchstart", (e) => down(e.touches[0].clientX, e.touches[0].clientY));
+  el.addEventListener("touchmove", (e) => { move(e.touches[0].clientX, e.touches[0].clientY); e.preventDefault(); });
+  addEventListener("touchend", () => { dragging = false; });
+  el.addEventListener("wheel", (e) => { dist = Math.min(120, Math.max(6, dist + e.deltaY * 0.03)); applyCam(); });
+
+  const meshes = new Map();   // body_id -> mesh
+  const colorFor = (b) =>
+    b.is_agent ? 0x7c9eff : b.static ? 0x2c3550 : b.sleeping ? 0x5d6b8f : 0x4ade80;
+
+  function syncBodies(bodies) {
+    const seen = new Set();
+    for (const b of bodies) {
+      seen.add(b.body_id);
+      let mesh = meshes.get(b.body_id);
+      if (!mesh) {
+        let geo;
+        if (b.shape === "sphere") geo = new THREE.SphereGeometry(b.radius, 20, 14);
+        else if (b.shape === "box") geo = new THREE.BoxGeometry(
+          b.half_extents[0]*2, b.half_extents[1]*2, b.half_extents[2]*2);
+        else geo = new THREE.PlaneGeometry(300, 300);
+        const mat = new THREE.MeshLambertMaterial({ color: colorFor(b) });
+        mesh = new THREE.Mesh(geo, mat);
+        if (b.shape === "plane") mesh.position.z = b.plane_height;
+        scene.add(mesh);
+        meshes.set(b.body_id, mesh);
+      }
+      if (b.shape !== "plane") {
+        mesh.position.set(b.position[0], b.position[1], b.position[2]);
+        mesh.quaternion.set(b.orientation[1], b.orientation[2], b.orientation[3], b.orientation[0]);
+      }
+      mesh.material.color.setHex(colorFor(b));
+    }
+    for (const [id, mesh] of meshes) {
+      if (!seen.has(id)) { scene.remove(mesh); meshes.delete(id); }
+    }
+  }
+
+  const meta = document.getElementById("meta");
+  const select = document.getElementById("world-select");
+  let current = null, live = false, liveTimer = null;
+
+  async function api(path, opts) {
+    const res = await fetch(path, opts);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.detail || ("HTTP " + res.status));
+    return body;
+  }
+
+  async function refreshList() {
+    try {
+      const body = await api("/api/worlds");
+      select.innerHTML = "";
+      for (const w of body.worlds) {
+        const opt = document.createElement("option");
+        opt.value = w.world_id;
+        opt.textContent = `${w.world_id} (tick ${w.tick ?? "?"})`;
+        select.appendChild(opt);
+      }
+      if (!current && body.worlds.length) { current = body.worlds[0].world_id; }
+      if (current) select.value = current;
+      err("");
+    } catch (e) { err(e.message); }
+  }
+
+  async function refreshWorld() {
+    if (!current) return;
+    try {
+      const body = await api(`/api/worlds/${current}/render`);
+      syncBodies(body.bodies);
+      const dynamic = body.bodies.filter((b) => !b.static).length;
+      meta.textContent =
+        `${body.name} — theme ${body.theme}, tick ${body.tick}\n` +
+        `${body.bodies.length} bodies (${dynamic} dynamic)\n` +
+        `digest ${body.state_digest.slice(0, 16)}…`;
+      err("");
+    } catch (e) { err(e.message); }
+  }
+
+  select.addEventListener("change", () => {
+    current = select.value;
+    for (const [, mesh] of meshes) scene.remove(mesh);
+    meshes.clear();
+    refreshWorld();
+  });
+  document.getElementById("step-btn").addEventListener("click", async () => {
+    if (!current) return;
+    try {
+      await api(`/api/worlds/${current}/step`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Aura-Desktop-Request": "1" },
+        body: JSON.stringify({ ticks: 120 }),
+      });
+      await refreshWorld(); await refreshList();
+    } catch (e) { err(e.message); }
+  });
+  document.getElementById("live-btn").addEventListener("click", (e) => {
+    live = !live;
+    e.target.textContent = "Live: " + (live ? "on" : "off");
+    if (live) liveTimer = setInterval(refreshWorld, 700);
+    else clearInterval(liveTimer);
+  });
+
+  (function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); })();
+  refreshList().then(refreshWorld);
+})();
+</script>
+</body>
+</html>

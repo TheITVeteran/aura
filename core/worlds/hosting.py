@@ -372,6 +372,36 @@ class WorldHost:
             "largest_divergences": deltas[:max(1, top)],
         }
 
+    def render_state(self, world_id: str) -> dict[str, Any]:
+        """Complete geometric state for a renderer: every body with its
+        shape, pose, and dimensions. Read-only."""
+        world = self.load_world(world_id)
+        bodies = []
+        for key in sorted(world.physics.bodies):
+            body = world.physics.bodies[key]
+            bodies.append({
+                "body_id": key,
+                "shape": body.shape,
+                "position": [round(float(x), 5) for x in body.position],
+                "orientation": [round(float(x), 6) for x in body.orientation],
+                "radius": body.radius,
+                "half_extents": [round(float(x), 5) for x in body.half_extents],
+                "plane_height": body.plane_height,
+                "static": body.is_static,
+                "sleeping": body.sleeping,
+                "is_agent": key in world.agents,
+            })
+        return {
+            "world_id": world.world_id,
+            "name": world.blueprint.name,
+            "theme": world.blueprint.theme,
+            "tick": world.physics.tick,
+            "size": world.blueprint.size,
+            "spawn_point": world.blueprint.spawn_point,
+            "state_digest": world.physics.state_digest(),
+            "bodies": bodies,
+        }
+
     def inspect(self, world_id: str, *, recent_events: int = 10) -> dict[str, Any]:
         world = self.load_world(world_id)
         return {

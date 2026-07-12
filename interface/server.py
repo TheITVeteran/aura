@@ -674,6 +674,7 @@ from interface import memory_ui
 from interface.routes import chat as chat_routes
 from interface.routes import dashboard as dashboard_routes
 from interface.routes import devices as devices_routes
+from interface.routes import worlds as worlds_routes
 from interface.routes import inner_state as inner_state_routes
 from interface.routes import interaction_signals as interaction_signal_routes
 from interface.routes import memory as memory_routes
@@ -692,6 +693,7 @@ app.include_router(system_health_router, prefix="/api/health", tags=["health"])
 app.include_router(memory_ui.router, prefix="/memory", tags=["memory"])
 app.include_router(chat_routes.router, prefix="/api", tags=["chat"])
 app.include_router(devices_routes.router, prefix="/api", tags=["devices"])
+app.include_router(worlds_routes.router, prefix="/api", tags=["worlds"])
 app.include_router(system_routes.router, prefix="/api", tags=["system"])
 app.include_router(subsystem_routes.router, prefix="/api", tags=["subsystems"])
 app.include_router(memory_routes.router, prefix="/api", tags=["memory-api"])
@@ -860,6 +862,22 @@ async def serve_ui(request: Request):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="UI not built")
     return FileResponse(str(ui), headers=NO_CACHE_HEADERS)
+
+
+@app.get("/worlds", include_in_schema=False)
+async def serve_worlds(request: Request):
+    """WebGL viewer for Aura's persistent physics worlds. Read-only for
+    paired devices; stepping is owner-only at the API layer."""
+    _require_internal(request)
+    host = request.client.host if request.client else "unknown"
+    if host not in ("127.0.0.1", "::1", "localhost") and device_for_request(request) is None:
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse(url="/pair", status_code=307)
+    p = STATIC_DIR / "worlds.html"
+    if not p.exists():
+        return ORJSONResponse({"error": "worlds viewer not found"}, status_code=404)
+    return FileResponse(str(p), headers=NO_CACHE_HEADERS)
 
 
 @app.get("/pair", include_in_schema=False)

@@ -71,6 +71,12 @@ DEVICE_ALLOWED_PATH_PREFIXES = (
     "/api/sessions",
     "/api/ui/bootstrap",
 )
+# Read-only surfaces for devices: GET/HEAD only. A paired phone may
+# watch Aura's worlds; it may not rewrite them.
+DEVICE_ALLOWED_READONLY_PREFIXES = (
+    "/worlds",
+    "/api/worlds",
+)
 
 _DEVICE_LOOKUP_RECOVERABLE_ERRORS = (
     ImportError,
@@ -283,6 +289,10 @@ def _device_authorizes_request(request: Request, path: str) -> bool:
     if device is None:
         return False
     if device_path_allowed(path):
+        return True
+    if path.startswith(DEVICE_ALLOWED_READONLY_PREFIXES) and _request_method(
+        request
+    ) in {"GET", "HEAD"}:
         return True
     logger.warning(
         "Paired device %s attempted out-of-scope path %s", device.device_id, path
