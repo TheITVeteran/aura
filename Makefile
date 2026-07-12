@@ -343,6 +343,21 @@ preflight:
 	@echo "🛫 Running runtime-environment preflight..."
 	@$(PYTHON) tools/runtime_preflight.py
 
+# Dependency-vulnerability audit. Waivers are EXPLICIT and documented in
+# docs/DEPENDENCY_AUDIT.md — never silently ignore a finding.
+#   CVE-2025-3000: torch.jit.script memory corruption — function never
+#   called anywhere in this codebase (verified by grep gate below), local
+#   attack vector only, no fixed torch release exists yet.
+AUDIT_WAIVERS := --ignore-vuln CVE-2025-3000
+audit-deps:
+	@echo "🔎 Auditing installed dependencies against known vulnerabilities..."
+	@if grep -rn "torch\.jit\.script" core/ tools/ aura_main.py --include="*.py" 2>/dev/null; then \
+		echo "❌ torch.jit.script is now in use — the CVE-2025-3000 waiver no longer holds; remove it."; \
+		exit 1; \
+	fi
+	@$(PYTHON) -m pip_audit --skip-editable --progress-spinner off $(AUDIT_WAIVERS)
+	@echo "✅ Dependency audit clean (waivers: see docs/DEPENDENCY_AUDIT.md)"
+
 diagnostic-bundle:
 	@echo "📦 Creating diagnostic bundle..."
 	@mkdir -p /tmp/aura_diagnostics
