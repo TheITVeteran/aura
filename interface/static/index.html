@@ -96,6 +96,8 @@
             window.__auraLegacyShellReady = false;
 
             function report(reason, detail) {
+                var localHost = ["localhost", "127.0.0.1", "::1"].indexOf(location.hostname) >= 0;
+                if (!localHost && window.__auraControlSurfaceAllowed !== true) return;
                 try {
                     fetch("/api/ui/shell-error", {
                         method: "POST",

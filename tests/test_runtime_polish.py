@@ -710,10 +710,11 @@ def test_desktop_shell_does_not_treat_socket_liveness_as_runtime_health():
     system_routes = (PROJECT_ROOT / "interface" / "routes" / "system.py").read_text(encoding="utf-8")
     websocket_manager = (PROJECT_ROOT / "interface" / "websocket_manager.py").read_text(encoding="utf-8")
 
-    assert "runtime_heartbeat_payload(\"pong\")" in server
+    assert "ws_manager.heartbeat_payload(ws, \"pong\")" in server
     assert "runtime_heartbeat_payload(\"heartbeat\")" in system_routes
-    assert "runtime_heartbeat_payload(\"heartbeat\")" in websocket_manager
-    assert "runtime_heartbeat_payload(\"ping\")" in websocket_manager
+    assert "self.heartbeat_payload(websocket, \"heartbeat\")" in websocket_manager
+    assert "self.heartbeat_payload(websocket, \"ping\")" in websocket_manager
+    assert "conversation_heartbeat_payload" in websocket_manager
     assert "payloadRuntimeHealthy(payload)" in aura_js
     assert "payload.transport_only === true" in aura_js
     assert "payload.runtime_probe_healthy === false" in aura_js
@@ -1289,6 +1290,56 @@ async def test_websocket_manager_replaces_lowest_priority_when_full():
     second = await queue.get()
 
     assert [first[0], second[0]] == [0, 0]
+
+
+@pytest.mark.asyncio
+async def test_websocket_manager_never_broadcasts_global_events_to_paired_scope():
+    manager = WebSocketManager()
+    owner = object()
+    paired = object()
+    owner_queue = asyncio.PriorityQueue(maxsize=2)
+    paired_queue = asyncio.PriorityQueue(maxsize=2)
+    manager.active_connections = {owner: owner_queue, paired: paired_queue}
+    manager._connection_scopes = {owner: "owner", paired: "conversation"}
+
+    await manager.broadcast({"type": "log", "message": "owner-private runtime event"})
+
+    assert owner_queue.qsize() == 1
+    assert paired_queue.qsize() == 0
+
+
+def test_websocket_manager_sanitizes_paired_heartbeat(monkeypatch):
+    manager = WebSocketManager()
+    paired = object()
+    manager._connection_scopes[paired] = "conversation"
+    monkeypatch.setattr(
+        websocket_module,
+        "runtime_heartbeat_payload",
+        lambda kind: {
+            "type": kind,
+            "timestamp": 1.0,
+            "status": "healthy",
+            "conversation_ready": True,
+            "conversation_busy": False,
+            "conversation_lane": {
+                "state": "ready",
+                "conversation_ready": True,
+                "model_path": "/private/model",
+            },
+            "required_probes": {"private": True},
+            "blockers": ["private_detail"],
+        },
+    )
+
+    payload = manager.heartbeat_payload(paired, "ping")
+
+    assert payload["conversation_lane"] == {
+        "state": "ready",
+        "conversation_ready": True,
+    }
+    assert "required_probes" not in payload
+    assert "blockers" not in payload
+    assert "model_path" not in payload["conversation_lane"]
 
 
 @pytest.mark.asyncio

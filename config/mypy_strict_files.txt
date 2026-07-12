@@ -50,3 +50,8 @@ core/worlds/generation.py
 core/worlds/embodied.py
 core/worlds/hosting.py
 core/skills/world_forge.py
+# Runtime incident and paired-device boundary (2026-07-12)
+core/orchestrator/mixins/tool_execution.py
+core/self_modification/error_intelligence.py
+interface/auth.py
+interface/websocket_manager.py

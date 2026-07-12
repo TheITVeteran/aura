@@ -270,6 +270,14 @@ button, textarea {
   gap: 16px;
 }
 
+.shell.conversation-only .workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.shell.conversation-only .chat-panel {
+  min-height: calc(100vh - 128px);
+}
+
 .panel {
   border-radius: 28px;
   border: 1px solid var(--border);

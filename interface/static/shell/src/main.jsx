@@ -15,6 +15,8 @@ class ShellErrorBoundary extends React.Component {
 
   componentDidCatch(error, info) {
     console.error("Aura shell render failure", error, info);
+    const localHost = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+    if (!localHost && window.__auraControlSurfaceAllowed !== true) return;
     try {
       fetch("/api/ui/shell-error", {
         method: "POST",

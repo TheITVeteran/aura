@@ -333,6 +333,23 @@ class ToolExecutionMixin:
         governance_context.setdefault("origin", _origin)
         governance_context.setdefault("source", _origin)
         governance_context.setdefault("objective", str(getattr(self, "_current_objective", "") or ""))
+        if bool(governance_context.get("conversation_only_surface")) or str(
+            governance_context.get("tool_execution_policy") or ""
+        ).strip().lower() == "deny":
+            result = {
+                "ok": False,
+                "status": "conversation_only_surface",
+                "error": (
+                    "This authenticated surface is scoped to conversation and "
+                    "cannot execute tools or external actions."
+                ),
+            }
+            _record_coding_tool_event(
+                result,
+                success=False,
+                error="conversation_only_surface",
+            )
+            return result
         _safe_autonomous_web = self._safe_autonomous_web_research_tool(
             tool_name,
             args,

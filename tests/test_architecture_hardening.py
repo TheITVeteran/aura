@@ -10,6 +10,12 @@ import pytest
 
 from core.agency_core import AgencyCore, AgencyState
 from core.autonomy.autonomous_initiative_loop import AutonomousInitiativeLoop
+from core.autonomy.proactive_communication import (
+    EmotionalState,
+    InterruptionUrgency,
+    ProactiveCommunicationManager,
+    ProactiveMessage,
+)
 from core.brain.identity import IdentityService
 from core.capability_engine import CapabilityEngine, SkillMetadata
 from core.consciousness.executive_closure import ExecutiveClosureEngine
@@ -19,6 +25,7 @@ from core.consciousness.substrate_authority import (
     SubstrateAuthority,
 )
 from core.container import ServiceContainer
+from core.conversation.terminal_chat import TerminalFallbackChat
 from core.executive.executive_core import DecisionOutcome, DecisionRecord, ExecutiveCore
 from core.executive.executive_ledger import ExecutiveLedger
 from core.health.degraded_events import clear_degraded_events, get_recent_degraded_events
@@ -29,16 +36,9 @@ from core.memory import db_writer_queue as dbw_module
 from core.memory.knowledge_graph import PersistentKnowledgeGraph
 from core.memory.memory_facade import MemoryFacade
 from core.motivation.goal_hierarchy import GoalHierarchy
-from core.autonomy.proactive_communication import (
-    EmotionalState,
-    InterruptionUrgency,
-    ProactiveCommunicationManager,
-    ProactiveMessage,
-)
 from core.senses.continuous_perception import ContinuousPerceptionEngine
 from core.social.social_imagination import SocialImagination
 from core.state.aura_state import AuraState
-from core.conversation.terminal_chat import TerminalFallbackChat
 from core.utils import output_gate as output_gate_module
 from core.utils.output_gate import AutonomousOutputGate
 from core.world_model.acg import ActionConsequenceGraph
@@ -1363,6 +1363,35 @@ async def test_orchestrator_execute_tool_derives_foreground_scoped_authority(
     assert execution_context["scoped_authority"] == (
         "foreground_user_requested:chat.required_skill:web_search"
     )
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_execute_tool_denies_conversation_only_surface(orchestrator):
+    orchestrator.router = SimpleNamespace(
+        skills={"web_search": object()},
+        execute=_AsyncCallRecorder(return_value={"ok": True, "result": "should not run"}),
+    )
+
+    result = await orchestrator.execute_tool(
+        "web_search",
+        {"query": "private owner data"},
+        origin="desktop-ui",
+        payload_context={
+            "route": "chat.paired_device",
+            "conversation_only_surface": True,
+            "tool_execution_policy": "deny",
+        },
+    )
+
+    assert result == {
+        "ok": False,
+        "status": "conversation_only_surface",
+        "error": (
+            "This authenticated surface is scoped to conversation and "
+            "cannot execute tools or external actions."
+        ),
+    }
+    assert orchestrator.router.execute.await_count == 0
 
 
 @pytest.mark.asyncio

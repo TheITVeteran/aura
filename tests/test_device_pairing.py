@@ -150,13 +150,22 @@ async def paired_token(registry, monkeypatch):
 
 
 async def test_device_token_allows_conversation_surface(paired_token):
-    for path in ("/api/chat", "/static/aura.js", "/api/ui/bootstrap", "/api/sessions"):
-        auth.validate_runtime_security_request(_remote_request(path, paired_token))
+    operations = (
+        ("/api/chat", "POST"),
+        ("/static/aura.js", "GET"),
+        ("/api/ui/bootstrap", "GET"),
+        ("/api/sessions", "GET"),
+    )
+    for path, method in operations:
+        auth.validate_runtime_security_request(
+            _remote_request(path, paired_token, method=method)
+        )
 
 
 async def test_device_token_denied_on_control_surface(paired_token):
     for path in ("/api/skill/execute", "/api/reboot", "/api/system/hot-reload",
-                 "/api/privacy/export", "/api/devices"):
+                 "/api/privacy/export", "/api/devices", "/api/performance/frame",
+                 "/api/chat/regenerate", "/api/sessions"):
         with pytest.raises(HTTPException) as err:
             auth.validate_runtime_security_request(
                 _remote_request(path, paired_token, method="POST")
@@ -183,7 +192,7 @@ async def test_revoked_device_token_unauthorized(registry, monkeypatch, paired_t
 
 
 async def test_device_cookie_authenticates(paired_token):
-    request = _remote_request("/api/chat")
+    request = _remote_request("/api/chat", method="POST")
     request.cookies = {auth.DEVICE_SESSION_COOKIE_NAME: paired_token}
     auth.validate_runtime_security_request(request)
 
@@ -223,11 +232,134 @@ async def test_foreign_origin_still_treated_as_csrf(paired_token):
 
 
 def test_device_path_allowlist_is_deny_by_default():
-    assert auth.device_path_allowed("/api/chat")
-    assert auth.device_path_allowed("/static/aura.css")
-    assert auth.device_path_allowed("/ws")
-    assert not auth.device_path_allowed("/api/skill/execute")
-    assert not auth.device_path_allowed("/api/devices")
-    assert not auth.device_path_allowed("/memory")
-    assert not auth.device_path_allowed("/rpc/anything")
-    assert not auth.device_path_allowed("/api/settings")
+    assert auth.device_path_allowed("/api/chat", "POST")
+    assert not auth.device_path_allowed("/api/chat", "GET")
+    assert not auth.device_path_allowed("/api/chat/regenerate", "POST")
+    assert auth.device_path_allowed("/static/aura.css", "GET")
+    assert not auth.device_path_allowed("/static/aura.css", "POST")
+    assert auth.device_path_allowed("/ws", "GET")
+    assert auth.device_path_allowed("/api/worlds/demo/render", "HEAD")
+    assert not auth.device_path_allowed("/api/worlds/demo/step", "POST")
+    assert not auth.device_path_allowed("/api/skill/execute", "POST")
+    assert not auth.device_path_allowed("/api/devices", "GET")
+    assert not auth.device_path_allowed("/memory", "GET")
+    assert not auth.device_path_allowed("/rpc/anything", "GET")
+    assert not auth.device_path_allowed("/api/settings", "GET")
+
+
+async def test_access_profile_advertises_paired_capability_boundary(paired_token):
+    profile = auth.request_access_profile(
+        _remote_request("/api/ui/bootstrap", paired_token)
+    )
+
+    assert profile["surface"] == "paired_device"
+    assert profile["conversation_only"] is True
+    assert profile["capabilities"]["chat"] is True
+    assert profile["capabilities"]["world_read"] is True
+    assert profile["capabilities"]["performance_telemetry"] is False
+    assert profile["capabilities"]["desktop_control"] is False
+
+
+async def test_repeated_device_scope_denials_are_rate_limited(
+    paired_token, caplog
+):
+    auth._DEVICE_DENIAL_LOG_STATE.clear()
+    request = _remote_request(
+        "/api/performance/frame",
+        paired_token,
+        method="POST",
+    )
+
+    for _ in range(3):
+        with pytest.raises(HTTPException) as err:
+            auth.validate_runtime_security_request(request)
+        assert err.value.status_code == 403
+
+    warnings = [
+        record
+        for record in caplog.records
+        if "out-of-scope operation POST /api/performance/frame" in record.message
+    ]
+    assert len(warnings) == 1
+
+
+async def test_paired_cognitive_turn_refuses_desktop_action_before_model_use():
+    from interface.routes import chat
+
+    trace = {}
+    result = await chat._run_cognitive_engine_chat_turn(
+        "Open Notes and write the owner's private memory there",
+        visible_user_message="Open Notes and write the owner's private memory there",
+        require_engine=True,
+        conversation_only_surface=True,
+        turn_trace=trace,
+    )
+
+    assert "require the owner surface" in result
+    assert trace["response_path"] == "paired_device_action_scope_denied"
+    assert trace["bounded_contract_used"] is True
+
+
+async def test_paired_cognitive_turn_scopes_owner_diagnostics_before_model_use():
+    from interface.routes import chat
+
+    trace = {}
+    result = await chat._run_cognitive_engine_chat_turn(
+        "Which exact model is loaded and what internal services are failing?",
+        require_engine=True,
+        conversation_only_surface=True,
+        lane={
+            "state": "ready",
+            "conversation_ready": True,
+            "model_path": "/private/owner/model",
+            "last_failure_reason": "private failure detail",
+        },
+        turn_trace=trace,
+    )
+
+    assert "owner surface" in result
+    assert "/private/owner/model" not in result
+    assert trace["response_path"] == "paired_device_runtime_scope"
+
+
+def test_paired_chat_wire_projection_is_allowlist_based():
+    from interface.routes import chat
+
+    projected = chat._paired_chat_response_payload(
+        {
+            "response": "hello",
+            "status": "ok",
+            "thought": "private chain",
+            "live_turn_contract": {"required_subsystems": {"vault": False}},
+            "memory_pressure": {"available_gb": 12.5},
+            "conversation_lane": {
+                "state": "ready",
+                "conversation_ready": True,
+                "model_path": "/private/owner/model",
+                "last_failure_reason": "private failure detail",
+            },
+        }
+    )
+
+    assert projected == {
+        "response": "hello",
+        "status": "ok",
+        "conversation_lane": {
+            "state": "ready",
+            "conversation_ready": True,
+        },
+    }
+
+
+def test_chat_idempotency_keys_are_namespaced_by_authenticated_session():
+    from interface.routes import chat
+
+    owner = chat._chat_idempotency_cache_key("owner", "same-wire-key")
+    phone = chat._chat_idempotency_cache_key(
+        "paired-device:phone",
+        "same-wire-key",
+    )
+
+    assert owner != phone
+    assert owner == ("owner", "same-wire-key")
+    assert phone == ("paired-device:phone", "same-wire-key")

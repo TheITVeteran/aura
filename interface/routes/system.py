@@ -42,7 +42,12 @@ from core.runtime.shutdown_coordinator import (
 from core.runtime.version import VERSION, version_string
 from core.scheduler import scheduler
 from core.tools.runtime_tools import get_runtime_state
-from interface.auth import _require_internal, _restore_owner_session_from_request
+from interface.auth import (
+    _require_internal,
+    _restore_owner_session_from_request,
+    paired_device_session_id,
+    request_access_profile,
+)
 from interface.websocket_manager import broadcast_bus, runtime_heartbeat_payload, ws_manager
 
 _SYSTEM_RECOVERABLE_ERRORS = (
@@ -3290,6 +3295,8 @@ async def api_tools_catalog():
 async def api_ui_bootstrap(request: Request = None):
     _mark_runtime_service_progress("api.ui.bootstrap")
     _restore_owner_session_from_request(request)
+    access_profile = request_access_profile(request)
+    conversation_only = bool(access_profile.get("conversation_only", True))
     orch = ServiceContainer.get("orchestrator", default=None)
     rt = _get_runtime_state_safe()
     constitutional_status = {}
@@ -3355,6 +3362,14 @@ async def api_ui_bootstrap(request: Request = None):
     except _SYSTEM_RECOVERABLE_ERRORS as exc:
         record_degradation("system", exc)
         logger.debug("Bootstrap conversation log snapshot failed: %s", exc)
+    if conversation_only:
+        session_id = paired_device_session_id(request)
+        recent_conversation = [
+            entry
+            for entry in recent_conversation
+            if session_id
+            and str(entry.get("session_id") or "") == session_id
+        ]
 
     static_dir = config.paths.project_root / "interface" / "static"
     shell_dist_dir = static_dir / "shell" / "dist"
@@ -3409,6 +3424,7 @@ async def api_ui_bootstrap(request: Request = None):
             "websocket_clients": ws_manager.count(),
             "is_gui_proxy": os.environ.get("AURA_GUI_PROXY") == "1",
         },
+        "access": access_profile,
         "constitutional": constitutional_status,
         "executive": executive_status,
         "state": state_summary,
@@ -3448,6 +3464,63 @@ async def api_ui_bootstrap(request: Request = None):
         },
         "timestamp": datetime.now(tz=UTC).isoformat(),
     }
+    if conversation_only:
+        lane = payload["conversation"].get("lane") or {}
+        public_lane = {
+            key: lane.get(key)
+            for key in (
+                "state",
+                "conversation_ready",
+                "active_generation",
+                "active_generations",
+            )
+            if key in lane
+        }
+        boot = payload["telemetry"].get("boot") or {}
+        public_boot = {
+            key: boot.get(key)
+            for key in (
+                "ready",
+                "status",
+                "system_ready",
+                "conversation_ready",
+                "progress",
+            )
+            if key in boot
+        }
+        public_flags = [
+            flag
+            for flag in payload["ui"].get("status_flags", [])
+            if flag == "booting"
+        ]
+        payload.update(
+            {
+                "session": {
+                    "connected": bool(payload["session"].get("connected", False)),
+                    "surface": "paired_device",
+                },
+                "constitutional": {},
+                "executive": {},
+                "state": {},
+                "commitments": {},
+                "tools": [],
+                "capabilities": {"conversation": True, "world_read": True},
+                "desktop_access": {
+                    "available": False,
+                    "overall_status": "surface_not_authorized",
+                },
+                "voice": {"available": False, "state": "surface_not_authorized"},
+                "interaction_signals": {},
+                "telemetry": {"runtime": {}, "boot": public_boot},
+                "diagnostics": {},
+                "ui": {"status_flags": public_flags},
+            }
+        )
+        payload["conversation"] = {
+            "recent": recent_conversation,
+            "count": len(recent_conversation),
+            "lane": public_lane,
+        }
     return JSONResponse(_json_safe(payload))
 
 

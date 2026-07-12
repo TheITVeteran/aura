@@ -20,6 +20,7 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,8 @@ from interface.auth import (
     _encode_owner_session_cookie,
     _require_internal,
     _restore_owner_session_from_request,
+    paired_device_session_id,
+    request_access_profile,
 )
 from interface.helpers import _notify_user_spoke
 
@@ -74,6 +77,115 @@ class ChatRequest(BaseModel):
 class CheatCodeRequest(BaseModel):
     code: str
     silent: bool = False
+
+
+_PAIRED_CHAT_RESPONSE_KEYS = frozenset(
+    {
+        "error",
+        "message",
+        "response",
+        "response_confidence",
+        "status",
+    }
+)
+_PAIRED_CONVERSATION_LANE_KEYS = frozenset(
+    {
+        "active_generation",
+        "active_generations",
+        "conversation_ready",
+        "state",
+    }
+)
+
+
+def _paired_conversation_lane_payload(value: Any) -> dict[str, Any]:
+    lane = value if isinstance(value, dict) else {}
+    return {
+        key: lane.get(key)
+        for key in _PAIRED_CONVERSATION_LANE_KEYS
+        if key in lane
+    }
+
+
+def _paired_chat_response_payload(value: Any) -> dict[str, Any]:
+    """Project every paired chat response onto its negotiated wire contract."""
+
+    payload = value if isinstance(value, dict) else {}
+    projected = {
+        key: payload.get(key)
+        for key in _PAIRED_CHAT_RESPONSE_KEYS
+        if key in payload
+    }
+    if "conversation_lane" in payload:
+        projected["conversation_lane"] = _paired_conversation_lane_payload(
+            payload.get("conversation_lane")
+        )
+    if not str(projected.get("response") or "").strip():
+        message = str(projected.get("message") or "").strip()
+        projected["response"] = message or "The paired conversation request could not be completed."
+    return projected
+
+
+def _chat_idempotency_cache_key(
+    session_id: str,
+    raw_key: str | None,
+) -> tuple[str, str] | None:
+    if not raw_key:
+        return None
+    return str(session_id or "default"), str(raw_key)
+
+
+def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[..., Any]:
+    """Fail closed on response metadata even when the route returns early."""
+
+    @wraps(handler)
+    async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        request = kwargs.get("request")
+        if request is None and len(args) > 1:
+            request = args[1]
+        conversation_only = bool(
+            request_access_profile(request).get("conversation_only", True)
+        )
+        try:
+            response = await handler(*args, **kwargs)
+        except HTTPException as exc:
+            if not conversation_only:
+                raise
+            response = JSONResponse(
+                {
+                    "response": "The paired conversation request was rejected.",
+                    "status": "paired_request_rejected",
+                    "response_confidence": "failed",
+                },
+                status_code=exc.status_code,
+            )
+        if not conversation_only:
+            return response
+        if not isinstance(response, JSONResponse):
+            return JSONResponse(
+                {
+                    "response": "The paired conversation response used an unsupported format.",
+                    "status": "paired_response_format_rejected",
+                    "response_confidence": "failed",
+                },
+                status_code=500,
+            )
+        try:
+            payload = json.loads(bytes(response.body))
+            projected = _paired_chat_response_payload(payload)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            record_degradation("chat.paired_response_projection", exc)
+            projected = {
+                "response": "The paired conversation response could not be projected safely.",
+                "status": "paired_response_projection_failed",
+                "response_confidence": "failed",
+            }
+            response.status_code = 500
+        response.body = response.render(projected)
+        response.headers["content-length"] = str(len(response.body))
+        return response
+
+    return _wrapped
 
 
 # Max chat message size to prevent memory exhaustion
@@ -3609,7 +3721,8 @@ def _inner_cognitive_cycle_timeout(
 
 
 _RUNTIME_FACT_STATUS_RE = re.compile(
-    r"\b(?:active model|model lane|foreground lane|conversation lane|"
+    r"\b(?:active model|loaded model|model (?:is )?loaded|model lane|"
+    r"foreground lane|conversation lane|"
     r"current lane|which lane|what lane|live desktop chat|live chat path|desktop chat path|"
     r"mind/cognition path|cognition path|cognitive path|desktop route|live desktop route|route probe|"
     r"short status|still coherent|same thread|able to continue|"
@@ -4118,6 +4231,7 @@ def _build_live_mind_context_payload(
     recent_conversation_context: str = "",
     recent_context_needed: bool = False,
     require_engine: bool = False,
+    conversation_only_surface: bool = False,
 ) -> dict[str, Any]:
     """Compact turn-level connective tissue for Aura's live desktop voice.
 
@@ -4217,6 +4331,47 @@ def _build_live_mind_context_payload(
     except _CHAT_RECOVERABLE_ERRORS as exc:
         record_degradation("chat", exc)
         logger.debug("Live mind context timescale bridge unavailable: %s", exc)
+
+    if conversation_only_surface:
+        # Full-mind readiness still gates the turn, but owner diagnostics,
+        # ambient voice transcripts, and raw internal snapshots are not prompt
+        # material on a least-privilege paired surface.
+        return {
+            "schema": "aura.live_mind_context.v1",
+            "surface": "paired_device",
+            "required_for_live_desktop": bool(require_engine),
+            "must_answer_from_full_mind_path": bool(require_engine),
+            "user_message": _bounded_text(user_message, 1000),
+            "lane": _paired_conversation_lane_payload(lane_snapshot),
+            "required_subsystems": required,
+            "required_subsystems_ok": all(required.values()),
+            "recent_context_needed": bool(recent_context_needed),
+            "recent_conversation_context": _bounded_text(
+                recent_conversation_context,
+                2200,
+            ),
+            "voice": {
+                key: voice_snapshot.get(key)
+                for key in ("mood", "dominant_action")
+                if voice_snapshot.get(key)
+            },
+            "voice_perception": {},
+            "substrate": {},
+            "mind_snapshot": {},
+            "mind_snapshot_quality": {
+                "present": bool(mind_snapshot_quality.get("present")),
+                "ready": bool(mind_snapshot_quality.get("ready")),
+            },
+            "derived_runtime_context": {},
+            "timescale_reconciliation": {},
+            "automatic_self_knowing": {},
+            "governance": {
+                "tool_governance_available": False,
+                "tool_execution_policy": "deny",
+                "legacy_fallback_allowed": False,
+                "bounded_repairs_are_degraded": True,
+            },
+        }
 
     return {
         "schema": "aura.live_mind_context.v1",
@@ -4803,6 +4958,48 @@ def _route_desktop_cognitive_failure_to_resilience(
     return outcome
 
 
+def _paired_device_information_scope_reply(
+    user_message: str,
+    *,
+    lane: dict[str, Any] | None = None,
+) -> tuple[str, str] | None:
+    """Answer owner-only introspection requests from the negotiated surface."""
+
+    if _is_explicit_capability_inventory_request(user_message) or _is_capability_request(
+        user_message
+    ):
+        return (
+            "On this paired device I can converse with you and show read-only worlds. "
+            "Desktop, file, tool, voice, learning-status, and diagnostic access stay on "
+            "the owner surface.",
+            "paired_device_capability_scope",
+        )
+    if _is_runtime_fact_status_request(user_message):
+        public_lane = _paired_conversation_lane_payload(lane)
+        ready = bool(public_lane.get("conversation_ready"))
+        active = bool(
+            public_lane.get("active_generation")
+            or public_lane.get("active_generations")
+        )
+        state = "ready" if ready else "busy" if active else "preparing"
+        return (
+            f"The paired conversation lane is {state}. Detailed runtime, model, and "
+            "diagnostic state remains available only on the owner surface.",
+            "paired_device_runtime_scope",
+        )
+    if (
+        _is_private_cognitive_model_request(user_message)
+        or _is_self_diagnostic_request(user_message)
+        or _is_architecture_self_assessment_request(user_message)
+    ):
+        return (
+            "That request needs owner-only model or diagnostic context. This paired "
+            "surface remains limited to conversation and read-only world viewing.",
+            "paired_device_diagnostic_scope",
+        )
+    return None
+
+
 async def _run_cognitive_engine_chat_turn(
     effective_user_message: str,
     *,
@@ -4814,6 +5011,7 @@ async def _run_cognitive_engine_chat_turn(
     lane: dict[str, Any] | None = None,
     source: str = "chat_api",
     require_engine: bool = False,
+    conversation_only_surface: bool = False,
     turn_trace: dict[str, Any] | None = None,
 ) -> str | None:
     """Run a live desktop/user chat turn through CognitiveEngine.
@@ -4902,6 +5100,27 @@ async def _run_cognitive_engine_chat_turn(
     shape = analyze_prompt_shape(visible)
     capability_inventory_contract = _is_explicit_capability_inventory_request(visible)
     desktop_execution_contract = _looks_like_desktop_objective(visible)
+    paired_information_reply = (
+        _paired_device_information_scope_reply(visible, lane=lane)
+        if conversation_only_surface
+        else None
+    )
+    if paired_information_reply is not None:
+        reply, status = paired_information_reply
+        _mark_turn_trace(
+            bounded_contract_used=True,
+            response_path=status,
+        )
+        return reply
+    if conversation_only_surface and desktop_execution_contract:
+        _mark_turn_trace(
+            bounded_contract_used=True,
+            response_path="paired_device_action_scope_denied",
+        )
+        return (
+            "This paired device is scoped to conversation and read-only world viewing. "
+            "Desktop, file, tool, and control actions require the owner surface."
+        )
     assistant_mode_recovery_contract = bool(
         require_engine
         and _is_assistant_mode_recovery_request(visible)
@@ -4961,8 +5180,10 @@ async def _run_cognitive_engine_chat_turn(
         if runtime_fact_status_contract
         else ""
     )
-    canonical_memory_state_evidence = _extract_canonical_memory_state_evidence_block(
-        effective_user_message
+    canonical_memory_state_evidence = (
+        ""
+        if conversation_only_surface
+        else _extract_canonical_memory_state_evidence_block(effective_user_message)
     )
     memory_state_contract = bool(canonical_memory_state_evidence)
 
@@ -5051,6 +5272,7 @@ async def _run_cognitive_engine_chat_turn(
         recent_conversation_context=recent_conversation_context,
         recent_context_needed=recent_context_needed,
         require_engine=require_engine,
+        conversation_only_surface=conversation_only_surface,
     )
     context = {
         "route": "desktop_chat",
@@ -5068,6 +5290,10 @@ async def _run_cognitive_engine_chat_turn(
         "live_mind_required_subsystems": dict(live_mind_context.get("required_subsystems") or {}),
         "live_mind_required_subsystems_ok": bool(live_mind_context.get("required_subsystems_ok")),
         "cognitive_engine_required": bool(require_engine),
+        "conversation_only_surface": bool(conversation_only_surface),
+        "tool_execution_policy": (
+            "deny" if conversation_only_surface else "governed"
+        ),
         "assistant_mode_recovery_contract": assistant_mode_recovery_contract,
         "bounded_planning_contract": bounded_planning_contract,
         "bounded_planning_reply": bounded_planning_reply or "",
@@ -5079,7 +5305,11 @@ async def _run_cognitive_engine_chat_turn(
         "grounded_runtime_status_context": grounded_runtime_status_context,
         "memory_state_contract": memory_state_contract,
         "canonical_memory_state_evidence": canonical_memory_state_evidence,
-        "conversation_lane": dict(lane or {}),
+        "conversation_lane": (
+            _paired_conversation_lane_payload(lane)
+            if conversation_only_surface
+            else dict(lane or {})
+        ),
         "prompt_shape": {
             "question_parts": int(getattr(shape, "question_parts", 0) or 0),
             "prefers_extended_answer": bool(getattr(shape, "prefers_extended_answer", False)),
@@ -5134,7 +5364,7 @@ async def _run_cognitive_engine_chat_turn(
         context["conversation_recall_evidence"] = conversation_recall_context[:3000]
     retained_memory_evidence_context = (
         ""
-        if capability_inventory_contract
+        if capability_inventory_contract or conversation_only_surface
         else await _build_retained_memory_evidence_context(
             visible,
             session_id=session_id,
@@ -14220,9 +14450,18 @@ async def api_sessions(request: Request, _: None = Depends(_require_internal)):
     """Return conversation history for the current session.
     Flagship AI products let users browse their conversation history."""
     try:
+        access_profile = request_access_profile(request)
+        conversation_only = bool(access_profile.get("conversation_only", True))
+        device_session_id = (
+            paired_device_session_id(request) if conversation_only else None
+        )
         db_coord = ServiceContainer.get("database_coordinator", default=None)
         persisted = []
-        if db_coord and hasattr(db_coord, "get_recent_conversations"):
+        if (
+            not conversation_only
+            and db_coord
+            and hasattr(db_coord, "get_recent_conversations")
+        ):
             try:
                 persisted = await db_coord.get_recent_conversations(limit=50)
             except _CHAT_RECOVERABLE_ERRORS as e:
@@ -14231,6 +14470,13 @@ async def api_sessions(request: Request, _: None = Depends(_require_internal)):
 
         async with _get_convo_lock():
             current = list(_conversation_log)
+        if conversation_only:
+            current = [
+                entry
+                for entry in current
+                if device_session_id
+                and str(entry.get("session_id") or "") == device_session_id
+            ]
 
         return JSONResponse({
             "current_session": {
@@ -14563,6 +14809,7 @@ async def api_think(
 
 
 @router.post("/chat")
+@_paired_chat_response_boundary
 async def api_chat(
     body: ChatRequest,
     request: Request,
@@ -14576,6 +14823,10 @@ async def api_chat(
     request_client = getattr(request, "client", None)
     _request_origin = str(getattr(request_client, "host", "unknown") or "unknown")
     _trusted_local_origin = _request_origin in {"127.0.0.1", "::1", "localhost"}
+    _request_access_profile = request_access_profile(request)
+    conversation_only_surface = bool(
+        _request_access_profile.get("conversation_only", True)
+    )
     _defensive_context = ""
     try:
         from core.security.defensive_runtime import inspect_chat_ingress
@@ -14600,12 +14851,21 @@ async def api_chat(
         record_degradation("chat.defensive_runtime", _defensive_exc)
         logger.debug("Chat defensive preflight skipped: %s", _defensive_exc)
 
-    is_benchmark = request.headers.get("X-Aura-Benchmark") == "true"
+    # Benchmark and proof behavior is an owner-only control surface. A paired
+    # caller cannot opt out of the production conversation contract by
+    # supplying internal headers directly.
+    is_benchmark = (
+        not conversation_only_surface
+        and request.headers.get("X-Aura-Benchmark") == "true"
+    )
     chat_origin = "benchmark" if is_benchmark else "user"
     desktop_requires_cognitive_engine, request_surface = _request_requires_cognitive_engine(
         request,
         is_benchmark=is_benchmark,
     )
+    if conversation_only_surface:
+        desktop_requires_cognitive_engine = True
+        request_surface = "paired-device"
 
     # ── Chat preflight ──────────────────────────────────────────
     # 1) File-reference loading: if the user references a file path, load
@@ -14631,7 +14891,16 @@ async def api_chat(
             extract_file_references,
             format_resume_prefix,
         )
-        if body.session_id:
+        device_session_id = (
+            paired_device_session_id(request)
+            if conversation_only_surface
+            else None
+        )
+        if device_session_id:
+            # A paired caller cannot select another device or owner session by
+            # supplying an arbitrary body.session_id.
+            _chat_session_id = device_session_id
+        elif body.session_id:
             _chat_session_id = body.session_id
         else:
             # Session id: client host is good enough for single-user local Aura.
@@ -14639,6 +14908,28 @@ async def api_chat(
                 _chat_session_id = (request.client.host if request.client else "default") or "default"
             except _CHAT_RECOVERABLE_ERRORS:
                 _chat_session_id = "default"
+
+        if conversation_only_surface:
+            scoped_reply = _paired_device_information_scope_reply(
+                _original_user_message,
+                lane=_collect_conversation_lane_status(),
+            )
+            if scoped_reply is not None:
+                reply, status = scoped_reply
+                await _log_exchange(
+                    _original_user_message,
+                    reply,
+                    record_experience=False,
+                    session_id=_chat_session_id,
+                )
+                return JSONResponse(
+                    {
+                        "response": reply,
+                        "status": status,
+                        "response_confidence": "scoped",
+                        "conversation_lane": _collect_conversation_lane_status(),
+                    }
+                )
 
         # 3) Late-answered messages first — give the cortex the prior thread
         #    so the new response can acknowledge continuity. The actual late
@@ -14666,7 +14957,7 @@ async def api_chat(
                 logger.debug("Resume preflight skipped: %s", _resume_exc)
 
         # 1) File-reference loading
-        if not is_benchmark:
+        if not is_benchmark and not conversation_only_surface:
             try:
                 _refs = extract_file_references(body.message)
                 if _refs:
@@ -14700,8 +14991,13 @@ async def api_chat(
                 _gr_history = getattr(
                     getattr(_gr_state, "cognition", None), "working_memory", None
                 )
-                _grounded = build_grounded_recall_context(
-                    _original_user_message, history=_gr_history
+                _grounded = (
+                    ""
+                    if conversation_only_surface
+                    else build_grounded_recall_context(
+                        _original_user_message,
+                        history=_gr_history,
+                    )
                 )
                 if _grounded:
                     _grounded_recall_context = _grounded
@@ -14715,7 +15011,9 @@ async def api_chat(
             try:
                 from core.conversation.chat_preflight import inject_profile_context
 
-                _profile_context = await inject_profile_context()
+                _profile_context = (
+                    "" if conversation_only_surface else await inject_profile_context()
+                )
                 if _profile_context:
                     body.message = f"{_profile_context}{body.message}"
                     logger.info("Chat preflight: injected learned profile context.")
@@ -14727,7 +15025,11 @@ async def api_chat(
             try:
                 from core.conversation.chat_preflight import inject_operational_self_context
 
-                _self_context = await inject_operational_self_context()
+                _self_context = (
+                    ""
+                    if conversation_only_surface
+                    else await inject_operational_self_context()
+                )
                 if _self_context:
                     body.message = f"{_self_context}{body.message}"
                     logger.info("Chat preflight: injected operational self context.")
@@ -14753,6 +15055,7 @@ async def api_chat(
                 if (
                     _affordances_on
                     and not is_benchmark
+                    and not conversation_only_surface
                     and not _looks_like_desktop_objective(_original_user_message)
                     and not _is_explicit_capability_inventory_request(_original_user_message)
                 ):
@@ -14980,7 +15283,11 @@ async def api_chat(
             logger.debug("Memory check failed: %s", e)
 
         # Idempotency check
-        idem_key = request.headers.get("X-Idempotency-Key")
+        raw_idem_key = request.headers.get("X-Idempotency-Key")
+        idem_key = _chat_idempotency_cache_key(
+            _chat_session_id,
+            raw_idem_key,
+        )
         if idem_key:
             async with _get_idemp_lock():
                 if idem_key in _idempotency_cache:
@@ -15073,9 +15380,17 @@ async def api_chat(
         # a language-model shortcut. Desktop-required surfaces collect/write the
         # canonical state before generation and bind it into CognitiveEngine
         # below; non-required API surfaces may answer directly from that gateway.
-        allow_memory_state_fastpath = not is_benchmark and not desktop_requires_cognitive_engine
+        allow_memory_state_fastpath = (
+            not is_benchmark
+            and not desktop_requires_cognitive_engine
+            and not conversation_only_surface
+        )
         allow_runtime_status_fastpath = not is_benchmark and not desktop_requires_cognitive_engine
-        allow_governed_action_fastpaths = not is_benchmark and not desktop_requires_cognitive_engine
+        allow_governed_action_fastpaths = (
+            not is_benchmark
+            and not desktop_requires_cognitive_engine
+            and not conversation_only_surface
+        )
         desktop_memory_state_evidence: tuple[str, str] | None = None
 
         _desktop_exec_state = {"attempted": False, "result": None}
@@ -15107,6 +15422,16 @@ async def api_chat(
             desktop lane called the executor directly, so the doors saw
             attempted=False/result=None and served receipt-less replies.
             """
+            if conversation_only_surface:
+                _desktop_exec_state["attempted"] = True
+                return {
+                    "ok": False,
+                    "status": "paired_device_action_scope_denied",
+                    "response": (
+                        "This paired device is scoped to conversation and read-only world viewing. "
+                        "Desktop, file, tool, and control actions require the owner surface."
+                    ),
+                }
             _desktop_exec_state["attempted"] = True
             executed = await _execute_desktop_objective_from_chat(
                 message, cognitive_reply=cognitive_reply
@@ -15126,6 +15451,15 @@ async def api_chat(
             while no tool ever dispatched — the chokepoint guarded only
             the fastpath door. Both doors now pass through here.
             """
+            if (
+                conversation_only_surface
+                and _looks_like_desktop_objective(_semantic_user_message)
+            ):
+                return (
+                    "This paired device is scoped to conversation and read-only world viewing. "
+                    "Desktop, file, tool, and control actions require the owner surface.",
+                    "paired_device_action_scope_denied",
+                )
             if (
                 is_benchmark
                 or _desktop_exec_state["attempted"]
@@ -15220,6 +15554,7 @@ async def api_chat(
                     lane=dict(lane or {}),
                     source="desktop_ui_recovery",
                     require_engine=True,
+                    conversation_only_surface=conversation_only_surface,
                     turn_trace=recovery_trace,
                 )
             except _CHAT_RECOVERABLE_ERRORS as rec_exc:
@@ -15718,6 +16053,7 @@ async def api_chat(
         async def _execute_narrow_desktop_objective_before_cognition() -> JSONResponse | None:
             if (
                 is_benchmark
+                or conversation_only_surface
                 or _blocks_consequential_desktop_execution(_semantic_user_message)
                 or not _looks_like_desktop_objective(_semantic_user_message)
             ):
@@ -15754,7 +16090,7 @@ async def api_chat(
                     )
             return None
 
-        if not is_benchmark:
+        if not is_benchmark and not conversation_only_surface:
             governed_capability_response = await _execute_governed_capability_request_from_chat(
                 _semantic_user_message
             )
@@ -15768,7 +16104,11 @@ async def api_chat(
         if desktop_objective_response is not None:
             return desktop_objective_response
 
-        if not is_benchmark and desktop_requires_cognitive_engine:
+        if (
+            not is_benchmark
+            and desktop_requires_cognitive_engine
+            and not conversation_only_surface
+        ):
             desktop_memory_state_evidence = await _build_memory_state_fastpath_reply(
                 _semantic_user_message,
                 session_id=_chat_session_id,
@@ -16147,10 +16487,14 @@ async def api_chat(
                 "[END CONVERSATION RECALL EVIDENCE]\n"
                 "Answer the recall question from the evidence above. Do not guess or invent a memory."
             )
-        retained_memory_evidence = await _build_retained_memory_evidence_context(
-            _semantic_user_message,
-            session_id=_chat_session_id,
-            conversation_recall_context=conversation_recall_evidence or "",
+        retained_memory_evidence = (
+            ""
+            if conversation_only_surface
+            else await _build_retained_memory_evidence_context(
+                _semantic_user_message,
+                session_id=_chat_session_id,
+                conversation_recall_context=conversation_recall_evidence or "",
+            )
         )
         if retained_memory_evidence:
             effective_user_message = (
@@ -16174,7 +16518,11 @@ async def api_chat(
                 "through CognitiveEngine in Aura's normal desktop voice."
             )
         desktop_required_search_evidence = None
-        if not is_benchmark and desktop_requires_cognitive_engine:
+        if (
+            not is_benchmark
+            and desktop_requires_cognitive_engine
+            and not conversation_only_surface
+        ):
             desktop_required_search_evidence = await _collect_desktop_required_search_evidence(
                 _semantic_user_message,
                 session_id=_chat_session_id,
@@ -16233,8 +16581,13 @@ async def api_chat(
                     origin=chat_origin,
                     timeout_s=cognitive_budget,
                     lane=dict(lane or {}),
-                    source="desktop_ui",
+                    source=(
+                        "paired_device_ui"
+                        if conversation_only_surface
+                        else "desktop_ui"
+                    ),
                     require_engine=True,
+                    conversation_only_surface=conversation_only_surface,
                     turn_trace=_live_turn_trace,
                 )
                 if reply_text:
@@ -16711,7 +17064,7 @@ async def api_chat(
                 status_code=503 if is_benchmark else 200,
             )
 
-        if reply_text:
+        if reply_text and not conversation_only_surface:
             # Surface parity: desktop/file objectives execute through the
             # governed skill path on EVERY user-facing surface, not only
             # when the desktop UI header is present. Observed live: a plain
@@ -16907,6 +17260,7 @@ async def api_chat(
         if (
             not reply_text
             and not is_benchmark
+            and not conversation_only_surface
             and _request_allows_legacy_orchestrator_fallback(request)
         ):
             orch = ServiceContainer.get("orchestrator", default=None)

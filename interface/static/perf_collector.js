@@ -17,11 +17,18 @@
   let lastTs = performance.now();
   const samples = [];
   let lastFlush = lastTs;
+  let enabled = false;
+
+  window.addEventListener("aura:access-profile", (event) => {
+    const capabilities = event && event.detail && event.detail.capabilities;
+    enabled = !!(capabilities && capabilities.performance_telemetry === true);
+    if (!enabled) samples.length = 0;
+  });
 
   function frame(ts) {
     const dur = ts - lastTs;
     lastTs = ts;
-    if (dur > 0 && dur < 1000) samples.push(dur);
+    if (enabled && dur > 0 && dur < 1000) samples.push(dur);
     if (ts - lastFlush > 5000 && samples.length) {
       flush();
       lastFlush = ts;
@@ -31,6 +38,10 @@
   requestAnimationFrame(frame);
 
   async function flush() {
+    if (!enabled) {
+      samples.length = 0;
+      return;
+    }
     const batch = samples.slice();
     samples.length = 0;
     const max = Math.max(...batch);
@@ -40,6 +51,10 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ duration_ms: max, source: "ui_raf" }),
       });
+      if (r.status === 401 || r.status === 403) {
+        enabled = false;
+        return;
+      }
       const d = await r.json();
       if (d && typeof d.throttled === "boolean") {
         document.body.classList.toggle("aura-throttle-motion", d.throttled);
@@ -49,12 +64,15 @@
 
   // Public hook for ack samples.
   window.auraRecordAck = (requestId, latencyMs) => {
+    if (!enabled) return;
     try {
       fetch("/api/performance/ack", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ request_id: String(requestId || ""), latency_ms: Number(latencyMs) || 0 }),
-      });
+      }).then((response) => {
+        if (response.status === 401 || response.status === 403) enabled = false;
+      }).catch(() => {});
     } catch {}
   };
 })();

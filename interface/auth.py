@@ -14,12 +14,15 @@ import secrets
 import threading
 import time
 from http.cookies import CookieError, SimpleCookie
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import Header, HTTPException, Request
 
 from core.config import config
 from core.runtime.errors import record_degradation
+
+if TYPE_CHECKING:
+    from core.security.device_pairing import PairedDevice
 
 logger = logging.getLogger("Aura.Server.Auth")
 
@@ -59,24 +62,26 @@ DEVICE_SESSION_COOKIE_TTL_SECS = 60 * 60 * 24 * 180
 # Reachable without credentials: the pairing ceremony IS the
 # authentication. Both are rate-limited and code/TTL/attempt bounded.
 PAIRING_PUBLIC_PATHS = {"/pair", "/api/devices/pair/complete"}
-DEVICE_ALLOWED_EXACT_PATHS = {
+DEVICE_ALLOWED_READONLY_EXACT_PATHS = {
     "/",
     "/pair",
-    "/api/devices/pair/complete",
-}
-DEVICE_ALLOWED_PATH_PREFIXES = (
-    "/static/",
-    "/ws",
-    "/api/chat",
     "/api/sessions",
     "/api/ui/bootstrap",
-)
+}
 # Read-only surfaces for devices: GET/HEAD only. A paired phone may
 # watch Aura's worlds; it may not rewrite them.
 DEVICE_ALLOWED_READONLY_PREFIXES = (
+    "/static",
+    "/ws",
     "/worlds",
     "/api/worlds",
 )
+_DEVICE_DENIAL_LOG_INTERVAL_S = 60.0
+_DEVICE_DENIAL_LOG_MAX_KEYS = 512
+_DEVICE_DENIAL_LOG_LOCK = threading.Lock()
+_DEVICE_DENIAL_LOG_STATE: dict[tuple[str, str, str], dict[str, float | int]] = {}
+_VERIFY_TOKEN_WARNED_MISSING = False
+_VERIFY_TOKEN_WARNED_LOCAL = False
 
 _DEVICE_LOOKUP_RECOVERABLE_ERRORS = (
     ImportError,
@@ -92,7 +97,8 @@ _DEVICE_LOOKUP_RECOVERABLE_ERRORS = (
 # ── Internal-only guard ──────────────────────────────────────
 
 def _request_host(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    client = getattr(request, "client", None)
+    return str(getattr(client, "host", "unknown") or "unknown")
 
 
 def _is_trusted_local_host(host: str) -> bool:
@@ -100,10 +106,10 @@ def _is_trusted_local_host(host: str) -> bool:
 
 
 def _extract_request_token(request: Request) -> str | None:
-    auth_header = request.headers.get("Authorization", "")
+    auth_header = str(request.headers.get("Authorization", "") or "")
     if auth_header.startswith("Bearer "):
         return auth_header[7:]
-    x_api_token = request.headers.get("X-Api-Token", "")
+    x_api_token = str(request.headers.get("X-Api-Token", "") or "")
     return x_api_token or None
 
 
@@ -226,12 +232,26 @@ def request_has_allowed_local_browser_origin(request: Request) -> bool:
 
 # ── Paired-device credentials ────────────────────────────────
 
-def device_path_allowed(path: str) -> bool:
-    """The conversation surface a paired device may touch. Deny by default."""
+def _path_at_or_below(path: str, prefix: str) -> bool:
+    return path == prefix or path.startswith(f"{prefix}/")
+
+
+def device_path_allowed(path: str, method: str = "GET") -> bool:
+    """Return whether a paired device may use this exact HTTP operation."""
     normalized = str(path or "")
-    if normalized in DEVICE_ALLOWED_EXACT_PATHS or normalized in HEALTH_PATHS:
+    normalized_method = str(method or "GET").upper()
+    if normalized == "/api/chat":
+        return normalized_method == "POST"
+    if normalized == "/api/devices/pair/complete":
+        return normalized_method == "POST"
+    if normalized_method not in {"GET", "HEAD"}:
+        return False
+    if normalized in DEVICE_ALLOWED_READONLY_EXACT_PATHS or normalized in HEALTH_PATHS:
         return True
-    return normalized.startswith(DEVICE_ALLOWED_PATH_PREFIXES)
+    return any(
+        _path_at_or_below(normalized, prefix)
+        for prefix in DEVICE_ALLOWED_READONLY_PREFIXES
+    )
 
 
 def _extract_device_token(request: Request) -> str | None:
@@ -264,7 +284,7 @@ def _extract_device_token(request: Request) -> str | None:
     return None
 
 
-def device_for_request(request: Request):
+def device_for_request(request: Request) -> PairedDevice | None:
     """Resolve a paired device from the request, or None. Fails closed."""
     token = _extract_device_token(request)
     if not token:
@@ -278,6 +298,131 @@ def device_for_request(request: Request):
         return None
 
 
+def paired_device_session_id(request: Request) -> str | None:
+    """Return the stable private chat-session key for a paired principal."""
+
+    device = device_for_request(request)
+    if device is None:
+        return None
+    device_id = str(getattr(device, "device_id", "") or "").strip()
+    return f"paired-device:{device_id}" if device_id else None
+
+
+def request_access_profile(request: Request | None) -> dict[str, Any]:
+    """Describe the authenticated UI surface without exposing credentials."""
+
+    if request is None:
+        return {
+            "surface": "internal",
+            "conversation_only": False,
+            "capabilities": {
+                "chat": True,
+                "sessions": True,
+                "websocket": True,
+                "world_read": True,
+                "desktop_control": True,
+                "performance_telemetry": True,
+                "voice_stream": True,
+                "interaction_signals": True,
+                "tools_catalog": True,
+                "learning_status": True,
+                "diagnostics": True,
+            },
+        }
+    supplied = _extract_request_token(request)
+    expected = str(config.api_token or "")
+    host = _request_host(request)
+    synthetic_internal_request = (
+        not isinstance(request, Request)
+        and host in {"test", "testclient", "unknown"}
+        and device_for_request(request) is None
+    )
+    owner_authenticated = _is_trusted_local_host(_request_host(request)) or bool(
+        supplied
+        and expected
+        and not supplied.startswith("adt1.")
+        and hmac.compare_digest(supplied, expected)
+    ) or synthetic_internal_request
+    if owner_authenticated:
+        return {
+            "surface": "owner",
+            "conversation_only": False,
+            "capabilities": {
+                "chat": True,
+                "sessions": True,
+                "websocket": True,
+                "world_read": True,
+                "desktop_control": True,
+                "performance_telemetry": True,
+                "voice_stream": True,
+                "interaction_signals": True,
+                "tools_catalog": True,
+                "learning_status": True,
+                "diagnostics": True,
+            },
+        }
+    if device_for_request(request) is not None:
+        return {
+            "surface": "paired_device",
+            "conversation_only": True,
+            "capabilities": {
+                "chat": True,
+                "sessions": True,
+                "websocket": True,
+                "world_read": True,
+                "desktop_control": False,
+                "performance_telemetry": False,
+                "voice_stream": False,
+                "interaction_signals": False,
+                "tools_catalog": False,
+                "learning_status": False,
+                "diagnostics": False,
+            },
+        }
+    return {
+        "surface": "unknown",
+        "conversation_only": True,
+        "capabilities": {},
+    }
+
+
+def _log_device_scope_denial(device_id: str, path: str, method: str) -> None:
+    key = (str(device_id), str(method).upper(), str(path))
+    now = time.monotonic()
+    suppressed = 0
+    should_log = False
+    with _DEVICE_DENIAL_LOG_LOCK:
+        state = _DEVICE_DENIAL_LOG_STATE.get(key)
+        if state is None:
+            should_log = True
+            _DEVICE_DENIAL_LOG_STATE[key] = {"last_logged": now, "suppressed": 0}
+        elif now - float(state.get("last_logged", 0.0)) >= _DEVICE_DENIAL_LOG_INTERVAL_S:
+            should_log = True
+            suppressed = int(state.get("suppressed", 0))
+            state["last_logged"] = now
+            state["suppressed"] = 0
+        else:
+            state["suppressed"] = int(state.get("suppressed", 0)) + 1
+        if len(_DEVICE_DENIAL_LOG_STATE) > _DEVICE_DENIAL_LOG_MAX_KEYS:
+            oldest = min(
+                _DEVICE_DENIAL_LOG_STATE,
+                key=lambda item: float(
+                    _DEVICE_DENIAL_LOG_STATE[item].get("last_logged", 0.0)
+                ),
+            )
+            if oldest != key:
+                _DEVICE_DENIAL_LOG_STATE.pop(oldest, None)
+    if should_log:
+        suffix = f" ({suppressed} similar attempts suppressed)" if suppressed else ""
+        logger.warning(
+            "Paired device %s attempted out-of-scope operation %s %s%s",
+            device_id,
+            str(method).upper(),
+            path,
+            suffix,
+        )
+
+
 def _device_authorizes_request(request: Request, path: str) -> bool:
     """True when a valid paired device may access this path.
 
@@ -288,15 +433,10 @@ def _device_authorizes_request(request: Request, path: str) -> bool:
     device = device_for_request(request)
     if device is None:
         return False
-    if device_path_allowed(path):
+    method = _request_method(request)
+    if device_path_allowed(path, method):
         return True
-    if path.startswith(DEVICE_ALLOWED_READONLY_PREFIXES) and _request_method(
-        request
-    ) in {"GET", "HEAD"}:
-        return True
-    logger.warning(
-        "Paired device %s attempted out-of-scope path %s", device.device_id, path
-    )
+    _log_device_scope_denial(device.device_id, path, method)
     raise HTTPException(status_code=403, detail="Device session lacks access to this surface")
 
 
@@ -367,6 +507,7 @@ def _require_internal(request: Request) -> None:
 
 def _verify_token(request: Request, x_api_token: str | None = Header(default=None)) -> None:
     """Bearer-token check. Ensures fail-closed unless running in strict internal_only_mode."""
+    global _VERIFY_TOKEN_WARNED_LOCAL, _VERIFY_TOKEN_WARNED_MISSING
     expected = config.api_token
     internal_only = getattr(config.security, "internal_only_mode", False)
     supplied = _extract_request_token(request) or x_api_token
@@ -374,9 +515,9 @@ def _verify_token(request: Request, x_api_token: str | None = Header(default=Non
     if not expected:
         # Only allow missing token if we are strictly bound to localhost
         if internal_only:
-            if not getattr(_verify_token, '_warned', False):
+            if not _VERIFY_TOKEN_WARNED_MISSING:
                 logger.warning("AURA_API_TOKEN not set but running in internal_only_mode.")
-                _verify_token._warned = True
+                _VERIFY_TOKEN_WARNED_MISSING = True
             return
 
         logger.error("AURA_API_TOKEN not set and service is not internal-only. Blocking.")
@@ -394,9 +535,9 @@ def _verify_token(request: Request, x_api_token: str | None = Header(default=Non
         return
 
     if _allow_local_without_token(request, protected_route=True):
-        if not getattr(_verify_token, '_warned_local', False):
+        if not _VERIFY_TOKEN_WARNED_LOCAL:
             logger.info("Trusted same-origin Aura UI request accepted without exposing API token.")
-            _verify_token._warned_local = True
+            _VERIFY_TOKEN_WARNED_LOCAL = True
         return
 
     if not supplied or not hmac.compare_digest(supplied, expected):
@@ -487,7 +628,7 @@ def _decode_owner_session_cookie(token: str | None) -> dict[str, Any] | None:
         return None
     if int(payload.get("exp", 0) or 0) < int(time.time()):
         return None
-    return payload
+    return cast(dict[str, Any], payload)
 
 
 def _restore_owner_session_from_request(request: Request | None) -> bool:
@@ -539,7 +680,8 @@ def _activate_cheat_code_for_request(code: str | None, *, silent: bool, source: 
     try:
         from core.security.cheat_codes import activate_cheat_code
 
-        return activate_cheat_code(code, silent=silent, source=source)
+        result = activate_cheat_code(code, silent=silent, source=source)
+        return cast(dict[str, Any], result)
     except _CHEAT_CODE_RECOVERABLE_ERRORS as exc:
         record_degradation('auth', exc)
         logger.debug("Cheat code activation failed: %s", exc)

@@ -60,7 +60,11 @@ const state = {
     cameraSignalWanted: false,
     cameraSignalInterval: null,
     cameraSignalCapture: null,
-    lastSystemRamPct: null
+    lastSystemRamPct: null,
+    accessResolved: false,
+    accessProfile: null,
+    conversationOnly: true,
+    profileFeaturesStarted: new Set()
 };
 console.log(`%c AURA %c ${state.version} `, "color:white; background:#8a2be2; padding:2px 5px; border-radius:3px 0 0 3px;", "color:white; background:#1e1535; padding:2px 5px; border-radius:0 3px 3px 0;");
 
@@ -76,6 +80,66 @@ const NEURAL_LIVENESS_PULSE_MS = 30000;
 const TYPING_SIGNAL_DEBOUNCE_MS = 850;
 const VOICE_SIGNAL_FLUSH_MS = 900;
 const CAMERA_SIGNAL_INTERVAL_MS = 2200;
+const surfaceTransportFetch = window.fetch.bind(window);
+const CONVERSATION_SURFACE_GET_PATHS = new Set([
+    '/',
+    '/api/health',
+    '/api/health/live',
+    '/api/health/ready',
+    '/api/sessions',
+    '/api/ui/bootstrap',
+]);
+
+function accessCapabilityAllowed(name) {
+    const capabilities = state.accessProfile && state.accessProfile.capabilities;
+    return !!(state.accessResolved && capabilities && capabilities[name] === true);
+}
+
+function conversationSurfaceRequestAllowed(path, method) {
+    if (path === '/api/chat') return method === 'POST';
+    if (CONVERSATION_SURFACE_GET_PATHS.has(path)) return ['GET', 'HEAD'].includes(method);
+    if (path === '/api/worlds' || path.startsWith('/api/worlds/')) {
+        return ['GET', 'HEAD'].includes(method);
+    }
+    return false;
+}
+
+function surfaceRequestAllowed(input, init = {}) {
+    let url;
+    try {
+        const raw = typeof input === 'string' ? input : input && input.url;
+        url = new URL(raw || '', window.location.origin);
+    } catch (_err) {
+        return false;
+    }
+    if (url.origin !== window.location.origin || !url.pathname.startsWith('/api/')) {
+        return true;
+    }
+    const requestMethod = String(
+        init.method || (input && typeof input === 'object' && input.method) || 'GET'
+    ).toUpperCase();
+    if (state.accessResolved && !state.conversationOnly) return true;
+    return conversationSurfaceRequestAllowed(url.pathname, requestMethod);
+}
+
+window.fetch = function auraSurfaceFetch(input, init = {}) {
+    if (!surfaceRequestAllowed(input, init)) {
+        const path = typeof input === 'string' ? input : (input && input.url) || 'unknown';
+        return Promise.reject(new Error(`surface_scope_denied:${path}`));
+    }
+    return surfaceTransportFetch(input, init);
+};
+
+function applyAccessProfile(profile) {
+    const normalized = profile && typeof profile === 'object' ? profile : {};
+    state.accessProfile = normalized;
+    state.accessResolved = true;
+    state.conversationOnly = normalized.conversation_only !== false;
+    const surface = String(normalized.surface || 'unknown');
+    window.__auraControlSurfaceAllowed = !state.conversationOnly;
+    document.body.dataset.auraSurface = surface;
+    window.dispatchEvent(new CustomEvent('aura:access-profile', { detail: normalized }));
+}
 
 function nowSeconds() {
     return Date.now() / 1000;
@@ -90,6 +154,7 @@ function auraDesktopHeaders(extra = {}) {
 }
 
 async function postInteractionSignal(path, payload, { quiet = true, keepalive = false } = {}) {
+    if (!accessCapabilityAllowed('interaction_signals')) return;
     try {
         await fetch(path, {
             method: 'POST',
@@ -1351,6 +1416,7 @@ function applyDesktopAccessSummary(summary) {
 }
 
 async function pollDesktopAccess() {
+    if (!accessCapabilityAllowed('desktop_control')) return;
     if (state.desktopAccessPollInFlight) return;
     state.desktopAccessPollInFlight = true;
     const controller = new AbortController();
@@ -1547,6 +1613,7 @@ function applyToolEvent(event) {
 
 function applyBootstrapPayload(payload, { hydrateConversationHistory = false } = {}) {
     if (!payload || typeof payload !== 'object') return;
+    applyAccessProfile(payload.access);
     state.bootstrapLoaded = true;
     const runtimeHealthy = payloadRuntimeHealthy(payload);
     state.runtimeHealthy = runtimeHealthy;
@@ -1607,6 +1674,7 @@ function applyBootstrapPayload(payload, { hydrateConversationHistory = false } =
     if (hydrateConversationHistory && payload.conversation && Array.isArray(payload.conversation.recent)) {
         hydrateRecentConversation(payload.conversation.recent);
     }
+    startProfileBoundFeatures();
 }
 
 async function hydrateBootstrap({ hydrateConversationHistory = false, quiet = true } = {}) {
@@ -1867,6 +1935,7 @@ class VoiceStreamPlayer {
     }
 
     async init() {
+        if (!accessCapabilityAllowed('voice_stream')) return;
         if (this.evtSource) return;
         // VoiceStreamPlayer init
         this.evtSource = new EventSource('/api/stream/voice');
@@ -2945,11 +3014,9 @@ function recordChatLatency(requestId, latencyMs, ok) {
     const tone = ok ? (seconds > 90 ? 'warn' : 'ok') : 'error';
     setLatencyStatus(`${seconds.toFixed(seconds >= 10 ? 0 : 1)}s`, tone);
 
-    fetch('/api/performance/ack', {
-        method: 'POST',
-        headers: auraDesktopHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ request_id: requestId, latency_ms: latencyMs }),
-    }).catch(() => {});
+    if (accessCapabilityAllowed('performance_telemetry') && window.auraRecordAck) {
+        window.auraRecordAck(requestId, latencyMs);
+    }
 }
 
 function sendMessage(message) {
@@ -3619,6 +3686,18 @@ function payloadShellLaunchable(payload) {
 
 function payloadRuntimeHealthy(payload) {
     if (!payload || typeof payload !== 'object') return false;
+    if (state.accessResolved && state.conversationOnly) {
+        const lane = payload.conversation && payload.conversation.lane
+            ? payload.conversation.lane
+            : {};
+        const laneState = String(lane.state || '').toLowerCase();
+        const connected = !!(payload.session && payload.session.connected);
+        return connected && (
+            lane.conversation_ready === true
+            || laneHasActiveGeneration(lane)
+            || !['failed', 'closed', 'offline'].includes(laneState)
+        );
+    }
     if (payload.transport_only === true) return false;
     if (payload.runtime_probe_healthy === false) return false;
     const requiredProbes = requiredProbesFromPayload(payload);
@@ -3680,6 +3759,21 @@ function conversationPayloadBusy(payload, blockers = []) {
 
 function runtimeHealthBlockers(payload) {
     if (!payload || typeof payload !== 'object') return ['runtime_health_unavailable'];
+    if (state.accessResolved && state.conversationOnly) {
+        const lane = payload.conversation && payload.conversation.lane
+            ? payload.conversation.lane
+            : {};
+        const blockers = [];
+        if (!(payload.session && payload.session.connected)) blockers.push('conversation_transport');
+        if (
+            lane.conversation_ready !== true
+            && !laneHasActiveGeneration(lane)
+            && ['failed', 'closed', 'offline'].includes(String(lane.state || '').toLowerCase())
+        ) {
+            blockers.push(`conversation_lane:${String(lane.state).toLowerCase()}`);
+        }
+        return blockers;
+    }
     const blockers = Array.isArray(payload.blockers) ? payload.blockers.slice() : [];
     if (payload.transport_only === true) blockers.push('runtime_transport_only');
     if (payload.runtime_probe_healthy === false) blockers.push('runtime_required_probes');
@@ -4391,6 +4485,7 @@ function fmtUptime(sec) {
 
 // ── Skills ───────────────────────────────────────────────
 async function loadSkills() {
+    if (!accessCapabilityAllowed('tools_catalog')) return;
     try {
         if (state.toolCatalog && state.toolCatalog.length) {
             renderToolCatalog(state.toolCatalog);
@@ -4430,6 +4525,7 @@ async function loadSkills() {
 
 // ── Learning & Growth ────────────────────────────────────
 async function loadLearningStatus() {
+    if (!accessCapabilityAllowed('learning_status')) return;
     const put = (id, value) => { const el = $(id); if (el) el.textContent = value; };
     try {
         const res = await fetch('/api/system/learning', { cache: 'no-store' });
@@ -5139,6 +5235,28 @@ if ('serviceWorker' in navigator) {
     });
 }
 
+function startProfileBoundFeatures() {
+    const startOnce = (name, fn) => {
+        if (state.profileFeaturesStarted.has(name)) return;
+        state.profileFeaturesStarted.add(name);
+        Promise.resolve()
+            .then(fn)
+            .catch(err => console.warn(`[UI] ${name} startup failed:`, err));
+    };
+    if (accessCapabilityAllowed('desktop_control')) {
+        startOnce('desktop_access', () => pollDesktopAccess());
+    }
+    if (accessCapabilityAllowed('voice_stream')) {
+        startOnce('voice_stream', () => voicePlayer.init());
+    }
+    if (accessCapabilityAllowed('tools_catalog')) {
+        startOnce('tools_catalog', () => loadSkills());
+    }
+    if (accessCapabilityAllowed('learning_status')) {
+        startOnce('learning_status', () => loadLearningStatus());
+    }
+}
+
 // ── Start ────────────────────────────────────────────────
 setConnectionVisual('booting');
 hydrateBootstrap({ hydrateConversationHistory: true, quiet: true });
@@ -5152,7 +5270,6 @@ if (DOM.neuralReadableToggle) {
 }
 connect();
 pollHealth();
-pollDesktopAccess();
 
 // Safety net: if WS connection fails repeatedly, keep polling health
 // so the splash can still be dismissed when the server comes up.
@@ -5161,13 +5278,10 @@ setInterval(() => {
         pollHealth();
     }
 }, 8000);
-voicePlayer.init();
 vadStream = new VADStream('neural-vad-canvas');
 setInterval(pollHealth, 10000); // 10s — enterprise-grade, not chatbot-grade
 setInterval(pollDesktopAccess, 15000);
 state.bootstrapTimer = setInterval(() => hydrateBootstrap({ quiet: true }), 30000);
-loadSkills();
-loadLearningStatus();
 
 // ── Settings & Preferences ────────────────────────────────
 const SETTINGS_KEY = 'aura_settings';

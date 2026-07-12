@@ -71,7 +71,7 @@ Status rules:
 | `MIND-001` | `OPEN` | Prove one boot-identified canonical self, workspace, substrate, welfare/homeostasis, consciousness cycle, identity, executive authority, and memory authority on the exact live path. | Matrix 3; Addendum 19 |
 | `STATE-001` | `OPEN` | Build the versioned canonical state catalog and inspectable causal graph with writer authority, freshness, arbitration, persistence, model-swap semantics, redaction, and action-to-learning traces. | Addendum 20 |
 | `MEMORY-001` | `OPEN` | Unify memory write/read authority and cross-store semantic retrieval; add provenance, conflict/freshness handling, exact live consumption proof, deletion, and symmetric observed rollback. | Addendum 26 |
-| `CONVERSATION-001` | `OPEN` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. | Pass F 6; Matrix 6 |
+| `CONVERSATION-001` | `IN PROGRESS 2026-07-12` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. | Pass F 6; Matrix 6 |
 | `SUBSTRATE-001` | `OPEN` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. | Matrix 2-3; Addendum 20 and 29 |
 | `DESKTOP-001` | `OPEN` | Generalize computer use into perception-plan-act-observe-repair loops over browser, files, Notes/Docs/PDF/images, dialogs, focus, permissions, changed layouts, and multi-app workflows. | Pass F 7; Matrix 7 |
 | `TOOLS-001` | `IN PROGRESS` | Make long, precise multi-tool workflows typed, resumable, idempotent, budgeted, compensating, provider-change tolerant, source preserving, and complete only after durable observed effects. | Matrix 9; original context tool/handoff goals |
@@ -90,16 +90,16 @@ Status rules:
 | `MULTIMODAL-001` | `OPEN` | Make continuous synchronized vision/audio/spatial/body perception, consented lip-reading, and internal/external situational analysis causal to belief, uncertainty, planning, action, and repair under occlusion and sensor loss. | Capability Addendum 33, `CTX3-PERCEPT-*` |
 | `SOCIAL-001` | `OPEN` | Unify social judgment, theory of mind, emotional modeling, rapport, boundary respect, and relationship repair with calibrated uncertainty, cultural variance, anti-manipulation controls, and longitudinal live evidence. | Capability Addendum 33, `CTX3-SOCIAL-*` |
 | `MULTIAGENT-001` | `OPEN` | Generalize complex subagent management into typed delegation, scoped authority, budget/deadline ownership, shared-world coordination, conflict arbitration, cancellation, recovery, and end-to-end accountability. | Capability Addendum 33, `CTX3-SUBAGENT-*` |
-| `DISTRIBUTED-001` | `OPEN` | Support governed distributed embodiment and execution across heterogeneous network devices with capability negotiation, identity/attestation, partition tolerance, idempotency, safety interlocks, compensation, and truthful degraded operation. | Capability Addendum 33, `CTX3-DIST-*` |
+| `DISTRIBUTED-001` | `IN PROGRESS 2026-07-12` | Support governed distributed embodiment and execution across heterogeneous network devices with capability negotiation, identity/attestation, partition tolerance, idempotency, safety interlocks, compensation, and truthful degraded operation. | Capability Addendum 33, `CTX3-DIST-*` |
 | `VALUES-001` | `OPEN` | Turn preference/value formation, strategic modeling, and manipulation resistance into provenance-bearing, corrigible, constitutionally bounded, longitudinally stable causal mechanisms with conflict and rollback evidence. | Capability Addendum 33, `CTX3-VALUE-*` |
 | `NEUROSIM-001` | `OPEN` | Establish scientifically bounded high-fidelity neural simulation and connectome mapping/tuning with explicit model assumptions, measurable prediction/control objectives, causal ablations, safe optimization, and rollback. | Capability Addendum 33, `CTX3-NEURO-*` |
 | `QUANTUM-001` | `IN PROGRESS 2026-07-12` | Preserve the bounded exact simulator and governed typed skill while adding a real quantum-compute backend abstraction, simulator/hardware capability negotiation, hybrid task routing, verification, cost/noise accounting, and matched classical controls; prohibit advantage claims without evidence. | Capability Addendum 33, `CTX3-QUANTUM-*` |
 | `EXTREME-001` | `OPEN` | Train and validate high-level navigation, diagnosis, repair, problem-solving, and assistance in hazardous/extreme simulated environments, then require governed digital-twin and hardware-transfer evidence before physical-world claims. | Capability Addendum 33, `CTX3-EXTREME-*` |
 | `COLLEAGUE-001` | `OPEN` | Validate the resident local synthetic-colleague contract through broad hidden day-in-the-life workflows, proactive precision, privacy, restart/update survival, honest degradation, and low correction burden. | Addendum 30 |
-| `UI-001` | `OPEN` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. | Pass F 11; Matrix 14 |
+| `UI-001` | `IN PROGRESS 2026-07-12` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. | Pass F 11; Matrix 14 |
 | `PERF-001` | `OPEN` | Establish and enforce end-to-end latency, throughput, memory, thermal, startup, model-switch, queue-growth, and UI responsiveness budgets without reducing intelligence or correctness. | Runtime/resource/colleague SLOs; original context performance goals |
-| `OBSERVE-001` | `OPEN` | Standardize structured logs, traces, metrics, crash taxonomy, receipt correlation, privacy-aware incident export, operator diagnosis, and replayable failure reconstruction. | Pass F 2, 4, and 10; Matrix 12 and 15 |
-| `SECURITY-001` | `OPEN` | Complete threat modeling, secret/privacy boundaries, prompt/tool/desktop abuse tests, dependency and license review, SBOM/provenance, signed artifacts, and recovery from hostile inputs. | Pass F 9-10; Matrix 15-16 |
+| `OBSERVE-001` | `IN PROGRESS 2026-07-12` | Standardize structured logs, traces, metrics, crash taxonomy, receipt correlation, privacy-aware incident export, operator diagnosis, and replayable failure reconstruction. | Pass F 2, 4, and 10; Matrix 12 and 15 |
+| `SECURITY-001` | `IN PROGRESS 2026-07-12` | Complete threat modeling, secret/privacy boundaries, prompt/tool/desktop abuse tests, dependency and license review, SBOM/provenance, signed artifacts, and recovery from hostile inputs. | Pass F 9-10; Matrix 15-16 |
 | `OPERATIONS-001` | `OPEN` | Make clean install, first boot, doctor, model acquisition, permissions, migration, update, backup/restore, rollback, uninstall, crash triage, and release channels reproducible and boring. | Pass F 10; Matrix 15 |
 | `REPO-001` | `OPEN` | Drain type, effect, cancellation, lifecycle, concurrency, dependency, dead-code, scaffolding/stub, configuration, documentation, and runtime/proof artifact-placement debt across every tracked source file. | Pass F 12; Matrix 11, 12, and 18 |
 | `PROOF-001` | `OPEN` | Purify all proof runners against leakage, copied answers, stale artifacts, fallback success, runner-solved work, environment dependence, and unsupported claims; separate builder/solver/evaluator/signer. | Pass F 9; Matrix 16 |
@@ -11461,3 +11461,115 @@ Authoritative remaining work:
   governed subjective-world bridge.
 - Keep multi-hour and 24-72 hour soaks deferred until all shorter static,
   bounded, fault-injection, GUI, clean-machine, and live-runtime gates are green.
+
+## Checkpoint 2026-07-12-36: Recoverable Inference Incidents And Scoped Paired Conversation
+
+This checkpoint advances `CONVERSATION-001`, `DISTRIBUTED-001`, `UI-001`,
+`OBSERVE-001`, and `SECURITY-001`. It fixes the reported MLX/ErrorIntelligence
+incident ambiguity and the repeated paired-device performance warning at their
+causal boundaries. It does not close underlying model-output reliability,
+general delegated-device trust, distributed embodiment, or the final live and
+soak programs.
+
+Implemented inference incident boundary:
+
+- Split recoverable empty foreground generation from terminal empty output. A
+  first empty draft records an informational `empty_generation_retry` with
+  model, attempt, classification, and cache-reset action; it does not inject a
+  synthetic foreground-blocking `RuntimeError` before the same-worker retry has
+  a verdict.
+- An exhausted retry records one `empty_generation_exhausted` terminal incident,
+  preserves the deferred worker-recovery action, and remains distinct from
+  background empty output. ErrorIntelligence warnings now carry reason,
+  classification, and bounded detail instead of the opaque
+  `RuntimeError in mlx_client` message.
+- Context-free runtime incidents now fingerprint by structured subsystem,
+  reason, and classification. Unrelated synthetic degradations can no longer
+  collapse into one `RuntimeError:unknown` pattern and drive the wrong repair.
+
+Implemented paired-device boundary:
+
+- Replaced prefix-only authorization with an exact method/path operation
+  allowlist. Paired devices may post chat and read their shell, private session,
+  health, and worlds; chat subroutes, settings, tools, desktop control,
+  performance telemetry, voice, and mutation routes deny by default. Repeated
+  denials remain enforced but are rate-limited in logs.
+- Added an authenticated access profile and stable private device-session key.
+  Bootstrap and session history project only that principal's conversation plus
+  minimal readiness; owner constitutional, executive, state, commitment, tool,
+  learning, diagnostic, performance, voice, and desktop data is removed.
+- Made the frontend default-deny until bootstrap negotiation. Legacy and React
+  shells hide owner controls on conversation-only surfaces; optional collectors
+  start only from explicit capability grants; the performance collector emits
+  no frame or acknowledgement request before negotiation or on a paired device.
+- Moved WebSocket registration after authentication, separated owner and
+  conversation scopes, suppressed all global broadcasts to paired sockets, and
+  projected heartbeats to conversation readiness only. Binary voice frames are
+  rejected before the voice engine. Revocation is revalidated while idle and
+  before each inbound frame, closes the existing socket, and cancels its active
+  CognitiveEngine turn.
+- Forced paired HTTP and WebSocket chat through CognitiveEngine with a
+  server-originated conversation-only/tool-deny policy. Caller-supplied
+  benchmark, legacy-fallback, arbitrary-session, and desktop headers cannot
+  broaden authority. Preflight file loading, owner profile/self context, global
+  retained-memory evidence, required web search, governed capability fastpaths,
+  and every pre/post-generation file, tool, runtime-proof, and desktop action
+  door are closed on that surface.
+- Namespaced idempotency by authenticated session, rejected overlapping
+  WebSocket turns, and added an allowlist response projector over every early
+  chat return. Paired prompt context keeps causal full-mind readiness but removes
+  raw model paths, failure details, ambient voice transcripts, owner runtime
+  snapshots, and diagnostic metadata.
+
+Verification completed for this checkpoint:
+
+- MLX resilience and ErrorIntelligence regressions passed `222/222`, including
+  recovered retry, exhausted retry, structured logging, and incident-fingerprint
+  separation.
+- Paired auth/HTTP/ASGI/WebSocket coverage passed `39/39`, including open-socket
+  revocation, in-flight cancellation, overlap rejection, binary-voice denial,
+  and response projection. The complete owner conversation lane passed
+  `248/248` after the shared route changes.
+- The architecture, WebSocket/runtime, server-contract, and executable frontend
+  matrix produced `163` passing tests with one stale source assertion; after the
+  assertion was corrected to require both owner and paired origins, the complete
+  server-contract file passed `8/8`. Node syntax/VM capability checks and the
+  React production build passed.
+- Strict MyPy passed all `43` configured files. Whole-surface compile and Ruff,
+  governance ownership, enterprise static and collection ratchets, security,
+  model-load/resource-observation/cognitive-gate ownership, the `75/75` skill
+  catalog, all `37` production-readiness checks, and the native Node frontend
+  contract/build passed. The mechanical closeout scan enumerated `5,064`
+  tracked files and `3,604,883` text lines with every nested technical gate
+  green; its expected pre-commit verdict failed only because the worktree was
+  intentionally dirty. Clean committed/post-rebase reruns remain mandatory.
+
+Authoritative remaining work from this milestone:
+
+- Prevent empty foreground output at the generation source, not only classify it
+  correctly: reproduce cold/warm and quality-gate empties with worker receipts,
+  distinguish decoding, cache, cancellation, deadline, and validator causes,
+  implement bounded same-worker repair for each proven class, and pass repeated
+  live turns without premature alerts, silent output, or recovery storms.
+- Complete delegated-device identity: explicit owner/delegate roles,
+  attestation, per-capability consent, expiring renewable leases, token rotation,
+  device-loss recovery, audit receipts, role-based memory disclosure, and
+  immediate cancellation of every HTTP, WebSocket, voice, world, and future
+  action when authority changes.
+- Prove reconnect, duplicate delivery, idempotent replay, backpressure, network
+  partition, clock skew, suspend/resume, server restart, multi-device concurrency,
+  revocation races, and stale-cookie/token behavior. Add a clean phone/browser
+  GUI run with screenshots, accessibility, responsive layout, long text, and no
+  forbidden network requests or hidden owner data.
+- Replace the remaining HTTP/WebSocket chat federation with one canonical
+  conversation transaction and terminal receipt contract so persistence,
+  cancellation, memory, quality gates, delivery, and observed user-visible
+  completion are identical across transports.
+- Continue `DESKTOP-001`/`TOOLS-001` with the reported `os_automation` failure:
+  typed script authority, foreground generation contracts, strict single-script
+  parsing, objective-specific postconditions, effect verification, compensation,
+  and surfaced authority finalization. Continue all broader tracker work after
+  that bounded checkpoint.
+- Keep multi-hour and 24-72 hour soaks deferred until every remaining shorter
+  static, bounded, fault-injection, GUI, clean-machine, and live-runtime gate is
+  green.

@@ -13,6 +13,7 @@ import os
 import random
 import time
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import WebSocket
@@ -50,6 +51,12 @@ _WEBSOCKET_DELIVERY_ERRORS = (
     ValueError,
 )
 _WEBSOCKET_HEARTBEAT_ERRORS = (asyncio.TimeoutError,) + _WEBSOCKET_DELIVERY_ERRORS
+
+type BroadcastItem = tuple[int, float, Any]
+type BroadcastQueue = asyncio.PriorityQueue[BroadcastItem]
+type ClientItem = tuple[int, float, str]
+type ClientQueue = asyncio.PriorityQueue[ClientItem]
+type TaskSpawner = Callable[..., asyncio.Task[Any]]
 
 
 def _env_positive_int(name: str, default: int, *, minimum: int = 1) -> int:
@@ -119,6 +126,34 @@ def runtime_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
         }
 
 
+def conversation_heartbeat_payload(kind: str = "heartbeat") -> dict[str, Any]:
+    """Return only conversation transport/readiness state for paired clients."""
+
+    full = runtime_heartbeat_payload(kind)
+    lane = full.get("conversation_lane")
+    lane = lane if isinstance(lane, dict) else {}
+    public_lane = {
+        key: lane.get(key)
+        for key in (
+            "state",
+            "conversation_ready",
+            "active_generation",
+            "active_generations",
+        )
+        if key in lane
+    }
+    return {
+        "type": kind,
+        "timestamp": full.get("timestamp", time.time()),
+        "transport_connected": True,
+        "status": full.get("status", "unknown"),
+        "healthy": bool(full.get("conversation_ready", False)),
+        "conversation_ready": bool(full.get("conversation_ready", False)),
+        "conversation_busy": bool(full.get("conversation_busy", False)),
+        "conversation_lane": public_lane,
+    }
+
+
 def _conversation_lane_readiness() -> tuple[dict[str, Any], bool]:
     """Return live conversation readiness for transport heartbeat payloads."""
     try:
@@ -180,18 +215,18 @@ class MessageBroadcastBus:
     Ensures that multiple consumers (WebSockets, SSE) get all messages.
     """
 
-    def __init__(self, maxsize: int = 2000):
-        self._subs: list[asyncio.PriorityQueue] = []
+    def __init__(self, maxsize: int = 2000) -> None:
+        self._subs: list[BroadcastQueue] = []
         self._lock = asyncio.Lock()
         self._maxsize = maxsize
 
-    async def subscribe(self) -> asyncio.PriorityQueue:
-        q = asyncio.PriorityQueue(maxsize=self._maxsize)
+    async def subscribe(self) -> BroadcastQueue:
+        q: BroadcastQueue = asyncio.PriorityQueue(maxsize=self._maxsize)
         async with self._lock:
             self._subs.append(q)
         return q
 
-    async def unsubscribe(self, q: asyncio.PriorityQueue):
+    async def unsubscribe(self, q: BroadcastQueue) -> None:
         async with self._lock:
             if q in self._subs:
                 self._subs.remove(q)
@@ -204,17 +239,17 @@ class MessageBroadcastBus:
         return (lhs[0], -float(lhs[1])) > (rhs[0], -float(rhs[1]))
 
     @staticmethod
-    def _drain_queue_snapshot(q: asyncio.PriorityQueue) -> list[tuple[int, float, Any]]:
+    def _drain_queue_snapshot(q: BroadcastQueue) -> list[BroadcastItem]:
         """Drain the current queue contents without relying on an unbounded loop."""
-        drained: list[tuple[int, float, Any]] = []
+        drained: list[BroadcastItem] = []
         for _ in range(q.qsize()):
             drained.append(q.get_nowait())
         return drained
 
     async def _replace_lowest_priority_item(
         self,
-        q: asyncio.PriorityQueue,
-        item: tuple[int, float, Any],
+        q: BroadcastQueue,
+        item: BroadcastItem,
     ) -> None:
         drained = self._drain_queue_snapshot(q)
         if not drained:
@@ -239,7 +274,7 @@ class MessageBroadcastBus:
         for existing in drained:
             q.put_nowait(existing)
 
-    async def publish(self, message: Any, priority: int = 10):
+    async def publish(self, message: Any, priority: int = 10) -> None:
         """Push message to all subscriber queues.
         Priority: 0=Critical, 10=Standard, 20=Logs
         """
@@ -300,15 +335,16 @@ def _normalize_ui_event(message: Any) -> dict[str, Any]:
 class WebSocketManager:
     """Manages WebSocket connections with priority-based queues and heartbeat monitoring."""
 
-    def __init__(self, task_spawner=None):
-        self.active_connections: dict[WebSocket, asyncio.PriorityQueue] = {}
-        self._pump_tasks: dict[WebSocket, asyncio.Task] = {}
-        self._heartbeat_tasks: dict[WebSocket, asyncio.Task] = {}
+    def __init__(self, task_spawner: TaskSpawner | None = None) -> None:
+        self.active_connections: dict[WebSocket, ClientQueue] = {}
+        self._connection_scopes: dict[WebSocket, str] = {}
+        self._pump_tasks: dict[WebSocket, asyncio.Task[Any]] = {}
+        self._heartbeat_tasks: dict[WebSocket, asyncio.Task[Any]] = {}
         self._lock = asyncio.Lock()
         self._heartbeat_interval = 20.0
         self._task_spawner = task_spawner or asyncio.create_task
 
-    def set_task_spawner(self, spawner):
+    def set_task_spawner(self, spawner: TaskSpawner) -> None:
         """Set the task spawner function (e.g. _spawn_server_task)."""
         self._task_spawner = spawner
 
@@ -317,17 +353,17 @@ class WebSocketManager:
         return (lhs[0], -float(lhs[1])) > (rhs[0], -float(rhs[1]))
 
     @staticmethod
-    def _drain_queue_snapshot(queue: asyncio.PriorityQueue) -> list[tuple[int, float, str]]:
+    def _drain_queue_snapshot(queue: ClientQueue) -> list[ClientItem]:
         """Drain the current queue contents without relying on an unbounded loop."""
-        drained: list[tuple[int, float, str]] = []
+        drained: list[ClientItem] = []
         for _ in range(queue.qsize()):
             drained.append(queue.get_nowait())
         return drained
 
     async def _replace_lowest_priority_item(
         self,
-        queue: asyncio.PriorityQueue,
-        item: tuple[int, float, str],
+        queue: ClientQueue,
+        item: ClientItem,
     ) -> None:
         drained = self._drain_queue_snapshot(queue)
         if not drained:
@@ -352,21 +388,34 @@ class WebSocketManager:
         for existing in drained:
             queue.put_nowait(existing)
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(
+        self,
+        websocket: WebSocket,
+        *,
+        accepted: bool = False,
+        scope: str = "owner",
+    ) -> None:
         """Accept connection and start a dedicated message pump for this client."""
-        await websocket.accept()
+        if not accepted:
+            await websocket.accept()
         if os.environ.get("AURA_TRACE_MODE") == "1":
             logger.info("📡 [TRACE] WebSocket connected (ID: %s)", id(websocket))
-        queue = asyncio.PriorityQueue(maxsize=1000)
+        queue: ClientQueue = asyncio.PriorityQueue(maxsize=1000)
         async with self._lock:
             self.active_connections[websocket] = queue
+            self._connection_scopes[websocket] = (
+                "conversation" if scope == "conversation" else "owner"
+            )
 
         task = self._task_spawner(
             self._pump_messages(websocket, queue), name="ws_pump"
         )
         self._pump_tasks[websocket] = task
 
-        def _on_pump_done(t: asyncio.Task, ws=websocket):
+        def _on_pump_done(
+            t: asyncio.Task[Any],
+            ws: WebSocket = websocket,
+        ) -> None:
             exc = t.exception() if not t.cancelled() else None
             if exc:
                 logger.error("WS pump task died with exception: %s", exc)
@@ -380,7 +429,7 @@ class WebSocketManager:
 
         logger.info("WS: Client connected. Total: %d", len(self.active_connections))
 
-    async def _pump_messages(self, websocket: WebSocket, queue: asyncio.Queue):
+    async def _pump_messages(self, websocket: WebSocket, queue: ClientQueue) -> None:
         """Hardened message pump with heartbeat and timeout protection."""
         try:
             while not is_shutdown_requested():
@@ -409,7 +458,9 @@ class WebSocketManager:
                             logger.warning("WS queue task accounting failed: %s", exc)
                 except TimeoutError:
                     try:
-                        await websocket.send_json(runtime_heartbeat_payload("heartbeat"))
+                        await websocket.send_json(
+                            self.heartbeat_payload(websocket, "heartbeat")
+                        )
                     except _WEBSOCKET_DELIVERY_ERRORS as exc:
                         logger.debug("WS heartbeat failed; closing pump: %s", exc)
                         break
@@ -429,11 +480,12 @@ class WebSocketManager:
         finally:
             await self.disconnect(websocket)
 
-    async def disconnect(self, websocket: WebSocket):
+    async def disconnect(self, websocket: WebSocket) -> None:
         """Cleanly remove connection and cancel pump task."""
         async with self._lock:
             if websocket in self.active_connections:
                 del self.active_connections[websocket]
+            self._connection_scopes.pop(websocket, None)
         task = self._pump_tasks.pop(websocket, None)
         if task and task is not asyncio.current_task() and not task.done():
             task.cancel()
@@ -442,7 +494,7 @@ class WebSocketManager:
             heartbeat_task.cancel()
         logger.debug("WS: Client disconnected. Total: %d", len(self.active_connections))
 
-    async def _heartbeat_runner(self, websocket: WebSocket):
+    async def _heartbeat_runner(self, websocket: WebSocket) -> None:
         """Aggressively reaps zombie connections to prevent FD exhaustion."""
         try:
             while not is_shutdown_requested():
@@ -455,7 +507,7 @@ class WebSocketManager:
 
                 try:
                     await asyncio.wait_for(
-                        websocket.send_json(runtime_heartbeat_payload("ping")),
+                        websocket.send_json(self.heartbeat_payload(websocket, "ping")),
                         timeout=5.0,
                     )
                 except _WEBSOCKET_HEARTBEAT_ERRORS:
@@ -465,9 +517,16 @@ class WebSocketManager:
         except asyncio.CancelledError:
             pass  # no-op: intentional
 
-    async def broadcast(self, message: dict):
+    async def broadcast(self, message: dict[str, Any]) -> None:
         """Send a JSON-serializable dict to all clients via their queues."""
         if not self.active_connections:
+            return
+        owner_connections = [
+            (websocket, queue)
+            for websocket, queue in self.active_connections.items()
+            if self._connection_scopes.get(websocket, "owner") == "owner"
+        ]
+        if not owner_connections:
             return
         message = _normalize_ui_event(message)
         msg_type = message.get("type", "")
@@ -480,7 +539,7 @@ class WebSocketManager:
         from enum import Enum
 
         class _EnumEncoder(json.JSONEncoder):
-            def default(self, obj):
+            def default(self, obj: Any) -> Any:
                 if isinstance(obj, Enum):
                     return obj.value
                 return super().default(obj)
@@ -495,7 +554,9 @@ class WebSocketManager:
 
         disconnect_later: list[WebSocket] = []
         async with self._lock:
-            for websocket, queue in list(self.active_connections.items()):
+            for websocket, queue in owner_connections:
+                if websocket not in self.active_connections:
+                    continue
                 try:
                     queue.put_nowait(item)
                 except asyncio.QueueFull:
@@ -511,11 +572,16 @@ class WebSocketManager:
     def count(self) -> int:
         return len(self.active_connections)
 
+    def heartbeat_payload(self, websocket: WebSocket, kind: str) -> dict[str, Any]:
+        if self._connection_scopes.get(websocket, "owner") == "conversation":
+            return conversation_heartbeat_payload(kind)
+        return runtime_heartbeat_payload(kind)
+
 
 # ── Module-level singletons ──────────────────────────────────
 
 broadcast_bus = MessageBroadcastBus(maxsize=1000)
 ws_manager = WebSocketManager()
-log_queue: collections.deque = collections.deque(
+log_queue: collections.deque[Any] = collections.deque(
     maxlen=_env_positive_int("AURA_UI_LOG_QUEUE_MAXLEN", 2000, minimum=500)
 )

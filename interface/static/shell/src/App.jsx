@@ -5,6 +5,7 @@ const TABS = ["neural", "telemetry", "memory", "tools", "settings"];
 const DEFAULT_BOOTSTRAP = {
   identity: { name: "Aura Luna", version: "offline", build: "" },
   session: { connected: false, initialized: false, websocket_clients: 0 },
+  access: { surface: "unknown", conversation_only: true, capabilities: {} },
   constitutional: { recent_decisions: [], belief_summary: {} },
   executive: {},
   state: {
@@ -56,6 +57,10 @@ function normalizeBootstrap(payload) {
     ...raw,
     identity: mergeObject(DEFAULT_BOOTSTRAP.identity, raw.identity),
     session: mergeObject(DEFAULT_BOOTSTRAP.session, raw.session),
+    access: {
+      ...mergeObject(DEFAULT_BOOTSTRAP.access, raw.access),
+      capabilities: safeObject(raw.access?.capabilities),
+    },
     constitutional: {
       ...constitutional,
       recent_decisions: safeArray(constitutional.recent_decisions),
@@ -254,6 +259,7 @@ export default function App() {
         const payload = await response.json();
         if (!mounted) return;
         const normalized = normalizeBootstrap(payload);
+        window.__auraControlSurfaceAllowed = normalized.access.conversation_only === false;
         startTransition(() => {
           setBootstrap(normalized);
           setTelemetry(normalized.telemetry);
@@ -492,6 +498,7 @@ export default function App() {
   }
 
   async function regenerate() {
+    if (bootstrap.access.conversation_only !== false) return;
     setSending(true);
     try {
       const response = await fetch("/api/chat/regenerate", {
@@ -518,6 +525,7 @@ export default function App() {
   }
 
   async function retryBrain() {
+    if (bootstrap.access.conversation_only !== false) return;
     try {
       const response = await fetch("/api/brain/retry", { method: "POST" });
       const payload = await response.json();
@@ -528,9 +536,11 @@ export default function App() {
   }
 
   async function exportConversation() {
+    if (bootstrap.access.conversation_only !== false) return;
     window.open("/api/export", "_blank", "noopener,noreferrer");
   }
 
+  const conversationOnly = bootstrap.access.conversation_only !== false;
   const closure = bootstrap.executive?.last_reason || telemetry.executive_closure?.dominant_need || "steady";
   const epistemics = bootstrap.state.epistemics || bootstrap.constitutional.belief_summary || {};
   const cognitiveHealth = bootstrap.state.health?.cognitive_health || {};
@@ -551,7 +561,7 @@ export default function App() {
   const unavailableTools = safeArray(bootstrap.tools).filter((tool) => !tool.available);
 
   return (
-    <div className={`shell ${connectionState}`}>
+    <div className={`shell ${connectionState}${conversationOnly ? " conversation-only" : ""}`}>
       <div className="cosmos" aria-hidden="true">
         <div className="cosmos-gradient cosmos-gradient-a" />
         <div className="cosmos-gradient cosmos-gradient-b" />
@@ -567,23 +577,23 @@ export default function App() {
           </div>
         </div>
 
-        <div className="stats-ribbon">
+        {!conversationOnly ? <div className="stats-ribbon">
           {headerStats.map((item) => (
             <div className="stat-chip" key={item.label}>
               <span>{item.label}</span>
               <strong>{item.value}</strong>
             </div>
           ))}
-        </div>
+        </div> : null}
 
-        <div className="toolbar">
+        {!conversationOnly ? <div className="toolbar">
           <button type="button" onClick={retryBrain}>Retry Brain</button>
           <button type="button" onClick={exportConversation}>Export</button>
           <button type="button" onClick={() => window.open("/memory", "_blank", "noopener,noreferrer")}>Black Hole</button>
           <button type="button" onClick={() => setDiagnosticsOpen((open) => !open)}>
             {diagnosticsOpen ? "Hide Diagnostics" : "Show Diagnostics"}
           </button>
-        </div>
+        </div> : null}
       </header>
 
       {toast ? <div className="toast">{toast}</div> : null}
@@ -606,13 +616,13 @@ export default function App() {
               <div className="eyebrow">Primary Channel</div>
               <h1>Conversation</h1>
             </div>
-            <div className="voice-cluster">
+            {!conversationOnly ? <div className="voice-cluster">
               <div className={`voice-orb ${bootstrap.voice.available ? "available" : "disabled"} ${sending ? "active" : ""}`} />
               <div className="voice-meta">
                 <span>Voice</span>
                 <strong>{bootstrap.voice.state || "offline"}</strong>
               </div>
-            </div>
+            </div> : null}
           </div>
 
           <div className="messages">
@@ -639,9 +649,11 @@ export default function App() {
               rows={3}
             />
             <div className="composer-actions">
-              <button type="button" className="secondary" onClick={regenerate} disabled={sending}>
-                Regenerate
-              </button>
+              {!conversationOnly ? (
+                <button type="button" className="secondary" onClick={regenerate} disabled={sending}>
+                  Regenerate
+                </button>
+              ) : null}
               <button type="submit" disabled={sending || !input.trim()}>
                 {sending ? "Sending..." : "Send"}
               </button>
@@ -649,7 +661,7 @@ export default function App() {
           </form>
         </section>
 
-        <aside className="sidebar panel">
+        {!conversationOnly ? <aside className="sidebar panel">
           <div className="tabs">
             {TABS.map((tab) => (
               <button
@@ -814,10 +826,10 @@ export default function App() {
               </div>
             ) : null}
           </div>
-        </aside>
+        </aside> : null}
       </main>
 
-      <section className={`diagnostics panel ${diagnosticsOpen ? "open" : "closed"}`}>
+      {!conversationOnly ? <section className={`diagnostics panel ${diagnosticsOpen ? "open" : "closed"}`}>
         <div className="panel-header compact">
           <div>
             <div className="eyebrow">Operational Truth</div>
@@ -854,7 +866,7 @@ export default function App() {
             </div>
           </div>
         </div>
-      </section>
+      </section> : null}
     </div>
   );
 }

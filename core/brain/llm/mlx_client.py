@@ -5176,14 +5176,6 @@ class MLXLocalClient:
                         )
                         self._set_lane_state("warming", "warmup_precompile_no_text")
                         return ""
-                    self._record_degraded_event(
-                        "empty_generation",
-                        detail=os.path.basename(self.model_path),
-                        severity="info",  # Downgraded from "warning"
-                        foreground_request=foreground_request,
-                    )
-                    # Only crash to recovering for repeated empty generations,
-                    # not a single occurrence
                     empty_count = getattr(self, "_consecutive_empty", 0) + 1
                     self._consecutive_empty = empty_count
                     # Inline one-shot retry for user-facing requests.  The
@@ -5199,6 +5191,20 @@ class MLXLocalClient:
                         and empty_count < 3
                         and (deadline.remaining is None or deadline.remaining > 5.0)
                     ):
+                        # This is an active recovery transition, not yet a
+                        # user-visible failure. Keep the attempt observable
+                        # without forwarding a synthetic RuntimeError into
+                        # ErrorIntelligence before the retry has a verdict.
+                        self._record_degraded_event(
+                            "empty_generation_retry",
+                            detail=(
+                                f"{os.path.basename(self.model_path)}:"
+                                f"attempt={empty_count}:cache_reset_retry"
+                            ),
+                            severity="info",
+                            foreground_request=False,
+                            classification="non_critical_fallback",
+                        )
                         logger.info(
                             "🔁 [MLX] Empty foreground generation — "
                             "inline retry after worker cache reset (%d/2).",
@@ -5215,7 +5221,26 @@ class MLXLocalClient:
                             **inline_kwargs,
                         )
                     if foreground_request:
+                        self._record_degraded_event(
+                            "empty_generation_exhausted",
+                            detail=(
+                                f"{os.path.basename(self.model_path)}:"
+                                f"attempt={empty_count}:no_visible_text"
+                            ),
+                            severity="error",
+                            foreground_request=True,
+                        )
                         self._deferred_reboot_reason = "recoverable_empty_generation"
+                    else:
+                        self._record_degraded_event(
+                            "empty_generation",
+                            detail=(
+                                f"{os.path.basename(self.model_path)}:"
+                                f"attempt={empty_count}:background"
+                            ),
+                            severity="info",
+                            foreground_request=False,
+                        )
                     if foreground_request and self._is_primary_or_deep_lane() and empty_count >= 3:
                         self._set_lane_state("recovering", "repeated_empty_generation")
                     return None

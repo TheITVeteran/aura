@@ -48,6 +48,28 @@
     --neural-meta-scale: 1;
 }
 
+/* Paired devices are an intentionally narrow conversation surface. */
+body[data-aura-surface="paired_device"] .hud-stats,
+body[data-aura-surface="paired_device"] .hdr-actions,
+body[data-aura-surface="paired_device"] .sidebar,
+body[data-aura-surface="paired_device"] .mobile-nav,
+body[data-aura-surface="paired_device"] .voice-orb-wrap {
+    display: none !important;
+}
+
+body[data-aura-surface="paired_device"] main {
+    gap: 0;
+    padding: 12px;
+}
+
+body[data-aura-surface="paired_device"] .chat-panel,
+body[data-aura-surface="paired_device"] .chat-panel.mobile-active {
+    display: flex !important;
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+}
+
 /* Flagship-grade font rendering: antialiased glyphs, tabular numerics for
    telemetry, Inter stylistic sets for a rounder single-story 'a' and curved
    'l'.  Applies globally; specific mono blocks opt in via --font-mono. */

@@ -1488,6 +1488,92 @@ class TestMLXClientResilience(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(lane["conversation_ready"])
         self.assertIn("visible_conversation_probe_missing", lane["readiness_blockers"])
 
+    async def test_foreground_empty_generation_retry_is_noncritical_when_recovered(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client._process = ProcessProbe(alive=True)
+        client._init_done = True
+        self._attach_local_ipc_queues(client)
+        client._set_lane_state("ready")
+        client._recurrent_depth_status = {
+            "active": True,
+            "config": {"n_loops": 2},
+            "expected_loops": 2,
+            "required": True,
+        }
+        recorded = SyncCallProbe()
+
+        with ReplaceAttr(client, "_record_degraded_event", recorded):
+            with ReplaceAttr(
+                client,
+                "_wait_for_generation_result",
+                AsyncCallProbe(
+                    side_effect=[
+                        {"status": "ok", "text": ""},
+                        {"status": "ok", "text": "Recovered visible reply."},
+                    ]
+                ),
+            ):
+                result = await client._generate_inner(
+                    "hello",
+                    _retry=True,
+                    foreground_request=True,
+                    owner_label="test",
+                    deadline=get_deadline(30.0),
+                )
+
+        self.assertEqual(result, "Recovered visible reply.")
+        self.assertEqual(len(recorded.call_args_list), 1)
+        event = recorded.call_args_list[0]
+        self.assertEqual(event.args, ("empty_generation_retry",))
+        self.assertEqual(event.kwargs["severity"], "info")
+        self.assertEqual(event.kwargs["classification"], "non_critical_fallback")
+        self.assertIsNone(client._deferred_reboot_reason)
+        self.assertEqual(client._consecutive_empty, 0)
+
+    async def test_foreground_empty_generation_exhaustion_records_terminal_incident(self):
+        client = MLXLocalClient(model_path=QWEN32_MODEL)
+        client._process = ProcessProbe(alive=True)
+        client._init_done = True
+        self._attach_local_ipc_queues(client)
+        client._set_lane_state("ready")
+        client._recurrent_depth_status = {
+            "active": True,
+            "config": {"n_loops": 2},
+            "expected_loops": 2,
+            "required": True,
+        }
+        recorded = SyncCallProbe()
+
+        with ReplaceAttr(client, "_record_degraded_event", recorded):
+            with ReplaceAttr(
+                client,
+                "_wait_for_generation_result",
+                AsyncCallProbe(
+                    side_effect=[
+                        {"status": "ok", "text": ""},
+                        {"status": "ok", "text": ""},
+                    ]
+                ),
+            ):
+                result = await client._generate_inner(
+                    "hello",
+                    _retry=True,
+                    foreground_request=True,
+                    owner_label="test",
+                    deadline=get_deadline(30.0),
+                )
+
+        self.assertIsNone(result)
+        self.assertEqual(
+            [call.args[0] for call in recorded.call_args_list],
+            ["empty_generation_retry", "empty_generation_exhausted"],
+        )
+        terminal = recorded.call_args_list[-1]
+        self.assertEqual(terminal.kwargs["severity"], "error")
+        self.assertTrue(terminal.kwargs["foreground_request"])
+        self.assertIn("no_visible_text", terminal.kwargs["detail"])
+        self.assertEqual(client._deferred_reboot_reason, "recoverable_empty_generation")
+
     async def test_generate_reboots_recoverable_empty_generation_without_failed_lane(self):
         client = MLXLocalClient(model_path=QWEN32_MODEL)
 

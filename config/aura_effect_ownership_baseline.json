@@ -4326,7 +4326,7 @@
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/worlds/hosting.py",
-      "scope": "<module>.WorldHost._persist"
+      "scope": "<module>.WorldHost._persist._write"
     },
     {
       "callee": "<file_write_gateway>.write_json_async",
@@ -4334,7 +4334,7 @@
       "category": "file_write_gateway",
       "count": 1,
       "path": "core/worlds/hosting.py",
-      "scope": "<module>.WorldHost._persist"
+      "scope": "<module>.WorldHost._persist._write"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_bytes",
@@ -13570,6 +13570,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "6a82abfc3708be6bdfcb4809d79f2c705a0ed1c509aba9db7ea81d5d2da02d74",
+  "inventory_sha256": "5ded15181c3a5b98fd524ab38e6cce30d319189f440498e39d1af7da2b142487",
   "schema_version": 1
 }

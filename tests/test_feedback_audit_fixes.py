@@ -56,6 +56,67 @@ def test_error_intelligence_targets_deepest_aura_traceback_frame(tmp_path):
     assert entered == [True]
 
 
+def test_error_intelligence_logs_structured_runtime_reason(caplog, tmp_path):
+    from core.self_modification.error_intelligence import StructuredErrorLogger
+
+    error_logger = StructuredErrorLogger(str(tmp_path))
+    caplog.set_level(logging.WARNING, logger="SelfModification.ErrorIntelligence")
+    context = {
+        "subsystem": "mlx_client",
+        "reason": "empty_generation_exhausted",
+        "classification": "foreground_blocking",
+        "detail": "Aura-32B:attempt=2:no_visible_text",
+    }
+
+    asyncio.run(
+        error_logger.log_error(
+            RuntimeError("synthetic health incident"),
+            context,
+            skill_name="mlx_client",
+            goal="empty_generation_exhausted",
+        )
+    )
+
+    assert "reason=empty_generation_exhausted" in caplog.text
+    assert "classification=foreground_blocking" in caplog.text
+    assert "Aura-32B:attempt=2:no_visible_text" in caplog.text
+
+
+def test_contextless_error_fingerprint_uses_structured_incident_identity():
+    from core.self_modification.error_intelligence import ErrorEvent
+
+    common = {
+        "timestamp": 1.0,
+        "error_type": "RuntimeError",
+        "error_message": "synthetic health incident",
+        "stack_trace": "",
+        "file_path": None,
+        "line_number": None,
+    }
+    empty_generation = ErrorEvent(
+        **common,
+        context={
+            "subsystem": "mlx_client",
+            "reason": "empty_generation_exhausted",
+            "classification": "foreground_blocking",
+        },
+        skill_name="mlx_client",
+        goal="empty_generation_exhausted",
+    )
+    queue_failure = ErrorEvent(
+        **common,
+        context={
+            "subsystem": "mlx_client",
+            "reason": "request_queue_failed",
+            "classification": "foreground_blocking",
+        },
+        skill_name="mlx_client",
+        goal="request_queue_failed",
+    )
+
+    assert empty_generation.fingerprint() != queue_failure.fingerprint()
+
+
 def test_omni_tracer_does_not_turn_forwarded_info_logs_into_failure_pressure():
     from core.resilience.omni_tracer import _classify_forwarded_log
 

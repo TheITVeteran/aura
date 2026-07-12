@@ -145,7 +145,6 @@ from interface.websocket_manager import (
 from interface.websocket_manager import (
     broadcast_bus,
     log_queue,
-    runtime_heartbeat_payload,
     ws_manager,
 )
 
@@ -673,7 +672,6 @@ from interface import memory_ui
 from interface.routes import chat as chat_routes
 from interface.routes import dashboard as dashboard_routes
 from interface.routes import devices as devices_routes
-from interface.routes import worlds as worlds_routes
 from interface.routes import inner_state as inner_state_routes
 from interface.routes import interaction_signals as interaction_signal_routes
 from interface.routes import memory as memory_routes
@@ -685,6 +683,7 @@ from interface.routes import rpc as rpc_routes
 from interface.routes import settings as settings_routes
 from interface.routes import subsystems as subsystem_routes
 from interface.routes import system as system_routes
+from interface.routes import worlds as worlds_routes
 
 checkpoint_service = CheckpointService()
 
@@ -973,7 +972,11 @@ def _verify_ws_device_token(token: str):
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
-    await ws_manager.connect(ws)
+    # Accept the transport so credentials can be exchanged, but do not
+    # register it with the global broadcast manager until authentication has
+    # succeeded. Pre-auth registration leaked queued runtime events during the
+    # five-second auth window.
+    await ws.accept()
 
     expected = os.environ.get("AURA_API_TOKEN", "")
     host = ws.client.host if ws.client else "unknown"
@@ -990,6 +993,8 @@ async def websocket_endpoint(ws: WebSocket):
     # handshake itself (browsers attach it automatically), scoped by
     # interface/auth.py to the conversation surface — /ws is in scope.
     device_session = None
+    explicit_device_token: str | None = None
+    connection_message_tasks: set[asyncio.Task[Any]] = set()
     if not authenticated:
         device_session = device_for_request(ws)
         if device_session is not None:
@@ -1000,7 +1005,6 @@ async def websocket_endpoint(ws: WebSocket):
             await ws.send_text(json.dumps({
                 "type": "auth_success",
                 "note": "paired_device",
-                "device_id": device_session.device_id,
             }))
         if not authenticated:
             try:
@@ -1010,11 +1014,11 @@ async def websocket_endpoint(ws: WebSocket):
                 if data.get("type") == "auth" and supplied_ws_token.startswith("adt1."):
                     device_session = _verify_ws_device_token(supplied_ws_token)
                     if device_session is not None:
+                        explicit_device_token = supplied_ws_token
                         authenticated = True
                         await ws.send_text(json.dumps({
                             "type": "auth_success",
                             "note": "paired_device",
-                            "device_id": device_session.device_id,
                         }))
                     else:
                         await ws.send_text(json.dumps({"type": "error", "message": "Unauthorized"}))
@@ -1036,8 +1040,55 @@ async def websocket_endpoint(ws: WebSocket):
         elif is_local and expected and local_browser_origin_allowed:
             await ws.send_text(json.dumps({"type": "auth_success", "note": "local_trust"}))
 
+        await ws_manager.connect(
+            ws,
+            accepted=True,
+            scope="conversation" if device_session is not None else "owner",
+        )
+
         while not is_shutdown_requested():
-            msg = await ws.receive()
+            try:
+                msg = await asyncio.wait_for(ws.receive(), timeout=20.0)
+            except TimeoutError:
+                if device_session is None:
+                    continue
+                refreshed = (
+                    _verify_ws_device_token(explicit_device_token)
+                    if explicit_device_token
+                    else device_for_request(ws)
+                )
+                if (
+                    refreshed is not None
+                    and refreshed.device_id == device_session.device_id
+                ):
+                    device_session = refreshed
+                    continue
+                await ws.send_text(json.dumps({
+                    "type": "error",
+                    "status": "paired_device_session_revoked",
+                    "message": "This paired-device session is no longer authorized.",
+                }))
+                await ws.close(code=4003, reason="Paired device session revoked")
+                return
+
+            if device_session is not None:
+                refreshed = (
+                    _verify_ws_device_token(explicit_device_token)
+                    if explicit_device_token
+                    else device_for_request(ws)
+                )
+                if (
+                    refreshed is None
+                    or refreshed.device_id != device_session.device_id
+                ):
+                    await ws.send_text(json.dumps({
+                        "type": "error",
+                        "status": "paired_device_session_revoked",
+                        "message": "This paired-device session is no longer authorized.",
+                    }))
+                    await ws.close(code=4003, reason="Paired device session revoked")
+                    return
+                device_session = refreshed
 
             if msg.get("type") == "websocket.disconnect":
                 break
@@ -1053,21 +1104,49 @@ async def websocket_endpoint(ws: WebSocket):
                 if msg_type == "user_message":
                     content = data.get("content", "")
                     if content:
+                        if any(not task.done() for task in connection_message_tasks):
+                            await ws.send_text(json.dumps({
+                                "type": "aura_message",
+                                "content": (
+                                    "The previous WebSocket turn is still running. "
+                                    "Wait for its terminal reply before sending another."
+                                ),
+                                "status": "conversation_turn_in_progress",
+                            }))
+                            continue
                         logger.debug("WS: Received user_message: %s", content[:100])
                         _notify_user_spoke(content)
 
-                        async def _handle_ws_message(ws_ref, user_content: str):
+                        async def _handle_ws_message(
+                            ws_ref,
+                            user_content: str,
+                            paired_session,
+                        ):
                             """Process user message and send response back via WebSocket."""
                             try:
                                 lane_snapshot = chat_routes._collect_conversation_lane_status()
                                 reply = await chat_routes._run_cognitive_engine_chat_turn(
                                     user_content,
                                     visible_user_message=user_content,
-                                    origin="desktop-ui",
+                                    session_id=(
+                                        f"paired-device:{paired_session.device_id}"
+                                        if paired_session is not None
+                                        else ""
+                                    ),
+                                    origin=(
+                                        "user"
+                                        if paired_session is not None
+                                        else "desktop-ui"
+                                    ),
                                     timeout_s=300.0,
                                     lane=lane_snapshot,
-                                    source="desktop_websocket",
+                                    source=(
+                                        "paired_device_websocket"
+                                        if paired_session is not None
+                                        else "desktop_websocket"
+                                    ),
                                     require_engine=True,
+                                    conversation_only_surface=paired_session is not None,
                                 )
                                 
                                 if not reply:
@@ -1098,10 +1177,22 @@ async def websocket_endpoint(ws: WebSocket):
                                     )
                                     or "cognitive_engine"
                                 )
-                                desktop_result = await chat_routes._execute_desktop_objective_from_chat(
-                                    user_content,
-                                    cognitive_reply=reply,
-                                )
+                                desktop_result = None
+                                if paired_session is None:
+                                    desktop_result = await chat_routes._execute_desktop_objective_from_chat(
+                                        user_content,
+                                        cognitive_reply=reply,
+                                    )
+                                elif chat_routes._looks_like_desktop_objective(user_content):
+                                    await ws_ref.send_text(json.dumps({
+                                        "type": "aura_message",
+                                        "content": (
+                                            "This paired device is scoped to conversation and read-only world viewing. "
+                                            "Desktop, file, tool, and control actions require the owner surface."
+                                        ),
+                                        "status": "paired_device_action_scope_denied",
+                                    }))
+                                    return
                                 if isinstance(desktop_result, dict):
                                     await ws_ref.send_text(json.dumps({
                                         "type": "aura_message",
@@ -1142,14 +1233,28 @@ async def websocket_endpoint(ws: WebSocket):
                                     "content": "The live message handler failed before a coherent answer formed. I logged the failure with the current turn context.",
                                 }))
 
-                        _spawn_server_bounded_task(
-                            _handle_ws_message(ws, content),
+                        message_task = _spawn_server_bounded_task(
+                            _handle_ws_message(ws, content, device_session),
                             name="server.ws.handle_message",
                         )
+                        connection_message_tasks.add(message_task)
+                        message_task.add_done_callback(connection_message_tasks.discard)
                 elif msg_type == "ping":
-                    await ws.send_text(json.dumps(runtime_heartbeat_payload("pong")))
+                    await ws.send_text(
+                        json.dumps(ws_manager.heartbeat_payload(ws, "pong"))
+                    )
 
             elif "bytes" in msg:
+                if device_session is not None:
+                    await ws.send_text(json.dumps({
+                        "type": "error",
+                        "status": "paired_device_voice_scope_denied",
+                        "message": (
+                            "Voice streaming is not enabled for this paired device. "
+                            "Use the owner surface for microphone input."
+                        ),
+                    }))
+                    continue
                 if _voice_engine_fn:
                     ve = _voice_engine_fn()
                     if ve:
@@ -1164,6 +1269,13 @@ async def websocket_endpoint(ws: WebSocket):
         record_degradation('server', exc)
         logger.debug("WS error: %s", exc)
     finally:
+        pending_message_tasks = [
+            task for task in connection_message_tasks if not task.done()
+        ]
+        for task in pending_message_tasks:
+            task.cancel()
+        if pending_message_tasks:
+            await asyncio.gather(*pending_message_tasks, return_exceptions=True)
         await ws_manager.disconnect(ws)
 
 

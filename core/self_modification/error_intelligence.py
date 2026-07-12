@@ -1,7 +1,6 @@
 """Error Intelligence System - Autonomous Bug Detection & Analysis
 Tracks execution, detects patterns, and generates diagnoses.
 """
-from core.runtime.errors import record_degradation
 import asyncio
 import hashlib
 import json
@@ -13,9 +12,10 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.governance_context import governed_scope_sync
+from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.utils.task_tracker import get_task_tracker
 
@@ -30,22 +30,32 @@ class ErrorEvent:
     error_type: str
     error_message: str
     stack_trace: str
-    context: Dict[str, Any]
-    skill_name: Optional[str] = None
-    goal: Optional[str] = None
-    file_path: Optional[str] = None
-    line_number: Optional[int] = None
+    context: dict[str, Any]
+    skill_name: str | None = None
+    goal: str | None = None
+    file_path: str | None = None
+    line_number: int | None = None
     
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
     
     def fingerprint(self) -> str:
         """Generate unique identifier for this error type"""
-        # Hash based on error type + location, not message (messages vary)
-        # v18: Fallback for context-free errors to still allow grouping
-        path = self.file_path or "unknown_file"
-        line = str(self.line_number) if self.line_number else "0"
-        key = f"{self.error_type}:{path}:{line}"
+        if self.file_path or self.line_number:
+            path = self.file_path or "unknown_file"
+            line = str(self.line_number) if self.line_number else "0"
+            key = f"{self.error_type}:location:{path}:{line}"
+        else:
+            # Synthetic health incidents have no traceback. Group them by
+            # their structured subsystem/reason identity so unrelated runtime
+            # degradations do not all collapse into RuntimeError:unknown:0.
+            subsystem = str(self.context.get("subsystem") or self.skill_name or "unknown")
+            reason = str(self.context.get("reason") or self.goal or "unknown")
+            classification = str(self.context.get("classification") or "unknown")
+            key = (
+                f"{self.error_type}:structured:{subsystem}:"
+                f"{reason}:{classification}"
+            )
         return hashlib.sha256(key.encode()).hexdigest()
 
 
@@ -57,10 +67,10 @@ class ErrorPattern:
     occurrences: int
     first_seen: float
     last_seen: float
-    events: List[ErrorEvent]
+    events: list[ErrorEvent]
     severity: str  # 'critical', 'high', 'medium', 'low'
     
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return {
             "fingerprint": self.fingerprint,
             "occurrences": self.occurrences,
@@ -76,7 +86,7 @@ class StructuredErrorLogger:
     Logs every error with full context for analysis.
     """
     
-    def __init__(self, log_dir: Optional[str] = None):
+    def __init__(self, log_dir: str | None = None):
         if log_dir is None:
             from core.config import config
             self.log_dir = config.paths.data_dir / "error_logs"
@@ -88,7 +98,7 @@ class StructuredErrorLogger:
         self.execution_log_path = self.log_dir / "execution_log.jsonl"
         
         # In-memory cache for fast access
-        self.recent_errors: List[ErrorEvent] = []
+        self.recent_errors: list[ErrorEvent] = []
         from core.memory.retention_policy import working_history_retention_policy
         self.max_recent = working_history_retention_policy("AURA_ERROR_INTELLIGENCE_RECENT_MAX").max_items
         
@@ -97,9 +107,9 @@ class StructuredErrorLogger:
     async def log_error(
         self,
         error: Exception,
-        context: Dict[str, Any],
-        skill_name: Optional[str] = None,
-        goal: Optional[str] = None
+        context: dict[str, Any],
+        skill_name: str | None = None,
+        goal: str | None = None
     ) -> ErrorEvent:
         """Log an error with full context (Async)."""
         # Extract stack trace information
@@ -156,17 +166,27 @@ class StructuredErrorLogger:
                 skill_name or "unknown",
             )
         else:
-            logger.warning("Error logged: %s in %s", event.error_type, skill_name or 'unknown')
+            reason = str(context.get("reason") or goal or "unknown")[:120]
+            classification = str(context.get("classification") or "unknown")[:80]
+            detail = str(context.get("detail") or event.error_message or "")[:240]
+            logger.warning(
+                "Error logged: %s in %s reason=%s classification=%s detail=%s",
+                event.error_type,
+                skill_name or "unknown",
+                reason,
+                classification,
+                detail,
+            )
         
         return event
     
     def log_execution(
         self,
         skill_name: str,
-        goal: Dict[str, Any],
-        result: Dict[str, Any],
-        duration: float
-    ):
+        goal: dict[str, Any],
+        result: dict[str, Any],
+        duration: float,
+    ) -> None:
         """Log successful execution for comparison with failures.
         
         Args:
@@ -186,7 +206,7 @@ class StructuredErrorLogger:
         }
 
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             self._append_to_log_sync(self.execution_log_path, execution_event)
         else:
@@ -195,7 +215,7 @@ class StructuredErrorLogger:
                 name="error_intelligence.log_execution",
             )
 
-    def _append_to_log_sync(self, path: Path, data: Dict[str, Any]) -> None:
+    def _append_to_log_sync(self, path: Path, data: dict[str, Any]) -> None:
         line = json.dumps(data) + '\n'
         decision = SimpleNamespace(
             receipt_id=f"self_mod_error_log:{time.time_ns()}",
@@ -213,7 +233,7 @@ class StructuredErrorLogger:
                 source="self_modification.error_intelligence.execution_log",
             )
 
-    async def _append_to_log(self, path: Path, data: Dict[str, Any]) -> None:
+    async def _append_to_log(self, path: Path, data: dict[str, Any]) -> None:
         """Append JSON line to log file without blocking the event loop."""
         try:
             await asyncio.to_thread(self._append_to_log_sync, path, data)
@@ -223,15 +243,15 @@ class StructuredErrorLogger:
             record_degradation('error_intelligence', e)
             logger.error("Failed to append to log %s: %s", path, e)
     
-    def get_recent_errors(self, limit: int = 50) -> List[ErrorEvent]:
+    def get_recent_errors(self, limit: int = 50) -> list[ErrorEvent]:
         """Get most recent errors"""
         return self.recent_errors[-limit:]
     
-    def load_all_errors(self) -> List[ErrorEvent]:
+    def load_all_errors(self) -> list[ErrorEvent]:
         """Load all errors from disk (expensive operation)"""
         errors = []
         if self.error_log_path.exists():
-            with open(self.error_log_path, 'r') as f:
+            with open(self.error_log_path) as f:
                 for line in f:
                     try:
                         data = json.loads(line)
@@ -251,7 +271,7 @@ class ErrorPatternAnalyzer:
         self.logger_system = error_logger
         
         # Pattern storage
-        self.patterns: Dict[str, ErrorPattern] = {}
+        self.patterns: dict[str, ErrorPattern] = {}
         
         # Thresholds (v18 Detection Overdrive)
         self.pattern_threshold = 2  # 2 occurrences = pattern (was 3)
@@ -260,7 +280,7 @@ class ErrorPatternAnalyzer:
         
         logger.info("ErrorPatternAnalyzer initialized")
     
-    def analyze_recent(self, window: int = 100) -> List[ErrorPattern]:
+    def analyze_recent(self, window: int = 100) -> list[ErrorPattern]:
         """Analyze recent errors for patterns.
         
         Args:
@@ -273,7 +293,7 @@ class ErrorPatternAnalyzer:
         errors = self.logger_system.get_recent_errors(limit=window)
         return self._cluster_errors(errors)
     
-    def analyze_all(self) -> List[ErrorPattern]:
+    def analyze_all(self) -> list[ErrorPattern]:
         """Analyze all historical errors (expensive).
         
         Returns:
@@ -283,7 +303,7 @@ class ErrorPatternAnalyzer:
         errors = self.logger_system.load_all_errors()
         return self._cluster_errors(errors)
     
-    def _cluster_errors(self, errors: List[ErrorEvent]) -> List[ErrorPattern]:
+    def _cluster_errors(self, errors: list[ErrorEvent]) -> list[ErrorPattern]:
         """Group errors by similarity.
         
         Args:
@@ -344,11 +364,11 @@ class ErrorPatternAnalyzer:
         logger.info("Detected %d error patterns", len(patterns))
         return patterns
     
-    def get_pattern(self, fingerprint: str) -> Optional[ErrorPattern]:
+    def get_pattern(self, fingerprint: str) -> ErrorPattern | None:
         """Get specific pattern by fingerprint"""
         return self.patterns.get(fingerprint)
     
-    def get_critical_patterns(self) -> List[ErrorPattern]:
+    def get_critical_patterns(self) -> list[ErrorPattern]:
         """Get only critical patterns that need immediate attention"""
         return [p for p in self.patterns.values() if p.severity == 'critical']
     
@@ -401,11 +421,11 @@ class AutomatedDiagnosisEngine:
     """Uses LLM to diagnose error patterns and propose root causes.
     """
     
-    def __init__(self, cognitive_engine):
+    def __init__(self, cognitive_engine: Any) -> None:
         self.brain = cognitive_engine
         logger.info("AutomatedDiagnosisEngine initialized")
 
-    def _deterministic_diagnosis(self, pattern: ErrorPattern) -> Dict[str, Any]:
+    def _deterministic_diagnosis(self, pattern: ErrorPattern) -> dict[str, Any]:
         """Produce a cheap diagnosis without waking a local model."""
         sample = pattern.events[0] if pattern.events else None
         if sample is None:
@@ -455,7 +475,7 @@ class AutomatedDiagnosisEngine:
             "diagnosis_source": "deterministic_static",
         }
     
-    async def diagnose_pattern(self, pattern: ErrorPattern) -> Dict[str, Any]:
+    async def diagnose_pattern(self, pattern: ErrorPattern) -> dict[str, Any]:
         """Generate diagnosis for an error pattern.
         
         Args:
@@ -576,7 +596,7 @@ Return ONLY the JSON, no other text.'''
         
         return prompt
     
-    def _parse_diagnosis(self, response: str) -> Dict[str, Any]:
+    def _parse_diagnosis(self, response: str) -> dict[str, Any]:
         """Parse LLM diagnosis response"""
         # Try to extract JSON
         response = response.strip()
@@ -588,8 +608,10 @@ Return ONLY the JSON, no other text.'''
         
         try:
             diagnosis = json.loads(response)
+            if not isinstance(diagnosis, dict):
+                raise json.JSONDecodeError("diagnosis must be a JSON object", response, 0)
             diagnosis["ok"] = True
-            return diagnosis
+            return {str(key): value for key, value in diagnosis.items()}
         except json.JSONDecodeError as e:
             logger.error("Failed to parse diagnosis JSON: %s", e)
             logger.debug("Response was: %s", response[:500])
@@ -606,7 +628,7 @@ class ErrorIntelligenceSystem:
     """Complete error intelligence system combining logging, analysis, and diagnosis.
     """
     
-    def __init__(self, cognitive_engine, log_dir: Optional[str] = None):
+    def __init__(self, cognitive_engine: Any, log_dir: str | None = None) -> None:
         self.logger_system = StructuredErrorLogger(log_dir)
         self.analyzer = ErrorPatternAnalyzer(self.logger_system)
         self.diagnostics = AutomatedDiagnosisEngine(cognitive_engine)
@@ -616,9 +638,9 @@ class ErrorIntelligenceSystem:
     async def on_error(
         self,
         error: Exception,
-        context: Dict[str, Any],
-        skill_name: Optional[str] = None,
-        goal: Optional[str] = None
+        context: dict[str, Any],
+        skill_name: str | None = None,
+        goal: str | None = None
     ) -> ErrorEvent:
         """Handle an error occurrence (Async)"""
         return await self.logger_system.log_error(error, context, skill_name, goal)
@@ -626,14 +648,14 @@ class ErrorIntelligenceSystem:
     def on_execution(
         self,
         skill_name: str,
-        goal: Dict[str, Any],
-        result: Dict[str, Any],
-        duration: float
-    ):
+        goal: dict[str, Any],
+        result: dict[str, Any],
+        duration: float,
+    ) -> None:
         """Handle a successful execution"""
         self.logger_system.log_execution(skill_name, goal, result, duration)
     
-    async def find_bugs_to_fix(self) -> List[Dict[str, Any]]:
+    async def find_bugs_to_fix(self) -> list[dict[str, Any]]:
         """Find bugs that should be fixed autonomously.
         
         Returns:
@@ -647,7 +669,7 @@ class ErrorIntelligenceSystem:
         fixable = [p for p in patterns if self.analyzer.should_trigger_fix(p)]
         
         # Generate diagnoses
-        bugs_with_diagnosis = []
+        bugs_with_diagnosis: list[dict[str, Any]] = []
         for pattern in fixable:
             diagnosis = await self.diagnostics.diagnose_pattern(pattern)
             if diagnosis.get("ok") and diagnosis.get("hypotheses"):
@@ -689,7 +711,7 @@ class ErrorIntelligenceSystem:
         
         return priority
     
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current error intelligence status"""
         recent_errors = self.logger_system.get_recent_errors(limit=50)
         patterns = self.analyzer.analyze_recent(window=200)
