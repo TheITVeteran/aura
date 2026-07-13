@@ -468,6 +468,7 @@ class WorldHost:
             friction=min(2.0, max(0.0, float(spec.get("friction", 0.5) or 0.0))),
             rolling_resistance=min(0.2, max(0.0, float(
                 spec.get("rolling_resistance", 0.02) or 0.0))),
+            oriented=bool(spec.get("oriented", False)) and shape == "box",
         )
         world.physics.add_body(body)
         world.record("conjured", {

@@ -88,6 +88,7 @@ class Body:
     friction: float = 0.4
     rolling_resistance: float = 0.0
     angular_locked: bool = False  # e.g. the embodied agent: never spins
+    oriented: bool = False  # boxes: opt into full 6-DoF rotation (SAT)
     orientation: np.ndarray = field(
         default_factory=lambda: np.array([1.0, 0.0, 0.0, 0.0])
     )  # quaternion (w, x, y, z)
@@ -134,7 +135,7 @@ class Body:
 
     @property
     def inertia(self) -> float:
-        """Scalar (isotropic) moment of inertia. Only spheres rotate."""
+        """Scalar (isotropic) moment of inertia — spheres only."""
         if self.shape != "sphere" or self.is_static or self.angular_locked:
             return 0.0
         return 0.4 * self.mass * self.radius ** 2
@@ -143,6 +144,32 @@ class Body:
     def inverse_inertia(self) -> float:
         inertia = self.inertia
         return 0.0 if inertia <= 0.0 else 1.0 / inertia
+
+    @property
+    def rotates(self) -> bool:
+        if self.is_static or self.angular_locked:
+            return False
+        return self.shape == "sphere" or (self.shape == "box" and self.oriented)
+
+    def rotation_matrix(self) -> np.ndarray:
+        from core.worlds.obb import quat_to_matrix
+
+        return quat_to_matrix(self.orientation)
+
+    def inverse_inertia_world(self) -> np.ndarray:
+        """World-frame inverse inertia tensor (3×3). Isotropic for
+        spheres; box tensor I=m/3·diag(hy²+hz², …) rotated into world;
+        zeros for static/locked/translational bodies."""
+        if not self.rotates:
+            return np.zeros((3, 3))
+        if self.shape == "sphere":
+            return np.eye(3) * self.inverse_inertia
+        hx, hy, hz = (float(v) for v in self.half_extents)
+        diagonal = (self.mass / 3.0) * np.array([
+            hy * hy + hz * hz, hx * hx + hz * hz, hx * hx + hy * hy,
+        ])
+        rotation = self.rotation_matrix()
+        return rotation @ np.diag(1.0 / diagonal) @ rotation.T
 
     def kinetic_energy(self) -> float:
         if self.is_static:
@@ -167,6 +194,7 @@ class Body:
             "friction": self.friction,
             "rolling_resistance": self.rolling_resistance,
             "angular_locked": self.angular_locked,
+            "oriented": self.oriented,
             "orientation": [float(x) for x in self.orientation],
             "angular_velocity": [float(x) for x in self.angular_velocity],
             "sleeping": self.sleeping,
@@ -188,6 +216,7 @@ class Body:
             friction=float(row.get("friction", 0.4)),
             rolling_resistance=float(row.get("rolling_resistance", 0.0)),
             angular_locked=bool(row.get("angular_locked", False)),
+            oriented=bool(row.get("oriented", False)),
             orientation=row.get("orientation", (1.0, 0.0, 0.0, 0.0)),
             angular_velocity=row.get("angular_velocity", (0.0, 0.0, 0.0)),
             sleeping=bool(row.get("sleeping", False)),
@@ -201,12 +230,16 @@ class Contact:
     body_b: str
     normal: np.ndarray  # from a toward b
     penetration: float
+    point: np.ndarray | None = None  # world contact point (manifold paths)
+    manifold_index: int = 0          # position within the pair's manifold
     impulse: float = 0.0            # accumulated normal impulse this tick
     friction_impulse: np.ndarray = field(default_factory=lambda: np.zeros(3))
     restitution_bias: float = 0.0   # target separating speed (e · approach)
     k_normal: float = 0.0           # effective mass along the normal
-    r_a: np.ndarray | None = None   # contact arm on a (spheres only)
+    r_a: np.ndarray | None = None   # contact arm on a (rotating bodies)
     r_b: np.ndarray | None = None
+    inv_inertia_a: np.ndarray | None = None  # cached world tensors
+    inv_inertia_b: np.ndarray | None = None
 
 
 class PhysicsWorld:
@@ -285,7 +318,7 @@ class PhysicsWorld:
                 continue
             body.velocity = body.velocity + self.gravity * self.dt
             body.position = body.position + body.velocity * self.dt
-            if body.inverse_inertia > 0.0 and float(
+            if body.rotates and float(
                 body.angular_velocity @ body.angular_velocity
             ) > 0.0:
                 # q̇ = ½ ω ⊗ q with ω as a pure quaternion (world frame).
@@ -310,9 +343,50 @@ class PhysicsWorld:
                 a, b = self.bodies[key_a], self.bodies[key_b]
                 if a.is_static and b.is_static:
                     continue
-                contact = self._pair_contact(a, b)
-                if contact is not None:
-                    contacts.append(contact)
+                if (a.shape == "box" and a.oriented) or (
+                    b.shape == "box" and b.oriented
+                ):
+                    contacts.extend(self._oriented_pair_contacts(a, b))
+                else:
+                    contact = self._pair_contact(a, b)
+                    if contact is not None:
+                        contacts.append(contact)
+        return contacts
+
+    def _oriented_pair_contacts(self, a: Body, b: Body) -> list[Contact]:
+        """Manifold contacts for pairs involving an oriented box (SAT)."""
+        from core.worlds import obb
+
+        # Canonicalize so the oriented box is X; flip normals if swapped.
+        flipped = not (a.shape == "box" and a.oriented)
+        box, other = (b, a) if flipped else (a, b)
+        rotation = box.rotation_matrix()
+        if other.shape == "plane":
+            manifold = obb.obb_vs_plane(
+                box.position, rotation, box.half_extents, other.plane_height)
+        elif other.shape == "sphere":
+            manifold = obb.obb_vs_sphere(
+                box.position, rotation, box.half_extents,
+                other.position, other.radius)
+        else:  # box (axis-aligned static or oriented)
+            other_rotation = (
+                other.rotation_matrix() if other.oriented else np.eye(3))
+            manifold = obb.obb_vs_obb(
+                box.position, rotation, box.half_extents,
+                other.position, other_rotation, other.half_extents)
+        if manifold is None:
+            return []
+        contacts: list[Contact] = []
+        for index, contact_point in enumerate(manifold.points):
+            normal = manifold.normal if not flipped else -manifold.normal
+            contacts.append(Contact(
+                body_a=a.body_id,
+                body_b=b.body_id,
+                normal=normal.copy(),
+                penetration=float(contact_point.penetration),
+                point=contact_point.point.copy(),
+                manifold_index=index,
+            ))
         return contacts
 
     def _pair_contact(self, a: Body, b: Body) -> Contact | None:
@@ -396,10 +470,29 @@ class PhysicsWorld:
             # correction creep. Settled stacks stay settled.
             if (a.is_static or a.sleeping) and (b.is_static or b.sleeping):
                 continue
+            if contact.point is not None:
+                contact.r_a = (contact.point - a.position) if a.rotates else None
+                contact.r_b = (contact.point - b.position) if b.rotates else None
+            else:
+                contact.r_a = a.radius * contact.normal if a.rotates else None
+                contact.r_b = -b.radius * contact.normal if b.rotates else None
+            contact.inv_inertia_a = a.inverse_inertia_world() if contact.r_a is not None else None
+            contact.inv_inertia_b = b.inverse_inertia_world() if contact.r_b is not None else None
             contact.k_normal = inv_mass_sum
-            contact.r_a = a.radius * contact.normal if a.inverse_inertia > 0.0 else None
-            contact.r_b = -b.radius * contact.normal if b.inverse_inertia > 0.0 else None
-            approach_speed = float((b.velocity - a.velocity) @ contact.normal)
+            if contact.r_a is not None:
+                arm = np.cross(contact.r_a, contact.normal)
+                contact.k_normal += float(
+                    contact.normal @ np.cross(contact.inv_inertia_a @ arm, contact.r_a))
+            if contact.r_b is not None:
+                arm = np.cross(contact.r_b, contact.normal)
+                contact.k_normal += float(
+                    contact.normal @ np.cross(contact.inv_inertia_b @ arm, contact.r_b))
+            approach_velocity = b.velocity - a.velocity
+            if contact.r_b is not None:
+                approach_velocity = approach_velocity + np.cross(b.angular_velocity, contact.r_b)
+            if contact.r_a is not None:
+                approach_velocity = approach_velocity - np.cross(a.angular_velocity, contact.r_a)
+            approach_speed = float(approach_velocity @ contact.normal)
             if -approach_speed > _RESTITUTION_SPEED_THRESHOLD:
                 contact.restitution_bias = (
                     -min(a.restitution, b.restitution) * approach_speed
@@ -415,7 +508,8 @@ class PhysicsWorld:
         # impulses mid-setup would contaminate the next contact's reading
         # and fake a "hit" every tick, defeating sleep.
         for contact in solvable:
-            cached = self._contact_cache.get((contact.body_a, contact.body_b))
+            cached = self._contact_cache.get(
+                (contact.body_a, contact.body_b, contact.manifold_index))
             if cached is not None:
                 cached_normal, cached_friction = cached
                 contact.impulse = cached_normal
@@ -434,7 +528,16 @@ class PhysicsWorld:
 
                 # Normal constraint: reach the restitution target speed,
                 # accumulated impulse clamped non-negative (no pulling).
-                normal_speed = float((b.velocity - a.velocity) @ normal)
+                # Contact-point velocity includes rotation for bodies with
+                # arms (off-center box contacts create torque).
+                normal_velocity = b.velocity - a.velocity
+                if contact.r_b is not None:
+                    normal_velocity = normal_velocity + np.cross(
+                        b.angular_velocity, contact.r_b)
+                if contact.r_a is not None:
+                    normal_velocity = normal_velocity - np.cross(
+                        a.angular_velocity, contact.r_a)
+                normal_speed = float(normal_velocity @ normal)
                 delta = -(normal_speed - contact.restitution_bias) / contact.k_normal
                 new_total = max(0.0, contact.impulse + delta)
                 delta = new_total - contact.impulse
@@ -458,13 +561,15 @@ class PhysicsWorld:
                 if tangent_speed <= 1e-12:
                     continue
                 tangent = tangent_velocity / tangent_speed
-                k_tangent = contact.k_normal
+                k_tangent = a.inverse_mass + b.inverse_mass
                 if contact.r_a is not None:
                     arm = np.cross(contact.r_a, tangent)
-                    k_tangent += a.inverse_inertia * float(arm @ arm)
+                    k_tangent += float(
+                        tangent @ np.cross(contact.inv_inertia_a @ arm, contact.r_a))
                 if contact.r_b is not None:
                     arm = np.cross(contact.r_b, tangent)
-                    k_tangent += b.inverse_inertia * float(arm @ arm)
+                    k_tangent += float(
+                        tangent @ np.cross(contact.inv_inertia_b @ arm, contact.r_b))
                 desired = contact.friction_impulse - (tangent_speed / k_tangent) * tangent
                 # Project onto the tangent plane and clamp to μ·λ_normal.
                 desired = desired - float(desired @ normal) * normal
@@ -481,8 +586,9 @@ class PhysicsWorld:
         self._contact_cache = {}
         for contact in solvable:
             a, b = self.bodies[contact.body_a], self.bodies[contact.body_b]
-            self._contact_cache[(contact.body_a, contact.body_b)] = (
-                contact.impulse, contact.friction_impulse.copy())
+            self._contact_cache[
+                (contact.body_a, contact.body_b, contact.manifold_index)
+            ] = (contact.impulse, contact.friction_impulse.copy())
             if contact.impulse > 0.0:
                 self._apply_rolling_resistance(a, b, contact.normal, contact.impulse)
             correction = max(contact.penetration - _PENETRATION_SLOP, 0.0)
@@ -501,12 +607,12 @@ class PhysicsWorld:
         angular velocity through each sphere's contact arm."""
         a.velocity = a.velocity - impulse_on_b * a.inverse_mass
         b.velocity = b.velocity + impulse_on_b * b.inverse_mass
-        if contact.r_a is not None:
+        if contact.r_a is not None and contact.inv_inertia_a is not None:
             a.angular_velocity = a.angular_velocity - (
-                a.inverse_inertia * np.cross(contact.r_a, impulse_on_b))
-        if contact.r_b is not None:
+                contact.inv_inertia_a @ np.cross(contact.r_a, impulse_on_b))
+        if contact.r_b is not None and contact.inv_inertia_b is not None:
             b.angular_velocity = b.angular_velocity + (
-                b.inverse_inertia * np.cross(contact.r_b, impulse_on_b))
+                contact.inv_inertia_b @ np.cross(contact.r_b, impulse_on_b))
 
     @staticmethod
     def _apply_rolling_resistance(a: Body, b: Body, normal: np.ndarray, impulse: float) -> None:
@@ -532,9 +638,11 @@ class PhysicsWorld:
     @staticmethod
     def _body_motion_speed(body: Body) -> float:
         speed = float(np.linalg.norm(body.velocity))
-        if body.inverse_inertia > 0.0:
+        if body.rotates:
             # A spinning body is not at rest even if its center is.
-            speed += float(np.linalg.norm(body.angular_velocity)) * body.radius
+            reach = body.radius if body.shape == "sphere" else float(
+                np.max(body.half_extents))
+            speed += float(np.linalg.norm(body.angular_velocity)) * reach
         return speed
 
     def _update_sleep_state(self, contacts: list[Contact]) -> None:
@@ -610,6 +718,13 @@ class PhysicsWorld:
             "dt": self.dt,
             "tick": self.tick,
             "bodies": [self.bodies[key].to_dict() for key in sorted(self.bodies)],
+            # Warm-start state is dynamical state: without it, a resumed
+            # world's solver walks a different intra-tick path than the
+            # uninterrupted one and digests diverge.
+            "contact_cache": [
+                [key[0], key[1], key[2], impulse, [float(v) for v in friction]]
+                for key, (impulse, friction) in sorted(self._contact_cache.items())
+            ],
         }
 
     @classmethod
@@ -618,4 +733,8 @@ class PhysicsWorld:
         world.tick = int(payload.get("tick", 0))
         for row in payload.get("bodies", []):
             world.add_body(Body.from_dict(row))
+        for entry in payload.get("contact_cache", []):
+            body_a, body_b, index, impulse, friction = entry
+            world._contact_cache[(str(body_a), str(body_b), int(index))] = (
+                float(impulse), np.asarray(friction, dtype=np.float64))
         return world

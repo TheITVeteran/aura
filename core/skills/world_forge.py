@@ -105,6 +105,7 @@ class WorldForgeInput(BaseModel):  # type: ignore[misc]
     structure: Literal["wall", "tower", "stairs"] = "wall"
     span: int = Field(default=4, ge=1, le=16)
     static: bool = True
+    oriented: bool = False
 
     @field_validator("impulse", "target")  # type: ignore[untyped-decorator]
     @classmethod
@@ -143,9 +144,9 @@ class WorldForgeInput(BaseModel):  # type: ignore[misc]
 
 
 _SIMULATION_SCOPE = (
-    "Bounded deterministic classical simulation with translational rigid-body dynamics and "
-    "rotational sphere dynamics; oriented-box rotation, a VR renderer, and physical-world "
-    "transfer are not yet implemented."
+    "Bounded deterministic classical simulation with full rigid-body dynamics: "
+    "rotational spheres and oriented boxes (SAT manifolds, tensor inertia); "
+    "a VR renderer and physical-world transfer are not implemented."
 )
 
 
@@ -345,6 +346,7 @@ class WorldForgeSkill(BaseSkill):  # type: ignore[misc]
                     "restitution": request.restitution,
                     "friction": request.friction,
                     "rolling_resistance": request.rolling_resistance,
+                    "oriented": request.oriented,
                 })
                 return self._ok(
                     action, world=summary,
