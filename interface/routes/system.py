@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -27,6 +27,7 @@ from core.config import config
 from core.container import ServiceContainer
 from core.health.boot_status import build_boot_health_snapshot
 from core.health.conversation_lane import conversation_lane_is_busy
+from core.health.read_model import HealthReadModelConfig, HealthSnapshotReadModel
 from core.runtime import resource_psutil as psutil
 from core.runtime.errors import record_degradation
 from core.runtime.health_contract import (
@@ -132,12 +133,32 @@ async def _optional_threaded_status(
     *,
     timeout_s: float = 0.18,
     fallback: dict[str, Any] | None = None,
+    offload: bool = True,
 ) -> dict[str, Any]:
     """Read optional health-panel data without blocking the API loop."""
 
     fallback_payload = {"_stale": True, "reason": "status_unavailable"}
     if fallback:
         fallback_payload.update(fallback)
+    if not offload:
+        try:
+            result = fn()
+            if inspect.isawaitable(result):
+                close = getattr(result, "close", None)
+                if callable(close):
+                    close()
+                fallback_payload["reason"] = "async_status_not_supported"
+                return fallback_payload
+            return (
+                dict(result or {})
+                if isinstance(result, dict)
+                else {"value": result, "_stale": False}
+            )
+        except _SYSTEM_RECOVERABLE_ERRORS as exc:
+            record_degradation("system.optional_status", exc)
+            logger.debug("Optional health status %s failed: %s", label, exc)
+            fallback_payload["reason"] = f"{type(exc).__name__}: {exc}"
+            return fallback_payload
     try:
         result = await asyncio.wait_for(
             asyncio.to_thread(fn),
@@ -161,7 +182,7 @@ def _runtime_component_status(
 ) -> dict[str, Any]:
     """Read a registered background component without instantiating a new one."""
 
-    service = ServiceContainer.get(service_name, default=None)
+    service = ServiceContainer.peek(service_name, default=None)
     if service is None:
         return {"registered": False, "running": False, "reason": "not_registered"}
     for method_name in status_methods:
@@ -226,7 +247,7 @@ def _collect_full_runtime_status(
         conductor.get("active") and "overt_action_cycle" in jobs
     )
     overt["running"] = bool(overt.get("scheduled") and overt.get("enabled", False))
-    agency = ServiceContainer.get("agency_core", default=None)
+    agency = ServiceContainer.peek("agency_core", default=None)
     swarm = getattr(agency, "swarm", None)
     deliberation = (
         swarm.get_status()
@@ -243,12 +264,12 @@ def _collect_full_runtime_status(
 
     components = {
         "pneuma": {
-            "registered": ServiceContainer.get("pneuma", default=None) is not None,
+            "registered": ServiceContainer.peek("pneuma", default=None) is not None,
             "running": bool(pneuma_data.get("online")),
             **pneuma_data,
         },
         "mhaf": {
-            "registered": ServiceContainer.get("mhaf", default=None) is not None,
+            "registered": ServiceContainer.peek("mhaf", default=None) is not None,
             "running": bool(mhaf_data.get("online")),
             **mhaf_data,
         },
@@ -347,7 +368,7 @@ def _collect_full_runtime_status(
     loop_start_reason = background_loop_start_reason(
         allow_desktop_safe_boot=True,
     )
-    orchestrator = ServiceContainer.get("orchestrator", default=None)
+    orchestrator = ServiceContainer.peek("orchestrator", default=None)
     activity_reason = background_activity_reason(
         orchestrator,
         min_idle_seconds=0.0,
@@ -826,7 +847,7 @@ def _collect_conversation_lane_status_resilient() -> dict[str, Any]:
     try:
         from interface.routes.chat import _collect_conversation_lane_status as _impl
 
-        lane = _impl()
+        lane = _impl(observe_only=True)
         if isinstance(lane, dict):
             return lane
         raise TypeError(f"conversation lane collector returned {type(lane).__name__}")
@@ -1080,17 +1101,20 @@ def _complete_health_probe_future(
 ) -> None:
     failure: Exception | None = None
     result: tuple[dict[str, Any], int] | None = None
-    try:
+    if future.cancelled():
+        failure = CancelledError("health probe future was cancelled")
+    else:
+        failure = future.exception()
+    if failure is None:
         candidate = future.result()
         if (
             not isinstance(candidate, tuple)
             or len(candidate) != 2
             or not isinstance(candidate[0], dict)
         ):
-            raise TypeError("health probe returned an invalid payload contract")
-        result = candidate
-    except Exception as exc:  # noqa: BLE001 - final Future completion boundary
-        failure = exc
+            failure = TypeError("health probe returned an invalid payload contract")
+        else:
+            result = candidate
 
     should_escalate = False
     with _HEALTH_PROBE_STATE_LOCK:
@@ -1469,7 +1493,7 @@ def _collect_stability_details() -> dict[str, Any]:
         "active_issues": [],
     }
     try:
-        guardian = ServiceContainer.get("stability_guardian", default=None)
+        guardian = ServiceContainer.peek("stability_guardian", default=None)
         if guardian is None:
             details["status"] = "unavailable"
             details["active_issues"].append(
@@ -1696,7 +1720,7 @@ def _collect_homeostasis_public_payload(homeostasis_data: dict[str, Any]) -> dic
     return payload
 
 
-async def _collect_soma_payload() -> dict[str, Any]:
+async def _collect_soma_payload(*, refresh: bool = True) -> dict[str, Any]:
     def _system_fallback() -> dict[str, Any]:
         try:
             cpu_pct = float(psutil.cpu_percent(interval=None) or 0.0) / 100.0
@@ -1715,11 +1739,11 @@ async def _collect_soma_payload() -> dict[str, Any]:
             logger.debug("Soma fallback telemetry failed: %s", exc)
             return {}
 
-    soma = ServiceContainer.get("soma", default=None)
+    soma = ServiceContainer.peek("soma", default=None)
     if not soma:
         return _system_fallback()
 
-    if hasattr(soma, "pulse"):
+    if refresh and hasattr(soma, "pulse"):
         try:
             await asyncio.wait_for(soma.pulse(), timeout=0.25)
         except _SYSTEM_RECOVERABLE_ERRORS as exc:
@@ -2701,7 +2725,7 @@ def _collect_imagination_status() -> dict[str, Any]:
         "authority_gateway_required_for_effects": True,
     }
     try:
-        engine = ServiceContainer.get("imagination_engine", default=None)
+        engine = ServiceContainer.peek("imagination_engine", default=None)
         if engine is None or not hasattr(engine, "snapshot"):
             return payload
         snapshot = engine.snapshot() or {}
@@ -3235,20 +3259,13 @@ async def gemini_usage(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
-@router.get("/health")
-async def api_health(request: Request):
-    _mark_runtime_service_progress("api.health")
-    try:
-        from interface.routes.privacy import get_voice_engine_fn
+async def _collect_api_health_payload(
+    *,
+    allow_owner_loop_reads: bool = True,
+) -> dict[str, Any]:
+    """Build the rich UI health payload outside the public request path."""
 
-        _voice_engine_fn = get_voice_engine_fn()
-    except _SYSTEM_RECOVERABLE_ERRORS as e:
-        record_degradation("system", e)
-        logger.debug("Voice engine resolver unavailable for health payload: %s", e)
-        _voice_engine_fn = None
-
-    _restore_owner_session_from_request(request)
-    orch       = ServiceContainer.get("orchestrator", default=None)
+    orch       = ServiceContainer.peek("orchestrator", default=None)
     rt         = _get_runtime_state_safe()
     runtime_payload = rt.get("state", {}) if isinstance(rt.get("state"), dict) else {}
     status_obj = getattr(orch, "status", None)
@@ -3290,13 +3307,17 @@ async def api_health(request: Request):
 
     ls_data = {}
     try:
-        ls = ServiceContainer.get("liquid_substrate", default=None) or ServiceContainer.get("liquid_state", default=None)
+        ls = ServiceContainer.peek("liquid_substrate", default=None) or ServiceContainer.peek("liquid_state", default=None)
         if ls and hasattr(ls, "get_status"):
             ls_data = ls.get_status()
 
         vad_data = {"valence": 0.0, "arousal": 0.0, "dominance": 0.0, "_stale": True}
-        engine = ServiceContainer.get("cognitive_engine", default=None)
-        if engine and hasattr(engine, "consciousness"):
+        engine = ServiceContainer.peek("cognitive_engine", default=None)
+        if (
+            allow_owner_loop_reads
+            and engine
+            and hasattr(engine, "consciousness")
+        ):
             v_state = await asyncio.wait_for(
                 engine.consciousness.substrate.get_state_summary(),
                 timeout=0.25,
@@ -3317,7 +3338,7 @@ async def api_health(request: Request):
 
     transcendence_data = {"meta_evolution": {"active": False, "acceleration_factor": 1.0}}
     try:
-        meta = ServiceContainer.get("meta_cognition", default=None)
+        meta = ServiceContainer.peek("meta_cognition", default=None)
         if meta:
             transcendence_data["meta_evolution"] = meta.get_health()
             transcendence_data["meta_evolution"]["active"] = True
@@ -3338,8 +3359,8 @@ async def api_health(request: Request):
     _agency_score = (_energy_raw * 0.4 + _curiosity_raw * 0.4 + (30.0 if _thinking else 0.0))
     _agency_score = min(100.0, max(0.0, _agency_score))
 
-    scratchpad_engine = ServiceContainer.get("scratchpad_engine", default=None)
-    subconscious_loop = ServiceContainer.get("subconscious_loop", default=None)
+    scratchpad_engine = ServiceContainer.peek("scratchpad_engine", default=None)
+    subconscious_loop = ServiceContainer.peek("subconscious_loop", default=None)
     subconscious_active = bool(
         subconscious_loop is not None
         and getattr(subconscious_loop, "_running", False)
@@ -3356,9 +3377,9 @@ async def api_health(request: Request):
         "autonomy":  config.security.aura_full_autonomy,
         "stealth":   config.security.enable_stealth_mode,
         "scratchpad": scratchpad_engine is not None,
-        "forge":      ServiceContainer.get("hephaestus_engine", default=None) is not None,
+        "forge":      ServiceContainer.peek("hephaestus_engine", default=None) is not None,
         "subconscious": "dreaming" if subconscious_active and _safe_float(getattr(orch, "boredom", 0), 0.0) > 45 else ("awake" if subconscious_active else "idle"),
-        "unity":      ServiceContainer.get("soma", default=None) is not None,
+        "unity":      ServiceContainer.peek("soma", default=None) is not None,
         "p_core_usage": float(int(_safe_float(p_core) * 10)) / 10.0,
         "singularity_factor": float(int(_safe_float(transcendence_data.get("meta_evolution", {}).get("acceleration_factor"), 1.0) * 100)) / 100.0,
         "meta_loop_active": transcendence_data.get("meta_evolution", {}).get("active", False)
@@ -3370,17 +3391,25 @@ async def api_health(request: Request):
         if orch and hasattr(orch, "self_model") and orch.self_model:
             cortex["beliefs"] = len(getattr(orch.self_model, "beliefs", []))
 
-        ep_mem = ServiceContainer.get("episodic_memory", default=None)
+        ep_mem = ServiceContainer.peek("episodic_memory", default=None)
         if ep_mem and hasattr(ep_mem, "get_summary_cached"):
             # Off-loop + TTL-cached: the fresh get_summary() runs eight
             # aggregate queries and stalled the event loop for 5.1s live.
-            ep_summary = await asyncio.to_thread(ep_mem.get_summary_cached)
+            ep_summary = (
+                await asyncio.to_thread(ep_mem.get_summary_cached)
+                if allow_owner_loop_reads
+                else ep_mem.get_summary_cached()
+            )
             cortex["episodes"] = ep_summary.get("total_episodes", 0)
         elif ep_mem and hasattr(ep_mem, "get_summary"):
-            ep_summary = await asyncio.to_thread(ep_mem.get_summary)
+            ep_summary = (
+                await asyncio.to_thread(ep_mem.get_summary)
+                if allow_owner_loop_reads
+                else ep_mem.get_summary()
+            )
             cortex["episodes"] = ep_summary.get("total_episodes", 0)
         else:
-            mem_mgr = ServiceContainer.get("memory_manager", default=None)
+            mem_mgr = ServiceContainer.peek("memory_manager", default=None)
             if mem_mgr and hasattr(mem_mgr, "get_stats"):
                 mem_stats = mem_mgr.get_stats()
                 cortex["episodes"] = mem_stats.get("episodic_count", 0)
@@ -3390,7 +3419,7 @@ async def api_health(request: Request):
 
     moral_data = {}
     try:
-        moral = ServiceContainer.get("moral", default=None)
+        moral = ServiceContainer.peek("moral", default=None)
         moral_data = moral.get_health() if moral and hasattr(moral, "get_health") else {}
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation("system", e)
@@ -3398,7 +3427,7 @@ async def api_health(request: Request):
 
     homeo_data = {}
     try:
-        homeostasis = ServiceContainer.get("homeostasis", default=None)
+        homeostasis = ServiceContainer.peek("homeostasis", default=None)
         homeo_data = homeostasis.get_health() if homeostasis and hasattr(homeostasis, "get_health") else {}
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation("system", e)
@@ -3411,11 +3440,11 @@ async def api_health(request: Request):
         runtime_state=runtime_payload if isinstance(runtime_payload, dict) else {},
         homeostasis_data=homeostasis_payload,
     )
-    soma_data = await _collect_soma_payload()
+    soma_data = await _collect_soma_payload(refresh=allow_owner_loop_reads)
 
     social_data = {"depth": 0.0}
     try:
-        social = ServiceContainer.get("social", default=None)
+        social = ServiceContainer.peek("social", default=None)
         social_data = social.get_health() if social and hasattr(social, "get_health") else social_data
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation("system", e)
@@ -3432,7 +3461,7 @@ async def api_health(request: Request):
     try:
         executive_closure_data = orch_status.get("executive_closure", {}) or {}
         if not executive_closure_data:
-            executive_closure = ServiceContainer.get("executive_closure", default=None)
+            executive_closure = ServiceContainer.peek("executive_closure", default=None)
             if executive_closure and hasattr(executive_closure, "get_status"):
                 executive_closure_data = executive_closure.get_status()
     except _SYSTEM_RECOVERABLE_ERRORS as e:
@@ -3443,7 +3472,7 @@ async def api_health(request: Request):
     try:
         consciousness_evidence = orch_status.get("consciousness_evidence", {}) or {}
         if not consciousness_evidence:
-            evidence = ServiceContainer.get("consciousness_evidence", default=None)
+            evidence = ServiceContainer.peek("consciousness_evidence", default=None)
             if evidence and hasattr(evidence, "snapshot"):
                 consciousness_evidence = evidence.snapshot()
     except _SYSTEM_RECOVERABLE_ERRORS as e:
@@ -3452,7 +3481,7 @@ async def api_health(request: Request):
 
     executive_authority_data = {}
     try:
-        executive_authority = ServiceContainer.get("executive_authority", default=None)
+        executive_authority = ServiceContainer.peek("executive_authority", default=None)
         if executive_authority and hasattr(executive_authority, "get_status"):
             executive_authority_data = executive_authority.get_status()
     except _SYSTEM_RECOVERABLE_ERRORS as e:
@@ -3461,7 +3490,7 @@ async def api_health(request: Request):
 
     interaction_signals_data = {}
     try:
-        interaction_signals = ServiceContainer.get("interaction_signals", default=None)
+        interaction_signals = ServiceContainer.peek("interaction_signals", default=None)
         if interaction_signals and hasattr(interaction_signals, "get_status"):
             interaction_signals_data = interaction_signals.get_status()
     except _SYSTEM_RECOVERABLE_ERRORS as e:
@@ -3471,14 +3500,14 @@ async def api_health(request: Request):
     # ── Resilience Status ──
     resilience_data: dict[str, Any] = {"circuit_breakers": {}, "snapshot": "unknown", "llm_tier": "unknown"}
     try:
-        voice = ServiceContainer.get("voice_engine", default=None)
+        voice = ServiceContainer.peek("voice_engine", default=None)
         if voice:
             for attr_name in ("_stt_breaker", "_tts_breaker"):
                 breaker = getattr(voice, attr_name, None)
                 if breaker and hasattr(breaker, "state"):
                     cast(dict[str, Any], resilience_data["circuit_breakers"])[breaker.name] = breaker.state.value
 
-        cog = ServiceContainer.get("cognitive_engine", default=None)
+        cog = ServiceContainer.peek("cognitive_engine", default=None)
         if cog:
             for attr_name in dir(cog):
                 obj = getattr(cog, attr_name, None)
@@ -3486,11 +3515,11 @@ async def api_health(request: Request):
                     if "breaker" in attr_name.lower():
                         cast(dict[str, Any], resilience_data["circuit_breakers"])[obj.name] = obj.state.value
 
-        snap_mgr = ServiceContainer.get("snapshot_manager", default=None)
+        snap_mgr = ServiceContainer.peek("snapshot_manager", default=None)
         if snap_mgr and hasattr(snap_mgr, "snapshot_file"):
             resilience_data["snapshot"] = "saved" if snap_mgr.snapshot_file.exists() else "none"
 
-        llm_router = ServiceContainer.get("llm_router", default=None)
+        llm_router = ServiceContainer.peek("llm_router", default=None)
         tier_value = conversation_lane.get("foreground_tier")
         if llm_router and hasattr(llm_router, "get_health_report"):
             report = llm_router.get_health_report()
@@ -3519,7 +3548,7 @@ async def api_health(request: Request):
                     }
                 resilience_data["llm_endpoints"] = ep_status
 
-        resilience_data["hardening_active"] = ServiceContainer.get("stability_guardian", default=None) is not None
+        resilience_data["hardening_active"] = ServiceContainer.peek("stability_guardian", default=None) is not None
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
         logger.debug("Resilience status collection failed: %s", e)
@@ -3527,7 +3556,7 @@ async def api_health(request: Request):
     # ── Qualia Status ──
     qualia_data: dict[str, Any] = {"pri": 0.0, "q_norm": 0.0, "dominant_dim": "none", "in_attractor": False, "_stale": True}
     try:
-        qualia = ServiceContainer.get("qualia_synthesizer", default=None)
+        qualia = ServiceContainer.peek("qualia_synthesizer", default=None)
         if not qualia and orch:
             qualia = getattr(orch, "qualia", None)
         if qualia:
@@ -3544,7 +3573,7 @@ async def api_health(request: Request):
     # ── Mycelial Network Status ──
     mycelial_data: dict[str, Any] = {"nodes": 0, "edges": 0, "health": "offline"}
     try:
-        mycelium = ServiceContainer.get("mycelial_network", default=None)
+        mycelium = ServiceContainer.peek("mycelial_network", default=None)
         if mycelium:
             if hasattr(mycelium, "pathways") and hasattr(mycelium, "hyphae"):
                 mycelial_data["nodes"] = len(mycelium.pathways)
@@ -3558,8 +3587,7 @@ async def api_health(request: Request):
     pneuma_data: dict[str, Any] = {"temperature": 0.7, "arousal": 0.0, "stability": 0.0,
                    "attractor_count": 0, "efe_score": 0.0, "online": False, "_stale": True}
     try:
-        from core.pneuma.pneuma import get_pneuma
-        pn = get_pneuma()
+        pn = ServiceContainer.peek("pneuma", default=None)
         if pn:
             runtime_state = pn.get_state_dict()
             pneuma_data["online"] = bool(runtime_state.get("online", False))
@@ -3585,8 +3613,7 @@ async def api_health(request: Request):
     mhaf_data: dict[str, Any] = {"phi": 0.0, "nodes": 0, "edges": 0, "free_energy": 0.0,
                  "lexicon_size": 0, "online": False, "_stale": True}
     try:
-        from core.consciousness.mhaf_field import get_mhaf
-        mhaf = get_mhaf()
+        mhaf = ServiceContainer.peek("mhaf", default=None)
         if mhaf:
             runtime_state = mhaf.get_state_dict()
             mhaf_data["online"] = bool(runtime_state.get("online", False))
@@ -3603,7 +3630,7 @@ async def api_health(request: Request):
         logger.debug("MHAF status collection failed: %s", e)
     # Wire real PhiCore IIT 4.0 phi into the MHAF data (replaces the surrogate)
     try:
-        phi_core = ServiceContainer.get("phi_core", default=None)
+        phi_core = ServiceContainer.peek("phi_core", default=None)
         if phi_core is not None:
             result = phi_core._last_result
             live_phi = 0.0
@@ -3622,7 +3649,7 @@ async def api_health(request: Request):
         logger.debug("PhiCore status collection failed: %s", e)
     if mhaf_data.get("phi", 0.0) <= 0.0:
         try:
-            closed_loop = ServiceContainer.get("closed_causal_loop", default=None)
+            closed_loop = ServiceContainer.peek("closed_causal_loop", default=None)
             if closed_loop is not None and hasattr(closed_loop, "get_status"):
                 closed_loop_phi = float(
                     ((closed_loop.get_status() or {}).get("phi") or {}).get("estimate") or 0.0
@@ -3634,8 +3661,7 @@ async def api_health(request: Request):
             record_degradation('system', e)
             logger.debug("Closed-loop phi fallback failed: %s", e)
     try:
-        from core.consciousness.neologism_engine import get_neologism_engine
-        neo = get_neologism_engine()
+        neo = ServiceContainer.peek("neologism_engine", default=None)
         if neo:
             mhaf_data["lexicon_size"] = len(neo._lexicon)
     except _SYSTEM_RECOVERABLE_ERRORS as e:
@@ -3648,36 +3674,40 @@ async def api_health(request: Request):
         "integrity_ok": True, "passphrase_set": False, "_stale": True,
     }
     try:
-        from core.security.trust_engine import get_trust_engine
-        te = get_trust_engine()
-        ts = te.get_status()
-        security_data["trust_level"] = ts.get("level", "guest")
-        security_data["_stale"] = False
+        te = ServiceContainer.peek("trust_engine", default=None)
+        if te is not None:
+            ts = te.get_status()
+            security_data["trust_level"] = ts.get("level", "guest")
+            security_data["_stale"] = False
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
         logger.debug("Security status collection failed: %s", e)
     try:
-        from core.security.emergency_protocol import get_emergency_protocol
-        ep = get_emergency_protocol()
-        eps = ep.get_status()
-        security_data["threat_score"] = eps.get("threat_score", 0.0)
-        security_data["threat_level"] = eps.get("threat_level", "none")
+        ep = ServiceContainer.peek("emergency_protocol", default=None)
+        if ep is not None:
+            eps = ep.get_status()
+            security_data["threat_score"] = eps.get("threat_score", 0.0)
+            security_data["threat_level"] = eps.get("threat_level", "none")
     except _SYSTEM_RECOVERABLE_ERRORS as _exc:
         record_degradation('system', _exc)
         logger.debug("Emergency protocol status collection failed: %s", _exc)
     try:
-        from core.security.integrity_guardian import get_integrity_guardian
-        igs = get_integrity_guardian().get_status()
-        security_data["integrity_ok"] = bool(
-            igs.get("integrity_ok", igs.get("alert_count", 0) == 0)
+        integrity_guardian = ServiceContainer.peek(
+            "integrity_guardian", default=None
         )
-        security_data["integrity_files"] = igs.get("manifest_files", 0)
+        if integrity_guardian is not None:
+            igs = integrity_guardian.get_status()
+            security_data["integrity_ok"] = bool(
+                igs.get("integrity_ok", igs.get("alert_count", 0) == 0)
+            )
+            security_data["integrity_files"] = igs.get("manifest_files", 0)
     except _SYSTEM_RECOVERABLE_ERRORS as _exc:
         record_degradation('system', _exc)
         logger.debug("Integrity guardian status collection failed: %s", _exc)
     try:
-        from core.security.user_recognizer import get_user_recognizer
-        security_data["passphrase_set"] = get_user_recognizer().has_passphrase()
+        user_recognizer = ServiceContainer.peek("user_recognizer", default=None)
+        if user_recognizer is not None:
+            security_data["passphrase_set"] = user_recognizer.has_passphrase()
     except _SYSTEM_RECOVERABLE_ERRORS as _exc:
         record_degradation('system', _exc)
         logger.debug("User recognizer status collection failed: %s", _exc)
@@ -3685,16 +3715,15 @@ async def api_health(request: Request):
     # ── Circadian State ──
     circadian_data: dict[str, Any] = {}
     try:
-        from core.senses.circadian import get_circadian
-        ce = get_circadian()
-        ce.update()
-        s = ce.state
-        circadian_data = {
-            "phase": s.phase.value,
-            "arousal_baseline": round(s.arousal_baseline, 3),
-            "energy_modifier": round(s.energy_modifier, 3),
-            "cognitive_mode": s.cognitive_mode,
-        }
+        ce = ServiceContainer.peek("circadian", default=None)
+        if ce is not None:
+            s = ce.state
+            circadian_data = {
+                "phase": s.phase.value,
+                "arousal_baseline": round(s.arousal_baseline, 3),
+                "energy_modifier": round(s.energy_modifier, 3),
+                "cognitive_mode": s.cognitive_mode,
+            }
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
         logger.debug("Circadian status collection failed: %s", e)
@@ -3702,23 +3731,29 @@ async def api_health(request: Request):
     # ── Substrate Learning ──
     substrate_data: dict[str, Any] = {}
     try:
-        from core.consciousness.crsm_lora_bridge import get_crsm_lora_bridge
-        substrate_data["lora_bridge"] = await _optional_threaded_status(
-            "crsm_lora_bridge",
-            lambda: get_crsm_lora_bridge().get_status(),
-            timeout_s=0.18,
-            fallback={"loop": None},
-        )
+        lora_bridge = ServiceContainer.peek("crsm_lora_bridge", default=None)
+        if lora_bridge is not None:
+            substrate_data["lora_bridge"] = await _optional_threaded_status(
+                "crsm_lora_bridge",
+                lora_bridge.get_status,
+                timeout_s=0.18,
+                fallback={"loop": None},
+                offload=allow_owner_loop_reads,
+            )
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
         logger.debug("LoRA bridge status failed: %s", e)
     try:
-        from core.consciousness.experience_consolidator import get_experience_consolidator
-        substrate_data["consolidator"] = await _optional_threaded_status(
-            "experience_consolidator",
-            lambda: get_experience_consolidator().get_status(),
-            timeout_s=0.18,
+        consolidator = ServiceContainer.peek(
+            "experience_consolidator", default=None
         )
+        if consolidator is not None:
+            substrate_data["consolidator"] = await _optional_threaded_status(
+                "experience_consolidator",
+                consolidator.get_status,
+                timeout_s=0.18,
+                offload=allow_owner_loop_reads,
+            )
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
         logger.debug("Consolidator status failed: %s", e)
@@ -3726,7 +3761,7 @@ async def api_health(request: Request):
     # ── Morphogenesis Status ──
     morphogenesis_data: dict[str, Any] = {"online": False, "cells": 0, "organs": 0, "_stale": True}
     try:
-        morpho_rt = ServiceContainer.get("morphogenetic_runtime", default=None)
+        morpho_rt = ServiceContainer.peek("morphogenetic_runtime", default=None)
         if morpho_rt is not None and hasattr(morpho_rt, "status"):
             ms = morpho_rt.status()
             morphogenesis_data = {
@@ -3746,11 +3781,11 @@ async def api_health(request: Request):
     # ── Terminal Fallback Status ──
     terminal_data: dict[str, Any] = {"active": False, "pending": 0, "watchdog": False}
     try:
-        from core.conversation.terminal_chat import get_terminal_fallback, get_terminal_watchdog
-        tf = get_terminal_fallback()
-        terminal_data["active"] = tf.is_active
-        terminal_data["pending"] = len(tf._pending)
-        tw = get_terminal_watchdog()
+        tf = ServiceContainer.peek("terminal_fallback", default=None)
+        if tf is not None:
+            terminal_data["active"] = tf.is_active
+            terminal_data["pending"] = len(tf._pending)
+        tw = ServiceContainer.peek("terminal_watchdog", default=None)
         terminal_data["watchdog"] = tw._running if tw else False
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)
@@ -3761,8 +3796,8 @@ async def api_health(request: Request):
 
     # ── Final Response Assembly ──
     try:
-        voice_mod = _voice_engine_fn() if _voice_engine_fn else None
-        smc_mod = ServiceContainer.get("sensory_motor_cortex", default=None)
+        voice_mod = ServiceContainer.peek("voice_engine", default=None)
+        smc_mod = ServiceContainer.peek("sensory_motor_cortex", default=None)
         from interface.routes.privacy import get_browser_camera_privacy
 
         browser_camera_privacy = get_browser_camera_privacy()
@@ -3945,7 +3980,219 @@ async def api_health(request: Request):
     else:
         payload["shutdown"] = shutdown
 
-    return JSONResponse(_json_safe(payload))
+    safe_payload = _json_safe(payload)
+    return safe_payload if isinstance(safe_payload, dict) else {"status": "degraded"}
+
+
+def _health_snapshot_fallback() -> dict[str, Any]:
+    timestamp = datetime.now(tz=UTC).isoformat()
+    blockers = ["health_snapshot_initializing"]
+    required_probes = {"all_passed": False}
+    boot = {
+        "status": "booting",
+        "ready": False,
+        "system_ready": False,
+        "conversation_ready": False,
+        "boot_phase": "health_snapshot_initializing",
+        "blockers": blockers,
+        "required_probes": required_probes,
+        "timestamp": timestamp,
+    }
+    return {
+        "status": "booting",
+        "healthy": False,
+        "connected": False,
+        "initialized": False,
+        "version": version_string("full"),
+        "cycle_count": 0,
+        "uptime": 0.0,
+        "cpu_usage": 0.0,
+        "ram_usage": 0.0,
+        "conversation_lane": {
+            "state": "initializing",
+            "conversation_ready": False,
+        },
+        "conversation_ready": False,
+        "conversation_busy": False,
+        "runtime_probe_healthy": False,
+        "proof_readiness_healthy": False,
+        "certification_ready": False,
+        "required_probes": required_probes,
+        "blockers": blockers,
+        "readiness_contract": {
+            "healthy": False,
+            "system_ready": False,
+            "conversation_ready": False,
+            "conversation_busy": False,
+            "runtime_probe_healthy": False,
+            "proof_readiness_healthy": False,
+            "certification_ready": False,
+            "required_probes": required_probes,
+            "blockers": blockers,
+        },
+        "boot": boot,
+        "timestamp": timestamp,
+    }
+
+
+def _collect_api_health_snapshot_sync() -> dict[str, Any]:
+    """Run the pull collector on its sole worker, never on the HTTP loop."""
+
+    return asyncio.run(
+        _collect_api_health_payload(allow_owner_loop_reads=False)
+    )
+
+
+def _new_health_read_model() -> HealthSnapshotReadModel:
+    refresh_s = _env_positive_float("AURA_UI_HEALTH_REFRESH_S", 5.0)
+    return HealthSnapshotReadModel(
+        _collect_api_health_snapshot_sync,
+        _health_snapshot_fallback,
+        config=HealthReadModelConfig(
+            refresh_interval_s=refresh_s,
+            max_stale_s=max(
+                refresh_s,
+                _env_positive_float("AURA_UI_HEALTH_MAX_STALE_S", 30.0),
+            ),
+            collection_timeout_s=_env_positive_float(
+                "AURA_UI_HEALTH_COLLECTION_TIMEOUT_S", 8.0
+            ),
+            retry_base_s=_env_positive_float(
+                "AURA_UI_HEALTH_RETRY_BASE_S", 2.0
+            ),
+            retry_max_s=_env_positive_float(
+                "AURA_UI_HEALTH_RETRY_MAX_S", 30.0
+            ),
+        ),
+    )
+
+
+_HEALTH_READ_MODEL = _new_health_read_model()
+
+
+def start_health_read_model() -> bool:
+    """Prewarm the public health snapshot after server services register."""
+
+    return _HEALTH_READ_MODEL.start()
+
+
+def stop_health_read_model() -> None:
+    _HEALTH_READ_MODEL.close()
+
+
+def _reset_health_read_model_for_test() -> None:
+    _HEALTH_READ_MODEL.reset_for_test()
+
+
+def _force_unhealthy_snapshot(
+    payload: dict[str, Any],
+    *,
+    blocker: str,
+    status: str,
+) -> dict[str, Any]:
+    """Withhold current-health claims when the read model has no current proof."""
+
+    result = dict(payload)
+    blockers = list(
+        dict.fromkeys(
+            [blocker]
+            + [str(item) for item in result.get("blockers", []) if str(item)]
+        )
+    )
+    result.update(
+        status=status,
+        healthy=False,
+        connected=False,
+        conversation_ready=False,
+        runtime_probe_healthy=False,
+        certification_ready=False,
+        blockers=blockers,
+    )
+
+    required_probes = dict(result.get("required_probes") or {})
+    required_probes["all_passed"] = False
+    result["required_probes"] = required_probes
+
+    readiness = dict(result.get("readiness_contract") or {})
+    readiness.update(
+        healthy=False,
+        system_ready=False,
+        conversation_ready=False,
+        runtime_probe_healthy=False,
+        certification_ready=False,
+        required_probes=required_probes,
+        blockers=blockers,
+    )
+    result["readiness_contract"] = readiness
+
+    boot = dict(result.get("boot") or {})
+    boot_blockers = list(
+        dict.fromkeys(
+            [blocker]
+            + [str(item) for item in boot.get("blockers", []) if str(item)]
+        )
+    )
+    boot.update(
+        status=status,
+        ready=False,
+        system_ready=False,
+        conversation_ready=False,
+        blockers=boot_blockers,
+        required_probes=required_probes,
+    )
+    result["boot"] = boot
+    return result
+
+
+def _apply_health_read_model_truth(payload: dict[str, Any]) -> dict[str, Any]:
+    metadata = payload.get("health_read_model")
+    if not isinstance(metadata, dict) or not bool(metadata.get("expired")):
+        return payload
+    initializing = metadata.get("captured_at_unix") is None
+    return _force_unhealthy_snapshot(
+        payload,
+        blocker=(
+            "health_snapshot_initializing"
+            if initializing
+            else "health_snapshot_expired"
+        ),
+        status="booting" if initializing else "stale",
+    )
+
+
+def _apply_current_shutdown_truth(payload: dict[str, Any]) -> dict[str, Any]:
+    shutdown = _shutdown_health_status()
+    request = shutdown.get("request")
+    if not isinstance(request, dict) or request.get("requested") is not True:
+        result = dict(payload)
+        result["shutdown"] = shutdown
+        return result
+    result = _force_unhealthy_snapshot(
+        payload,
+        blocker="runtime_shutdown",
+        status="stopping",
+    )
+    result["shutdown"] = shutdown
+    return result
+
+
+@router.get("/health")
+async def api_health(request: Request):
+    """Serve the latest versioned snapshot without running live probes inline."""
+
+    _mark_runtime_service_progress("api.health")
+    _restore_owner_session_from_request(request)
+    payload = _apply_health_read_model_truth(_HEALTH_READ_MODEL.read())
+    payload = _apply_current_shutdown_truth(payload)
+    metadata = payload.get("health_read_model") or {}
+    return JSONResponse(
+        _json_safe(payload),
+        headers={
+            "Cache-Control": "no-store",
+            "X-Aura-Health-Generation": str(metadata.get("snapshot_generation", 0)),
+            "X-Aura-Health-Serving": str(metadata.get("serving", "unknown")),
+        },
+    )
 
 
 @router.get("/tools/catalog")

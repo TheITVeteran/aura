@@ -475,8 +475,22 @@ def _complete_required_probe_payload() -> dict[str, object]:
     return probes
 
 
+@pytest.fixture
+def isolated_health_probe_state():
+    from interface.routes import system as system_routes
+
+    system_routes._reset_health_probe_state_for_test()
+    system_routes._reset_boot_health_cache_for_test()
+    yield
+    system_routes._reset_health_probe_state_for_test()
+    system_routes._reset_boot_health_cache_for_test()
+
+
 @pytest.mark.asyncio
-async def test_api_heartbeat_rejects_boot_payload_without_required_probe_components(monkeypatch):
+async def test_api_heartbeat_rejects_boot_payload_without_required_probe_components(
+    monkeypatch,
+    isolated_health_probe_state,
+):
     from interface.routes import system as system_routes
 
     forged_probes = _complete_required_probe_payload()
@@ -516,7 +530,10 @@ async def test_api_heartbeat_rejects_boot_payload_without_required_probe_compone
 
 
 @pytest.mark.asyncio
-async def test_api_heartbeat_reports_healthy_only_with_all_required_probe_components(monkeypatch):
+async def test_api_heartbeat_reports_healthy_only_with_all_required_probe_components(
+    monkeypatch,
+    isolated_health_probe_state,
+):
     from interface.routes import system as system_routes
 
     monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
@@ -553,7 +570,10 @@ async def test_api_heartbeat_reports_healthy_only_with_all_required_probe_compon
 
 
 @pytest.mark.asyncio
-async def test_api_heartbeat_surfaces_integrity_as_proof_readiness_not_launch_blocker(monkeypatch):
+async def test_api_heartbeat_surfaces_integrity_as_proof_readiness_not_launch_blocker(
+    monkeypatch,
+    isolated_health_probe_state,
+):
     from interface.routes import system as system_routes
 
     monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
@@ -611,7 +631,10 @@ async def test_api_heartbeat_surfaces_integrity_as_proof_readiness_not_launch_bl
 
 
 @pytest.mark.asyncio
-async def test_api_heartbeat_treats_integrity_advisory_as_proof_debt(monkeypatch):
+async def test_api_heartbeat_treats_integrity_advisory_as_proof_debt(
+    monkeypatch,
+    isolated_health_probe_state,
+):
     from interface.routes import system as system_routes
 
     monkeypatch.setattr(
@@ -667,7 +690,10 @@ async def test_api_heartbeat_treats_integrity_advisory_as_proof_debt(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_api_heartbeat_requires_conversation_readiness(monkeypatch):
+async def test_api_heartbeat_requires_conversation_readiness(
+    monkeypatch,
+    isolated_health_probe_state,
+):
     from interface.routes import system as system_routes
 
     monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))

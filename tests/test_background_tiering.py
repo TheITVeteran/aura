@@ -32,14 +32,19 @@ def _safe_boot_disabled():
 
 @contextmanager
 def _service_get_overrides(**services):
-    original = ServiceContainer.__dict__["get"]
+    original_get = ServiceContainer.__dict__["get"]
+    original_peek = ServiceContainer.__dict__["peek"]
     ServiceContainer.get = classmethod(
+        lambda cls, name, default=None: services.get(name, default)
+    )
+    ServiceContainer.peek = classmethod(
         lambda cls, name, default=None: services.get(name, default)
     )
     try:
         yield
     finally:
-        ServiceContainer.get = original
+        ServiceContainer.get = original_get
+        ServiceContainer.peek = original_peek
 
 
 class EndpointCallRecorder:

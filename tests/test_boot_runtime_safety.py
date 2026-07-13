@@ -357,6 +357,7 @@ def test_desktop_resource_guard_does_not_disable_background_local_cognition(monk
 
 def test_inference_gate_disables_boot_prewarm_under_safe_desktop_boot(monkeypatch):
     monkeypatch.setenv("AURA_SAFE_BOOT_DESKTOP", "1")
+    monkeypatch.delenv("AURA_AUTO_PREWARM_CORTEX", raising=False)
 
     assert InferenceGate._boot_should_eager_warmup() is False
     assert InferenceGate._boot_should_schedule_deferred_prewarm() is False

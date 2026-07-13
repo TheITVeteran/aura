@@ -146,7 +146,9 @@ def test_legacy_shell_neural_feed_receives_health_liveness_pulses():
     assert "lane.conversation_ready === true || payload.conversation_ready === true" not in js
     assert "publishHealthNeuralPulse(payload, 'websocket_heartbeat');" in js
     assert "publishHealthNeuralPulse(d, 'health_poll');" in js
-    assert "[health_poll] health probe failed" in js
+    assert "function recordHealthPollFailure" in js
+    assert "health endpoint unavailable; retaining last known state" in js
+    assert "endpoint recovered after" in js
 
 
 def test_server_keeps_legacy_shell_as_default_route():

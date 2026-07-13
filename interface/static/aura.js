@@ -25,6 +25,10 @@ const state = {
     lastTelemetryFingerprint: null,
     userScrolledUp: false,
     healthPollInFlight: false,
+    healthPollTimer: null,
+    healthPollFailures: 0,
+    healthPollIncident: null,
+    healthLastSuccessAt: 0,
     processedEventIds: new Set(),
     toolCatalog: [],
     uiFlags: [],
@@ -77,6 +81,12 @@ const THOUGHT_COALESCE_LOOKBACK = 18;
 const PROCESSED_EVENT_ID_MAX = 2000;
 const PROCESSED_MESSAGE_FINGERPRINT_MAX = 500;
 const NEURAL_LIVENESS_PULSE_MS = 30000;
+const HEALTH_POLL_BASE_MS = 10000;
+const HEALTH_POLL_RETRY_BASE_MS = 2500;
+const HEALTH_POLL_MAX_MS = 60000;
+const HEALTH_POLL_TIMEOUT_MS = 6000;
+const HEALTH_POLL_REMINDER_MS = 5 * 60 * 1000;
+const HEALTH_POLL_JITTER_RATIO = 0.15;
 const TYPING_SIGNAL_DEBOUNCE_MS = 850;
 const VOICE_SIGNAL_FLUSH_MS = 900;
 const CAMERA_SIGNAL_INTERVAL_MS = 2200;
@@ -1879,6 +1889,7 @@ function reconnectLiveSurface(reason = 'resume') {
     showConnToast('resuming');
     setConnectionVisual('reconnecting', 'resuming live surface');
     hydrateBootstrap({ hydrateConversationHistory: !state.bootstrapLoaded, quiet: true });
+    if (!state.healthPollInFlight) scheduleHealthPoll(0);
 
     if (state.reconnectTimer) {
         clearTimeout(state.reconnectTimer);
@@ -3924,11 +3935,85 @@ function applyConversationLane(lane, healthStatus = '') {
 }
 
 // ── Health polling ───────────────────────────────────────
+function nextHealthPollDelay() {
+    const failures = Math.max(0, Number(state.healthPollFailures || 0));
+    const base = failures > 0
+        ? Math.min(HEALTH_POLL_MAX_MS, HEALTH_POLL_RETRY_BASE_MS * (2 ** Math.min(5, failures - 1)))
+        : (document.hidden ? Math.min(HEALTH_POLL_MAX_MS, HEALTH_POLL_BASE_MS * 3) : HEALTH_POLL_BASE_MS);
+    const jitter = base * HEALTH_POLL_JITTER_RATIO * ((Math.random() * 2) - 1);
+    return Math.max(1000, Math.round(base + jitter));
+}
+
+function scheduleHealthPoll(delayMs = null) {
+    if (state.healthPollTimer) clearTimeout(state.healthPollTimer);
+    const delay = delayMs == null ? nextHealthPollDelay() : Math.max(0, Number(delayMs) || 0);
+    state.healthPollTimer = setTimeout(() => {
+        state.healthPollTimer = null;
+        pollHealth();
+    }, delay);
+}
+
+function healthFailureReason(error) {
+    if (error && error.name === 'AbortError') return `timeout after ${HEALTH_POLL_TIMEOUT_MS}ms`;
+    return error && error.message ? String(error.message) : 'unknown transport failure';
+}
+
+function recordHealthPollFailure(error) {
+    const now = Date.now();
+    const reason = healthFailureReason(error);
+    state.healthPollFailures = Math.min(32, Number(state.healthPollFailures || 0) + 1);
+    if (!state.healthPollIncident) {
+        state.healthPollIncident = {
+            id: `health_poll_${now}`,
+            startedAt: now,
+            failures: 1,
+            lastReason: reason,
+            lastReminderAt: now
+        };
+        queueNeuralLivenessCard(
+            `[health_poll] health endpoint unavailable; retaining last known state (${reason})`,
+            { level: 'warning', force: true }
+        );
+        return;
+    }
+
+    const incident = state.healthPollIncident;
+    incident.failures += 1;
+    incident.lastReason = reason;
+    if (now - Number(incident.lastReminderAt || 0) >= HEALTH_POLL_REMINDER_MS) {
+        incident.lastReminderAt = now;
+        const elapsedSeconds = Math.max(1, Math.round((now - incident.startedAt) / 1000));
+        queueNeuralLivenessCard(
+            `[health_poll] endpoint incident continues after ${elapsedSeconds}s (${incident.failures} failed attempts); last known state retained`,
+            { level: 'warning', force: true }
+        );
+    }
+}
+
+function recordHealthPollSuccess(payload) {
+    const now = Date.now();
+    const incident = state.healthPollIncident;
+    state.healthPollFailures = 0;
+    state.healthLastSuccessAt = now;
+    state.healthPollIncident = null;
+    if (!incident) return false;
+
+    const elapsedSeconds = Math.max(1, Math.round((now - incident.startedAt) / 1000));
+    const snapshotState = payload && payload.health_read_model
+        ? String(payload.health_read_model.serving || 'available').replace(/_/g, ' ')
+        : 'available';
+    queueNeuralLivenessCard(
+        `[health_poll] endpoint recovered after ${elapsedSeconds}s and ${incident.failures} failed attempts; snapshot ${snapshotState}`,
+        { level: 'info', force: true }
+    );
+    return true;
+}
+
 async function pollHealth() {
     if (state.healthPollInFlight) return;
     state.healthPollInFlight = true;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1500);
+    const timeoutId = setTimeout(() => controller.abort(), HEALTH_POLL_TIMEOUT_MS);
 
     try {
         const res = await fetch('/api/health', {
@@ -3936,11 +4021,11 @@ async function pollHealth() {
             signal: controller.signal
         });
         if (!res.ok) {
-            console.warn(`⚠️ Health poll returned status: ${res.status}`);
-            return; // Retain last known state
+            throw new Error(`HTTP ${res.status}`);
         }
         const d = await res.json();
-        if (!d) return;
+        if (!d || typeof d !== 'object') throw new Error('invalid health payload');
+        const recovered = recordHealthPollSuccess(d);
         state.runtimeHealthy = payloadRuntimeHealthy(d);
         state.runtimeHealthBlockers = runtimeHealthBlockers(d);
         const fmtPct01 = (value) => `${Math.round((value || 0) * 100)}%`;
@@ -3972,7 +4057,7 @@ async function pollHealth() {
                 session: { connected: state.runtimeHealthy }
             });
         }
-        publishHealthNeuralPulse(d, 'health_poll');
+        if (!recovered) publishHealthNeuralPulse(d, 'health_poll');
 
         state.cycleCount = d.cycle_count || state.cycleCount || 0;
         const cyclesEl = $('hud-cycles');
@@ -4395,16 +4480,12 @@ async function pollHealth() {
 
         refreshMetricGuide();
     } catch (e) {
-        if (!e || e.name !== 'AbortError') {
-            console.warn('⚠️ Health poll failed:', e);
-            queueNeuralLivenessCard(
-                `[health_poll] health probe failed: ${e && e.message ? e.message : 'unknown failure'}`,
-                { level: 'warning' }
-            );
-        }
+        console.warn('⚠️ Health poll failed:', e);
+        recordHealthPollFailure(e);
     } finally {
         clearTimeout(timeoutId);
         state.healthPollInFlight = false;
+        scheduleHealthPoll();
     }
 }
 
@@ -5270,16 +5351,7 @@ if (DOM.neuralReadableToggle) {
 }
 connect();
 pollHealth();
-
-// Safety net: if WS connection fails repeatedly, keep polling health
-// so the splash can still be dismissed when the server comes up.
-setInterval(() => {
-    if (!state.runtimeHealthy && !state.healthPollInFlight) {
-        pollHealth();
-    }
-}, 8000);
 vadStream = new VADStream('neural-vad-canvas');
-setInterval(pollHealth, 10000); // 10s — enterprise-grade, not chatbot-grade
 setInterval(pollDesktopAccess, 15000);
 state.bootstrapTimer = setInterval(() => hydrateBootstrap({ quiet: true }), 30000);
 

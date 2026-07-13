@@ -343,8 +343,8 @@ async def test_api_health_exposes_liquid_state_and_soma_payloads(service_contain
         "moral", SimpleNamespace(get_health=lambda: {"integrity": 0.95}), required=False
     )
 
-    response = await server_module.api_health(SimpleNamespace(headers={}))
-    payload = json.loads(response.body)
+    server_module._sync_legacy_system_exports()
+    payload = await server_module.system_routes._collect_api_health_payload()
 
     assert payload["liquid_state"]["energy"] == 81.0
     assert payload["liquid_state"]["curiosity"] == 23.0
@@ -487,8 +487,8 @@ async def test_api_health_reports_cold_standby_without_healthy_claim(service_con
         required=False,
     )
 
-    response = await server_module.api_health(SimpleNamespace(headers={}))
-    payload = json.loads(response.body)
+    server_module._sync_legacy_system_exports()
+    payload = await server_module.system_routes._collect_api_health_payload()
 
     assert payload["status"] == "standby"
     assert payload["healthy"] is False
@@ -564,8 +564,8 @@ async def test_api_health_exposes_ready_conversation_at_top_level(service_contai
         required=False,
     )
 
-    response = await server_module.api_health(SimpleNamespace(headers={}))
-    payload = json.loads(response.body)
+    server_module._sync_legacy_system_exports()
+    payload = await server_module.system_routes._collect_api_health_payload()
 
     assert payload["status"] == "ok"
     assert payload["healthy"] is True

@@ -600,7 +600,7 @@ def _foreground_activity_reason() -> str:
     try:
         from core.container import ServiceContainer
 
-        gate = ServiceContainer.get("inference_gate", default=None)
+        gate = ServiceContainer.peek("inference_gate", default=None)
         if gate and hasattr(gate, "get_conversation_status"):
             lane = dict(gate.get_conversation_status() or {})
             if bool(lane.get("foreground_owned")) or int(lane.get("active_generations", 0) or 0) > 0:
@@ -636,7 +636,7 @@ def _first_visible_conversation_probe_reason() -> str:
     try:
         from core.container import ServiceContainer
 
-        gate = ServiceContainer.get("inference_gate", default=None)
+        gate = ServiceContainer.peek("inference_gate", default=None)
         if not gate or not hasattr(gate, "get_conversation_status"):
             return ""
         lane = dict(gate.get_conversation_status() or {})
@@ -800,7 +800,7 @@ def background_activity_reason(
         try:
             from core.container import ServiceContainer
 
-            gate = ServiceContainer.get("inference_gate", default=None)
+            gate = ServiceContainer.peek("inference_gate", default=None)
             if gate and hasattr(gate, "get_conversation_status"):
                 lane = gate.get_conversation_status() or {}
                 if not bool(lane.get("conversation_ready", False)):

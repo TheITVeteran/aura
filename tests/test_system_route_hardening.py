@@ -114,7 +114,7 @@ def test_stability_details_do_not_default_missing_report_field_to_healthy(monkey
 
     monkeypatch.setattr(
         system_routes.ServiceContainer,
-        "get",
+        "peek",
         staticmethod(lambda name, default=None: Guardian() if name == "stability_guardian" else default),
     )
     monkeypatch.setattr(

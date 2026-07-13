@@ -16,9 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **root-fix the live health-surface
-  failure (`HEALTH-SURFACE-001`) while the preserved concurrent Fable runtime
-  occupies the shared desktop**, then run exact-main signed-app proof of the
+- Current bounded implementation milestone: **Checkpoint 61 makes the live
+  health-surface root fix (`HEALTH-SURFACE-001`) source-green while the
+  preserved concurrent Fable runtime occupies the shared desktop; exact-main
+  signed-app proof remains mandatory**, then run the full signed-app proof of the
   source-green canonical action spine, standing authority, owned-task, self-condition,
   desktop-access, event-loop pressure, and launch provenance
   (`AUTONOMY-AUTHORITY-001`, `ASYNC-TASK-001`, `SELF-STATE-CHAT-001`,
@@ -28,9 +29,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `MEMORY-LEAK-001` while that live lane remains occupied, followed by joy/social
   self-state separation and the remaining typed canonical person-model
   consolidation (`MEMORY-001`, `MIND-001`, `STATE-001`,
-  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 60 establish the current
+  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 61 establish the current
   social, OS-automation, runtime-pressure, desktop-access, self-condition,
-  owned-task, standing-authority, and action-execution source boundaries, signed
+  owned-task, standing-authority, action-execution, and pressure-resilient
+  health source boundaries, signed
   launch identity, resource lifecycle, and non-constructing service-observation
   contract; none substitutes for launched desktop behavior.
   `CTX2-LANE-001..004` and
@@ -41,17 +43,19 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `CTX2-SKILL-001..002`) are complete with checkpoint evidence. Every other
   item remains open or in progress unless its detailed entry explicitly carries
   a completion date and proof.
-- Overall completion percentage: **30% planning estimate as of pushed
-  Checkpoint 60**. Checkpoint 60 closes real source defects, but the expanded
-  Aura 1.0/foundation/release denominator added in the same checkpoint keeps the
-  rounded planning percentage flat rather than manufacturing progress by
-  omitting newly explicit work.
+- Overall completion percentage: **29% planning estimate as of pushed
+  Checkpoint 61**. Checkpoint 61 closes the health-surface source defect, but
+  newly explicit system-wide frontier cognition/engineering and morphogenetic
+  organ-engineering burdens increase the denominator. Recording that expansion
+  lowers the rounded estimate instead of manufacturing progress by hiding
+  material work.
   This is an evidence-weighted release estimate, not a certification claim.
   `PROGRESS-CONTROL-001` and `SCOPE-001` must replace the manual estimate with a
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
-- Remaining checkpoint forecast: **approximately 130-190 additional total
-  checkpoints before final soak/release closure**. This includes every
+- Total checkpoint forecast: **approximately 206-276 total checkpoints for the
+  expanded program, with 61 pushed and approximately 145-215 remaining before
+  final soak/release closure**. This includes every
   implementation, cleanup, repair, integration, verification, live,
   portability, release, and soak checkpoint, not only headline milestones.
   The wide initial interval
@@ -98,7 +102,7 @@ Status rules:
 | `EFFECT-001` | `IN PROGRESS` | Put file, network, browser, OS, memory, model, patch, self-repair, social, and environmental effects through canonical authority, transaction, compensation, and reconstructable receipt boundaries. | Pass F 5; Matrix 9 and 11 |
 | `STORAGE-GATEWAY-001` | `OPEN 2026-07-13` | Remove the seven remaining production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Preserve bootstrap/crash/rollback availability through explicit gateway primitives and fault-injection tests rather than linter exemptions. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoint 53 production-surface audit |
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
-| `HEALTH-SURFACE-001` | `OPEN (LIVE FAILURE) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with one bounded, versioned, asynchronously refreshed health read model whose public request path is O(1), stale-aware, and available under owner-loop and CPU pressure. Give desktop, service worker, launcher, and operator probes one single-flight contract with latency budgets, cancellation, jittered backoff, last-known-state semantics, incident episode coalescing, bounded reminders, and one recovery transition instead of repeated `Aura.Live.Neural` cards. Prove liveness/readiness remain responsive while cognition, Phi, neural-mesh, MLX recovery, desktop perception, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; live `/api/health` timeout, ~100% Python CPU, and repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
+| `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with one bounded, versioned, asynchronously refreshed health read model whose public request path is non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; one daemon single-flight refresh owner, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and one recovery transition are source-green. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoint 61; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
 | `RESOURCE-001` | `COMPLETE 2026-07-12` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. | Pass F 3; Addendum 22; Checkpoint 34 |
 | `MEMORY-LEAK-001` | `OPEN (H1 CONFIRMED) 2026-07-13` | Attribute and eliminate the measured 350-450 MB/hour idle orchestrator RSS growth without relying on restart, pressure-triggered reclamation, model-worker exclusion, or a raised limit. Use allocation-growth evidence plus owned cache/queue/task/resource cardinalities to identify every contributor; add bounded-growth and release regressions, prove a stable live plateau across idle and ordinary interaction, and retain restart/crash continuity. | `RESOURCE-001`, `RUNTIME-001`, `FAULT-001`, `PERF-001`; two independent 45/70-minute idle windows in `docs/SYSTEMS_MATURITY_2026_07_12.md`; attribution attempt `never_ready` remains open |
@@ -122,6 +126,9 @@ Status rules:
 | `AUTONOMY-AUTHORITY-001` | `IN PROGRESS (FOUNDATION SOURCE GREEN; LIVE + EXPANSION OPEN) 2026-07-13` | Replace repeated human-in-loop approval with durable, revocable, least-privilege standing authority, risk budgets, and self-issued child capabilities for safe reversible work. Aura must act autonomously within policy, learn from receipted outcomes, pause on uncertainty or boundary conflict, and request confirmation only when consequential scope was never granted or cannot be safely reversed. The first durable grant registry, argument/effect/risk-bound child leases, immediate revocation, owner control API, canonical Will/Constitution/Capability integration, and autonomous research/introspection/local-read/account-read/maintenance grants are source-green. CapabilityEngine now recognizes an internally verified standing child lease as the confirmation contract it represents instead of prompting a second time, while caller-supplied token/boolean context cannot manufacture confirmation. Authenticated-principal attestation, broader reversible operational grants, outcome-to-policy learning, and current-app live proof remain mandatory. | `AGENCY-001`, `EFFECT-001`, `VALUES-001`; user autonomy/free-will requirement reaffirmed 2026-07-13; Checkpoints 59-60 |
 | `ACTION-SPINE-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Establish one typed causal action spine from goal/selection through invocation-bound standing authority, non-blocking execution, observed-effect verification, expectation verdict, reconstructable receipt, substrate feedback, repair, and learning. Generated prose must never be executable authority. Authority issuance/verification/finalization must remain on the canonical owner loop; blocking bodies must not stall it; cancellation and every terminal outcome must close leases truthfully. Prove foreground, autonomous, immune, failure, cancellation, restart, and concurrent action paths in the signed app under lag and revocation pressure. | `EXPECT-001`, `EFFECT-001`, `ARCH-001`, `SUBSTRATE-001`, `FOREGROUND-LATENCY-001`, `AUTONOMY-AUTHORITY-001`; Checkpoint 60 |
 | `CODING-001` | `OPEN` | Reach human-level-plus unseen-repository coding and governed closed-loop self-repair from failing evidence through root cause, mutation, review, validation, rollback, commit, learning, and monitoring. | Pass F 8; Matrix 8 |
+| `IMMUNE-CODING-001` | `OPEN 2026-07-13` | Make Aura's repair, optimization, self-modification, adaptive-immunity, healing-swarm, and code-maintenance cells a frontier-quality software-engineering system rather than patch generators. Build one typed repair workspace and causal authority chain from live incident/reproducer through cross-module architecture and runtime diagnosis, hypothesis ranking, isolated multi-file implementation, migration/compatibility analysis, static/type/security/performance review, targeted plus adjacent/property/fuzz/mutation/race/fault tests, independent adversarial review, canary, compensation/rollback, signed receipt, outcome monitoring, and evidence-gated learning. Route each phase to the strongest policy-eligible coding/reasoning model through a versioned provider-neutral contract; preserve provenance and source context across handoffs; support Python, native/Swift, web UI, data/schema, async/concurrency, security, model/runtime, and operations faults. Autonomous reversible repairs use standing authority without per-action approval, while consequence budgets and exact rollback constrain unsafe self-mutation. Certify the quality claim only through sealed unseen-repository tasks, historical Aura fault replay, injected live failures, regression resistance, cost/latency budgets, long-horizon repair success, and matched comparison against the declared frontier baseline; reject shallow tests, benchmark leakage, reviewer collusion, fake success, and themed multi-agent federation. | `CODING-001`, `ADAPT-001`, `FAULT-001`, `ACTION-SPINE-001`, `AUTONOMY-AUTHORITY-001`, `PROOF-001`, `TEST-DEPTH-001`; frontier-quality immune coding request 2026-07-13 |
+| `FRONTIER-COGNITION-001` | `OPEN 2026-07-13` | Build one canonical frontier cognition and engineering substrate that every applicable Aura organ can invoke without creating a second mind: immune and repair cells, morphogenesis, organ design, self-modification, optimization, incident response, operations, capability construction, research, planning, and review. Provide versioned capability negotiation across the strongest policy-eligible local or remote models; repository/world semantic graphs; persistent long-context task state; grounded retrieval; multimodal perception; terminal/browser/desktop/tool use; hypothesis, planning, implementation, verification, critique, context compression, handoff, and resumable long-horizon execution; explicit uncertainty, cost, latency, privacy, authority, and fallback contracts; and identity/memory/substrate integration through the canonical workspace and action spine. A provider or model label is never proof. Claim parity with GPT 5.6, Fable 5, Mythos, Sol Ultra, or a successor only after contamination-resistant matched sealed evaluations of coding, reasoning, research, tool use, multimodal work, repair, regression resistance, and sustained completion at declared budgets; retain the strongest measured configuration and reject benchmark-only uplift or an ungoverned model bypass. | `CODING-001`, `IMMUNE-CODING-001`, `TOOLS-001`, `SUBSTRATE-001`, `INTELLIGENCE-001`, `PROOF-001`, `AUTONOMY-AUTHORITY-001`; system-wide Sol Ultra/frontier capability request clarified 2026-07-13 |
+| `MORPHOGENETIC-ENGINEERING-001` | `OPEN 2026-07-13` | Give lineage-bearing cells and organ-forming systems frontier-grade diagnosis and software engineering through `FRONTIER-COGNITION-001`, while preventing arbitrary live-code proliferation. Implement a typed organogenesis lifecycle from unmet causal need and lesion evidence through interface/specification, dependency and data-contract design, isolated construction, generated and adversarial tests, resource/authority/lifecycle registration, compatibility and migration proof, staged canary, canonical-workspace integration, causal contribution measurement, monitoring, repair, consolidation, pruning, extinction, and exact rollback. Organs must solve held-out needs better than the pre-formation baseline, remain inspectable and bounded across restart, and merge into canonical ownership rather than accumulate themed cells, duplicate services, or self-validating swarms. | `FRONTIER-COGNITION-001`, `IMMUNE-CODING-001`, `ADAPT-001`, `THRONG-001`, `ARCH-001`, `SUBSTRATE-001`, `ACTION-SPINE-001`, `RESOURCE-001`, `TEST-DEPTH-001`; frontier-quality cells and organ formation clarification 2026-07-13 |
 | `ADAPT-001` | `OPEN` | Correct and safely enable one-shot hidden-state adaptation; validate CRSM/CAA/LoRA/compounding with uncontaminated behavioral holdouts, calibration, rollback, and real capability-growth curves. | Pass F 8; Addendum 25; learning/substrate closure |
 | `AMPLIFY-001` | `OPEN` | Repair verifier soundness and retain reasoning amplification only where sealed matched controls show calibrated quality gains within latency/resource budgets. | Addendum 24 |
 | `IDENTITY-001` | `OPEN` | Preserve signed longitudinal identity, beliefs, commitments, values, relationships, consent, accountability, and uncertainty through restart, conflict, correction, rollback, and model replacement. | Addendum 27-28 |
@@ -213,10 +220,12 @@ corpus, and every line of the one-page capability PDF (SHA-256
 `853eae8a849a7883564c1f8b56e43b5d3911f15ea4ea6d10271dbe83c1b25ebf`). Any
 future source corpus is additive: it must be registered and mapped before its
 requirements can be called in scope. The 2026-07-13 splash/reference images,
-Thronglets request, live health-poll failure, and Aura 1.0 closure question are
-manually mapped to `SPLASH-001`, `THRONG-001`, `HEALTH-SURFACE-001`, and the
-new release-readiness rows above; machine ingestion and zero-unmapped proof
-remain open under `SCOPE-001`.
+Thronglets request, live health-poll failure, Aura 1.0 closure question, and the
+system-wide frontier cognition/organ-engineering clarification are manually
+mapped to `SPLASH-001`, `THRONG-001`, `HEALTH-SURFACE-001`,
+`FRONTIER-COGNITION-001`, `MORPHOGENETIC-ENGINEERING-001`, and the new
+release-readiness rows above; machine ingestion and zero-unmapped proof remain
+open under `SCOPE-001`.
 
 ### Scope Clarification For The Current Pass
 
@@ -14049,3 +14058,121 @@ Live evidence and immediate next work:
   foreground MLX, desktop probes, self-condition chat, swarm ingress, clean
   quit, and relaunch. Continue storage gateway, memory-growth attribution, the
   complete foundation/master index, and all shorter gates before final soaks.
+
+## Checkpoint 2026-07-13-61: Pressure-Resilient Health Read Model And Frontier Engineering Scope
+
+This checkpoint advances `HEALTH-SURFACE-001`, `RUNTIME-001`,
+`FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `FAULT-001`, `ARCH-001`,
+`REPO-001`, `SUPPORTABILITY-001`, `SCOPE-001`, and
+`PROGRESS-CONTROL-001`. The source and bounded deterministic gates are green.
+Exact-main signed-app health and recovery proof remains open because the
+preserved Fable worktree process still owns the desktop runtime.
+
+Reproduced and measured the visible failure instead of treating the card as a
+generic network symptom:
+
+- PID `55113` serves the current desktop from
+  `.claude/worktrees/fable-improvement-pass` at commit `e593f5f`, one commit
+  behind `origin/main` and necessarily without this uncommitted checkpoint.
+  Under the concurrently preserved Fable test load, its rich `/api/health`
+  request returned HTTP `200`, `135883` JSON bytes, and took `5.3s`.
+- That runtime's desktop JavaScript aborts the same request after `1.5s` and has
+  two fixed polling schedules. WebKit reports the abort as `Load failed`, which
+  explains the repeated `Aura.Live.Neural` cards. The payload also showed hard
+  event-loop lag, stopped monitor/sentinel owners, and an unready conversation
+  lane; these remain truthful live defects rather than being converted to a
+  transport-only success.
+
+Moved rich health collection completely out of the public request budget:
+
+- `HealthSnapshotReadModel` owns one daemon single-flight collector with a
+  versioned `aura.health.snapshot.v1` contract, stale-while-revalidate serving,
+  bounded freshness/expiry, collection-timeout telemetry, exponential retry,
+  one incident identity, one recovery record, generation fencing, and lifecycle
+  invalidation. A stuck collector is never joined or replaced, bounding fanout
+  to one thread; close/restart cannot overlap collectors, and malformed retry
+  configuration normalizes to safe positive bounds.
+- `/api/health` now reads the latest snapshot immediately, applies current
+  shutdown truth, and withholds every green readiness/certification claim once
+  evidence expires. It emits no-store, generation, and serving-state headers.
+  The legacy server export delegates to the same route, eliminating two health
+  meanings. Initializing and expired states are explicit rather than fake
+  connection failures.
+- The sole background collector observes registered services with `peek`
+  instead of cold-constructing them, does not advance circadian or Soma state,
+  skips owner-loop-only substrate reads, and performs blocking compatibility
+  reads only from its off-loop worker. Background policy and conversation-lane
+  observation use the same non-constructing contract.
+
+Collapsed the desktop poll storm into one diagnosable episode:
+
+- The shell now has one self-scheduling health loop with hidden-tab pacing,
+  bounded jitter, exponential retry, a `6s` transport deadline, and retained
+  last-known state. It emits one opening incident card, no per-attempt spam, at
+  most one reminder every five minutes, and one recovery card with duration,
+  attempts, and snapshot state.
+- Reconnect/resume requests an immediate poll without creating a second timer.
+  The service worker uses the lightweight readiness heartbeat instead of the
+  rich desktop snapshot, preventing background synchronization from multiplying
+  collection pressure.
+
+Hardened adjacent health contracts exposed by composed testing:
+
+- The terminal boot-health future callback now inspects cancellation and the
+  completed exception explicitly instead of using a broad catch that could hide
+  callback defects. Invalid result shapes become typed terminal failures.
+- Background-policy tests mock both constructing and observing service access,
+  preserving the production no-cold-construction contract. Heartbeat tests now
+  reset shared probe/cache state, and safe-boot tests clear host auto-prewarm
+  configuration, removing false-green and machine-dependent order behavior.
+
+Expanded the no-drop intelligence denominator from immune repair to every
+applicable self-engineering organ:
+
+- `FRONTIER-COGNITION-001` requires one canonical, provider-neutral frontier
+  cognition/engineering substrate for immune cells, morphogenesis, organ
+  design, self-modification, optimization, incident response, operations,
+  research, planning, and review. It includes persistent task/repository state,
+  multimodal/tool execution, long-horizon resumption, critique and verification,
+  explicit authority/resource contracts, and integration through Aura's one
+  workspace and action spine.
+- `MORPHOGENETIC-ENGINEERING-001` requires cells to form real organs through a
+  typed need/specification/build/test/canary/integration/monitor/prune/rollback
+  lifecycle with held-out causal contribution, bounded resources, and canonical
+  ownership. Arbitrary live-code proliferation and self-validating duplicate
+  services cannot count as organ formation.
+- GPT 5.6, Fable 5, Mythos, Sol Ultra, and successor comparisons are outcome
+  bars, not branding claims. Aura may claim parity only after matched sealed,
+  contamination-resistant coding, reasoning, research, multimodal, tool-use,
+  repair, regression, and sustained-completion evaluations at declared cost and
+  latency. The strongest policy-eligible measured configuration wins.
+
+Verification completed on the final source candidate:
+
+- The dedicated read-model and full health/server/system/shell compatibility
+  composition passes `384/384` in `207.98s`. It covers blocked collectors,
+  single-flight and restart behavior, stale expiry, shutdown overlays,
+  non-constructing observation, incident/recovery coalescing, HTTP latency, and
+  the single-scheduler JavaScript contract.
+- The adjacent background-policy, router, boot, launcher, runtime-polish, and
+  substrate architecture composition passes `242/242` in `105.68s`; the five
+  heartbeat cases and safe-boot environment contract pass hermetically.
+- Configured Ruff, targeted Python compilation, both JavaScript syntax checks,
+  and `git diff --check` pass. The enterprise static ratchet, all `37/37`
+  production-readiness checks, and all `20/20` closeout-rubric criteria pass.
+
+Progress and immediate next work:
+
+- This is pushed Checkpoint `61`. The expanded planning estimate is `29%`.
+  The honest forecast is `206-276` total checkpoints, with `145-215` remaining;
+  it counts implementation, cleanup, integration, verification, live,
+  portability, release, and soak checkpoints rather than only milestones.
+- The visible old Fable runtime will continue showing the old health failure
+  until it releases the desktop and Aura.app is rebuilt from exact pushed
+  `main`. Then run signed-app cold-start, warm snapshot, forced blocked
+  collector, stale expiry, CPU/owner-loop pressure, network interruption,
+  incident/recovery UI, sleep/wake, clean quit, and relaunch proof. A source-green
+  route is not live closure.
+- Continue `STORAGE-GATEWAY-001` and `MEMORY-LEAK-001` while preserving that
+  runtime, then execute the exact-main signed-app matrix and the complete master
+  index. Final multi-hour and 24-72 hour soaks remain last.

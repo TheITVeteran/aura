@@ -7474,8 +7474,13 @@ from interface.routes.chat_quality import (  # noqa: E402
 
 # ── Conversation Lane Helpers ─────────────────────────────────
 
-def _collect_conversation_lane_status() -> dict[str, Any]:
+def _collect_conversation_lane_status(
+    *,
+    observe_only: bool = False,
+) -> dict[str, Any]:
     from core.brain.llm.model_registry import BRAINSTEM_ENDPOINT, PRIMARY_ENDPOINT
+
+    service_lookup = ServiceContainer.peek if observe_only else ServiceContainer.get
 
     lane: dict[str, Any] = {
         "desired_model": "Cortex (32B)",
@@ -7496,7 +7501,7 @@ def _collect_conversation_lane_status() -> dict[str, Any]:
         "kernel_tick_age_s": None,
     }
     try:
-        gate = ServiceContainer.get("inference_gate", default=None)
+        gate = service_lookup("inference_gate", default=None)
         if gate and hasattr(gate, "get_conversation_status"):
             gate_lane = gate.get_conversation_status()
             if isinstance(gate_lane, dict):
@@ -7506,7 +7511,7 @@ def _collect_conversation_lane_status() -> dict[str, Any]:
         logger.debug("Conversation lane status collection failed: %s", exc)
 
     try:
-        llm_router = ServiceContainer.get("llm_router", default=None)
+        llm_router = service_lookup("llm_router", default=None)
         if llm_router and hasattr(llm_router, "get_health_report"):
             report = llm_router.get_health_report()
             if report.get("background_endpoint") is not None:
@@ -7533,8 +7538,8 @@ def _collect_conversation_lane_status() -> dict[str, Any]:
 
     # Kernel tick staleness — lets the UI detect when the kernel is locked up
     try:
-        kernel = ServiceContainer.get("aura_kernel", default=None)
-        if kernel is None:
+        kernel = service_lookup("aura_kernel", default=None)
+        if kernel is None and not observe_only:
             from core.kernel.kernel_interface import KernelInterface
             ki = KernelInterface.get_instance()
             kernel = getattr(ki, "kernel", None) if ki else None
@@ -7818,7 +7823,7 @@ def _conversation_lane_user_message(
     # Build a mood-aware prefix for softer messages
     _mood_prefix = ""
     try:
-        _pe = ServiceContainer.get("personality_engine", default=None)
+        _pe = ServiceContainer.peek("personality_engine", default=None)
         if _pe and hasattr(_pe, "get_emotional_context_for_response"):
             _emo = _pe.get_emotional_context_for_response() or {}
             _mood = str(_emo.get("mood", "") or "").lower()

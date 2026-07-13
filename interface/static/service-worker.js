@@ -150,7 +150,7 @@ self.addEventListener('notificationclick', (event) => {
 self.addEventListener('sync', (event) => {
   if (event.tag === 'aura-reconnect') {
     event.waitUntil(
-      fetch('/api/health').then(r => r.json()).then(data => {
+      fetch('/api/health/heartbeat').then(r => r.json()).then(data => {
         // Background sync — server alive
       }).catch(() => {
         // Background sync — server unreachable
@@ -163,7 +163,7 @@ self.addEventListener('sync', (event) => {
 self.addEventListener('periodicsync', (event) => {
   if (event.tag === 'aura-heartbeat') {
     event.waitUntil(
-      fetch('/api/health').then(r => r.json()).then(data => {
+      fetch('/api/health/heartbeat').then(r => r.json()).then(data => {
         // Heartbeat received
       })
     );
