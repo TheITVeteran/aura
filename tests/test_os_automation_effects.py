@@ -134,8 +134,8 @@ def test_unbounded_interaction_is_declared_unverifiable() -> None:
     assert contract.unsupported_reasons
 
 
-def test_close_app_requires_running_app_readback() -> None:
-    contract = build_effect_contract("Close the Preview app.")
+def test_quit_app_requires_running_app_readback() -> None:
+    contract = build_effect_contract("Quit the Preview app.")
     before = _snapshot(running_apps=("Finder", "Preview"))
     after = _snapshot(frontmost_app="Finder", running_apps=("Finder",))
 
@@ -143,3 +143,69 @@ def test_close_app_requires_running_app_readback() -> None:
 
     assert verdict.verified is True
     assert any("app_not_running=Preview" in evidence for evidence in verdict.evidence)
+
+
+def test_close_window_is_not_misrepresented_as_process_termination() -> None:
+    contract = build_effect_contract("Close the Preview app.")
+
+    assert contract.verifiable is False
+    assert any("window-closure" in reason for reason in contract.unsupported_reasons)
+
+
+def test_generic_app_descriptor_does_not_become_a_fake_application_name() -> None:
+    contract = build_effect_contract("Open a visible app and prepare a short note.")
+
+    assert contract.verifiable is False
+    assert contract.requirements == ()
+
+
+def test_incidental_app_name_in_content_is_not_an_execution_target() -> None:
+    contract = build_effect_contract(
+        "Write a report about Chrome into Notes.",
+        text_payload="Chrome release notes",
+    )
+
+    targets = {
+        item.expected
+        for item in contract.requirements
+        if item.kind == EffectKind.APP_FRONTMOST
+    }
+    assert targets == {"Notes"}
+
+
+def test_supported_prefix_cannot_hide_unverified_destructive_suffix() -> None:
+    contract = build_effect_contract("Open Notes and delete the current note.")
+
+    assert contract.verifiable is False
+    assert any("deletion" in reason for reason in contract.unsupported_reasons)
+
+
+def test_connector_variants_cannot_hide_unverified_destructive_suffix() -> None:
+    for goal in (
+        "Open Notes to delete the current note.",
+        "Open Notes where you should delete the current note.",
+        "Open Notes; please delete the current note.",
+    ):
+        contract = build_effect_contract(goal)
+        assert contract.verifiable is False
+        assert any("deletion" in reason for reason in contract.unsupported_reasons)
+
+
+def test_action_target_stops_before_then_or_to_connector() -> None:
+    then_contract = build_effect_contract(
+        'Open Notes then type "Daily review complete".'
+    )
+    to_contract = build_effect_contract(
+        'Open Notes to type "Daily review complete".'
+    )
+
+    assert {
+        item.expected
+        for item in then_contract.requirements
+        if item.kind == EffectKind.APP_FRONTMOST
+    } == {"Notes"}
+    assert {
+        item.expected
+        for item in to_contract.requirements
+        if item.kind == EffectKind.APP_FRONTMOST
+    } == {"Notes"}

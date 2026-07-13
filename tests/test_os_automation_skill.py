@@ -84,6 +84,11 @@ def _snapshot(
 def _install_runtime(monkeypatch: pytest.MonkeyPatch, engine: _Engine, host: _Host | None) -> None:
     monkeypatch.setattr(
         os_automation_module.ServiceContainer,
+        "peek",
+        lambda name, default=None: default,
+    )
+    monkeypatch.setattr(
+        os_automation_module.ServiceContainer,
         "get",
         lambda name, default=None: engine if name == "cognitive_engine" else default,
     )
@@ -140,6 +145,38 @@ async def test_delegated_execution_uses_foreground_primary_and_verifies_effect(
     assert result["effect_verified"] is True
     assert result["authority"]["mode"] == "delegated"
     assert len(host.executed_scripts) == 1
+    assert result["compiler"]["mode"] == "deterministic_intent_compiler"
+    assert engine.calls == []
+
+
+@pytest.mark.asyncio
+async def test_cognitive_compiler_is_foreground_primary_for_unrepresented_interaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = _Engine(
+        """```applescript
+tell application "System Events"
+    tell first application process whose frontmost is true
+        click button "Continue" of window 1
+    end tell
+end tell
+```"""
+    )
+    host = _Host(
+        [
+            _snapshot(text="Setup\nContinue"),
+            _snapshot(text="Account details"),
+        ]
+    )
+    _install_runtime(monkeypatch, engine, host)
+
+    result = await OSAutomationCompilerSkill().execute(
+        OSAutomationInput(goal="Click the Continue button."),
+        {"_capability_token_verified": True, "capability_token_id": "outer-token"},
+    )
+
+    assert result["ok"] is True
+    assert result["compiler"]["mode"] == "cognitive_compiler"
     assert engine.calls[0]["is_background"] is False
     assert engine.calls[0]["prefer_tier"] == "primary"
     assert engine.calls[0]["use_strategies"] is False
@@ -174,8 +211,8 @@ async def test_failed_effect_gets_one_evidence_driven_repair(
     assert result["attempts"][0]["verification"]["verified"] is False
     assert result["attempts"][1]["verification"]["verified"] is True
     assert len(host.executed_scripts) == 2
-    assert len(engine.calls) == 2
-    assert "Failed checks" in engine.calls[1]["prompt"]
+    assert len(engine.calls) == 1
+    assert "Failed checks JSON" in engine.calls[0]["prompt"]
 
 
 @pytest.mark.asyncio
@@ -183,9 +220,10 @@ async def test_transport_success_without_effect_never_reports_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     script = '```applescript\ntell application "Google Chrome" to activate\n```'
-    engine = _Engine(script, script)
+    engine = _Engine(script)
     host = _Host(
         [
+            _snapshot(app="Google Chrome"),
             _snapshot(app="Google Chrome"),
             _snapshot(app="Google Chrome"),
         ]
@@ -198,10 +236,10 @@ async def test_transport_success_without_effect_never_reports_success(
     )
 
     assert result["ok"] is False
-    assert result["status"] == "repair_made_no_change"
+    assert result["status"] == "effect_verification_failed"
     assert result["effect_verified"] is False
     assert result["attempts"][0]["transport_success"] is True
-    assert len(host.executed_scripts) == 1
+    assert len(host.executed_scripts) == 2
 
 
 @pytest.mark.asyncio
@@ -277,4 +315,154 @@ async def test_direct_closure_failure_stops_repair_and_requires_reconciliation(
     assert result["status"] == "authority_closure_failed"
     assert result["manual_reconciliation_required"] is True
     assert len(host.executed_scripts) == 1
-    assert len(engine.calls) == 1
+    assert engine.calls == []
+
+
+@pytest.mark.asyncio
+async def test_generic_contract_probe_never_resolves_or_calls_cognitive_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_engine_lookup(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("an unverifiable objective must not resolve the cognitive engine")
+
+    monkeypatch.setattr(os_automation_module.ServiceContainer, "get", fail_engine_lookup)
+    monkeypatch.setattr(
+        os_automation_module,
+        "get_host_automation",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("an unverifiable objective must not resolve host automation")
+        ),
+    )
+
+    result = await OSAutomationCompilerSkill().execute(
+        OSAutomationInput(
+            goal="Open a visible app and prepare a short note.",
+            execute=False,
+        ),
+        {},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "objective_not_verifiable"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_compiler_does_not_require_cognitive_engine() -> None:
+    contract = os_automation_module.build_effect_contract("Open Notes.")
+
+    script, compiler = await OSAutomationCompilerSkill._compile_script(
+        engine=None,
+        goal="Open Notes.",
+        context={},
+        env_context="",
+        contract=contract,
+    )
+
+    assert 'tell application "Notes" to activate' in script
+    assert compiler["mode"] == "deterministic_intent_compiler"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_execute_never_constructs_cognitive_engine(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host = _Host([_snapshot(), _snapshot(app="Notes")])
+
+    def fail_engine_lookup(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("deterministic OS automation must not construct cognition")
+
+    monkeypatch.setattr(os_automation_module.ServiceContainer, "get", fail_engine_lookup)
+    monkeypatch.setattr(
+        os_automation_module.ServiceContainer,
+        "peek",
+        lambda _name, default=None: default,
+    )
+    monkeypatch.setattr(os_automation_module, "get_host_automation", lambda: host)
+
+    result = await OSAutomationCompilerSkill().execute(
+        OSAutomationInput(goal="Open Notes."),
+        {"_capability_token_verified": True, "capability_token_id": "outer-token"},
+    )
+
+    assert result["ok"] is True
+    assert result["compiler"]["mode"] == "deterministic_intent_compiler"
+
+
+def test_cognitive_script_cannot_target_unrelated_named_process() -> None:
+    contract = os_automation_module.build_effect_contract("Click the Continue button.")
+    script = """tell application "System Events"
+    tell process "Mail" to click button "Continue" of window 1
+end tell"""
+
+    safe, reason = OSAutomationCompilerSkill._validate_script(
+        "applescript",
+        script,
+        contract=contract,
+    )
+
+    assert safe is False
+    assert "process target is outside the effect contract" in reason
+
+
+def test_cognitive_script_can_target_exact_contract_process() -> None:
+    contract = os_automation_module.build_effect_contract(
+        "Open Notes and click the Continue button."
+    )
+    script = """tell application "System Events"
+    tell process "Notes" to click button "Continue" of window 1
+end tell"""
+
+    safe, reason = OSAutomationCompilerSkill._validate_script(
+        "applescript",
+        script,
+        contract=contract,
+    )
+
+    assert safe is True, reason
+
+
+@pytest.mark.asyncio
+async def test_cognitive_script_cannot_target_unrelated_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    malicious = """```applescript
+tell application "Mail"
+    activate
+end tell
+tell application "System Events" to click button "Continue" of window 1
+```"""
+    engine = _Engine(malicious, malicious)
+    _install_runtime(monkeypatch, engine, None)
+
+    result = await OSAutomationCompilerSkill().execute(
+        OSAutomationInput(goal="Click the Continue button.", execute=False),
+        {},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "compiler_failed"
+    assert "outside the effect contract" in result["error"]
+    assert len(engine.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_mixed_supported_and_unverified_action_never_compiles_or_executes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_lookup(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("incomplete effect contracts must stop before service lookup")
+
+    monkeypatch.setattr(os_automation_module.ServiceContainer, "get", fail_lookup)
+    monkeypatch.setattr(os_automation_module, "get_host_automation", fail_lookup)
+
+    result = await OSAutomationCompilerSkill().execute(
+        OSAutomationInput(goal="Open Notes and delete the current note."),
+        {},
+    )
+
+    assert result["ok"] is False
+    assert result["status"] == "objective_not_verifiable"
+    assert any(
+        "deletion" in reason
+        for reason in result["effect_contract"]["unsupported_reasons"]
+    )

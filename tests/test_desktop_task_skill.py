@@ -1698,6 +1698,8 @@ async def test_desktop_task_escalates_unrepresented_desktop_workflow_to_os_autom
                 "foreground_request": True,
                 "user_requested_action": True,
                 "user_explicitly_authorized": True,
+                "user_visible_desktop_action": True,
+                "local_desktop_action": True,
                 "desktop_task_reason": (
                     "Primitive desktop actions were not sufficient for this objective; "
                     "escalating to governed OS automation."

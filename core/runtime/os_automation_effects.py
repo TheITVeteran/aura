@@ -31,6 +31,68 @@ class EffectKind(StrEnum):
     INTERACTION_CHANGED_VISIBLE_STATE = "interaction_changed_visible_state"
 
 
+_APP_ALIASES = {
+    "arc": "Arc",
+    "brave": "Brave Browser",
+    "brave browser": "Brave Browser",
+    "browser": "browser",
+    "calculator": "Calculator",
+    "chrome": "Google Chrome",
+    "default browser": "browser",
+    "finder": "Finder",
+    "firefox": "Firefox",
+    "google chrome": "Google Chrome",
+    "microsoft edge": "Microsoft Edge",
+    "microsoft word": "Microsoft Word",
+    "notes": "Notes",
+    "pages": "Pages",
+    "preview": "Preview",
+    "safari": "Safari",
+    "textedit": "TextEdit",
+    "web browser": "browser",
+}
+_GENERIC_APP_TARGETS = frozenset(
+    {
+        "any",
+        "application",
+        "app",
+        "current",
+        "default",
+        "existing",
+        "new",
+        "some",
+        "target",
+        "visible",
+    }
+)
+_UNVERIFIED_CONTROL_OPERATIONS = (
+    (
+        re.compile(r"\b(?:delete|erase|remove|trash)\b", re.IGNORECASE),
+        "deletion lacks a durable target-specific postcondition",
+    ),
+    (
+        re.compile(r"\b(?:save|export|download|upload|print)\b", re.IGNORECASE),
+        "persistence or transfer lacks a durable artifact postcondition",
+    ),
+    (
+        re.compile(r"\b(?:email|message|post|publish|send)\b", re.IGNORECASE),
+        "external communication lacks recipient and delivery verification",
+    ),
+    (
+        re.compile(r"\b(?:install|uninstall)\b", re.IGNORECASE),
+        "software installation is outside the desktop automation authority",
+    ),
+    (
+        re.compile(r"\b(?:copy|move|rename)\b", re.IGNORECASE),
+        "filesystem mutation lacks source, destination, and artifact verification",
+    ),
+    (
+        re.compile(r"\b(?:log\s*in|sign\s*in|password|purchase|pay)\b", re.IGNORECASE),
+        "authentication or transaction workflows require a dedicated governed contract",
+    ),
+)
+
+
 @dataclass(frozen=True)
 class DesktopSnapshot:
     """Bounded observable desktop state captured without mutating the host."""
@@ -241,15 +303,22 @@ def build_effect_contract(
             )
         )
 
-    apps = tuple(target_apps or _extract_target_apps(normalized_goal))
-    close_targets = _extract_action_targets(normalized_goal, ("close", "quit"))
+    apps = tuple(
+        extract_target_apps(normalized_goal)
+        if target_apps is None
+        else target_apps
+    )
+    quit_targets = _extract_action_targets(normalized_goal, ("quit",))
+    close_targets = _extract_action_targets(normalized_goal, ("close",))
     for app in apps:
-        if any(_apps_match(app, target) for target in close_targets):
+        if any(_apps_match(app, target) for target in quit_targets):
             add(
                 EffectKind.APP_NOT_RUNNING,
                 app,
                 f"{app} is no longer a running visible application.",
             )
+        elif any(_apps_match(app, target) for target in close_targets):
+            continue
         else:
             add(
                 EffectKind.APP_FRONTMOST,
@@ -333,6 +402,13 @@ def build_effect_contract(
             )
         else:
             unsupported.append("requested interaction has no concrete visible target to verify")
+
+    if close_targets:
+        unsupported.append(
+            "closing an app window lacks targeted window-closure observation; "
+            "use an explicit quit objective for process termination"
+        )
+    unsupported.extend(_unsupported_control_operations(normalized_goal))
 
     if not requirements:
         unsupported.append("objective has no supported observable desktop postcondition")
@@ -572,62 +648,89 @@ def _apps_match(expected: str, observed: str) -> bool:
             "google chrome",
             "safari",
         }
-    return bool(expected_name and observed_name) and (
-        expected_name == observed_name
-        or expected_name in observed_name
-        or observed_name in expected_name
-    )
+    return bool(expected_name and observed_name) and expected_name == observed_name
 
 
-def _extract_target_apps(goal: str) -> tuple[str, ...]:
-    lowered = goal.lower()
-    markers = (
-        ("google docs", "Google Chrome"),
-        ("google chrome", "Google Chrome"),
-        ("chrome", "Google Chrome"),
-        ("calculator", "Calculator"),
-        ("textedit", "TextEdit"),
-        ("microsoft word", "Microsoft Word"),
-        ("preview", "Preview"),
-        ("finder", "Finder"),
-        ("safari", "Safari"),
-        ("notes", "Notes"),
-        ("pages", "Pages"),
-        ("browser", "browser"),
-    )
+def extract_target_apps(goal: str) -> tuple[str, ...]:
+    """Extract only concrete app targets from objective-control language."""
+    normalized_goal = " ".join(str(goal or "").split())
+    lowered = normalized_goal.casefold()
     apps: list[str] = []
-    for marker, app in markers:
-        if re.search(rf"\b{re.escape(marker)}\b", lowered) and app not in apps:
-            if app == "browser" and any(
-                browser in apps for browser in ("Google Chrome", "Safari")
-            ):
-                continue
-            apps.append(app)
-    for target in _extract_action_targets(goal, ("open", "launch", "switch to", "focus", "close", "quit")):
-        normalized = {
-            "chrome": "Google Chrome",
-            "google chrome": "Google Chrome",
-            "browser": "browser",
-            "notes": "Notes",
-        }.get(target.lower(), target)
-        if normalized not in apps:
-            apps.append(normalized)
+    for target in _extract_action_targets(
+        normalized_goal,
+        ("open", "launch", "switch to", "focus", "close", "quit"),
+    ):
+        if target not in apps:
+            apps.append(target)
+
+    phrase_prefix = r"(?:current|in|inside|into|the|using|with)\s+(?:the\s+)?"
+    for alias in sorted(_APP_ALIASES, key=len, reverse=True):
+        canonical = _APP_ALIASES[alias]
+        phrase = rf"\b{phrase_prefix}{re.escape(alias)}\b"
+        window_phrase = rf"\b{re.escape(alias)}\s+(?:app|application|window)\b"
+        if (
+            re.search(phrase, lowered)
+            or re.search(window_phrase, lowered)
+            or (alias == "google chrome" and "google docs" in lowered)
+        ) and canonical not in apps:
+            apps.append(canonical)
+
+    if "browser" in apps and any(
+        app in apps
+        for app in (
+            "Arc",
+            "Brave Browser",
+            "Firefox",
+            "Google Chrome",
+            "Microsoft Edge",
+            "Safari",
+        )
+    ):
+        apps.remove("browser")
     return tuple(apps[:5])
 
 
 def _extract_action_targets(goal: str, actions: Sequence[str]) -> tuple[str, ...]:
     action_pattern = "|".join(re.escape(action) for action in actions)
     pattern = (
-        rf"\b(?:{action_pattern})\s+(?:up\s+)?(?:my\s+|the\s+)?"
+        rf"\b(?:{action_pattern})\s+(?:up\s+)?(?:a\s+|an\s+|my\s+|the\s+)?"
         r"([A-Za-z][A-Za-z0-9 &._-]{1,60}?)"
-        r"(?:\s+(?:app|application))?(?=\s*(?:,|\.|;|\band\b|$))"
+        r"(?:\s+(?:app|application))?"
+        r"(?=\s*(?:,|\.|;|\b(?:and|then|before|after|to)\b|$))"
     )
     targets: list[str] = []
     for match in re.finditer(pattern, goal, flags=re.IGNORECASE):
-        candidate = re.sub(r"\s+", " ", match.group(1)).strip(" ._-")
-        if candidate and candidate.lower() not in {"a", "an", "my", "the", "current"}:
+        candidate = _normalize_app_target(match.group(1))
+        if candidate and candidate not in targets:
             targets.append(candidate)
     return tuple(targets)
+
+
+def _normalize_app_target(value: str) -> str:
+    candidate = re.sub(r"\s+", " ", str(value or "")).strip(" ._-'\"")
+    candidate = re.sub(
+        r"^(?:a|an|my|the)\s+|\s+(?:app|application)$",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    ).strip()
+    lowered = candidate.casefold()
+    if not lowered:
+        return ""
+    tokens = set(re.findall(r"[a-z]+", lowered))
+    if tokens and tokens <= _GENERIC_APP_TARGETS:
+        return ""
+    return _APP_ALIASES.get(lowered, candidate[:80])
+
+
+def _unsupported_control_operations(goal: str) -> list[str]:
+    control_text = re.sub(r"([\"']).*?\1", " ", str(goal or ""))
+    control_text = re.sub(r"https?://\S+", " ", control_text)
+    reasons: list[str] = []
+    for operation, reason in _UNVERIFIED_CONTROL_OPERATIONS:
+        if operation.search(control_text):
+            reasons.append(reason)
+    return reasons
 
 
 def _extract_inline_text(goal: str) -> str:

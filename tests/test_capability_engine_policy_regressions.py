@@ -219,6 +219,82 @@ def test_background_desktop_task_does_not_auto_confirm():
     )
 
 
+def test_explicit_foreground_os_automation_auto_confirms_user_request():
+    context = {
+        "origin": "desktop_ui",
+        "route": "desktop_task.os_automation",
+        "foreground_request": True,
+        "user_requested_action": True,
+        "user_explicitly_authorized": True,
+        "user_visible_desktop_action": True,
+        "local_desktop_action": True,
+    }
+
+    assert CapabilityEngine._user_advocate_auto_confirmed_for(
+        "os_automation",
+        context,
+        "desktop_ui",
+        "foreground_desktop_control",
+    )
+    assert CapabilityEngine._user_advocate_confirmed_for(
+        "os_automation",
+        {"goal": "Open Notes", "execute": True},
+        context,
+        "desktop_ui",
+        "high",
+        "foreground_desktop_control",
+    )
+
+
+@pytest.mark.parametrize(
+    ("context", "source", "risk"),
+    [
+        (
+            {
+                "route": "desktop_task.os_automation",
+                "foreground_request": True,
+                "user_requested_action": True,
+                "user_explicitly_authorized": True,
+                "user_visible_desktop_action": True,
+            },
+            "background",
+            "high",
+        ),
+        (
+            {
+                "route": "desktop_task.os_automation",
+                "foreground_request": True,
+                "user_visible_desktop_action": True,
+            },
+            "desktop_ui",
+            "high",
+        ),
+        (
+            {
+                "route": "chat.desktop_action",
+                "foreground_request": True,
+                "user_visible_desktop_action": True,
+            },
+            "desktop_ui",
+            "low",
+        ),
+    ],
+)
+def test_os_automation_does_not_auto_confirm_without_full_user_authority(
+    context,
+    source,
+    risk,
+):
+    assert not CapabilityEngine._user_advocate_confirmed_for(
+        "os_automation",
+        {"goal": "Open Notes", "execute": True},
+        context,
+        source,
+        risk,
+        "foreground_desktop_control",
+    )
+
+
 def test_capability_engine_forwards_scoped_authority_to_constitutional_args():
     source = (Path(__file__).resolve().parents[1] / "core" / "capability_engine.py").read_text(
         encoding="utf-8"
@@ -278,7 +354,7 @@ async def test_execute_with_retry_uses_skill_execution_timeout(monkeypatch):
 
     observed_timeouts = []
 
-    async def fake_wait_for(coro, timeout):
+    async def fake_wait_for(coro, timeout):  # noqa: ASYNC109 - asyncio API double
         observed_timeouts.append(timeout)
         return await coro
 
@@ -306,7 +382,7 @@ async def test_execute_with_retry_reports_blank_timeout_with_skill_context(monke
         async def safe_execute(self, params, context):
             return {"ok": True}
 
-    async def fake_wait_for(coro, timeout):
+    async def fake_wait_for(coro, timeout):  # noqa: ASYNC109 - asyncio API double
         coro.close()
         raise TimeoutError()
 

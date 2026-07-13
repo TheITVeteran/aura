@@ -2527,7 +2527,12 @@ class CapabilityEngine(AuraBaseModule):
         ):
             return True
 
-        if skill_name not in {"desktop_task", "computer_use", "web_interlocutor"}:
+        if skill_name not in {
+            "computer_use",
+            "desktop_task",
+            "os_automation",
+            "web_interlocutor",
+        }:
             return False
         scope = str(effect_scope or "").lower()
         if scope not in {
@@ -2546,12 +2551,73 @@ class CapabilityEngine(AuraBaseModule):
                 or str(ctx.get("route") or "").startswith(("chat.", "voice."))
                 or ctx.get("proof_evaluation_contract")
             )
+        if skill_name == "os_automation":
+            return bool(
+                ctx.get("foreground_request")
+                and ctx.get("user_requested_action")
+                and ctx.get("user_explicitly_authorized")
+                and (
+                    ctx.get("user_visible_desktop_action")
+                    or ctx.get("local_desktop_action")
+                    or str(ctx.get("route") or "").startswith(
+                        ("chat.", "desktop_task.os_automation", "voice.")
+                    )
+                )
+            )
         return bool(
             ctx.get("user_visible_desktop_action")
             or ctx.get("local_desktop_action")
             or ctx.get("desktop_task_owned_by")
             or str(ctx.get("route") or "").startswith(("chat.", "voice."))
             or ctx.get("proof_evaluation_contract")
+        )
+
+    @classmethod
+    def _user_advocate_confirmed_for(
+        cls,
+        skill_name: str,
+        params: dict[str, Any],
+        ctx: dict[str, Any],
+        exec_source: str,
+        risk_level: str,
+        effect_scope: str,
+    ) -> bool:
+        """Return one confirmation decision for cooldown and advocate review."""
+        explicitly_confirmed = bool(
+            params.get("confirmed")
+            or params.get("user_confirmed")
+            or ctx.get("confirmed")
+            or ctx.get("user_confirmed")
+        )
+        if skill_name == "os_automation":
+            return bool(
+                explicitly_confirmed
+                or cls._user_advocate_auto_confirmed_for(
+                    skill_name,
+                    ctx,
+                    exec_source,
+                    effect_scope,
+                )
+            )
+        return bool(
+            explicitly_confirmed
+            or (
+                exec_source in _USER_FACING_CONTEXT_ORIGINS
+                and risk_level not in ("high", "critical")
+            )
+            or cls._safe_autonomous_web_research(
+                skill_name,
+                params,
+                ctx,
+                exec_source,
+                effect_scope,
+            )
+            or cls._user_advocate_auto_confirmed_for(
+                skill_name,
+                ctx,
+                exec_source,
+                effect_scope,
+            )
         )
 
     @staticmethod
@@ -4026,11 +4092,15 @@ class CapabilityEngine(AuraBaseModule):
                     # re-attempted each cycle, surprise=1.0 every time, the
                     # loop never learning the advocate said "confirm first").
                     _block_until = self._advocate_block_cooldowns.get(skill_name, 0.0)
-                    _params_confirmed = bool(
-                        params.get("confirmed") or params.get("user_confirmed")
-                        or ctx.get("confirmed") or ctx.get("user_confirmed")
+                    confirmed = self._user_advocate_confirmed_for(
+                        skill_name,
+                        params,
+                        ctx,
+                        exec_source,
+                        _risk_hint,
+                        effect_scope,
                     )
-                    if _block_until > time.monotonic() and not _params_confirmed:
+                    if _block_until > time.monotonic() and not confirmed:
                         return {
                             "ok": False,
                             "error": (
@@ -4041,26 +4111,6 @@ class CapabilityEngine(AuraBaseModule):
                             "awaiting_confirmation": True,
                             "cooldown": True,
                         }
-                    confirmed = bool(
-                        params.get("confirmed")
-                        or params.get("user_confirmed")
-                        or ctx.get("confirmed")
-                        or ctx.get("user_confirmed")
-                        or (exec_source in _USER_FACING_CONTEXT_ORIGINS and _risk_hint not in ("high", "critical"))
-                        or self._safe_autonomous_web_research(
-                            skill_name,
-                            params,
-                            ctx,
-                            exec_source,
-                            effect_scope,
-                        )
-                        or self._user_advocate_auto_confirmed_for(
-                            skill_name,
-                            ctx,
-                            exec_source,
-                            effect_scope,
-                        )
-                    )
                     user_benefit = self._user_benefit_for_execution(
                         skill_name,
                         params,
