@@ -55,6 +55,10 @@ _REGISTRY_ERRORS = (OSError, RuntimeError, TypeError, ValueError, KeyError)
 # The only scope minted today. The HTTP layer maps it to a path
 # allowlist; new scopes must be added there deliberately, not here.
 SCOPE_CONVERSATION = "conversation"
+# Voice is never minted at pairing time: it must be granted explicitly
+# by the owner, per device, after pairing (deny-by-default posture).
+SCOPE_VOICE = "voice"
+GRANTABLE_SCOPES = frozenset({SCOPE_VOICE})
 
 
 class PairingError(Exception):
@@ -275,6 +279,37 @@ class DevicePairingRegistry:
             snapshot = self._snapshot_locked()
         await self._persist(snapshot)
         await self._audit("device_revoked", {"device_id": device_id, "name": device.name})
+        return True
+
+    async def grant_scope(self, device_id: str, scope: str) -> bool:
+        """Owner-granted scope widening (e.g. voice). Only scopes in
+        GRANTABLE_SCOPES may ever be added post-pairing."""
+        scope = str(scope or "").strip().lower()
+        if scope not in GRANTABLE_SCOPES:
+            raise PairingError(f"scope '{scope}' is not grantable")
+        with self._lock:
+            device = self.devices.get(str(device_id))
+            if device is None or device.revoked:
+                return False
+            if scope not in device.scopes:
+                device.scopes = tuple(device.scopes) + (scope,)
+            snapshot = self._snapshot_locked()
+        await self._persist(snapshot)
+        await self._audit("device_scope_granted",
+                          {"device_id": device_id, "scope": scope})
+        return True
+
+    async def revoke_scope(self, device_id: str, scope: str) -> bool:
+        scope = str(scope or "").strip().lower()
+        with self._lock:
+            device = self.devices.get(str(device_id))
+            if device is None:
+                return False
+            device.scopes = tuple(s for s in device.scopes if s != scope)
+            snapshot = self._snapshot_locked()
+        await self._persist(snapshot)
+        await self._audit("device_scope_revoked",
+                          {"device_id": device_id, "scope": scope})
         return True
 
     async def flush_last_seen(self) -> None:

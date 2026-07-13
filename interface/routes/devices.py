@@ -106,10 +106,13 @@ async def pair_begin(request: Request) -> dict[str, Any]:
     port = host_header.rsplit(":", 1)[1] if ":" in host_header else "8000"
     if not port.isdigit():
         port = "8000"
+    scheme = str(getattr(request.url, "scheme", "http") or "http")
     return {
         "ok": True,
         **challenge,
-        "pair_urls": [f"http://{addr}:{port}/pair" for addr in _lan_addresses()],
+        "pair_urls": [
+            f"{scheme}://{addr}:{port}/pair" for addr in _lan_addresses()
+        ],
     }
 
 
@@ -148,6 +151,36 @@ async def list_devices(request: Request) -> dict[str, Any]:
     registry = get_device_registry()
     await registry.flush_last_seen()
     return {"ok": True, "devices": registry.list_devices()}
+
+
+@router.post("/devices/grant-scope")
+async def grant_device_scope(request: Request) -> dict[str, Any]:
+    """Owner-only scope widening (e.g. voice for a trusted phone).
+    Deny-by-default stands: nothing is granted at pairing time."""
+    _require_owner(request)
+    payload = await request.json()
+    device_id = str(payload.get("device_id", "") or "")
+    scope = str(payload.get("scope", "") or "")
+    try:
+        granted = await get_device_registry().grant_scope(device_id, scope)
+    except PairingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not granted:
+        raise HTTPException(status_code=404, detail="Unknown or revoked device")
+    logger.info("Granted scope '%s' to device %s", scope, device_id)
+    return {"ok": True, "device_id": device_id, "scope": scope}
+
+
+@router.post("/devices/revoke-scope")
+async def revoke_device_scope(request: Request) -> dict[str, Any]:
+    _require_owner(request)
+    payload = await request.json()
+    device_id = str(payload.get("device_id", "") or "")
+    scope = str(payload.get("scope", "") or "")
+    revoked = await get_device_registry().revoke_scope(device_id, scope)
+    if not revoked:
+        raise HTTPException(status_code=404, detail="Unknown device")
+    return {"ok": True, "device_id": device_id, "scope": scope}
 
 
 @router.post("/devices/revoke")

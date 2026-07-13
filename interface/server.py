@@ -959,6 +959,21 @@ async def restore_checkpoint(request: Request):
 
 # ── Routes — WebSocket ────────────────────────────────────────
 
+def _live_device_scopes(device_id: str) -> tuple[str, ...]:
+    """Current scopes from the live registry — grants and revocations
+    take effect per-frame, not per-connection."""
+    try:
+        from core.security.device_pairing import get_device_registry
+
+        device = get_device_registry().devices.get(str(device_id))
+        if device is None or device.revoked:
+            return ()
+        return tuple(device.scopes)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("server.ws_device_scopes", exc)
+        return ()
+
+
 def _verify_ws_device_token(token: str):
     """Resolve a paired device from an explicit WS auth message token."""
     try:
@@ -1245,13 +1260,19 @@ async def websocket_endpoint(ws: WebSocket):
                     )
 
             elif "bytes" in msg:
-                if device_session is not None:
+                if device_session is not None and "voice" not in _live_device_scopes(
+                    device_session.device_id
+                ):
+                    # Deny-by-default stands: only an explicit owner grant
+                    # (POST /api/devices/grant-scope {scope: "voice"})
+                    # opens the microphone lane for a paired device.
                     await ws.send_text(json.dumps({
                         "type": "error",
                         "status": "paired_device_voice_scope_denied",
                         "message": (
                             "Voice streaming is not enabled for this paired device. "
-                            "Use the owner surface for microphone input."
+                            "Ask the owner to grant the voice scope, or use the "
+                            "owner surface for microphone input."
                         ),
                     }))
                     continue
@@ -1350,6 +1371,28 @@ def main() -> None:
     host = "127.0.0.1" if config.security.internal_only_mode else "0.0.0.0"
     logger.info("Binding to %s:8000", host)
 
+    tls_kwargs: dict = {}
+    try:
+        from core.security.tls_local import ensure_local_certificate, tls_enabled
+
+        if tls_enabled():
+            certificate = ensure_local_certificate()
+            if certificate is not None:
+                cert_path, key_path = certificate
+                tls_kwargs = {
+                    "ssl_certfile": str(cert_path),
+                    "ssl_keyfile": str(key_path),
+                }
+                logger.info(
+                    "Serving HTTPS with the local certificate — phones get a "
+                    "secure context (accept the cert once) and the voice lane "
+                    "becomes possible for scope-granted devices."
+                )
+            else:
+                logger.error("AURA_ENABLE_TLS=1 but no certificate; staying on HTTP")
+    except (ImportError, AttributeError, RuntimeError, OSError) as _tls_exc:
+        record_degradation("server.tls", _tls_exc)
+
     uvicorn.run(
         "interface.server:app",
         host=host,
@@ -1358,6 +1401,7 @@ def main() -> None:
         log_level="warning",
         ws_ping_interval=20,
         ws_ping_timeout=10,
+        **tls_kwargs,
     )
 
 
