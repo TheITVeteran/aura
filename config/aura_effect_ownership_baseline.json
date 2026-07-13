@@ -1905,6 +1905,14 @@
       "scope": "<module>.main"
     },
     {
+      "callee": "core.runtime.atomic_writer.atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/runtime/launch_provenance.py",
+      "scope": "<module>.write_launch_manifest"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_json",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -12730,6 +12738,30 @@
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/runtime/launch_provenance.py",
+      "scope": "<module>._git_identity"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/runtime/launch_provenance.py",
+      "scope": "<module>._run_git"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/runtime/launch_provenance.py",
+      "scope": "<module>._strict_bundle_verification"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": true,
       "category": "subprocess_gateway",
       "count": 1,
@@ -13506,6 +13538,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "d0d518c258a39543f8beb9c998c0c892bcda4db2e568d139079ff81164880c52",
+  "inventory_sha256": "5af2df1095cf897d3bbaa970bd3f77b08d2a2bf9b98b81005fca7934a97706b1",
   "schema_version": 1
 }
