@@ -20,6 +20,7 @@ demand is always available once permission is granted.
 """
 from __future__ import annotations
 
+from core.runtime.service_access import optional_service
 import hashlib
 import importlib.util
 import logging
@@ -306,7 +307,7 @@ class SensoryRuntime:
     @staticmethod
     def _synchronizer() -> MultimodalSynchronizer | None:
         try:
-            service = ServiceContainer.get("multimodal_synchronizer", default=None)
+            service = optional_service("multimodal_synchronizer")
         except (AttributeError, LookupError, RuntimeError, TypeError, ValueError):
             return None
         return service if isinstance(service, MultimodalSynchronizer) else None

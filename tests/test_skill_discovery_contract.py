@@ -223,7 +223,7 @@ def test_live_repo_catalog_matches_rust_and_dry_runs_every_skill():
     assert catalog.ok is True
     assert catalog.backend == "rust+python-parity"
     assert catalog.parity_status == "matched"
-    assert len(catalog.accepted) == 73
+    assert len(catalog.accepted) == 75
     assert len(catalog.excluded) == 10
     assert python_catalog.backend == "python"
     assert python_catalog.parity_status == "python_only"

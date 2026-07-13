@@ -94,6 +94,9 @@ EXPECTED_REGISTERED_SKILLS = {
     "program_dna_reconstruct",
     "program_dna_equivalence_battery",
     "x_tools",
+    # 2026-07-12 capability corpus
+    "quantum_lab",
+    "world_forge",
 }
 
 
@@ -309,7 +312,7 @@ def _redirect_runtime_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
 def test_registered_skill_surface_matches_expected_catalog(skill_registry):
     assert set(skill_registry) == EXPECTED_REGISTERED_SKILLS
-    assert len(skill_registry) == 73
+    assert len(skill_registry) == 75
 
 
 @pytest.mark.asyncio

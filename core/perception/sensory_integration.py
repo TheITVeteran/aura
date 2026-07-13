@@ -1,6 +1,7 @@
 """Sensory Integration System
 Gives Aura access to cameras, microphones, speakers, and A/V production tools
 """
+from core.runtime.service_access import optional_service
 import asyncio
 import base64
 import hashlib
@@ -188,7 +189,7 @@ class SensorySystem:
 
     @staticmethod
     def _synchronizer() -> MultimodalSynchronizer | None:
-        service = ServiceContainer.get("multimodal_synchronizer", default=None)
+        service = optional_service("multimodal_synchronizer")
         return service if isinstance(service, MultimodalSynchronizer) else None
 
     def _publish_event(
@@ -433,9 +434,9 @@ class VisionSystem:
         # Try real vision analysis via screen_vision -> cognitive engine
         try:
             from core.container import ServiceContainer
-            brain = ServiceContainer.get("cognitive_engine", default=None)
+            brain = optional_service("cognitive_engine")
             if brain is None:
-                brain = ServiceContainer.get("brain", default=None)
+                brain = optional_service("brain")
 
             if brain is not None and hasattr(brain, "think"):
                 import base64
@@ -738,7 +739,7 @@ class AVProductionSystem:
         """Generate image via local Stable Diffusion or brain inference."""
         try:
             from core.container import ServiceContainer
-            brain = ServiceContainer.get("cognitive_engine", default=None)
+            brain = optional_service("cognitive_engine")
             if brain and hasattr(brain, "generate_image"):
                 result = await brain.generate_image(description, style=style)
                 if result:
@@ -792,7 +793,7 @@ def get_sensory_system() -> SensorySystem:
                     factory=lambda: SensorySystem(),
                     lifetime=ServiceLifetime.SINGLETON
                 )
-            res = ServiceContainer.get("sensory_system", default=None)
+            res = optional_service("sensory_system")
             if isinstance(res, SensorySystem):
                 return res
             return SensorySystem()

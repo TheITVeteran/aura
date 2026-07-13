@@ -131,6 +131,7 @@ async def test_blocking_model_gateway_refuses_active_event_loop() -> None:
         )
 
 
+@pytest.mark.host_observation
 @pytest.mark.asyncio
 async def test_spawn_async_commits_and_releases_model_process_owner(
     monkeypatch: pytest.MonkeyPatch,
@@ -177,6 +178,7 @@ async def test_spawn_async_commits_and_releases_model_process_owner(
     assert controller._receipt_store.coverage_stats()["resource_admission"] == 1
 
 
+@pytest.mark.host_observation
 @pytest.mark.asyncio
 async def test_model_owner_survives_root_exit_until_process_group_drains(
     monkeypatch: pytest.MonkeyPatch,
@@ -250,6 +252,7 @@ async def test_model_subprocess_requires_isolated_process_group(
         )
 
 
+@pytest.mark.host_observation
 @pytest.mark.asyncio
 async def test_cancelled_monitor_retains_owner_until_child_process_dies(
     monkeypatch: pytest.MonkeyPatch,
@@ -291,6 +294,7 @@ async def test_cancelled_monitor_retains_owner_until_child_process_dies(
     assert controller.snapshot()["owners"] == []
 
 
+@pytest.mark.host_observation
 @pytest.mark.asyncio
 async def test_gateway_child_consumes_exact_inherited_model_lane_delegation(
     monkeypatch: pytest.MonkeyPatch,
@@ -328,6 +332,12 @@ async def test_gateway_child_consumes_exact_inherited_model_lane_delegation(
         )
     )
     child_env = {**os.environ, "HOME": str(home)}
+    # The autouse resource_observer fixture pins AURA_MODEL_LANE_STATE_PATH
+    # to a per-test file; inherited by the child it would point the child's
+    # controller at a DIFFERENT state file than the parent controller above,
+    # so the delegation could never match. The child derives its path from
+    # HOME, exactly like a real delegated tool process.
+    child_env.pop("AURA_MODEL_LANE_STATE_PATH", None)
 
     proc = await subprocess_gateway.SubprocessGateway().spawn_async(
         [sys.executable, "-c", child_code],
@@ -348,6 +358,7 @@ async def test_gateway_child_consumes_exact_inherited_model_lane_delegation(
     assert reservation["delegation"]["consumed_process"]["pid"] == proc.pid
 
 
+@pytest.mark.host_observation
 @pytest.mark.asyncio
 async def test_run_async_tracks_model_owner_through_completion(
     monkeypatch: pytest.MonkeyPatch,
@@ -389,6 +400,7 @@ async def test_run_async_tracks_model_owner_through_completion(
     assert controller.snapshot()["owners"] == []
 
 
+@pytest.mark.host_observation
 @pytest.mark.asyncio
 async def test_monitor_registration_failure_reaps_committed_model_child(
     monkeypatch: pytest.MonkeyPatch,

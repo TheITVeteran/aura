@@ -8,6 +8,7 @@ publication to the canonical multimodal synchronizer.
 """
 from __future__ import annotations
 
+from core.runtime.service_access import optional_service
 import asyncio
 import hashlib
 import inspect
@@ -875,7 +876,7 @@ class VisualSpeechEngine:
                 "speaker_identity_verified": False,
                 "created_at": result.created_at,
             }
-        service = ServiceContainer.get("multimodal_synchronizer", default=None)
+        service = optional_service("multimodal_synchronizer")
         if not isinstance(service, MultimodalSynchronizer):
             return
         sequence = self._next_sequence()

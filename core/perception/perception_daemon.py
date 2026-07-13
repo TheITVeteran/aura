@@ -5,6 +5,7 @@ and updates a rolling perceptual memory.
 """
 from __future__ import annotations
 
+from core.runtime.service_access import optional_service
 import asyncio
 import hashlib
 import logging
@@ -188,7 +189,7 @@ class PerceptionDaemon:
     def _publish_synchronized_moment(self, moment: dict[str, Any]) -> None:
         """Bridge semantic daemon moments into the canonical evidence ledger."""
 
-        synchronizer = ServiceContainer.get("multimodal_synchronizer", default=None)
+        synchronizer = optional_service("multimodal_synchronizer")
         if not isinstance(synchronizer, MultimodalSynchronizer):
             return
         source = str(moment.get("source") or "daemon")[:80]
@@ -404,7 +405,7 @@ class PerceptionDaemon:
 
                 # 6. Ambient Microphone Status Check
                 try:
-                    ears = ServiceContainer.get("ears", default=None)
+                    ears = optional_service("ears")
                     if ears:
                         self.register_moment(
                             source="microphone",
@@ -629,7 +630,7 @@ class PerceptionDaemon:
         logger.info("🔍 Active perception triggered: probe_type=%s, query=%s", probe_type, query)
         
         if probe_type == "screen_ocr":
-            vision = ServiceContainer.get("vision_engine", default=None)
+            vision = optional_service("vision_engine")
             if vision and hasattr(vision, "analyze_moment"):
                 try:
                     desc = await vision.analyze_moment(prompt=query or "Describe current text contents.")

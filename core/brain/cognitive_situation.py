@@ -11,6 +11,7 @@ and tool-governance posture through the same live path.
 
 from __future__ import annotations
 
+from core.runtime.service_access import optional_service
 import hashlib
 import math
 import re
@@ -644,7 +645,7 @@ class CognitiveSituationEngine:
     def _social_summary(self, context: dict[str, Any]) -> dict[str, Any]:
         """Read the canonical estimator; never trust caller-supplied social claims."""
         try:
-            service = ServiceContainer.get("other_agent_model", default=None)
+            service = optional_service("other_agent_model")
             if service is None or not hasattr(service, "cognitive_snapshot"):
                 return {}
             requested_agent = _compact(context.get("user_id"), limit=160)
@@ -899,7 +900,7 @@ def get_cognitive_situation_engine() -> CognitiveSituationEngine:
     if _ENGINE is None:
         _ENGINE = CognitiveSituationEngine()
     try:
-        current = ServiceContainer.get("cognitive_situation", default=None)
+        current = optional_service("cognitive_situation")
         if current is not _ENGINE:
             ServiceContainer.register_instance(
                 "cognitive_situation",
