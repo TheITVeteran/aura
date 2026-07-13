@@ -3337,6 +3337,14 @@
       "scope": "<module>.AffordanceKnowledgeBase._save"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/perception/vsr_onnx_backend.py",
+      "scope": "<module>._record_provenance"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -13538,6 +13546,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "5af2df1095cf897d3bbaa970bd3f77b08d2a2bf9b98b81005fca7934a97706b1",
+  "inventory_sha256": "62f2e871c5f716038b68bec3c300ad0d4f5744e11d693db3032b141c406cdc9b",
   "schema_version": 1
 }

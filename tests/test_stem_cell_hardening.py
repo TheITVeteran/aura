@@ -48,3 +48,15 @@ def test_stem_cell_refuses_tampered_payload(isolated_stem_cells):
     path.write_bytes(raw + b"tamper")
 
     assert registry.latest("will") is None
+
+
+def test_stem_cell_writes_survive_production_governance(isolated_stem_cells, monkeypatch):
+    """The signing-key write is internal maintenance and must carry its own
+    governed scope. Without one, a production-governance runtime refuses the
+    key material and every stem-cell signature dies with it — found live as
+    an in-chunk order-dependence failure when a preceding test left
+    production mode enabled."""
+    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "production")
+    registry = StemCellRegistry()
+    registry.capture("identity", _Snapshot(name="aura", version=3), schema_version="v1")
+    assert registry.revert("identity", schema_version="v1") == {"name": "aura", "version": 3}

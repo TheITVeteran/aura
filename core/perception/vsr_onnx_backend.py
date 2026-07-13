@@ -190,10 +190,22 @@ def load_onnx_backend(
 
 
 def _record_provenance(path: Path, provenance: ModelProvenance) -> None:
-    """Write the acknowledged provenance beside the model for audit."""
+    """Write the acknowledged provenance beside the model for audit.
+
+    An audit sidecar is a consequential write: it goes through the governed
+    file-write gateway like every other internal maintenance artifact."""
     try:
+        from core.governance_context import local_internal_governed_scope
+        from core.runtime.file_write_gateway import get_file_write_gateway
+
         sidecar = path.with_suffix(".provenance.json")
-        sidecar.write_text(
-            json.dumps(provenance.to_dict(), indent=2), encoding="utf-8")
+        with local_internal_governed_scope(
+            "perception.vsr.provenance", domain="file_write"
+        ):
+            get_file_write_gateway().write_text(
+                sidecar,
+                json.dumps(provenance.to_dict(), indent=2),
+                source="perception.vsr.provenance",
+            )
     except _VSR_ERRORS as exc:
         record_degradation("perception.vsr.provenance", exc)

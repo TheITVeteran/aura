@@ -101,11 +101,20 @@ def _key() -> bytes:
     if _STEM_KEY_FILE.exists():
         return _STEM_KEY_FILE.read_bytes().strip()
     raw = secrets.token_bytes(32)
-    get_file_write_gateway().write_bytes(
-        _STEM_KEY_FILE,
-        raw,
-        source="resilience.stem_cell.key",
-    )
+    # Internal maintenance write: must carry its own governed scope or a
+    # production-governance runtime refuses the key material — which would
+    # silently disable every stem-cell signature (caught as an in-chunk
+    # order-dependence failure when another test enabled production mode).
+    from core.governance_context import local_internal_governed_scope
+
+    with local_internal_governed_scope(
+        "resilience.stem_cell.key", domain="file_write"
+    ):
+        get_file_write_gateway().write_bytes(
+            _STEM_KEY_FILE,
+            raw,
+            source="resilience.stem_cell.key",
+        )
     try:
         os.chmod(_STEM_KEY_FILE, 0o600)
     except (RuntimeError, AttributeError, TypeError, ValueError):
