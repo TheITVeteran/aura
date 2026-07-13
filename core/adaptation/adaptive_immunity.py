@@ -970,7 +970,14 @@ class AdaptiveImmuneSystem:
         anomaly_score: Any | None = None,
         state_snapshot: dict[str, Any] | None = None,
     ) -> ImmuneResponse:
-        antigen = self.present_antigen(
+        # OFF-LOOP: present_antigen runs numpy projections per event plus a
+        # PCA eigendecomposition on the periodic expansion check — on the
+        # loop it froze the runtime for 5.3s during a degradation storm
+        # (2026-07-12 23:53 stall receipt: dimensional_expansion
+        # _update_contribution_scores on the stamped loop thread). The
+        # expansion engine takes its own lock; thread-safe by design.
+        antigen = await asyncio.to_thread(
+            self.present_antigen,
             event,
             anomaly_score=anomaly_score,
             state_snapshot=state_snapshot,

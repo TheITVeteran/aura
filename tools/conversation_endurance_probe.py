@@ -330,11 +330,31 @@ def main() -> int:
     for attempt in range(3):
         try:
             boot = _get_json(args.base, "/api/health/boot")
-            if boot.get("ready"):
+        except urllib.error.HTTPError as exc:
+            # A degraded aggregate returns 503 WITH a boot-contract body. The
+            # probe's real dependency is the CONVERSATION lane — the same
+            # verdict the desktop GUI trusts (8e349d6c); aggregate health is
+            # telemetry this probe already records per turn.
+            try:
+                boot = json.loads(exc.read().decode("utf-8", errors="replace"))
+            except (ValueError, OSError, AttributeError):
+                boot = {}
+            if boot.get("conversation_ready") or boot.get("conversation_busy"):
+                print(
+                    "[endurance] runtime degraded "
+                    f"({str(boot.get('status_message', ''))[:80]}) but the "
+                    "conversation lane serves — proceeding; per-turn health "
+                    "snapshots carry the degradation.",
+                    flush=True,
+                )
                 break
-            preflight_error = f"RUNTIME NOT READY: {boot}"
+            preflight_error = f"RUNTIME UNAVAILABLE: {exc}"
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             preflight_error = f"RUNTIME UNAVAILABLE: {exc}"
+        else:
+            if boot.get("ready") or boot.get("conversation_ready") or boot.get("conversation_busy"):
+                break
+            preflight_error = f"RUNTIME NOT READY: {boot}"
         if attempt < 2:
             print(f"[endurance] preflight miss ({preflight_error}); retrying in 20s...", flush=True)
             time.sleep(20.0)
