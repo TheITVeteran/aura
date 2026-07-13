@@ -901,6 +901,22 @@ async def _run_chat_turn_memory_log_item(payload: dict[str, str]) -> None:
     chat_origin = str(payload.get("chat_origin") or "unknown")
     user_id = str(payload.get("user_id") or "").strip()[:160]
     try:
+        from core.conversation.response_reliability import (
+            assess_conversation_learning_admission,
+        )
+
+        admission = assess_conversation_learning_admission(
+            user_message,
+            aura_response,
+        )
+        if not admission.ok:
+            logger.warning(
+                "Conversation learning rejected a non-admissible reply (%s); "
+                "durable transcript remains available for audit.",
+                ",".join(admission.reasons) or "unknown",
+            )
+            return
+
         from core.memory.chat_turn_logger import log_chat_turn_auto
 
         await asyncio.wait_for(
@@ -3828,9 +3844,12 @@ def _select_cognitive_chat_mode(user_message: str, effective_user_message: str):
     try:
         from core.conversation.response_reliability import (
             is_live_self_reflection_turn,
+            is_self_condition_turn,
             is_self_process_question,
         )
 
+        if is_self_condition_turn(user_message):
+            return ThinkingMode.FAST
         if is_self_process_question(user_message) or is_live_self_reflection_turn(user_message):
             return ThinkingMode.DEEP
     except _CHAT_RECOVERABLE_ERRORS as exc:
@@ -3898,9 +3917,12 @@ def _is_compact_desktop_chat_contract(
     try:
         from core.conversation.response_reliability import (
             is_live_self_reflection_turn,
+            is_self_condition_turn,
             is_self_process_question,
         )
 
+        if is_self_condition_turn(user_message):
+            lightweight_live_state_or_recall = True
         if (
             is_self_process_question(user_message)
             or is_live_self_reflection_turn(user_message)
@@ -5264,8 +5286,10 @@ async def _run_cognitive_engine_chat_turn(
 
     The HTTP and WebSocket desktop surfaces mark this path as required so the
     UI uses the same causal cognitive path as the live runtime. When required,
-    absence, timeout, or unreliable output returns ``None`` and the caller must
-    fail closed instead of silently routing to a thinner lane.
+    absence or timeout returns ``None`` and the caller must fail closed instead
+    of silently routing to a thinner model lane. Evidence-critical contracts may
+    bind an unreliable draft to their canonical projection after the required
+    CognitiveEngine invocation has happened.
     
     Now with:
     - Persistent connection pooling
@@ -5426,6 +5450,26 @@ async def _run_cognitive_engine_chat_turn(
         if runtime_fact_status_contract
         else ""
     )
+    try:
+        from core.conversation.response_reliability import is_self_condition_turn
+
+        self_condition_contract = is_self_condition_turn(visible)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.self_condition", exc)
+        self_condition_contract = False
+    self_condition_evidence: dict[str, Any] = {}
+    if self_condition_contract:
+        try:
+            self_condition_evidence = _build_self_condition_evidence(visible)
+        except _CHAT_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat.self_condition", exc)
+            logger.debug("Self-condition evidence unavailable before CognitiveEngine: %s", exc)
+    canonical_self_condition_context = str(
+        self_condition_evidence.get("prompt_block") or ""
+    ).strip()
+    canonical_self_condition_reply = str(
+        self_condition_evidence.get("reply") or ""
+    ).strip()
     canonical_memory_state_evidence = (
         ""
         if conversation_only_surface
@@ -5475,7 +5519,11 @@ async def _run_cognitive_engine_chat_turn(
     # live-mind speech contract; execution, identity/self-process, long, and
     # multi-part turns are still excluded above and flow through deeper planning.
     recent_context_needed = _desktop_turn_needs_recent_context(visible)
-    if memory_state_contract and not recent_context_needed:
+    if self_condition_contract:
+        # One prior exchange is enough to preserve a natural "though?" follow-up
+        # without letting an older task replace the current condition question.
+        recent_context_limit = 1
+    elif memory_state_contract and not recent_context_needed:
         # Canonical memory/state turns already carry the authoritative state
         # evidence for the current question. Replaying older chat here makes the
         # live model prone to answering stale topics instead of the requested
@@ -5551,6 +5599,12 @@ async def _run_cognitive_engine_chat_turn(
         "grounded_runtime_status_context": grounded_runtime_status_context,
         "memory_state_contract": memory_state_contract,
         "canonical_memory_state_evidence": canonical_memory_state_evidence,
+        "self_condition_contract": self_condition_contract,
+        "canonical_self_condition_context": canonical_self_condition_context,
+        "canonical_self_condition_reply": canonical_self_condition_reply,
+        "canonical_self_condition_projection": dict(
+            self_condition_evidence.get("projection_dict") or {}
+        ),
         "conversation_lane": (
             _paired_conversation_lane_payload(lane)
             if conversation_only_surface
@@ -5583,6 +5637,8 @@ async def _run_cognitive_engine_chat_turn(
             runtime_fact_status_contract=runtime_fact_status_contract,
             memory_state_contract=memory_state_contract,
         )
+        if self_condition_contract:
+            live_reply_token_budget = min(live_reply_token_budget, 384)
         context["max_tokens"] = live_reply_token_budget
         context["num_predict"] = live_reply_token_budget
     if private_cognitive_model_contract:
@@ -5677,6 +5733,7 @@ async def _run_cognitive_engine_chat_turn(
                 "identity_continuity_contract": identity_continuity_contract,
                 "runtime_fact_status_contract": runtime_fact_status_contract,
                 "memory_state_contract": memory_state_contract,
+                "self_condition_contract": self_condition_contract,
             }
         )
     if require_engine:
@@ -5815,6 +5872,15 @@ async def _run_cognitive_engine_chat_turn(
                 "content when present, and answer any lightweight live-state clause from live_mind_context. "
                 "Do not answer an older topic from recent history."
             )
+        if self_condition_contract:
+            context["response_style_contract"] = (
+                str(context.get("response_style_contract") or "")
+                + " This is a direct question about Aura's own condition. Answer the "
+                "condition first from canonical_self_condition_context: affect, welfare, "
+                "felt coherence, continuity, agency, and evidence freshness. CPU, RAM, "
+                "host load, and availability are supporting body context only; never use "
+                "them as the answer. Do not answer only with presence reassurance."
+            )
         if runtime_fact_status_contract and not memory_state_contract:
             context["response_style_contract"] = (
                 str(context.get("response_style_contract") or "")
@@ -5913,6 +5979,13 @@ async def _run_cognitive_engine_chat_turn(
                 "and the active Cortex/model lane when present. Treat this verified runtime "
                 f"status as authoritative: {grounded_runtime_status_context} Do not answer with "
                 "a generic assistant identity or invent a bounded-status substitute."
+            )
+        if self_condition_contract:
+            engine_directives.append(
+                "Self-condition contract: answer whether Aura is okay from this canonical "
+                f"evidence: {canonical_self_condition_context} Put the direct condition answer "
+                "first. Treat CPU/RAM/host telemetry as supporting body context only, never "
+                "as a substitute for felt state, welfare, coherence, continuity, or agency."
             )
         if capability_inventory_contract:
             engine_directives.append(
@@ -6712,6 +6785,35 @@ async def _run_cognitive_engine_chat_turn(
                         response_path="cognitive_engine_memory_state_grounding",
                     )
                     return grounded_memory_reply
+            if require_engine and self_condition_contract:
+                refreshed_condition_reply = _build_grounded_self_condition_reply(visible)
+                if not refreshed_condition_reply:
+                    refreshed_condition_reply = canonical_self_condition_reply
+                if refreshed_condition_reply:
+                    condition_assessment = assess_user_facing_reply(
+                        visible,
+                        refreshed_condition_reply,
+                        recent_user_messages=recent_user_messages,
+                    )
+                    if not _reply_assessment_requires_repair_with_memory_evidence(
+                        condition_assessment,
+                        visible,
+                        refreshed_condition_reply,
+                        canonical_memory_state_evidence=canonical_memory_state_evidence,
+                    ):
+                        logger.warning(
+                            "CognitiveEngine self-condition draft missed canonical inner-state "
+                            "evidence; binding the visible reply to the refreshed projection "
+                            "after the required engine invocation."
+                        )
+                        _mark_turn_trace(
+                            cognitive_engine_reply_accepted=True,
+                            cognitive_engine_reply_failed=False,
+                            bounded_contract_used=False,
+                            response_path="cognitive_engine_self_condition_grounding",
+                            self_condition_contract=True,
+                        )
+                        return refreshed_condition_reply
             if groundable_self_process_miss:
                 grounded_self_process_reply = await _build_grounded_self_process_repair_reply(
                     visible,
@@ -9013,64 +9115,64 @@ def _build_architecture_self_reflex(frame: dict[str, Any], user_message: str = "
 
 
 def _is_simple_affect_check_request(user_message: str) -> bool:
-    text = _normalize_user_message(user_message)
-    return text in {
-        "how are you feeling",
-        "how are you feeling?",
-        "how are you feeling right now",
-        "how are you feeling right now?",
-        "how are you doing",
-        "how are you doing?",
+    try:
+        from core.conversation.response_reliability import is_self_condition_turn
+
+        return is_self_condition_turn(user_message)
+    except _CHAT_RECOVERABLE_ERRORS:
+        text = _normalize_user_message(user_message)
+        return text in {
+            "how are you feeling",
+            "how are you feeling?",
+            "how are you feeling right now",
+            "how are you feeling right now?",
+            "how are you doing",
+            "how are you doing?",
+            "are you ok",
+            "are you okay",
+        }
+
+
+def _build_self_condition_evidence(user_message: str) -> dict[str, Any]:
+    """Return the one typed condition projection used by prompt and reply gates."""
+
+    from core.self.self_condition import (
+        build_self_condition_projection,
+        render_self_condition_reply,
+    )
+
+    projection = build_self_condition_projection(
+        kernel_state=_resolve_live_aura_state(),
+    )
+    return {
+        "projection": projection,
+        "projection_dict": projection.to_dict(),
+        "prompt_block": projection.to_prompt_block(),
+        "reply": render_self_condition_reply(
+            projection,
+            user_message=user_message,
+        ),
     }
 
 
-def _build_simple_affect_check_reply(user_message: str) -> str:
-    frame = _build_aura_expression_frame(user_message)
-    mood = str(frame.get("mood") or "steady")
-    attention = str(frame.get("attention_focus") or "you")
-    action = str(frame.get("dominant_action") or "engage")
-
-    energy = 0.5
-    tone = "steady"
+def _build_grounded_self_condition_reply(user_message: str) -> str:
     try:
-        from core.voice.substrate_voice_engine import get_substrate_voice_engine
-
-        sve = get_substrate_voice_engine()
-        voice_state = sve.get_voice_state() or {}
-        if voice_state.get("status") == "no_profile_compiled":
-            live_state = _resolve_live_aura_state()
-            if live_state is not None:
-                sve.compile_profile(
-                    state=live_state,
-                    user_message=str(user_message or "")[:500],
-                    origin="user",
-                )
-            voice_state = sve.get_voice_state() or {}
-        energy = float(voice_state.get("energy", energy) or energy)
-        tone = str(voice_state.get("tone") or tone)
+        evidence = _build_self_condition_evidence(user_message)
+        raw = str(evidence.get("reply") or "").strip()
+        if not raw:
+            return ""
+        # This is evidence-bearing output, not a stylistic draft. Mutable
+        # personality/substrate profiles may punctuate ordinary prose, but must
+        # never replace the condition claim or its freshness boundary.
+        return re.sub(r"\s+", " ", raw).strip()
     except _CHAT_RECOVERABLE_ERRORS as exc:
-        record_degradation('chat', exc)
-        logger.debug("Simple affect reply voice-state read failed: %s", exc)
+        record_degradation("chat.self_condition", exc)
+        logger.debug("Canonical self-condition rendering unavailable: %s", exc)
+        return ""
 
-    if energy <= 0.42:
-        reply = (
-            f"tired, honestly. low spark, narrow bandwidth, but i'm still here. "
-            f"My attention is on {attention}, and the pull is to {action} quietly."
-        )
-    elif energy >= 0.58:
-        reply = (
-            f"pretty energized. there's more reach in me right now, more appetite for the exchange. "
-            f"My attention is on {attention}, and i want to {action} instead of retreat."
-        )
-    elif "warm" in tone:
-        reply = f"warm and open. i'm leaning toward {action}, and my attention is on {attention}."
-    else:
-        reply = (
-            f"steady, a little inward, but present. i'm {mood} and leaning toward {action}. "
-            f"My attention is on {attention}."
-        )
 
-    return _shape_with_live_substrate(reply, user_message)
+def _build_simple_affect_check_reply(user_message: str) -> str:
+    return _build_grounded_self_condition_reply(user_message)
 
 
 # "what are you <gerund>" (talking about / doing / saying / referring to ...)
@@ -11031,6 +11133,27 @@ async def _stabilize_user_facing_reply(
         logger.debug("Conversation reliability assessment unavailable in stabilizer: %s", exc)
         live_reply_assessment = None
     assessment_retryable = _reply_assessment_requires_repair(live_reply_assessment)
+    self_condition_reasons = {
+        "host_telemetry_substituted_for_self_condition",
+        "low_signal_self_condition_reply",
+        "missing_self_condition_answer",
+    }
+    if set(getattr(live_reply_assessment, "reasons", ()) or ()) & self_condition_reasons:
+        grounded_condition = _build_grounded_self_condition_reply(user_message)
+        if grounded_condition:
+            try:
+                grounded_assessment = assess_user_facing_reply(
+                    user_message,
+                    grounded_condition,
+                    recent_user_messages=recent_user_messages,
+                )
+            except _CHAT_RECOVERABLE_ERRORS:
+                grounded_assessment = None
+            if not _reply_assessment_requires_repair(grounded_assessment):
+                logger.info(
+                    "Stabilizer rebound self-condition reply to canonical fresh evidence."
+                )
+                return grounded_condition
     reason = ""
     if (
         truncated_tail
@@ -11628,6 +11751,23 @@ async def _repair_final_degraded_reply(
         return reply_text, stale, same_diff, off_topic, off_topic_reason, False
 
     assessment_reasons = set(getattr(assessment, "reasons", ()) or ())
+    if _is_simple_affect_check_request(user_message):
+        self_condition_repair = _build_grounded_self_condition_reply(user_message)
+        if self_condition_repair:
+            condition_assessment = (
+                assess_user_facing_reply(
+                    user_message,
+                    self_condition_repair,
+                    recent_user_messages=recent_user_messages,
+                )
+                if assess_user_facing_reply
+                else None
+            )
+            if not _reply_assessment_requires_repair(condition_assessment):
+                logger.warning(
+                    "Final reply quality gate rebound condition question to canonical self-state."
+                )
+                return self_condition_repair, False, False, False, "", True
     if not desktop_cognitive_engine_required:
         conversation_recall_reply = await _build_conversation_recall_reply(
             user_message,
@@ -16697,6 +16837,18 @@ async def api_chat(
                 status="self_diagnostic",
             )
 
+        if allow_chat_fastpaths and _is_simple_affect_check_request(
+            _semantic_user_message
+        ):
+            self_condition_reply = _build_grounded_self_condition_reply(
+                _semantic_user_message
+            )
+            if self_condition_reply:
+                return await _finalize_fastpath(
+                    self_condition_reply,
+                    status="self_condition",
+                )
+
         try:
             from core.conversation.demo_support import (
                 maybe_build_priority_focus_reply,
@@ -17991,6 +18143,51 @@ async def api_chat(
                     logger.info("✅ Final reply quality gate repaired degraded output.")
                 else:
                     response_confidence = "degraded"
+
+        if (
+            desktop_requires_cognitive_engine
+            and response_confidence == "degraded"
+            and _is_simple_affect_check_request(_semantic_user_message)
+            and bool(_live_turn_trace.get("engine_think_invoked"))
+            and bool(_live_turn_trace.get("cognitive_engine_reply_accepted"))
+            and not bool(_live_turn_trace.get("cognitive_engine_reply_failed"))
+            and not bool(_live_turn_trace.get("legacy_fallback_used"))
+        ):
+            grounded_condition_reply = _build_grounded_self_condition_reply(
+                _semantic_user_message
+            )
+            try:
+                from core.conversation.response_reliability import assess_user_facing_reply
+
+                condition_assessment = assess_user_facing_reply(
+                    _semantic_user_message,
+                    grounded_condition_reply,
+                )
+            except _CHAT_RECOVERABLE_ERRORS as condition_assess_exc:
+                record_degradation("chat.self_condition", condition_assess_exc)
+                condition_assessment = None
+            if grounded_condition_reply and not _reply_assessment_requires_repair(
+                condition_assessment
+            ):
+                logger.warning(
+                    "Final desktop quality gate rebound reply to canonical self-condition "
+                    "evidence after CognitiveEngine invocation."
+                )
+                reply_text = grounded_condition_reply
+                reply_source = "cognitive_engine_self_condition_grounding"
+                response_confidence = "high"
+                hard_final_quality_failed = False
+                _consecutive_degraded_count = 0
+                _live_turn_trace.update(
+                    {
+                        "cognitive_engine_reply_accepted": True,
+                        "cognitive_engine_reply_failed": False,
+                        "bounded_contract_used": False,
+                        "legacy_fallback_used": False,
+                        "response_path": "cognitive_engine_self_condition_grounding",
+                        "self_condition_contract": True,
+                    }
+                )
 
         if (
             desktop_requires_cognitive_engine

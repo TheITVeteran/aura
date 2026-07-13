@@ -1508,7 +1508,7 @@ def test_status_check_rejects_thin_liquid_substrate_metaphor():
     assert assessment.retryable
     assert assessment.hard_failure
     assert "pseudo_internal_jargon" in assessment.reasons
-    assert "too_thin_for_status_turn" in assessment.reasons
+    assert "missing_self_condition_answer" in assessment.reasons
 
 
 def test_live_self_reflection_rejects_metric_status_page_answer():
@@ -1933,7 +1933,10 @@ def test_short_cortex_replies_are_accepted_by_reliability_gate():
     from core.conversation.response_reliability import assess_user_facing_reply
 
     # 1. Status turn check
-    assessment = assess_user_facing_reply("You ok?", "Yeah. Just thinking.")
+    assessment = assess_user_facing_reply(
+        "You ok?",
+        "Yeah, I'm okay and steady. Just thinking.",
+    )
     assert not assessment.retryable
     assert assessment.ok
 

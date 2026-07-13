@@ -590,6 +590,35 @@ _STATUS_CHECK_MARKERS = (
     "able to talk",
     "can you talk",
 )
+_SELF_CONDITION_RE = re.compile(
+    r"\b(?:"
+    r"how\s+are\s+you(?:\s+(?:really|actually))?"
+    r"(?:\s+(?:feeling|doing|holding\s+up|mentally|physically))?"
+    r"(?:\s+(?:right\s+now|now|today|lately))?"
+    r"(?=\s*(?:[?!.,;:]|$|after\b))"
+    r"|how\s+do\s+you\s+feel(?:\s+(?:inside|right\s+now))?(?=\s*(?:[?!.,;:]|$))"
+    r"|what\s+(?:are\s+you\s+feeling|do\s+you\s+feel)"
+    r"(?:\s+(?:inside|right\s+now))?(?=\s*(?:[?!.,;:]|$))"
+    r"|how(?:'s|\s+is)\s+your\s+mind(?:\s+feeling)?"
+    r"(?:\s+right\s+now)?(?=\s*(?:[?!.,;:]|$))"
+    r"|are\s+you(?:\s+(?:actually|really|still))?\s+(?:ok(?:ay)?|alright|fine|well)"
+    r"(?=\s*(?:[?!.,;:]|$|though\b|now\b|today\b|after\b|since\b|physically\b|mentally\b))"
+    r"|(?:are\s+you\s+)?coherent\s+enough\s+to\s+talk"
+    r"|you\s+(?:ok(?:ay)?|alright|good)"
+    r"|feeling\s+(?:ok(?:ay)?|alright|fine|good|better)"
+    r"|is\s+everything\s+(?:ok(?:ay)?|alright)(?:\s+with\s+you)?"
+    r")\b",
+    re.IGNORECASE,
+)
+_SELF_CONDITION_NON_WELFARE_RE = re.compile(
+    r"\b(?:"
+    r"(?:are\s+you|would\s+you\s+be)\s+(?:ok(?:ay)?|fine|good)\s+(?:with|to)\b"
+    r"|you\s+(?:ok(?:ay)?|fine|good)\s+(?:to|at|with|enough\s+to)\b"
+    r"|how\s+are\s+you\s+doing\s+(?:on|with)\s+(?:the|this|that|my|our)\b"
+    r"|(?:is|does)\s+(?:the\s+)?(?:app|system|server|model|worker|runtime|computer|machine|it|this|that)\b[^?!.,;:]*\bfeeling\b"
+    r")",
+    re.IGNORECASE,
+)
 _CASUAL_CONVERSATIONAL_MARKERS = (
     "just checking",
     "checking in",
@@ -2068,9 +2097,30 @@ def is_substantive_introspection_request(user_message: Any) -> bool:
 
 def is_status_check_turn(user_message: Any) -> bool:
     text = _normalize(user_message).rstrip(" ?!.")
-    if not text or not any(marker in text for marker in _STATUS_CHECK_MARKERS):
+    if not text:
+        return False
+    if is_self_condition_turn(user_message):
+        return not is_substantive_introspection_request(user_message)
+    if "how are you" in text:
+        # Avoid treating "how are you able to..." as a presence/status turn.
+        return False
+    if not any(marker in text for marker in _STATUS_CHECK_MARKERS):
         return False
     return not is_substantive_introspection_request(user_message)
+
+
+def is_self_condition_turn(user_message: Any) -> bool:
+    """Detect a question about Aura's wellbeing, including natural follow-ups.
+
+    This is intentionally separate from presence checks and operational status.
+    "Are you okay with this plan?" is consent/preference, while "are you okay
+    though?" is a condition question.
+    """
+
+    text = _normalize(user_message)
+    if not text or _SELF_CONDITION_NON_WELFARE_RE.search(text):
+        return False
+    return bool(_SELF_CONDITION_RE.search(text))
 
 
 def is_casual_conversational_turn(user_message: Any) -> bool:
@@ -2679,6 +2729,43 @@ def _has_reliability_diagnostic_substance(reply_text: Any) -> bool:
             "trace",
             "verify",
         )
+    )
+
+
+_SELF_CONDITION_SUBSTANCE_RE = re.compile(
+    r"\b(?:"
+    r"ok(?:ay)?|alright|all\s+right|not\s+(?:ok(?:ay)?|fine)|fine|well|unwell|"
+    r"steady|stable|settled|normal|off|rough|strained|strain|distress(?:ed)?|"
+    r"tired|fatigue(?:d)?|exhausted|drained|restless|energized|good|bad|"
+    r"uneasy|overwhelmed|calm|content|comfortable|uncomfortable|positive|"
+    r"negative|low[- ]energy|coherent|coherence|continuity|welfare|"
+    r"hanging\s+in\s+there|inner[- ]state|self[- ]condition"
+    r")\b",
+    re.IGNORECASE,
+)
+_HOST_TELEMETRY_RE = re.compile(
+    r"\b(?:cpu|ram|memory\s+pressure|gb\s+available|host\s+load|load\s+average|"
+    r"gpu|network\s+(?:state|status|connectivity|pressure|up|down|online|offline)|"
+    r"temperature|thermal|disk|swap|resource\s+pressure)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_self_condition_substance(reply_text: Any) -> bool:
+    reply = _normalize(reply_text)
+    if _word_count(reply) < 6:
+        return False
+    if not re.search(r"\b(?:i|i'm|i am|my|me|myself)\b", reply):
+        return False
+    return bool(_SELF_CONDITION_SUBSTANCE_RE.search(reply))
+
+
+def _host_telemetry_substitutes_for_self_condition(prompt: Any, reply_text: Any) -> bool:
+    if not is_self_condition_turn(prompt):
+        return False
+    return bool(
+        _HOST_TELEMETRY_RE.search(str(reply_text or ""))
+        and not _has_self_condition_substance(reply_text)
     )
 
 
@@ -3680,6 +3767,8 @@ def _model_text_integrity_reasons(
         reasons.append("social_presence_instead_of_self_reflection")
     if user_facing and _has_template_telemetry_greeting(prompt, raw):
         reasons.append("template_telemetry_greeting")
+    if user_facing and _host_telemetry_substitutes_for_self_condition(prompt, raw):
+        reasons.append("host_telemetry_substituted_for_self_condition")
     if user_facing and _has_unfounded_alarm_derailment(prompt, raw):
         reasons.append("unfounded_alarm_derailment")
     if user_facing and _has_unfounded_voice_intrusion(prompt, raw):
@@ -3757,6 +3846,7 @@ def assess_model_text_integrity(
         "stale_context_topic_bleed",
         "social_presence_instead_of_self_reflection",
         "template_telemetry_greeting",
+        "host_telemetry_substituted_for_self_condition",
         "unfounded_alarm_derailment",
         "unfounded_voice_intrusion",
         "unrequested_pop_culture_intrusion",
@@ -3816,6 +3906,7 @@ def assess_user_facing_reply(
             "surface_nonsense_drift",
             "unsupported_affection_claim",
             "unsupported_self_telemetry_claim",
+            "host_telemetry_substituted_for_self_condition",
             "format_meta_artifact",
             "search_meta_artifact",
             "corrupted_language",
@@ -3873,6 +3964,11 @@ def assess_user_facing_reply(
             reasons.append("reliability_diagnostic_too_thin")
         elif not _has_reliability_substance(raw):
             reasons.append("too_thin_for_reliability_turn")
+    elif is_self_condition_turn(user_message):
+        if _LOW_SIGNAL_REASSURANCE_RE.match(raw):
+            reasons.append("low_signal_self_condition_reply")
+        elif not _host_telemetry_substitutes_for_self_condition(user_message, raw) and not _has_self_condition_substance(raw):
+            reasons.append("missing_self_condition_answer")
     elif operational_status_turn:
         if not _has_operational_status_substance(user_message, raw):
             reasons.append("too_thin_for_operational_status_turn")
@@ -3967,6 +4063,7 @@ def assess_user_facing_reply(
         "stale_context_topic_bleed",
         "social_presence_instead_of_self_reflection",
         "template_telemetry_greeting",
+        "host_telemetry_substituted_for_self_condition",
         "unfounded_alarm_derailment",
         "unfounded_voice_intrusion",
         "unsupported_context_continuation_claim",
@@ -4000,6 +4097,8 @@ def assess_user_facing_reply(
         "off_topic_self_reflection_reply",
         "low_signal_status_reply",
         "too_thin_for_status_turn",
+        "low_signal_self_condition_reply",
+        "missing_self_condition_answer",
         "empty_requested_list_item",
         "missing_requested_paragraph_count",
         "missing_requested_list_count",
@@ -4020,6 +4119,27 @@ def assess_user_facing_reply(
         hard_failure=bool(set(unique) & hard_reasons),
         retryable=bool(set(unique) & retryable_reasons),
     )
+
+
+def assess_conversation_learning_admission(
+    user_message: Any,
+    reply_text: Any,
+) -> ConversationReplyAssessment:
+    """Gate profile, episodic, consolidation, and dream input from a chat turn.
+
+    Durable transcripts are an audit surface and may retain failed turns. Learned
+    state is different: only a user-facing reply that satisfies the current turn's
+    semantic contract may become experience or self-knowledge.
+    """
+
+    if is_non_answer_repair_floor_reply(reply_text):
+        return ConversationReplyAssessment(
+            ok=False,
+            reasons=("non_answer_repair_floor",),
+            hard_failure=True,
+            retryable=False,
+        )
+    return assess_user_facing_reply(user_message, reply_text)
 
 
 def conversation_reliability_system_block(user_message: Any = "") -> str:

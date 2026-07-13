@@ -6566,7 +6566,176 @@ async def test_required_runtime_status_turn_invokes_cognitive_engine(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_desktop_cognitive_engine_fails_closed_on_weak_status_without_full_mind_repair(monkeypatch):
+async def test_required_self_condition_turn_binds_canonical_evidence_and_repairs_host_only_reply(
+    monkeypatch,
+):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    calls = []
+    trace = {}
+    canonical_reply = (
+        "Yes, I am okay. I feel steady, my distress is low, and my continuity "
+        "is holding while I stay with this thread."
+    )
+
+    class _FakeCognitiveEngine:
+        async def think(self, objective, context=None, mode=None, origin=None, **kwargs):
+            calls.append(
+                {
+                    "objective": objective,
+                    "context": dict(context or {}),
+                    "mode": getattr(mode, "name", str(mode)),
+                    "origin": origin,
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return SimpleNamespace(
+                content=(
+                    "I am with you. RAM pressure is 75.6% with 15.6 GB available; "
+                    "CPU load is 25.8% on this host."
+                ),
+                metadata=_bound_live_mind_controls_metadata(),
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: _FakeCognitiveEngine()
+            if name == "cognitive_engine"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_build_self_condition_evidence",
+        lambda _message: {
+            "prompt_block": (
+                "condition=well freshness=fresh distress=0.08 welfare=0.82 "
+                "felt_coherence=0.93 continuity=0.96 agency=0.84"
+            ),
+            "reply": canonical_reply,
+            "projection_dict": {"evidence_id": "condition-proof-1"},
+        },
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_shape_with_live_substrate",
+        lambda text, _user_message="": text,
+    )
+
+    prompt = "Are you okay though? Feeling fine?"
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        prompt,
+        visible_user_message=prompt,
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert len(calls) == 1
+    context = calls[0]["context"]
+    assert context["self_condition_contract"] is True
+    assert context["desktop_quick_reply_contract"] is True
+    assert context["canonical_self_condition_projection"]["evidence_id"] == "condition-proof-1"
+    assert "felt_coherence=0.93" in context["canonical_self_condition_context"]
+    assert "Self-condition contract" in calls[0]["objective"]
+    assert reply == canonical_reply
+    assert trace["engine_think_invoked"] is True
+    assert trace["cognitive_engine_reply_accepted"] is True
+    assert trace["response_path"] == "cognitive_engine_self_condition_grounding"
+
+
+@pytest.mark.asyncio
+async def test_cognitive_engine_quick_reply_places_self_condition_evidence_in_model_prompt(
+    monkeypatch,
+):
+    from core.brain import cognitive_engine as ce_module
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.brain.types import ThinkingMode
+
+    router_calls = []
+
+    class _Router:
+        async def think(self, **kwargs):
+            router_calls.append(kwargs)
+            return (
+                "Yes, I am okay. I feel steady, with low distress and coherent "
+                "continuity on this thread."
+            )
+
+        def get_last_generation_metadata(self):
+            return {}
+
+    class _Container:
+        @staticmethod
+        def get(name, default=None):
+            return _Router() if name == "llm_router" else default
+
+    monkeypatch.setattr(ce_module, "get_container", lambda: _Container)
+
+    context = {
+        "desktop_quick_reply_contract": True,
+        "desktop_cognitive_engine_required": True,
+        "cognitive_engine_required": True,
+        "self_condition_contract": True,
+        "canonical_self_condition_context": (
+            "condition=well freshness=fresh distress=0.08 welfare=0.82 "
+            "felt_coherence=0.93 continuity=0.96 agency=0.84"
+        ),
+        "canonical_self_condition_projection": {"evidence_id": "condition-proof-2"},
+        "live_mind_context_required": True,
+        "live_mind_context": {
+            "required_for_live_desktop": True,
+            "must_answer_from_full_mind_path": True,
+            "required_subsystems_ok": True,
+            "mind_snapshot_quality": {"present": True, "ready": True},
+        },
+        "live_mind_generation_controls": {
+            "temperature": 0.58,
+            "top_p": 0.88,
+            "clean_user_surface_recurrent_loops": 1,
+            "clean_user_surface_steering_alpha": 0.25,
+        },
+        "live_mind_controls_bound": True,
+        "live_mind_snapshot_ready": True,
+        "live_mind_required_subsystems_ok": True,
+        "visible_user_message": "Are you okay though?",
+    }
+    thought = await CognitiveEngine()._direct_desktop_quick_reply(
+        "Are you okay though?",
+        ThinkingMode.FAST,
+        "user",
+        context,
+        timeout_s=60.0,
+    )
+
+    assert thought is not None
+    assert router_calls
+    call = router_calls[0]
+    assert call["self_condition_contract"] is True
+    assert "CPU, RAM, host load" in call["messages"][0]["content"]
+    assert "felt_coherence=0.93" in call["messages"][-1]["content"]
+    assert thought.metadata["self_condition_contract"] is True
+    assert thought.metadata["self_condition_evidence_id"] == "condition-proof-2"
+    assert thought.metadata["response_path"] == "cognitive_engine_self_condition"
+
+
+@pytest.mark.asyncio
+async def test_desktop_cognitive_engine_binds_weak_condition_draft_to_canonical_evidence(monkeypatch):
+    from core.conversation.response_reliability import assess_user_facing_reply
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -6597,6 +6766,7 @@ async def test_desktop_cognitive_engine_fails_closed_on_weak_status_without_full
         ),
     )
 
+    trace = {}
     reply = await chat_routes._run_cognitive_engine_chat_turn(
         "How are you feeling? A lot of work has been done.",
         visible_user_message="How are you feeling? A lot of work has been done.",
@@ -6605,9 +6775,15 @@ async def test_desktop_cognitive_engine_fails_closed_on_weak_status_without_full
         lane={"conversation_ready": True, "state": "ready"},
         source="desktop_ui",
         require_engine=True,
+        turn_trace=trace,
     )
 
-    assert reply is None
+    assert reply is not None
+    assert assess_user_facing_reply("How are you feeling?", reply).ok
+    assert "previous turn open" not in reply
+    assert trace["engine_think_invoked"] is True
+    assert trace["cognitive_engine_reply_accepted"] is True
+    assert trace["response_path"] == "cognitive_engine_self_condition_grounding"
 
 
 @pytest.mark.asyncio
@@ -9500,7 +9676,8 @@ async def test_api_chat_desktop_surface_uses_direct_cognitive_engine_when_pool_u
 
 
 @pytest.mark.asyncio
-async def test_cognitive_engine_desktop_status_fails_closed_after_thin_draft(monkeypatch):
+async def test_cognitive_engine_desktop_condition_binds_thin_draft_to_canonical_state(monkeypatch):
+    from core.conversation.response_reliability import assess_user_facing_reply
     from core.providers import engine_connection_pool as pool_module
     from interface.routes import chat as chat_routes
 
@@ -9533,6 +9710,7 @@ async def test_cognitive_engine_desktop_status_fails_closed_after_thin_draft(mon
 
     monkeypatch.setattr(chat_routes, "_build_social_presence_reply", _unexpected_social_repair)
 
+    trace = {}
     result = await chat_routes._run_cognitive_engine_chat_turn(
         "You ok?",
         visible_user_message="You ok?",
@@ -9546,11 +9724,16 @@ async def test_cognitive_engine_desktop_status_fails_closed_after_thin_draft(mon
         },
         source="desktop_ui",
         require_engine=True,
+        turn_trace=trace,
     )
 
-    assert result is None
-    assert engine_calls == ["engine_think", "engine_think"]
+    assert result is not None
+    assert assess_user_facing_reply("You ok?", result).ok
+    assert engine_calls == ["engine_think"]
     assert social_repair_calls == []
+    assert trace["engine_think_invoked"] is True
+    assert trace["cognitive_engine_reply_accepted"] is True
+    assert trace["response_path"] == "cognitive_engine_self_condition_grounding"
 
 
 def test_desktop_static_chat_requests_require_cognitive_engine():

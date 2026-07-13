@@ -2,13 +2,11 @@
 Performs "Neural Replay" and "Graph Traversal" to generate new insights.
 Replaces the old linear summary dreamer.
 """
-import asyncio
 import json
 import logging
-import random
 import sqlite3
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -25,6 +23,71 @@ class DreamerV2:
         self.kg = knowledge_graph
         self.vector_memory = vector_memory
         self.belief_graph = belief_graph
+
+    @staticmethod
+    def _dream_seed_is_admissible(node: dict[str, Any]) -> bool:
+        """Keep failed chat surfaces and synthetic recursion out of dream input."""
+
+        metadata = node.get("metadata") or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        admission = str(metadata.get("learning_admission") or "").strip().lower()
+        if admission in {"rejected", "failed", "false", "blocked"}:
+            return False
+
+        source = str(node.get("source") or metadata.get("source") or "").strip().lower()
+        node_type = str(node.get("type") or "").strip().lower()
+        content = str(node.get("content") or "").strip()
+        conversation_seed = bool(
+            source in {
+                "chat_api",
+                "chat_turn_logger",
+                "live_conversation_turn",
+                "conversation",
+            }
+            or node_type in {"conversation", "conversation_continuity"}
+            or content.lower().startswith("conversation continuity memory.")
+        )
+        if conversation_seed and admission != "verified":
+            # Legacy conversation rows were written before semantic admission
+            # existed. They remain searchable history, but are not safe evidence
+            # for autonomous synthesis.
+            return False
+
+        user_message = str(
+            metadata.get("user_utterance")
+            or metadata.get("user_message")
+            or ""
+        ).strip()
+        aura_response = str(metadata.get("aura_response") or "").strip()
+        if user_message and aura_response:
+            try:
+                from core.conversation.response_reliability import (
+                    assess_conversation_learning_admission,
+                )
+
+                if not assess_conversation_learning_admission(
+                    user_message,
+                    aura_response,
+                ).ok:
+                    return False
+            except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+                return False
+
+        if node_type in {"error", "failure", "raw_response"}:
+            return False
+        if source == "dream_v2":
+            # Dream output must earn waking evidence before it can seed another
+            # autonomous synthesis; otherwise one weak inference recursively
+            # amplifies itself.
+            return False
+        return bool(content)
 
     async def engage_sleep_cycle(self):
         """Full biological maintenance pipeline:
@@ -94,7 +157,7 @@ class DreamerV2:
             logger.info("🧠 Nucleus: Checking for self-optimization opportunity...")
             results["self_optimization"] = await optimizer.optimize(iters=100)
             if emitter and results["self_optimization"].get("ok"):
-                emitter.emit("Optimization ✅", f"LoRA update successful. Model weights refined.", level="success")
+                emitter.emit("Optimization ✅", "LoRA update successful. Model weights refined.", level="success")
             elif emitter and not results["self_optimization"].get("ok"):
                  emitter.emit("Optimization ⏸️", f"Skipped: {results['self_optimization'].get('error')}", level="info")
         except (ImportError, AttributeError, RuntimeError) as e:
@@ -321,26 +384,34 @@ class DreamerV2:
                 emitter.emit("Nightmare ⚡", f"Dream interrupted: {e}", level="warning")
             return {"dreamed": False, "error": str(e)}
 
-    def _get_random_nodes(self, n=2) -> List[Dict]:
+    def _get_random_nodes(self, n=2) -> list[dict[str, Any]]:
         """Get N random nodes from the graph (SQLite efficient-ish)."""
         try:
             conn = self.kg._get_conn()
             # Fix: Ensure row_factory is set so dict(row) works
             conn.row_factory = getattr(conn, 'row_factory', None)
             c = conn.cursor()
-            c.execute("SELECT * FROM knowledge ORDER BY RANDOM() LIMIT ?", (n,))
+            candidate_limit = max(16, int(n) * 8)
+            c.execute(
+                "SELECT * FROM knowledge ORDER BY RANDOM() LIMIT ?",
+                (candidate_limit,),
+            )
             rows = c.fetchall()
             results = []
             for row in rows:
                 try:
-                    results.append(dict(row))
+                    candidate = dict(row)
                 except (TypeError, ValueError):
                     # Fallback: convert tuple rows using column names
                     cols = [desc[0] for desc in c.description] if c.description else []
                     if cols:
-                        results.append(dict(zip(cols, row)))
+                        candidate = dict(zip(cols, row, strict=False))
                     else:
-                        results.append({"content": str(row), "id": "unknown"})
+                        candidate = {"content": str(row), "id": "unknown"}
+                if self._dream_seed_is_admissible(candidate):
+                    results.append(candidate)
+                if len(results) >= int(n):
+                    break
             return results
         except (sqlite3.Error, OSError) as e:
             record_degradation('dreamer_v2', e)

@@ -497,17 +497,29 @@ async def record_conversation_experience(
     if not str(user_input or "").strip() or not str(aura_response or "").strip():
         return
     try:
-        from core.conversation.response_reliability import is_non_answer_repair_floor_reply
+        from core.conversation.response_reliability import (
+            assess_conversation_learning_admission,
+            is_self_condition_turn,
+        )
 
-        if is_non_answer_repair_floor_reply(aura_response):
-            logger.debug("Skipping non-answer repair floor in conversational learning.")
+        learning_admission = assess_conversation_learning_admission(
+            user_input,
+            aura_response,
+        )
+        if not learning_admission.ok:
+            logger.warning(
+                "Skipping non-admissible conversation learning input (%s); "
+                "the durable transcript remains the audit record.",
+                ",".join(learning_admission.reasons) or "unknown",
+            )
             return
-    except (ImportError, AttributeError, RuntimeError) as exc:
+        self_condition_grounded = bool(is_self_condition_turn(user_input))
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         _record_conversation_degradation(
             exc,
-            action="continued conversational learning without non-answer floor filter",
+            action="failed conversational learning admission closed while preserving transcript storage",
         )
-        logger.debug("Non-answer learning filter skipped: %s", exc)
+        return
 
     state_obj = state
     if state_obj is None:
@@ -558,6 +570,8 @@ async def record_conversation_experience(
                     "memory_salience": round(float(importance), 4),
                     "conversation_turn": True,
                     "preserve_for_continuity": True,
+                    "learning_admission": "verified",
+                    "self_condition_grounded": self_condition_grounded,
                 },
             )
             
@@ -591,6 +605,8 @@ async def record_conversation_experience(
                             "importance": min(0.95, max(importance, 0.62)),
                             "provenance_source": "live_conversation_turn",
                             "confidence": 1.0,
+                            "learning_admission": "verified",
+                            "self_condition_grounded": self_condition_grounded,
                         },
                     )
                     if hasattr(continuity_result, "__await__"):

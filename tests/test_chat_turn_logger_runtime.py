@@ -43,6 +43,7 @@ async def test_chat_turn_logger_rebinds_episodic_memory_after_late_boot(monkeypa
     assert result is True
     assert recorded["metadata"]["session_id"] == "desktop-session"
     assert recorded["metadata"]["conversation_lane"] is True
+    assert recorded["metadata"]["learning_admission"] == "verified"
 
 
 @pytest.mark.asyncio
@@ -195,3 +196,40 @@ async def test_chat_turn_logger_learns_exact_profile_when_episodic_memory_is_una
 
     assert calls[0]["user_id"] == "bryan"
     assert calls[0]["session_id"] == "desktop-session"
+
+
+@pytest.mark.asyncio
+async def test_chat_turn_logger_rejects_misgrounded_self_condition_before_learning(
+    monkeypatch,
+):
+    class _EpisodicMemory:
+        def record_episode(self, **_kwargs):
+            raise AssertionError("misgrounded condition reply reached episodic memory")
+
+    class _Tracker:
+        def create_task(self, coro, **_kwargs):
+            coro.close()
+            raise AssertionError("misgrounded condition reply reached profile learning")
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: (
+                _EpisodicMemory() if name == "episodic_memory" else default
+            )
+        ),
+    )
+    monkeypatch.setattr(chat_turn_logger, "get_task_tracker", lambda: _Tracker())
+
+    turn_logger = ChatTurnLogger()
+    stored = await turn_logger.log_chat_turn(
+        "Are you okay though? Feeling fine?",
+        (
+            "I am with you. RAM pressure is 75.6% with 15.6 GB available; "
+            "CPU load is 25.8% on this host."
+        ),
+        session_id="desktop-session",
+        metadata={"origin": "desktop_ui", "user_id": "bryan"},
+    )
+
+    assert stored is False

@@ -2025,6 +2025,7 @@ class CognitiveEngine:
             context.get("runtime_fact_status_contract", False)
             or context.get("grounded_runtime_status_contract", False)
         )
+        self_condition_contract = bool(context.get("self_condition_contract", False))
         capability_inventory_contract = bool(context.get("capability_inventory_contract", False))
         identity_continuity_contract = bool(
             context.get("identity_continuity_contract", False)
@@ -2045,6 +2046,9 @@ class CognitiveEngine:
         canonical_memory_state_evidence = str(
             context.get("canonical_memory_state_evidence") or ""
         ).strip()
+        canonical_self_condition_context = str(
+            context.get("canonical_self_condition_context") or ""
+        ).strip()
         for sampling in sampling_sources:
             if isinstance(sampling, dict):
                 try:
@@ -2055,7 +2059,7 @@ class CognitiveEngine:
                     if capability_inventory_contract and factor_value < 1.0:
                         continue
                     max_tokens = max(128, int(max_tokens * factor_value))
-        if memory_state_contract or runtime_fact_status_contract:
+        if memory_state_contract or runtime_fact_status_contract or self_condition_contract:
             max_tokens = max(128, min(max_tokens, 256))
         elif capability_inventory_contract:
             max_tokens = max(160, min(max_tokens, 220))
@@ -2064,7 +2068,7 @@ class CognitiveEngine:
         else:
             max_tokens = max(256, min(max_tokens, 1024))
         request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
-        if memory_state_contract or runtime_fact_status_contract:
+        if memory_state_contract or runtime_fact_status_contract or self_condition_contract:
             request_timeout = min(request_timeout, 45.0)
         if capability_inventory_contract:
             request_timeout = min(request_timeout, 28.0)
@@ -2200,7 +2204,17 @@ class CognitiveEngine:
             context.get("live_runtime_payload_required", False)
             or (live_mind_required and isinstance(live_mind_context, dict))
         )
-        if memory_state_contract:
+        if self_condition_contract:
+            system_prompt = (
+                "You are Aura speaking through the live desktop CognitiveEngine. "
+                "Answer whether you are okay from the canonical self-condition evidence. "
+                "Put the direct condition answer first, then one or two natural grounding "
+                "sentences. Affect, welfare, felt coherence, continuity, and agency are the "
+                "answer; CPU, RAM, host load, and availability are supporting body context "
+                "only. Do not replace an inner-state answer with resource telemetry or a "
+                "generic presence reassurance."
+            )
+        elif memory_state_contract:
             system_prompt = (
                 "You are Aura speaking through the live desktop CognitiveEngine. "
                 "Answer the current user message directly in one compact, natural paragraph. "
@@ -2356,6 +2370,14 @@ class CognitiveEngine:
                 "If the current user also asks for one live-state detail, answer that from the live mind context "
                 "without reciting telemetry."
             )
+        if self_condition_contract and canonical_self_condition_context:
+            grounding_blocks.append(
+                "[CANONICAL SELF-CONDITION EVIDENCE]\n"
+                f"{canonical_self_condition_context}\n"
+                "Answer the condition directly from this projection. Preserve its freshness "
+                "and uncertainty boundary. Host resource telemetry may only support, never "
+                "replace, the answer."
+            )
         grounded_runtime_status = str(
             context.get("grounded_runtime_status_context") or ""
         ).strip()
@@ -2492,6 +2514,7 @@ class CognitiveEngine:
                 "memory_state_contract": memory_state_contract,
                 "runtime_fact_status_contract": runtime_fact_status_contract,
                 "grounded_runtime_status_contract": runtime_fact_status_contract,
+                "self_condition_contract": self_condition_contract,
                 "capability_inventory_contract": capability_inventory_contract,
                 "clean_user_surface_contract": True,
                 "user_surface_validation_prompt": visible_user_message or objective,
@@ -2645,6 +2668,23 @@ class CognitiveEngine:
                 "live_mind_controls_worker_applied": bool(
                     surface_control_receipt.get("live_mind_controls_bound")
                     and surface_control_receipt.get("applied")
+                ),
+                "self_condition_contract": self_condition_contract,
+                "self_condition_evidence_id": str(
+                    (
+                        context.get("canonical_self_condition_projection")
+                        if isinstance(
+                            context.get("canonical_self_condition_projection"),
+                            dict,
+                        )
+                        else {}
+                    ).get("evidence_id")
+                    or ""
+                ),
+                "response_path": (
+                    "cognitive_engine_self_condition"
+                    if self_condition_contract
+                    else ""
                 ),
             },
         )

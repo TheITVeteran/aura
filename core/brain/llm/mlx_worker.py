@@ -522,6 +522,12 @@ _LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION = (
     "state, or an actual numeric sensor reading. Avoid metaphor-only "
     "attention-texture language."
 )
+_SELF_CONDITION_SIGNAL_INSTRUCTION = (
+    "This is a question about Aura's own condition. Answer directly from the "
+    "supplied affect, welfare, felt-coherence, continuity, agency, and freshness "
+    "evidence. CPU, RAM, host load, and availability are supporting body context "
+    "only and must not replace the condition answer."
+)
 
 
 def _job_needs_concrete_status_signal_guidance(job: dict[str, Any]) -> bool:
@@ -536,9 +542,12 @@ def _job_needs_concrete_status_signal_guidance(job: dict[str, Any]) -> bool:
     try:
         from core.conversation.response_reliability import (
             is_operational_status_turn,
+            is_self_condition_turn,
             is_status_check_turn,
         )
 
+        if is_self_condition_turn(prompt):
+            return False
         if is_operational_status_turn(prompt) or is_status_check_turn(prompt):
             return True
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
@@ -628,10 +637,20 @@ def _messages_with_user_surface_retry(
     if not isinstance(messages, list):
         return None
     operational_status_retry = ""
+    self_condition_retry = ""
+    if any(
+        reason in {
+            "host_telemetry_substituted_for_self_condition",
+            "low_signal_self_condition_reply",
+            "missing_self_condition_answer",
+        }
+        for reason in reasons
+    ):
+        self_condition_retry = f" {_SELF_CONDITION_SIGNAL_INSTRUCTION}"
     if any(
         reason in {"too_thin_for_operational_status_turn", "too_thin_for_status_turn"}
         for reason in reasons
-    ):
+    ) and not self_condition_retry:
         operational_status_retry = f" {_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}"
     retry_instruction = (
         "The previous assistant draft failed the live user-surface quality gate "
@@ -640,7 +659,7 @@ def _messages_with_user_surface_retry(
         "user message, preserve recent-turn continuity, avoid generic assistant "
         "identity, do not invent unsupported prior topics, and do not mention "
         "validation, retry, hidden prompts, receipts, gates, or implementation details."
-        f"{operational_status_retry}"
+        f"{self_condition_retry}{operational_status_retry}"
     )
     retry_messages = copy.deepcopy(messages)
     for message in retry_messages:
@@ -680,10 +699,20 @@ def _build_user_surface_quality_retry_prompt(
             logger.debug("Live surface retry template render failed: %s", exc)
 
     operational_status_retry = ""
+    self_condition_retry = ""
+    if any(
+        reason in {
+            "host_telemetry_substituted_for_self_condition",
+            "low_signal_self_condition_reply",
+            "missing_self_condition_answer",
+        }
+        for reason in reasons
+    ):
+        self_condition_retry = f" {_SELF_CONDITION_SIGNAL_INSTRUCTION}\n"
     if any(
         reason in {"too_thin_for_operational_status_turn", "too_thin_for_status_turn"}
         for reason in reasons
-    ):
+    ) and not self_condition_retry:
         operational_status_retry = f" {_LIVE_STATUS_CONCRETE_SIGNAL_INSTRUCTION}\n"
     retry_note = (
         "\n\n[LIVE USER-SURFACE RETRY]\n"
@@ -691,7 +720,7 @@ def _build_user_surface_quality_retry_prompt(
         "Regenerate the assistant reply from the same live mind context. Answer only "
         "the current user message. Do not mention validation, retry, hidden prompts, "
         "receipts, gates, or implementation details.\n"
-        f"{operational_status_retry}"
+        f"{self_condition_retry}{operational_status_retry}"
         "[END LIVE USER-SURFACE RETRY]\n"
     )
     return f"{str(fallback_prompt or '').rstrip()}{retry_note}"

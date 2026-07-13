@@ -16,16 +16,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **canonical self-feeling
-  conversation grounding (`SELF-STATE-CHAT-001`) plus launched proof of the
-  source-green desktop-access and event-loop pressure repairs
-  (`DESKTOP-ACCESS-001`, `FOREGROUND-LATENCY-001`,
+- Current bounded implementation milestone: **owned conversation-support task
+  lifecycle (`ASYNC-TASK-001`) plus launched proof of the source-green
+  self-condition, desktop-access, and event-loop pressure repairs
+  (`SELF-STATE-CHAT-001`, `DESKTOP-ACCESS-001`, `FOREGROUND-LATENCY-001`,
   `LAUNCH-PROVENANCE-001`)**, followed by joy/social
   self-state separation and the remaining typed canonical person-model
   consolidation (`MEMORY-001`, `MIND-001`, `STATE-001`,
-  `CTX3-SOCIAL-001..002`). Checkpoints 49 and 50 establish the current social
-  authority and OS-automation boundaries; neither substitutes for launched
-  desktop behavior.
+  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 52 establish the current
+  social, OS-automation, runtime-pressure, desktop-access, and self-condition
+  source boundaries; none substitutes for launched desktop behavior.
   `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
@@ -82,7 +82,7 @@ Status rules:
 | `STATE-001` | `OPEN` | Build the versioned canonical state catalog and inspectable causal graph with writer authority, freshness, arbitration, persistence, model-swap semantics, redaction, and action-to-learning traces. | Addendum 20 |
 | `MEMORY-001` | `IN PROGRESS 2026-07-12` | Preserve the encrypted exact-agent relational-memory authority while unifying every remaining memory writer/reader, cross-store semantic retrieval, provenance, conflict/freshness handling, exact live consumption proof, deletion, key rotation, and symmetric observed rollback. | Addendum 26; Checkpoints 42-45 |
 | `CONVERSATION-001` | `IN PROGRESS 2026-07-12` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. | Pass F 6; Matrix 6 |
-| `SELF-STATE-CHAT-001` | `IN PROGRESS 2026-07-13` | Make direct questions about Aura's own condition use one fresh canonical self-state projection with calibrated uncertainty and conversational continuity; host telemetry may support but must never replace the answer. Prove the launched desktop path cannot route "are you okay/feeling fine" into a generic RAM/CPU status response. | `CONVERSATION-001`, `MIND-001`, `STATE-001`; live defect at 00:27-00:28 on 2026-07-13 |
+| `SELF-STATE-CHAT-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make direct questions about Aura's own condition use one fresh canonical self-state projection with calibrated uncertainty and conversational continuity; host telemetry may support but must never replace the answer. Prove the launched desktop path cannot route "are you okay/feeling fine" into a generic RAM/CPU status response. | `CONVERSATION-001`, `MIND-001`, `STATE-001`; Checkpoint 52; live defect at 00:27-00:28 on 2026-07-13 |
 | `SUBSTRATE-001` | `OPEN` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. | Matrix 2-3; Addendum 20 and 29 |
 | `DESKTOP-001` | `IN PROGRESS 2026-07-12` | Generalize computer use into perception-plan-act-observe-repair loops over browser, files, Notes/Docs/PDF/images, dialogs, focus, permissions, changed layouts, and multi-app workflows. | Pass F 7; Matrix 7; Checkpoint 38 |
 | `DESKTOP-ACCESS-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate repeated resident-bridge/direct TCC probe timeouts from the launched desktop path. Separate expected permission latency from faults, deduplicate concurrent probes, preserve successful dimensions, use truthful cached/readiness conditions, and prevent one probe timeout from producing duplicate degradation, fault, and affective-strain amplification. | `DESKTOP-001`, `FAULT-001`, `RUNTIME-001`; Checkpoint 51; live `system.desktop_access.*_probe` timeout defects at 00:28 on 2026-07-13 |
@@ -13129,3 +13129,110 @@ Immediate next work and proof burden:
   unobserved-task `ValueError` for root-cause repair. `LIFECYCLE-001`, standing
   autonomy authority, joy/social person-state separation, the full remaining
   master index, final GUI/clean-machine gates, and all soaks remain open.
+
+## Checkpoint 2026-07-13-52: Canonical Evidence-Bounded Self Condition
+
+This checkpoint advances `SELF-STATE-CHAT-001`, `CONVERSATION-001`,
+`MIND-001`, `STATE-001`, `MEMORY-001`, `FAULT-001`, and `SUBSTRATE-001`.
+It closes the source path that answered a direct question about Aura's own
+condition with host CPU/RAM telemetry and then admitted that misgrounded reply
+as learning evidence. Launched desktop behavior remains open until the signed
+resident app runs this exact `main` revision and the GUI proves the same causal
+path under fresh, stale, unavailable, and pressured conditions.
+
+Implemented one canonical current-condition projection:
+
+- Added a typed `SelfConditionProjection` that aggregates fresh AuraNow felt
+  state, unified affect, welfare, continuity, ownership/agency, attention, and
+  body/runtime pressure without conflating them. It records source timestamps,
+  ages, missing dimensions, freshness, confidence, condition, and a stable
+  evidence ID; stale evidence is retained as historical context and unavailable
+  evidence is stated honestly.
+- Host CPU, RAM, and scheduling pressure are supporting body context only. They
+  cannot establish wellbeing, distress, coherence, or continuity, and numeric
+  state is rendered only when the user asks for numbers. The deterministic
+  renderer answers well, steady, strained, distressed, stale, and unavailable
+  cases directly with calibrated uncertainty.
+- Centralized direct and follow-up intent detection for natural forms including
+  "how are you feeling", "are you okay though", and "you good" while excluding
+  consent, capability, expertise, and project-status questions. Self-condition
+  validation rejects host-only telemetry, generic presence scripts, and thin
+  yes/no output with explicit retryable reasons.
+
+Bound the exact desktop conversation path:
+
+- CognitiveEngine receives the canonical projection and reply contract in its
+  live context and uses a bounded self-condition generation profile. MLX retry
+  guidance requests affect, welfare, coherence, continuity, and agency instead
+  of operational telemetry; the generic operational repair path is prohibited
+  from rewriting a condition turn.
+- A desktop-required turn still invokes CognitiveEngine. If its draft omits or
+  contradicts the canonical inner-state evidence, the route rejects the draft
+  and binds the visible reply to a refreshed projection with an explicit
+  `cognitive_engine_self_condition_grounding` trace instead of taking a thin
+  fallback or spending another model call on facts already known locally.
+- Canonical condition output is immutable evidence-bearing prose. Mutable
+  personality and substrate voice profiles cannot replace its condition claim
+  or freshness boundary. Stabilization, final repair, and top-level desktop
+  rebound paths all preserve the same projection rather than emitting a generic
+  "I'm here" or resource-status response.
+
+Prevented failed conversation from becoming synthetic truth:
+
+- Added one semantic learning-admission contract shared by the HTTP memory-log
+  queue, `ChatTurnLogger`, and runtime `record_conversation_experience`. The
+  audit transcript remains retainable, but episodic/profile/consciousness,
+  conversational-intelligence, coding-memory, and facade learning occur only
+  after the exact user/reply pair passes its user-facing contract.
+- Verified learning records carry explicit admission and self-condition
+  grounding metadata. Dreamer rejects failed or rejected rows, raw error/model
+  output, unverified legacy conversation rows, and recursive dream output; it
+  resamples bounded candidates until it has admissible waking evidence.
+
+Verification completed for this source checkpoint:
+
+- The broad response, long-transcript, grounding, and introspection matrix
+  passed `227/227` in 193 seconds. It includes 120-turn varied and frontier-style
+  transcripts plus the regression proving a mutable substrate profile cannot
+  rewrite canonical condition evidence.
+- The complete server conversation lane passed `250/250` in 215 seconds. It
+  proves required CognitiveEngine invocation, weak-draft rejection, canonical
+  trace provenance, no generic social fallback, desktop fail-closed boundaries,
+  and both direct and follow-up condition forms.
+- The complementary MLX, projection, persistence, coding-memory, feedback,
+  Dreamer, and conversation-support matrix passed `241/241` in 201 seconds.
+  Selected compile and Ruff checks pass on every touched source and test file,
+  and `git diff --check` reports no whitespace defects.
+- The repository gate found and closed two concurrent world-backend regressions
+  rather than suppressing them: MuJoCo `3.10.0` is now pinned in the `physics`
+  extra and development profile, its real integration suite runs `4/4` without
+  a conditional skip, and world hosting now supplies the canonical NumPy body
+  contract. Hosting, physics, rotation, embodiment, and MuJoCo pass `74/74`;
+  strict MyPy is green across all 77 configured production files.
+- Source hygiene, enterprise static and collection ratchets, the `37/37`
+  production-readiness contract, compile-all, configured Ruff, `13/13`
+  cognitive gates, governance at `1,787` calls in `1,683` buckets with `1,667`
+  migration-debt calls, and the 2,566-file security scan all pass. The bounded
+  smoke suite passes `104/104`, and the independent enterprise closeout rubric
+  passes `20/20`.
+- The temporary-output mechanical closeout audit passed over `4,101` tracked
+  code files and `1,130,297` code lines with production, architecture, model
+  ownership, and resource-observation subgates green. It correctly reports
+  `full_closeout_complete=false` and `full_semantic_review_current=false`;
+  mechanical enumeration is not being presented as semantic completion.
+
+Immediate next work and proof burden:
+
+- `ASYNC-TASK-001` is now the bounded implementation milestone. Reproduce the
+  empty-agent conversation-support task failure, establish canonical task
+  identity and ownership before scheduling, observe every completion, preserve
+  cancellation, and emit structured terminal evidence without orphan tasks.
+- Rebuild and launch the signed resident app from this exact checkpoint, prove
+  root/commit/bridge identity, then exercise condition questions through the
+  real GUI while desktop probes and foreground model admission are active.
+  `SELF-STATE-CHAT-001`, `DESKTOP-ACCESS-001`, and
+  `FOREGROUND-LATENCY-001` remain live-open until that evidence exists.
+- Joy/social self-state separation, typed canonical person consolidation,
+  standing autonomous authority, every remaining master-index item,
+  clean-machine/release proof, and final multi-hour and 24-72 hour soaks remain
+  open and tracked.

@@ -75,7 +75,7 @@ class ChatTurnLogger:
             logger.warning("ChatTurnLogger initialization incomplete: %s", e)
     
     def _is_meaningful_turn(self, user_message: str, aura_response: str) -> bool:
-        """Filter out hollow bot exchanges (too short, empty, error responses)."""
+        """Admit only semantically valid turns to learned memory."""
         # Minimum meaningful lengths
         if len(user_message.strip()) < 5:
             return False
@@ -96,7 +96,30 @@ class ChatTurnLogger:
         if any(marker in response_lower for marker in error_markers):
             if len(aura_response.strip()) < 50:  # Short error message
                 return False
-        
+
+        try:
+            from core.conversation.response_reliability import (
+                assess_conversation_learning_admission,
+            )
+
+            assessment = assess_conversation_learning_admission(
+                user_message,
+                aura_response,
+            )
+            if not assessment.ok:
+                logger.warning(
+                    "Rejected chat turn from learned memory (%s).",
+                    ",".join(assessment.reasons) or "unknown",
+                )
+                return False
+        except _CHAT_TURN_RECOVERABLE_ERRORS as exc:
+            record_degradation(
+                "chat_turn_logger.learning_admission",
+                exc,
+                action="failed learned-memory admission closed while preserving transcript storage",
+            )
+            return False
+
         return True
 
     def _schedule_profile_learning(
@@ -171,6 +194,15 @@ class ChatTurnLogger:
         episode_metadata["session_id"] = session_id
         episode_metadata["turn_type"] = "conversation"
         episode_metadata["conversation_lane"] = True
+        episode_metadata["learning_admission"] = "verified"
+        try:
+            from core.conversation.response_reliability import is_self_condition_turn
+
+            episode_metadata["self_condition_grounded"] = bool(
+                is_self_condition_turn(user_message)
+            )
+        except _CHAT_TURN_RECOVERABLE_ERRORS:
+            episode_metadata["self_condition_grounded"] = False
         profile_user_id = str(episode_metadata.get("user_id") or "").strip()[:160]
         self._schedule_profile_learning(
             user_id=profile_user_id,

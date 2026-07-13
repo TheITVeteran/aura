@@ -58,10 +58,10 @@ def _frontier_style_user_turn(idx: int) -> str:
 
 
 def _frontier_style_reply(user: str, idx: int) -> str:
-    lower = user.lower()
     variants = [
         (
-            "I am here, and the honest version is that I should sound grounded before I sound confident. "
+            "I feel steady and coherent right now, without a strong distress signal, and the honest version is that "
+            "I should sound grounded before I sound confident. "
             "If my answer gets thin, repetitive, or weirdly symbolic, that is not personality; that is a failed turn, "
             "and I need to catch it before it reaches you."
         ),
@@ -354,7 +354,11 @@ def test_model_text_integrity_rejects_malformed_32b_backend_output():
 @pytest.mark.parametrize(
     ("user", "reply", "reason"),
     [
-        ("Are you coherent enough to talk?", "I'm fine", "low_signal_status_reply"),
+        (
+            "Are you coherent enough to talk?",
+            "I'm fine",
+            "low_signal_self_condition_reply",
+        ),
         ("Tell me what you think about personhood here.", "Sure.", "too_short_for_user_turn"),
         ("Huh?", "Heidi. That's the thing to do.", "foreign_name_intrusion"),
         ("Can you stay with this thread?", "I dropped the heavy reasoning lane.", "runtime_boilerplate"),
@@ -931,6 +935,22 @@ async def test_final_quality_gate_repairs_high_confidence_semantic_glitch(monkey
     assert not is_stale
     assert not is_same
     assert not is_off_topic, reason
+
+
+def test_grounded_self_condition_reply_cannot_be_rewritten_by_substrate_voice(monkeypatch):
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes import chat as chat_routes
+
+    monkeypatch.setattr(
+        chat_routes,
+        "_shape_with_live_substrate",
+        lambda *_args, **_kwargs: "I'm here, and I'm following the thread.",
+    )
+
+    reply = chat_routes._build_grounded_self_condition_reply("You ok?")
+
+    assert reply != "I'm here, and I'm following the thread."
+    assert assess_user_facing_reply("You ok?", reply).ok
 
 
 @pytest.mark.asyncio

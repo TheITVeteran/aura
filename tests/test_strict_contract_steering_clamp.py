@@ -17,10 +17,11 @@ from core.brain.llm.mlx_worker import (
     _build_user_surface_quality_retry_prompt,
     _expand_user_surface_retry_budget,
     _extract_expected_strict_value,
+    _job_needs_concrete_status_signal_guidance,
     _messages_with_user_surface_retry,
     _normalize_strict_value_response,
-    _repair_live_user_surface_self_claims,
     _repair_live_user_surface_operational_status,
+    _repair_live_user_surface_self_claims,
     _repair_live_user_surface_truncated_tail,
     _restore_surface_generation_controls,
     _surface_control_alpha,
@@ -339,6 +340,35 @@ def test_initial_live_status_generation_leaves_non_status_turn_unchanged():
 
     assert guided is messages
     assert prompt == "fallback"
+
+
+def test_self_condition_turn_does_not_request_host_telemetry_guidance():
+    job = {
+        "clean_user_surface_contract": True,
+        "user_surface_validation_prompt": "Are you okay though? Feeling fine?",
+    }
+
+    assert not _job_needs_concrete_status_signal_guidance(job)
+
+    messages = [{"role": "system", "content": "live mind context stays here"}]
+    guided, prompt = _with_initial_user_surface_guidance(messages, "fallback", job)
+
+    assert guided is messages
+    assert prompt == "fallback"
+
+
+def test_self_condition_failure_is_not_repaired_with_host_telemetry():
+    original = "I am with you."
+    repaired = _repair_live_user_surface_operational_status(
+        original,
+        ["missing_self_condition_answer"],
+        {
+            "clean_user_surface_contract": True,
+            "user_surface_validation_prompt": "Are you okay though?",
+        },
+    )
+
+    assert repaired == original
 
 
 def test_live_status_repair_uses_concrete_runtime_telemetry():

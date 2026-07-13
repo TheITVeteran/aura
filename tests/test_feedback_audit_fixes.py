@@ -1657,39 +1657,32 @@ def test_protected_foreground_summary_message_filters_symbolic_scene_leak(monkey
     assert chat_module._build_protected_foreground_summary_message() is None
 
 
-def test_simple_affect_check_detection_and_reply_tracks_voice_energy(monkeypatch):
+def test_simple_affect_check_uses_canonical_self_condition_projection(monkeypatch):
     from interface.routes import chat as chat_module
 
-    class DummyVoiceEngine:
-        def __init__(self, energy, tone):
-            self._energy = energy
-            self._tone = tone
-
-        def compile_profile(self, **_kwargs):
-            return None
-
-        def get_voice_state(self):
-            return {"energy": self._energy, "tone": self._tone}
-
-    monkeypatch.setattr(chat_module, "_resolve_live_aura_state", lambda: object())
     monkeypatch.setattr(chat_module, "_shape_with_live_substrate", lambda text, user_message="": text)
     monkeypatch.setattr(
-        "core.voice.substrate_voice_engine.get_substrate_voice_engine",
-        lambda: DummyVoiceEngine(0.35, "thoughtful_measured"),
+        chat_module,
+        "_build_self_condition_evidence",
+        lambda _message: {
+            "reply": (
+                "Yes, I am okay. I feel steady, my distress is low, and my "
+                "continuity is holding on this thread."
+            )
+        },
     )
 
-    low_reply = chat_module._build_simple_affect_check_reply("how are you feeling?")
-
-    monkeypatch.setattr(
-        "core.voice.substrate_voice_engine.get_substrate_voice_engine",
-        lambda: DummyVoiceEngine(0.72, "enthusiastic"),
+    reply = chat_module._build_simple_affect_check_reply(
+        "Are you okay though? Feeling fine?"
     )
-
-    high_reply = chat_module._build_simple_affect_check_reply("how are you feeling?")
 
     assert chat_module._is_simple_affect_check_request("how are you feeling?")
-    assert "tired, honestly" in low_reply
-    assert "pretty energized" in high_reply
+    assert chat_module._is_simple_affect_check_request(
+        "Are you okay though? Feeling fine?"
+    )
+    assert reply.startswith("Yes, I am okay.")
+    assert "distress is low" in reply
+    assert "RAM pressure" not in reply
 
 
 def test_identity_challenge_detection_and_reply_pushes_back(monkeypatch):

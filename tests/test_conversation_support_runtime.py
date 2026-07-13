@@ -37,7 +37,10 @@ async def test_record_conversation_experience_prefers_memory_facade_commit(monke
 
     await conversation_support.record_conversation_experience(
         "Please explain this architecture in detail.",
-        "Here is the grounded architectural breakdown.",
+        (
+            "The architecture routes each request through one governed cognition path, "
+            "then verifies effects before committing the result to durable state."
+        ),
         state,
     )
 
@@ -47,6 +50,7 @@ async def test_record_conversation_experience_prefers_memory_facade_commit(monke
     assert captured["metadata"]["domain"] == "conversation"
     assert captured["metadata"]["objective"] == "Please explain this architecture in detail."
     assert captured["metadata"]["semantic_mode"] == "technical"
+    assert captured["metadata"]["learning_admission"] == "verified"
 
 
 @pytest.mark.asyncio
@@ -95,3 +99,46 @@ async def test_record_conversation_experience_adds_searchable_continuity_memory(
     assert continuity["metadata"]["searchable_conversation_context"] is True
     assert continuity["metadata"]["preserve_for_continuity"] is True
     assert continuity["metadata"]["provenance_source"] == "live_conversation_turn"
+    assert continuity["metadata"]["learning_admission"] == "verified"
+
+
+@pytest.mark.asyncio
+async def test_record_conversation_experience_rejects_misgrounded_self_condition(
+    monkeypatch,
+):
+    calls = []
+
+    class DummyFacade:
+        async def commit_interaction(self, **kwargs):
+            calls.append(("commit", kwargs))
+            return "episode-should-not-exist"
+
+        async def add_memory(self, text, metadata=None):
+            calls.append(("memory", text, metadata))
+            return True
+
+    monkeypatch.setattr(
+        conversation_support.service_access,
+        "optional_service",
+        lambda *names, default=None: (
+            DummyFacade() if "memory_facade" in names else default
+        ),
+    )
+    monkeypatch.setattr(
+        conversation_support,
+        "update_conversational_intelligence",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("misgrounded reply reached conversational intelligence")
+        ),
+    )
+
+    await conversation_support.record_conversation_experience(
+        "Are you okay though? Feeling fine?",
+        (
+            "I am with you. RAM pressure is 75.6% with 15.6 GB available; "
+            "CPU load is 25.8% on this host."
+        ),
+        AuraState.default(),
+    )
+
+    assert calls == []
