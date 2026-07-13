@@ -234,6 +234,10 @@ class VisualSpeechPipeline:
                 record_degradation("senses.visual_speech.landmark_init", exc)
         self._previous_aperture: float | None = None
         self._previous_mouth: np.ndarray | None = None
+        from core.senses.viseme_decoder import LipReadResult, VisemeDecoder
+
+        self._viseme_decoder = VisemeDecoder()
+        self.last_lip_read: LipReadResult | None = None
         self._energy_window: deque[float] = deque(maxlen=_ACTIVITY_WINDOW_FRAMES)
         self._speaking = False
         self._vsr_session = None
@@ -348,6 +352,7 @@ class VisualSpeechPipeline:
             self._previous_aperture = None
             return None
         aperture = float(metrics["aperture"])
+        width = float(metrics["width"])
         previous = self._previous_aperture
         self._previous_aperture = aperture
         delta = (aperture - previous) if previous is not None else 0.0
@@ -359,10 +364,26 @@ class VisualSpeechPipeline:
         probability = 1.0 / (1.0 + math.exp(
             -_LANDMARK_STEEPNESS * (band_energy - _LANDMARK_MIDPOINT)
         ))
+        was_speaking = self._speaking
         if not self._speaking and probability >= _SPEAK_ON_THRESHOLD:
             self._speaking = True
         elif self._speaking and probability <= _SPEAK_OFF_THRESHOLD:
             self._speaking = False
+
+        # Bounded-vocabulary lip reading: feed the viseme decoder while
+        # speech is active; decode on the utterance boundary.
+        transcript: str | None = None
+        transcript_source = "no_utterance"
+        self._viseme_decoder.feed(aperture, width, speaking=self._speaking)
+        if was_speaking and not self._speaking:
+            result = self._viseme_decoder.decode()
+            self.last_lip_read = result
+            if result.word is not None:
+                transcript = result.word
+                transcript_source = "viseme_command_decoder"
+            else:
+                transcript_source = f"viseme_decoder_{result.reason}"
+
         self.observations += 1
         return VisualSpeechObservation(
             at=at,
@@ -373,15 +394,11 @@ class VisualSpeechPipeline:
             speaking=self._speaking,
             viseme_features=[
                 round(min(1.0, aperture / 0.15), 5),
-                round(min(1.0, float(metrics["width"]) / 0.8), 5),
+                round(min(1.0, width / 0.8), 5),
                 round(min(1.0, energy / 0.05), 5),
             ],
-            transcript=None,
-            transcript_source=(
-                "vsr_model_attached_but_decoding_not_wired"
-                if self._vsr_session is not None
-                else "unavailable_no_vsr_model"
-            ),
+            transcript=transcript,
+            transcript_source=transcript_source,
         )
 
     @staticmethod

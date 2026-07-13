@@ -89,17 +89,37 @@ Gates run per checkpoint: `make compile`, `make smoke`, `make governance-lint`
   principal, paired sessions get scoped history/bootstrap, paired WS
   voice frames are DENIED by policy, heartbeats sanitized.
 
-## Roadmap (next passes, in priority order)
+## Third pass (2026-07-13 continued, all pushed)
 
-1. **Oriented-box dynamics** (SAT contact manifolds) — the last physics
-   shape limitation.
-2. **Phone voice**: now a *policy* question, not just TLS — Zenflow's
-   hardening deliberately denies paired-device binary voice frames.
-   Unlock = TLS (local CA) + an explicit owner-granted voice scope for
-   a named device.
-3. **VSR model onboarding**: word-level lip-reading ONNX model behind
-   the existing seam (licensing + download need owner approval).
-4. **MuJoCo backend** behind `simulator_bridge.SimulatorInterface`.
-5. **Practice → learning loop**: feed the practice ledger trends into
-   deliberate_practice/compounding so embodied skill growth becomes
-   trainable signal, not just measurement.
+- **Oriented-box 6-DoF dynamics** (d5c9f3e4): DONE — SAT manifolds
+  (core/worlds/obb.py), tensor inertia, topple/settle/stack proofs,
+  warm-start cache serialized for exact resume. No physics shape
+  limitations remain except non-convex meshes.
+- **Phone voice** (dad064b5): DONE — owner-granted per-device voice
+  scope (deny-by-default preserved; per-frame live revocation) + local
+  TLS (AURA_ENABLE_TLS=1, self-signed EC cert, LAN SANs) for the
+  getUserMedia secure-context requirement.
+- **MuJoCo backend** (e9d7b741): DONE — SimulatorInterface drop-in +
+  blueprint→MJCF compilation (mujoco 3.10.0 installed, owner-approved).
+- **Landmark lip tracking** (da4d82fb): DONE — mediapipe FaceMesh
+  geometry, signed-derivative band-pass, seamless fallback.
+- **Practice → learning loop** (d9b7561e): DONE — ledger feeds
+  PracticeDirector (domain embodied.<kind>).
+- **Bounded-vocabulary lip reading**: DONE — viseme classifier +
+  sequence decoder over an 8-command vocabulary; transcripts are now
+  REAL for that vocabulary (`viseme_command_decoder`), with honest
+  refusals on short/ambiguous/no-match utterances.
+- **Audits**: social/planning/swarm/actuator/trust suites all run green
+  (61 tests) — former PRESENT-UNVERIFIED rows upgraded.
+
+## Remaining (deliberate, with named blockers)
+
+1. **Open-vocabulary sentence VSR**: candidate checkpoint identified
+   (HF `nguyenvulebinh/auto_avsr_visual_trlrwlrs2lrs3vox2avsp_base`,
+   ~1.0 GB safetensors). NOT downloaded: license unspecified on the
+   re-upload (upstream auto_avsr models are research/non-commercial),
+   and inference requires transformers remote-code execution that must
+   pass a security review before it runs inside Aura. Both blockers are
+   administrative, not technical; the attach seam is ready.
+2. **Non-convex collision meshes** — beyond boxes/spheres; MuJoCo lane
+   covers high-fidelity needs meanwhile.
