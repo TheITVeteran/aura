@@ -243,13 +243,13 @@ class RelationalMemoryAuthority:
     @property
     def active_agent_id(self) -> str:
         try:
-            from core.container import ServiceContainer
+            from core.runtime.service_access import optional_service
 
-            estimator = ServiceContainer.get("other_agent_model", default=None)
+            estimator = optional_service("other_agent_model")
             active = str(getattr(estimator, "active_agent_id", "") or "").strip()
-            return active[:160] or "local_user"
+            return active[:160]
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
-            return "local_user"
+            return ""
 
     @staticmethod
     def supported_kinds() -> tuple[str, ...]:
@@ -1121,6 +1121,12 @@ class RelationalMemoryAuthority:
         if namespace == "relationship_graph:v1":
             node_id = str(raw.get("node_id") or "").strip()
             return {node_id: {"node": raw}} if node_id else {}
+        if namespace == "theory_of_mind:v1":
+            return {
+                str(agent_id): {"model": model}
+                for agent_id, model in raw.items()
+                if isinstance(model, dict)
+            }
         return {}
 
     def _prepare_grant(

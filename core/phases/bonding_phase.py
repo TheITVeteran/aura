@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from core.runtime.service_registry import get_runtime_service
 from core.kernel.bridge import Phase
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.state.aura_state import AuraState
@@ -83,15 +82,6 @@ def _bounded_float(
     return max(lower, min(upper, number))
 
 
-def _service_get(container: Any, name: str, *, default: Any = None) -> Any:
-    if container is not None and hasattr(container, "get"):
-        try:
-            return container.get(name, default=default)
-        except TypeError:
-            return container.get(name) or default
-    return get_runtime_service(name, default=default)
-
-
 class BondingPhase(Phase):
     """
     Phase to handle long-term personality evolution and user bonding.
@@ -137,23 +127,9 @@ class BondingPhase(Phase):
             if len(subtext) > 10:
                 multiplier += 0.5
 
-            rapport = 0.5
-            try:
-                tom = _service_get(self.container, "theory_of_mind", default=None)
-                if tom and tom.known_selves:
-                    user_model = next(iter(tom.known_selves.values()))
-                    rapport = _bounded_float(getattr(user_model, "rapport", 0.5), 0.5)
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                _record_bonding_fault(
-                    exc,
-                    action="used neutral rapport and continued bonding update",
-                    severity="warning",
-                    stage="theory_of_mind",
-                )
-                logger.debug("Theory-of-mind rapport unavailable: %s", exc)
-
-            rapport_multiplier = 0.5 + rapport
-            increment = 0.0001 * multiplier * rapport_multiplier
+            # This is Aura's own bounded social-plasticity state, not a claim
+            # about rapport, intimacy, or trust with whichever user is cached.
+            increment = 0.0001 * multiplier
             current_bonding = _bounded_float(getattr(identity, "bonding_level", 0.0), 0.0)
             identity.bonding_level = min(1.0, current_bonding + increment)
 
@@ -176,8 +152,8 @@ class BondingPhase(Phase):
 
             modifiers["bonding_phase"] = {
                 "increment": round(increment, 7),
-                "rapport": round(rapport, 3),
                 "bonding_level": round(identity.bonding_level, 5),
+                "person_specific_relationship_claimed": False,
             }
 
             logger.debug(

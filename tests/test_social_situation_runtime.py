@@ -34,6 +34,27 @@ class FakeEstimator:
         self.events.append(("response", (user_id, response_text)))
 
 
+class FakeObserverContext:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, object]] = []
+
+    def register_interaction(self, user_id, snapshot):
+        self.events.append(
+            (
+                "snapshot",
+                (user_id, snapshot["agent_id"], snapshot["evidence_digest"]),
+            )
+        )
+
+    def observe_agent(self, user_id, **kwargs):
+        self.events.append(
+            (
+                "presence",
+                (user_id, kwargs["kind"], kwargs["evidence_digest"]),
+            )
+        )
+
+
 class Harness(IncomingLogicMixin):
     def __init__(self) -> None:
         self.user_identity = {"name": "alice"}
@@ -61,8 +82,10 @@ class FakeOutputGate:
 @pytest.mark.asyncio
 async def test_incoming_social_state_is_exact_current_and_ready_before_cognition() -> None:
     estimator = FakeEstimator()
+    observer = FakeObserverContext()
     ServiceContainer.clear()
     ServiceContainer.register_instance("other_agent_model", estimator, required=False)
+    ServiceContainer.register_instance("recursive_tom", observer, required=False)
     harness = Harness()
     context = {"user_id": "bryan"}
     live_state = SimpleNamespace(cognition=SimpleNamespace(current_partner=""))
@@ -81,6 +104,11 @@ async def test_incoming_social_state_is_exact_current_and_ready_before_cognition
             ("observe", ("bryan", "this is still broken and urgent", False)),
             ("snapshot", "bryan"),
         ]
+        assert observer.events[0][0] == "presence"
+        assert observer.events[0][1][:2] == ("bryan", "conversation_turn")
+        assert observer.events[1][0] == "snapshot"
+        assert observer.events[1][1][:2] == ("bryan", "bryan")
+        assert len(observer.events[1][1][2]) == 64
         assert harness.tasks
         await asyncio.gather(*harness.tasks)
         assert estimator.events[-1] == ("persist", True)
@@ -153,7 +181,51 @@ def test_social_user_id_resolution_never_selects_an_unrelated_agent() -> None:
     assert len(harness._resolve_social_user_id({"user_id": "x" * 500})) == 160
 
     harness.user_identity = {}
-    assert harness._resolve_social_user_id({}) == "local_user"
+    assert harness._resolve_social_user_id({}) == ""
+
+
+def test_missing_social_identity_abstains_without_creating_a_synthetic_user() -> None:
+    estimator = FakeEstimator()
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("other_agent_model", estimator, required=False)
+    harness = Harness()
+    harness.user_identity = {}
+    context = {}
+
+    try:
+        assert harness._observe_social_turn(context, "hello", None) == ""
+        harness._record_delivered_social_response(context, "response")
+    finally:
+        ServiceContainer.clear()
+
+    assert context == {}
+    assert estimator.events == []
+
+
+@pytest.mark.asyncio
+async def test_malformed_social_snapshot_cannot_block_objective_presence() -> None:
+    class RejectingObserver(FakeObserverContext):
+        def register_interaction(self, user_id, snapshot):
+            raise ValueError("malformed calibrated snapshot")
+
+    estimator = FakeEstimator()
+    observer = RejectingObserver()
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("other_agent_model", estimator, required=False)
+    ServiceContainer.register_instance("recursive_tom", observer, required=False)
+    harness = Harness()
+
+    try:
+        assert harness._observe_social_turn(
+            {"user_id": "bryan"},
+            "hello",
+            None,
+        ) == "bryan"
+        await asyncio.gather(*harness.tasks)
+    finally:
+        ServiceContainer.clear()
+
+    assert observer.events[0][0] == "presence"
 
 
 def test_explicit_user_commands_control_exact_agent_relational_memory(tmp_path) -> None:

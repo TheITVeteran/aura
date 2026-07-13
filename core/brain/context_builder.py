@@ -14,7 +14,8 @@ class DynamicContextBuilder:
 
     @staticmethod
     async def build_rich_context(
-        message: str, current_context: Dict[str, Any] = None
+        message: str,
+        current_context: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Gather all available state data and format it for the cognitive loop."""
         rich_context = current_context or {}
@@ -70,13 +71,17 @@ class DynamicContextBuilder:
             logger.debug("Semantic memory retrieval failed: %s", e)
 
         # 5. Theory of Mind (Intent detection)
-        try:
-            tom = container.get("theory_of_mind", default=None)
-            if tom:
-                rich_context["user_intent"] = await tom.infer_intent(message, rich_context)
-        except (OSError, ConnectionError, TimeoutError) as e:
-            record_degradation('context_builder', e)
-            logger.debug("Theory of Mind unavailable: %s", e)
+        if not rich_context.get("user_intent"):
+            try:
+                tom = container.get("theory_of_mind", default=None)
+                if tom:
+                    rich_context["user_intent"] = await tom.infer_intent(
+                        message,
+                        rich_context,
+                    )
+            except (OSError, ConnectionError, TimeoutError) as e:
+                record_degradation('context_builder', e)
+                logger.debug("Theory of Mind unavailable: %s", e)
 
         # 6. Global Workspace Theory — last N competition winners
         # get_context_stream() returns a pre-formatted string; safe to call sync.

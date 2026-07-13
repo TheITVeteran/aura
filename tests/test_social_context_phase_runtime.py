@@ -8,9 +8,17 @@ from core.state.aura_state import AuraState
 
 
 class SocialContainer:
-    def __init__(self, *, ava=None, theory_of_mind=None, fail_theory=False):
+    def __init__(
+        self,
+        *,
+        ava=None,
+        theory_of_mind=None,
+        other_agent_model=None,
+        fail_theory=False,
+    ):
         self.ava = ava
         self.theory_of_mind = theory_of_mind
+        self.other_agent_model = other_agent_model
         self.fail_theory = fail_theory
 
     def get(self, name, default=None):
@@ -20,7 +28,29 @@ class SocialContainer:
             if self.fail_theory:
                 raise RuntimeError("theory service unavailable")
             return self.theory_of_mind if self.theory_of_mind is not None else default
+        if name == "other_agent_model":
+            return (
+                self.other_agent_model
+                if self.other_agent_model is not None
+                else default
+            )
         return default
+
+
+class ExactEstimator:
+    active_agent_id = "bryan"
+
+    def __init__(self, *, confidence=0.8, recommendation=None):
+        self.confidence = confidence
+        self.recommendation = recommendation or {}
+
+    def cognitive_snapshot(self, agent_id):
+        assert agent_id == "bryan"
+        return {
+            "agent_id": agent_id,
+            "confidence": self.confidence,
+            "recommendation": self.recommendation,
+        }
 
 
 class AvaAnalysisUnavailable:
@@ -107,7 +137,7 @@ def test_social_context_keeps_local_cues_when_context_injection_fails():
     asyncio.run(scenario())
 
 
-def test_social_context_keeps_cues_when_theory_register_fails():
+def test_social_context_abstains_without_exact_active_estimator():
     async def scenario():
         tracker = get_degradation_tracker()
         tracker.reset()
@@ -120,20 +150,21 @@ def test_social_context_keeps_cues_when_theory_register_fails():
         assert state.cognition.modifiers["interaction_style"] == "balanced_flow"
         assert state.cognition.modifiers["social_context"] == "available context"
         assert "relational_register" not in state.cognition.modifiers
-        assert any(
-            "without theory-of-mind rapport register" in record.action
-            for record in tracker.recent(subsystem="social_context_phase")
-        )
+        assert tracker.count("social_context_phase") == 0
         tracker.reset()
 
     asyncio.run(scenario())
 
 
-def test_social_context_clamps_rapport_and_sets_register():
+def test_social_context_clamps_calibrated_confidence_and_sets_register():
     async def scenario():
-        user_model = SimpleNamespace(rapport=9.5)
-        theory = SimpleNamespace(known_selves={"bryan": user_model})
-        phase = SocialContextPhase(SocialContainer(theory_of_mind=theory))
+        estimator = ExactEstimator(
+            confidence=9.5,
+            recommendation={"slow_down": True},
+        )
+        phase = SocialContextPhase(
+            SocialContainer(other_agent_model=estimator)
+        )
         state = _user_state()
 
         await phase.execute(
@@ -141,8 +172,9 @@ def test_social_context_clamps_rapport_and_sets_register():
             objective="Let's make this release feel polished and emotionally precise.",
         )
 
-        assert state.cognition.modifiers["rapport_level"] == 1.0
-        assert state.cognition.modifiers["relational_register"] == "established"
+        assert state.cognition.modifiers["social_state_confidence"] == 1.0
+        assert state.cognition.modifiers["social_state_is_hypothesis"] is True
+        assert state.cognition.modifiers["relational_register"] == "repair"
         assert state.cognition.modifiers["lexical_mirror"][:3] == [
             "let's",
             "release",

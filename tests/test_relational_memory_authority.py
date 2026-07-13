@@ -637,3 +637,10 @@ def test_legacy_adapters_share_one_exact_agent_authority(tmp_path):
     assert alice_context == ""
     assert not (tmp_path / "social_memory.json").exists()
     assert not (tmp_path / "shared_ground.json").exists()
+
+
+def test_authority_has_no_synthetic_active_agent_without_estimator(tmp_path):
+    ServiceContainer.clear()
+    authority = _authority(tmp_path)
+
+    assert authority.active_agent_id == ""

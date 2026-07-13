@@ -50,7 +50,15 @@ class _ContextMemory:
 
 
 class _TheoryOfMind:
-    def infer_intent(self, _message: str, _context: dict[str, Any]) -> dict[str, str]:
+    def __init__(self) -> None:
+        self.awaited = False
+
+    async def infer_intent(
+        self,
+        _message: str,
+        _context: dict[str, Any],
+    ) -> dict[str, str]:
+        self.awaited = True
         return {"pragmatic": "greeting"}
 
 
@@ -86,9 +94,10 @@ async def test_native_chat_routes_personality_into_cognitive_prompt() -> None:
     brain = _RecordingBrain()
     memory = _ContextMemory()
     skill = NativeChatSkill(brain=brain)
+    theory_of_mind = _TheoryOfMind()
     context = {
         "memory": memory,
-        "theory_of_mind": _TheoryOfMind(),
+        "theory_of_mind": theory_of_mind,
         "orchestrator": SimpleNamespace(),
     }
 
@@ -113,6 +122,7 @@ async def test_native_chat_routes_personality_into_cognitive_prompt() -> None:
     assert "### USER INTENT" in prompt
     assert "Pragmatic: greeting" in prompt
     assert "User Input: Hello Aura!" in prompt
+    assert theory_of_mind.awaited is True
     assert personality.events == [("user_message", {"message": "Hello Aura!"})]
 
 

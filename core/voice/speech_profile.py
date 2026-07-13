@@ -258,7 +258,7 @@ class SpeechProfileCompiler:
             homeostasis: Dict of drive_name → level (0-1)
             unified_field: Dict with 'coherence', 'dominant_modes', 'phi'
             personality: Big Five dict
-            social_context: rapport, trust, relationship depth
+            social_context: exact-agent calibrated confidence and caution
             conversation_context: energy, topic_depth, user_trend, turn_count
             user_message: the user's message (for length matching)
         """
@@ -333,8 +333,14 @@ class SpeechProfileCompiler:
 
         # Social context
         sc = social_context or {}
-        rapport = sc.get("rapport", 0.5)
-        trust = sc.get("trust", 0.5)
+        try:
+            social_confidence = float(sc.get("social_confidence", 0.0))
+        except (TypeError, ValueError, OverflowError):
+            social_confidence = 0.0
+        if not math.isfinite(social_confidence):
+            social_confidence = 0.0
+        social_confidence = max(0.0, min(1.0, social_confidence))
+        social_caution = sc.get("social_caution", "unknown")
 
         # Conversation context
         cc = conversation_context or {}
@@ -418,8 +424,8 @@ class SpeechProfileCompiler:
 
         # High arousal + high dopamine + casual conversation = multi-message
         multi_score = arousal * 0.4 + dopamine * 0.3 + (1.0 - gaba) * 0.2
-        if rapport > 0.6:
-            multi_score += 0.1  # More comfortable = more natural texting
+        if social_confidence >= 0.35 and social_caution == "high":
+            multi_score -= 0.15
 
         if multi_score > 0.65 and profile.word_budget > 25:
             profile.multi_message = True
@@ -451,7 +457,7 @@ class SpeechProfileCompiler:
             profile.ellipsis_probability = 0.3
 
         # Capitalization
-        if arousal < 0.3 and rapport > 0.5:
+        if arousal < 0.3:
             profile.capitalization = "lowercase"
             sources.append("lowercase_low_energy")
         elif arousal > 0.8 and valence > 0.5:
@@ -475,7 +481,7 @@ class SpeechProfileCompiler:
             profile.vocabulary_tier = "casual"
 
         # Contractions: almost always in casual, less in deliberate mode
-        profile.contraction_rate = 0.9 - (1.0 - rapport) * 0.3
+        profile.contraction_rate = 0.75 if social_caution == "high" else 0.9
 
         # Fillers: more when tired or thinking out loud
         profile.filler_probability = 0.05 + (1.0 - serotonin) * 0.15 + gaba * 0.1
@@ -582,9 +588,9 @@ class SpeechProfileCompiler:
         # 8. MOOD COLORING
         # ══════════════════════════════════════════════════════════════════
 
-        # Warmth: driven by oxytocin, valence, rapport
+        # Warmth is Aura's self-state, not an inferred relationship score.
         profile.warmth = (
-            oxytocin * 0.3 + max(0, valence) * 0.3 + rapport * 0.2 + agreeableness * 0.2
+            oxytocin * 0.35 + max(0, valence) * 0.35 + agreeableness * 0.3
         )
         profile.warmth = max(0.0, min(1.0, profile.warmth))
 

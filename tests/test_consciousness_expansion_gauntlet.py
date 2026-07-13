@@ -140,9 +140,22 @@ def test_gauntlet_minimal_selfhood_reaches_dugesia_and_biases_toward_rest():
 def test_gauntlet_tom_observer_effect_drives_bias_change():
     tom_alone = RecursiveTheoryOfMind()
     tom_watched = RecursiveTheoryOfMind()
-    tom_watched.observe_agent("bryan", strength=0.9)
-    tom_watched.observe_agent("bryan", strength=0.9)
-    tom_watched.register_interaction("bryan", salience=0.8, trust=0.9)
+    tom_watched.observe_agent(
+        "bryan",
+        strength=0.9,
+        evidence_digest="a" * 64,
+    )
+    tom_watched.register_interaction(
+        "bryan",
+        {
+            "agent_id": "bryan",
+            "confidence": 0.8,
+            "observations": 1,
+            "social_rupture_risk": 0.0,
+            "evidence_digest": "b" * 64,
+            "affect_hypotheses": {},
+        },
+    )
     assert tom_watched.depth_reached("bryan") == MAX_DEPTH
     ba = tom_alone.get_observer_bias().bias
     bw = tom_watched.get_observer_bias().bias
@@ -220,7 +233,11 @@ def test_gauntlet_biases_remain_bounded_across_many_iterations():
                              "agency_score": 0.6},
         )
         if i % 3 == 0:
-            tom.observe_agent(f"agent_{i % 5}", strength=0.4)
+            tom.observe_agent(
+                f"agent_{i % 5}",
+                strength=0.4,
+                evidence_digest=f"{i + 1:064x}",
+            )
         uni.fuse(
             split.fused_bias(),
             ms.get_priority_bias(),
@@ -246,7 +263,7 @@ def test_gauntlet_combined_latency_budget():
         cog = rng.standard_normal(16); emb = rng.standard_normal(8)
         split.tick(exec_s, sens_s, cog, emb)
     t0 = time.time()
-    for _ in range(50):
+    for i in range(50):
         exec_s = rng.standard_normal(8); sens_s = rng.standard_normal(16)
         cog = rng.standard_normal(16); emb = rng.standard_normal(8)
         split.tick(exec_s, sens_s, cog, emb)
@@ -257,7 +274,11 @@ def test_gauntlet_combined_latency_budget():
             cognitive_state={"social_hunger": 0.3, "prediction_error": 0.2,
                              "agency_score": 0.6},
         )
-        tom.observe_agent("stream", strength=0.2)
+        tom.observe_agent(
+            "stream",
+            strength=0.2,
+            evidence_digest=f"{i + 1:064x}",
+        )
         uni.fuse(
             split.fused_bias(),
             ms.get_priority_bias(),

@@ -14,6 +14,7 @@ from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.governance_policy import allow_direct_user_shortcut
+from core.runtime.service_access import optional_service
 
 logger = logging.getLogger(__name__)
 _INCOMING_LOGIC_RECOVERABLE_ERRORS = (
@@ -58,7 +59,7 @@ class IncomingLogicMixin:
             if isinstance(identity, dict)
             else ""
         )
-        return (payload_user or identity_name or "local_user")[:160]
+        return (payload_user or identity_name)[:160]
 
     def _record_delivered_social_response(
         self,
@@ -66,12 +67,11 @@ class IncomingLogicMixin:
         response_text: str,
     ) -> None:
         try:
-            from core.container import ServiceContainer
-
-            other_agent = ServiceContainer.get("other_agent_model", default=None)
-            if other_agent and hasattr(other_agent, "record_response"):
+            other_agent = optional_service("other_agent_model")
+            user_id = self._resolve_social_user_id(payload_context)
+            if user_id and other_agent and hasattr(other_agent, "record_response"):
                 other_agent.record_response(
-                    self._resolve_social_user_id(payload_context),
+                    user_id,
                     response_text,
                 )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
@@ -88,12 +88,11 @@ class IncomingLogicMixin:
     ) -> None:
         """Open humor feedback only after OutputGate confirms delivery."""
         try:
-            from core.container import ServiceContainer
-
-            humor = ServiceContainer.get("humor_engine", default=None)
-            if humor and hasattr(humor, "observe_delivered_response"):
+            humor = optional_service("humor_engine")
+            user_id = self._resolve_social_user_id(payload_context)
+            if user_id and humor and hasattr(humor, "observe_delivered_response"):
                 humor.observe_delivered_response(
-                    self._resolve_social_user_id(payload_context),
+                    user_id,
                     response_text,
                     # Request context is user-controlled. Delivered-output
                     # classification must use the response itself unless a
@@ -140,12 +139,13 @@ class IncomingLogicMixin:
         live_state: Any,
     ) -> str:
         """Update exact-agent social state synchronously before cognition reads it."""
-        from core.container import ServiceContainer
-
         user_id = self._resolve_social_user_id(payload_context)
+        if not user_id:
+            payload_context.pop("user_id", None)
+            return ""
         payload_context["user_id"] = user_id
         observed_at = time.time()
-        humor = ServiceContainer.get("humor_engine", default=None)
+        humor = optional_service("humor_engine")
         if humor and hasattr(humor, "record_reaction"):
             try:
                 humor.record_reaction(user_id, message, observed_at)
@@ -154,7 +154,7 @@ class IncomingLogicMixin:
                     exc,
                     action="continued incoming turn after prior delivered-humor feedback pairing failed",
                 )
-        other_agent = ServiceContainer.get("other_agent_model", default=None)
+        other_agent = optional_service("other_agent_model")
         if other_agent and hasattr(other_agent, "observe_message"):
             other_agent.observe_message(
                 user_id,
@@ -176,6 +176,31 @@ class IncomingLogicMixin:
             cognition = getattr(live_state, "cognition", None)
             if cognition is not None and hasattr(cognition, "current_partner"):
                 cognition.current_partner = user_id
+        try:
+            observer_context = optional_service("recursive_tom")
+            social_snapshot = payload_context.get("social_situation")
+            if observer_context:
+                evidence_digest = hashlib.sha256(
+                    f"{user_id}\n{message}".encode("utf-8", errors="replace")
+                ).hexdigest()
+                if hasattr(observer_context, "observe_agent"):
+                    observer_context.observe_agent(
+                        user_id,
+                        kind="conversation_turn",
+                        strength=0.8,
+                        evidence_digest=evidence_digest,
+                        observed_at=observed_at,
+                    )
+                if isinstance(social_snapshot, dict):
+                    social_snapshot.setdefault("evidence_digest", evidence_digest)
+                    social_snapshot.setdefault("at", observed_at)
+                    if hasattr(observer_context, "register_interaction"):
+                        observer_context.register_interaction(user_id, social_snapshot)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_incoming_degradation(
+                exc,
+                action="continued incoming turn without observer privacy posture update",
+            )
         return user_id
 
     def _internal_model_updates_allowed(self) -> bool:
@@ -234,7 +259,6 @@ class IncomingLogicMixin:
         user_id: str,
     ) -> dict[str, Any] | None:
         """Apply explicit user memory commands to the exact-agent authority."""
-        from core.container import ServiceContainer
         from core.runtime.memory_consent import (
             MemoryConsentMode,
             parse_consent_command,
@@ -252,7 +276,7 @@ class IncomingLogicMixin:
         )
         if mode is None and not delete_all:
             return None
-        authority = ServiceContainer.get("relational_memory", default=None)
+        authority = optional_service("relational_memory")
         if authority is None:
             raise RuntimeError("relational memory authority unavailable")
         evidence = hashlib.sha256(
@@ -588,7 +612,7 @@ class IncomingLogicMixin:
 
             # DriveEngine: Satisfy social drive on user contact + relieve boredom
             try:
-                drive = ServiceContainer.get("drive_engine", default=None)
+                drive = optional_service("drive_engine")
                 if drive:
                     self._fire_and_forget(
                         drive.satisfy("social", 15.0), name="drive_social_satisfy"
@@ -604,7 +628,7 @@ class IncomingLogicMixin:
 
             # NeurochemicalSystem: user interaction triggers novelty + social
             try:
-                ncs = ServiceContainer.get("neurochemical_system", default=None)
+                ncs = optional_service("neurochemical_system")
                 if ncs:
                     ncs.on_social_connection(0.2)
                     ncs.on_novelty(0.15)
@@ -695,7 +719,7 @@ class IncomingLogicMixin:
             # v50: Reset idle model swap flag so AutonomicCore knows to
             # re-warm the 32B cortex if it was hibernated.
             try:
-                autonomic = ServiceContainer.get("autonomic_core", default=None)
+                autonomic = optional_service("autonomic_core")
                 if autonomic and hasattr(autonomic, "_reset_idle_swap"):
                     autonomic._reset_idle_swap()
             except (ImportError, AttributeError) as autonomic_err:
@@ -713,7 +737,7 @@ class IncomingLogicMixin:
 
             # v49: Store true semantic memory (Episodic Storage)
             try:
-                vector_mem = ServiceContainer.get("vector_memory_engine", default=None)
+                vector_mem = optional_service("vector_memory_engine")
                 if vector_mem and hasattr(vector_mem, "store"):
                     # Get emotional context for enriched memory
                     affect = ServiceContainer.get("affect_engine", None)
@@ -846,7 +870,7 @@ class IncomingLogicMixin:
                     )
 
                 try:
-                    discourse_tracker = ServiceContainer.get("discourse_tracker", default=None)
+                    discourse_tracker = optional_service("discourse_tracker")
                     if discourse_tracker and _live_state is not None:
                         self._fire_and_forget(
                             discourse_tracker.update(_live_state, message),
@@ -861,8 +885,8 @@ class IncomingLogicMixin:
 
                 # Update Theory of Mind user model (rapport, trust, emotional state)
                 try:
-                    tom = ServiceContainer.get("theory_of_mind", default=None)
-                    if tom:
+                    tom = optional_service("theory_of_mind")
+                    if tom and user_id:
                         self._fire_and_forget(
                             tom.understand_user(
                                 user_id,
@@ -1000,7 +1024,7 @@ class IncomingLogicMixin:
 
             # WIRE-04: Inject Cognitive Brief
             try:
-                kernel = ServiceContainer.get("cognitive_kernel", default=None)
+                kernel = optional_service("cognitive_kernel")
                 if kernel:
                     brief = await kernel.evaluate(
                         message, history=getattr(self, "conversation_history", [])
@@ -1586,7 +1610,7 @@ class IncomingLogicMixin:
                                 "🧠 Legacy bridge request detected; bypassing KernelInterface to avoid recursive re-entry."
                             )
                             if (
-                                cog := ServiceContainer.get("cognitive_integration", default=None)
+                                cog := optional_service("cognitive_integration")
                             ) and cog.is_active:
                                 self._emit_thought_stream(
                                     "🧠 Phase 7: Cognitive Inversion Pipeline engaged..."
@@ -1599,7 +1623,7 @@ class IncomingLogicMixin:
                                 )
                                 final_response = None
                         elif (
-                            cog := ServiceContainer.get("cognitive_integration", default=None)
+                            cog := optional_service("cognitive_integration")
                         ) and cog.is_active:
                             self._emit_thought_stream(
                                 "🧠 Phase 7: Cognitive Inversion Pipeline engaged..."

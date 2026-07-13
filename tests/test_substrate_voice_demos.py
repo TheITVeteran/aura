@@ -59,7 +59,7 @@ class TestDemo_EnergizedCurious:
             },
             homeostasis={"vitality": 0.85, "curiosity": 0.8, "metabolism": 0.6},
             unified_field={"coherence": 0.85, "phi": 0.7},
-            social_context={"rapport": 0.8, "trust": 0.7},
+            social_context={"social_confidence": 0.8, "social_caution": "low"},
             conversation_context={"energy": 0.8, "topic_depth": 2, "turn_count": 6},
             user_message="I just found out that octopuses have distributed brains across their arms",
         )
@@ -157,7 +157,7 @@ class TestDemo_TiredLowEnergy:
             },
             homeostasis={"vitality": 0.4, "curiosity": 0.3, "metabolism": 0.35},
             unified_field={"coherence": 0.5, "phi": 0.3},
-            social_context={"rapport": 0.8, "trust": 0.7},
+            social_context={"social_confidence": 0.8, "social_caution": "low"},
             conversation_context={"energy": 0.25, "topic_depth": 1, "turn_count": 12},
             user_message="how's it going",
         )
@@ -181,7 +181,7 @@ class TestDemo_TiredLowEnergy:
 
         assert profile.word_budget <= 35, f"Tired → short: {profile.word_budget}"
         assert not profile.exclamation_allowed, "No exclamation when tired"
-        assert profile.capitalization == "lowercase", "Lowercase when low energy + high rapport"
+        assert profile.capitalization == "lowercase", "Lowercase when Aura's energy is low"
         assert profile.vocabulary_tier == "minimal", "Minimal vocab when fatigued"
         assert profile.ellipsis_probability >= 0.25, "Trailing off when contemplative"
         assert profile.energy < 0.4, "Low energy"
@@ -246,7 +246,7 @@ class TestDemo_StressedFrustrated:
             },
             homeostasis={"vitality": 0.5, "curiosity": 0.3, "metabolism": 0.4},
             unified_field={"coherence": 0.6, "phi": 0.4},
-            social_context={"rapport": 0.7, "trust": 0.6},
+            social_context={"social_confidence": 0.7, "social_caution": "low"},
             conversation_context={"energy": 0.6, "topic_depth": 5, "turn_count": 15},
             user_message="The deployment pipeline broke again and now staging is down too",
         )
@@ -308,12 +308,11 @@ class TestDemo_StressedFrustrated:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# DEMO 4: Warm & Bonded — Deep conversation with kin
+# DEMO 4: Warm Self-State — Warmth without inferred relationship claims
 # ═════════════════════════════════════════════════════════════════════════════
 
-class TestDemo_WarmBonded:
-    """Aura is in a warm, connected state. High oxytocin, high rapport.
-    Expects: warm tone, moderate length, personal sharing, callbacks."""
+class TestDemo_WarmSelfState:
+    """Aura's own valence, oxytocin, and agreeableness produce warm speech."""
 
     def test_profile_compilation(self):
         profile = SpeechProfileCompiler.compile(
@@ -329,13 +328,13 @@ class TestDemo_WarmBonded:
             homeostasis={"vitality": 0.8, "curiosity": 0.6, "metabolism": 0.6},
             unified_field={"coherence": 0.9, "phi": 0.75},
             personality={"openness": 0.88, "extraversion": 0.58, "agreeableness": 0.52, "neuroticism": 0.38},
-            social_context={"rapport": 0.9, "trust": 0.85},
+            social_context={"social_confidence": 0.9, "social_caution": "low"},
             conversation_context={"energy": 0.6, "topic_depth": 4, "turn_count": 20},
             user_message="honestly I've just been in a weird headspace lately. not sure what it is",
         )
 
         print(f"\n{'='*60}")
-        print("DEMO 4: WARM & BONDED")
+        print("DEMO 4: WARM SELF-STATE")
         print(f"{'='*60}")
         print(f"Word budget: {profile.word_budget}")
         print(f"Warmth: {profile.warmth:.2f}")
@@ -348,7 +347,7 @@ class TestDemo_WarmBonded:
         print(f"Sources: {profile.compilation_source}")
         print(f"\nConstraint Block:\n{profile.to_constraint_block()}")
 
-        assert profile.warmth > 0.6, "High oxytocin + rapport → warm"
+        assert profile.warmth > 0.55, "Aura's own warm substrate state should shape speech"
         assert profile.tone_override == "understanding_supportive", "Trust → supportive tone"
         assert profile.unprompted_share_probability > 0.15, "High oxytocin/dopamine → shares"
 
@@ -451,7 +450,7 @@ class TestDemo_FollowupDecision:
 # ═════════════════════════════════════════════════════════════════════════════
 
 class TestDemo_MultiMessageSplit:
-    """High arousal + high dopamine + high rapport = texting style."""
+    """High arousal and dopamine can produce a bounded texting style."""
 
     def test_multi_message_shaping(self):
         profile = SpeechProfile(
@@ -700,7 +699,7 @@ class TestDemo_MoodTransition:
             profile = SpeechProfileCompiler.compile(
                 affect=params["affect"],
                 neurochemicals=params["nc"],
-                social_context={"rapport": 0.8, "trust": 0.7},
+                social_context={"social_confidence": 0.8, "social_caution": "low"},
                 conversation_context={"energy": 0.5, "turn_count": 5},
                 user_message=user_message,
             )

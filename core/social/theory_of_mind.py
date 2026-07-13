@@ -1,108 +1,184 @@
-"""Theory-of-mind state for modeling separate operator beliefs."""
+"""Evidence-scoped perspective correction over canonical Theory of Mind."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+import math
+from dataclasses import dataclass
+from typing import Any
+
+from core.consciousness.theory_of_mind import TheoryOfMindEngine as CanonicalToM
+
+_FACT_SOURCES = {"authorized_operator_correction", "verified_world_state"}
 
 
-class TheoryOfMindModel:
-    """Estimates the differences between user beliefs and actual system state."""
-
-    def __init__(self):
-        # Maps person -> beliefs dict
-        self._mental_models: Dict[str, Dict[str, Any]] = {}
-
-    def update_user_belief(self, person: str, key: str, value: Any) -> None:
-        if person not in self._mental_models:
-            self._mental_models[person] = {}
-        self._mental_models[person][key] = value
-
-    def check_belief_discrepancy(self, person: str, actual_state: Dict[str, Any]) -> Dict[str, Any]:
-        """Identifies discrepancies between user expectations and system reality."""
-        user_beliefs = self._mental_models.get(person, {})
-        discrepancies = {}
-        
-        for key, user_val in user_beliefs.items():
-            if key in actual_state and actual_state[key] != user_val:
-                discrepancies[key] = {
-                    "user_believed": user_val,
-                    "actual_value": actual_state[key]
-                }
-        return discrepancies
+def _normalized(value: Any, *, field: str, limit: int) -> str:
+    result = " ".join(str(value or "").strip().split())[:limit]
+    if not result:
+        raise ValueError(f"{field} must be non-empty")
+    return result
 
 
-@dataclass
-class BeliefState:
-    """Aura's current believed facts for lightweight ToM correction flows."""
+def _digest(value: Any) -> str:
+    result = str(value or "").strip().casefold()
+    if len(result) != 64 or any(char not in "0123456789abcdef" for char in result):
+        raise ValueError("evidence_digest must be a SHA-256 hex digest")
+    return result
 
-    beliefs: Dict[str, Any] = field(default_factory=dict)
+
+def _confidence(value: Any) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("confidence must be finite and between zero and one") from exc
+    if not math.isfinite(result) or not 0.0 <= result <= 1.0:
+        raise ValueError("confidence must be finite and between zero and one")
+    return result
 
 
-@dataclass
-class TrustState:
-    """Mutable trust calibration for belief-correction interactions."""
-
-    trust: float = 1.0
-
-    def lower(self, amount: float = 0.05) -> None:
-        self.trust = max(0.0, min(1.0, self.trust - amount))
+@dataclass(frozen=True)
+class EvidenceClaim:
+    value: Any
+    evidence_digest: str
+    source: str
+    confidence: float
 
 
 class PerspectiveSimulator:
-    """Compares Aura-known facts with an operator's modeled beliefs."""
+    """Compares verified task facts with sourced beliefs for one exact agent."""
 
-    def __init__(self, *, person: str = "user"):
-        self.person = person
-        self.aura_beliefs: Dict[str, Any] = {}
-        self.user_model = TheoryOfMindModel()
+    def __init__(self, *, person: str, canonical: CanonicalToM) -> None:
+        self.person = _normalized(person, field="person", limit=160)
+        self._canonical = canonical
+        self._actual_facts: dict[str, EvidenceClaim] = {}
 
-    def aura_knows(self, key: str, value: Any) -> None:
-        self.aura_beliefs[str(key)] = value
+    @property
+    def aura_beliefs(self) -> dict[str, Any]:
+        """Compatibility view of verified task facts, detached from internal state."""
+        return {key: claim.value for key, claim in self._actual_facts.items()}
 
-    def user_believes(self, key: str, value: Any) -> None:
-        self.user_model.update_user_belief(self.person, str(key), value)
+    def aura_knows(
+        self,
+        key: str,
+        value: Any,
+        *,
+        evidence_digest: str,
+        source: str = "verified_world_state",
+        confidence: float = 1.0,
+    ) -> None:
+        normalized_key = _normalized(key, field="fact key", limit=100)
+        normalized_source = _normalized(source, field="fact source", limit=80)
+        if normalized_source not in _FACT_SOURCES:
+            raise ValueError("fact source is not verified")
+        self._actual_facts[normalized_key] = EvidenceClaim(
+            value=value,
+            evidence_digest=_digest(evidence_digest),
+            source=normalized_source,
+            confidence=_confidence(confidence),
+        )
 
-    def divergence(self, key: str) -> Optional[Dict[str, Any]]:
-        key = str(key)
-        user_beliefs = self.user_model._mental_models.get(self.person, {})
-        aura_has = key in self.aura_beliefs
-        user_has = key in user_beliefs
-        if aura_has and user_has and self.aura_beliefs[key] != user_beliefs[key]:
-            return {
-                "kind": "false_belief",
-                "key": key,
-                "aura_value": self.aura_beliefs[key],
-                "user_value": user_beliefs[key],
-            }
-        if aura_has and not user_has:
+    def user_believes(
+        self,
+        key: str,
+        value: Any,
+        *,
+        evidence_digest: str,
+        source: str = "observed_task_state",
+        confidence: float = 0.8,
+    ) -> bool:
+        return bool(
+            self._canonical.record_belief_hypothesis(
+                self.person,
+                key=key,
+                value=value,
+                confidence=confidence,
+                evidence_digest=evidence_digest,
+                source=source,
+            )
+        )
+
+    def divergence(self, key: str) -> dict[str, Any] | None:
+        normalized_key = _normalized(key, field="fact key", limit=100)
+        actual = self._actual_facts.get(normalized_key)
+        if actual is None:
+            return None
+        hypotheses = self._canonical.get_belief_hypotheses(self.person)
+        believed = hypotheses.get(normalized_key)
+        if believed is None:
             return {
                 "kind": "knowledge_gap",
-                "key": key,
-                "aura_value": self.aura_beliefs[key],
+                "key": normalized_key,
+                "aura_value": actual.value,
+                "actual_evidence_digest": actual.evidence_digest,
+                "confidence": actual.confidence,
+                "hypothesis": True,
             }
-        return None
+        if believed.get("value") == actual.value:
+            return None
+        return {
+            "kind": "false_belief",
+            "key": normalized_key,
+            "aura_value": actual.value,
+            "user_value": believed.get("value"),
+            "actual_evidence_digest": actual.evidence_digest,
+            "belief_evidence_digest": believed.get("evidence_digest"),
+            "confidence": min(
+                actual.confidence,
+                float(believed.get("confidence") or 0.0),
+            ),
+            "hypothesis": True,
+        }
 
 
-class TheoryOfMindEngine:
-    """Operational ToM facade used by explanation and correction flows."""
+class PerspectiveCorrectionEngine:
+    """Compatibility facade without an independent person or trust model."""
 
-    def __init__(self, *, person: str = "user"):
-        self.simulator = PerspectiveSimulator(person=person)
-        self.belief = BeliefState()
-        self.trust = TrustState()
+    def __init__(
+        self,
+        *,
+        person: str,
+        canonical: CanonicalToM | None = None,
+    ) -> None:
+        self.person = _normalized(person, field="person", limit=160)
+        self.canonical = canonical or CanonicalToM()
+        self.simulator = PerspectiveSimulator(
+            person=self.person,
+            canonical=self.canonical,
+        )
 
     def explanation_strategy(self, key: str) -> str:
         divergence = self.simulator.divergence(key)
         if not divergence:
             return "confirm_shared_context"
-        kind = divergence.get("kind")
-        if kind == "false_belief":
+        if divergence["kind"] == "false_belief":
             return "respectfully_correct_false_belief"
-        if kind == "knowledge_gap":
+        if divergence["kind"] == "knowledge_gap":
             return "explain_from_first_principles"
         return "collaborative_clarification"
 
-    def record_correction(self, *, key: str, correct_value: Any) -> None:
-        self.belief.beliefs[str(key)] = correct_value
-        self.simulator.aura_knows(str(key), correct_value)
-        self.trust.lower()
+    def record_correction(
+        self,
+        *,
+        key: str,
+        correct_value: Any,
+        evidence_digest: str,
+        source: str = "authorized_operator_correction",
+        confidence: float = 1.0,
+    ) -> None:
+        """Correct verified task state without mutating relational trust."""
+        self.simulator.aura_knows(
+            key,
+            correct_value,
+            evidence_digest=evidence_digest,
+            source=source,
+            confidence=confidence,
+        )
+
+
+# Compatibility import for the old module path. This is an adapter, not an owner.
+TheoryOfMindEngine = PerspectiveCorrectionEngine
+
+__all__ = [
+    "EvidenceClaim",
+    "PerspectiveCorrectionEngine",
+    "PerspectiveSimulator",
+    "TheoryOfMindEngine",
+]

@@ -6,7 +6,7 @@ single priority bias that the GlobalWorkspace scorer consumes.
 Sources:
     • HemisphericSplit.fused_bias()                — left/right fusion
     • MinimalSelfhood.get_priority_bias()          — chemotaxis/directed
-    • RecursiveTheoryOfMind.get_observer_bias()    — scrub-jay effect
+    • ObserverContextModel.get_observer_bias()     — interactive privacy posture
 
 Fusion rule:
     final = tanh(
@@ -15,10 +15,9 @@ Fusion rule:
       + w_observer   * observer_bias
     )
 
-The default weights are tuned so that each layer can dominate in its
-regime: selfhood dominates when body budget is in deficit, observer
-dominates when many observers are watching, hemispheric dominates
-otherwise.
+The observer input prioritizes the active interaction and suppresses unrelated
+private/background categories while a person is present. It never boosts tool
+use or treats presence as evidence about a person's beliefs.
 
 This keeps the biases COMPOSABLE — each layer's intended contribution
 is visible in the fused vector and attributable via
@@ -31,7 +30,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 import numpy as np
 
@@ -71,7 +70,7 @@ class UnifiedCognitiveBias:
         arr = np.asarray(x, dtype=np.float32).reshape(-1)
         if arr.size < BIAS_DIM:
             arr = np.pad(arr, (0, BIAS_DIM - arr.size))
-        return arr[:BIAS_DIM]
+        return cast(np.ndarray, arr[:BIAS_DIM])
 
     def fuse(self,
              hemi_bias: Optional[np.ndarray],

@@ -2985,22 +2985,6 @@
       "scope": "<module>.SynapticPlasticityEngine._persist_state"
     },
     {
-      "callee": "<file_write_gateway>.ensure_directory",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/consciousness/theory_of_mind.py",
-      "scope": "<module>.TheoryOfMindEngine.save"
-    },
-    {
-      "callee": "<file_write_gateway>.write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/consciousness/theory_of_mind.py",
-      "scope": "<module>.TheoryOfMindEngine.save"
-    },
-    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -13482,6 +13466,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "045ea530c5bcc3199bca05c3091e881f2432a901a317dbdc50de4eddce9b859c",
+  "inventory_sha256": "b18528837d3cd6293b1e769f65df8afb4d374d83afbcda29d0b255629f43cfba",
   "schema_version": 1
 }

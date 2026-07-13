@@ -1,328 +1,371 @@
-"""core/consciousness/recursive_tom.py
-========================================
-Recursive Theory of Mind — observer-aware action modulation.
+"""Exact-agent observer context backed by calibrated social evidence.
 
-Extends the existing ``theory_of_mind`` engine with two deep-ToM capabilities
-from the Kurzgesagt consciousness-origins and secret-place videos plus the
-scrub-jay cache-protection literature:
-
-    1. RECURSIVE MIND NESTING (depth ≥ 3)
-       For any agent ``X``, Aura maintains
-
-           M0[X] = Aura's beliefs about X                    (depth 0)
-           M1[X] = Aura's beliefs about X's beliefs about Aura
-           M2[X] = Aura's beliefs about X's beliefs about
-                   Aura's beliefs about X
-           M3[X] = Aura's beliefs about X's beliefs about Aura's
-                   beliefs about X's beliefs about Aura
-
-       These nested structures are real dict trees, enforced up to
-       ``MAX_DEPTH``.  Each level holds a compact state (salience,
-       trust, knowledge, expectation).  When we update M0 we
-       propagate reflected updates up the tree.
-
-    2. OBSERVER-AWARE ACTION BIAS (scrub-jay re-caching)
-       Western scrub jays re-hide food when a competitor has been
-       watching them cache it.  Behaviour changes as a function of
-       perceived observation.  Aura does the same: when one or more
-       agents are believed to be observing, the ``get_observer_bias``
-       method returns a BIAS_DIM vector that
-
-           • lowers priority for "private" action categories
-             (``self_inspect``, ``dream``, ``revise_goal``,
-             ``rehearse_memory``)
-           • raises priority for "public" action categories
-             (``emit_narrative``, ``engage_social``,
-             ``approach_other``, ``tool_use``)
-
-       The ``ObserverPresence`` tracker decides who is currently
-       watching based on recent interactions + explicit markers.
-       When nobody is watching, the bias collapses to zero (no
-       distortion).
-
-Impact on substrate:
-    The observer bias is combined with the hemispheric and selfhood
-    biases in ``UnifiedCognitiveBias`` (see unified_cognitive_bias.py)
-    to produce a single BIAS_DIM vector that the GlobalWorkspace
-    priority scorer consumes.
-
-Registered as ``recursive_tom`` in ServiceContainer.  Fed by the
-conversation layer (``observe_agent(id)``, ``register_interaction``)
-and by ClosedCausalLoop (``tick()``).
+The historical module fabricated three nested minds from one caller-supplied
+trust value. This compatibility surface retains the useful, causal capability:
+an ephemeral account of who is actively interacting and a privacy posture that
+suppresses unrelated private/background activity while a person is present.
+It does not claim recursive beliefs without recursive evidence.
 """
 from __future__ import annotations
 
-
-import logging
+import math
 import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
-logger = logging.getLogger("Consciousness.RecursiveToM")
+MAX_DEPTH = 0
+BIAS_DIM = 16
+OBSERVER_DECAY_S = 60.0
 
-
-# ── Configuration ────────────────────────────────────────────────────────────
-
-MAX_DEPTH = 3                            # Maximum nested ToM levels
-BIAS_DIM = 16                            # Matches ACTION_CATEGORIES
-OBSERVER_DECAY_S = 60.0                  # Presence decays after this many seconds
-
-# Named action categories (kept in sync with minimal_selfhood.ACTION_CATEGORIES)
-ACTION_CATEGORIES: Tuple[str, ...] = (
-    "rest", "explore", "engage_social", "consolidate",
-    "tool_use", "pattern_match", "self_inspect", "approach_other",
-    "withdraw", "attend_body", "dream", "persist_goal",
-    "revise_goal", "rehearse_memory", "emit_narrative", "pause",
+ACTION_CATEGORIES: tuple[str, ...] = (
+    "rest",
+    "explore",
+    "engage_social",
+    "consolidate",
+    "tool_use",
+    "pattern_match",
+    "self_inspect",
+    "approach_other",
+    "withdraw",
+    "attend_body",
+    "dream",
+    "persist_goal",
+    "revise_goal",
+    "rehearse_memory",
+    "emit_narrative",
+    "pause",
 )
+FOREGROUND_ACTIONS = {"engage_social", "emit_narrative", "pause"}
+BACKGROUND_PRIVATE_ACTIONS = {
+    "self_inspect",
+    "dream",
+    "revise_goal",
+    "rehearse_memory",
+}
+# Compatibility names; tool use is intentionally absent from foreground boosts.
+PUBLIC_ACTIONS = FOREGROUND_ACTIONS
+PRIVATE_ACTIONS = BACKGROUND_PRIVATE_ACTIONS
+_OBSERVATION_KINDS = {
+    "conversation_turn",
+    "paired_device_turn",
+    "voice_session",
+    "explicit_presence",
+}
+_AFFECT_SIGNALS = {"frustration", "urgency", "fatigue", "uncertainty"}
 
-# Indices used by the observer bias.
-PUBLIC_ACTIONS = {"emit_narrative", "engage_social", "approach_other", "tool_use"}
-PRIVATE_ACTIONS = {"self_inspect", "dream", "revise_goal", "rehearse_memory"}
+
+def _agent_id(value: Any) -> str:
+    normalized = " ".join(str(value or "").strip().split())[:160]
+    if not normalized:
+        raise ValueError("observer context requires an exact non-empty agent_id")
+    return normalized
 
 
-# ── Data structures ──────────────────────────────────────────────────────────
+def _digest(value: Any) -> str:
+    normalized = str(value or "").strip().casefold()
+    if len(normalized) != 64 or any(
+        char not in "0123456789abcdef" for char in normalized
+    ):
+        raise ValueError("observer evidence_digest must be a SHA-256 hex digest")
+    return normalized
 
-@dataclass
+
+def _number(value: Any, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return default
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return result if math.isfinite(result) else default
+
+
+def _clamp(value: Any, default: float = 0.0) -> float:
+    return min(1.0, max(0.0, _number(value, default)))
+
+
+@dataclass(frozen=True)
 class MindSnapshot:
-    """A compact simulation of another mind at a given nesting depth."""
+    """Bounded depth-zero projection from the canonical social estimator."""
+
     agent_id: str
     depth: int
-    salience: float = 0.5            # How strongly present in current cognition
-    trust: float = 0.5               # Reliability assessment
-    knowledge_overlap: float = 0.5   # Shared-knowledge estimate
-    expectation: float = 0.5         # What they seem to want next
-    emotional_valence: float = 0.0   # -1..1, their felt state
-    last_updated: float = field(default_factory=time.time)
-    # Nested level: what THIS agent believes, at the next depth.
-    nested: Optional["MindSnapshot"] = None
+    confidence: float
+    observations: int
+    social_rupture_risk: float
+    evidence_digest: str
+    affect_hypotheses: dict[str, dict[str, float]]
+    captured_at: float
+    hypothesis: bool = True
+    nested: None = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        out = {
+    def to_dict(self) -> dict[str, Any]:
+        return {
             "agent_id": self.agent_id,
             "depth": self.depth,
-            "salience": round(self.salience, 3),
-            "trust": round(self.trust, 3),
-            "knowledge_overlap": round(self.knowledge_overlap, 3),
-            "expectation": round(self.expectation, 3),
-            "emotional_valence": round(self.emotional_valence, 3),
+            "confidence": round(self.confidence, 3),
+            "observations": self.observations,
+            "social_rupture_risk": round(self.social_rupture_risk, 3),
+            "evidence_digest": self.evidence_digest,
+            "affect_hypotheses": self.affect_hypotheses,
+            "captured_at": self.captured_at,
+            "hypothesis": True,
+            "recursive_claimed": False,
         }
-        if self.nested is not None:
-            out["nested"] = self.nested.to_dict()
-        return out
 
     def depth_reached(self) -> int:
-        if self.nested is None:
-            return self.depth
-        return self.nested.depth_reached()
+        return 0
 
 
-@dataclass
+@dataclass(frozen=True)
 class ObservationEvent:
     agent_id: str
     ts: float
-    kind: str           # "explicit" | "implicit" | "camera" | "log_tail"
-    strength: float     # [0, 1]
+    kind: str
+    strength: float
+    evidence_digest: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class BiasProfile:
-    """Observer-aware bias profile. Positive entries raise priority."""
+    """Privacy posture bias. Positive entries prioritize the active turn."""
+
     bias: np.ndarray
-    total_observer_presence: float      # [0, 1], combined normalized presence
-    active_observers: List[str]
+    total_observer_presence: float
+    active_observers: list[str]
+    privacy_posture: str
     ts: float = field(default_factory=time.time)
 
 
-# ── Recursive ToM ─────────────────────────────────────────────────────────────
+class ObserverContextModel:
+    """Tracks digest-backed presence and canonical depth-zero hypotheses."""
 
-class RecursiveTheoryOfMind:
-    """Maintains per-agent nested mind models and an observer-presence tracker."""
-
-    def __init__(self, max_depth: int = MAX_DEPTH):
+    def __init__(self, max_depth: int = MAX_DEPTH) -> None:
+        if max_depth != 0:
+            raise ValueError("recursive depth requires explicit nested evidence support")
         self._lock = threading.RLock()
-        self._max_depth = max_depth
-        self._minds: Dict[str, MindSnapshot] = {}
-        self._observations: Deque[ObservationEvent] = deque(maxlen=512)
-        self._last_presence: Dict[str, float] = {}    # agent -> presence score
-        logger.info(
-            "RecursiveTheoryOfMind initialized: max_depth=%d, bias_dim=%d",
-            max_depth, BIAS_DIM,
-        )
+        self._snapshots: dict[str, MindSnapshot] = {}
+        self._observations: deque[ObservationEvent] = deque(maxlen=512)
+        self._last_presence: dict[str, float] = {}
 
-    # ── Mind-model updates ────────────────────────────────────────────────
-
-    def observe_agent(self, agent_id: str, kind: str = "implicit",
-                      strength: float = 0.6) -> None:
-        """Register an observation event that agent ``id`` is present."""
-        if strength <= 0:
-            return
-        ev = ObservationEvent(agent_id=agent_id, ts=time.time(),
-                              kind=kind, strength=min(1.0, max(0.0, strength)))
-        with self._lock:
-            self._observations.append(ev)
-            self._refresh_presence_locked(agent_id)
-
-    def register_interaction(self, agent_id: str, salience: float = 0.7,
-                              valence: float = 0.0, knowledge: float = 0.5,
-                              trust: float = 0.5,
-                              their_expectation: float = 0.5) -> MindSnapshot:
-        """Update M0[agent_id] with directly observed interaction state, and
-        reflect plausibly upward into nested levels."""
+    def observe_agent(
+        self,
+        agent_id: str,
+        *,
+        kind: str = "conversation_turn",
+        strength: float = 0.6,
+        evidence_digest: str,
+        observed_at: float | None = None,
+    ) -> bool:
+        exact_id = _agent_id(agent_id)
+        normalized_kind = " ".join(str(kind or "").strip().split())[:40]
+        if normalized_kind not in _OBSERVATION_KINDS:
+            raise ValueError("observer kind is not an accepted presence source")
+        normalized_digest = _digest(evidence_digest)
+        bounded_strength = _clamp(strength)
+        if bounded_strength <= 0.0:
+            return False
         now = time.time()
+        timestamp = _number(now if observed_at is None else observed_at)
+        if timestamp <= 0.0 or timestamp > now + 5.0:
+            raise ValueError("observer timestamp must be finite, positive, and current")
         with self._lock:
-            root = self._minds.get(agent_id)
-            if root is None:
-                root = self._new_snapshot(agent_id, depth=0)
-                self._minds[agent_id] = root
-            self._blend(root, salience, valence, knowledge, trust, their_expectation)
-            root.last_updated = now
+            if any(
+                event.agent_id == exact_id
+                and event.evidence_digest == normalized_digest
+                for event in self._observations
+            ):
+                return False
+            self._observations.append(
+                ObservationEvent(
+                    agent_id=exact_id,
+                    ts=timestamp,
+                    kind=normalized_kind,
+                    strength=bounded_strength,
+                    evidence_digest=normalized_digest,
+                )
+            )
+            self._refresh_presence_locked(exact_id, now=timestamp)
+        return True
 
-            # Propagate reflected updates up the stack (M1, M2, ...).
-            cur = root
-            for d in range(1, self._max_depth + 1):
-                if cur.nested is None:
-                    cur.nested = self._new_snapshot(agent_id, depth=d)
-                # Reflection heuristic: nested belief approximately tracks
-                # the parent's snapshot but dampened (we're less certain
-                # how they model us).
-                cur.nested.salience = 0.5 * cur.salience + 0.5 * cur.nested.salience
-                cur.nested.trust = 0.5 * (1.0 - abs(0.5 - cur.trust)) + 0.5 * cur.nested.trust
-                cur.nested.knowledge_overlap = 0.6 * cur.knowledge_overlap + 0.4 * cur.nested.knowledge_overlap
-                cur.nested.expectation = 0.5 * cur.expectation + 0.5 * cur.nested.expectation
-                cur.nested.emotional_valence = -0.3 * cur.emotional_valence + 0.7 * cur.nested.emotional_valence
-                cur.nested.last_updated = now
-                cur = cur.nested
-            return root
-
-    def get_mind(self, agent_id: str) -> Optional[MindSnapshot]:
+    def register_interaction(
+        self,
+        agent_id: str,
+        snapshot: dict[str, Any],
+    ) -> MindSnapshot:
+        """Accept one calibrated estimator snapshot without inventing nesting."""
+        exact_id = _agent_id(agent_id)
+        if not isinstance(snapshot, dict) or snapshot.get("agent_id") != exact_id:
+            raise ValueError("social snapshot must match the exact agent_id")
+        evidence_digest = _digest(snapshot.get("evidence_digest"))
+        affect = snapshot.get("affect_hypotheses")
+        affect = affect if isinstance(affect, dict) else {}
+        sanitized_affect: dict[str, dict[str, float]] = {}
+        for name in sorted(_AFFECT_SIGNALS):
+            raw = affect.get(name)
+            if not isinstance(raw, dict):
+                continue
+            confidence = _clamp(raw.get("confidence"))
+            if confidence <= 0.0:
+                continue
+            sanitized_affect[name] = {
+                "value": round(_clamp(raw.get("value")), 4),
+                "confidence": round(confidence, 4),
+            }
+        now = time.time()
+        captured_at = _number(snapshot.get("at"), now)
+        if captured_at <= 0.0 or captured_at > now + 5.0:
+            captured_at = now
+        projection = MindSnapshot(
+            agent_id=exact_id,
+            depth=0,
+            confidence=_clamp(snapshot.get("confidence")),
+            observations=min(1_000_000, max(0, int(_number(snapshot.get("observations"))))),
+            social_rupture_risk=_clamp(snapshot.get("social_rupture_risk")),
+            evidence_digest=evidence_digest,
+            affect_hypotheses=sanitized_affect,
+            captured_at=captured_at,
+        )
         with self._lock:
-            return self._minds.get(agent_id)
+            current = self._snapshots.get(exact_id)
+            if current is None or current.evidence_digest != evidence_digest:
+                self._snapshots[exact_id] = projection
+                return projection
+            return current
 
-    def get_mind_at_depth(self, agent_id: str, depth: int) -> Optional[MindSnapshot]:
-        if depth < 0 or depth > self._max_depth:
+    def get_mind(self, agent_id: str) -> MindSnapshot | None:
+        with self._lock:
+            return self._snapshots.get(_agent_id(agent_id))
+
+    def get_mind_at_depth(self, agent_id: str, depth: int) -> MindSnapshot | None:
+        if depth != 0:
             return None
-        with self._lock:
-            cur = self._minds.get(agent_id)
-            for _ in range(depth):
-                if cur is None:
-                    return None
-                cur = cur.nested
-            return cur
+        return self.get_mind(agent_id)
 
     def depth_reached(self, agent_id: str) -> int:
+        return 0 if self.get_mind(agent_id) is not None else -1
+
+    def forget_agent(self, agent_id: str) -> None:
+        exact_id = _agent_id(agent_id)
         with self._lock:
-            root = self._minds.get(agent_id)
-            return root.depth_reached() if root else -1
+            self._snapshots.pop(exact_id, None)
+            self._last_presence.pop(exact_id, None)
+            self._observations = deque(
+                (
+                    event
+                    for event in self._observations
+                    if event.agent_id != exact_id
+                ),
+                maxlen=512,
+            )
 
-    # ── Observer presence ─────────────────────────────────────────────────
-
-    def _refresh_presence_locked(self, agent_id: str) -> None:
-        """Compute exponential-decay presence for a specific agent."""
-        now = time.time()
+    def _refresh_presence_locked(self, agent_id: str, *, now: float | None = None) -> None:
+        timestamp = time.time() if now is None else now
         score = 0.0
-        for ev in self._observations:
-            if ev.agent_id != agent_id:
+        for event in self._observations:
+            if event.agent_id != agent_id:
                 continue
-            dt = max(0.0, now - ev.ts)
-            decay = max(0.0, 1.0 - dt / OBSERVER_DECAY_S)
-            score += ev.strength * decay
+            elapsed = max(0.0, timestamp - event.ts)
+            score += event.strength * max(0.0, 1.0 - elapsed / OBSERVER_DECAY_S)
         self._last_presence[agent_id] = min(1.0, score)
 
-    def active_observers(self, threshold: float = 0.15) -> List[Tuple[str, float]]:
-        """Agents whose observer-presence is above ``threshold``."""
+    def active_observers(self, threshold: float = 0.15) -> list[tuple[str, float]]:
+        bounded_threshold = _clamp(threshold)
         with self._lock:
-            # Refresh presence for all known observers.
-            seen = {ev.agent_id for ev in self._observations}
-            for aid in seen:
-                self._refresh_presence_locked(aid)
+            seen = {event.agent_id for event in self._observations}
+            for agent_id in seen:
+                self._refresh_presence_locked(agent_id)
             return sorted(
-                ((aid, p) for aid, p in self._last_presence.items() if p >= threshold),
-                key=lambda kv: -kv[1],
+                (
+                    (agent_id, presence)
+                    for agent_id, presence in self._last_presence.items()
+                    if presence >= bounded_threshold
+                ),
+                key=lambda item: (-item[1], item[0]),
             )
 
     def total_observer_presence(self) -> float:
-        """Aggregated normalized presence in [0, 1]."""
-        actives = self.active_observers(threshold=0.05)
-        if not actives:
-            return 0.0
-        # Soft-cap via tanh on sum of presences.
-        total = float(np.tanh(sum(p for _, p in actives)))
-        return min(1.0, total)
-
-    # ── Observer-aware bias ──────────────────────────────────────────────
+        active = self.active_observers(threshold=0.05)
+        return min(1.0, float(np.tanh(sum(value for _, value in active))))
 
     def get_observer_bias(self) -> BiasProfile:
-        """Scrub-jay style bias: when someone is watching, private behaviors
-        get suppressed and public-facing ones get boosted."""
-        bias = np.zeros(BIAS_DIM, dtype=np.float32)
-        actives = self.active_observers(threshold=0.15)
-        if not actives:
-            return BiasProfile(bias=bias, total_observer_presence=0.0, active_observers=[])
-
+        bias: np.ndarray = np.zeros(BIAS_DIM, dtype=np.float32)
+        active = self.active_observers(threshold=0.15)
+        if not active:
+            return BiasProfile(
+                bias=bias,
+                total_observer_presence=0.0,
+                active_observers=[],
+                privacy_posture="background",
+            )
         presence = self.total_observer_presence()
-        for i, name in enumerate(ACTION_CATEGORIES):
-            if name in PUBLIC_ACTIONS:
-                bias[i] += 0.6 * presence
-            elif name in PRIVATE_ACTIONS:
-                bias[i] -= 0.7 * presence
-        # Squish.
-        bias = np.tanh(bias).astype(np.float32)
-
+        for index, category in enumerate(ACTION_CATEGORIES):
+            if category in FOREGROUND_ACTIONS:
+                bias[index] += 0.45 * presence
+            elif category in BACKGROUND_PRIVATE_ACTIONS:
+                bias[index] -= 0.8 * presence
         return BiasProfile(
-            bias=bias,
+            bias=np.tanh(bias).astype(np.float32),
             total_observer_presence=presence,
-            active_observers=[aid for aid, _ in actives],
+            active_observers=[agent_id for agent_id, _ in active],
+            privacy_posture="interactive",
         )
 
-    # ── Snapshot helpers ──────────────────────────────────────────────────
-
-    def _new_snapshot(self, agent_id: str, depth: int) -> MindSnapshot:
-        return MindSnapshot(
-            agent_id=agent_id, depth=depth,
-            salience=0.5, trust=0.5,
-            knowledge_overlap=0.5, expectation=0.5,
-            emotional_valence=0.0,
+    def should_defer_background_action(self, action_category: str) -> bool:
+        return (
+            action_category in BACKGROUND_PRIVATE_ACTIONS
+            and self.total_observer_presence() >= 0.15
         )
 
-    @staticmethod
-    def _blend(s: MindSnapshot, salience: float, valence: float,
-               knowledge: float, trust: float, expectation: float,
-               alpha: float = 0.3) -> None:
-        s.salience = float(np.clip((1 - alpha) * s.salience + alpha * salience, 0.0, 1.0))
-        s.emotional_valence = float(np.clip((1 - alpha) * s.emotional_valence + alpha * valence, -1.0, 1.0))
-        s.knowledge_overlap = float(np.clip((1 - alpha) * s.knowledge_overlap + alpha * knowledge, 0.0, 1.0))
-        s.trust = float(np.clip((1 - alpha) * s.trust + alpha * trust, 0.0, 1.0))
-        s.expectation = float(np.clip((1 - alpha) * s.expectation + alpha * expectation, 0.0, 1.0))
-
-    # ── Public diagnostics ───────────────────────────────────────────────
-
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
+        active = self.active_observers(threshold=0.1)
         with self._lock:
-            actives = self.active_observers(threshold=0.1)
             return {
-                "n_minds": len(self._minds),
-                "max_depth": self._max_depth,
+                "model": "observer_context",
+                "recursive_mind_claims": False,
+                "max_supported_depth": 0,
+                "snapshot_count": len(self._snapshots),
                 "total_observer_presence": round(self.total_observer_presence(), 4),
+                "privacy_posture": "interactive" if active else "background",
                 "active_observers": [
-                    {"id": aid, "presence": round(p, 3)} for aid, p in actives
+                    {"id": agent_id, "presence": round(presence, 3)}
+                    for agent_id, presence in active
                 ],
-                "minds": {
-                    aid: m.to_dict() for aid, m in self._minds.items()
+                "snapshots": {
+                    agent_id: snapshot.to_dict()
+                    for agent_id, snapshot in self._snapshots.items()
                 },
             }
 
 
-# ── Singleton accessor ────────────────────────────────────────────────────────
+# Compatibility class and service names while callers migrate terminology.
+RecursiveTheoryOfMind = ObserverContextModel
 
-_INSTANCE: Optional[RecursiveTheoryOfMind] = None
+_INSTANCE: ObserverContextModel | None = None
 
 
-def get_recursive_tom() -> RecursiveTheoryOfMind:
+def get_recursive_tom() -> ObserverContextModel:
     global _INSTANCE
     if _INSTANCE is None:
-        _INSTANCE = RecursiveTheoryOfMind()
+        _INSTANCE = ObserverContextModel()
     return _INSTANCE
+
+
+__all__ = [
+    "ACTION_CATEGORIES",
+    "BACKGROUND_PRIVATE_ACTIONS",
+    "BIAS_DIM",
+    "BiasProfile",
+    "FOREGROUND_ACTIONS",
+    "MAX_DEPTH",
+    "MindSnapshot",
+    "ObserverContextModel",
+    "PRIVATE_ACTIONS",
+    "PUBLIC_ACTIONS",
+    "RecursiveTheoryOfMind",
+    "get_recursive_tom",
+]

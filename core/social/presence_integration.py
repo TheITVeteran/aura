@@ -140,7 +140,7 @@ def apply_presence_patch(orchestrator):
         record_degradation('presence_integration', e)
         logger.warning("SocialMemory init failed: %s", e)
 
-    # 9. TheoryOfMind (user model: rapport, trust, emotional state)
+    # 9. Canonical exact-agent TheoryOfMind evidence projection
     try:
         if not get_runtime_service("theory_of_mind", default=None):
             from core.consciousness.theory_of_mind import get_theory_of_mind

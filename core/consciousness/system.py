@@ -320,19 +320,19 @@ class ConsciousnessSystem:
             )
             logger.warning("Could not initialize MinimalSelfhood: %s", e)
 
-        # Layer 5e: RecursiveToM — depth-3 nested minds + observer-aware bias
+        # Layer 5e: exact-agent observer context and interactive privacy posture
         try:
             from .recursive_tom import get_recursive_tom
 
             self.recursive_tom = get_recursive_tom()
             register_runtime_service("recursive_tom", self.recursive_tom)
             self._mark_layer_online("recursive_tom")
-            logger.info("🧠 Layer 5e: RecursiveToM ONLINE (max_depth=3, observer-aware)")
+            logger.info("Layer 5e: ObserverContext ONLINE (evidence-bounded)")
         except (ImportError, AttributeError, RuntimeError) as e:
             self._mark_layer_degraded(
                 "recursive_tom",
                 e,
-                action="continued consciousness start without recursive theory-of-mind layer",
+                action="continued consciousness start without observer-context privacy posture",
             )
             logger.warning("Could not initialize RecursiveToM: %s", e)
 

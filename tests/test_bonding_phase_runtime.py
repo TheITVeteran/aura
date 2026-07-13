@@ -1,7 +1,6 @@
 import asyncio
 from types import SimpleNamespace
 
-from core.phases import bonding_phase as bonding_module
 from core.phases.bonding_phase import BondingPhase
 from core.runtime.errors import get_degradation_tracker
 from core.state.aura_state import AuraState
@@ -47,25 +46,28 @@ def test_bonding_phase_repairs_missing_growth_keys_for_deep_bonding():
     asyncio.run(scenario())
 
 
-def test_bonding_phase_uses_neutral_rapport_when_service_fails(monkeypatch):
-    def unavailable(*_args, **_kwargs):
-        unavailable.called = True
-        raise RuntimeError("theory unavailable")
+def test_bonding_phase_does_not_consume_person_specific_tom_state():
+    class NoPersonModelReads:
+        def get(self, *_args, **_kwargs):
+            raise AssertionError("bonding phase must not read a person model")
 
     async def scenario():
         get_degradation_tracker().reset()
-        monkeypatch.setattr(bonding_module, "get_runtime_service", unavailable)
         state = AuraState()
         state.cognition.current_origin = "admin"
         before = state.identity.bonding_level
 
-        await BondingPhase().execute(state, objective="still a real user turn")
+        await BondingPhase(NoPersonModelReads()).execute(
+            state,
+            objective="still a real user turn",
+        )
 
-        assert unavailable.called is True
         assert state.identity.bonding_level > before
-        assert get_degradation_tracker().count("bonding_phase") == 1
+        assert state.cognition.modifiers["bonding_phase"][
+            "person_specific_relationship_claimed"
+        ] is False
+        assert get_degradation_tracker().count("bonding_phase") == 0
 
-    unavailable.called = False
     asyncio.run(scenario())
 
 

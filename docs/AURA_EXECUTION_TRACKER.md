@@ -16,10 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Theory-of-Mind, joy-social, and
-  remaining canonical person-model consolidation
+- Current bounded implementation milestone: **Other-agent estimator authority,
+  joy-social, and remaining canonical person-model consolidation
   (`MEMORY-001`, `MIND-001`, `STATE-001`, `CTX3-SOCIAL-001..002`)**, following
-  the canonical relationship-topology authority recorded in Checkpoint 47.
+  the evidence-bounded ToM/observer checkpoint recorded in Checkpoint 48.
   `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
@@ -2052,16 +2052,15 @@ This compact map now mirrors the executable contract in
 
 ## Current Phase
 
-Checkpoint 10 live Aura.app reliability. Current focus is resolving the real
-desktop-access/Accessibility blocker on the launched app path, then using that
-same visible lane for full-mind conversation, background autonomy, screen/audio,
-and general desktop agency proof.
+Wholesale enterprise hardening before final launched proof. The current focus
+is canonical exact-agent person-state ownership, then remaining bounded
+capability, runtime, GUI, clean-machine, and release gates before final soaks.
 
 ## Current Milestone
 
-Final proof and live-runtime closure. The current worktree contains general
-clause-local commitment consistency and deterministic first-person grounding
-repairs discovered by the clean-tree live desktop proof.
+Move the still-independent other-agent estimator and person-specific
+joy/social state into the canonical relational authority and typed projection
+contract following Checkpoint 48.
 
 ## Latest Clean-Tree Contract Failure Repair (2026-06-29)
 
@@ -12576,6 +12575,7 @@ Authoritative remaining person-model work:
   Final multi-hour and 24-72 hour soaks remain deferred until these and every
   other shorter requirement are green.
 
+
 ## Checkpoint 2026-07-12-47: Canonical Relationship Topology
 
 This checkpoint advances `MEMORY-001`, `SOCIAL-001`, `ARCH-001`, `STATE-001`,
@@ -12675,3 +12675,122 @@ Authoritative remaining person-model and graph work:
   deletion, restart, crash, adversarial, failed-delivery, and long-gap proof.
   Final multi-hour and 24-72 hour soaks remain deferred until these and every
   other shorter requirement are green.
+
+## Checkpoint 2026-07-12-48: Evidence-Bounded Theory of Mind and Observer Context
+
+This checkpoint advances `MEMORY-001`, `SOCIAL-001`, `ARCH-001`,
+`STATE-001`, `CONVERSATION-001`, `PRIVACY-001`, and `FAULT-001`.
+It consolidates the canonical Theory-of-Mind adapter, retires a second mutable
+trust owner, replaces fabricated recursive-mind depth with a live exact-agent
+observer context, and removes implicit-first-user reads from social consumers.
+It does not close the still-independent `OtherAgentStateEstimator` writer and
+heuristic ownership, joy/social self-state, the unified typed person schema,
+complete controls, launched GUI proof, or final soaks.
+
+Implemented exact-agent Theory of Mind:
+
+- Replaced the plaintext `theory_of_mind.json` owner with a bounded
+  `theory_of_mind:v1` `derived_profile` snapshot in canonical relational
+  authority. Legacy profiles enter encrypted unscoped quarantine. Reads,
+  prompt projection, mutation, restart, deletion, and cache invalidation
+  recheck exact-agent consent; missing identity never becomes `default_user`
+  or `local_user`.
+- Retained only message/event digests, observation counts, and explicitly
+  sourced belief hypotheses with SHA-256 evidence, finite confidence, bounded
+  capacity, correction replacement, malformed-snapshot sanitization, and
+  persistence rollback. Raw turns, goals, preferences, generated responses,
+  reactions, trust, rapport, intimacy, and attachment claims are not persisted.
+- Made intent classification read-only so native chat and context assembly
+  cannot double or triple-count one incoming turn. Fixed native chat to await
+  asynchronous intent inference and made the dynamic context builder reuse an
+  existing classification.
+- Made prompt context deterministic quoted JSON with an instruction/data
+  boundary and explicit uncertainty. Social response guidance derives only
+  from the exact active calibrated estimator; stale cached users and
+  unreceipted praise/criticism cannot alter the projection. Response feedback
+  requires a canonical transport-accepted output receipt and matching
+  estimator feedback context.
+
+Consolidated duplicate and observer representations:
+
+- Replaced `core.social.theory_of_mind`'s default `user`, independent belief
+  dictionary, and correction-lowers-trust rule with an exact-agent
+  perspective-correction adapter over canonical ToM. User-belief attribution
+  requires authority consent and sourced evidence; verified task facts require
+  evidence digests; correction never mutates relationship trust.
+- Removed the import cycle caused by eagerly exporting the duplicate owner from
+  `core.social`. The compatibility import is lazy and names an adapter, not a
+  second source of truth.
+- Replaced the dormant recursive model that fabricated depth three from one
+  caller-supplied trust value with a depth-zero `ObserverContextModel`.
+  Presence requires exact identity, accepted source kind, finite timestamp,
+  strength, and unique evidence digest. Calibrated snapshots copy only bounded
+  affect hypotheses and never raw goals or beliefs.
+- Wired observer context into the real synchronous incoming social path before
+  cognition. Interactive presence prioritizes foreground conversation and
+  suppresses unrelated private/background categories; it never boosts tool
+  use. Duplicate evidence is idempotent, presence decays, exact-agent deletion
+  is supported, and status explicitly reports that recursive minds are not
+  claimed.
+
+Removed cross-user and passive-rapport behavior:
+
+- Removed synthetic `local_user` selection from incoming routing and
+  relational-memory compatibility. Missing identity abstains from social,
+  humor, response-feedback, observer, and ToM mutation while the ordinary
+  conversation path remains available.
+- Removed `next(iter(known_selves))` behavior from bonding, affect, social
+  context, voice, and generic context assembly. Aura's global affect and
+  bonding state no longer move toward an arbitrary cached person's rapport.
+  Voice warmth now derives from Aura's own bounded self-state; exact-agent
+  social caution can make delivery more deliberate but cannot invent comfort,
+  intimacy, or trust.
+- Removed two ToM filesystem effect buckets and ratcheted governance from
+  1,789 recognized calls / 1,685 buckets / 1,669 migration-debt calls to
+  1,787 / 1,683 / 1,667. Strict MyPy grew from 71 to 75 production files,
+  adding observer context, perspective correction, unified bias, and speech
+  profile.
+
+Verification completed for this checkpoint:
+
+- Focused and adjacent authority, privacy, identity, intent, receipt, observer,
+  social-phase, bonding, native-chat, voice, server, and deletion matrices
+  passed, including a `54/54` exact identity/authority set and a `49/49`
+  cross-consumer set.
+- The expanded server, relational authority, profile, dialogue, humor,
+  relationship graph, service-access, ToM, observer, social, voice, and
+  consciousness matrix passed `538/538` in 294 seconds.
+- Source hygiene, enterprise static and collection ratchets, all `37/37`
+  production-readiness checks, paired frontend access/build, `13/13`
+  cognitive gates, `75/75` skill parity, model/resource ownership,
+  architecture generation, whole-tree compile, configured Ruff, governance,
+  the 2,562-file security scan, strict MyPy, and `103/103` smoke tests passed.
+  The independent closeout rubric passed `20/20`.
+- The all-line audit mechanically enumerated 5,094 tracked files and 3,625,975
+  text lines, but correctly failed its clean-worktree/full-closeout verdict
+  because this checkpoint and unrelated concurrent files were dirty and full
+  semantic review remains incomplete. No launched-runtime, GUI, or soak claim
+  is made by this source checkpoint.
+
+Authoritative remaining canonical-person work:
+
+- Move `OtherAgentStateEstimator` off its independent JSON writer and
+  heuristic ownership into the same exact-agent authority. Remove raw
+  request-goal retention, keyword trust/capability inference, length/timing as
+  emotion truth, arbitrary affiliation-to-trust mutation, and unverified
+  forward forecasts; preserve only calibrated evidence with outcome receipts,
+  freshness, correction, uncertainty, and abstention.
+- Audit joy/social/bonding as Aura self-state. Separate general self affect from
+  every person-specific preference, familiarity, trust, boundary, and
+  relationship claim; route the latter through the canonical person contract.
+- Define one typed canonical person schema and projection registry spanning
+  profile facts, dialogue, humor, shared ground, relationship topology,
+  boundaries, social hypotheses, outcomes, source receipts, freshness,
+  contradiction, correction, retention, decay, and exclusive writer ownership.
+- Retire or integrate the dormant SQLite/world graph owners and raw
+  `AuraState.world.relationship_graph` prompt path. Add signed consent/action
+  receipts, key rotation/recovery, desktop/API controls, and launched
+  multiuser, identity-switch, deletion, restart, crash, adversarial,
+  failed-delivery, long-gap, and GUI proof. Final multi-hour and 24-72 hour
+  soaks remain deferred until these and every other shorter requirement are
+  green.

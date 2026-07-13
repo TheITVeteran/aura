@@ -505,31 +505,6 @@ class AffectUpdatePhase(Phase):
             affect.emotions["sadness"] = min(1.0, affect.emotions.get("sadness", 0.0) + 0.05)
             affect.social_hunger = min(1.0, affect.social_hunger + 0.06)
 
-        # ── Rapport → bonding_level + social hunger ───────────────────────
-        try:
-            from core.container import ServiceContainer
-            tom = ServiceContainer.get("theory_of_mind", default=None)
-            if tom and tom.known_selves:
-                user_model = next(iter(tom.known_selves.values()))
-                rapport = user_model.rapport
-                # High rapport → social hunger satisfied
-                if rapport > 0.6:
-                    affect.social_hunger = max(0.0, affect.social_hunger - 0.03)
-                    # Also update identity bonding level toward rapport (slow convergence)
-                    current_bond = getattr(state.identity, "bonding_level", 0.05)
-                    state.identity.bonding_level = min(1.0, current_bond + (rapport - current_bond) * 0.01)
-                elif rapport < 0.3:
-                    # Low rapport → slight anxiety
-                    affect.emotions["fear"] = min(1.0, affect.emotions.get("fear", 0.0) + 0.02)
-        except _AFFECT_UPDATE_ERRORS as exc:
-            self._record_phase_degradation(
-                state,
-                exc,
-                stage="theory_of_mind_rapport",
-                action="kept conversation affect feedback after rapport lookup failed",
-            )
-            logger.debug("Theory-of-mind rapport affect feedback skipped: %s", exc)
-
         # ── Discourse depth → curiosity satisfaction ──────────────────────
         depth = getattr(cognition, "discourse_depth", 0)
         if depth > 4:

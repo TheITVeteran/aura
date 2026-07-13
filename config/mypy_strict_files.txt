@@ -91,3 +91,8 @@ core/security/device_pairing.py
 core/memory/chat_turn_logger.py
 core/social/relationship_graph.py
 core/social/person_model.py
+# Evidence-bounded ToM compatibility and observer projections (2026-07-12)
+core/consciousness/recursive_tom.py
+core/consciousness/unified_cognitive_bias.py
+core/social/theory_of_mind.py
+core/voice/speech_profile.py

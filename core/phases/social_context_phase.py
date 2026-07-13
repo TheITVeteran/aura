@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from core.container import ServiceContainer
+from core.runtime.service_access import optional_service
 from core.kernel.bridge import Phase
 from core.runtime.errors import FallbackClassification, record_degradation
 from core.service_names import ServiceNames
@@ -196,7 +197,7 @@ class SocialContextPhase(Phase):
         """Pull a few grounded facts relevant to the message for belief-conflict checks."""
         facade = _service_get(self.container, ServiceNames.MEMORY_FACADE, default=None)
         if facade is None:
-            facade = ServiceContainer.get("memory_facade", default=None)
+            facade = optional_service("memory_facade")
         if facade is None or not hasattr(facade, "search"):
             return []
         try:
@@ -293,7 +294,7 @@ class SocialContextPhase(Phase):
         try:
             estimator = _service_get(self.container, "other_agent_model", default=None)
             if estimator is None:
-                estimator = ServiceContainer.get("other_agent_model", default=None)
+                estimator = optional_service("other_agent_model")
             agent_id = str(getattr(estimator, "active_agent_id", "") or "")
             if estimator and agent_id and hasattr(estimator, "cognitive_snapshot"):
                 snapshot = estimator.cognitive_snapshot(agent_id)
@@ -312,37 +313,11 @@ class SocialContextPhase(Phase):
                     modifiers["relational_register"] = "neutral"
                 return
 
-            tom = _service_get(self.container, "theory_of_mind", default=None)
-            if tom is None:
-                tom = ServiceContainer.get("theory_of_mind", default=None)
-            known_selves = getattr(tom, "known_selves", None) if tom else None
-            if not known_selves:
-                return
-            active_user_id = str(getattr(tom, "active_user_id", "") or "")
-            if active_user_id and hasattr(known_selves, "get"):
-                user_model = known_selves.get(active_user_id)
-            elif hasattr(known_selves, "__len__") and len(known_selves) == 1:
-                values = (
-                    known_selves.values()
-                    if hasattr(known_selves, "values")
-                    else known_selves
-                )
-                user_model = next(iter(values), None)
-            else:
-                user_model = None
-            if user_model is None:
-                return
-            rapport = _safe_float(getattr(user_model, "rapport", 0.5), default=0.5)
-            if rapport > 0.75:
-                modifiers["relational_register"] = "established"
-            elif rapport > 0.4:
-                modifiers["relational_register"] = "warm"
-            else:
-                modifiers["relational_register"] = "cordial"
-            modifiers["rapport_level"] = rapport
+            # No exact active estimator means no person-specific social claim.
+            return
         except _SOCIAL_RECOVERABLE_ERRORS as exc:
             _record_social_degradation(
                 exc,
-                action="kept social cues without theory-of-mind rapport register",
+                action="kept local social cues without calibrated exact-agent register",
                 stage="theory_of_mind",
             )

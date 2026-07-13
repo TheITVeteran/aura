@@ -10,6 +10,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from core.container import ServiceContainer
+from core.runtime.service_access import optional_service
 
 logger = logging.getLogger("Aura.ContextAssembler")
 
@@ -74,15 +75,13 @@ class ContextAssembler:
 
         # 4. Theory of Mind
         try:
-            tom = ServiceContainer.get("theory_of_mind", default=None)
-            if tom:
-                # Assume default_user for now or get from orch
-                user_id = "default_user"
-                if self.orch and hasattr(self.orch, 'current_user_id'):
-                    user_id = self.orch.current_user_id
-                
-                if hasattr(tom, 'known_selves') and user_id in tom.known_selves:
-                    context["social_model"]["user"] = tom.known_selves[user_id].to_dict()
+            tom = optional_service("theory_of_mind")
+            estimator = optional_service("other_agent_model")
+            user_id = str(getattr(estimator, "active_agent_id", "") or "")[:160]
+            if tom and user_id and hasattr(tom, "get_context_block"):
+                hypothesis_block = tom.get_context_block(user_id)
+                if hypothesis_block:
+                    context["social_model"]["hypotheses"] = hypothesis_block
         except (ImportError, AttributeError, RuntimeError) as e:
             record_degradation('context_assembler', e)
             logger.debug("Failed to gather ToM: %s", e)
@@ -126,9 +125,9 @@ class ContextAssembler:
             parts.append(f"[DRIVES: {drive_str}]")
             
         # 3. Social Context
-        u = context.get("social_model", {}).get("user", {})
-        if u:
-            parts.append(f"[USER STATE: mood={u.get('emotional_state')}, rapport={u.get('rapport', 0.5):.2f}]")
+        hypotheses = context.get("social_model", {}).get("hypotheses", "")
+        if hypotheses:
+            parts.append(str(hypotheses))
             
         # 4. Strategic Intent
         s = context.get("strategic_state", {})

@@ -8454,35 +8454,108 @@ def test_telemetry_exporter_null_records_metrics_and_spans():
 # ==========================================================================
 
 
-def test_theory_of_mind_detects_false_belief():
+def _perspective_correction_engine(tmp_path):
+    from core.consciousness.theory_of_mind import TheoryOfMindEngine as CanonicalToM
+    from core.social.relational_memory import RelationalMemoryAuthority
     from core.social.theory_of_mind import TheoryOfMindEngine
 
-    tom = TheoryOfMindEngine()
-    tom.simulator.aura_knows("capital_of_x", "Atlantis")
-    tom.simulator.user_believes("capital_of_x", "Eldorado")
+    authority = RelationalMemoryAuthority(
+        tmp_path / "perspective-relational.json",
+        encryption_key=b"p" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    authority.grant_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["persist", "recall"],
+        receipt_id="perspective-consent",
+    )
+    canonical = CanonicalToM(
+        authority=authority,
+        storage_path=tmp_path / "legacy-tom.json",
+    )
+    return TheoryOfMindEngine(person="bryan", canonical=canonical)
+
+
+def test_theory_of_mind_detects_false_belief(tmp_path):
+    from core.social.theory_of_mind import TheoryOfMindEngine
+
+    tom: TheoryOfMindEngine = _perspective_correction_engine(tmp_path)
+    tom.simulator.aura_knows(
+        "capital_of_x",
+        "Atlantis",
+        evidence_digest="a" * 64,
+    )
+    assert tom.simulator.user_believes(
+        "capital_of_x",
+        "Eldorado",
+        evidence_digest="b" * 64,
+    )
     div = tom.simulator.divergence("capital_of_x")
     assert div is not None and div["kind"] == "false_belief"
+    assert div["hypothesis"] is True
+    assert div["confidence"] == pytest.approx(0.8)
     strategy = tom.explanation_strategy("capital_of_x")
     assert strategy == "respectfully_correct_false_belief"
 
 
-def test_theory_of_mind_detects_user_knowledge_gap():
+def test_theory_of_mind_detects_user_knowledge_gap(tmp_path):
     from core.social.theory_of_mind import TheoryOfMindEngine
 
-    tom = TheoryOfMindEngine()
-    tom.simulator.aura_knows("nuance_about_x", "complex")
+    tom: TheoryOfMindEngine = _perspective_correction_engine(tmp_path)
+    tom.simulator.aura_knows(
+        "nuance_about_x",
+        "complex",
+        evidence_digest="c" * 64,
+    )
     strategy = tom.explanation_strategy("nuance_about_x")
     assert strategy == "explain_from_first_principles"
 
 
-def test_theory_of_mind_correction_lowers_trust_and_updates_belief():
+def test_theory_of_mind_correction_updates_evidence_without_mutating_trust(tmp_path):
     from core.social.theory_of_mind import TheoryOfMindEngine
 
-    tom = TheoryOfMindEngine()
-    initial_trust = tom.trust.trust
-    tom.record_correction(key="topic", correct_value="real_answer")
-    assert tom.belief.beliefs["topic"] == "real_answer"
-    assert tom.trust.trust <= initial_trust
+    tom: TheoryOfMindEngine = _perspective_correction_engine(tmp_path)
+    tom.record_correction(
+        key="topic",
+        correct_value="real_answer",
+        evidence_digest="d" * 64,
+    )
+
+    assert tom.simulator.aura_beliefs["topic"] == "real_answer"
+    assert not hasattr(tom, "trust")
+    assert not hasattr(tom, "belief")
+
+
+def test_theory_of_mind_perspective_requires_exact_agent_and_consent(tmp_path):
+    from core.consciousness.theory_of_mind import TheoryOfMindEngine as CanonicalToM
+    from core.social.relational_memory import RelationalMemoryAuthority
+    from core.social.theory_of_mind import TheoryOfMindEngine
+
+    with pytest.raises(ValueError, match="person must be non-empty"):
+        TheoryOfMindEngine(person="")
+
+    authority = RelationalMemoryAuthority(
+        tmp_path / "no-consent.json",
+        encryption_key=b"n" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    tom = TheoryOfMindEngine(
+        person="bryan",
+        canonical=CanonicalToM(
+            authority=authority,
+            storage_path=tmp_path / "legacy-no-consent.json",
+        ),
+    )
+
+    assert tom.simulator.user_believes(
+        "topic",
+        "unsupported",
+        evidence_digest="e" * 64,
+    ) is False
+    assert tom.simulator.divergence("topic") is None
 
 
 def test_abstraction_validator_retires_failing_principle():

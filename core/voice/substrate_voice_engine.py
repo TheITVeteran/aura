@@ -23,6 +23,7 @@ Registered in ServiceContainer as "substrate_voice_engine".
 """
 from __future__ import annotations
 from core.runtime.errors import record_degradation
+from core.runtime.service_access import optional_service
 
 
 
@@ -668,19 +669,26 @@ def _extract_personality(state: Any) -> Dict[str, float]:
 
 
 def _extract_social_context() -> Dict[str, Any]:
-    """Pull social context — rapport, trust, relationship depth."""
+    """Pull the exact active estimator's bounded caution, or abstain."""
     try:
-        from core.container import ServiceContainer
-        tom = ServiceContainer.get("theory_of_mind", default=None)
-        if tom and hasattr(tom, "known_selves") and tom.known_selves:
-            user_model = next(iter(tom.known_selves.values()))
+        estimator = optional_service("other_agent_model")
+        agent_id = str(getattr(estimator, "active_agent_id", "") or "")[:160]
+        if estimator and agent_id and hasattr(estimator, "cognitive_snapshot"):
+            snapshot = estimator.cognitive_snapshot(agent_id)
+            recommendation = snapshot.get("recommendation")
+            recommendation = recommendation if isinstance(recommendation, dict) else {}
             return {
-                "rapport": getattr(user_model, "rapport", 0.5),
-                "trust": getattr(user_model, "trust_level", 0.5),
-                "emotional_state": getattr(user_model, "emotional_state", "neutral"),
-                "knowledge_level": getattr(user_model, "knowledge_level", "unknown"),
+                "agent_id": agent_id,
+                "social_confidence": max(
+                    0.0,
+                    min(1.0, float(snapshot.get("confidence") or 0.0)),
+                ),
+                "social_caution": (
+                    "high" if recommendation.get("slow_down") else "low"
+                ),
+                "social_inference_is_hypothesis": True,
             }
-    except (ImportError, AttributeError, RuntimeError) as e:
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as e:
         record_degradation('substrate_voice_engine', e)
         logger.debug("Social context extraction failed: %s", e)
     return {}

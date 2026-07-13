@@ -235,6 +235,8 @@ class NativeChatSkill(BaseSkill):
         try:
             from core.brain.context_builder import DynamicContextBuilder
 
+            if intent_context:
+                context["user_intent"] = dict(intent_context)
             rich_context = await DynamicContextBuilder.build_rich_context(msg_str, context)
             if intent_context and not rich_context.get("user_intent"):
                 rich_context["user_intent"] = intent_context
@@ -330,7 +332,8 @@ class NativeChatSkill(BaseSkill):
         tom = context_data.get("theory_of_mind")
         if tom:
             try:
-                intent_context = dict(tom.infer_intent(msg_str, context_data) or {})
+                inferred = await _maybe_await(tom.infer_intent(msg_str, context_data))
+                intent_context = dict(inferred or {})
                 logger.info("ToM Intent: %s", intent_context.get("pragmatic", "standard"))
             except _NATIVE_CHAT_RECOVERABLE_ERRORS as exc:
                 degraded_stages.append("theory_of_mind")
