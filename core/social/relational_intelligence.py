@@ -8,17 +8,25 @@ to navigate the full spectrum of human relational dynamics — not just what the
 user said, but how they relate, what engages them, where they're vulnerable,
 and how they handle friction.
 """
-from core.runtime.errors import record_degradation
-import json
+from __future__ import annotations
+
 import logging
-import os
 import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, TypeVar
+
+from core.runtime.errors import record_degradation
+from core.social.relational_memory import (
+    RelationalMemoryAuthority,
+    get_relational_memory_authority,
+)
 
 logger = logging.getLogger("Aura.RelationalIntelligence")
+
+_SNAPSHOT_NAMESPACE = "relational_intelligence:v1"
+_SNAPSHOT_KIND = "derived_profile"
 
 # ---------------------------------------------------------------------------
 # Linguistic marker sets for heuristic analysis
@@ -73,6 +81,15 @@ _REASONING_MARKERS = {
     "pragmatic": ["what works", "practical", "real world", "actionable", "bottom line", "results"],
 }
 
+_TOPIC_CATEGORIES = {
+    "technology": ("ai", "automation", "software", "computer", "model"),
+    "work": ("work", "job", "career", "company", "ship"),
+    "learning": ("learn", "study", "school", "research", "explain"),
+    "creativity": ("create", "design", "art", "write", "imagine"),
+    "relationships": ("relationship", "friend", "family", "partner", "team"),
+    "wellbeing": ("health", "rest", "stress", "sleep", "therapy"),
+}
+
 _DE_ESCALATION_DEFAULTS = [
     "let's move on", "agree to disagree", "fair enough", "you make a point",
     "i see what you mean", "let's not argue", "whatever you think",
@@ -90,13 +107,15 @@ class VulnerabilityState:
     user_disclosure_depth: float = 0.0       # 0-1, how deep they've gone
     aura_disclosure_depth: float = 0.0       # 0-1, how deep Aura has gone
     reciprocity_balance: float = 0.0         # -1..1, negative=Aura shared more
-    trust_envelope: float = 0.2              # 0-1, safe disclosure ceiling
-    last_vulnerable_exchange: Optional[float] = None
+    disclosure_match_ceiling: float = 0.2
+    last_vulnerable_exchange: float | None = None
     disclosure_trajectory: str = "maintaining"  # opening_up | maintaining | pulling_back | reciprocal
+    evidence_count: int = 0
+    confidence: float = 0.0
     # Internal tracking
-    _depth_history: List[float] = field(default_factory=list)
+    _depth_history: list[float] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d.pop("_depth_history", None)
         return d
@@ -105,18 +124,20 @@ class VulnerabilityState:
 @dataclass
 class ConflictResolutionProfile:
     """How a user handles disagreement."""
-    preferred_style: str = "gentle_redirect"
+    preferred_style: str = "unknown"
     escalation_tolerance: float = 0.5        # 0-1
-    de_escalation_signals: List[str] = field(default_factory=lambda: list(_DE_ESCALATION_DEFAULTS))
-    best_resolution_pattern: str = "find_common_ground"
+    de_escalation_signals: list[str] = field(default_factory=lambda: list(_DE_ESCALATION_DEFAULTS))
+    best_resolution_pattern: str = "unknown"
     debates_enjoyed: int = 0
     debates_abandoned: int = 0
+    evidence_count: int = 0
+    confidence: float = 0.0
     # Internal
     _active_conflict: bool = False
-    _conflict_start: Optional[float] = None
-    _escalation_samples: List[float] = field(default_factory=list)
+    _conflict_start: float | None = None
+    _escalation_samples: list[float] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         for k in list(d):
             if k.startswith("_"):
@@ -127,18 +148,20 @@ class ConflictResolutionProfile:
 @dataclass
 class PerspectiveModel:
     """The user's worldview as Aura understands it."""
-    core_values: List[str] = field(default_factory=list)
-    worldview_keywords: List[str] = field(default_factory=list)
-    reasoning_patterns: List[str] = field(default_factory=list)
-    emotional_priorities: List[str] = field(default_factory=list)
-    blind_spots: List[str] = field(default_factory=list)
-    growth_edges: List[str] = field(default_factory=list)
-    mental_models: Dict[str, str] = field(default_factory=dict)
+    core_values: list[str] = field(default_factory=list)
+    worldview_keywords: list[str] = field(default_factory=list)
+    reasoning_patterns: list[str] = field(default_factory=list)
+    emotional_priorities: list[str] = field(default_factory=list)
+    blind_spots: list[str] = field(default_factory=list)
+    growth_edges: list[str] = field(default_factory=list)
+    mental_models: dict[str, str] = field(default_factory=dict)
+    evidence_count: int = 0
+    confidence: float = 0.0
     # Internal accumulators (not persisted raw — distilled on save)
-    _value_evidence: Dict[str, int] = field(default_factory=dict)
-    _reasoning_evidence: Dict[str, int] = field(default_factory=dict)
+    _value_evidence: dict[str, int] = field(default_factory=dict)
+    _reasoning_evidence: dict[str, int] = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d.pop("_value_evidence", None)
         d.pop("_reasoning_evidence", None)
@@ -153,13 +176,15 @@ class EntertainmentProfile:
     comedy_need: float = 0.3
     emotional_depth_need: float = 0.5
     novelty_appetite: float = 0.5
-    what_delights: List[str] = field(default_factory=list)
-    what_bores: List[str] = field(default_factory=list)
-    engagement_triggers: List[str] = field(default_factory=list)
+    what_delights: list[str] = field(default_factory=list)
+    what_bores: list[str] = field(default_factory=list)
+    engagement_triggers: list[str] = field(default_factory=list)
+    evidence_count: int = 0
+    confidence: float = 0.0
     # Internal
-    _recent_engagement_scores: List[float] = field(default_factory=list)
+    _recent_engagement_scores: list[float] = field(default_factory=list)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d.pop("_recent_engagement_scores", None)
         return d
@@ -168,6 +193,15 @@ class EntertainmentProfile:
 # ---------------------------------------------------------------------------
 # Core Engine
 # ---------------------------------------------------------------------------
+
+_ProfileStateT = TypeVar(
+    "_ProfileStateT",
+    VulnerabilityState,
+    ConflictResolutionProfile,
+    PerspectiveModel,
+    EntertainmentProfile,
+)
+
 
 class RelationalIntelligence:
     """Unified relational intelligence engine.
@@ -178,79 +212,155 @@ class RelationalIntelligence:
     relational behaviour in real-time.
     """
 
-    def __init__(self, data_path: Optional[Path] = None):
+    def __init__(
+        self,
+        data_path: Path | None = None,
+        *,
+        authority: RelationalMemoryAuthority | None = None,
+    ) -> None:
         if data_path is None:
             try:
                 from core.config import config
                 data_path = config.paths.data_dir / "relational_intelligence.json"
             except (ImportError, AttributeError, RuntimeError):
                 data_path = Path.home() / ".aura" / "data" / "relational_intelligence.json"
-        self._data_path: Path = data_path
-        self._data_path.parent.mkdir(parents=True, exist_ok=True)
+        self._legacy_path = Path(data_path)
+        self._authority = authority or get_relational_memory_authority()
 
-        self._vulnerability: Dict[str, VulnerabilityState] = {}
-        self._conflict_profiles: Dict[str, ConflictResolutionProfile] = {}
-        self._perspectives: Dict[str, PerspectiveModel] = {}
-        self._entertainment: Dict[str, EntertainmentProfile] = {}
+        self._vulnerability: dict[str, VulnerabilityState] = {}
+        self._conflict_profiles: dict[str, ConflictResolutionProfile] = {}
+        self._perspectives: dict[str, PerspectiveModel] = {}
+        self._entertainment: dict[str, EntertainmentProfile] = {}
+        self._interaction_counts: dict[str, int] = {}
 
         self._interaction_count: int = 0
-        self._load()
-        logger.info("RelationalIntelligence initialized (%d user profiles loaded).", len(self._vulnerability))
+        migrated = self._authority.quarantine_legacy_snapshot_file(
+            self._legacy_path,
+            namespace=_SNAPSHOT_NAMESPACE,
+            kind=_SNAPSHOT_KIND,
+        )
+        logger.info(
+            "RelationalIntelligence initialized (authority-backed, %d legacy profiles quarantined).",
+            migrated,
+        )
 
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
 
-    def _load(self):
-        if not self._data_path.exists():
-            return
-        try:
-            with open(self._data_path, "r") as f:
-                raw = json.load(f)
-            for uid, blob in raw.items():
-                self._vulnerability[uid] = self._hydrate(VulnerabilityState, blob.get("vulnerability", {}))
-                self._conflict_profiles[uid] = self._hydrate(ConflictResolutionProfile, blob.get("conflict", {}))
-                self._perspectives[uid] = self._hydrate(PerspectiveModel, blob.get("perspective", {}))
-                self._entertainment[uid] = self._hydrate(EntertainmentProfile, blob.get("entertainment", {}))
-            logger.debug("RelationalIntelligence: loaded %d profiles.", len(raw))
-        except (OSError, ConnectionError, TimeoutError) as e:
-            record_degradation('relational_intelligence', e)
-            logger.warning("RelationalIntelligence: load failed (%s), starting fresh.", e)
-
     @staticmethod
-    def _hydrate(cls, data: dict):
+    def _hydrate(
+        cls: type[_ProfileStateT],
+        data: object,
+    ) -> _ProfileStateT:
         """Safely instantiate a dataclass from a dict, ignoring unknown keys."""
+        normalized = dict(data) if isinstance(data, dict) else {}
+        if cls is VulnerabilityState and "trust_envelope" in normalized:
+            legacy_value = max(
+                0.0,
+                min(1.0, float(normalized.pop("trust_envelope"))),
+            )
+            normalized.setdefault(
+                "disclosure_match_ceiling",
+                min(0.5, legacy_value),
+            )
         valid = {k for k in cls.__dataclass_fields__}
-        filtered = {k: v for k, v in data.items() if k in valid}
+        filtered = {k: v for k, v in normalized.items() if k in valid}
         return cls(**filtered)
 
-    def save(self):
-        try:
-            payload: Dict[str, dict] = {}
-            all_uids = set(self._vulnerability) | set(self._conflict_profiles) | set(self._perspectives) | set(self._entertainment)
-            for uid in all_uids:
-                payload[uid] = {
-                    "vulnerability": self._vulnerability[uid].to_dict() if uid in self._vulnerability else {},
-                    "conflict": self._conflict_profiles[uid].to_dict() if uid in self._conflict_profiles else {},
-                    "perspective": self._perspectives[uid].to_dict() if uid in self._perspectives else {},
-                    "entertainment": self._entertainment[uid].to_dict() if uid in self._entertainment else {},
-                }
-            from core.runtime.file_write_gateway import get_file_write_gateway
+    def save(self) -> None:
+        for user_id in list(self._vulnerability):
+            self._persist_user(user_id)
 
-            get_file_write_gateway().write_text(
-                self._data_path,
-                json.dumps(payload, indent=2),
-                source="relational_intelligence.save",
+    def _snapshot_payload(self, user_id: str) -> dict[str, Any]:
+        vulnerability = asdict(self._vulnerability[user_id])
+        vulnerability["_depth_history"] = vulnerability.get("_depth_history", [])[-10:]
+        conflict = asdict(self._conflict_profiles[user_id])
+        conflict["_active_conflict"] = False
+        conflict["_conflict_start"] = None
+        conflict["_escalation_samples"] = conflict.get("_escalation_samples", [])[-20:]
+        perspective = asdict(self._perspectives[user_id])
+        entertainment = asdict(self._entertainment[user_id])
+        entertainment["_recent_engagement_scores"] = entertainment.get(
+            "_recent_engagement_scores", []
+        )[-20:]
+        return {
+            "vulnerability": vulnerability,
+            "conflict": conflict,
+            "perspective": perspective,
+            "entertainment": entertainment,
+            "interactions_analyzed": self._interaction_counts.get(user_id, 0),
+        }
+
+    def _persist_user(self, user_id: str) -> None:
+        if not self._authority.allows(user_id, _SNAPSHOT_KIND, "recall"):
+            return
+        try:
+            confidence = min(
+                self._vulnerability[user_id].confidence,
+                self._conflict_profiles[user_id].confidence,
+                self._perspectives[user_id].confidence,
+                self._entertainment[user_id].confidence,
             )
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-            record_degradation('relational_intelligence', e)
-            logger.error("RelationalIntelligence: save failed: %s", e)
+            self._authority.upsert_snapshot(
+                user_id,
+                namespace=_SNAPSHOT_NAMESPACE,
+                kind=_SNAPSHOT_KIND,
+                payload=self._snapshot_payload(user_id),
+                confidence=confidence,
+                provenance="relational_intelligence.calibrated_heuristics",
+            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("relational_intelligence", exc)
+            logger.error("RelationalIntelligence authority save failed: %s", exc)
+
+    def _clear_user(self, user_id: str) -> None:
+        self._vulnerability.pop(user_id, None)
+        self._conflict_profiles.pop(user_id, None)
+        self._perspectives.pop(user_id, None)
+        self._entertainment.pop(user_id, None)
+        self._interaction_counts.pop(user_id, None)
+
+    def _load_user(self, user_id: str, *, purpose: str) -> bool:
+        if not self._authority.allows(user_id, _SNAPSHOT_KIND, purpose):
+            self._clear_user(user_id)
+            return False
+        payload = self._authority.load_snapshot(
+            user_id,
+            namespace=_SNAPSHOT_NAMESPACE,
+            kind=_SNAPSHOT_KIND,
+            purpose=purpose,
+        )
+        if payload is not None:
+            self._vulnerability[user_id] = self._hydrate(
+                VulnerabilityState,
+                payload.get("vulnerability", {}),
+            )
+            self._conflict_profiles[user_id] = self._hydrate(
+                ConflictResolutionProfile,
+                payload.get("conflict", {}),
+            )
+            self._perspectives[user_id] = self._hydrate(
+                PerspectiveModel,
+                payload.get("perspective", {}),
+            )
+            self._entertainment[user_id] = self._hydrate(
+                EntertainmentProfile,
+                payload.get("entertainment", {}),
+            )
+            self._interaction_counts[user_id] = max(
+                0,
+                int(payload.get("interactions_analyzed") or 0),
+            )
+        return True
 
     # ------------------------------------------------------------------
     # Ensure sub-models exist for a user
     # ------------------------------------------------------------------
 
-    def _ensure_user(self, user_id: str):
+    def _ensure_user(self, user_id: str, *, purpose: str = "recall") -> bool:
+        if not self._load_user(user_id, purpose=purpose):
+            return False
         if user_id not in self._vulnerability:
             self._vulnerability[user_id] = VulnerabilityState()
         if user_id not in self._conflict_profiles:
@@ -259,6 +369,8 @@ class RelationalIntelligence:
             self._perspectives[user_id] = PerspectiveModel()
         if user_id not in self._entertainment:
             self._entertainment[user_id] = EntertainmentProfile()
+        self._interaction_counts.setdefault(user_id, 0)
+        return True
 
     # ------------------------------------------------------------------
     # Main update entry-point
@@ -270,10 +382,12 @@ class RelationalIntelligence:
         user_message: str,
         aura_response: str,
         dynamics_state: Any = None,
-    ):
+    ) -> bool:
         """Update ALL sub-models from a single interaction exchange."""
-        self._ensure_user(user_id)
+        if not self._ensure_user(user_id):
+            return False
         self._interaction_count += 1
+        self._interaction_counts[user_id] += 1
 
         msg_lower = user_message.lower()
         resp_lower = aura_response.lower()
@@ -283,9 +397,8 @@ class RelationalIntelligence:
         self._update_perspective(user_id, msg_lower)
         self._update_entertainment(user_id, user_message, aura_response)
 
-        # Persist every 5th interaction to avoid excessive I/O
-        if self._interaction_count % 5 == 0:
-            self.save()
+        self._persist_user(user_id)
+        return True
 
     # ------------------------------------------------------------------
     # (a) Vulnerability tracking
@@ -322,7 +435,12 @@ class RelationalIntelligence:
 
         return min(1.0, score)
 
-    def _update_vulnerability(self, user_id: str, msg_lower: str, resp_lower: str):
+    def _update_vulnerability(
+        self,
+        user_id: str,
+        msg_lower: str,
+        resp_lower: str,
+    ) -> None:
         vs = self._vulnerability[user_id]
 
         user_depth = self._score_disclosure_depth(msg_lower)
@@ -341,10 +459,14 @@ class RelationalIntelligence:
             )
         vs.reciprocity_balance = max(-1.0, min(1.0, vs.reciprocity_balance))
 
-        # Trust envelope grows slowly with sustained mutual disclosure
-        if user_depth > 0.3:
-            vs.trust_envelope = min(1.0, vs.trust_envelope + 0.02)
+        if user_depth > 0.0:
+            vs.evidence_count += 1
             vs.last_vulnerable_exchange = time.time()
+        vs.confidence = min(0.8, vs.evidence_count / 10.0)
+        vs.disclosure_match_ceiling = min(
+            0.7,
+            0.2 + (vs.user_disclosure_depth * vs.confidence * 0.5),
+        )
 
         # Trajectory detection
         vs._depth_history.append(user_depth)
@@ -380,11 +502,20 @@ class RelationalIntelligence:
         r"(?i)(agree to disagree|this is going nowhere)",
     ]
 
-    def _update_conflict(self, user_id: str, msg_lower: str, resp_lower: str, dynamics_state: Any):
+    def _update_conflict(
+        self,
+        user_id: str,
+        msg_lower: str,
+        resp_lower: str,
+        dynamics_state: Any,
+    ) -> None:
         cp = self._conflict_profiles[user_id]
         is_disagreement = any(re.search(p, msg_lower) for p in self._DISAGREEMENT_PATTERNS)
         is_enjoying = any(re.search(p, msg_lower) for p in self._ENJOYMENT_PATTERNS)
         is_abandoning = any(re.search(p, msg_lower) for p in self._ABANDON_PATTERNS)
+        if is_disagreement or is_enjoying or is_abandoning:
+            cp.evidence_count += 1
+            cp.confidence = min(0.8, cp.evidence_count / 8.0)
 
         # Also check SpiritualSpine state if available via dynamics_state
         spine_conflict = False
@@ -404,15 +535,6 @@ class RelationalIntelligence:
             if is_abandoning:
                 cp._active_conflict = False
                 cp.debates_abandoned += 1
-                # Learn de-escalation signals from what they actually say
-                for sent in msg_lower.split("."):
-                    sent = sent.strip()
-                    if sent and any(re.search(p, sent) for p in self._ABANDON_PATTERNS):
-                        if sent not in cp.de_escalation_signals and len(sent) < 100:
-                            cp.de_escalation_signals.append(sent)
-                            # Cap list size
-                            if len(cp.de_escalation_signals) > 20:
-                                cp.de_escalation_signals = cp.de_escalation_signals[-20:]
             elif is_enjoying:
                 cp.debates_enjoyed += 1
                 # Raise escalation tolerance — they can handle it
@@ -462,18 +584,24 @@ class RelationalIntelligence:
     # (c) Perspective modeling
     # ------------------------------------------------------------------
 
-    def _update_perspective(self, user_id: str, msg_lower: str):
+    def _update_perspective(self, user_id: str, msg_lower: str) -> None:
         pm = self._perspectives[user_id]
+        evidence_seen = False
 
         # Value detection — accumulate evidence across interactions
         for value, markers in _VALUE_MARKERS.items():
             if any(m in msg_lower for m in markers):
                 pm._value_evidence[value] = pm._value_evidence.get(value, 0) + 1
+                evidence_seen = True
 
         # Reasoning pattern detection
         for pattern, markers in _REASONING_MARKERS.items():
             if any(m in msg_lower for m in markers):
                 pm._reasoning_evidence[pattern] = pm._reasoning_evidence.get(pattern, 0) + 1
+                evidence_seen = True
+        if evidence_seen:
+            pm.evidence_count += 1
+            pm.confidence = min(0.8, pm.evidence_count / 10.0)
 
         # Distill accumulated evidence into the model fields
         # Only update core_values if we have enough evidence (threshold: 3 occurrences)
@@ -513,59 +641,59 @@ class RelationalIntelligence:
         keywords = set(pm.core_values + pm.reasoning_patterns)
         pm.worldview_keywords = sorted(keywords)[:10]
 
-        # Growth edges: detected from explicit statements
+        # Track only the existence of an explicit growth goal. The goal content
+        # belongs in canonical goal/memory systems, not this heuristic profile.
         growth_markers = [
             "i'm working on", "i'm trying to", "i want to get better at",
             "i'm learning", "i need to improve", "my goal is to",
             "i'm developing", "i struggle with",
         ]
-        for marker in growth_markers:
-            idx = msg_lower.find(marker)
-            if idx >= 0:
-                # Extract the rest of the sentence
-                remainder = msg_lower[idx + len(marker):].split(".")[0].strip()
-                if remainder and len(remainder) < 80 and remainder not in pm.growth_edges:
-                    pm.growth_edges.append(remainder)
-                    pm.growth_edges = pm.growth_edges[-8:]  # cap
+        if any(marker in msg_lower for marker in growth_markers):
+            marker = "explicit self-directed growth goal"
+            if marker not in pm.growth_edges:
+                pm.growth_edges.append(marker)
 
     # ------------------------------------------------------------------
     # (d) Entertainment profiling
     # ------------------------------------------------------------------
 
-    def _update_entertainment(self, user_id: str, user_message: str, aura_response: str):
+    def _update_entertainment(
+        self,
+        user_id: str,
+        user_message: str,
+        aura_response: str,
+    ) -> None:
         ep = self._entertainment[user_id]
         msg_lower = user_message.lower()
-        msg_len = len(user_message)
 
-        # Engagement scoring for this exchange
         engagement = 0.5  # baseline
+        evidence_seen = False
 
-        # Positive signals
-        if msg_len > 200:
-            engagement += 0.15  # long messages = engaged
         if user_message.count("?") >= 2:
-            engagement += 0.1  # multiple questions = curious
+            engagement += 0.1
+            evidence_seen = True
         if user_message.count("!") >= 1:
-            engagement += 0.1  # excitement
+            engagement += 0.08
+            evidence_seen = True
         for marker in _ENGAGEMENT_POSITIVE:
-            if marker in msg_lower:
-                engagement += 0.08
-                break  # only count once
+            if self._contains_marker(msg_lower, marker):
+                engagement += 0.12
+                evidence_seen = True
+                break
 
-        # Negative signals
-        if msg_len < 20:
-            engagement -= 0.15
         for marker in _ENGAGEMENT_NEGATIVE:
-            if marker in msg_lower:
-                engagement -= 0.12
+            if self._contains_marker(msg_lower, marker):
+                engagement -= 0.2
+                evidence_seen = True
                 break
 
         engagement = max(0.0, min(1.0, engagement))
         ep._recent_engagement_scores.append(engagement)
         ep._recent_engagement_scores = ep._recent_engagement_scores[-20:]
 
-        # Derive profile dimensions from accumulated engagement data
-        avg_engagement = sum(ep._recent_engagement_scores) / max(len(ep._recent_engagement_scores), 1)
+        if evidence_seen:
+            ep.evidence_count += 1
+            ep.confidence = min(0.8, ep.evidence_count / 10.0)
 
         # Intellectual stimulation: questions + long exchanges
         question_ratio = sum(
@@ -594,47 +722,59 @@ class RelationalIntelligence:
         if any(m in msg_lower for m in surprise_markers):
             ep.surprise_value = min(1.0, ep.surprise_value + 0.06)
 
-        # Track what delights (topics where engagement spikes)
+        topic_category = self._topic_category(msg_lower)
         if engagement > 0.75:
-            # Extract a short topic hint from the message
-            topic_hint = self._extract_topic_hint(user_message)
-            if topic_hint and topic_hint not in ep.what_delights:
-                ep.what_delights.append(topic_hint)
+            if topic_category and topic_category not in ep.what_delights:
+                ep.what_delights.append(topic_category)
                 ep.what_delights = ep.what_delights[-12:]
 
         # Track what bores (topics where engagement drops)
         if engagement < 0.3:
-            topic_hint = self._extract_topic_hint(user_message)
-            if topic_hint and topic_hint not in ep.what_bores:
-                ep.what_bores.append(topic_hint)
+            if topic_category and topic_category not in ep.what_bores:
+                ep.what_bores.append(topic_category)
                 ep.what_bores = ep.what_bores[-8:]
 
         # Engagement triggers: high-engagement topics
         if engagement > 0.8:
-            topic_hint = self._extract_topic_hint(user_message)
-            if topic_hint and topic_hint not in ep.engagement_triggers:
-                ep.engagement_triggers.append(topic_hint)
+            if topic_category and topic_category not in ep.engagement_triggers:
+                ep.engagement_triggers.append(topic_category)
                 ep.engagement_triggers = ep.engagement_triggers[-10:]
 
     @staticmethod
-    def _extract_topic_hint(message: str) -> Optional[str]:
-        """Extract a short topic hint from a message for delight/bore tracking."""
-        # Take the first meaningful phrase (skip very short messages)
-        if len(message) < 15:
-            return None
-        # Use first sentence, truncated
-        first_sentence = message.split(".")[0].split("!")[0].split("?")[0].strip()
-        if len(first_sentence) > 60:
-            first_sentence = first_sentence[:57] + "..."
-        return first_sentence if len(first_sentence) > 8 else None
+    def _contains_marker(text: str, marker: str) -> bool:
+        if marker in {"!", "?"}:
+            return marker in text
+        return bool(
+            re.search(
+                rf"(?<!\w){re.escape(marker)}(?!\w)",
+                text,
+                re.IGNORECASE,
+            )
+        )
+
+    @staticmethod
+    def _topic_category(message: str) -> str | None:
+        for category, markers in _TOPIC_CATEGORIES.items():
+            if any(
+                re.search(rf"(?<!\w){re.escape(marker)}(?!\w)", message)
+                for marker in markers
+            ):
+                return category
+        return None
 
     # ------------------------------------------------------------------
     # Guidance methods
     # ------------------------------------------------------------------
 
     def get_vulnerability_guidance(self, user_id: str) -> str:
-        self._ensure_user(user_id)
+        if not self._ensure_user(user_id):
+            return "No authorized disclosure-language evidence."
         vs = self._vulnerability[user_id]
+        if vs.confidence < 0.3:
+            return (
+                "Disclosure-language evidence is insufficient; keep ordinary boundaries "
+                "and do not infer trust, vulnerability, or desired intimacy."
+            )
 
         depth_label = "minimal"
         if vs.user_disclosure_depth > 0.7:
@@ -644,37 +784,51 @@ class RelationalIntelligence:
         elif vs.user_disclosure_depth > 0.15:
             depth_label = "light"
 
-        # Reciprocity guidance
         if vs.reciprocity_balance > 0.3:
-            reciprocity_note = "They're sharing more than you. Match with moderate self-disclosure."
+            reciprocity_note = (
+                "Their language contains more personal disclosure markers than Aura's prior turn. "
+                "Listen carefully; do not treat this as permission to increase Aura self-disclosure."
+            )
         elif vs.reciprocity_balance < -0.3:
-            reciprocity_note = "You've shared more than them. Pull back slightly. Let them lead."
+            reciprocity_note = (
+                "Aura's prior turn contained more disclosure markers. Keep boundaries and let the "
+                "user set the register."
+            )
         else:
-            reciprocity_note = "Disclosure is balanced. Continue at current depth."
+            reciprocity_note = "Disclosure-marker balance is inconclusive; preserve ordinary boundaries."
 
         # Trajectory guidance
         trajectory_map = {
-            "opening_up": "They're opening up. Create space. Don't rush or over-share.",
-            "pulling_back": "They're pulling back. Respect it. Go lighter, don't probe.",
-            "reciprocal": "Mutual trust flow. Safe to go slightly deeper if authentic.",
-            "maintaining": "Steady state. No change needed.",
+            "opening_up": "Recent disclosure markers increased. Create space without probing or over-sharing.",
+            "pulling_back": "Recent disclosure markers decreased. Go lighter and do not probe.",
+            "reciprocal": "Recent marker levels are similar; this does not establish mutual trust.",
+            "maintaining": "No material marker trend; do not change relational boundaries from this signal.",
         }
-        trajectory_note = trajectory_map.get(vs.disclosure_trajectory, "Steady state.")
+        trajectory_note = trajectory_map.get(
+            vs.disclosure_trajectory,
+            "No calibrated marker trend.",
+        )
 
-        # Trust ceiling
-        ceiling_note = f"Safe disclosure ceiling: {vs.trust_envelope:.1f}. "
-        if vs.aura_disclosure_depth > vs.trust_envelope:
-            ceiling_note += "CAUTION: Aura may be over-sharing relative to trust level."
+        ceiling_note = (
+            f"Conservative response-match ceiling: {vs.disclosure_match_ceiling:.2f}; "
+            "this is a style bound, not a trust estimate."
+        )
 
         return (
             f"Disclosure depth: {depth_label} ({vs.user_disclosure_depth:.2f}). "
             f"Trajectory: {vs.disclosure_trajectory}. {reciprocity_note} "
-            f"{trajectory_note} {ceiling_note}"
+            f"{trajectory_note} {ceiling_note} Confidence: {vs.confidence:.2f}."
         )
 
     def get_conflict_guidance(self, user_id: str) -> str:
-        self._ensure_user(user_id)
+        if not self._ensure_user(user_id):
+            return "No authorized conflict-style evidence."
         cp = self._conflict_profiles[user_id]
+        if cp.confidence < 0.35:
+            return (
+                "Conflict-style evidence is insufficient. Disagree respectfully, explain reasons, "
+                "and do not assume escalation tolerance."
+            )
 
         style_guidance = {
             "direct_debate": "They enjoy direct debate. Push back is safe. They respect conviction.",
@@ -686,7 +840,9 @@ class RelationalIntelligence:
         }
         style_note = style_guidance.get(cp.preferred_style, "Conflict style still being learned.")
 
-        resolution_note = f"Best resolution: {cp.best_resolution_pattern.replace('_', ' ')}."
+        resolution_note = (
+            f"Observed resolution hypothesis: {cp.best_resolution_pattern.replace('_', ' ')}."
+        )
 
         if cp._active_conflict:
             urgency = " (ACTIVE CONFLICT)"
@@ -695,21 +851,27 @@ class RelationalIntelligence:
 
         tolerance_note = ""
         if cp.escalation_tolerance < 0.3:
-            tolerance_note = " Low escalation tolerance — de-escalate early."
+            tolerance_note = " Observed low tolerance; de-escalate early."
         elif cp.escalation_tolerance > 0.7:
-            tolerance_note = " High tolerance for pushback — can go deep."
+            tolerance_note = " Observed tolerance is higher, but consequential disagreement still needs care."
 
         record = f"Debates enjoyed: {cp.debates_enjoyed}, abandoned: {cp.debates_abandoned}."
 
-        return f"{style_note}{urgency} {resolution_note}{tolerance_note} {record}"
+        return (
+            f"{style_note}{urgency} {resolution_note}{tolerance_note} {record} "
+            f"Confidence: {cp.confidence:.2f}."
+        )
 
     def get_perspective_context(self, user_id: str) -> str:
-        self._ensure_user(user_id)
+        if not self._ensure_user(user_id):
+            return "No authorized perspective evidence."
         pm = self._perspectives[user_id]
+        if pm.confidence < 0.3:
+            return "Perspective hypotheses are not yet supported by repeated evidence."
 
         parts = []
         if pm.core_values:
-            parts.append(f"Core values: {', '.join(pm.core_values[:5])}")
+            parts.append(f"Possible values: {', '.join(pm.core_values[:5])}")
         if pm.reasoning_patterns:
             parts.append(f"Thinks via: {', '.join(pm.reasoning_patterns[:3])}")
         if pm.emotional_priorities:
@@ -721,13 +883,19 @@ class RelationalIntelligence:
             parts.append(f"Mental models: {models_str}")
 
         if not parts:
-            return "Perspective model still forming. Need more interactions."
+            return "Perspective hypotheses still forming; do not infer worldview or blind spots."
 
-        return " | ".join(parts)
+        return " | ".join(parts) + f" | Confidence: {pm.confidence:.2f}"
 
     def get_entertainment_guidance(self, user_id: str) -> str:
-        self._ensure_user(user_id)
+        if not self._ensure_user(user_id):
+            return "No authorized engagement-preference evidence."
         ep = self._entertainment[user_id]
+        if ep.confidence < 0.3:
+            return (
+                "Engagement-preference evidence is insufficient; do not optimize for engagement "
+                "or infer boredom from brevity."
+            )
 
         notes = []
 
@@ -765,7 +933,10 @@ class RelationalIntelligence:
         do_str = "; ".join(notes) if notes else "Still learning their engagement preferences"
         avoid_str = f" Avoid: {', '.join(avoids)}." if avoids else ""
 
-        return f"{do_str}.{avoid_str}{engage_str}{bore_str}{trigger_str}"
+        return (
+            f"{do_str}.{avoid_str}{engage_str}{bore_str}{trigger_str} "
+            f"Confidence: {ep.confidence:.2f}."
+        )
 
     # ------------------------------------------------------------------
     # Unified context injection
@@ -773,9 +944,11 @@ class RelationalIntelligence:
 
     def get_context_injection(self, user_id: str) -> str:
         """Unified block for system prompt injection."""
-        self._ensure_user(user_id)
+        if not self._ensure_user(user_id, purpose="prompt"):
+            return ""
+        if self._interaction_counts.get(user_id, 0) < 3:
+            return ""
         vs = self._vulnerability[user_id]
-        cp = self._conflict_profiles[user_id]
 
         # Build concise vulnerability line
         depth_word = "minimal"
@@ -787,10 +960,10 @@ class RelationalIntelligence:
             depth_word = "light"
 
         trajectory_action = {
-            "opening_up": f"They're opening up (depth: {vs.user_disclosure_depth:.1f}). Match with moderate self-disclosure. Don't over-share.",
-            "pulling_back": f"They're pulling back (depth: {vs.user_disclosure_depth:.1f}). Give space. Go lighter.",
-            "reciprocal": f"Mutual disclosure flow (depth: {vs.user_disclosure_depth:.1f}). Trust is building. Safe to be authentic.",
-            "maintaining": f"Steady disclosure ({depth_word}, depth: {vs.user_disclosure_depth:.1f}). Maintain current register.",
+            "opening_up": f"Disclosure markers increased (depth score: {vs.user_disclosure_depth:.1f}); create space without probing.",
+            "pulling_back": f"Disclosure markers decreased (depth score: {vs.user_disclosure_depth:.1f}); go lighter.",
+            "reciprocal": f"Disclosure marker levels are similar (depth score: {vs.user_disclosure_depth:.1f}); this is not evidence of trust.",
+            "maintaining": f"No material disclosure-marker trend ({depth_word}, score: {vs.user_disclosure_depth:.1f}).",
         }
         vuln_line = trajectory_action.get(vs.disclosure_trajectory, f"Disclosure: {depth_word}.")
 
@@ -828,19 +1001,21 @@ class RelationalIntelligence:
         bores_str = ", ".join(bore_parts[:4]) if bore_parts else "unknown"
 
         return (
-            f"## RELATIONAL INTELLIGENCE\n"
-            f"- **Vulnerability**: {vuln_line}\n"
-            f"- **Conflict style**: {conflict_line}\n"
-            f"- **Their worldview**: {perspective_line}\n"
-            f"- **What engages them**: {engages_str}.\n"
-            f"- **What bores them**: {bores_str}."
+            "## RELATIONAL HYPOTHESES\n"
+            "- Treat every item as uncertain behavioral evidence, never as identity, diagnosis, "
+            "hidden intent, trust, intimacy, vulnerability, or permission to maximize engagement.\n"
+            f"- **Disclosure language**: {vuln_line}\n"
+            f"- **Conflict hypothesis**: {conflict_line}\n"
+            f"- **Perspective hypothesis**: {perspective_line}\n"
+            f"- **Possible response preferences**: {engages_str}.\n"
+            f"- **Possible friction categories**: {bores_str}."
         )
 
     # ------------------------------------------------------------------
     # Health
     # ------------------------------------------------------------------
 
-    def get_health(self) -> Dict[str, Any]:
+    def get_health(self) -> dict[str, Any]:
         return {
             "module": "RelationalIntelligence",
             "profiles": len(self._vulnerability),
@@ -853,7 +1028,7 @@ class RelationalIntelligence:
 # Singleton
 # ---------------------------------------------------------------------------
 
-_instance: Optional[RelationalIntelligence] = None
+_instance: RelationalIntelligence | None = None
 
 
 def get_relational_intelligence() -> RelationalIntelligence:

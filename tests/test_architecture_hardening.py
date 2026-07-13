@@ -38,6 +38,7 @@ from core.memory.memory_facade import MemoryFacade
 from core.motivation.goal_hierarchy import GoalHierarchy
 from core.senses.continuous_perception import ContinuousPerceptionEngine
 from core.social.social_imagination import SocialImagination
+from core.social.relational_memory import RelationalMemoryAuthority
 from core.state.aura_state import AuraState
 from core.utils import output_gate as output_gate_module
 from core.utils.output_gate import AutonomousOutputGate
@@ -430,8 +431,30 @@ def test_capability_engine_still_detects_explicit_numeric_arithmetic():
     assert "run_code" in engine.detect_intent("Multiply 6 by 7.")
 
 
+def _social_imagination_engine(tmp_path):
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"i" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    authority.grant_consent(
+        "bryan",
+        kinds=["social_imagination"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="social-imagination-test",
+    )
+    return (
+        SocialImagination(
+            tmp_path / "social_imagination.json",
+            authority=authority,
+        ),
+        authority,
+    )
+
+
 def test_social_imagination_links_private_trouble_to_public_issue(tmp_path):
-    engine = SocialImagination(tmp_path / "social_imagination.json")
+    engine, _ = _social_imagination_engine(tmp_path)
     text = (
         "I'm working full time and still can't afford rent in this city. "
         "It feels like no matter how hard I work, housing keeps getting more expensive."
@@ -458,7 +481,7 @@ def test_social_imagination_links_private_trouble_to_public_issue(tmp_path):
 
 
 def test_social_imagination_can_relate_abstract_topics_personally(tmp_path):
-    engine = SocialImagination(tmp_path / "social_imagination.json")
+    engine, _ = _social_imagination_engine(tmp_path)
     text = "AI is reshaping work and education faster than institutions know how to adapt."
 
     frame = engine.analyze_text(text)
@@ -482,7 +505,7 @@ def test_social_imagination_can_relate_abstract_topics_personally(tmp_path):
 
 
 def test_social_imagination_holds_positive_feelings_as_socially_shaped(tmp_path):
-    engine = SocialImagination(tmp_path / "social_imagination.json")
+    engine, _ = _social_imagination_engine(tmp_path)
     text = "I'm excited that AI could help me learn faster and do more creative work."
 
     frame = engine.analyze_text(text)
@@ -499,21 +522,52 @@ def test_social_imagination_holds_positive_feelings_as_socially_shaped(tmp_path)
     assert "hope" in block.lower() or "delight" in block.lower()
 
 
-def test_social_imagination_save_uses_internal_governance(monkeypatch, tmp_path):
-    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "strict")
-    engine = SocialImagination(tmp_path / "social_imagination.json")
+def test_social_imagination_save_uses_relational_memory_authority(tmp_path):
+    engine, authority = _social_imagination_engine(tmp_path)
+    raw_sentence = "I'm working full time and still can't afford rent in this city."
 
     frame = asyncio.run(
         engine.update_from_interaction(
             "bryan",
-            "I'm working full time and still can't afford rent in this city.",
+            raw_sentence,
         )
     )
 
-    payload = json.loads((tmp_path / "social_imagination.json").read_text(encoding="utf-8"))
     assert frame is not None
-    assert "bryan" in payload["frames"]
-    assert payload["frames"]["bryan"][0]["public_issues"]
+    assert not (tmp_path / "social_imagination.json").exists()
+    snapshot = authority.load_snapshot(
+        "bryan",
+        namespace="social_imagination:v1",
+        kind="social_imagination",
+    )
+    assert snapshot is not None
+    assert snapshot["frames"][0]["public_issues"]
+    assert raw_sentence not in json.dumps(snapshot)
+    assert snapshot["frames"][0]["evidence_digest"]
+
+
+def test_social_imagination_does_not_retain_or_prompt_without_consent(tmp_path):
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"i" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    engine = SocialImagination(
+        tmp_path / "social_imagination.json",
+        authority=authority,
+    )
+
+    frame = asyncio.run(
+        engine.update_from_interaction(
+            "bryan",
+            "I'm working full time and still can't afford rent.",
+        )
+    )
+
+    assert frame is None
+    assert engine.get_context_injection("bryan", current_text="housing costs") == ""
+    assert authority.status()["record_count"] == 0
 
 
 def test_terminal_fallback_drops_autonomous_message_when_executive_rejects(monkeypatch):

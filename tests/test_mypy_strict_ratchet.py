@@ -20,8 +20,9 @@ ALLOWLIST = REPO_ROOT / "config" / "mypy_strict_files.txt"
 # bounded multimodal event-time fusion + canonical legacy sensory adapter +
 # consented visual-only speech recognition + calibrated live social situation +
 # identity-scoped relational-memory authority and compatibility adapters +
-# authority-backed conversational-profile and dialogue-cognition adapters.
-MIN_STRICT_FILES = 60
+# authority-backed conversational-profile, dialogue-cognition, relational-
+# intelligence, and social-imagination adapters.
+MIN_STRICT_FILES = 62
 
 MYPY_FLAGS = ["--follow-imports=skip", "--explicit-package-bases"]
 

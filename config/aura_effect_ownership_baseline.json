@@ -4177,14 +4177,6 @@
       "scope": "<module>.OtherAgentStateEstimator.save"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/social/relational_intelligence.py",
-      "scope": "<module>.RelationalIntelligence.save"
-    },
-    {
       "callee": "<file_write_gateway>.delete_file",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -4215,14 +4207,6 @@
       "count": 1,
       "path": "core/social/relational_memory.py",
       "scope": "<module>.RelationalMemoryAuthority.quarantine_legacy_snapshot_file"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/social/social_imagination.py",
-      "scope": "<module>.SocialImagination.save"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -11649,14 +11633,6 @@
       "scope": "<module>"
     },
     {
-      "callee": "self._data_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/social/relational_intelligence.py",
-      "scope": "<module>.RelationalIntelligence.__init__"
-    },
-    {
       "callee": "self.storage_dir.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -11687,14 +11663,6 @@
       "count": 1,
       "path": "core/social/relationship_model.py",
       "scope": "<module>.RelationshipStore._save"
-    },
-    {
-      "callee": "self._storage_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/social/social_imagination.py",
-      "scope": "<module>.SocialImagination.__init__"
     },
     {
       "callee": "self.storage_path.parent.mkdir",
@@ -13570,6 +13538,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "3da721f1a628dac0416f7bf263c17a2ad643668215b92418fa8934f6daec1a68",
+  "inventory_sha256": "e7b83f96521e5b2e5979a0d0dd96eadf9ebd04395932a2be2805d755968526ae",
   "schema_version": 1
 }

@@ -485,6 +485,50 @@ def test_session_snapshot_overlay_never_rewrites_prior_durable_value(tmp_path):
     ) == {"turns": 1}
 
 
+def test_legacy_dialogue_source_profiles_are_never_claimable_as_users(tmp_path):
+    legacy = tmp_path / "dialogue_cognition.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "profiles": {
+                    "bryan": {"user_id": "bryan", "interactions_analyzed": 4},
+                    "source:edi": {
+                        "user_id": "source:edi",
+                        "interactions_analyzed": 30,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    authority = _authority(tmp_path)
+    assert authority.quarantine_legacy_snapshot_file(
+        legacy,
+        namespace="dialogue_cognition:v1",
+        kind="dialogue_preference",
+    ) == 2
+    authority.grant_consent(
+        "bryan",
+        kinds=["dialogue_preference"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="dialogue-grant",
+    )
+
+    receipt = authority.claim_legacy_records(
+        "bryan",
+        confirmation_receipt_id="claim-dialogue",
+        confirmed=True,
+    )
+
+    assert len(receipt.record_ids) == 1
+    assert authority.load_snapshot(
+        "bryan",
+        namespace="dialogue_cognition:v1",
+        kind="dialogue_preference",
+    ) == {"profile": {"interactions_analyzed": 4, "user_id": "bryan"}}
+    assert authority.status()["legacy_quarantine_count"] == 1
+
+
 def test_legacy_adapters_share_one_exact_agent_authority(tmp_path):
     authority = _authority(tmp_path)
     authority.grant_consent(

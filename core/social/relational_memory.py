@@ -1012,6 +1012,25 @@ class RelationalMemoryAuthority:
                 for agent_id, profile in profiles.items()
                 if isinstance(profile, dict)
             }
+        if namespace == "social_imagination:v1":
+            frames = raw.get("frames") or {}
+            if not isinstance(frames, dict):
+                return {}
+            return {
+                str(agent_id): {
+                    "frames": [
+                        frame for frame in value[-5:] if isinstance(frame, dict)
+                    ]
+                }
+                for agent_id, value in frames.items()
+                if isinstance(value, list)
+            }
+        if namespace == "relational_intelligence:v1":
+            return {
+                str(agent_id): profile
+                for agent_id, profile in raw.items()
+                if isinstance(profile, dict)
+            }
         return {}
 
     def _prepare_grant(

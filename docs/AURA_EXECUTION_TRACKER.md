@@ -16,10 +16,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **remaining relational-intelligence,
-  social-imagination, humor, and person-model consolidation (`MEMORY-001`,
-  `MIND-001`, `STATE-001`, `CTX3-SOCIAL-001..002`)**, following the canonical
-  profile/dialogue adapters recorded in Checkpoint 43. `CTX2-LANE-001..004` and
+- Current bounded implementation milestone: **humor, joy, user-profile,
+  relationship-graph, and remaining person-model consolidation (`MEMORY-001`,
+  `MIND-001`, `STATE-001`, `CTX3-SOCIAL-001..002`)**, following the calibrated
+  relational/social-imagination adapters recorded in Checkpoint 44.
+  `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
   Signal-safe terminal shutdown (`CTX2-SHUTDOWN-001..003`) and the fail-closed
@@ -1030,12 +1031,13 @@ evidence into a metaphysical, legal, or comparative claim.
      `SharedGround` are now storage-free adapters over one encrypted, versioned,
      identity-scoped authority with expiring/revocable persistence/recall/prompt
      grants, quarantine, attribution, export, and deletion. Still consolidate
-     conversational profile and dialogue cognition are now computation/formatting
-     adapters over that authority. Still consolidate relational intelligence,
-     social imagination, humor, and every other person representation; connect
-     terminal action receipts to observed social outcomes; add complete
-     user-facing style/boundary controls; and measure trust calibration,
-     correction burden, continuity, and recovery in launched
+     conversational profile, dialogue cognition, relational intelligence, and
+     social imagination are now computation/formatting adapters over that
+     authority. Still consolidate humor, joy, user profile, relationship graph,
+     Theory of Mind, and every other person representation; connect terminal
+     action receipts to observed social outcomes; add complete user-facing
+     style/boundary controls; and measure trust calibration, correction burden,
+     continuity, and recovery in launched
      multi-session trials. Persuasion, dependency creation, and engagement
      maximization remain prohibited success metrics.
 
@@ -12285,3 +12287,93 @@ Authoritative remaining person-model consolidation work:
   rotation/recovery, and launched identity-switch, multiuser, deletion, restart,
   crash, prompt-injection, and long-gap proof. Final multi-hour and 24-72 hour
   soaks remain deferred until all shorter requirements are green.
+
+## Checkpoint 2026-07-12-44: Calibrated Relational and Social Projections
+
+This checkpoint advances `MEMORY-001`, `SOCIAL-001`, `CTX3-SOCIAL-001..002`,
+`ARCH-001`, `PRIVACY-001`, and `FAULT-001`. It converts relational intelligence
+and retained social-imagination frames into exact-agent authority projections
+and removes unsupported trust/intimacy semantics. It does not close humor, joy,
+user-profile, relationship-graph, Theory-of-Mind, receipt-grounded outcome
+learning, controls, or launched longitudinal proof.
+
+Implemented calibrated relational hypotheses:
+
+- Replaced the relational-intelligence JSON file, raw directory creation,
+  independent load owner, global five-turn persistence cadence, and restart-lost
+  evidence accumulators with one versioned `relational_intelligence:v1`
+  `derived_profile` snapshot. Per-user disclosure, conflict, perspective,
+  engagement-category evidence, confidence, and interaction count now restart
+  through the encrypted authority; transient active-conflict timing is reset.
+- Removed the monotonic `trust_envelope` and every prompt claim that disclosure
+  markers establish trust, intimacy, vulnerability, safe depth, or permission
+  for Aura to self-disclose more. The replacement is an explicitly conservative
+  response-matching ceiling derived from repeated linguistic evidence and
+  labelled as a style bound, never a trust estimate.
+- Added repeated-evidence confidence to disclosure, conflict, perspective, and
+  engagement projections. Relational prompt projection stays empty for fewer
+  than three interactions, low-confidence submodels return uncertainty rather
+  than a default person claim, and the prompt forbids interpreting hypotheses as
+  identity, diagnosis, hidden intent, trust, intimacy, or engagement objectives.
+- Removed verbatim de-escalation sentences, growth-goal tails, delight/boredom
+  excerpts, and engagement-trigger excerpts from retained state. Growth keeps
+  only the existence of an explicit goal; entertainment keeps bounded topic
+  categories. Message length no longer implies engagement or boredom, substring
+  matches are token-bounded, and `continue` is neutral.
+
+Implemented authority-backed social imagination:
+
+- Replaced the social-imagination JSON file, raw directory creation, independent
+  load owner, and per-frame file write with one bounded
+  `social_imagination:v1` snapshot. Pure category analysis remains stateless;
+  exact-agent updates require recall authority, durable writes separately
+  require persist authority, and prompt rendering separately requires prompt
+  authority. Session-only adaptation is therefore functional but non-durable.
+- Removed verbatim personal sentences from retained `personal_troubles`. Frames
+  now retain bounded category labels, curated structures/institutions/questions,
+  evidence digest, confidence, and explicit limitations. Prompt text labels the
+  frame as a category-level hypothesis that cannot establish identity,
+  diagnosis, intent, blame, or causal responsibility.
+- Extended verified legacy quarantine extraction for relational-intelligence and
+  social-imagination schemas. Old asserted user keys remain untrusted digests
+  until exact-agent confirmation, use adapter-only prompt policy, and are deleted
+  from plaintext only after encrypted persistence verifies.
+- Changed live learning admission for both adapters from persist-only to recall
+  scope. The authority remains the sole durability decision point, so private or
+  unconsented users are not inferred, session-only users can adapt ephemerally,
+  and deletion or revocation invalidates cached projections.
+
+Verification completed for this checkpoint:
+
+- Calibrated relational-intelligence and social-imagination tests passed `9/9`;
+  the expanded authority, profile, dialogue, exact-agent runtime, and strict
+  regression matrix passed `51/51`. Dedicated authority plus relational tests
+  passed `22/22`, including source-attractor non-claimability, encrypted restart,
+  no-consent denial, session non-durability, exact-agent exclusion, deletion
+  invalidation, neutral `continue`, raw-text non-retention, and unsupported-trust
+  language exclusion.
+- Whole-tree compile and configured Ruff passed. Strict MyPy grew from `60` to
+  `62` production files. Governance passes at `1,796` recognized calls in
+  `1,692` buckets; removing two independent writers and two raw directory
+  mutations reduced acknowledged migration debt from `1,680` to `1,676` calls.
+- Enterprise static and collection ratchets, all 37 production-readiness checks,
+  source hygiene, the 2,562-file security scan, 13/13 cognitive-gate ownership,
+  75/75 skill discovery/live-registry parity, model-load ownership,
+  resource-observation ownership, and the 20-point closeout rubric passed.
+
+Authoritative remaining person-model work:
+
+- Convert humor, joy-social, `UserProfile`, `ProfileManager`, relationship graph,
+  both remaining Theory-of-Mind engines, and every other person representation
+  into authority-owned versioned projections. Remove independent files, global
+  mutable users, raw examples, passive rapport/intimacy counters, and duplicated
+  confidence/freshness semantics.
+- Replace parallel profile schemas with one typed canonical person model and
+  explicit projection contracts. Evidence must identify source, observation,
+  outcome receipt, freshness, uncertainty, contradiction, correction, retention,
+  and writer; projections must abstain when evidence is weak and may not optimize
+  dependency, persuasion, time-on-system, or engagement.
+- Add authenticated signed receipts, complete user controls, key
+  rotation/recovery, and launched multiuser, identity-switch, deletion, restart,
+  crash, adversarial, and long-gap proof. Final multi-hour and 24-72 hour soaks
+  remain deferred until all shorter requirements are green.

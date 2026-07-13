@@ -6,25 +6,24 @@ issue, and also relate abstract topics back to lived stakes, daily life,
 identity, and institutional structure.
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
-
-
-import json
+import hashlib
 import logging
-import os
 import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from core.governance_context import local_internal_governed_scope
+from core.runtime.errors import record_degradation
+from core.social.relational_memory import (
+    RelationalMemoryAuthority,
+    get_relational_memory_authority,
+)
 
 logger = logging.getLogger("Aura.SocialImagination")
 
 _FIRST_PERSON = re.compile(r"\b(i|me|my|mine|we|our|us)\b", re.IGNORECASE)
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _POSITIVE_AFFECT = re.compile(
     r"\b(excited|hopeful|proud|grateful|relieved|joy|happy|delighted|love|inspired|fascinated|curious)\b",
     re.IGNORECASE,
@@ -34,7 +33,7 @@ _NEGATIVE_AFFECT = re.compile(
     re.IGNORECASE,
 )
 
-_ROLE_MARKERS: Dict[str, List[str]] = {
+_ROLE_MARKERS: dict[str, list[str]] = {
     "student": ["student", "school", "college", "class", "semester", "professor"],
     "worker": ["job", "work", "boss", "manager", "salary", "career", "office"],
     "founder": ["startup", "founder", "company", "product", "customers", "ship"],
@@ -43,7 +42,7 @@ _ROLE_MARKERS: Dict[str, List[str]] = {
     "tenant": ["rent", "landlord", "lease", "apartment", "housing", "mortgage"],
 }
 
-_CATEGORY_RULES: Dict[str, Dict[str, Any]] = {
+_CATEGORY_RULES: dict[str, dict[str, Any]] = {
     "employment": {
         "keywords": ["job", "work", "working", "working full time", "laid off", "unemployed", "salary", "boss", "promotion", "career", "hiring"],
         "public_issue": "labor market pressure and workplace power",
@@ -166,33 +165,44 @@ _CATEGORY_RULES: Dict[str, Dict[str, Any]] = {
     },
 }
 
+_SNAPSHOT_NAMESPACE = "social_imagination:v1"
+_SNAPSHOT_KIND = "social_imagination"
+
 
 @dataclass
 class SocialImaginationFrame:
-    personal_troubles: List[str] = field(default_factory=list)
-    personal_angles: List[str] = field(default_factory=list)
-    positive_possibilities: List[str] = field(default_factory=list)
-    public_issues: List[str] = field(default_factory=list)
-    biography_factors: List[str] = field(default_factory=list)
-    historical_structural_factors: List[str] = field(default_factory=list)
-    institutions: List[str] = field(default_factory=list)
+    personal_troubles: list[str] = field(default_factory=list)
+    personal_angles: list[str] = field(default_factory=list)
+    positive_possibilities: list[str] = field(default_factory=list)
+    public_issues: list[str] = field(default_factory=list)
+    biography_factors: list[str] = field(default_factory=list)
+    historical_structural_factors: list[str] = field(default_factory=list)
+    institutions: list[str] = field(default_factory=list)
     reframing: str = ""
-    questions: List[str] = field(default_factory=list)
+    questions: list[str] = field(default_factory=list)
+    matched_categories: list[str] = field(default_factory=list)
+    evidence_digest: str = ""
+    limitations: list[str] = field(default_factory=list)
     confidence: float = 0.0
     created_at: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SocialImaginationFrame":
+    def from_dict(cls, data: dict[str, Any]) -> SocialImaginationFrame:
         valid = {field_name for field_name in cls.__dataclass_fields__}
         filtered = {k: v for k, v in data.items() if k in valid}
         return cls(**filtered)
 
 
 class SocialImagination:
-    def __init__(self, storage_path: Optional[Path] = None):
+    def __init__(
+        self,
+        storage_path: Path | None = None,
+        *,
+        authority: RelationalMemoryAuthority | None = None,
+    ):
         if storage_path is None:
             try:
                 from core.config import config
@@ -200,57 +210,75 @@ class SocialImagination:
                 storage_path = config.paths.data_dir / "social_imagination.json"
             except (ImportError, AttributeError, RuntimeError):
                 storage_path = Path.home() / ".aura" / "data" / "social_imagination.json"
-        self._storage_path = Path(storage_path)
-        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
-        self._frames: Dict[str, List[SocialImaginationFrame]] = {}
+        self._legacy_path = Path(storage_path)
+        self._authority = authority or get_relational_memory_authority()
+        self._frames: dict[str, list[SocialImaginationFrame]] = {}
         self._analysis_count = 0
-        self._load()
-        logger.info("SocialImagination initialized (%d users loaded).", len(self._frames))
-
-    def _load(self) -> None:
-        if not self._storage_path.exists():
-            return
-        try:
-            raw = json.loads(self._storage_path.read_text())
-            for user_id, frames in raw.get("frames", {}).items():
-                self._frames[user_id] = [
-                    SocialImaginationFrame.from_dict(frame)
-                    for frame in (frames or [])
-                    if isinstance(frame, dict)
-                ]
-        except (OSError, ConnectionError, TimeoutError) as exc:
-            record_degradation('social_imagination', exc)
-            logger.warning("SocialImagination load failed: %s", exc)
+        migrated = self._authority.quarantine_legacy_snapshot_file(
+            self._legacy_path,
+            namespace=_SNAPSHOT_NAMESPACE,
+            kind=_SNAPSHOT_KIND,
+        )
+        logger.info(
+            "SocialImagination initialized (authority-backed, %d legacy profiles quarantined).",
+            migrated,
+        )
 
     def save(self) -> None:
+        for user_id in list(self._frames):
+            self._persist_frames(user_id)
+
+    def _persist_frames(self, user_id: str) -> None:
+        if not self._authority.allows(user_id, _SNAPSHOT_KIND, "recall"):
+            return
         try:
-            payload = {
-                "frames": {
-                    user_id: [frame.to_dict() for frame in frames[-5:]]
-                    for user_id, frames in self._frames.items()
-                }
-            }
-            from core.runtime.file_write_gateway import get_file_write_gateway
+            frames = self._frames.get(user_id, [])[-5:]
+            confidence = max((frame.confidence for frame in frames), default=0.0)
+            self._authority.upsert_snapshot(
+                user_id,
+                namespace=_SNAPSHOT_NAMESPACE,
+                kind=_SNAPSHOT_KIND,
+                payload={"frames": [frame.to_dict() for frame in frames]},
+                confidence=confidence,
+                provenance="social_imagination.category_rules",
+            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("social_imagination", exc)
+            logger.error("SocialImagination authority save failed: %s", exc)
 
-            with local_internal_governed_scope("social_imagination.save", domain="file_write"):
-                get_file_write_gateway().write_text(
-                    self._storage_path,
-                    json.dumps(payload, indent=2),
-                    encoding="utf-8",
-                    source="social_imagination.save",
-                )
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('social_imagination', exc)
-            logger.error("SocialImagination save failed: %s", exc)
+    def _frames_for_purpose(
+        self,
+        user_id: str,
+        *,
+        purpose: str,
+    ) -> list[SocialImaginationFrame]:
+        if not self._authority.allows(user_id, _SNAPSHOT_KIND, purpose):
+            self._frames.pop(user_id, None)
+            return []
+        payload = self._authority.load_snapshot(
+            user_id,
+            namespace=_SNAPSHOT_NAMESPACE,
+            kind=_SNAPSHOT_KIND,
+            purpose=purpose,
+        )
+        if payload is not None:
+            raw_frames = payload.get("frames") or []
+            if isinstance(raw_frames, list):
+                self._frames[user_id] = [
+                    SocialImaginationFrame.from_dict(frame)
+                    for frame in raw_frames[-5:]
+                    if isinstance(frame, dict)
+                ]
+        return list(self._frames.get(user_id, []))
 
-    def analyze_text(self, text: str) -> Optional[SocialImaginationFrame]:
+    def analyze_text(self, text: str) -> SocialImaginationFrame | None:
         normalized = " ".join(str(text or "").strip().lower().split())
         if len(normalized) < 12:
             return None
 
         first_person = bool(_FIRST_PERSON.search(normalized))
 
-        matched_categories: List[str] = []
+        matched_categories: list[str] = []
         for category, rule in _CATEGORY_RULES.items():
             if any(keyword in normalized for keyword in rule["keywords"]):
                 matched_categories.append(category)
@@ -268,31 +296,20 @@ class SocialImagination:
         elif not biography_factors:
             biography_factors.append("everyday social life")
 
-        personal_troubles: List[str] = []
-        for sentence in _SENTENCE_SPLIT.split(str(text or "").strip()):
-            sentence_norm = sentence.strip()
-            if not sentence_norm:
-                continue
-            lowered = sentence_norm.lower()
-            if first_person and _FIRST_PERSON.search(lowered) and any(
-                keyword in lowered for category in matched_categories for keyword in _CATEGORY_RULES[category]["keywords"]
-            ) and not (_POSITIVE_AFFECT.search(lowered) and not _NEGATIVE_AFFECT.search(lowered)):
-                personal_troubles.append(sentence_norm[:180])
-
         positive_message = bool(_POSITIVE_AFFECT.search(normalized) and not _NEGATIVE_AFFECT.search(normalized))
-
-        if not personal_troubles and first_person and not positive_message:
+        personal_troubles: list[str] = []
+        if first_person and not positive_message:
             personal_troubles = [
                 f"personal strain around {category.replace('_', ' ')}"
                 for category in matched_categories[:2]
             ]
 
-        personal_angles: List[str] = []
-        positive_possibilities: List[str] = []
-        public_issues: List[str] = []
-        structures: List[str] = []
-        institutions: List[str] = []
-        questions: List[str] = []
+        personal_angles: list[str] = []
+        positive_possibilities: list[str] = []
+        public_issues: list[str] = []
+        structures: list[str] = []
+        institutions: list[str] = []
+        questions: list[str] = []
         for category in matched_categories:
             rule = _CATEGORY_RULES[category]
             public_issues.append(str(rule["public_issue"]))
@@ -342,6 +359,14 @@ class SocialImagination:
             institutions=institutions,
             reframing=reframing,
             questions=questions,
+            matched_categories=matched_categories[:5],
+            evidence_digest=hashlib.sha256(
+                normalized.encode("utf-8", errors="strict")
+            ).hexdigest(),
+            limitations=[
+                "category-level linguistic heuristic",
+                "does not establish identity, diagnosis, intent, or causal responsibility",
+            ],
             confidence=confidence,
         )
 
@@ -350,9 +375,11 @@ class SocialImagination:
         user_id: str,
         user_message: str,
         aura_response: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Optional[SocialImaginationFrame]:
+        metadata: dict[str, Any] | None = None,
+    ) -> SocialImaginationFrame | None:
         del aura_response, metadata
+        if not self._authority.allows(user_id, _SNAPSHOT_KIND, "recall"):
+            return None
         frame = self.analyze_text(user_message)
         self._analysis_count += 1
         if frame is None:
@@ -360,15 +387,22 @@ class SocialImagination:
         frames = self._frames.setdefault(user_id, [])
         frames.append(frame)
         self._frames[user_id] = frames[-5:]
-        self.save()
+        self._persist_frames(user_id)
         return frame
 
-    def get_latest_frame(self, user_id: str) -> Optional[SocialImaginationFrame]:
-        frames = self._frames.get(user_id) or []
+    def get_latest_frame(self, user_id: str) -> SocialImaginationFrame | None:
+        frames = self._frames_for_purpose(user_id, purpose="recall")
         return frames[-1] if frames else None
 
     def get_context_injection(self, user_id: str, current_text: str = "") -> str:
-        frame = self.analyze_text(current_text) if current_text else self.get_latest_frame(user_id)
+        if not self._authority.allows(user_id, _SNAPSHOT_KIND, "prompt"):
+            self._frames.pop(user_id, None)
+            return ""
+        if current_text:
+            frame = self.analyze_text(current_text)
+        else:
+            frames = self._frames_for_purpose(user_id, purpose="prompt")
+            frame = frames[-1] if frames else None
         if frame is None or frame.confidence < 0.3:
             return ""
 
@@ -379,16 +413,18 @@ class SocialImagination:
         questions = " | ".join(frame.questions[:2])
         return (
             "## SOCIAL IMAGINATION\n"
+            "- These are category-level hypotheses, not facts about identity, intent, diagnosis, or blame.\n"
             f"- Personal stakes in view: {personal_view}\n"
             f"- Public issues in view: {issues}\n"
             f"- Positive possibilities in view: {positive}\n"
             f"- Biography/history link: {frame.reframing}\n"
             f"- Institutions and structures: {institutions}\n"
             "- Relate the topic to daily life, agency, relationships, time, money, dignity, delight, hope, and institutional constraint.\n"
-            f"- Good follow-up questions: {questions}"
+            f"- Good follow-up questions: {questions}\n"
+            f"- Evidence confidence: {frame.confidence:.2f}; source digest: {frame.evidence_digest[:16]}"
         )
 
-    def get_health(self) -> Dict[str, Any]:
+    def get_health(self) -> dict[str, Any]:
         return {
             "module": "SocialImagination",
             "profiles": len(self._frames),
@@ -397,9 +433,9 @@ class SocialImagination:
         }
 
 
-def _unique(items: List[str]) -> List[str]:
+def _unique(items: list[str]) -> list[str]:
     seen = set()
-    out: List[str] = []
+    out: list[str] = []
     for item in items:
         normalized = item.strip().lower()
         if not normalized or normalized in seen:
@@ -409,7 +445,7 @@ def _unique(items: List[str]) -> List[str]:
     return out
 
 
-_instance: Optional[SocialImagination] = None
+_instance: SocialImagination | None = None
 
 
 def get_social_imagination() -> SocialImagination:

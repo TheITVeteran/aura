@@ -80,3 +80,5 @@ core/memory/shared_ground.py
 # Authority-backed person-model adapters (2026-07-12)
 core/social/conversational_profile.py
 core/social/dialogue_cognition.py
+core/social/relational_intelligence.py
+core/social/social_imagination.py

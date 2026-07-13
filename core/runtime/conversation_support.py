@@ -419,7 +419,7 @@ async def update_conversational_intelligence(
 
     try:
         rel_intel = service_access.optional_service("relational_intelligence", default=None)
-        if rel_intel and relational_memory_allows(user_id, "derived_profile", "persist"):
+        if rel_intel and relational_memory_allows(user_id, "derived_profile", "recall"):
             dynamics = service_access.resolve_conversational_dynamics(default=None)
             dynamics_state = dynamics.get_current_state() if dynamics else None
             await rel_intel.update_from_interaction(
@@ -437,7 +437,7 @@ async def update_conversational_intelligence(
         if social_imagination and relational_memory_allows(
             user_id,
             "social_imagination",
-            "persist",
+            "recall",
         ):
             await social_imagination.update_from_interaction(user_id, user_input, aura_response, {})
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
