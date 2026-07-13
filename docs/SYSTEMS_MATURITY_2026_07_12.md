@@ -44,6 +44,29 @@ over; this pass raised the engineering floor.
   nondeterministic shutdown-census race (two occurrences, zero replays
   on identical sets) and chipped with reproduction guidance.
 
+## Leak addendum (2026-07-13): H1 confirmed — a real idle leak
+
+The H1-vs-H2 discriminator has its verdict. Two independent quiet-box
+idle windows, computed from the soak drivers' RSS trend CSVs:
+
+| run | idle window | idle slope | load slope |
+|---|---|---|---|
+| 2026-07-12 23:09 | 45 min, 90 samples | **+454 MB/h** | (n/a, 2 samples) |
+| 2026-07-13 02:08 | 70 min, 140 samples | **+354 MB/h** | +379 MB/h |
+
+The orchestrator process (model workers excluded — n_procs=1, sub-GB
+RSS) grows at ~350–450 MB/h while doing NOTHING but its own idle
+cognition, and the slope under load is statistically the same. That is
+**H1: a real leak**, not proof-deferred reclamation under load (H2
+falsified — reclamation pressure changes nothing because load isn't
+the driver). July 7's "242 MB/h under load" was this same leak.
+
+Still owed: ATTRIBUTION — the tracemalloc idle window
+(`AURA_RUNTIME_HYGIENE_TRACEMALLOC=1`, read via
+`/api/system/memory/growth`) names the subsystem; the 2026-07-13 05:50
+attribution attempt aborted (`never_ready`, the candidate-readiness
+cluster). It reruns with the next quiet idle window, before the fix.
+
 ## The meta-lesson
 
 Every blocking failure this pass found reduced to one of two shapes:
