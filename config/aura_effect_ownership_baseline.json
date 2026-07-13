@@ -2269,14 +2269,6 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/social/relationship_graph.py",
-      "scope": "<module>.RelationshipGraph._persist"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
       "path": "core/social/relationship_model.py",
       "scope": "<module>.RelationshipStore._save"
     },
@@ -11601,22 +11593,6 @@
       "scope": "<module>"
     },
     {
-      "callee": "self.storage_dir.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/social/relationship_graph.py",
-      "scope": "<module>.RelationshipGraph.__init__"
-    },
-    {
-      "callee": "self._path().unlink",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/social/relationship_graph.py",
-      "scope": "<module>.RelationshipGraph.forget_node"
-    },
-    {
       "callee": "_REL_DIR.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13506,6 +13482,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "b21c7c35296d230ab214a833171c7411f9434791d8dcefab11f92a9d3d5160cb",
+  "inventory_sha256": "045ea530c5bcc3199bca05c3091e881f2432a901a317dbdc50de4eddce9b859c",
   "schema_version": 1
 }

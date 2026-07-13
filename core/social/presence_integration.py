@@ -11,6 +11,40 @@ from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.PresenceIntegration")
 
+
+def _register_relationship_graph(relational_memory):
+    """Register one canonical graph instance under both supported service names."""
+    from core.social.relationship_graph import RelationshipGraph
+
+    if relational_memory is None:
+        raise RuntimeError("relational memory authority is unavailable")
+    relationship_graph = get_runtime_service("relationship_graph", default=None)
+    if relationship_graph is None:
+        relationship_graph = RelationshipGraph(authority=relational_memory)
+        if not register_runtime_service(
+            "relationship_graph",
+            relationship_graph,
+            required=False,
+            owner="relational_memory",
+            registered_by="presence_integration",
+            failure_policy="degrade",
+        ):
+            raise RuntimeError("runtime registry rejected relationship_graph")
+    legacy_graph = get_runtime_service("entity_graph", default=None)
+    if legacy_graph is not None and legacy_graph is not relationship_graph:
+        raise RuntimeError("entity_graph is registered to a competing relationship owner")
+    if legacy_graph is None:
+        if not register_runtime_service(
+            "entity_graph",
+            relationship_graph,
+            required=False,
+            owner="relational_memory",
+            registered_by="presence_integration",
+            failure_policy="degrade",
+        ):
+            raise RuntimeError("runtime registry rejected entity_graph alias")
+    return relationship_graph
+
 def apply_presence_patch(orchestrator):
     """
     Wires OpinionEngine, ProactivePresence, and social/discourse systems
@@ -83,7 +117,15 @@ def apply_presence_patch(orchestrator):
         record_degradation('presence_integration', e)
         logger.warning("SharedGround adapter init failed: %s", e)
 
-    # 7. SocialMemory compatibility adapter
+    # 7. Canonical relationship topology (legacy entity_graph is an alias)
+    try:
+        _register_relationship_graph(relational_memory)
+        logger.info("✅ RelationshipGraph registered under canonical and legacy aliases.")
+    except (ImportError, AttributeError, RuntimeError) as e:
+        record_degradation("presence_integration", e)
+        logger.warning("RelationshipGraph adapter init failed: %s", e)
+
+    # 8. SocialMemory compatibility adapter
     try:
         # Only register if not already present (another boot path may have registered it)
         if not get_runtime_service("social_memory", default=None):
@@ -98,7 +140,7 @@ def apply_presence_patch(orchestrator):
         record_degradation('presence_integration', e)
         logger.warning("SocialMemory init failed: %s", e)
 
-    # 8. TheoryOfMind (user model: rapport, trust, emotional state)
+    # 9. TheoryOfMind (user model: rapport, trust, emotional state)
     try:
         if not get_runtime_service("theory_of_mind", default=None):
             from core.consciousness.theory_of_mind import get_theory_of_mind
@@ -110,7 +152,7 @@ def apply_presence_patch(orchestrator):
         record_degradation('presence_integration', e)
         logger.warning("TheoryOfMind init failed: %s", e)
 
-    # 9. DiscourseTracker (topic threading, user emotional trend, conversation energy)
+    # 10. DiscourseTracker (topic threading, user emotional trend, conversation energy)
     try:
         from core.brain.discourse_tracker import DiscourseTracker
         ce = getattr(orchestrator, "cognitive_engine", None)

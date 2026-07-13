@@ -603,6 +603,53 @@ class RelationalMemoryAuthority:
             return None
         return None
 
+    def delete_snapshot(
+        self,
+        agent_id: str,
+        *,
+        namespace: str,
+        kind: str,
+        authorization_receipt_id: str,
+    ) -> RelationalMemoryReceipt:
+        """Delete one adapter snapshot without deleting unrelated agent memory."""
+        normalized_agent_id = _normalize_agent_id(agent_id)
+        normalized_kind = _normalize_kind(kind)
+        normalized_namespace = " ".join(str(namespace or "").strip().split())[
+            :_MAX_SNAPSHOT_NAMESPACE_CHARS
+        ]
+        if not normalized_namespace:
+            raise ValueError("snapshot namespace must be non-empty")
+        if not str(authorization_receipt_id or "").strip():
+            raise PermissionError("snapshot deletion requires an authorization receipt")
+        self._require_control_plane_unlocked("snapshot deletion")
+        with self._lock:
+            records_before = copy.deepcopy(self._records)
+            revision_before = self._revision
+            matching = [
+                (record_id, record)
+                for record_id, record in self._records.items()
+                if record.agent_id == normalized_agent_id
+                and record.kind == normalized_kind
+                and record.metadata.get("snapshot_namespace") == normalized_namespace
+            ]
+            deleted = [record_id for record_id, _ in matching]
+            deleted_durable = any(record.durable for _, record in matching)
+            for record_id in deleted:
+                self._records.pop(record_id, None)
+            if deleted:
+                self._revision += 1
+                if deleted_durable and not self._save_locked():
+                    self._records = records_before
+                    self._revision = revision_before
+                    raise RuntimeError("relational snapshot deletion could not be persisted")
+            return self._receipt_locked(
+                "delete_snapshot",
+                normalized_agent_id,
+                deleted,
+                durable=bool(deleted) and deleted_durable and self.persistence_available,
+                reason="authorized_snapshot_deletion" if deleted else "snapshot_absent",
+            )
+
     def query(
         self,
         agent_id: str,
@@ -1071,6 +1118,9 @@ class RelationalMemoryAuthority:
                 if categories
                 else {}
             )
+        if namespace == "relationship_graph:v1":
+            node_id = str(raw.get("node_id") or "").strip()
+            return {node_id: {"node": raw}} if node_id else {}
         return {}
 
     def _prepare_grant(

@@ -89,3 +89,5 @@ core/memory/semantic_fact_extractor.py
 core/memory/user_profile.py
 core/security/device_pairing.py
 core/memory/chat_turn_logger.py
+core/social/relationship_graph.py
+core/social/person_model.py

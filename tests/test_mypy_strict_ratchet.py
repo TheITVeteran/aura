@@ -24,8 +24,9 @@ ALLOWLIST = REPO_ROOT / "config" / "mypy_strict_files.txt"
 # intelligence, social-imagination, delivered-outcome humor, and receipt-confirmed
 # user output transport, exact-agent user profiles, semantic fact provenance,
 # principal-bound paired devices, authenticated principal resolution, and
-# exact-agent chat-turn profile scheduling.
-MIN_STRICT_FILES = 69
+# exact-agent chat-turn profile scheduling, canonical relationship topology,
+# and the exact-agent person compatibility view.
+MIN_STRICT_FILES = 71
 
 MYPY_FLAGS = ["--follow-imports=skip", "--explicit-package-bases"]
 

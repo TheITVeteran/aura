@@ -16,10 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **joy-social, relationship-graph,
-  Theory-of-Mind, and remaining canonical person-model consolidation
+- Current bounded implementation milestone: **Theory-of-Mind, joy-social, and
+  remaining canonical person-model consolidation
   (`MEMORY-001`, `MIND-001`, `STATE-001`, `CTX3-SOCIAL-001..002`)**, following
-  the exact-agent user-profile authority recorded in Checkpoint 46.
+  the canonical relationship-topology authority recorded in Checkpoint 47.
   `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
@@ -12570,6 +12570,106 @@ Authoritative remaining person-model work:
   shared references, social hypotheses, corrections, outcomes, freshness,
   uncertainty, retention, decay, and writer ownership into one typed canonical
   person model with explicit projection contracts and abstention rules.
+- Add authenticated signed consent/action receipts, complete desktop and API
+  controls, key rotation/recovery, and launched multiuser, identity-switch,
+  deletion, restart, crash, adversarial, failed-delivery, and long-gap proof.
+  Final multi-hour and 24-72 hour soaks remain deferred until these and every
+  other shorter requirement are green.
+
+## Checkpoint 2026-07-12-47: Canonical Relationship Topology
+
+This checkpoint advances `MEMORY-001`, `SOCIAL-001`, `ARCH-001`, `STATE-001`,
+`SECURITY-001`, `PRIVACY-001`, and `FAULT-001`. It replaces the standalone
+relationship-node file store with one exact-agent authority projection and
+wires that projection into the live conversation service aliases. It does not
+close canonical Theory-of-Mind, recursive observer modeling, joy-social,
+`AuraState.world.relationship_graph`, the dormant SQLite/world graph classes,
+the unified typed person schema, complete controls, or launched proof.
+
+Implemented canonical relationship topology:
+
+- Replaced one plaintext JSON file per relationship node, raw directory
+  creation, independent loading, atomic file writes, and direct unlink deletion
+  with a bounded `relationship_graph:v1` `shared_ground` snapshot in canonical
+  relational-memory authority. Legacy node files enter encrypted unscoped
+  quarantine and cannot be attributed automatically.
+- Removed relationship `sentiment_score`, mirrored preferences, raw interaction
+  excerpts, raw project identifiers, and raw connection identifiers. The graph
+  now retains only exact agent identity, bounded topology type, relation types,
+  unique SHA-256 evidence, interaction count, confidence derived from unique
+  evidence count, project/connection digests, and finite update time. Replayed
+  evidence is idempotent and cannot inflate confidence.
+- Split explicit boundary controls into a separately consented
+  `relationship_boundaries:v1` `boundary` snapshot. Boundary mutation requires
+  exact-agent boundary consent, SHA-256 evidence, and an authorization receipt;
+  the retained payload contains only a receipt digest. Missing identity,
+  consent, evidence, or receipt fails closed.
+- Rejected arbitrary sentiment deltas as relationship truth. The compatibility
+  interaction method records topology only, and nonzero sentiment requires a
+  separate confirmed-outcome model rather than praise/criticism shortcuts.
+  Prompt projection labels topology as bounded observed evidence and explicitly
+  forbids trust, intimacy, sentiment, identity, or hidden-intent conclusions.
+
+Implemented ownership and deletion closure:
+
+- Added targeted `RelationalMemoryAuthority.delete_snapshot`, including
+  authorization receipts, exact namespace/kind matching, durable-save rollback,
+  session/durable receipt semantics, and preservation of unrelated agent
+  snapshots and consent grants. Relationship deletion therefore no longer
+  deletes an entire person's profile, dialogue, humor, or shared memory.
+- Registered one `RelationshipGraph` instance under canonical
+  `relationship_graph` and legacy `entity_graph` names during the live presence
+  boot path. The registry fails closed if either registration is rejected or an
+  existing alias points to a competing owner; conversation-support updates now
+  reach this same object through its existing async `register_interaction` hook.
+- Replaced `PersonModel`'s hidden construction of seven parallel trust,
+  preference, memory, reciprocity, boundary, relationship, and Theory-of-Mind
+  stores plus its hard-coded Bryan mutation with a fail-closed exact-agent view
+  over the canonical relationship projection. It exposes evidence and explicit
+  boundaries, never invented trust or permission from rapport.
+
+Verification completed for this checkpoint:
+
+- Focused relationship topology and relational-authority tests passed `35/35`,
+  covering no-consent refusal, exact-agent isolation, encrypted restart,
+  session non-durability, duplicate-evidence idempotency, unverified-sentiment
+  refusal, separate boundary consent/evidence/receipt requirements, digested
+  projects/connections, async live registration, targeted deletion and rollback,
+  legacy quarantine, malformed snapshots, prompt claim boundaries, fail-closed
+  person views, alias identity, competing-owner refusal, and registry rejection.
+- The expanded relational authority, user profile, conversational profile,
+  dialogue, relational intelligence, humor, conversation support, coding-session
+  memory, service access, social situation, full server conversation lane, and
+  strict-ratchet matrix passed `355/355`.
+- The complete bounded `make quality` ladder passed: source hygiene, enterprise
+  static and collection ratchets, all `37/37` production-readiness checks,
+  paired frontend access/build, `13/13` cognitive gates, `75/75` skill parity,
+  model/resource ownership, architecture map, compile, configured Ruff,
+  governance, the `2,562`-file security scan, strict MyPy, and `103/103` smoke
+  tests. The independent closeout rubric passed `20/20`.
+- Strict MyPy grew from `69` to `71` production files. Governance passes at
+  `1,789` recognized effect calls in `1,685` buckets; removing the graph writer,
+  raw directory creation, and direct unlink reduced acknowledged migration debt
+  from `1,672` to `1,669` calls. No launched-runtime, GUI, or soak claim is made
+  by this source checkpoint.
+
+Authoritative remaining person-model and graph work:
+
+- Consolidate the live `core.consciousness.theory_of_mind` model, the
+  `core.social.theory_of_mind` correction shim, and recursive observer ToM into
+  one explicit ownership model. Remove default/global users, raw goals,
+  unreceipted praise/criticism trust changes, length-as-engagement assumptions,
+  passive rapport/intimacy implications, independent persistence, and stale
+  active-user fallback.
+- Retire or integrate the dormant direct-SQLite `core.memory.entity_graph`, the
+  hard-coded-trust `core.world.social_graph`, and the raw
+  `AuraState.world.relationship_graph` prompt formatter. No graph may count
+  interaction frequency as bond strength or inject unproven trust/sentiment.
+- Audit joy-social as Aura self-state, route any person-specific social
+  preference through exact-agent authority, then reconcile profile, dialogue,
+  relationship topology, ToM, humor, boundaries, goals, values, corrections,
+  outcomes, freshness, uncertainty, retention, decay, and writer ownership into
+  one typed canonical person model with explicit projection contracts.
 - Add authenticated signed consent/action receipts, complete desktop and API
   controls, key rotation/recovery, and launched multiuser, identity-switch,
   deletion, restart, crash, adversarial, failed-delivery, and long-gap proof.

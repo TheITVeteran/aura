@@ -196,6 +196,73 @@ def test_delete_and_export_require_authorization_receipts(tmp_path):
         authority.export_agent("bryan", authorization_receipt_id="")
     with pytest.raises(PermissionError):
         authority.delete_agent("bryan", authorization_receipt_id="")
+    with pytest.raises(PermissionError):
+        authority.delete_snapshot(
+            "bryan",
+            namespace="relationship_graph:v1",
+            kind="shared_ground",
+            authorization_receipt_id="",
+        )
+
+
+def test_targeted_snapshot_delete_preserves_other_namespaces_and_rolls_back(tmp_path, monkeypatch):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["shared_ground"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-1",
+    )
+    authority.upsert_snapshot(
+        "bryan",
+        namespace="relationship_graph:v1",
+        kind="shared_ground",
+        payload={"node": {"interaction_count": 1}},
+        confidence=0.4,
+        provenance="test",
+    )
+    authority.upsert_snapshot(
+        "bryan",
+        namespace="shared_ground_adapter:v1",
+        kind="shared_ground",
+        payload={"entries": ["preserve"]},
+        confidence=1.0,
+        provenance="test",
+    )
+
+    receipt = authority.delete_snapshot(
+        "bryan",
+        namespace="relationship_graph:v1",
+        kind="shared_ground",
+        authorization_receipt_id="delete-graph",
+    )
+
+    assert receipt.operation == "delete_snapshot"
+    assert receipt.record_ids
+    assert authority.load_snapshot(
+        "bryan",
+        namespace="relationship_graph:v1",
+        kind="shared_ground",
+    ) is None
+    assert authority.load_snapshot(
+        "bryan",
+        namespace="shared_ground_adapter:v1",
+        kind="shared_ground",
+    ) == {"entries": ["preserve"]}
+
+    monkeypatch.setattr(authority, "_save_locked", lambda: False)
+    with pytest.raises(RuntimeError, match="snapshot deletion could not be persisted"):
+        authority.delete_snapshot(
+            "bryan",
+            namespace="shared_ground_adapter:v1",
+            kind="shared_ground",
+            authorization_receipt_id="delete-shared",
+        )
+    assert authority.load_snapshot(
+        "bryan",
+        namespace="shared_ground_adapter:v1",
+        kind="shared_ground",
+    ) == {"entries": ["preserve"]}
 
 
 def test_failed_persistence_never_returns_a_durable_record_receipt(tmp_path, monkeypatch):
