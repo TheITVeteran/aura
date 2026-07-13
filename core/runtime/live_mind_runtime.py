@@ -125,7 +125,23 @@ def get_live_mind_runtime() -> LiveMindRuntime:
     return _instance
 
 
-def activate_live_mind_runtime() -> dict[str, Any]:
-    """Materialize the registered live-mind organs from the boot owner thread."""
+def activate_live_mind_runtime(container: Any | None = None) -> dict[str, Any]:
+    """Resolve the registered owner, then materialize its required organs.
 
-    return get_live_mind_runtime().materialize()
+    Runtime health deliberately observes initialized services without invoking
+    their factories. Resolving the owner through the container here is therefore
+    part of activation, not an optional implementation detail.
+    """
+
+    if container is None:
+        from core.container import ServiceContainer
+
+        container = ServiceContainer
+
+    runtime = container.get("live_mind_runtime", default=None)
+    if runtime is None:
+        raise RuntimeError("Live-mind runtime owner is not registered")
+    materialize = getattr(runtime, "materialize", None)
+    if not callable(materialize):
+        raise RuntimeError("Live-mind runtime owner has no materialize() contract")
+    return materialize(container)

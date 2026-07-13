@@ -22,7 +22,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `FOREGROUND-LATENCY-001`, `LAUNCH-PROVENANCE-001`)**, followed by joy/social
   self-state separation and the remaining typed canonical person-model
   consolidation (`MEMORY-001`, `MIND-001`, `STATE-001`,
-  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 55 establish the current
+  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 58 establish the current
   social, OS-automation, runtime-pressure, desktop-access, self-condition, and
   owned-task source boundaries, signed launch identity, resource lifecycle, and
   non-constructing service-observation contract; none substitutes for launched
@@ -13707,3 +13707,60 @@ Immediate next work and proof burden:
   `STORAGE-GATEWAY-001`, the remaining master-index work, and all bounded live
   gates. Multi-hour and 24-72 hour soaks remain deferred until those shorter
   requirements are green.
+
+## Checkpoint 2026-07-13-58: Live-Mind Owner Health Visibility
+
+This checkpoint advances `MIND-001`, `RUNTIME-001`, `FAULT-001`,
+`LAUNCH-PROVENANCE-001`, and `VALIDATE-001`. It converts the first
+checkpoint-57 installed-app failure into a bounded lifecycle repair. Current
+source and fresh-process evidence are green; complete signed-app proof remains
+`LIVE OPEN` because a concurrent Fable worktree runtime owns the shared live
+desktop during this checkpoint.
+
+Closed the lifecycle-owner visibility defect exposed only by the real app:
+
+- The signed `/Applications/Aura.app` was rebuilt from pushed commit
+  `65e5cb62348c9bb7b0544537ff7b0c4eca4b36a5`. Strict deep verification passed,
+  the stable `Aura Local Code Signing` identity and `com.aura.desktop` bundle
+  identity matched, and launch provenance recorded the exact `main` source
+  root, commit, and truthful dirty-source digest.
+- The current-build boot materially populated all eight required live-mind
+  organs and logged `Live-mind runtime ready: 8/8`, but canonical runtime
+  health repeatedly reported `live_mind_runtime (not_configured)`. This was a
+  real contract failure rather than a slow probe: activation fetched the global
+  singleton directly, leaving its registered lazy `ServiceContainer` factory
+  unresolved, while health correctly refuses to instantiate services during
+  observation.
+- `activate_live_mind_runtime()` now resolves the registered lifecycle owner
+  through `ServiceContainer` before materializing organs. Missing or malformed
+  owners fail boot explicitly. The same non-instantiating health bridge can now
+  observe the initialized owner and invoke its `is_ready()` contract.
+
+Verification completed for the bounded repair:
+
+- Live-mind, boot-health, orchestrator-boot, and runtime-health regression
+  suites pass `66/66`; configured Ruff passes on the changed source and tests.
+- A fresh-process smoke using the actual `ServiceContainer`, consciousness
+  provider, activation function, and production health evaluator changed owner
+  state from uninitialized to initialized, populated all eight required organs
+  with zero missing or unpopulated sections, and reported
+  `health_present=true`, `health_liveness_ok=true`, `health_error=null`.
+- The initial current-main runtime was externally sent `SIGTERM` at
+  `2026-07-13T20:23:17Z` by a concurrent Fable worktree desktop launch on port
+  `8001`; shutdown began before current-main could complete the remaining live
+  proof. That active worktree process was preserved rather than killed or
+  overwritten, and the interruption is not mislabeled as an internal crash.
+
+Immediate next work and proof burden:
+
+- Commit and push this repair directly on shared `main`. Once the concurrent
+  desktop owner releases the live runtime, rebuild the signed app from the new
+  exact revision and require `live_mind_runtime` present/ready in health,
+  strict boot readiness, source/signature/process agreement, and a clean log
+  interval.
+- Continue the checkpoint-57 live matrix: original two-turn self-condition
+  conversation, concurrent desktop probes, production governance, foreground
+  MLX recovery, control-plane freshness, swarm workspace telemetry, paired
+  bootstrap, clean quit, and relaunch. Then continue
+  `AUTONOMY-AUTHORITY-001`, `MEMORY-LEAK-001`, `STORAGE-GATEWAY-001`, and every
+  remaining master-index item before final soaks.

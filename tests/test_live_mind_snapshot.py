@@ -210,6 +210,60 @@ def test_live_mind_runtime_materializes_registered_organs_before_snapshot(monkey
     )
 
 
+def test_live_mind_activation_materializes_owner_for_health_contract(monkeypatch):
+    from core.runtime import health_contract, live_mind_runtime, live_mind_snapshot
+
+    runtime = live_mind_runtime.LiveMindRuntime()
+
+    class LazyContainer:
+        services = {**RuntimeServices.services, "live_mind_runtime": runtime}
+        materialized: dict[str, object] = {}
+
+        @classmethod
+        def get(cls, name: str, default=None):
+            value = cls.services.get(name, default)
+            if value is not default:
+                cls.materialized[name] = value
+            return value
+
+    def resolve(name: str, default=None):
+        return LazyContainer.materialized.get(name, default)
+
+    monkeypatch.setattr(live_mind_snapshot, "get_runtime_service", resolve)
+    monkeypatch.setattr(live_mind_runtime, "get_runtime_service", resolve)
+    monkeypatch.setattr(health_contract, "get_runtime_service", resolve)
+    monkeypatch.setattr(live_mind_snapshot, "_frontmost_app_fast", lambda: "Notes")
+
+    report = live_mind_runtime.activate_live_mind_runtime(LazyContainer)
+    verdict = health_contract.evaluate_health()
+    owner_status = next(
+        status
+        for status in verdict.services
+        if status.requirement.container_key == "live_mind_runtime"
+    )
+
+    assert report["ready"] is True
+    assert LazyContainer.materialized["live_mind_runtime"] is runtime
+    assert owner_status.present is True
+    assert owner_status.liveness_ok is True
+
+
+def test_live_mind_activation_refuses_unregistered_owner():
+    from core.runtime.live_mind_runtime import activate_live_mind_runtime
+
+    class MissingOwnerContainer:
+        @staticmethod
+        def get(_name: str, default=None):
+            return default
+
+    try:
+        activate_live_mind_runtime(MissingOwnerContainer)
+    except RuntimeError as exc:
+        assert str(exc) == "Live-mind runtime owner is not registered"
+    else:
+        raise AssertionError("activation accepted an unregistered lifecycle owner")
+
+
 def test_live_mind_runtime_refuses_partial_activation(monkeypatch):
     from core.runtime import live_mind_runtime, live_mind_snapshot
 
