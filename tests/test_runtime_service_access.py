@@ -87,7 +87,7 @@ def test_build_conversational_context_blocks_aggregates_registered_services(serv
         "humor_engine",
         SimpleNamespace(
             get_humor_guidance=lambda user_id: f"humor:{user_id}",
-            get_banter_directive=lambda: "banter",
+            get_banter_directive=lambda user_id: f"banter:{user_id}",
         ),
         required=False,
     )
@@ -123,7 +123,7 @@ def test_build_conversational_context_blocks_aggregates_registered_services(serv
         "profile:bryan",
         "dialogue:bryan:steady continuity:recent",
         "humor:bryan",
-        "banter",
+        "banter:bryan",
         "conversation",
         "relation:bryan",
         "social:bryan:steady continuity",

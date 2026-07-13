@@ -21,8 +21,9 @@ ALLOWLIST = REPO_ROOT / "config" / "mypy_strict_files.txt"
 # consented visual-only speech recognition + calibrated live social situation +
 # identity-scoped relational-memory authority and compatibility adapters +
 # authority-backed conversational-profile, dialogue-cognition, relational-
-# intelligence, and social-imagination adapters.
-MIN_STRICT_FILES = 62
+# intelligence, social-imagination, delivered-outcome humor, and receipt-confirmed
+# user output transport.
+MIN_STRICT_FILES = 64
 
 MYPY_FLAGS = ["--follow-imports=skip", "--explicit-package-bases"]
 

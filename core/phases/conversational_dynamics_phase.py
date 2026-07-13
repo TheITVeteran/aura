@@ -245,12 +245,29 @@ class ConversationalDynamicsPhase(Phase):
                     and relational_memory_allows(
                         active_user_id,
                         "style_preference",
-                        "persist",
+                        "recall",
                     )
                 ):
-                    humor.update_banter_state(objective, dynamics)
-                    guidance = humor.get_humor_guidance(active_user_id) if hasattr(humor, "get_humor_guidance") else ""
-                    banter = humor.get_banter_directive() if hasattr(humor, "get_banter_directive") else ""
+                    humor.update_banter_state(
+                        objective,
+                        dynamics,
+                        user_id=active_user_id,
+                    )
+                if humor and relational_memory_allows(
+                    active_user_id,
+                    "style_preference",
+                    "prompt",
+                ):
+                    guidance = (
+                        humor.get_humor_guidance(active_user_id)
+                        if hasattr(humor, "get_humor_guidance")
+                        else ""
+                    )
+                    banter = (
+                        humor.get_banter_directive(active_user_id)
+                        if hasattr(humor, "get_banter_directive")
+                        else ""
+                    )
                     if guidance or banter:
                         new_state.response_modifiers["humor_guidance"] = f"{guidance}\n{banter}".strip()
             except (ImportError, AttributeError, RuntimeError) as exc:

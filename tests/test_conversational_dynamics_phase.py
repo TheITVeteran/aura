@@ -115,3 +115,59 @@ def test_phase_preserves_core_dynamics_when_optional_context_modules_fail(monkey
     assert "continued without multiple-drafts context for this turn" in recent_actions
     assert "continued without higher-order thought context for this turn" in recent_actions
     assert "continued without intersubjectivity context for this turn" in recent_actions
+
+
+def test_humor_phase_uses_recall_and_prompt_without_requiring_persistence(monkeypatch):
+    phase = ConversationalDynamicsPhase(kernel=None)
+    phase._engine = FakeDynamicsEngine()
+    state = AuraState()
+    state.cognition.current_partner = "bryan"
+    operations = []
+
+    class Humor:
+        def __init__(self):
+            self.updated_for = ""
+            self.guidance_for = ""
+            self.banter_for = ""
+
+        def update_banter_state(self, _objective, _dynamics, *, user_id):
+            self.updated_for = user_id
+
+        def get_humor_guidance(self, user_id):
+            self.guidance_for = user_id
+            return "calibrated humor"
+
+        def get_banter_directive(self, user_id):
+            self.banter_for = user_id
+            return "land the bit"
+
+    humor = Humor()
+
+    def allows(user_id, kind, operation):
+        assert user_id == "bryan"
+        if kind == "style_preference":
+            operations.append(operation)
+            return operation in {"recall", "prompt"}
+        return False
+
+    monkeypatch.setattr(
+        "core.phases.conversational_dynamics_phase.relational_memory_allows",
+        allows,
+    )
+    monkeypatch.setattr(
+        ServiceContainer,
+        "get",
+        classmethod(
+            lambda cls, name, default=None: humor if name == "humor_engine" else default
+        ),
+    )
+
+    result = asyncio.run(phase.execute(state, "continue", origin="user"))
+
+    assert operations == ["recall", "prompt"]
+    assert humor.updated_for == "bryan"
+    assert humor.guidance_for == "bryan"
+    assert humor.banter_for == "bryan"
+    assert result.response_modifiers["humor_guidance"] == (
+        "calibrated humor\nland the bit"
+    )

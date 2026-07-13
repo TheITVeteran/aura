@@ -80,6 +80,34 @@ class IncomingLogicMixin:
                 action="continued after delivered response could not be paired with social feedback",
             )
 
+    def _record_delivered_humor_response(
+        self,
+        payload_context: dict[str, Any],
+        response_text: str,
+        delivery_receipt_id: str,
+    ) -> None:
+        """Open humor feedback only after OutputGate confirms delivery."""
+        try:
+            from core.container import ServiceContainer
+
+            humor = ServiceContainer.get("humor_engine", default=None)
+            if humor and hasattr(humor, "observe_delivered_response"):
+                humor.observe_delivered_response(
+                    self._resolve_social_user_id(payload_context),
+                    response_text,
+                    # Request context is user-controlled. Delivered-output
+                    # classification must use the response itself unless a
+                    # trusted generation caller invokes HumorEngine directly.
+                    metadata={},
+                    delivered_at=time.time(),
+                    delivery_receipt_id=delivery_receipt_id,
+                )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            _record_incoming_degradation(
+                exc,
+                action="continued after delivered response could not open bounded humor feedback",
+            )
+
     async def _emit_user_response(
         self,
         payload_context: dict[str, Any],
@@ -88,16 +116,22 @@ class IncomingLogicMixin:
         origin: str,
         target: str = "primary",
         **emit_kwargs: Any,
-    ) -> None:
+    ) -> str | None:
         """Emit first, then mark the exact response as eligible for feedback."""
-        await self.output_gate.emit(
+        delivery_receipt_id = await self.output_gate.emit(
             response_text,
             origin=origin,
             target=target,
             **emit_kwargs,
         )
-        if origin in ("user", "voice", "admin"):
+        if delivery_receipt_id and origin in ("user", "voice", "admin"):
             self._record_delivered_social_response(payload_context, response_text)
+            self._record_delivered_humor_response(
+                payload_context,
+                response_text,
+                delivery_receipt_id,
+            )
+        return delivery_receipt_id
 
     def _observe_social_turn(
         self,
@@ -110,9 +144,18 @@ class IncomingLogicMixin:
 
         user_id = self._resolve_social_user_id(payload_context)
         payload_context["user_id"] = user_id
+        observed_at = time.time()
+        humor = ServiceContainer.get("humor_engine", default=None)
+        if humor and hasattr(humor, "record_reaction"):
+            try:
+                humor.record_reaction(user_id, message, observed_at)
+            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                _record_incoming_degradation(
+                    exc,
+                    action="continued incoming turn after prior delivered-humor feedback pairing failed",
+                )
         other_agent = ServiceContainer.get("other_agent_model", default=None)
         if other_agent and hasattr(other_agent, "observe_message"):
-            observed_at = time.time()
             other_agent.observe_message(
                 user_id,
                 message,

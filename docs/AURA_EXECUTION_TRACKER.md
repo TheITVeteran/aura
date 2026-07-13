@@ -16,10 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **humor, joy, user-profile,
-  relationship-graph, and remaining person-model consolidation (`MEMORY-001`,
-  `MIND-001`, `STATE-001`, `CTX3-SOCIAL-001..002`)**, following the calibrated
-  relational/social-imagination adapters recorded in Checkpoint 44.
+- Current bounded implementation milestone: **joy, user-profile,
+  relationship-graph, Theory-of-Mind, and remaining person-model consolidation
+  (`MEMORY-001`, `MIND-001`, `STATE-001`, `CTX3-SOCIAL-001..002`)**, following
+  the delivered-outcome humor authority recorded in Checkpoint 45.
   `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
@@ -73,7 +73,7 @@ Status rules:
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
 | `MIND-001` | `OPEN` | Prove one boot-identified canonical self, workspace, substrate, welfare/homeostasis, consciousness cycle, identity, executive authority, and memory authority on the exact live path. | Matrix 3; Addendum 19 |
 | `STATE-001` | `OPEN` | Build the versioned canonical state catalog and inspectable causal graph with writer authority, freshness, arbitration, persistence, model-swap semantics, redaction, and action-to-learning traces. | Addendum 20 |
-| `MEMORY-001` | `IN PROGRESS 2026-07-12` | Preserve the encrypted exact-agent relational-memory authority while unifying every remaining memory writer/reader, cross-store semantic retrieval, provenance, conflict/freshness handling, exact live consumption proof, deletion, key rotation, and symmetric observed rollback. | Addendum 26; Checkpoint 42 |
+| `MEMORY-001` | `IN PROGRESS 2026-07-12` | Preserve the encrypted exact-agent relational-memory authority while unifying every remaining memory writer/reader, cross-store semantic retrieval, provenance, conflict/freshness handling, exact live consumption proof, deletion, key rotation, and symmetric observed rollback. | Addendum 26; Checkpoints 42-45 |
 | `CONVERSATION-001` | `IN PROGRESS 2026-07-12` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. | Pass F 6; Matrix 6 |
 | `SUBSTRATE-001` | `OPEN` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. | Matrix 2-3; Addendum 20 and 29 |
 | `DESKTOP-001` | `IN PROGRESS 2026-07-12` | Generalize computer use into perception-plan-act-observe-repair loops over browser, files, Notes/Docs/PDF/images, dialogs, focus, permissions, changed layouts, and multi-app workflows. | Pass F 7; Matrix 7; Checkpoint 38 |
@@ -91,7 +91,7 @@ Status rules:
 | `LONGHORIZON-001` | `OPEN` | Build a domain-general partially observable long-horizon agency harness, then a non-scripted NetHack-compatible evaluation with crash-resume, transfer, hidden maps, and adversarial interruption. | Matrix 5; Addendum 31 |
 | `SIMWORLD-001` | `IN PROGRESS 2026-07-12` | Preserve the deterministic hosted-world core while completing unit-aware multi-fidelity physics, full spatial/VR engine adapters, validated procedural generation, replay/migration, multi-agent synchronization, and inspectable UI without mistaking visual animation for physical correctness. | Capability Addendum 33, `CTX3-PHYS-*`, `CTX3-WORLD-*` |
 | `MULTIMODAL-001` | `IN PROGRESS 2026-07-12` | Preserve the canonical bounded event-time fusion and causal cognition path while completing every producer, consented visual speech, calibrated situation modeling, live hardware/occlusion evaluation, and longitudinal action/repair evidence. | Capability Addendum 33, `CTX3-PERCEPT-*` |
-| `SOCIAL-001` | `IN PROGRESS 2026-07-12` | Preserve the exact-agent calibrated live situation path while unifying identity-scoped relational memory, consent/boundary history, cultural and power-context uncertainty, multi-party reasoning, outcome learning, and longitudinal live repair evidence without manipulation or intimacy overclaim. | Capability Addendum 33, `CTX3-SOCIAL-*`; Checkpoint 41 |
+| `SOCIAL-001` | `IN PROGRESS 2026-07-12` | Preserve the exact-agent calibrated live situation path while unifying identity-scoped relational memory, consent/boundary history, cultural and power-context uncertainty, multi-party reasoning, outcome learning, and longitudinal live repair evidence without manipulation or intimacy overclaim. | Capability Addendum 33, `CTX3-SOCIAL-*`; Checkpoints 41-45 |
 | `MULTIAGENT-001` | `OPEN` | Generalize complex subagent management into typed delegation, scoped authority, budget/deadline ownership, shared-world coordination, conflict arbitration, cancellation, recovery, and end-to-end accountability. | Capability Addendum 33, `CTX3-SUBAGENT-*` |
 | `DISTRIBUTED-001` | `IN PROGRESS 2026-07-12` | Support governed distributed embodiment and execution across heterogeneous network devices with capability negotiation, identity/attestation, partition tolerance, idempotency, safety interlocks, compensation, and truthful degraded operation. | Capability Addendum 33, `CTX3-DIST-*` |
 | `VALUES-001` | `OPEN` | Turn preference/value formation, strategic modeling, and manipulation resistance into provenance-bearing, corrigible, constitutionally bounded, longitudinally stable causal mechanisms with conflict and rollback evidence. | Capability Addendum 33, `CTX3-VALUE-*` |
@@ -12377,3 +12377,101 @@ Authoritative remaining person-model work:
   rotation/recovery, and launched multiuser, identity-switch, deletion, restart,
   crash, adversarial, and long-gap proof. Final multi-hour and 24-72 hour soaks
   remain deferred until all shorter requirements are green.
+
+## Checkpoint 2026-07-12-45: Calibrated Delivered-Humor Outcomes
+
+This checkpoint advances `MEMORY-001`, `SOCIAL-001`, `CTX3-SOCIAL-001..002`,
+`ARCH-001`, `PRIVACY-001`, and `FAULT-001`. It replaces the humor engine's
+independent user-profile store and unpaired reaction inference with exact-agent,
+delivered-outcome learning. It does not close joy, canonical `UserProfile` and
+`ProfileManager`, relationship graph, Theory-of-Mind consolidation, broad
+response-generation humor attribution, user controls, or launched longitudinal
+proof.
+
+Implemented authority-backed humor evidence:
+
+- Replaced `humor_profiles.json`, raw directory creation, the independent file
+  writer, and process-global user assumptions with one bounded
+  `humor_profile:v1` `style_preference` snapshot in relational-memory authority.
+  Legacy profile and attempt maps enter encrypted unscoped quarantine; exact
+  agent consent controls recall, prompt use, durability, deletion, and session
+  isolation. Session-only humor learning works in memory and leaves no durable
+  record.
+- Retained no response, reaction, or topic excerpts. Attempts store bounded
+  response and reaction digests, character count, topic category, delivery
+  receipt, timestamps, classification provenance, and outcome confidence.
+  Authority snapshots cap each agent at 100 attempts, upsert one logical
+  profile, and immediately invalidate adapter caches after deletion or consent
+  loss.
+- Opened feedback only after a user-facing transport accepts the output and the
+  canonical receipt store durably records its `OutputReceipt`. `OutputGate`
+  returns that receipt ID; Will-blocked, safety-blocked, rerouted, sinkless, and
+  receipt-failed output returns no confirmation and cannot update social or
+  humor state. Incoming user observation synchronously consumes at most the
+  previous exact-agent accepted output before the next response is generated;
+  fire-and-forget response-generation learning no longer creates a race that can
+  pair a message backward to the response produced after it. Predelivery and
+  expired timestamps cannot consume a valid window.
+- Made each feedback window one-shot, including neutral reactions. Generic or
+  stale praise cannot score an earlier joke, `continue` remains neutral, and
+  only explicit strong landing or miss evidence changes a profile. User request
+  metadata cannot fabricate a humor attempt; structured labels require explicit
+  Aura response-generation provenance, while the live delivery path otherwise
+  accepts only conservative overt response evidence.
+
+Implemented calibrated projection and banter:
+
+- Replaced raw averages and one-example preference claims with bounded Bayesian
+  landing estimates, sample counts, confidence, minimum three-attempt support
+  for type/topic guidance, and conservative sarcasm and irony ceilings. Sparse
+  evidence keeps humor low risk and optional instead of claiming the user enjoys
+  a style.
+- Made banter state exact-agent rather than global. Momentum, streak,
+  escalation, landing, and callback guidance cannot cross users; serious,
+  vulnerable, or anxious frames suppress escalation. Prompt guidance states its
+  evidence limits and cannot infer identity, diagnosis, hidden intent, intimacy,
+  or dependency from humor reactions.
+- Wired the exact active identity through conversational context and dynamics.
+  Ephemeral state updates require `recall`, prompt projection separately
+  requires `prompt`, and neither path incorrectly requires durable `persist`
+  authority. The full humor module is now in the strict-MyPy allowlist.
+
+Verification completed for this checkpoint:
+
+- Thirteen dedicated authority, privacy, calibration, ordering, malformed-
+  snapshot, and identity regressions pass. The broad humor, relational
+  authority, profile, dialogue,
+  relational-intelligence, social-situation, conversation-support, dynamics,
+  service-access, and context compatibility matrix passed `85/85`. The expanded
+  output-gate, effect-closure, architecture, social, humor, conversation, and
+  dynamics matrix passed `121/121` after transport-receipt confirmation and
+  session-permission correction.
+- Whole-tree compile and configured Ruff passed. Strict MyPy grew from `62` to
+  `64` production files, including both humor and `OutputGate`. Governance
+  passes at `1,794` recognized effect calls in
+  `1,690` buckets; removing the humor engine's independent file writer and raw
+  directory mutation reduced acknowledged migration debt from `1,676` to
+  `1,674` calls.
+- Source hygiene, enterprise static and collection ratchets, all 37 production-
+  readiness checks, the 2,562-file security scan, 13/13 cognitive-gate
+  ownership, 75/75 skill discovery/live-registry parity, model-load ownership,
+  resource-observation ownership, and the 20-point closeout rubric passed.
+  No launched-runtime or GUI claim is made by this source checkpoint.
+
+Authoritative remaining person-model work:
+
+- Convert canonical user profile, profile manager, relationship graph, and both
+  remaining Theory-of-Mind representations into authority-owned versioned
+  projections. Audit joy-social as Aura self-state separately, then route any
+  person-specific joy/social preference or relationship output through the same
+  exact-agent evidence contract rather than creating another truth store.
+- Reconcile overlapping style, vulnerability, conflict, entertainment, values,
+  goals, boundaries, shared-reference, humor, and social hypotheses into one
+  typed canonical person model with source/outcome receipts, freshness,
+  contradiction, correction, uncertainty, retention, decay, and exclusive
+  writer ownership.
+- Add authenticated signed consent/action receipts, complete desktop and API
+  controls, key rotation/recovery, and launched multiuser, identity-switch,
+  deletion, restart, crash, adversarial, failed-delivery, and long-gap proof.
+  Final multi-hour and 24-72 hour soaks remain deferred until these and all
+  other shorter requirements are green.

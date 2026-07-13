@@ -72,9 +72,73 @@ async def test_primary_output_sink_accepts_constitutional_receipt_shape(service_
     )
 
     async with governed_scope(decision):
-        await gate._send_to_primary("hello", "system", {"suppress_bus": True})
+        receipt_id = await gate._send_to_primary(
+            "hello",
+            "system",
+            {"suppress_bus": True},
+        )
 
     assert queue.items == ["hello"]
+    assert receipt_id
+
+
+@pytest.mark.asyncio
+async def test_primary_output_sink_withholds_receipt_without_an_accepted_transport(
+    service_container,
+):
+    _live_runtime(service_container)
+    gate = AutonomousOutputGate(orchestrator=None)
+    decision = ConstitutionalDecision(
+        proposal_id="proposal-no-sink",
+        kind=ProposalKind.EXPRESSION,
+        outcome=ProposalOutcome.APPROVED,
+        reason="ok",
+        source="test",
+        constraints={"will_receipt_id": "will-no-sink"},
+    )
+
+    async with governed_scope(decision):
+        receipt_id = await gate._send_to_primary(
+            "hello",
+            "system",
+            {"suppress_bus": True, "voice": False},
+        )
+
+    assert receipt_id is None
+
+
+@pytest.mark.asyncio
+async def test_primary_output_sink_withholds_confirmation_when_receipt_persistence_fails(
+    service_container,
+    monkeypatch,
+):
+    _live_runtime(service_container)
+    queue = _ReplyQueue()
+    gate = AutonomousOutputGate(
+        orchestrator=SimpleNamespace(reply_queue=queue, conversation_history=[])
+    )
+    decision = ConstitutionalDecision(
+        proposal_id="proposal-receipt-failure",
+        kind=ProposalKind.EXPRESSION,
+        outcome=ProposalOutcome.APPROVED,
+        reason="ok",
+        source="test",
+        constraints={"will_receipt_id": "will-receipt-failure"},
+    )
+
+    async def fail_receipt(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(gate, "_emit_output_receipt", fail_receipt)
+    async with governed_scope(decision):
+        receipt_id = await gate._send_to_primary(
+            "hello",
+            "system",
+            {"suppress_bus": True, "voice": False},
+        )
+
+    assert queue.items == ["hello"]
+    assert receipt_id is None
 
 
 def test_effect_sink_registry_lists_critical_sinks():

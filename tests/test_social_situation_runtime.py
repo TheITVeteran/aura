@@ -46,14 +46,16 @@ class Harness(IncomingLogicMixin):
 
 
 class FakeOutputGate:
-    def __init__(self, *, fail: bool = False) -> None:
+    def __init__(self, *, fail: bool = False, confirm: bool = True) -> None:
         self.fail = fail
+        self.confirm = confirm
         self.emitted: list[tuple[str, str, str, dict[str, object]]] = []
 
     async def emit(self, response_text, *, origin, target, **kwargs):
         if self.fail:
             raise RuntimeError("delivery failed")
         self.emitted.append((response_text, origin, target, kwargs))
+        return "output-receipt-test" if self.confirm else None
 
 
 @pytest.mark.asyncio
@@ -120,6 +122,14 @@ async def test_emit_records_feedback_context_only_after_successful_delivery() ->
         assert harness.output_gate.emitted == [
             ("delivered", "user", "primary", {"metadata": {"voice": True}})
         ]
+        assert estimator.events == [("response", ("bryan", "delivered"))]
+
+        harness.output_gate = FakeOutputGate(confirm=False)
+        assert await harness._emit_user_response(
+            {"user_id": "bryan"},
+            "unconfirmed",
+            origin="user",
+        ) is None
         assert estimator.events == [("response", ("bryan", "delivered"))]
 
         harness.output_gate = FakeOutputGate(fail=True)

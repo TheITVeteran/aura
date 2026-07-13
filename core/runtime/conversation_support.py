@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
 from core.runtime import service_access
@@ -195,7 +194,7 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
             humor_guide = humor.get_humor_guidance(user_id)
             if humor_guide:
                 blocks.append(humor_guide)
-            banter = humor.get_banter_directive()
+            banter = humor.get_banter_directive(user_id)
             if banter:
                 blocks.append(banter)
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
@@ -382,15 +381,18 @@ async def update_conversational_intelligence(
 
     try:
         humor = service_access.optional_service("humor_engine", default=None)
-        if humor and relational_memory_allows(user_id, "style_preference", "persist"):
-            humor.record_reaction(user_id, user_input, time.time())
+        if humor and relational_memory_allows(user_id, "style_preference", "recall"):
             dynamics = service_access.resolve_conversational_dynamics(default=None)
             if dynamics:
-                humor.update_banter_state(user_input, dynamics.get_current_state())
+                humor.update_banter_state(
+                    user_input,
+                    dynamics.get_current_state(),
+                    user_id=user_id,
+                )
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         _record_conversation_degradation(
             exc,
-            action="skipped humor and banter state update for this exchange",
+            action="skipped humor banter-state update for this exchange",
         )
         logger.debug("HumorEngine update skipped: %s", exc)
 

@@ -3,25 +3,28 @@
 Standardizes which messages reach the User (Primary) vs. Background (Secondary).
 Prevents "Autonomous Pollution" where background search results flood the chat.
 """
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
-import logging
 import asyncio
 import hashlib
+import logging
 import time
-from typing import Any, Dict, Optional
+import weakref
+from collections.abc import AsyncIterator
+from typing import Any, cast
 
 from core.runtime.effect_boundary import effect_sink
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.OutputGate")
+
 
 class AutonomousOutputGate:
     """Triage engine for Aura's communicative outputs."""
     
-    def __init__(self, orchestrator=None):
+    def __init__(self, orchestrator: Any = None) -> None:
         self.orchestrator = orchestrator
         # Secondary sink for background/autonomous logs
-        self.secondary_queue = asyncio.Queue()
+        self.secondary_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         
         # Identity Guard (Bridge 3)
         try:
@@ -91,7 +94,7 @@ class AutonomousOutputGate:
                 return True
         return False
 
-    def _foreground_policy(self, content: str, origin: str, target: str, metadata: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+    def _foreground_policy(self, content: str, origin: str, target: str, metadata: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """Route internal autonomy chatter away from the user-facing channel."""
         import re
 
@@ -151,8 +154,8 @@ class AutonomousOutputGate:
         *,
         origin: str,
         target: str,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
+        metadata: dict[str, Any] | None = None,
+    ) -> str | None:
         try:
             from core.runtime.receipts import OutputReceipt, get_receipt_store
 
@@ -167,18 +170,25 @@ class AutonomousOutputGate:
                     "origin": str(origin or "system"),
                     "target": str(target or "primary"),
                     "autonomous": bool((metadata or {}).get("autonomous", False)),
+                    "accepted_sinks": list((metadata or {}).get("accepted_sinks", [])),
+                    "delivery_stage": "transport_accepted",
                 },
             )
-            await asyncio.to_thread(get_receipt_store().emit, receipt)
-        except (ImportError, AttributeError, RuntimeError) as exc:
+            stored = await asyncio.to_thread(get_receipt_store().emit, receipt)
+            return str(stored.receipt_id or "") or None
+        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
             record_degradation('output_gate', exc)
             logger.debug("OutputGate: output receipt emit skipped: %s", exc)
+            return None
         
-    async def emit(self, content: str,
-             origin: str = "system",
-             target: str = "primary",
-             metadata: Optional[Dict[str, Any]] = None,
-             timeout: float = 5.0):
+    async def emit(
+        self,
+        content: str,
+        origin: str = "system",
+        target: str = "primary",
+        metadata: dict[str, Any] | None = None,
+        timeout: float = 5.0,  # noqa: ASYNC109 - public transport budget
+    ) -> str | None:
         """Route a message to the appropriate sink.
 
         Targets:
@@ -194,7 +204,7 @@ class AutonomousOutputGate:
         No autonomous content ever reaches the user ungoverned.
         """
         if not content:
-            return
+            return None
         _primary_governance_decision = None
         metadata = dict(metadata or {})
         target, metadata = self._foreground_policy(content, origin, target, metadata)
@@ -216,7 +226,7 @@ class AutonomousOutputGate:
                 )
                 if not _decision.is_approved():
                     logger.info("OutputGate: Unified Will blocked emission from %s: %s", origin, _decision.reason)
-                    return
+                    return None
                 # Attach receipt to metadata for provenance
                 metadata = metadata or {}
                 metadata["will_receipt_id"] = _decision.receipt_id
@@ -254,12 +264,12 @@ class AutonomousOutputGate:
                     if target == "both":
                         target = "secondary"
                     else:  # target == "primary"
-                        return
+                        return None
 
         current_task = asyncio.current_task()
         if current_task is not None and not getattr(current_task, "_aura_supervised", False):
             try:
-                setattr(current_task, "_aura_supervised", True)
+                cast(Any, current_task)._aura_supervised = True
             except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
                 record_degradation('output_gate', _exc)
                 logger.debug("Suppressed Exception: %s", _exc)
@@ -268,7 +278,7 @@ class AutonomousOutputGate:
         content = self._sanitize_autonomous_output(content)
         if self._is_output_blocked(content):
             logger.warning("OutputGate: Blocked potentially unsafe or non-aligned output.")
-            return
+            return None
 
         try:
             from core.consciousness.closed_loop import notify_closed_loop_output
@@ -309,7 +319,7 @@ class AutonomousOutputGate:
                         homeostasis = ServiceContainer.get("homeostasis", default=None)
                         if homeostasis:
                             homeostasis.integrity = max(0.0, homeostasis.integrity - 0.15)
-                        return # Reject entirely if alignment is too low
+                        return None  # Reject entirely if alignment is too low
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('output_gate', e)
                 logger.warning("IdentityGuard evaluation failed: %s", e)
@@ -336,14 +346,14 @@ class AutonomousOutputGate:
         # Auto-classify background/internal origins as autonomous.
         # Prevents internal cognitive ticks (reflection, consolidation, dream, initiative)
         # from reaching the primary user channel even when metadata lacks the flag.
-        _BACKGROUND_ORIGINS = frozenset({
+        background_origins = frozenset({
             "cognitive_tick", "autonomous", "internal", "background", "dream",
             "reflection", "consolidation", "initiative", "self_model", "shadow",
             "response_generation_internal", "response_generation_background",
             "response_generation_cognitive_tick", "response_generation_consolidation",
             "response_generation_reflection", "response_generation_dream",
         })
-        if not is_autonomous and any(bg in origin for bg in _BACKGROUND_ORIGINS):
+        if not is_autonomous and any(bg in origin for bg in background_origins):
             is_autonomous = True
             logger.debug("OutputGate: Auto-classified origin '%s' as autonomous (thought leak prevention).", origin)
 
@@ -399,54 +409,85 @@ class AutonomousOutputGate:
             target = "secondary"
             logger.debug("🛡️ OutputGate: Redirecting autonomous output to secondary: %s...", content[:50])
 
+        primary_receipt_id: str | None = None
         if target in ["primary", "both"]:
             if _primary_governance_decision is not None:
                 from core.governance_context import governed_scope
 
                 async with governed_scope(_primary_governance_decision):
-                    await self._send_to_primary(content, origin, metadata, timeout=timeout)
+                    primary_receipt_id = await self._send_to_primary(
+                        content,
+                        origin,
+                        metadata,
+                        timeout=timeout,
+                    )
             else:
-                await self._send_to_primary(content, origin, metadata, timeout=timeout)
+                primary_receipt_id = await self._send_to_primary(
+                    content,
+                    origin,
+                    metadata,
+                    timeout=timeout,
+                )
             
         if target in ["secondary", "both"]:
             await self._send_to_secondary(content, origin, metadata, timeout=timeout)
+        return primary_receipt_id
 
-    @effect_sink("output.primary", allowed_domains=("response", "expression"))
-    async def _send_to_primary(self, content: str, origin: str, metadata: Optional[Dict[str, Any]], timeout: float = 5.0):
+    @effect_sink(  # type: ignore[untyped-decorator]
+        "output.primary",
+        allowed_domains=("response", "expression"),
+    )
+    async def _send_to_primary(
+        self,
+        content: str,
+        origin: str,
+        metadata: dict[str, Any] | None,
+        timeout: float = 5.0,  # noqa: ASYNC109 - sink budget
+    ) -> str | None:
         """Send to the primary user communication channel."""
         # ★ NEW: Feed reply_queue for REST API waiters (per Architecture Audit)
         from core.container import ServiceContainer
-        from core.conversation.tagged_reply_queue import current_reply_origin, current_reply_session_id
+        from core.conversation.tagged_reply_queue import (
+            current_reply_origin,
+            current_reply_session_id,
+        )
+        metadata = dict(metadata or {})
+        accepted_sinks: list[str] = []
         orch = self.orchestrator or ServiceContainer.get("orchestrator", default=None)
         if orch and hasattr(orch, "reply_queue"):
-            metadata = metadata or {}
             is_interim = metadata.get("interim", False)
             
             if not is_interim:
+                def _put_reply() -> None:
+                    try:
+                        orch.reply_queue.put_nowait(
+                            content,
+                            origin=metadata.get("reply_origin")
+                            or current_reply_origin(origin),
+                            session_id=metadata.get("reply_session_id")
+                            or current_reply_session_id(""),
+                        )
+                    except TypeError:
+                        orch.reply_queue.put_nowait(content)
+
                 try:
-                    # Using put_nowait for non-blocking REST response feeding
-                    orch.reply_queue.put_nowait(
-                        content,
-                        origin=metadata.get("reply_origin") or current_reply_origin(origin),
-                        session_id=metadata.get("reply_session_id") or current_reply_session_id(""),
-                    )
-                except TypeError:
-                    orch.reply_queue.put_nowait(content)
+                    _put_reply()
+                    accepted_sinks.append("reply_queue")
                 except asyncio.QueueFull:
                     # Drain one stale entry, then retry
                     try:
                         orch.reply_queue.get_nowait()
-                        try:
-                            orch.reply_queue.put_nowait(
-                                content,
-                                origin=metadata.get("reply_origin") or current_reply_origin(origin),
-                                session_id=metadata.get("reply_session_id") or current_reply_session_id(""),
-                            )
-                        except TypeError:
-                            orch.reply_queue.put_nowait(content)
-                    except (OSError, ConnectionError, TimeoutError) as _exc:
+                        _put_reply()
+                        accepted_sinks.append("reply_queue")
+                    except (
+                        asyncio.QueueEmpty,
+                        asyncio.QueueFull,
+                        OSError,
+                        ConnectionError,
+                        TimeoutError,
+                    ) as _exc:
                         record_degradation('output_gate', _exc)
-                        logger.debug("Suppressed Exception: %s", _exc)
+                        logger.warning("OutputGate: reply_queue retry failed: %s", _exc)
                 except (OSError, ConnectionError, TimeoutError) as e:
                     record_degradation('output_gate', e)
                     logger.warning("OutputGate: Failed to feed reply_queue: %s", e)
@@ -485,6 +526,7 @@ class AutonomousOutputGate:
                 }
                 logger.info("OutputGate: Publishing to EventBus...")
                 bus.publish_threadsafe("aura_message", aura_message_payload)
+                accepted_sinks.append("event_bus")
                 bus.publish_threadsafe("log", f"PRIMARY_OUT: {content[:100]}")
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation('output_gate', e)
@@ -499,6 +541,7 @@ class AutonomousOutputGate:
                         try:
                             loop = asyncio.get_running_loop()
                             asyncio.run_coroutine_threadsafe(mycelium.ui_callback(content), loop)
+                            accepted_sinks.append("mycelial_ui")
                         except RuntimeError:
                             logger.warning("No running loop for Mycelial fail-safe.")
                     else:
@@ -507,7 +550,57 @@ class AutonomousOutputGate:
                     record_degradation('output_gate', e2)
                     logger.critical("Final fail-safe failed: %s", e2)
 
-        await self._emit_output_receipt(content, origin=origin, target="primary", metadata=metadata)
+        # 4. Trigger a user-facing multimodal or voice transport. Task
+        # acceptance is receipt-worthy; later render failure remains visible in
+        # the supervised task's degradation path and cannot score an outcome
+        # without a subsequent user reaction.
+        renderer = ServiceContainer.get("multimodal_orchestrator", default=None)
+        if renderer:
+            try:
+                track_output_task(get_task_tracker().create_task(renderer.render(content, metadata)))
+                accepted_sinks.append("multimodal_renderer")
+            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                record_degradation('output_gate', e)
+                logger.debug("Multimodal rendering failed: %s", e)
+        else:
+            voice = ServiceContainer.get("voice_engine", default=None)
+            metadata_allows_voice = metadata.get("voice", True)
+            tts_enabled = getattr(voice, "speaking_enabled", True) if voice else False
+            if voice and metadata_allows_voice and tts_enabled:
+                try:
+                    track_output_task(get_task_tracker().create_task(voice.speak(content)))
+                    accepted_sinks.append("voice_engine")
+                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                    record_degradation('output_gate', e)
+                    logger.debug("Legacy Voice trigger failed: %s", e)
+
+        if not accepted_sinks:
+            failure = RuntimeError("primary output was not accepted by any user-facing sink")
+            record_degradation(
+                "output_gate.primary_delivery",
+                failure,
+                severity="error",
+                action="withheld output receipt because no primary transport accepted the response",
+            )
+            logger.error("OutputGate: %s", failure)
+            return None
+        metadata["accepted_sinks"] = accepted_sinks
+        receipt_id = await self._emit_output_receipt(
+            content,
+            origin=origin,
+            target="primary",
+            metadata=metadata,
+        )
+        if not receipt_id:
+            failure = RuntimeError("primary output receipt could not be persisted")
+            record_degradation(
+                "output_gate.primary_delivery",
+                failure,
+                severity="error",
+                action="withheld delivery confirmation because its output receipt was not durable",
+            )
+            logger.error("OutputGate: %s", failure)
+            return None
         try:
             from core.epistemics.epistemic_reach import (
                 acknowledge_epistemic_correction_delivery,
@@ -518,28 +611,15 @@ class AutonomousOutputGate:
             record_degradation("output_gate", exc)
             logger.debug("Epistemic correction delivery acknowledgement skipped: %s", exc)
 
-        # 4. Trigger High-Fidelity Multimodal Manifestation
-        from core.container import ServiceContainer
-        renderer = ServiceContainer.get("multimodal_orchestrator", default=None)
-        if renderer:
-            try:
-                track_output_task(get_task_tracker().create_task(renderer.render(content, metadata)))
-            except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                record_degradation('output_gate', e)
-                logger.debug("Multimodal rendering failed: %s", e)
-        else:
-            voice = ServiceContainer.get("voice_engine", default=None)
-            # Check both: metadata voice flag AND voice engine's speaking_enabled (TTS mute state)
-            metadata_allows_voice = metadata.get("voice", True) if metadata else True
-            tts_enabled = getattr(voice, "speaking_enabled", True) if voice else False
-            if voice and metadata_allows_voice and tts_enabled:
-                try:
-                    track_output_task(get_task_tracker().create_task(voice.speak(content)))
-                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
-                    record_degradation('output_gate', e)
-                    logger.debug("Legacy Voice trigger failed: %s", e)
+        return receipt_id
 
-    async def _send_to_secondary(self, content: str, origin: str, metadata: Optional[Dict[str, Any]], timeout: float = 5.0):
+    async def _send_to_secondary(
+        self,
+        content: str,
+        origin: str,
+        metadata: dict[str, Any] | None,
+        timeout: float = 5.0,  # noqa: ASYNC109 - sink budget
+    ) -> None:
         """Send to the secondary background log channel."""
         try:
             await asyncio.wait_for(self.secondary_queue.put({
@@ -553,43 +633,45 @@ class AutonomousOutputGate:
             
         logger.info("📡 [AUTONOMOUS] %s: %s", origin, content)
 
-    async def get_secondary_stream(self):
+    async def get_secondary_stream(self) -> AsyncIterator[dict[str, Any]]:
         """Generator for secondary output stream."""
         while getattr(self, '_running', True):
             yield await self.secondary_queue.get()
             self.secondary_queue.task_done()
 
-import weakref
-from typing import Set
+_gates: weakref.WeakKeyDictionary[Any, AutonomousOutputGate] = weakref.WeakKeyDictionary()
+_background_tasks: set[asyncio.Task[Any]] = set()
 
-_gates = weakref.WeakKeyDictionary()
-_background_tasks: Set[asyncio.Task] = set()
 
-def get_output_gate(orchestrator=None):
+class _DummyOrchestrator:
+    pass
+
+
+_dummy_orchestrator = _DummyOrchestrator()
+
+
+def get_output_gate(orchestrator: Any = None) -> AutonomousOutputGate:
     if orchestrator is None:
         # Fallback for legacy calls without orchestrator
-        # We use a static dummy object as a key
-        class Dummy: pass
-        if not hasattr(get_output_gate, "_dummy"):
-            get_output_gate._dummy = Dummy()
-        orchestrator = get_output_gate._dummy
+        orchestrator = _dummy_orchestrator
 
     if orchestrator not in _gates:
         _gates[orchestrator] = AutonomousOutputGate(orchestrator if not hasattr(orchestrator, "__dict__") or "reply_queue" in orchestrator.__dict__ else None)
     return _gates[orchestrator]
 
 # Helper to track background tasks in OutputGate
-def track_output_task(task: asyncio.Task):
+def track_output_task(task: asyncio.Task[Any]) -> None:
     try:
-        setattr(task, "_aura_supervised", True)
-        setattr(task, "_aura_task_tracker", "OutputGate")
+        task_metadata = cast(Any, task)
+        task_metadata._aura_supervised = True
+        task_metadata._aura_task_tracker = "OutputGate"
     except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
         record_degradation('output_gate', _exc)
         logger.debug("Suppressed Exception: %s", _exc)
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     
-    def _handle_result(t: asyncio.Task):
+    def _handle_result(t: asyncio.Task[Any]) -> None:
         try:
             t.result()
         except (RuntimeError, AttributeError, TypeError, ValueError) as e:

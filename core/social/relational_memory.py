@@ -1031,6 +1031,30 @@ class RelationalMemoryAuthority:
                 for agent_id, profile in raw.items()
                 if isinstance(profile, dict)
             }
+        if namespace == "humor_profile:v1":
+            profiles = raw.get("profiles") or {}
+            attempts = raw.get("attempts") or {}
+            if not isinstance(profiles, dict) or not isinstance(attempts, dict):
+                return {}
+            agent_ids = set(profiles) | set(attempts)
+            return {
+                str(agent_id): {
+                    "profile": (
+                        profiles.get(agent_id)
+                        if isinstance(profiles.get(agent_id), dict)
+                        else {}
+                    ),
+                    "attempts": (
+                        attempt_values[-100:]
+                        if isinstance(
+                            (attempt_values := attempts.get(agent_id)),
+                            list,
+                        )
+                        else []
+                    ),
+                }
+                for agent_id in agent_ids
+            }
         return {}
 
     def _prepare_grant(
