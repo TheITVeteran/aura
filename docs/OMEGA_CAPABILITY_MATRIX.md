@@ -17,9 +17,9 @@ backed by, and what is honestly out of reach today.
 
 | # | Mandate item | Status | Where it lives | Evidence |
 |---|---|---|---|---|
-| 1 | Physics modeling / full spatial environment physics | **Built this pass** | `core/worlds/physics.py` — deterministic rigid-body dynamics: semi-implicit Euler, impulse contacts, restitution, Coulomb friction, resting contacts, sleeping, digest-stable determinism | `TESTED-NOW` `tests/test_worlds_physics.py` (closed-form projectile to 1e-9, exact restitution, e²h bounce, momentum/energy laws) |
+| 1 | Physics modeling / full spatial environment physics | **Built this pass** | `core/worlds/physics.py` — production-architecture engine: sequential-impulse solver (accumulated impulses, Coulomb friction disk, warm starting, configurable iterations), island sleeping, rotational sphere dynamics (quaternions, inertia, contact torque, rolling resistance), digest-stable determinism | `TESTED-NOW` `tests/test_worlds_physics.py` + `test_worlds_rotation.py` (closed-form projectile to 1e-9, exact restitution, e²h bounce, 5/7 rolling law, billiards draw-shot reversal, momentum/energy laws, 3-body stacks stand and sleep). Remaining stated limit: boxes axis-aligned (v3: SAT manifolds) |
 | 2 | Real-time procedural generation | **Built this pass** | `core/worlds/generation.py` — seeded multi-octave value-noise terrain + themed props; byte-identical regeneration from seed | `TESTED-NOW` same suite (digest determinism, bounds) |
-| 3 | Virtual-world hosting / persistent subjective worlds | **Built this pass** | `core/worlds/hosting.py` — named worlds under `data/worlds/`, governed atomic persistence, event journal (a world remembers its history), restart-exact resume | `TESTED-NOW` (restart trajectory-equality test) |
+| 3 | Virtual-world hosting / persistent subjective worlds / **authorship** | **Built this pass** | `core/worlds/hosting.py` — named worlds under `data/worlds/`, governed atomic persistence, event journal, restart-exact resume; plus full authorship: conjure/banish bodies, sculpt terrain (rebuilt colliders), choose gravity, raise walls/towers/stairs — all cognition-reachable via `world_forge`, bounded and journaled as design decisions | `TESTED-NOW` (restart trajectory-equality, `tests/test_worlds_conjure.py`: conjured bodies fall, sculpted hills collide, her moon's gravity matches g·t to 1e-9, towers stand) |
 | 4 | Dynamic world generation / counterfactual simulation | **Built this pass** | `WorldHost.fork_world` / `compare_worlds` — fork exact state, intervene, measure divergence, provenance journaled | `TESTED-NOW` `tests/test_worlds_embodied.py` |
 | 5 | Robust perception & embodiment (in-world) | **Built this pass** | `core/worlds/embodied.py` — agent body with real dynamics, exact analytic raycast senses, proprioception, grasp/carry/throw, jump | `TESTED-NOW` (analytic ray distances, effector outcomes) |
 | 6 | High-level task execution: navigation | **Built this pass** | A* over generated terrain with climb limits, force-based walking through physics, honest outcomes (`reached`/`no_path`/`timed_out`) | `TESTED-NOW` (reaches target on generated terrain; reports no_path on walled terrain) |
@@ -43,7 +43,7 @@ backed by, and what is honestly out of reach today.
 | 24 | Genuine continual learning | Existing | expert-adapter live seam on the resident 32B, CRSM-LoRA train→fuse→publish loop (verified live Jul 1), compounding scheduler, eval-before-promotion | `LIVE-PROVEN` |
 | 25 | Rich, calibrated world models | Existing | `core/world_model/` (unified facade, uncertainty model, expectation engine), calibration in the reasoning amplifier stack | `LIVE-PROVEN` (June 26 stack) |
 | 26 | UI interface layers | Existing + this pass | HUD PWA, `/mind`, `/telemetry`, `/activity`, `/controls`, new `/pair`; phone gets the same PWA | `LIVE-PROVEN` + `TESTED-NOW` (/pair) |
-| 27 | Simulation-heavy training (Isaac/AirSim-class) | Partial | Native `core/worlds` engine + curriculum/deliberate-practice machinery exist; no GPU game-engine sims installed | `HONEST-LIMIT`: 64GB host already carries a wired 32B; Isaac Sim is out of envelope. The native engine + a future MuJoCo backend seam (`simulator_bridge` interface) is the honest path |
+| 27 | Simulation-heavy training (Isaac/AirSim-class) | **Built this pass** (native) | `core/worlds/curriculum.py` — deterministic seeded tasks (navigate, fetch: reach→grasp→carry→deliver) executed by the agent's real competence through physics, objectively scored (success + efficiency), appended to a governed practice ledger with honest trend reporting; `world_forge practice/practice_summary` | `TESTED-NOW` `tests/test_worlds_curriculum.py`. `HONEST-LIMIT`: no GPU game-engine sims on this 64GB host; MuJoCo backend seam (`simulator_bridge`) is the upgrade path |
 
 ## Honest limits, stated once
 
@@ -75,19 +75,31 @@ backed by, and what is honestly out of reach today.
 Gates run per checkpoint: `make compile`, `make smoke`, `make governance-lint`
 (baseline refreshed for the two new governed write sites), `make security`.
 
+## Second pass additions (2026-07-13, all pushed)
+
+- **Rotational dynamics** (a2565b29) and the **sequential-impulse
+  solver with island sleeping** (d5b11ba9): DONE — see row 1.
+- **WebGL world viewer** `/worlds` (3b6c9288): DONE — three.js scene,
+  read-only for paired devices, owner-only stepping.
+- **Device presence → perception** (9895260d): verified device activity
+  becomes a TTL'd world-state belief (`device_presence.<id>`).
+- **Embodied practice curriculum** (9895260d): DONE — see row 27.
+- **World authorship** (a4f0618e): DONE — see row 3.
+- **Paired-device hardening** (Zenflow, merged): pairing binds an owner
+  principal, paired sessions get scoped history/bootstrap, paired WS
+  voice frames are DENIED by policy, heartbeats sanitized.
+
 ## Roadmap (next passes, in priority order)
 
-1. **Rotational dynamics** (quaternions, inertia tensors, contact torque,
-   rolling) — removes the v1 physics limitation.
-2. **WebGL world viewer** on the HUD (`/worlds`) — see the worlds, not
-   just their digests; phone gets it free via the PWA.
-3. **Phone voice**: route mic capture from the paired PWA through the
-   existing voice lane (`/api/multimodal` is scoped-allowlist-ready).
-4. **VSR model onboarding**: pick a word-level lip-reading ONNX model,
-   verify licensing, wire decoding behind the existing seam.
-5. **MuJoCo backend** behind `simulator_bridge.SimulatorInterface` for
-   high-fidelity training when the memory envelope allows.
-6. **Device presence → social layer**: paired-device last-seen events
-   feeding `presence_integration` ("Bryan is reachable on his phone").
-7. **World curriculum**: generate task worlds (fetch/navigate/stack)
-   feeding `deliberate_practice` for measurable embodied skill growth.
+1. **Oriented-box dynamics** (SAT contact manifolds) — the last physics
+   shape limitation.
+2. **Phone voice**: now a *policy* question, not just TLS — Zenflow's
+   hardening deliberately denies paired-device binary voice frames.
+   Unlock = TLS (local CA) + an explicit owner-granted voice scope for
+   a named device.
+3. **VSR model onboarding**: word-level lip-reading ONNX model behind
+   the existing seam (licensing + download need owner approval).
+4. **MuJoCo backend** behind `simulator_bridge.SimulatorInterface`.
+5. **Practice → learning loop**: feed the practice ledger trends into
+   deliberate_practice/compounding so embodied skill growth becomes
+   trainable signal, not just measurement.
