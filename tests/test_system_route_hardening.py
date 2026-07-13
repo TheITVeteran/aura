@@ -7,6 +7,17 @@ from types import SimpleNamespace
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_boot_health_cache():
+    from interface.routes import system as system_routes
+
+    system_routes._reset_boot_health_cache_for_test()
+    try:
+        yield
+    finally:
+        system_routes._reset_boot_health_cache_for_test()
+
+
 @pytest.mark.asyncio
 async def test_pneuma_status_rejects_dead_background_task(monkeypatch):
     from core.pneuma import pneuma as pneuma_module
@@ -442,6 +453,8 @@ async def test_runtime_heartbeat_refuses_boot_blockers_even_when_required_probes
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from interface.routes import system as system_routes
 
+    system_routes._store_boot_health_cache({}, 503)
+
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
         for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
@@ -485,6 +498,8 @@ async def test_runtime_heartbeat_drops_stale_conversation_blocker_when_lane_is_r
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from interface.routes import system as system_routes
 
+    system_routes._store_boot_health_cache({}, 503)
+
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
         for group, keys in REQUIRED_HEALTH_PROBE_GROUPS.items()
@@ -526,6 +541,8 @@ async def test_runtime_heartbeat_drops_stale_conversation_blocker_when_lane_is_r
 async def test_runtime_heartbeat_treats_active_generation_as_working_not_healthy(monkeypatch):
     from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
     from interface.routes import system as system_routes
+
+    system_routes._store_boot_health_cache({}, 503)
 
     required_probes = {
         group: {"ok": True, "components": {key: True for key in keys}}
@@ -604,12 +621,39 @@ async def test_boot_health_probe_times_out_instead_of_hanging_http_loop(monkeypa
     assert payload["ready"] is False
     assert payload["required_probes"]["all_passed"] is False
     assert payload["blockers"] == ["health_probe_timeout"]
-    assert payload["health_probe_runtime"]["consecutive_failures"] == 1
+    assert payload["health_probe_runtime"]["consecutive_failures"] == 0
     assert payload["health_probe_runtime"]["total_timeouts"] == 1
+    assert payload["health_probe_runtime"]["total_terminal_failures"] == 0
     assert payload["health_probe_runtime"]["escalated"] is False
     assert degradations == []
     await asyncio.sleep(0.25)
     system_routes._reset_health_probe_state_for_test()
+
+
+def test_boot_health_cache_is_partitioned_by_runtime_surface(monkeypatch):
+    from interface.routes import system as system_routes
+
+    monkeypatch.setattr(system_routes, "_HEALTH_CACHE_TTL_S", 30.0)
+    system_routes._store_boot_health_cache(
+        {"ready": False, "surface": "runtime"},
+        503,
+        is_gui_proxy=False,
+    )
+    system_routes._store_boot_health_cache(
+        {"ready": True, "surface": "gui_proxy"},
+        200,
+        is_gui_proxy=True,
+    )
+
+    runtime_payload = system_routes._fresh_boot_health_payload(is_gui_proxy=False)
+    proxy_payload = system_routes._fresh_boot_health_payload(is_gui_proxy=True)
+
+    assert runtime_payload is not None
+    assert proxy_payload is not None
+    assert runtime_payload[0]["surface"] == "runtime"
+    assert runtime_payload[1] == 503
+    assert proxy_payload[0]["surface"] == "gui_proxy"
+    assert proxy_payload[1] == 200
 
 
 @pytest.mark.asyncio
@@ -653,7 +697,8 @@ async def test_boot_health_probe_reports_single_flight_while_prior_probe_is_wedg
         200,
     )
     system_routes._reset_health_probe_state_for_test()
-    monkeypatch.setattr(system_routes, "_HEALTH_CACHE_TTL_S", 30.0)
+    monkeypatch.setattr(system_routes, "_HEALTH_CACHE_TTL_S", 0.0)
+    monkeypatch.setattr(system_routes, "_HEALTH_STALE_CACHE_TTL_S", 30.0)
     monkeypatch.setattr(system_routes, "_HEALTH_PROBE_TIMEOUT_S", 0.05)
     monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda _name, default=None: default))
     monkeypatch.setattr(system_routes, "_get_runtime_state_safe", lambda: {})
@@ -678,18 +723,19 @@ async def test_boot_health_probe_reports_single_flight_while_prior_probe_is_wedg
 
     assert status_code == 200
     assert payload["ready"] is True
-    assert payload["cache_status"] == "fresh"
-    assert payload["cache_reason"] == "health_probe_already_running"
+    assert payload["cache_status"] == "stale_while_revalidate"
+    assert payload["cache_reason"] == "health_probe_in_flight"
     assert first_status_code == 200
     assert first_payload["ready"] is True
-    assert first_payload["cache_status"] == "fresh"
+    assert first_payload["cache_status"] == "stale_while_revalidate"
     assert first_payload["cache_reason"] == "health_probe_timeout"
     assert payload["health_probe_runtime"]["total_contentions"] == 1
+    assert payload["health_probe_runtime"]["consecutive_failures"] == 0
     system_routes._reset_health_probe_state_for_test()
 
 
 @pytest.mark.asyncio
-async def test_boot_health_probe_escalates_only_after_repeated_timeouts(monkeypatch):
+async def test_boot_health_poll_storm_does_not_escalate_one_slow_probe(monkeypatch):
     from interface.routes import system as system_routes
 
     degradations: list[tuple] = []
@@ -718,14 +764,61 @@ async def test_boot_health_probe_escalates_only_after_repeated_timeouts(monkeypa
     ]
 
     assert [item[0]["health_probe_runtime"]["consecutive_failures"] for item in payloads] == [
+        0,
+        0,
+        0,
+    ]
+    assert [item[0]["health_probe_runtime"]["total_timeouts"] for item in payloads] == [
+        1,
+        1,
+        1,
+    ]
+    assert [item[0]["health_probe_runtime"]["total_contentions"] for item in payloads] == [
+        0,
         1,
         2,
-        3,
     ]
-    assert payloads[-1][0]["health_probe_runtime"]["escalated"] is True
-    assert len(degradations) == 1
-    assert "repeated health readiness probe timeouts" in degradations[0][1]["action"]
+    assert payloads[-1][0]["health_probe_runtime"]["escalated"] is False
+    assert degradations == []
     await asyncio.sleep(0.2)
+    assert system_routes._health_probe_state_snapshot()["active"] is False
+    system_routes._reset_health_probe_state_for_test()
+
+
+@pytest.mark.asyncio
+async def test_boot_health_escalation_counts_distinct_terminal_probe_failures(monkeypatch):
+    from interface.routes import system as system_routes
+
+    degradations: list[tuple] = []
+
+    def failed_health_snapshot(*, is_gui_proxy: bool):
+        del is_gui_proxy
+        raise RuntimeError("probe failed independently")
+
+    system_routes._store_boot_health_cache({}, 503)
+    system_routes._reset_health_probe_state_for_test()
+    monkeypatch.setattr(system_routes, "_HEALTH_CACHE_TTL_S", 0.0)
+    monkeypatch.setattr(system_routes, "_runtime_manifest_boot_health_payload", lambda _reason: None)
+    monkeypatch.setattr(system_routes, "_HEALTH_PROBE_TIMEOUT_S", 0.2)
+    monkeypatch.setattr(system_routes, "_HEALTH_PROBE_DEGRADATION_THRESHOLD", 2)
+    monkeypatch.setattr(system_routes, "_build_boot_health_payload_sync", failed_health_snapshot)
+    monkeypatch.setattr(
+        system_routes,
+        "record_degradation",
+        lambda *args, **kwargs: degradations.append((args, kwargs)),
+    )
+
+    first = await system_routes._build_boot_health_payload_bounded(is_gui_proxy=False)
+    await asyncio.sleep(0.02)
+    second = await system_routes._build_boot_health_payload_bounded(is_gui_proxy=False)
+    await asyncio.sleep(0.02)
+
+    assert first[0]["health_probe_runtime"]["consecutive_failures"] == 1
+    assert second[0]["health_probe_runtime"]["consecutive_failures"] == 2
+    assert second[0]["health_probe_runtime"]["total_terminal_failures"] == 2
+    assert second[0]["health_probe_runtime"]["escalated"] is True
+    assert len(degradations) == 1
+    assert "distinct terminal health-probe failures" in degradations[0][1]["action"]
     system_routes._reset_health_probe_state_for_test()
 
 

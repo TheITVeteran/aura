@@ -10,6 +10,8 @@ import ctypes.util
 import logging
 import os
 import sys
+import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
 
@@ -23,6 +25,7 @@ _ERR_SEC_ITEM_NOT_FOUND = -25300
 _ERR_SEC_DUPLICATE_ITEM = -25299
 _KEYCHAIN_UNAVAILABLE = object()
 _KEYCHAIN_BACKEND: "KeychainBackend | object | None" = None
+_DEFAULT_KEYCHAIN_CALL_TIMEOUT_S = 0.75
 _KEYCHAIN_RECOVERABLE_ERRORS = (
     AttributeError,
     LookupError,
@@ -206,6 +209,135 @@ class _SecurityFrameworkKeychain:
             self._core_foundation.CFRelease(item_ref)
 
 
+def _configured_keychain_call_timeout_s() -> float:
+    raw = os.environ.get(
+        "AURA_KEYCHAIN_CALL_TIMEOUT_S",
+        str(_DEFAULT_KEYCHAIN_CALL_TIMEOUT_S),
+    )
+    try:
+        configured = float(raw)
+    except (TypeError, ValueError):
+        configured = _DEFAULT_KEYCHAIN_CALL_TIMEOUT_S
+    return max(0.05, min(5.0, configured))
+
+
+class _BoundedKeychainBackend:
+    """Keep native Security.framework IPC off callers and bound its blast radius.
+
+    Security.framework can wait indefinitely for a locked or unavailable
+    security daemon. A daemon worker keeps that wait off Aura's event loop and
+    cannot hold process shutdown open. Single-flight admission guarantees that
+    one stuck OS call cannot accumulate more threads over a long-lived runtime.
+    """
+
+    def __init__(
+        self,
+        backend_factory: Callable[[], KeychainBackend] | None = None,
+        *,
+        timeout_s: float | None = None,
+    ) -> None:
+        self._backend_factory = backend_factory or _SecurityFrameworkKeychain
+        self._timeout_s = (
+            _configured_keychain_call_timeout_s()
+            if timeout_s is None
+            else max(0.01, float(timeout_s))
+        )
+        self._state_lock = threading.Lock()
+        self._backend: KeychainBackend | None = None
+        self._active_thread: threading.Thread | None = None
+
+    def get_password(self, service: str, account: str) -> str | None:
+        result = self._invoke("read", service, account, None)
+        return result if isinstance(result, str) else None
+
+    def set_password(self, service: str, account: str, password: str) -> bool:
+        return bool(self._invoke("write", service, account, password))
+
+    def _invoke(
+        self,
+        operation: str,
+        service: str,
+        account: str,
+        password: str | None,
+    ) -> object:
+        done = threading.Event()
+        result_lock = threading.Lock()
+        state: dict[str, object] = {
+            "abandoned": False,
+            "result": None,
+            "error": None,
+        }
+
+        def _worker() -> None:
+            result: object = None
+            error: BaseException | None = None
+            try:
+                backend = self._backend
+                if backend is None:
+                    candidate = self._backend_factory()
+                    with self._state_lock:
+                        if self._backend is None:
+                            self._backend = candidate
+                        backend = self._backend
+                if operation == "read":
+                    result = backend.get_password(service, account)
+                else:
+                    result = backend.set_password(service, account, password or "")
+            except BaseException as exc:  # noqa: BLE001 - final daemon-worker containment boundary
+                error = exc
+
+            with result_lock:
+                if not bool(state["abandoned"]):
+                    state["result"] = result
+                    state["error"] = error
+            with self._state_lock:
+                if self._active_thread is threading.current_thread():
+                    self._active_thread = None
+            done.set()
+
+        worker = threading.Thread(
+            target=_worker,
+            name=f"aura-keychain-{operation}",
+            daemon=True,
+        )
+        with self._state_lock:
+            if self._active_thread is not None:
+                raise KeychainUnavailableError(
+                    "Keychain operation deferred while a previous native call is still in progress"
+                )
+            self._active_thread = worker
+            worker.start()
+
+        if not done.wait(self._timeout_s):
+            with result_lock:
+                state["abandoned"] = True
+                state["result"] = None
+            raise KeychainUnavailableError(
+                f"Keychain {operation} timed out after {self._timeout_s:.2f}s"
+            )
+
+        with result_lock:
+            error = state["error"]
+            result = state["result"]
+            state["result"] = None
+        if isinstance(error, BaseException):
+            if isinstance(error, KeychainUnavailableError):
+                raise error
+            raise KeychainUnavailableError(
+                f"Keychain {operation} failed: {type(error).__name__}: {error}"
+            ) from error
+        return result
+
+
+def _native_keychain_disabled_for_test() -> bool:
+    if os.environ.get("AURA_ALLOW_NATIVE_KEYCHAIN_IN_TESTS") == "1":
+        return False
+    return bool(
+        os.environ.get("PYTEST_CURRENT_TEST")
+        or os.environ.get("AURA_TEST_MODE") == "1"
+    )
+
+
 def get_secret(key: str, default: str | None = None) -> str | None:
     """
     Retrieve a secret by key. Never logs the value.
@@ -272,11 +404,15 @@ def _keychain_backend() -> KeychainBackend | None:
         return None
     if _KEYCHAIN_BACKEND is not None:
         return _KEYCHAIN_BACKEND
+    # Unit and proof runs must never read or mutate the operator's real
+    # Keychain. Explicit injected backends above remain available to tests.
+    if _native_keychain_disabled_for_test():
+        return None
     if sys.platform != "darwin":
         _KEYCHAIN_BACKEND = _KEYCHAIN_UNAVAILABLE
         return None
     try:
-        backend = _SecurityFrameworkKeychain()
+        backend = _BoundedKeychainBackend()
     except _KEYCHAIN_RECOVERABLE_ERRORS as exc:
         record_degradation("zenith_secrets", exc)
         logger.debug("Native Keychain backend unavailable: %s", exc)

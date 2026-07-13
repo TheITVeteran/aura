@@ -295,7 +295,8 @@ async def test_desktop_quick_reply_bounded_planning_uses_live_mind_floor(monkeyp
     assert calls == []
     assert thought.metadata["response_path"] == "cognitive_engine_bounded_planning"
     assert thought.metadata["live_mind_controls_bound"] is True
-    assert thought.metadata["live_mind_controls_worker_applied"] is True
+    assert thought.metadata["live_mind_controls_worker_applied"] is False
+    assert thought.metadata["live_mind_generation_required"] is False
 
 
 @pytest.mark.asyncio

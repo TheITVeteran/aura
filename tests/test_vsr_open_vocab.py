@@ -218,7 +218,7 @@ def test_onnx_backend_transcribes_a_real_trained_model(tmp_path):
 
 def test_restricted_license_model_refused_without_acknowledgement(tmp_path):
     model = tmp_path / "frontier.onnx"
-    model.write_bytes(b"placeholder")
+    assert not model.exists()
     with pytest.raises(PermissionError, match="license"):
         load_onnx_backend(model, provenance=ModelProvenance(
             model_id="auto_avsr_vsr_trlrs3vox2",

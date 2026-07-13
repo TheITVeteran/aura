@@ -85,7 +85,7 @@ class TestGeneratorSkill(BaseSkill):
         self.brain = brain
 
     def _resolve_brain(self):
-        brain = self.brain or ServiceContainer.get("cognitive_engine", default=None)
+        brain = self.brain or ServiceContainer.peek("cognitive_engine", default=None)
         if brain is not None:
             self.brain = brain
         return brain

@@ -1,13 +1,15 @@
 ################################################################################
 
+
 import pytest
-import asyncio
+
 from core.container import ServiceContainer, ServiceLifetime
 from core.exceptions import (
-    ServiceNotFoundError,
     CircularDependencyError,
     LifecycleError,
+    ServiceNotFoundError,
 )
+
 
 @pytest.fixture(autouse=True)
 def clean_container():
@@ -26,6 +28,26 @@ def test_singleton_behavior():
     s1 = ServiceContainer.get("singleton")
     s2 = ServiceContainer.get("singleton")
     assert s1 is s2
+
+
+def test_runtime_service_bridge_observes_without_cold_starting_factory():
+    from core.runtime.service_registry import get_runtime_service
+
+    created = []
+
+    def factory():
+        instance = object()
+        created.append(instance)
+        return instance
+
+    ServiceContainer.register("runtime_probe", factory)
+
+    assert get_runtime_service("runtime_probe", default=None) is None
+    assert created == []
+
+    instance = ServiceContainer.get("runtime_probe")
+    assert get_runtime_service("runtime_probe", default=None) is instance
+    assert created == [instance]
 
 def test_transient_behavior():
     class MyService:
@@ -50,8 +72,8 @@ def test_auto_wiring():
     assert ServiceContainer.get("app") == "Connected to postgres"
 
 def test_circular_dependency():
-    ServiceContainer.register("A", lambda B: "A", dependencies=["B"])
-    ServiceContainer.register("B", lambda A: "B", dependencies=["A"])
+    ServiceContainer.register("A", lambda B: "A", dependencies=["B"])  # noqa: N803
+    ServiceContainer.register("B", lambda A: "B", dependencies=["A"])  # noqa: N803
     
     with pytest.raises(CircularDependencyError):
         ServiceContainer.get("A")

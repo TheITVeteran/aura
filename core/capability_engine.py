@@ -3234,20 +3234,22 @@ class CapabilityEngine(AuraBaseModule):
         orchestrator = (
             ctx.get("orchestrator")
             or self.orchestrator
-            or ServiceContainer.get("orchestrator", default=None)
+            or ServiceContainer.peek("orchestrator", default=None)
         )
-        brain = ctx.get("brain") or ServiceContainer.get("cognitive_engine", default=None)
-        memory_facade = ctx.get("memory_facade") or ServiceContainer.get(
+        brain = ctx.get("brain") or ServiceContainer.peek("cognitive_engine", default=None)
+        memory_facade = ctx.get("memory_facade") or ServiceContainer.peek(
             "memory_facade", default=None
         )
-        memory_store = ctx.get("memory_store") or ServiceContainer.get("memory", default=None)
-        semantic_memory = ctx.get("semantic_memory") or ServiceContainer.get(
+        memory_store = ctx.get("memory_store") or ServiceContainer.peek(
+            "memory", default=None
+        )
+        semantic_memory = ctx.get("semantic_memory") or ServiceContainer.peek(
             "semantic_memory", default=None
         )
-        vector_memory = ctx.get("vector_memory") or ServiceContainer.get(
+        vector_memory = ctx.get("vector_memory") or ServiceContainer.peek(
             "vector_memory", default=None
         )
-        theory_of_mind = ctx.get("theory_of_mind") or ServiceContainer.get(
+        theory_of_mind = ctx.get("theory_of_mind") or ServiceContainer.peek(
             "theory_of_mind", default=None
         )
 

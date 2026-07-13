@@ -27,6 +27,8 @@ class FakeEstimator:
             "confidence": 0.8,
             "observations": 1,
             "affect_hypotheses": {},
+            "evidence_digest": "",
+            "at": 0.0,
         }
 
     def save_if_due(self):

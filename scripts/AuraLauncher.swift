@@ -1086,9 +1086,10 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        if explicitStopInProgress {
-            terminateSpawnedProcesses()
-        }
+        // A direct launcher child belongs to this app lifecycle. Command-Q,
+        // AppleScript quit, logout, and explicit stop must all reap it; an
+        // attached pre-existing runtime is absent from spawnedProcesses.
+        terminateSpawnedProcesses()
         releaseAppInstanceLock()
     }
 
@@ -2657,13 +2658,19 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             proc.terminate()
         }
 
-        let deadline = Date().addingTimeInterval(2.0)
+        let configuredGrace = ProcessInfo.processInfo.environment["AURA_LAUNCHER_CHILD_TERMINATION_GRACE_S"]
+            .flatMap(TimeInterval.init) ?? 18.0
+        let deadline = Date().addingTimeInterval(min(30.0, max(5.0, configuredGrace)))
         for proc in processes where proc.isRunning {
             while proc.isRunning && Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.05)
             }
             if proc.isRunning {
                 kill(proc.processIdentifier, SIGKILL)
+                let reapDeadline = Date().addingTimeInterval(2.0)
+                while proc.isRunning && Date() < reapDeadline {
+                    Thread.sleep(forTimeInterval: 0.05)
+                }
             }
         }
     }

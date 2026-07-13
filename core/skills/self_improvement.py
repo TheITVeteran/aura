@@ -1,13 +1,13 @@
-from core.runtime.errors import record_degradation
 import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.skills.base_skill import BaseSkill
 
@@ -16,8 +16,8 @@ from core.skills.base_skill import BaseSkill
 logger = logging.getLogger("Skills.SelfImprovement")
 
 class ImprovementInput(BaseModel):
-    objective: Optional[str] = Field(None, description="The specific goal for self-reflection or learning.")
-    mode: Optional[str] = Field("introspective", description="Mode of improvement: 'knowledge_integration', 'recursive', 'structural', or 'introspective'.")
+    objective: str | None = Field(None, description="The specific goal for self-reflection or learning.")
+    mode: str | None = Field("introspective", description="Mode of improvement: 'knowledge_integration', 'recursive', 'structural', or 'introspective'.")
     allow_weight_update: bool = Field(True, description="Allow governed model-weight/adaptor updates.")
     allow_code_modification: bool = Field(False, description="Allow governed structural source-code improvements.")
     force: bool = Field(False, description="Run a cycle even when normal scheduling would wait.")
@@ -38,7 +38,7 @@ class SelfImprovementSkill(BaseSkill):
         self.learning_log_path = Path(config.paths.data_dir) / "learning_history.json"
         self.learning_log_path.parent.mkdir(parents=True, exist_ok=True)
         
-    def _append_to_log(self, entry: Dict[str, Any]):
+    def _append_to_log(self, entry: dict[str, Any]):
         history = self._get_learning_history()
         history.append(entry)
         try:
@@ -51,7 +51,7 @@ class SelfImprovementSkill(BaseSkill):
             record_degradation('self_improvement', e)
             logger.error("Failed to write learning log: %s", e)
 
-    def match(self, goal: Dict[str, Any]) -> bool:
+    def match(self, goal: dict[str, Any]) -> bool:
         """Match goals related to self-improvement or learning status."""
         objective = goal.get("objective", "").lower()
         keywords = ["improve", "better", "evolve", "learning", "upgrade", "self-reflection"]
@@ -60,16 +60,9 @@ class SelfImprovementSkill(BaseSkill):
     @staticmethod
     def _resolve_brain() -> Any:
         try:
-            brain = ServiceContainer.get("cognitive_engine", default=None)
-            if brain:
-                return brain
-        except (ImportError, AttributeError, RuntimeError):
-            pass  # no-op: intentional
-
-        try:
-            from core.brain.cognitive_engine import cognitive_engine
-
-            return cognitive_engine
+            # A skill borrows the live cognitive organ; it must not cold-boot
+            # the runtime service graph and its durable resources on demand.
+            return ServiceContainer.peek("cognitive_engine", default=None)
         except (ImportError, AttributeError, RuntimeError):
             return None
 
@@ -84,10 +77,10 @@ class SelfImprovementSkill(BaseSkill):
 
     def _fallback_improvement_plan(
         self,
-        stats: Dict[str, Any],
-        history: List[str],
+        stats: dict[str, Any],
+        history: list[str],
         objective: str,
-    ) -> List[str]:
+    ) -> list[str]:
         cycle_count = stats.get("cycle_count", 0)
         recent = history[-3:] if history else []
         plan = [
@@ -103,7 +96,7 @@ class SelfImprovementSkill(BaseSkill):
             plan.append("No recent learnings recorded; prioritize collecting fresh observations before tuning.")
         return plan
     
-    async def execute(self, goal: Dict[str, Any] = None, context: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def execute(self, goal: dict[str, Any] = None, context: dict[str, Any] = None) -> dict[str, Any]:
         logger.info("Executing self-improvement reflection.")
         context = context or {}
         
@@ -136,7 +129,7 @@ class SelfImprovementSkill(BaseSkill):
         # Default: Introspective check
         return await self._perform_system_check(params.model_dump(), context) 
 
-    async def _perform_recursive_improvement(self, params: ImprovementInput) -> Dict[str, Any]:
+    async def _perform_recursive_improvement(self, params: ImprovementInput) -> dict[str, Any]:
         """Run the real recursive self-improvement coordinator."""
         try:
             from core.learning.recursive_self_improvement import get_recursive_self_improvement_loop
@@ -165,7 +158,7 @@ class SelfImprovementSkill(BaseSkill):
             logger.error("Recursive self-improvement cycle failed: %s", e)
             return {"ok": False, "error": f"{type(e).__name__}: {e}"}
 
-    async def _process_new_knowledge(self, knowledge_text: str, goal: Dict[str, Any]):
+    async def _process_new_knowledge(self, knowledge_text: str, goal: dict[str, Any]):
         """Uses Cognitive Engine to summarize and store new info."""
         prompt = "Summarize this information into a concise 'Learning Node' for my long-term memory. Focus on actionable insights."
         
@@ -204,7 +197,7 @@ class SelfImprovementSkill(BaseSkill):
             "message": f"I have integrated new data regarding '{goal.get('objective')}'."
         }
 
-    async def _perform_system_check(self, goal: Dict[str, Any], context: Dict[str, Any]):
+    async def _perform_system_check(self, goal: dict[str, Any], context: dict[str, Any]):
         """Execute self-improvement reflection with dynamic growth planning."""
         objective = goal.get("objective", "")
         logger.info("Executing self-improvement reflection: %s", objective)
@@ -257,12 +250,12 @@ class SelfImprovementSkill(BaseSkill):
             "message": "I have reflected on my current state and synthesized a dynamic growth plan."
         }
 
-    def _get_learning_history(self) -> List[str]:
+    def _get_learning_history(self) -> list[str]:
         """Get recent learning milestones."""
         if not self.learning_log_path.exists():
             return []
         try:
-            with open(self.learning_log_path, "r") as f:
+            with open(self.learning_log_path) as f:
                 data = json.load(f)
                 return [entry.get("insight", entry.get("summary", "")) for entry in data]
         except (OSError, ConnectionError, TimeoutError):

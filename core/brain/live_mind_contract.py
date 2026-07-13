@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-
 REQUIRED_LIVE_MIND_GENERATION_CONTROL_KEYS = frozenset(
     {
         "temperature",
@@ -54,6 +53,23 @@ def normalize_live_mind_surface_control_receipt(
         if surface_quality_gate_passed is None
         else bool(surface_quality_gate_passed)
     )
+
+    generation_required = normalized.get("generation_required") is not False
+    if not generation_required:
+        return {
+            **normalized,
+            "enabled": False,
+            "applied": False,
+            "generation_required": False,
+            "application_status": "not_applicable_structured_floor",
+            "live_mind_controls_bound": bool(controls_bound and controls_present),
+            "clean_user_surface_contract": True,
+            "surface_quality_gate_enabled": False,
+            "surface_quality_gate_passed": bool(quality_passed),
+            "surface_quality_gate_attempts": 0,
+            "surface_quality_gate_reasons": [],
+            "source": normalized.get("source") or source,
+        }
 
     if not (controls_bound and controls_present and quality_passed):
         return normalized

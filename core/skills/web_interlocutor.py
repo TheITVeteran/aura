@@ -12,7 +12,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from core.capabilities.web_interlocutor import WebInterlocutorSession, get_web_interlocutor_job_manager
+from core.capabilities.web_interlocutor import (
+    WebInterlocutorSession,
+    get_web_interlocutor_job_manager,
+)
 from core.container import ServiceContainer
 from core.skills.base_skill import BaseSkill
 
@@ -63,7 +66,9 @@ class WebInterlocutorSkill(BaseSkill):
             return get_web_interlocutor_job_manager().status(parsed.job_id)
         if parsed.mode == "cancel":
             return get_web_interlocutor_job_manager().cancel(parsed.job_id)
-        brain = (context or {}).get("brain") or ServiceContainer.get("cognitive_engine", default=None)
+        brain = (context or {}).get("brain") or ServiceContainer.peek(
+            "cognitive_engine", default=None
+        )
         logger.info(
             "WebInterlocutorSkill brain=%s generate=%s think=%s mode=%s turns=%s",
             type(brain).__name__ if brain is not None else "None",

@@ -1,22 +1,23 @@
-from core.runtime.errors import record_degradation
-import asyncio
 import ast
+import asyncio
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-from core.skills.base_skill import BaseSkill
-from core.config import config
-from core.runtime.file_write_gateway import get_file_write_gateway
+from typing import Any
 
 from pydantic import BaseModel, Field
+
+from core.config import config
+from core.runtime.errors import record_degradation
+from core.runtime.file_write_gateway import get_file_write_gateway
+from core.skills.base_skill import BaseSkill
+
 
 class EvolutionInput(BaseModel):
     action: str = Field("propose", description="Action: 'propose' | 'apply' | 'scramble'")
     objective: str = Field(..., description="The feature or improvement to implement.")
-    files: Optional[List[str]] = Field(None, description="Specific files to target.")
+    files: list[str] | None = Field(None, description="Specific files to target.")
 
 class SelfEvolutionSkill(BaseSkill):
     """Skill for autonomous self-improvement. Performs the Research -> Synthesize -> Propose loop for code updates."""
@@ -39,14 +40,14 @@ class SelfEvolutionSkill(BaseSkill):
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    def _load_error_registry(self) -> Dict:
+    def _load_error_registry(self) -> dict:
         """Load or initialize error registry for self-correction."""
         filepath = self._evolution_dir() / "error_registry.json"
         if filepath.exists():
             try:
-                with open(filepath, "r") as f:
+                with open(filepath) as f:
                     return json.load(f)
-            except (json.JSONDecodeError, IOError) as e:
+            except (OSError, json.JSONDecodeError) as e:
                 self.logger.warning("Could not load error registry: %s", e)
         return {}
 
@@ -59,7 +60,7 @@ class SelfEvolutionSkill(BaseSkill):
             source="skills.self_evolution.error_registry",
         )
 
-    def _resolve_brain(self, context: Optional[Dict[str, Any]]) -> Any:
+    def _resolve_brain(self, context: dict[str, Any] | None) -> Any:
         ctx = context or {}
         if "brain" in ctx:
             return ctx.get("brain")
@@ -67,21 +68,14 @@ class SelfEvolutionSkill(BaseSkill):
         try:
             from core.container import ServiceContainer
 
-            brain = ServiceContainer.get("cognitive_engine", default=None)
-            if brain:
-                return brain
-        except (ImportError, AttributeError, RuntimeError):
-            pass  # no-op: intentional
-
-        try:
-            from core.brain.cognitive_engine import cognitive_engine
-
-            return cognitive_engine
+            # Self-evolution may use the running mind, but it does not own the
+            # mind's service graph and therefore cannot initialize it ad hoc.
+            return ServiceContainer.peek("cognitive_engine", default=None)
         except (ImportError, AttributeError, RuntimeError):
             return None
 
-    def _resolve_target_paths(self, files: Optional[List[str]]) -> List[Path]:
-        resolved: List[Path] = []
+    def _resolve_target_paths(self, files: list[str] | None) -> list[Path]:
+        resolved: list[Path] = []
         for raw_path in files or []:
             if not raw_path:
                 continue
@@ -93,7 +87,7 @@ class SelfEvolutionSkill(BaseSkill):
         return resolved
 
     @staticmethod
-    def _effective_timeout(context: Optional[Dict[str, Any]], default: float = 15.0) -> float:
+    def _effective_timeout(context: dict[str, Any] | None, default: float = 15.0) -> float:
         ctx = context or {}
         timeout_raw = (
             ctx.get("timeout_s")
@@ -106,7 +100,7 @@ class SelfEvolutionSkill(BaseSkill):
             return default
 
     @staticmethod
-    def _is_read_only(context: Optional[Dict[str, Any]]) -> bool:
+    def _is_read_only(context: dict[str, Any] | None) -> bool:
         ctx = context or {}
         if ctx.get("read_only") is not None:
             return bool(ctx.get("read_only"))
@@ -116,7 +110,7 @@ class SelfEvolutionSkill(BaseSkill):
         self,
         brain: Any,
         prompt: str,
-        context: Optional[Dict[str, Any]],
+        context: dict[str, Any] | None,
         *,
         default_timeout: float = 12.0,
     ) -> Any:
@@ -124,8 +118,8 @@ class SelfEvolutionSkill(BaseSkill):
         return await asyncio.wait_for(brain.think(prompt), timeout=timeout_s)
 
     @staticmethod
-    def _scan_python_file(path: Path) -> Dict[str, Any]:
-        summary: Dict[str, Any] = {
+    def _scan_python_file(path: Path) -> dict[str, Any]:
+        summary: dict[str, Any] = {
             "file": str(path),
             "exists": path.exists(),
             "long_functions": [],
@@ -161,11 +155,11 @@ class SelfEvolutionSkill(BaseSkill):
     def _build_fallback_proposal(
         self,
         objective: str,
-        files: Optional[List[str]],
-        proprioception: Dict[str, Any],
+        files: list[str] | None,
+        proprioception: dict[str, Any],
         research_summary: str,
         *,
-        reason: Optional[str] = None,
+        reason: str | None = None,
     ) -> str:
         target_paths = self._resolve_target_paths(files)
         file_summaries = [self._scan_python_file(path) for path in target_paths[:3]]
@@ -232,7 +226,7 @@ class SelfEvolutionSkill(BaseSkill):
 
         return "\n".join(lines)
 
-    async def execute(self, params: EvolutionInput, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, params: EvolutionInput, context: dict[str, Any]) -> dict[str, Any]:
         """Execute self-evolution loop."""
         context = context or {}
         if isinstance(params, dict):
@@ -258,8 +252,8 @@ class SelfEvolutionSkill(BaseSkill):
         proprioception = context.get("proprioception", {})
         research_summary = f"System Status: {json.dumps(proprioception)}"
         brain = self._resolve_brain(context)
-        fallback_reason: Optional[str] = None
-        proposal: Optional[str] = None
+        fallback_reason: str | None = None
+        proposal: str | None = None
         
         # 2. SYNTHESIZE
         if read_only:
@@ -344,11 +338,11 @@ class SelfEvolutionSkill(BaseSkill):
                 "results": proposal[:self.MAX_PREVIEW],
                 "fallback": bool(fallback_reason),
             }
-        except (OSError, IOError) as e:
+        except OSError as e:
             record_degradation('self_evolution', e)
             return {"ok": False, "error": f"Failed to save proposal: {e}"}
 
-    async def _apply_evolution(self, objective: str, files: Optional[List[str]], brain: Any, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def _apply_evolution(self, objective: str, files: list[str] | None, brain: Any, context: dict[str, Any]) -> dict[str, Any]:
         """Apply the evolution objective autonomously using sandboxed verification."""
         self.logger.info("Applying Self-Evolution for: %s", objective)
         
@@ -403,7 +397,7 @@ class SelfEvolutionSkill(BaseSkill):
         else:
              return {"ok": False, "error": "Failed to apply validated fix to live system."}
 
-    def _perform_scrambling(self) -> Dict[str, Any]:
+    def _perform_scrambling(self) -> dict[str, Any]:
         """Scramble is disabled. Returns honest status."""
         self.logger.info("Scramble requested but feature is disabled by safety protocols.")
         return {

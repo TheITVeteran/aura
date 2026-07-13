@@ -1288,7 +1288,10 @@ def _install_runtime_service_registry_bridge() -> None:
             return getattr(desc, "failure_policy", None)
 
         def _service_for(service_name: str, default: object | None = None) -> object | None:
-            result: object | None = ServiceContainer.get(service_name, default=default)
+            # Low-level observers and error sinks may inspect runtime services,
+            # but they are not lifecycle owners. A read here must never invoke
+            # a factory and recursively boot an organ during diagnostics.
+            result: object | None = ServiceContainer.peek(service_name, default=default)
             return result
 
         def _has_service(service_name: str) -> bool:

@@ -1,10 +1,44 @@
 import asyncio
+import threading
 from types import SimpleNamespace
 
 import pytest
 
 from core.runtime import conversation_support
 from core.state.aura_state import AuraState
+
+
+@pytest.mark.asyncio
+async def test_dialogue_cognition_cold_start_does_not_block_event_loop(monkeypatch):
+    release = threading.Event()
+
+    def _blocking_dialogue_resolution(*, default=None):
+        release.wait(1.0)
+        return default
+
+    monkeypatch.setattr(
+        conversation_support.service_access,
+        "optional_service",
+        lambda *_args, **kwargs: kwargs.get("default"),
+    )
+    monkeypatch.setattr(
+        conversation_support.service_access,
+        "resolve_dialogue_cognition",
+        _blocking_dialogue_resolution,
+    )
+
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.05, release.set)
+    started_at = loop.time()
+
+    await conversation_support.update_conversational_intelligence(
+        "Still with me?",
+        "I am here.",
+        None,
+        agent_id="owner",
+    )
+
+    assert loop.time() - started_at < 0.4
 
 
 @pytest.mark.asyncio

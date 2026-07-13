@@ -243,28 +243,17 @@ class StateRepository:
         return self._lock
 
     async def _ensure_db(self) -> aiosqlite.Connection:
-        """Ensure the DB connection is alive and bound to the current loop."""
+        """Return the repository-owned connection, opening it once when needed.
+
+        ``aiosqlite>=0.20`` dispatches each result to the calling future's loop;
+        its connection no longer carries a legacy ``_loop`` binding. Treating
+        that absent private field as a mismatch reopened a worker thread for
+        every repository access and left the final worker alive at process exit.
+        """
         try:
-            current_loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError as exc:
             raise RuntimeError("Database access attempted outside of event loop") from exc
-
-        if self._db is not None:
-            # Check for loop mismatch
-            bound_loop = getattr(self._db, "_get_loop", lambda: getattr(self._db, "_loop", None))()
-            if bound_loop != current_loop:
-                logger.debug(
-                    "Loop mismatch detected in StateRepository DB connection. Reconnecting."
-                )
-                try:
-                    if self._db is not None:
-                        await self._db.close()
-                except _STATE_BOUNDARY_ERRORS as _e:
-                    _record_state_degradation(
-                        _e, action="stale loop-bound DB connection close skipped"
-                    )
-                    logger.debug("StateRepository stale DB close skipped: %s", _e)
-                self._db = None
 
         if self._db is None:
             self._db = await aiosqlite.connect(self.db_path)

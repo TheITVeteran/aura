@@ -310,6 +310,62 @@ def _redirect_runtime_memory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     monkeypatch.setenv("AURA_ROOT", str(tmp_path))
 
 
+def test_skill_brain_resolvers_never_cold_start_cognitive_runtime(monkeypatch):
+    from core.container import ServiceContainer
+
+    sentinel = object()
+    lookups: list[str] = []
+
+    def _peek(_cls, name: str, default=None):
+        lookups.append(name)
+        return sentinel
+
+    def _forbidden_get(*_args, **_kwargs):
+        raise AssertionError("skill resolution cold-started the cognitive service graph")
+
+    monkeypatch.setattr(ServiceContainer, "peek", classmethod(_peek))
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(_forbidden_get))
+
+    evolution = object.__new__(SelfEvolutionSkill)
+    test_generator = TestGeneratorSkill(brain=None)
+
+    assert SelfImprovementSkill._resolve_brain() is sentinel
+    assert evolution._resolve_brain({}) is sentinel
+    assert test_generator._resolve_brain() is sentinel
+    assert lookups == ["cognitive_engine"] * 3
+
+
+def test_capability_context_borrows_only_initialized_runtime_services(monkeypatch):
+    from core.container import ServiceContainer
+
+    lookups: list[str] = []
+
+    def _peek(_cls, name: str, default=None):
+        lookups.append(name)
+        return default
+
+    def _forbidden_get(*_args, **_kwargs):
+        raise AssertionError("capability context cold-started a runtime service")
+
+    monkeypatch.setattr(ServiceContainer, "peek", classmethod(_peek))
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(_forbidden_get))
+    engine = object.__new__(CapabilityEngine)
+    engine.orchestrator = None
+
+    context = engine._augment_execution_context({})
+
+    assert context == {"memory": None}
+    assert lookups == [
+        "orchestrator",
+        "cognitive_engine",
+        "memory_facade",
+        "memory",
+        "semantic_memory",
+        "vector_memory",
+        "theory_of_mind",
+    ]
+
+
 def test_registered_skill_surface_matches_expected_catalog(skill_registry):
     assert set(skill_registry) == EXPECTED_REGISTERED_SKILLS
     assert len(skill_registry) == 75

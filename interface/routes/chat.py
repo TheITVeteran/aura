@@ -246,8 +246,8 @@ def _observe_authenticated_chat_turn(
             and isinstance(snapshot, dict)
             and hasattr(observer, "register_interaction")
         ):
-            snapshot.setdefault("evidence_digest", evidence_digest)
-            snapshot.setdefault("at", observed_at)
+            snapshot["evidence_digest"] = evidence_digest
+            snapshot["at"] = observed_at
             observer.register_interaction(principal, snapshot)
         if hasattr(estimator, "save_if_due"):
             get_task_tracker().track(
@@ -596,8 +596,8 @@ _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S = _env_float(
 )
 _DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COMPACT_CHAT_CYCLE_TIMEOUT_S",
-    42.0,
-    minimum=10.0,
+    96.0,
+    minimum=60.0,
 )
 _DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S = _env_float(
     "AURA_DESKTOP_COGNITIVE_MAX_TURN_TIMEOUT_S",
@@ -4341,6 +4341,15 @@ def _build_live_turn_contract_payload(
         live_mind_surface_control_receipt.get("live_mind_controls_bound")
         and live_mind_surface_control_receipt.get("applied")
     )
+    live_mind_generation_required = bool(
+        trace.get(
+            "live_mind_generation_required",
+            live_mind_surface_control_receipt.get("generation_required", True),
+        )
+    )
+    live_mind_controls_application_satisfied = bool(
+        (not live_mind_generation_required) or live_mind_controls_worker_applied
+    )
     live_mind_surface_quality_gate_enabled = bool(
         live_mind_surface_control_receipt.get("surface_quality_gate_enabled")
     )
@@ -4352,7 +4361,7 @@ def _build_live_turn_contract_payload(
         (not live_mind_context_required)
         or (
             live_mind_controls_bound
-            and live_mind_controls_worker_applied
+            and live_mind_controls_application_satisfied
             and live_mind_surface_quality_gate_passed
         )
     )
@@ -4367,6 +4376,7 @@ def _build_live_turn_contract_payload(
         "cognitive_engine_capability_tail_grounding",
         "cognitive_engine_capability_catalog_grounding",
         "cognitive_engine_self_process_grounding",
+        "cognitive_engine_self_condition_grounding",
         "cognitive_engine_bounded_planning",
     }
     accepted_cognitive_path = bool(
@@ -4414,6 +4424,8 @@ def _build_live_turn_contract_payload(
         "live_mind_generation_controls": live_mind_generation_controls,
         "live_mind_surface_control_receipt": live_mind_surface_control_receipt,
         "live_mind_controls_worker_applied": live_mind_controls_worker_applied,
+        "live_mind_generation_required": live_mind_generation_required,
+        "live_mind_controls_application_satisfied": live_mind_controls_application_satisfied,
         "live_mind_surface_quality_gate_enabled": live_mind_surface_quality_gate_enabled,
         "live_mind_surface_quality_gate_passed": live_mind_surface_quality_gate_passed,
         "live_mind_controls_structurally_bound": live_mind_controls_structurally_bound,
@@ -6463,6 +6475,12 @@ async def _run_cognitive_engine_chat_turn(
                 and surface_control_receipt.get("applied")
             )
         )
+        generation_required = bool(
+            thought_metadata.get(
+                "live_mind_generation_required",
+                surface_control_receipt.get("generation_required", True),
+            )
+        )
         metadata_response_path = str(thought_metadata.get("response_path") or "").strip()
         turn_trace.update(
             {
@@ -6470,6 +6488,7 @@ async def _run_cognitive_engine_chat_turn(
                 "live_mind_generation_controls": generation_controls,
                 "live_mind_surface_control_receipt": surface_control_receipt,
                 "live_mind_controls_worker_applied": worker_applied,
+                "live_mind_generation_required": generation_required,
                 "live_mind_snapshot_ready": snapshot_ready,
                 "live_mind_required_subsystems_ok": required_subsystems_ok,
                 "live_mind_snapshot_ready_from_thought": bool(

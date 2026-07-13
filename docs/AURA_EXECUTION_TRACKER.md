@@ -22,9 +22,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `FOREGROUND-LATENCY-001`, `LAUNCH-PROVENANCE-001`)**, followed by joy/social
   self-state separation and the remaining typed canonical person-model
   consolidation (`MEMORY-001`, `MIND-001`, `STATE-001`,
-  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 53 establish the current
+  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 55 establish the current
   social, OS-automation, runtime-pressure, desktop-access, self-condition, and
-  owned-task source boundaries; none substitutes for launched desktop behavior.
+  owned-task source boundaries, signed launch identity, resource lifecycle, and
+  non-constructing service-observation contract; none substitutes for launched
+  desktop behavior.
   `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
@@ -115,7 +117,7 @@ Status rules:
 | `SECURITY-001` | `IN PROGRESS 2026-07-12` | Complete threat modeling, secret/privacy boundaries, prompt/tool/desktop abuse tests, dependency and license review, SBOM/provenance, signed artifacts, and recovery from hostile inputs. | Pass F 9-10; Matrix 15-16 |
 | `OPERATIONS-001` | `OPEN` | Make clean install, first boot, doctor, model acquisition, permissions, migration, update, backup/restore, rollback, uninstall, crash triage, and release channels reproducible and boring. | Pass F 10; Matrix 15 |
 | `REPO-001` | `OPEN` | Drain type, effect, cancellation, lifecycle, concurrency, dependency, dead-code, scaffolding/stub, configuration, documentation, and runtime/proof artifact-placement debt across every tracked source file. | Pass F 12; Matrix 11, 12, and 18 |
-| `LIFECYCLE-001` | `IN PROGRESS 2026-07-13` | Make every bounded test and runtime command terminate after its result: identify and close the non-daemon thread/process/resource owner that leaves `tests/test_skill_surface_contracts.py` alive after `99/99`, add leak detection, and prove clean interpreter exit without hiding the owner behind forced termination. | `FAULT-001`, `REPO-001`, `VALIDATE-001`; post-summary process-exit defect discovered during Checkpoint 49/50 validation |
+| `LIFECYCLE-001` | `COMPLETE 2026-07-13` | Preserve the now-enforced ownership contract: bounded commands terminate after their result; diagnostic/runtime lookups cannot cold-construct service graphs; `aiosqlite` workers remain repository-owned and close explicitly; launch cleanup targets exact process identity; regressions must prove real interpreter exit without forced termination. | `FAULT-001`, `ARCH-001`, `REPO-001`, `VALIDATE-001`; Checkpoint 55; exact reproducer `101/101` plus normal interpreter exit |
 | `ASYNC-TASK-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate every unobserved async task failure and require owned task identity, completion observation, cancellation, and structured terminal evidence. First reproduce and root-fix the live `conversation_support.py` task whose empty `agent_id` raised `ValueError` under “Task exception was never retrieved.” | `FAULT-001`, `LIFECYCLE-001`, `CONVERSATION-001`; Checkpoint 53; live desktop log evidence 2026-07-13 |
 | `LAUNCH-PROVENANCE-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make the signed resident Aura.app the canonical launcher, pin its source root and commit provenance to current `main`, reject stale/worktree drift, keep the native bridge resident, and expose launched root/commit/signature evidence in readiness and proof. The next live proof must replace the observed Python process running from `.claude/worktrees/fable-improvement-pass` without a resident Aura.app process. | `OPERATIONS-001`, `RUNTIME-001`, `DESKTOP-ACCESS-001`, `VALIDATE-001`; Checkpoint 54; live process evidence 2026-07-13 |
 | `PROOF-001` | `OPEN` | Purify all proof runners against leakage, copied answers, stale artifacts, fallback success, runner-solved work, environment dependence, and unsupported claims; separate builder/solver/evaluator/signer. | Pass F 9; Matrix 16 |
@@ -13405,3 +13407,111 @@ Immediate next work and proof burden:
 - After live closure, drain `STORAGE-GATEWAY-001`, then continue every remaining
   master-index item. Multi-hour and 24-72 hour soaks remain deferred until all
   shorter gates are green.
+
+## Checkpoint 2026-07-13-55: Foreground Recovery And Owned Runtime Resources
+
+This checkpoint closes `LIFECYCLE-001` and advances `FOREGROUND-LATENCY-001`,
+`SELF-STATE-CHAT-001`, `DESKTOP-ACCESS-001`, `ASYNC-TASK-001`,
+`LAUNCH-PROVENANCE-001`, `ARCH-001`, `FAULT-001`, `CONVERSATION-001`, and
+`VALIDATE-001`. The bounded source and process-exit gates are green. Launched
+desktop proof remains open for every item whose status explicitly says
+`LIVE OPEN`.
+
+Converted the checkpoint-54 live failures into owned recovery contracts:
+
+- Forced model-lane abort, reboot, close, and dead-worker replacement now
+  release the exact durable fencing token. A dead worker cannot respawn after a
+  failed release, stale admission backoff cannot block a new foreground turn,
+  and background denial remains rate-limited. This addresses the lived
+  `event_loop_lag_3.638s` admission denial without weakening truthful lag
+  policy or merely increasing thresholds.
+- Direct questions about Aura's condition now return one typed canonical
+  self-condition projection when the required mind/evidence controls are
+  bound. Host RAM/CPU telemetry can support that answer but cannot replace it.
+  The ordinary compact conversation budget was also corrected for a real 32B
+  cold first token instead of timing out before the configured model can
+  answer.
+- Social context producers assign the current exact-agent evidence digest and
+  observation time rather than preserving an empty default. Recursive
+  theory-of-mind receives a valid evidence-bearing situation instead of
+  failing on an empty digest.
+- System health now uses process-level single-flight probes, fresh caching, and
+  stale-while-revalidate. One slow desktop probe produces at most one timeout
+  per generation; cache contention is not reclassified as degradation.
+  Expected TCC latency is a throttled structured diagnostic and no longer fans
+  one permission timeout into duplicate fault-taxonomy, degradation, and
+  affective-strain events.
+
+Closed blocking and orphaned resource owners from the bottom up:
+
+- Native Keychain access runs through one bounded daemon worker with
+  single-flight admission and an abandoned-result boundary after timeout.
+  Ordinary tests are hermetic unless native Keychain access is explicitly
+  enabled. Dialogue-cognition cold initialization runs off the event loop, so
+  relational-memory key lookup cannot stall foreground chat.
+- `StateRepository` reuses its explicit `aiosqlite>=0.20` connection instead of
+  interpreting the library's intentionally absent legacy `_loop` field as a
+  mismatch and spawning a new worker on every access. The repository's
+  existing `close()` remains the terminal owner.
+- Skills and capability-context enrichment borrow only initialized runtime
+  collaborators. The low-level runtime service registry now honors its
+  read-only contract with `ServiceContainer.peek()`: recording a degradation
+  cannot recursively construct self-modification, cognition, state, memory,
+  and database services. This was the exact hidden path that left pytest in
+  `Py_FinalizeEx -> wait_for_thread_shutdown` after all assertions passed.
+- Runtime cleanup parses real Python argv and accepts only exact Aura entry
+  scripts or their descendants. Shell text, `python -c`, and unrelated
+  processes cannot match. PID creation time is re-observed through the
+  canonical resource observer immediately before signalling, closing the PID
+  reuse race. The native launcher owns and terminates its direct Python child
+  on app quit with bounded graceful and reap phases.
+
+Verification completed for this source checkpoint:
+
+- The exact lifecycle reproducer now passes `101/101` and emits normal
+  `/usr/bin/time` completion instead of remaining alive after the pytest
+  summary. The integrated skill/container/state/capability battery passes
+  `198/198` and returns normally; focused ownership and fallback coverage
+  passes `97/97`.
+- Foreground model-lane fencing, preemption, memory safety, and heartbeat tests
+  pass `144/144`. The full chat/social/conversation-support/server lane passes
+  `273/273`. Launcher/process identity passes `44/44`; shutdown and signed
+  launch provenance pass `52/52`; system/desktop/social/Keychain focus passes
+  `45/45`.
+- The reconciled open-vocabulary VSR battery passes `10/10`. Its license
+  refusal test now proves policy precedence without creating fake model bytes,
+  removing the only new enterprise placeholder regression introduced by the
+  concurrent mainline capability checkpoint.
+- Configured Ruff, Python compilation, Swift typecheck, `git diff --check`, and
+  strict MyPy across all `78` production anchors pass. The enterprise static
+  ratchet, all `37/37` production-readiness checks, all `20/20` closeout-rubric
+  criteria, and resource-observation ownership over `2,687` files with zero
+  findings pass.
+- The temporary-output mechanical closeout audit passes over `5,124` tracked
+  files, `4,122` code files, and `1,137,032` code lines with production,
+  architecture, model-load ownership, and resource-observation subgates green.
+  It correctly reports `full_closeout_complete=false` and
+  `full_semantic_review_current=false`; this enumeration pass is not presented
+  as completion of `AUDIT-001` or the master program.
+- Concurrent mainline capability, shutdown-witness, quantum, Ray, and
+  open-vocabulary VSR commits were fast-forward reconciled before this
+  checkpoint. Their overlapping system-route and test-hygiene work is
+  preserved; no force push, branch detour, or unrelated-file rollback was used.
+
+Immediate next work and proof burden:
+
+- Commit and push this checkpoint directly on `main`, rebuild and install the
+  signed `/Applications/Aura.app` from that exact revision, and prove resident
+  app, source root, commit, signature, Python child, native bridge, GUI, and API
+  identity agree.
+- Exercise the original self-condition follow-up, concurrent desktop-access
+  probes, healthy foreground MLX admission, exact-agent social callback, app
+  quit, and relaunch paths while checking the complete log interval for orphan
+  tasks, empty-agent failures, probe fanout, stale fencing, cold-construction,
+  and event-loop stalls.
+- Keep `SELF-STATE-CHAT-001`, `DESKTOP-ACCESS-001`,
+  `FOREGROUND-LATENCY-001`, `ASYNC-TASK-001`, and
+  `LAUNCH-PROVENANCE-001` live-open until that launched evidence is recorded.
+  Then drain `STORAGE-GATEWAY-001` and continue every remaining master-index
+  item. Multi-hour and 24-72 hour soaks remain deferred until all shorter gates
+  are green.

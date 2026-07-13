@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import queue
 from types import SimpleNamespace
 
@@ -95,6 +96,96 @@ async def test_lost_heartbeat_fence_stops_stale_worker(
     assert client._model_lane_fencing_token == 0
     assert client._lane_state == "cold"
     assert client._deferred_reboot_reason == "model_lane_fence_lost"
+
+
+def test_forced_abort_releases_exact_durable_lane_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.runtime import model_lane_control
+
+    released: list[tuple[str, int, str]] = []
+    unregistered: list[str] = []
+
+    class _Controller:
+        def release_owner_sync(
+            self,
+            owner_id: str,
+            *,
+            fencing_token: int,
+            reason: str,
+        ) -> bool:
+            released.append((owner_id, fencing_token, reason))
+            return True
+
+    monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: _Controller())
+    monkeypatch.setattr(
+        model_lane_control,
+        "unregister_model_lane_owner_adapter",
+        lambda owner_id: unregistered.append(owner_id),
+    )
+    client = MLXLocalClient(model_path="/models/test-1.5b")
+    process = _ProcessProbe()
+    client._process = process
+    client._active_generations = 1
+    client._model_lane_owner_id = "mlx:test:forced-abort"
+    client._model_lane_fencing_token = 101
+    client._model_lane_terminal_receipt_id = "receipt-101"
+
+    assert client.force_abort_active_generation("foreground_deadline") is True
+
+    assert process.killed is True
+    assert released == [("mlx:test:forced-abort", 101, "foreground_deadline")]
+    assert unregistered == ["mlx:test:forced-abort"]
+    assert client._model_lane_fencing_token == 0
+    assert client._model_lane_terminal_receipt_id == ""
+
+
+@pytest.mark.asyncio
+async def test_dead_worker_releases_stale_fence_before_respawn_admission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.brain.llm import mlx_client
+    from core.runtime import model_lane_control
+
+    events: list[str] = []
+
+    class _Controller:
+        def release_owner_sync(
+            self,
+            owner_id: str,
+            *,
+            fencing_token: int,
+            reason: str,
+        ) -> bool:
+            events.append(f"release:{owner_id}:{fencing_token}:{reason}")
+            return True
+
+    @contextlib.asynccontextmanager
+    async def _admitted(client, *, foreground_request):
+        assert foreground_request is True
+        assert client._model_lane_fencing_token == 0
+        events.append("admitted")
+        yield SimpleNamespace()
+
+    async def _spawned(**_kwargs: object) -> bool:
+        events.append("spawned")
+        return True
+
+    monkeypatch.setattr(model_lane_control, "get_model_lane_controller", lambda: _Controller())
+    monkeypatch.setattr(model_lane_control, "unregister_model_lane_owner_adapter", lambda _owner: None)
+    monkeypatch.setattr(mlx_client, "_model_load_admission_context", _admitted)
+    client = MLXLocalClient(model_path="/models/test-1.5b")
+    client._model_lane_owner_id = "mlx:test:dead-worker"
+    client._model_lane_fencing_token = 102
+    client._model_lane_terminal_receipt_id = "receipt-102"
+    monkeypatch.setattr(client, "_ensure_worker_alive_inner", _spawned)
+
+    assert await client._ensure_worker_alive(foreground_request=True) is True
+    assert events == [
+        "release:mlx:test:dead-worker:102:dead_worker_before_respawn",
+        "admitted",
+        "spawned",
+    ]
 
 
 @pytest.mark.asyncio

@@ -67,7 +67,9 @@ async def test_background_scheduler_falls_back_to_active_loop(monkeypatch):
     await asyncio.sleep(0)
 
     assert ran["value"] is True
-    assert tracker_down_calls == ["attempted"]
+    # The first lookup schedules the chat task; the second is the bounded
+    # adaptive-repair observation emitted by the causal degradation router.
+    assert tracker_down_calls == ["attempted", "attempted"]
     last = get_degradation_tracker().recent(subsystem="native_chat")[-1]
     assert (
         last.action

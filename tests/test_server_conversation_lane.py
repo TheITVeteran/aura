@@ -425,7 +425,9 @@ def test_structured_governance_refusal_can_prove_live_full_mind_path(monkeypatch
     )
 
     assert payload["live_mind_controls_bound"] is True
-    assert payload["live_mind_controls_worker_applied"] is True
+    assert payload["live_mind_controls_worker_applied"] is False
+    assert payload["live_mind_generation_required"] is False
+    assert payload["live_mind_controls_application_satisfied"] is True
     assert payload["live_mind_surface_quality_gate_passed"] is True
     assert payload["full_mind_path"] is True
 
@@ -6734,6 +6736,103 @@ async def test_cognitive_engine_quick_reply_places_self_condition_evidence_in_mo
 
 
 @pytest.mark.asyncio
+async def test_cognitive_engine_self_condition_uses_canonical_projection_without_model_wait(
+    monkeypatch,
+):
+    from core.brain import cognitive_engine as ce_module
+    from core.brain.cognitive_engine import CognitiveEngine
+    from core.brain.types import ThinkingMode
+    from interface.routes import chat as chat_routes
+
+    class _Container:
+        @staticmethod
+        def get(name, default=None):
+            return default
+
+    monkeypatch.setattr(ce_module, "get_container", lambda: _Container)
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    canonical_reply = (
+        "Yes, I am okay. I feel warm and settled, with low distress and a "
+        "coherent sense of the current thread. My continuity signal is holding."
+    )
+    context = {
+        "desktop_quick_reply_contract": True,
+        "desktop_cognitive_engine_required": True,
+        "cognitive_engine_required": True,
+        "self_condition_contract": True,
+        "canonical_self_condition_reply": canonical_reply,
+        "canonical_self_condition_context": (
+            "condition=well freshness=fresh distress=0.08 welfare=0.82 "
+            "felt_coherence=0.93 continuity=0.96 agency=0.84"
+        ),
+        "canonical_self_condition_projection": {
+            "evidence_id": "condition-proof-structured",
+            "confidence": 0.91,
+        },
+        "live_mind_context_required": True,
+        "live_mind_context": {
+            "required_for_live_desktop": True,
+            "must_answer_from_full_mind_path": True,
+            "required_subsystems_ok": True,
+            "mind_snapshot_quality": {"present": True, "ready": True},
+        },
+        "live_mind_generation_controls": {
+            "temperature": 0.58,
+            "top_p": 0.88,
+            "clean_user_surface_recurrent_loops": 1,
+            "clean_user_surface_steering_alpha": 0.25,
+        },
+        "live_mind_controls_bound": True,
+        "live_mind_snapshot_ready": True,
+        "live_mind_required_subsystems_ok": True,
+        "visible_user_message": "Are you okay though?",
+    }
+
+    thought = await CognitiveEngine()._direct_desktop_quick_reply(
+        "Are you okay though?",
+        ThinkingMode.FAST,
+        "user",
+        context,
+        timeout_s=96.0,
+    )
+
+    assert thought is not None
+    assert thought.content == canonical_reply
+    assert thought.metadata["response_path"] == "cognitive_engine_self_condition_grounding"
+    assert thought.metadata["self_condition_evidence_id"] == "condition-proof-structured"
+    assert thought.metadata["live_mind_generation_required"] is False
+    assert thought.metadata["live_mind_controls_worker_applied"] is False
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine_self_condition_grounding",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "response_path": "cognitive_engine_self_condition_grounding",
+            **thought.metadata,
+        },
+    )
+
+    assert payload["live_mind_controls_worker_applied"] is False
+    assert payload["live_mind_controls_application_satisfied"] is True
+    assert payload["full_mind_path"] is True
+
+
+@pytest.mark.asyncio
 async def test_desktop_cognitive_engine_binds_weak_condition_draft_to_canonical_evidence(monkeypatch):
     from core.conversation.response_reliability import assess_user_facing_reply
     from core.providers import engine_connection_pool as pool_module
@@ -7331,7 +7430,7 @@ async def test_desktop_cognitive_engine_required_simple_chat_uses_compact_live_m
     assert calls[0]["context"]["skip_runtime_payload"] is True
     assert calls[0]["context"]["allow_deep_handoff"] is False
     assert calls[0]["context"]["allow_cloud_fallback"] is False
-    assert calls[0]["kwargs"]["timeout_s"] == pytest.approx(42.0)
+    assert calls[0]["kwargs"]["timeout_s"] == pytest.approx(58.0)
 
 
 @pytest.mark.asyncio

@@ -107,6 +107,61 @@ async def test_http_turn_applies_consent_and_observes_exact_principal_idempotent
     assert len({digest for _, digest in observer.events}) == 1
 
 
+def test_http_turn_rebinds_empty_estimator_provenance_before_recursive_observation(
+    monkeypatch,
+):
+    from core.consciousness.recursive_tom import ObserverContextModel
+
+    class _AbstainingEstimator:
+        def observe_message(self, *_args, **_kwargs):
+            return None
+
+        def cognitive_snapshot(self, principal, _observed_at):
+            return {
+                "agent_id": principal,
+                "confidence": 0.0,
+                "observations": 0,
+                "affect_hypotheses": {},
+                "evidence_digest": "",
+                "at": 0.0,
+            }
+
+    degradations = []
+    observer = ObserverContextModel()
+    monkeypatch.setattr(
+        chat_routes,
+        "_authenticated_chat_principal",
+        lambda _request: "bryan",
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "record_degradation",
+        lambda *args, **kwargs: degradations.append((args, kwargs)),
+    )
+    ServiceContainer.clear()
+    ServiceContainer.register_instance(
+        "other_agent_model",
+        _AbstainingEstimator(),
+        required=False,
+    )
+    ServiceContainer.register_instance("recursive_tom", observer, required=False)
+
+    try:
+        principal = chat_routes._observe_authenticated_chat_turn(
+            _request(idempotency_key="social-proof"),
+            SimpleNamespace(message="Are you with me?", session_id="session-1"),
+        )
+        snapshot = observer.get_mind("bryan")
+    finally:
+        ServiceContainer.clear()
+
+    assert principal == "bryan"
+    assert snapshot is not None
+    assert len(snapshot.evidence_digest) == 64
+    assert snapshot.captured_at > 0.0
+    assert degradations == []
+
+
 @pytest.mark.asyncio
 async def test_http_feedback_window_opens_only_after_response_background_runs(
     tmp_path,

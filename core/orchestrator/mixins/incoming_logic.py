@@ -208,11 +208,8 @@ class IncomingLogicMixin:
                         observed_at=observed_at,
                     )
                 if isinstance(social_snapshot, dict):
-                    social_snapshot.setdefault(
-                        "evidence_digest",
-                        turn_evidence_digest,
-                    )
-                    social_snapshot.setdefault("at", observed_at)
+                    social_snapshot["evidence_digest"] = turn_evidence_digest
+                    social_snapshot["at"] = observed_at
                     if hasattr(observer_context, "register_interaction"):
                         observer_context.register_interaction(user_id, social_snapshot)
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:

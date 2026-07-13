@@ -51,6 +51,19 @@ def test_shutdown_commit_bus_quieting_is_limited_to_state_vault_shutdown() -> No
     assert actor_shutdown_commit("state_vault", "get_state", payload) is False
 
 
+def test_state_repository_reuses_aiosqlite_connection_across_event_loops(tmp_path):
+    """aiosqlite 0.20+ is loop-agnostic; access must not spawn worker churn."""
+
+    repo = StateRepository(db_path=str(tmp_path / "state.db"), is_vault_owner=True)
+
+    first = asyncio.run(repo._ensure_db())
+    second = asyncio.run(repo._ensure_db())
+
+    assert second is first
+    asyncio.run(repo.close())
+    assert repo._db is None
+
+
 @pytest.mark.asyncio
 async def test_state_repair_reports_deferred_consumer_restart(monkeypatch, tmp_path):
     monkeypatch.setattr(state_module, "get_task_tracker", lambda: FailingTracker())

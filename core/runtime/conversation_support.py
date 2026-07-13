@@ -416,7 +416,13 @@ async def update_conversational_intelligence(
         logger.debug("ConversationalProfile update skipped: %s", exc)
 
     try:
-        dialogue = service_access.resolve_dialogue_cognition(default=None)
+        # Dialogue cognition may cold-start encrypted relational memory. Keep
+        # native secure-store and file initialization off the request loop so
+        # post-turn learning cannot stall model admission or UI health polls.
+        dialogue = await asyncio.to_thread(
+            service_access.resolve_dialogue_cognition,
+            default=None,
+        )
         if exact_agent_id and dialogue and relational_memory_allows(
             exact_agent_id,
             "dialogue_preference",

@@ -855,15 +855,22 @@ async def _model_load_admission_context(
                 cancelled.reason,
                 receipt_id=cancelled.receipt_id,
             ) from exc
-        client._model_lane_fencing_token = committed.fencing_token
-        client._model_lane_terminal_receipt_id = committed.receipt_id
-        from core.runtime.model_lane_control import register_model_lane_owner_adapter
+        adopt_owner = getattr(client, "_adopt_durable_model_lane_owner", None)
+        if callable(adopt_owner):
+            adopt_owner(
+                fencing_token=committed.fencing_token,
+                receipt_id=committed.receipt_id,
+            )
+        else:
+            client._model_lane_fencing_token = committed.fencing_token
+            client._model_lane_terminal_receipt_id = committed.receipt_id
+            from core.runtime.model_lane_control import register_model_lane_owner_adapter
 
-        register_model_lane_owner_adapter(
-            committed.owner_id,
-            evict=_evict_model_lane_owner,
-            compensate=_compensate_model_lane_owner,
-        )
+            register_model_lane_owner_adapter(
+                committed.owner_id,
+                evict=_evict_model_lane_owner,
+                compensate=_compensate_model_lane_owner,
+            )
     except asyncio.CancelledError:
         await asyncio.shield(_release_schedule_lease("model_load_cancelled"))
         if lane_decision is not None and lane_decision.admitted:
@@ -1823,6 +1830,7 @@ class MLXLocalClient:
         self._expert_adapter_path: str | None = None
         self._process: mp.Process | None = None
         self._model_lane_owner_id = f"mlx:{os.getpid()}:{_real_model_path(model_path)}"
+        self._model_lane_state_lock = _threading.RLock()
         self._model_lane_fencing_token = 0
         self._model_lane_terminal_receipt_id = ""
         self._mp_context = (
@@ -2002,6 +2010,82 @@ class MLXLocalClient:
                 "suppressed_calls": self._model_load_admission_suppressed_count,
                 "last_denied_at_unix": self._model_load_admission_denied_at,
             }
+
+    def _adopt_durable_model_lane_owner(
+        self,
+        *,
+        fencing_token: int,
+        receipt_id: str,
+    ) -> None:
+        """Publish one committed owner token atomically to worker listeners."""
+
+        token = int(fencing_token or 0)
+        if token <= 0:
+            raise ValueError("model-lane fencing token must be positive")
+        with self._model_lane_state_lock:
+            from core.runtime.model_lane_control import register_model_lane_owner_adapter
+
+            register_model_lane_owner_adapter(
+                self._model_lane_owner_id,
+                evict=_evict_model_lane_owner,
+                compensate=_compensate_model_lane_owner,
+            )
+            self._model_lane_fencing_token = token
+            self._model_lane_terminal_receipt_id = str(receipt_id or "")
+
+    def _durable_model_lane_owner_snapshot(self) -> tuple[str, int, str]:
+        with self._model_lane_state_lock:
+            return (
+                str(self._model_lane_owner_id or ""),
+                int(self._model_lane_fencing_token or 0),
+                str(self._model_lane_terminal_receipt_id or ""),
+            )
+
+    def _release_durable_model_lane_owner_sync(self, *, reason: str) -> bool:
+        """Release the exact committed owner before another worker may spawn.
+
+        The state lock spans the controller operation so a concurrent commit
+        cannot publish a newer token while lifecycle cleanup is releasing the
+        old one. A missing owner is already a settled release and still clears
+        the local token; controller failures retain it so respawn can refuse
+        rather than heartbeat a stale fence.
+        """
+
+        with self._model_lane_state_lock:
+            owner_id = str(self._model_lane_owner_id or "")
+            fencing_token = int(self._model_lane_fencing_token or 0)
+            if not owner_id or fencing_token <= 0:
+                self._model_lane_fencing_token = 0
+                self._model_lane_terminal_receipt_id = ""
+                return True
+
+            from core.runtime.model_lane_control import (
+                get_model_lane_controller,
+                unregister_model_lane_owner_adapter,
+            )
+
+            released = get_model_lane_controller().release_owner_sync(
+                owner_id,
+                fencing_token=fencing_token,
+                reason=str(reason or "worker_stopped"),
+            )
+            unregister_model_lane_owner_adapter(owner_id)
+            self._model_lane_fencing_token = 0
+            self._model_lane_terminal_receipt_id = ""
+            if not released:
+                logger.info(
+                    "Model-lane owner %s token=%d was already absent during %s.",
+                    owner_id,
+                    fencing_token,
+                    reason,
+                )
+            return True
+
+    async def _release_durable_model_lane_owner(self, *, reason: str) -> bool:
+        return await asyncio.to_thread(
+            self._release_durable_model_lane_owner_sync,
+            reason=reason,
+        )
 
     def _mark_progress(self) -> None:
         self._last_progress_at = time.time()
@@ -3478,6 +3562,17 @@ class MLXLocalClient:
             severity="error",
             foreground_request=True,
         )
+        try:
+            self._release_durable_model_lane_owner_sync(reason=reason)
+        except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action=(
+                    "kept forced-abort lane fenced because durable owner release failed; "
+                    "respawn will retry before admission"
+                ),
+                severity="critical",
+            )
         self._set_lane_state("cold", reason)
         return True
 
@@ -3732,15 +3827,17 @@ class MLXLocalClient:
                 if status == "heartbeat":
                     self._last_heartbeat = time.time()
                     self._mark_progress()
-                    fencing_token = int(self._model_lane_fencing_token or 0)
-                    if fencing_token > 0 and self._model_lane_owner_id:
+                    owner_id, fencing_token, _receipt_id = (
+                        self._durable_model_lane_owner_snapshot()
+                    )
+                    if fencing_token > 0 and owner_id:
                         try:
                             from core.runtime.model_lane_control import (
                                 get_model_lane_controller,
                             )
 
                             lease_alive = await get_model_lane_controller().heartbeat_owner(
-                                self._model_lane_owner_id,
+                                owner_id,
                                 fencing_token=fencing_token,
                             )
                             if not lease_alive:
@@ -3765,9 +3862,11 @@ class MLXLocalClient:
                                 unregister_model_lane_owner_adapter,
                             )
 
-                            unregister_model_lane_owner_adapter(self._model_lane_owner_id)
-                            self._model_lane_fencing_token = 0
-                            self._model_lane_terminal_receipt_id = ""
+                            unregister_model_lane_owner_adapter(owner_id)
+                            with self._model_lane_state_lock:
+                                if self._model_lane_fencing_token == fencing_token:
+                                    self._model_lane_fencing_token = 0
+                                    self._model_lane_terminal_receipt_id = ""
                             self._set_lane_state("cold", "model_lane_fence_lost")
                             return
                     audit = ServiceContainer.get("subsystem_audit", default=None)
@@ -3932,6 +4031,29 @@ class MLXLocalClient:
         # spawn gate remains the mechanical single-spawn mutex beneath it.
         if request_is_background and self._model_load_admission_backoff_active():
             return False
+        if int(self._model_lane_fencing_token or 0) > 0:
+            try:
+                await self._release_durable_model_lane_owner(
+                    reason="dead_worker_before_respawn",
+                )
+            except (
+                ImportError,
+                OSError,
+                RuntimeError,
+                AttributeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                self._set_lane_state("recovering", "stale_model_lane_owner_release_failed")
+                _record_mlx_degradation(
+                    exc,
+                    action=(
+                        "refused worker respawn until the dead worker's durable "
+                        "model-lane owner can be released"
+                    ),
+                    severity="critical",
+                )
+                return False
         try:
             async with _model_load_admission_context(
                 self,
@@ -5926,20 +6048,7 @@ class MLXLocalClient:
             if acquired:
                 self._lock.release()
         try:
-            from core.runtime.model_lane_control import (
-                get_model_lane_controller,
-                unregister_model_lane_owner_adapter,
-            )
-
-            released = await get_model_lane_controller().release_owner(
-                self._model_lane_owner_id,
-                fencing_token=(self._model_lane_fencing_token or None),
-                reason=reason,
-            )
-            if released:
-                unregister_model_lane_owner_adapter(self._model_lane_owner_id)
-                self._model_lane_fencing_token = 0
-                self._model_lane_terminal_receipt_id = ""
+            await self._release_durable_model_lane_owner(reason=reason)
         except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             _record_mlx_degradation(
                 exc,
@@ -6180,6 +6289,14 @@ class MLXLocalClient:
                         "Loop-agnostic lifecycle lock for %s was already released.",
                         os.path.basename(self.model_path),
                     )
+        try:
+            self._release_durable_model_lane_owner_sync(reason="client_close")
+        except (ImportError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_mlx_degradation(
+                exc,
+                action="client closed but durable model-lane owner release failed",
+                severity="warning",
+            )
 
     async def aclose(self) -> None:
         """Async shutdown hook for runtime coordinators."""

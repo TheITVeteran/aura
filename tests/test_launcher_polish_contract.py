@@ -21,6 +21,31 @@ def _launcher_observation(resource_observer, *, pid: int, create_time: float):
     )
 
 
+def _process_observation(
+    resource_observer,
+    *,
+    pid: int,
+    ppid: int,
+    create_time: float,
+    cmdline: tuple[str, ...],
+    cwd: str,
+    ancestor_pids: tuple[int, ...] = (),
+):
+    return ProcessObservation(
+        provenance=resource_observer.provenance,
+        pid=pid,
+        ppid=ppid,
+        create_time=create_time,
+        status="running",
+        name=Path(cmdline[0]).name,
+        cmdline=cmdline,
+        rss_bytes=1024,
+        ancestor_pids=ancestor_pids,
+        exe=cmdline[0],
+        cwd=cwd,
+    )
+
+
 def test_launcher_exposes_desktop_window_action_and_dock_presence():
     swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
 
@@ -144,6 +169,20 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "NSRunningApplication.current.activate" in swift
 
 
+def test_launcher_quit_reaps_every_direct_runtime_child_with_grace_period():
+    swift = (PROJECT_ROOT / "scripts" / "AuraLauncher.swift").read_text(encoding="utf-8")
+    termination_hook = swift.split("func applicationWillTerminate", 1)[1].split(
+        "private func configurePaths",
+        1,
+    )[0]
+
+    assert "terminateSpawnedProcesses()" in termination_hook
+    assert "if explicitStopInProgress" not in termination_hook
+    assert "AURA_LAUNCHER_CHILD_TERMINATION_GRACE_S" in swift
+    assert "?? 18.0" in swift
+    assert "kill(proc.processIdentifier, SIGKILL)" in swift
+
+
 def test_launch_script_supports_gui_window_mode():
     shell = (PROJECT_ROOT / "launch_aura.sh").read_text(encoding="utf-8")
 
@@ -225,6 +264,8 @@ def test_cleanup_preserves_verified_live_runtime_unless_forced():
     assert "preserving native Aura.app launcher bridge" in cleanup
     assert "AURA_CLEANUP_RECENT_GRACE_S" in cleanup
     assert "Preserving recent Aura native launcher" in cleanup
+    assert "select_script_process_tree" in cleanup
+    assert "pkill" not in cleanup
 
 
 def test_cleanup_recognizes_native_launcher_process():
@@ -333,6 +374,135 @@ def test_cleanup_treats_missing_lock_pid_as_stale(monkeypatch):
     monkeypatch.setattr(aura_cleanup, "read_instance_lock_pid", lambda _name: 999999)
 
     assert aura_cleanup._verified_live_runtime_pid() is None
+
+
+def test_cleanup_targets_exact_runtime_tree_without_matching_shell_text(
+    monkeypatch,
+    resource_observer,
+):
+    import sys
+    import time
+
+    from scripts.one_off import aura_cleanup
+
+    created_at = time.time() - 120.0
+    terminated: list[int] = []
+
+    class FakeProc:
+        def __init__(self, pid: int):
+            self.pid = pid
+
+        def create_time(self):
+            return created_at
+
+        def terminate(self):
+            terminated.append(self.pid)
+
+        def kill(self):
+            raise AssertionError("responsive exact runtime should not require SIGKILL")
+
+    class FakePsutil:
+        Error = Exception
+
+        @staticmethod
+        def Process(pid):  # noqa: N802 - psutil-compatible test action handle.
+            return FakeProc(pid)
+
+        @staticmethod
+        def wait_procs(processes, timeout):
+            del timeout
+            return list(processes), []
+
+    runtime = _process_observation(
+        resource_observer,
+        pid=4322,
+        ppid=111,
+        create_time=created_at,
+        cmdline=(sys.executable, str(PROJECT_ROOT / "aura_main.py"), "--desktop"),
+        cwd=str(PROJECT_ROOT),
+    )
+    worker = _process_observation(
+        resource_observer,
+        pid=4323,
+        ppid=4322,
+        create_time=created_at,
+        cmdline=(sys.executable, "-c", "from multiprocessing.spawn import spawn_main"),
+        cwd=str(PROJECT_ROOT),
+        ancestor_pids=(4322, 111),
+    )
+    shell_probe = _process_observation(
+        resource_observer,
+        pid=4324,
+        ppid=111,
+        create_time=created_at,
+        cmdline=(
+            "/bin/zsh",
+            "-lc",
+            "pgrep -fl 'aura_main.py --desktop' | head -2",
+        ),
+        cwd=str(PROJECT_ROOT),
+    )
+    resource_observer.configure_processes([runtime, worker, shell_probe])
+    monkeypatch.setitem(sys.modules, "psutil", FakePsutil)
+    monkeypatch.setattr(aura_cleanup, "_verified_live_runtime_pid", lambda: None)
+
+    aura_cleanup._kill_stale_processes()
+
+    assert terminated == [4322, 4323]
+
+
+def test_cleanup_revalidates_process_identity_before_signaling(monkeypatch, resource_observer):
+    import sys
+    import time
+
+    from scripts.one_off import aura_cleanup
+
+    original_created_at = time.time() - 120.0
+    reused_created_at = original_created_at + 60.0
+    runtime = _process_observation(
+        resource_observer,
+        pid=5322,
+        ppid=111,
+        create_time=original_created_at,
+        cmdline=(sys.executable, str(PROJECT_ROOT / "aura_main.py"), "--desktop"),
+        cwd=str(PROJECT_ROOT),
+    )
+    reused = _process_observation(
+        resource_observer,
+        pid=5322,
+        ppid=111,
+        create_time=reused_created_at,
+        cmdline=(sys.executable, str(PROJECT_ROOT / "aura_main.py"), "--desktop"),
+        cwd=str(PROJECT_ROOT),
+    )
+
+    class ChangingObserver:
+        def process_table(self):
+            return SimpleNamespace(available=True, error="", processes=(runtime,))
+
+        def process(self, pid):
+            assert pid == 5322
+            return reused
+
+    class ForbiddenPsutil:
+        class Error(Exception):
+            pass
+
+        @staticmethod
+        def Process(_pid):  # noqa: N802 - psutil-compatible test action handle.
+            raise AssertionError("a reused PID must never become a signal handle")
+
+        @staticmethod
+        def wait_procs(processes, timeout):
+            del timeout
+            assert processes == []
+            return [], []
+
+    monkeypatch.setattr(aura_cleanup, "get_resource_observer", ChangingObserver)
+    monkeypatch.setattr(aura_cleanup, "_verified_live_runtime_pid", lambda: None)
+    monkeypatch.setitem(sys.modules, "psutil", ForbiddenPsutil)
+
+    aura_cleanup._kill_stale_processes()
 
 
 def test_aura_main_supports_gui_window_mode():

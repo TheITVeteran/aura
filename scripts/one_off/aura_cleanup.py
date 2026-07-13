@@ -12,19 +12,20 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from core.runtime.process_identity import (  # noqa: E402
+    process_invokes_python_script,
+    select_script_process_tree,
+)
 from core.runtime.resource_observation import get_resource_observer  # noqa: E402
-from core.runtime.subprocess_gateway import get_subprocess_gateway  # noqa: E402
 from core.utils.singleton import read_instance_lock_metadata, read_instance_lock_pid  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Aura.IroncladCleanup")
 
-_CLEANUP_RECOVERABLE_ERRORS = (OSError, RuntimeError, TimeoutError, ValueError)
-_AURA_PROCESS_PATTERNS = (
-    "aura_main.py",
-    "mlx_worker.py",
-    "gui_actor.py",
-    "simulate_200.py",
+_AURA_RUNTIME_SCRIPTS = (
+    ROOT / "aura_main.py",
+    ROOT / "core" / "brain" / "llm" / "mlx_worker.py",
+    ROOT / "interface" / "gui_actor.py",
 )
 _NATIVE_LAUNCHER_SUFFIX = "Aura.app/Contents/MacOS/aura-launcher"
 
@@ -48,7 +49,6 @@ def _verified_live_runtime_pid() -> int | None:
     process = get_resource_observer().process(pid)
     if process is None or process.status.lower() in {"dead", "zombie"}:
         return None
-    command = " ".join(process.cmdline).lower()
     metadata = read_instance_lock_metadata("orchestrator")
     expected_cwd = str(metadata.get("cwd") or "")
     try:
@@ -57,7 +57,10 @@ def _verified_live_runtime_pid() -> int | None:
         ).resolve()
     except (OSError, RuntimeError, TypeError, ValueError):
         cwd_matches = False
-    if cwd_matches and "aura_main.py" in command:
+    if cwd_matches and process_invokes_python_script(
+        process,
+        expected_script=ROOT / "aura_main.py",
+    ):
         return pid
     return None
 
@@ -70,21 +73,69 @@ def _kill_stale_processes() -> None:
             live_pid,
         )
         return
-    for pattern in _AURA_PROCESS_PATTERNS:
+    observer = get_resource_observer()
+    table = observer.process_table()
+    if not table.available:
+        logger.warning(
+            "Process table unavailable; refusing broad stale-runtime cleanup: %s",
+            table.error or "unknown error",
+        )
+        return
+    observations = select_script_process_tree(
+        table.processes,
+        expected_scripts=_AURA_RUNTIME_SCRIPTS,
+        protected_pids=(os.getpid(), os.getppid()),
+    )
+    if not observations:
+        logger.info("No exact stale Aura runtime process tree was observed.")
+        return
+
+    try:
+        import psutil
+    except ImportError:
+        logger.warning("psutil unavailable; refusing unverified stale-runtime signals.")
+        return
+
+    handles = []
+    for observation in observations:
         try:
-            logger.info("Terminating stale Aura process pattern: %s", pattern)
-            result = get_subprocess_gateway().run(
-                ["pkill", "-9", "-f", pattern],
-                cwd=ROOT,
-                timeout=10,
-                capture_output=True,
-                offline_tooling=True,
-                source="maintenance_tooling:aura_cleanup:pkill",
-            )
-            if result.returncode not in {0, 1}:
-                logger.warning("pkill failed for %s: %s", pattern, result.stderr.strip())
-        except _CLEANUP_RECOVERABLE_ERRORS as exc:
-            logger.warning("Failed to kill %s: %s: %s", pattern, type(exc).__name__, exc)
+            observed_create_time = float(observation.create_time or 0.0)
+            current_observation = observer.process(observation.pid)
+            if current_observation is None or current_observation.status.lower() in {
+                "dead",
+                "zombie",
+            }:
+                continue
+            current_create_time = float(current_observation.create_time or 0.0)
+            if (
+                observed_create_time > 0.0
+                and abs(current_create_time - observed_create_time) > 0.01
+            ):
+                logger.warning(
+                    "Skipping PID %s because creation time changed after observation.",
+                    observation.pid,
+                )
+                continue
+            process = psutil.Process(observation.pid)
+            handles.append(process)
+        except psutil.Error:
+            continue
+
+    for process in handles:
+        try:
+            logger.info("Terminating exact stale Aura process PID: %s", process.pid)
+            process.terminate()
+        except psutil.Error as exc:
+            logger.debug("Aura process PID %s already exited: %s", process.pid, exc)
+    _gone, alive = psutil.wait_procs(handles, timeout=5.0)
+    for process in alive:
+        try:
+            logger.warning("Killing unresponsive exact Aura process PID: %s", process.pid)
+            process.kill()
+        except psutil.Error as exc:
+            logger.debug("Aura process PID %s unavailable for kill: %s", process.pid, exc)
+    if alive:
+        psutil.wait_procs(alive, timeout=2.0)
 
 
 def _is_native_launcher_process(proc) -> bool:

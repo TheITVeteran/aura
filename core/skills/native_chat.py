@@ -139,7 +139,7 @@ class NativeChatSkill(BaseSkill):
         self.brain = brain
 
     def _resolve_brain(self, context: Mapping[str, Any]) -> Any | None:
-        """Resolve the cognitive engine from injection, context, container, or global fallback."""
+        """Resolve an injected or already-running cognitive engine."""
         if self.brain:
             return self.brain
 
@@ -159,7 +159,7 @@ class NativeChatSkill(BaseSkill):
         try:
             from core.container import ServiceContainer
 
-            brain = ServiceContainer.get("cognitive_engine", default=None)
+            brain = ServiceContainer.peek("cognitive_engine", default=None)
             if brain:
                 self.brain = brain
                 return brain
@@ -168,19 +168,6 @@ class NativeChatSkill(BaseSkill):
                 exc,
                 stage="brain_container_lookup",
                 action="continued native chat brain resolution after ServiceContainer lookup failed",
-            )
-
-        try:
-            from core.brain.cognitive_engine import cognitive_engine
-
-            if cognitive_engine:
-                self.brain = cognitive_engine
-                return cognitive_engine
-        except ImportError as exc:
-            _record_native_degradation(
-                exc,
-                stage="brain_global_lookup",
-                action="global cognitive_engine fallback unavailable during native chat brain resolution",
             )
 
         return None

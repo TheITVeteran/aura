@@ -15,7 +15,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -421,32 +421,53 @@ _HEALTH_PROBE_DEGRADATION_THRESHOLD = max(
     2,
     _safe_int(os.getenv("AURA_HEALTH_PROBE_DEGRADATION_THRESHOLD", ""), 3),
 )
-_HEALTH_PROBE_LOCK = threading.Lock()
+_HEALTH_PROBE_STUCK_THRESHOLD_S = max(
+    10.0,
+    _env_positive_float(
+        "AURA_HEALTH_PROBE_STUCK_THRESHOLD_S",
+        max(30.0, _HEALTH_PROBE_TIMEOUT_S * 8.0),
+    ),
+)
+_HEALTH_PROBE_LOCKS = {
+    False: threading.Lock(),
+    True: threading.Lock(),
+}
+# Backward-compatible canonical-runtime lock for direct contract tests.
+_HEALTH_PROBE_LOCK = _HEALTH_PROBE_LOCKS[False]
 _HEALTH_PROBE_STATE_LOCK = threading.Lock()
 _HEALTH_PROBE_STATE: dict[str, Any] = {
-    "active_since": 0.0,
+    "generation": 0,
     "consecutive_failures": 0,
     "total_timeouts": 0,
     "total_contentions": 0,
+    "total_terminal_failures": 0,
+    "timeout_recorded_generation": 0,
+    "stuck_recorded_generation": 0,
     "last_failure_reason": "",
     "last_failure_at_unix": 0.0,
     "escalated": False,
 }
+_HEALTH_PROBE_FUTURES: dict[bool, Future[tuple[dict[str, Any], int]]] = {}
+_HEALTH_PROBE_GENERATIONS: dict[bool, int] = {}
+_HEALTH_PROBE_STARTED_AT: dict[bool, float] = {}
 _HEALTH_PROBE_EXECUTOR = ThreadPoolExecutor(
     max_workers=max(2, min(4, _safe_int(os.getenv("AURA_HEALTH_PROBE_WORKERS", ""), 2))),
     thread_name_prefix="AuraHealthProbe",
 )
 _HEALTH_CACHE_TTL_S = _env_positive_float("AURA_HEALTH_CACHE_TTL_S", 5.0)
+_HEALTH_STALE_CACHE_TTL_S = max(
+    _HEALTH_CACHE_TTL_S,
+    _env_positive_float("AURA_HEALTH_STALE_CACHE_TTL_S", 30.0),
+)
 _HEALTH_MANIFEST_FALLBACK_TTL_S = _env_positive_float(
     "AURA_HEALTH_MANIFEST_FALLBACK_TTL_S",
     15.0,
 )
 _UI_SHELL_ERROR_BODY = Body(default=None)
 _boot_health_cache_lock = threading.Lock()
-_boot_health_cache: dict[str, Any] = {
-    "captured_at": 0.0,
-    "payload": None,
-    "status_code": 503,
+_boot_health_cache: dict[bool, dict[str, Any]] = {
+    False: {"captured_at": 0.0, "payload": None, "status_code": 503},
+    True: {"captured_at": 0.0, "payload": None, "status_code": 503},
 }
 _desktop_access_cache: dict[str, Any] = {
     "captured_at": 0.0,
@@ -470,18 +491,49 @@ _desktop_access_request_state: dict[str, Any] = {}
 def _health_probe_state_snapshot() -> dict[str, Any]:
     now = time.monotonic()
     with _HEALTH_PROBE_STATE_LOCK:
-        active_since = float(_HEALTH_PROBE_STATE.get("active_since") or 0.0)
+        active_entries = {
+            bool(surface): {
+                "generation": int(_HEALTH_PROBE_GENERATIONS.get(surface) or 0),
+                "started_at": float(_HEALTH_PROBE_STARTED_AT.get(surface) or 0.0),
+            }
+            for surface, future in _HEALTH_PROBE_FUTURES.items()
+            if not future.done()
+        }
+        active_since = min(
+            (
+                float(entry["started_at"])
+                for entry in active_entries.values()
+                if float(entry["started_at"]) > 0.0
+            ),
+            default=0.0,
+        )
+        active_generations = sorted(
+            int(entry["generation"])
+            for entry in active_entries.values()
+            if int(entry["generation"]) > 0
+        )
         return {
-            "active": active_since > 0.0,
+            "active": bool(active_entries),
+            "active_count": len(active_entries),
             "active_age_s": round(max(0.0, now - active_since), 3)
             if active_since > 0.0
             else 0.0,
             "consecutive_failures": int(
                 _HEALTH_PROBE_STATE.get("consecutive_failures") or 0
             ),
+            "active_generation": active_generations[-1] if active_generations else 0,
+            "active_generations": active_generations,
+            "active_surfaces": sorted(
+                "gui_proxy" if surface else "runtime"
+                for surface in active_entries
+            ),
+            "generation": int(_HEALTH_PROBE_STATE.get("generation") or 0),
             "total_timeouts": int(_HEALTH_PROBE_STATE.get("total_timeouts") or 0),
             "total_contentions": int(
                 _HEALTH_PROBE_STATE.get("total_contentions") or 0
+            ),
+            "total_terminal_failures": int(
+                _HEALTH_PROBE_STATE.get("total_terminal_failures") or 0
             ),
             "last_failure_reason": str(
                 _HEALTH_PROBE_STATE.get("last_failure_reason") or ""
@@ -491,58 +543,8 @@ def _health_probe_state_snapshot() -> dict[str, Any]:
             ),
             "escalated": bool(_HEALTH_PROBE_STATE.get("escalated", False)),
             "degradation_threshold": _HEALTH_PROBE_DEGRADATION_THRESHOLD,
+            "stuck_threshold_s": _HEALTH_PROBE_STUCK_THRESHOLD_S,
         }
-
-
-def _mark_health_probe_started() -> None:
-    with _HEALTH_PROBE_STATE_LOCK:
-        _HEALTH_PROBE_STATE["active_since"] = time.monotonic()
-
-
-def _mark_health_probe_completed() -> None:
-    with _HEALTH_PROBE_STATE_LOCK:
-        _HEALTH_PROBE_STATE["active_since"] = 0.0
-        _HEALTH_PROBE_STATE["consecutive_failures"] = 0
-        _HEALTH_PROBE_STATE["last_failure_reason"] = ""
-        _HEALTH_PROBE_STATE["escalated"] = False
-
-
-def _record_health_probe_failure(reason: str) -> tuple[dict[str, Any], bool]:
-    now_monotonic = time.monotonic()
-    normalized = str(reason or "health_probe_timeout")
-    with _HEALTH_PROBE_STATE_LOCK:
-        active_since = float(_HEALTH_PROBE_STATE.get("active_since") or 0.0)
-        active_age_s = (
-            max(0.0, now_monotonic - active_since) if active_since > 0.0 else 0.0
-        )
-        if normalized == "health_probe_already_running":
-            _HEALTH_PROBE_STATE["total_contentions"] = int(
-                _HEALTH_PROBE_STATE.get("total_contentions") or 0
-            ) + 1
-            count_failure = active_age_s >= _HEALTH_PROBE_TIMEOUT_S
-        else:
-            _HEALTH_PROBE_STATE["total_timeouts"] = int(
-                _HEALTH_PROBE_STATE.get("total_timeouts") or 0
-            ) + 1
-            count_failure = True
-
-        if count_failure:
-            _HEALTH_PROBE_STATE["consecutive_failures"] = int(
-                _HEALTH_PROBE_STATE.get("consecutive_failures") or 0
-            ) + 1
-            _HEALTH_PROBE_STATE["last_failure_reason"] = normalized
-            _HEALTH_PROBE_STATE["last_failure_at_unix"] = time.time()
-
-        should_escalate = bool(
-            count_failure
-            and int(_HEALTH_PROBE_STATE.get("consecutive_failures") or 0)
-            >= _HEALTH_PROBE_DEGRADATION_THRESHOLD
-            and not bool(_HEALTH_PROBE_STATE.get("escalated", False))
-        )
-        if should_escalate:
-            _HEALTH_PROBE_STATE["escalated"] = True
-
-    return _health_probe_state_snapshot(), should_escalate
 
 
 def _attach_health_probe_state(
@@ -556,15 +558,33 @@ def _attach_health_probe_state(
 
 def _reset_health_probe_state_for_test() -> None:
     with _HEALTH_PROBE_STATE_LOCK:
+        for surface, future in list(_HEALTH_PROBE_FUTURES.items()):
+            if future.done():
+                _HEALTH_PROBE_FUTURES.pop(surface, None)
+                _HEALTH_PROBE_GENERATIONS.pop(surface, None)
+                _HEALTH_PROBE_STARTED_AT.pop(surface, None)
         _HEALTH_PROBE_STATE.update(
-            active_since=0.0,
+            generation=0,
             consecutive_failures=0,
             total_timeouts=0,
             total_contentions=0,
+            total_terminal_failures=0,
+            timeout_recorded_generation=0,
+            stuck_recorded_generation=0,
             last_failure_reason="",
             last_failure_at_unix=0.0,
             escalated=False,
         )
+
+
+def _reset_boot_health_cache_for_test() -> None:
+    with _boot_health_cache_lock:
+        for entry in _boot_health_cache.values():
+            entry.update(
+                captured_at=0.0,
+                payload=None,
+                status_code=503,
+            )
 
 
 def _desktop_access_empty_payload() -> dict[str, Any]:
@@ -972,10 +992,10 @@ def _build_boot_health_payload_sync(*, is_gui_proxy: bool) -> tuple[dict[str, An
     if stopping is not None:
         return stopping
 
-    acquired = _HEALTH_PROBE_LOCK.acquire(False)
+    probe_lock = _HEALTH_PROBE_LOCKS[bool(is_gui_proxy)]
+    acquired = probe_lock.acquire(False)
     if not acquired:
         raise TimeoutError("health_probe_already_running")
-    _mark_health_probe_started()
     try:
         orch = ServiceContainer.get("orchestrator", default=None)
         rt = _get_runtime_state_safe()
@@ -988,7 +1008,11 @@ def _build_boot_health_payload_sync(*, is_gui_proxy: bool) -> tuple[dict[str, An
                 conversation_lane=conversation_lane,
             )
             payload, status_code = _attach_launch_provenance_contract(payload, status_code)
-            _store_boot_health_cache(payload, status_code)
+            _store_boot_health_cache(
+                payload,
+                status_code,
+                is_gui_proxy=is_gui_proxy,
+            )
             return payload, status_code
         except _SYSTEM_RECOVERABLE_ERRORS as exc:
             record_degradation("system", exc)
@@ -1001,35 +1025,258 @@ def _build_boot_health_payload_sync(*, is_gui_proxy: bool) -> tuple[dict[str, An
                 "timestamp": datetime.now(tz=UTC).isoformat(),
             }
             payload, status_code = _attach_launch_provenance_contract(payload, 503)
-            _store_boot_health_cache(payload, status_code)
+            _store_boot_health_cache(
+                payload,
+                status_code,
+                is_gui_proxy=is_gui_proxy,
+            )
             return payload, status_code
     finally:
-        _mark_health_probe_completed()
-        _HEALTH_PROBE_LOCK.release()
+        probe_lock.release()
 
 
-def _store_boot_health_cache(payload: dict[str, Any], status_code: int) -> None:
+def _store_boot_health_cache(
+    payload: dict[str, Any],
+    status_code: int,
+    *,
+    is_gui_proxy: bool = False,
+) -> None:
     with _boot_health_cache_lock:
-        _boot_health_cache["captured_at"] = time.monotonic()
-        _boot_health_cache["payload"] = dict(payload)
-        _boot_health_cache["status_code"] = int(status_code)
+        entry = _boot_health_cache[bool(is_gui_proxy)]
+        entry["captured_at"] = time.monotonic()
+        entry["payload"] = dict(payload)
+        entry["status_code"] = int(status_code)
 
 
-def _cached_boot_health_payload(reason: str) -> tuple[dict[str, Any], int]:
+def _fresh_boot_health_payload(
+    *,
+    is_gui_proxy: bool,
+) -> tuple[dict[str, Any], int] | None:
+    now = time.monotonic()
+    with _boot_health_cache_lock:
+        entry = _boot_health_cache[bool(is_gui_proxy)]
+        captured_at = float(entry.get("captured_at") or 0.0)
+        payload = entry.get("payload")
+        status_code = int(entry.get("status_code") or 503)
+    age_s = max(0.0, now - captured_at) if captured_at > 0.0 else float("inf")
+    if (
+        not isinstance(payload, dict)
+        or "ready" not in payload
+        or age_s > _HEALTH_CACHE_TTL_S
+    ):
+        return None
+    cached = dict(payload)
+    cached["cache_status"] = "fresh"
+    cached["cache_reason"] = "health_cache_ttl"
+    cached["cache_age_s"] = round(age_s, 3)
+    return cached, status_code
+
+
+def _complete_health_probe_future(
+    future: Future[tuple[dict[str, Any], int]],
+    generation: int,
+    *,
+    is_gui_proxy: bool,
+) -> None:
+    failure: Exception | None = None
+    result: tuple[dict[str, Any], int] | None = None
+    try:
+        candidate = future.result()
+        if (
+            not isinstance(candidate, tuple)
+            or len(candidate) != 2
+            or not isinstance(candidate[0], dict)
+        ):
+            raise TypeError("health probe returned an invalid payload contract")
+        result = candidate
+    except Exception as exc:  # noqa: BLE001 - final Future completion boundary
+        failure = exc
+
+    should_escalate = False
+    with _HEALTH_PROBE_STATE_LOCK:
+        surface = bool(is_gui_proxy)
+        if _HEALTH_PROBE_FUTURES.get(surface) is not future:
+            return
+        _HEALTH_PROBE_FUTURES.pop(surface, None)
+        _HEALTH_PROBE_GENERATIONS.pop(surface, None)
+        _HEALTH_PROBE_STARTED_AT.pop(surface, None)
+        if result is not None:
+            _store_boot_health_cache(
+                result[0],
+                result[1],
+                is_gui_proxy=surface,
+            )
+        if failure is None:
+            _HEALTH_PROBE_STATE["consecutive_failures"] = 0
+            _HEALTH_PROBE_STATE["last_failure_reason"] = ""
+            _HEALTH_PROBE_STATE["escalated"] = False
+        else:
+            reason = f"health_probe_exception:{type(failure).__name__}"
+            _HEALTH_PROBE_STATE["total_terminal_failures"] = int(
+                _HEALTH_PROBE_STATE.get("total_terminal_failures") or 0
+            ) + 1
+            _HEALTH_PROBE_STATE["consecutive_failures"] = int(
+                _HEALTH_PROBE_STATE.get("consecutive_failures") or 0
+            ) + 1
+            _HEALTH_PROBE_STATE["last_failure_reason"] = reason
+            _HEALTH_PROBE_STATE["last_failure_at_unix"] = time.time()
+            should_escalate = bool(
+                int(_HEALTH_PROBE_STATE.get("consecutive_failures") or 0)
+                >= _HEALTH_PROBE_DEGRADATION_THRESHOLD
+                and not bool(_HEALTH_PROBE_STATE.get("escalated", False))
+            )
+            if should_escalate:
+                _HEALTH_PROBE_STATE["escalated"] = True
+
+    if failure is None:
+        return
+    if should_escalate:
+        record_degradation(
+            "system",
+            failure,
+            severity="warning",
+            action="escalated distinct terminal health-probe failures",
+            extra=_health_probe_state_snapshot(),
+            enforce_failure_policy=False,
+        )
+    else:
+        logger.warning(
+            "Boot-health probe generation %d failed: %s",
+            generation,
+            failure,
+        )
+
+
+def _start_or_join_health_probe(
+    *,
+    is_gui_proxy: bool,
+) -> tuple[Future[tuple[dict[str, Any], int]], int, bool]:
+    with _HEALTH_PROBE_STATE_LOCK:
+        surface = bool(is_gui_proxy)
+        existing = _HEALTH_PROBE_FUTURES.get(surface)
+        if existing is not None:
+            generation = int(
+                _HEALTH_PROBE_GENERATIONS.get(surface)
+                or _HEALTH_PROBE_STATE.get("generation")
+                or 0
+            )
+            if not existing.done():
+                _HEALTH_PROBE_STATE["total_contentions"] = int(
+                    _HEALTH_PROBE_STATE.get("total_contentions") or 0
+                ) + 1
+                return existing, generation, False
+            return existing, generation, True
+
+        generation = int(_HEALTH_PROBE_STATE.get("generation") or 0) + 1
+        _HEALTH_PROBE_STATE["generation"] = generation
+        _HEALTH_PROBE_GENERATIONS[surface] = generation
+        _HEALTH_PROBE_STARTED_AT[surface] = time.monotonic()
+        future = _HEALTH_PROBE_EXECUTOR.submit(
+            _build_boot_health_payload_sync,
+            is_gui_proxy=surface,
+        )
+        _HEALTH_PROBE_FUTURES[surface] = future
+
+    future.add_done_callback(
+        lambda completed, probe_generation=generation, probe_surface=surface: _complete_health_probe_future(
+            completed,
+            probe_generation,
+            is_gui_proxy=probe_surface,
+        )
+    )
+    return future, generation, True
+
+
+def _record_health_probe_wait_timeout(generation: int) -> tuple[dict[str, Any], bool]:
+    recorded = False
+    with _HEALTH_PROBE_STATE_LOCK:
+        if int(_HEALTH_PROBE_STATE.get("timeout_recorded_generation") or 0) != generation:
+            recorded = True
+            _HEALTH_PROBE_STATE["timeout_recorded_generation"] = generation
+            _HEALTH_PROBE_STATE["total_timeouts"] = int(
+                _HEALTH_PROBE_STATE.get("total_timeouts") or 0
+            ) + 1
+    return _health_probe_state_snapshot(), recorded
+
+
+def _record_stuck_health_probe_once(
+    generation: int,
+    *,
+    is_gui_proxy: bool,
+) -> tuple[dict[str, Any], bool, bool]:
+    now_monotonic = time.monotonic()
+    recorded = False
+    should_escalate = False
+    with _HEALTH_PROBE_STATE_LOCK:
+        surface = bool(is_gui_proxy)
+        active_since = float(_HEALTH_PROBE_STARTED_AT.get(surface) or 0.0)
+        active_generation = int(_HEALTH_PROBE_GENERATIONS.get(surface) or 0)
+        active_age_s = (
+            max(0.0, now_monotonic - active_since) if active_since > 0.0 else 0.0
+        )
+        if (
+            active_generation == generation
+            and active_age_s >= _HEALTH_PROBE_STUCK_THRESHOLD_S
+            and int(_HEALTH_PROBE_STATE.get("stuck_recorded_generation") or 0)
+            != generation
+        ):
+            recorded = True
+            _HEALTH_PROBE_STATE["stuck_recorded_generation"] = generation
+            _HEALTH_PROBE_STATE["total_terminal_failures"] = int(
+                _HEALTH_PROBE_STATE.get("total_terminal_failures") or 0
+            ) + 1
+            _HEALTH_PROBE_STATE["consecutive_failures"] = int(
+                _HEALTH_PROBE_STATE.get("consecutive_failures") or 0
+            ) + 1
+            _HEALTH_PROBE_STATE["last_failure_reason"] = "health_probe_stuck"
+            _HEALTH_PROBE_STATE["last_failure_at_unix"] = time.time()
+            should_escalate = bool(
+                int(_HEALTH_PROBE_STATE.get("consecutive_failures") or 0)
+                >= _HEALTH_PROBE_DEGRADATION_THRESHOLD
+                and not bool(_HEALTH_PROBE_STATE.get("escalated", False))
+            )
+            if should_escalate:
+                _HEALTH_PROBE_STATE["escalated"] = True
+    return _health_probe_state_snapshot(), recorded, should_escalate
+
+
+def _cached_boot_health_payload(
+    reason: str,
+    *,
+    is_gui_proxy: bool,
+) -> tuple[dict[str, Any], int]:
     stopping = _stopping_boot_health_payload()
     if stopping is not None:
         return stopping
     now = time.monotonic()
     with _boot_health_cache_lock:
-        captured_at = float(_boot_health_cache.get("captured_at") or 0.0)
-        payload = _boot_health_cache.get("payload")
-        status_code = int(_boot_health_cache.get("status_code") or 503)
+        entry = _boot_health_cache[bool(is_gui_proxy)]
+        captured_at = float(entry.get("captured_at") or 0.0)
+        payload = entry.get("payload")
+        status_code = int(entry.get("status_code") or 503)
 
-    if isinstance(payload, dict) and now - captured_at <= _HEALTH_CACHE_TTL_S:
+    cache_age_s = max(0.0, now - captured_at) if captured_at > 0.0 else float("inf")
+    if (
+        isinstance(payload, dict)
+        and "ready" in payload
+        and cache_age_s <= _HEALTH_CACHE_TTL_S
+    ):
         cached = dict(payload)
         cached["cache_status"] = "fresh"
         cached["cache_reason"] = reason
-        cached["cache_age_s"] = round(now - captured_at, 3)
+        cached["cache_age_s"] = round(cache_age_s, 3)
+        return cached, status_code
+    if (
+        reason in {"health_probe_in_flight", "health_probe_timeout"}
+        and isinstance(payload, dict)
+        and "ready" in payload
+        and cache_age_s <= _HEALTH_STALE_CACHE_TTL_S
+    ):
+        cached = dict(payload)
+        cached["cache_status"] = "stale_while_revalidate"
+        cached["cache_reason"] = reason
+        cached["cache_age_s"] = round(cache_age_s, 3)
+        cached["cache_stale"] = True
         return cached, status_code
 
     manifest_payload = _runtime_manifest_boot_health_payload(reason)
@@ -1126,61 +1373,75 @@ def _runtime_manifest_boot_health_payload(reason: str) -> tuple[dict[str, Any], 
 async def _build_boot_health_payload_bounded(*, is_gui_proxy: bool) -> tuple[dict[str, Any], int]:
     """Return a boot-health snapshot without allowing probes to hang the HTTP loop."""
 
-    if _HEALTH_PROBE_LOCK.locked():
-        failure_reason = "health_probe_already_running"
-        probe_state, should_escalate = _record_health_probe_failure(failure_reason)
+    fresh = _fresh_boot_health_payload(is_gui_proxy=is_gui_proxy)
+    if fresh is not None:
+        return _attach_health_probe_state(fresh)
+
+    future, generation, created = _start_or_join_health_probe(
+        is_gui_proxy=is_gui_proxy,
+    )
+    if not created:
+        probe_state, newly_stuck, should_escalate = _record_stuck_health_probe_once(
+            generation,
+            is_gui_proxy=is_gui_proxy,
+        )
         if should_escalate:
             record_degradation(
                 "system",
                 TimeoutError(
-                    "health readiness probe remained in flight across repeated requests"
+                    "distinct health probes exceeded the explicit stuck threshold"
                 ),
                 severity="warning",
-                action="escalated persistent health-probe contention after bounded fallbacks",
+                action="escalated distinct stuck health-probe generations",
                 extra=probe_state,
                 enforce_failure_policy=False,
             )
+        elif newly_stuck:
+            logger.warning(
+                "Boot-health probe generation %d exceeded the %.1fs stuck threshold; "
+                "recorded once while callers continue using bounded fallback evidence.",
+                generation,
+                _HEALTH_PROBE_STUCK_THRESHOLD_S,
+            )
         return _attach_health_probe_state(
-            _cached_boot_health_payload(failure_reason)
+            _cached_boot_health_payload(
+                "health_probe_in_flight",
+                is_gui_proxy=is_gui_proxy,
+            )
         )
 
-    loop = asyncio.get_running_loop()
     try:
         result = await asyncio.wait_for(
-            loop.run_in_executor(
-                _HEALTH_PROBE_EXECUTOR,
-                lambda: _build_boot_health_payload_sync(is_gui_proxy=is_gui_proxy),
-            ),
+            asyncio.shield(asyncio.wrap_future(future)),
             timeout=_HEALTH_PROBE_TIMEOUT_S,
         )
-        _mark_health_probe_completed()
         return _attach_health_probe_state(result)
-    except TimeoutError as exc:
-        failure_reason = str(exc) or "health_probe_timeout"
-        if failure_reason not in {"health_probe_already_running"}:
-            failure_reason = "health_probe_timeout"
-        probe_state, should_escalate = _record_health_probe_failure(failure_reason)
-        if should_escalate:
-            record_degradation(
-                "system",
-                exc,
-                severity="warning",
-                action=(
-                    "escalated repeated health readiness probe timeouts after bounded "
-                    "HTTP fallbacks"
-                ),
-                extra=probe_state,
-                enforce_failure_policy=False,
-            )
-        else:
+    except TimeoutError:
+        probe_state, timeout_recorded = _record_health_probe_wait_timeout(generation)
+        if timeout_recorded:
             logger.warning(
-                "Transient boot-health probe timeout; serving conservative fallback "
-                "(streak=%d/%d)",
-                probe_state["consecutive_failures"],
-                probe_state["degradation_threshold"],
+                "Boot-health probe generation %d exceeded the %.1fs HTTP wait budget; "
+                "the singleflight remains active and later polls will reuse its result.",
+                generation,
+                _HEALTH_PROBE_TIMEOUT_S,
             )
         return _attach_health_probe_state(
-            _cached_boot_health_payload(failure_reason)
+            _cached_boot_health_payload(
+                "health_probe_timeout",
+                is_gui_proxy=is_gui_proxy,
+            )
+        )
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        logger.warning(
+            "Boot-health probe generation %d ended before returning a payload: %s",
+            generation,
+            exc,
+        )
+        return _attach_health_probe_state(
+            _cached_boot_health_payload(
+                "health_probe_failed",
+                is_gui_proxy=is_gui_proxy,
+            )
         )
 
 

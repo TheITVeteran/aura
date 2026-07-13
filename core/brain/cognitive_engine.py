@@ -2003,8 +2003,6 @@ class CognitiveEngine:
 
         container = get_container()
         router = container.get("llm_router", default=None)
-        if router is None or not hasattr(router, "think"):
-            return None
 
         max_tokens = int(context.get("max_tokens") or 768)
         advice = context.get("spiking_active_inference")
@@ -2069,7 +2067,7 @@ class CognitiveEngine:
             max_tokens = max(256, min(max_tokens, 1024))
         request_timeout = max(12.0, min(max(12.0, float(timeout_s or 32.0) - 5.0), 180.0))
         if memory_state_contract or runtime_fact_status_contract or self_condition_contract:
-            request_timeout = min(request_timeout, 45.0)
+            request_timeout = min(request_timeout, 90.0)
         if capability_inventory_contract:
             request_timeout = min(request_timeout, 28.0)
         style_contract = str(context.get("response_style_contract") or "").strip()
@@ -2113,6 +2111,54 @@ class CognitiveEngine:
             and live_mind_required_subsystems_ok
         ):
             live_mind_controls_bound = True
+        canonical_self_condition_reply = str(
+            context.get("canonical_self_condition_reply") or ""
+        ).strip()
+        canonical_self_condition_projection = context.get(
+            "canonical_self_condition_projection"
+        )
+        if not isinstance(canonical_self_condition_projection, dict):
+            canonical_self_condition_projection = {}
+        self_condition_evidence_id = str(
+            canonical_self_condition_projection.get("evidence_id") or ""
+        ).strip()
+        if (
+            self_condition_contract
+            and canonical_self_condition_reply
+            and self_condition_evidence_id
+            and live_mind_snapshot_ready
+            and live_mind_required_subsystems_ok
+            and live_mind_controls_bound
+        ):
+            metadata = self._live_mind_structured_floor_metadata(
+                context,
+                source="cognitive_engine_self_condition_grounding",
+            )
+            metadata.update(
+                {
+                    "response_path": "cognitive_engine_self_condition_grounding",
+                    "self_condition_contract": True,
+                    "self_condition_evidence_id": self_condition_evidence_id,
+                    "canonical_self_condition_grounding": True,
+                }
+            )
+            try:
+                confidence = float(
+                    canonical_self_condition_projection.get("confidence") or 0.88
+                )
+            except (TypeError, ValueError):
+                confidence = 0.88
+            return Thought(
+                id=str(uuid.uuid4()),
+                content=canonical_self_condition_reply,
+                mode=mode,
+                confidence=max(0.65, min(0.95, confidence)),
+                reasoning=[
+                    "Current self-condition was rendered from the canonical typed projection inside CognitiveEngine.",
+                    "The projection bound affect, welfare, coherence, continuity, agency, freshness, and uncertainty without substituting host telemetry.",
+                ],
+                metadata=metadata,
+            )
         if bool(context.get("bounded_planning_contract")) and not bool(
             context.get("require_full_foreground_mind_reply", False)
         ):
@@ -2145,14 +2191,17 @@ class CognitiveEngine:
                 context.get("grounded_capability_inventory_context") or ""
             ).strip()
             if grounded_inventory:
-                surface_control_receipt = {
-                    "enabled": False,
-                    "applied": True,
-                    "live_mind_controls_bound": live_mind_controls_bound,
-                    "surface_quality_gate_enabled": False,
-                    "surface_quality_gate_passed": True,
-                    "source": "cognitive_engine_capability_catalog_grounding",
-                }
+                metadata = self._live_mind_structured_floor_metadata(
+                    context,
+                    source="cognitive_engine_capability_catalog_grounding",
+                )
+                metadata.update(
+                    {
+                        "response_path": "cognitive_engine_capability_catalog_grounding",
+                        "capability_inventory_contract": True,
+                        "grounded_capability_inventory": True,
+                    }
+                )
                 return Thought(
                     id=str(uuid.uuid4()),
                     content=grounded_inventory,
@@ -2162,16 +2211,7 @@ class CognitiveEngine:
                         "Desktop capability inventory was grounded from the governed live capability catalog.",
                         "No foreground model generation was required for this runtime-fact turn.",
                     ],
-                    metadata={
-                        "live_mind_controls_bound": live_mind_controls_bound,
-                        "live_mind_generation_controls": dict(live_mind_generation_controls),
-                        "live_mind_snapshot_ready": live_mind_snapshot_ready,
-                        "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
-                        "live_mind_context_required": live_mind_required,
-                        "live_mind_surface_control_receipt": surface_control_receipt,
-                        "live_mind_controls_worker_applied": bool(live_mind_controls_bound),
-                        "response_path": "cognitive_engine_capability_catalog_grounding",
-                    },
+                    metadata=metadata,
                 )
         if identity_continuity_contract:
             grounded_identity = str(
@@ -2200,6 +2240,8 @@ class CognitiveEngine:
                     ],
                     metadata=metadata,
                 )
+        if router is None or not hasattr(router, "think"):
+            return None
         live_runtime_required = bool(
             context.get("live_runtime_payload_required", False)
             or (live_mind_required and isinstance(live_mind_context, dict))
@@ -2956,7 +2998,9 @@ class CognitiveEngine:
             return {}
         surface_control_receipt = {
             "enabled": False,
-            "applied": bool(controls_bound),
+            "applied": False,
+            "generation_required": False,
+            "application_status": "not_applicable_structured_floor",
             "live_mind_controls_bound": bool(controls_bound),
             "clean_user_surface_contract": bool(
                 context.get("clean_user_surface_contract", True)
@@ -2974,7 +3018,8 @@ class CognitiveEngine:
             "live_mind_required_subsystems_ok": required_subsystems_ok,
             "live_mind_context_required": True,
             "live_mind_surface_control_receipt": surface_control_receipt,
-            "live_mind_controls_worker_applied": bool(controls_bound),
+            "live_mind_controls_worker_applied": False,
+            "live_mind_generation_required": False,
             "response_path": "cognitive_engine",
             "structured_floor_source": source,
         }
