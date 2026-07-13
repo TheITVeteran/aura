@@ -59,6 +59,10 @@ def test_canonical_boot_refreshes_health_before_manifest():
     )[0]
 
     assert "await _enforce_boot_probes(ready_label)" in boot_slice
+    assert "activate_live_mind_runtime" in boot_slice
+    assert boot_slice.index("activate_live_mind_runtime") < boot_slice.index(
+        "ServiceContainer.lock_registration()"
+    )
     assert "readiness_snapshot = _refresh_orchestrator_health_before_manifest(orchestrator, ready_label)" in boot_slice
     assert "readiness_snapshot=readiness_snapshot" in boot_slice
     assert "_schedule_runtime_manifest_ready_refresh(" in boot_slice

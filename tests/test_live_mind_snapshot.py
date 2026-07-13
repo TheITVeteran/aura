@@ -172,6 +172,104 @@ def test_live_mind_snapshot_collects_deep_runtime_state(monkeypatch):
     assert snapshot["frontmost_app_fast"] == "Notes"
 
 
+def test_live_mind_runtime_materializes_registered_organs_before_snapshot(monkeypatch):
+    from core.runtime import live_mind_runtime, live_mind_snapshot
+
+    class LazyContainer:
+        services = dict(RuntimeServices.services)
+        materialized: dict[str, object] = {}
+
+        @classmethod
+        def get(cls, name: str, default=None):
+            value = cls.services.get(name, default)
+            if value is not default:
+                cls.materialized[name] = value
+            return value
+
+    monkeypatch.setattr(
+        live_mind_snapshot,
+        "get_runtime_service",
+        lambda name, default=None: LazyContainer.materialized.get(name, default),
+    )
+    monkeypatch.setattr(
+        live_mind_runtime,
+        "get_runtime_service",
+        lambda name, default=None: LazyContainer.materialized.get(name, default),
+    )
+    monkeypatch.setattr(live_mind_snapshot, "_frontmost_app_fast", lambda: "Notes")
+
+    runtime = live_mind_runtime.LiveMindRuntime()
+    before = runtime.get_status()
+    report = runtime.materialize(LazyContainer)
+
+    assert before["ready"] is False
+    assert report["ready"] is True
+    assert report["missing_services"] == []
+    assert set(live_mind_snapshot.REQUIRED_LIVE_MIND_SERVICES).issubset(
+        LazyContainer.materialized
+    )
+
+
+def test_live_mind_runtime_refuses_partial_activation(monkeypatch):
+    from core.runtime import live_mind_runtime, live_mind_snapshot
+
+    class PartialContainer:
+        @staticmethod
+        def get(name: str, default=None):
+            if name == "scientific_engine":
+                return default
+            return RuntimeServices.services.get(name, default)
+
+    resolved: dict[str, object] = {}
+
+    def resolve(name: str, default=None):
+        return resolved.get(name, default)
+
+    original_get = PartialContainer.get
+
+    def recording_get(name: str, default=None):
+        value = original_get(name, default)
+        if value is not default:
+            resolved[name] = value
+        return value
+
+    monkeypatch.setattr(PartialContainer, "get", recording_get)
+    monkeypatch.setattr(live_mind_snapshot, "get_runtime_service", resolve)
+    monkeypatch.setattr(live_mind_runtime, "get_runtime_service", resolve)
+    monkeypatch.setattr(live_mind_snapshot, "_frontmost_app_fast", lambda: "Notes")
+
+    report = live_mind_runtime.LiveMindRuntime().materialize(PartialContainer)
+
+    assert report["ready"] is False
+    assert report["missing_services"] == ["scientific_engine"]
+    assert report["activation_errors"]["scientific_engine"] == "registered service resolved to None"
+
+
+def test_live_mind_snapshot_requires_readout_from_every_required_organ():
+    from core.runtime.live_mind_snapshot import (
+        REQUIRED_LIVE_MIND_SECTIONS,
+        assess_live_mind_snapshot,
+    )
+
+    snapshot = {
+        "services_present": {
+            service_name: True for service_name in REQUIRED_LIVE_MIND_SECTIONS
+        },
+        **{
+            section_name: {"available": True}
+            for section_name in REQUIRED_LIVE_MIND_SECTIONS.values()
+        },
+    }
+    snapshot["scientific_engine"] = None
+
+    quality = assess_live_mind_snapshot(snapshot)
+
+    assert quality["ready"] is False
+    assert quality["missing_services"] == []
+    assert quality["unpopulated_services"] == ["scientific_engine"]
+    assert quality["unpopulated_sections"] == ["scientific_engine"]
+
+
 def test_live_desktop_context_payload_carries_mind_snapshot(monkeypatch):
     from core.runtime import live_mind_snapshot
     from interface.routes import chat as chat_routes

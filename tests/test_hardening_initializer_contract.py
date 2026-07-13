@@ -48,6 +48,7 @@ class _Supervisor:
 
 class _EventLoopMonitor:
     threshold = 0.25
+    active_threshold = 5.0
 
     def __init__(
         self,
@@ -59,18 +60,24 @@ class _EventLoopMonitor:
         self.alive_after_start = alive_after_start
         self.start_calls = 0
         self._alive = False
+        self._running = False
 
     def start(self) -> None:
         self.start_calls += 1
         if self.error is not None:
             raise self.error
         self._alive = self.alive_after_start
+        self._running = True
 
     def is_alive(self) -> bool:
         return self._alive
 
+    def is_running(self) -> bool:
+        return self._running
+
     async def stop(self) -> None:
         self._alive = False
+        self._running = False
 
 
 @pytest.fixture(autouse=True)
@@ -131,6 +138,32 @@ def test_hardening_initializer_fails_closed_on_dead_monitor_in_prod(monkeypatch)
     assert ServiceContainer.get("hypervisor", default=None) is hypervisor
     assert ServiceContainer.get("event_loop_monitor", default=None) is None
     assert get_degradation_tracker().recent(subsystem="hardening")[-1].severity == "critical"
+
+
+def test_control_plane_does_not_restart_running_monitor_during_lag_recovery(monkeypatch):
+    monkeypatch.setattr(hardening.config, "env", hardening.Environment.DEV)
+    reaper = _Supervisor()
+    hypervisor = _Supervisor()
+    monitor = _EventLoopMonitor()
+    _patch_dependencies(monkeypatch, reaper=reaper, hypervisor=hypervisor, monitor=monitor)
+
+    async def _exercise():
+        await hardening.init_hardening_layer(SimpleNamespace())
+        monitor._alive = False
+        plane = ServiceContainer.get("runtime_control_plane")
+        return await plane.reconcile_once()
+
+    report = asyncio.run(_exercise())
+
+    assert monitor.is_alive() is False
+    assert monitor.is_running() is True
+    assert monitor.start_calls == 1
+    assert report["services"]["event_loop_monitor"]["observed_state"] == "ready"
+    assert not [
+        action
+        for action in report["actions"]
+        if action["service"] == "event_loop_monitor"
+    ]
 
 
 def test_long_run_supervisors_are_part_of_runtime_health_contract():

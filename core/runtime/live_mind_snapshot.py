@@ -24,7 +24,7 @@ _SNAPSHOT_RECOVERABLE_ERRORS = (
     ValueError,
 )
 
-_SERVICE_NAMES = (
+REQUIRED_LIVE_MIND_SERVICES = (
     "global_workspace",
     "nociception",
     "affect_grounding",
@@ -33,11 +33,30 @@ _SERVICE_NAMES = (
     "scientific_engine",
     "unified_world_model",
     "phenomenal_engine",
+)
+
+REQUIRED_LIVE_MIND_SECTIONS = {
+    "global_workspace": "global_workspace",
+    "nociception": "nociception",
+    "affect_grounding": "affect_grounding",
+    "drive_integration": "drive_integration",
+    "outcome_ledger": "outcome_ledger",
+    "scientific_engine": "scientific_engine",
+    "unified_world_model": "world_model",
+    "phenomenal_engine": "phenomenal_engine",
+}
+
+LIVE_MIND_OBSERVATION_SERVICES = (
     "phenomenal_knowing",
     "recursive_self_knowing",
     "automatic_self_knowing",
     "screen_perception",
     "perceptual_pump",
+)
+
+LIVE_MIND_SERVICE_NAMES = (
+    *REQUIRED_LIVE_MIND_SERVICES,
+    *LIVE_MIND_OBSERVATION_SERVICES,
 )
 
 
@@ -52,7 +71,7 @@ def _compact(value: Any, *, depth: int = 3, items: int = 16, text: int = 420) ->
         except _SNAPSHOT_RECOVERABLE_ERRORS as exc:
             record_degradation("live_mind_snapshot", exc, severity="debug")
             return type(value).__name__
-    if hasattr(value, "to_dict") and callable(getattr(value, "to_dict")):
+    if hasattr(value, "to_dict") and callable(value.to_dict):
         try:
             value = value.to_dict()
         except _SNAPSHOT_RECOVERABLE_ERRORS as exc:
@@ -152,13 +171,69 @@ def _frontmost_app_fast() -> str:
         return ""
 
 
+def assess_live_mind_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    """Assess the one canonical structural contract for live desktop speech."""
+
+    if not isinstance(snapshot, dict) or not snapshot:
+        return {
+            "present": False,
+            "ready": False,
+            "missing_services": list(REQUIRED_LIVE_MIND_SERVICES),
+            "unpopulated_services": list(REQUIRED_LIVE_MIND_SERVICES),
+            "unpopulated_sections": list(REQUIRED_LIVE_MIND_SECTIONS.values()),
+            "populated_sections": [],
+        }
+
+    services = snapshot.get("services_present")
+    if not isinstance(services, dict):
+        services = {}
+    missing = [
+        name for name in REQUIRED_LIVE_MIND_SERVICES if not bool(services.get(name))
+    ]
+    unpopulated_services = [
+        service_name
+        for service_name, section_name in REQUIRED_LIVE_MIND_SECTIONS.items()
+        if not bool(snapshot.get(section_name))
+    ]
+    unpopulated_sections = [
+        REQUIRED_LIVE_MIND_SECTIONS[name] for name in unpopulated_services
+    ]
+    populated_sections = [
+        name
+        for name in (
+            "global_workspace",
+            "nociception",
+            "affect_grounding",
+            "drive_integration",
+            "outcome_ledger",
+            "scientific_engine",
+            "world_model",
+            "phenomenal_engine",
+            "phenomenal_knowing",
+            "recursive_self_knowing",
+            "automatic_self_knowing",
+        )
+        if bool(snapshot.get(name))
+    ]
+    return {
+        "present": True,
+        "ready": not missing and not unpopulated_services,
+        "missing_services": missing,
+        "unpopulated_services": unpopulated_services,
+        "unpopulated_sections": unpopulated_sections,
+        "populated_sections": populated_sections,
+    }
+
+
 def collect_live_mind_snapshot(*, lane: dict[str, Any] | None = None) -> dict[str, Any]:
     """Collect compact runtime state for one live desktop conversation turn."""
-    services = {name: _service(name) for name in _SERVICE_NAMES}
+    services = {name: _service(name) for name in LIVE_MIND_SERVICE_NAMES}
     snapshot: dict[str, Any] = {
         "schema": "aura.live_mind_snapshot.v1",
         "lane": _compact(lane or {}, depth=2, items=12),
-        "services_present": {name: services[name] is not None for name in _SERVICE_NAMES},
+        "services_present": {
+            name: services[name] is not None for name in LIVE_MIND_SERVICE_NAMES
+        },
     }
     snapshot["global_workspace"] = _compact(_call(services["global_workspace"], "get_snapshot"))
     snapshot["nociception"] = _compact(_call(services["nociception"], "snapshot"))

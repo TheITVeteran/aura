@@ -514,6 +514,17 @@ class EventLoopMonitor:
             and not self._stop_event.is_set()
         )
 
+    def is_running(self) -> bool:
+        """Return lifecycle liveness without conflating it with lag health.
+
+        The desired-state control plane uses this probe to decide whether the
+        monitor task needs a restart. ``is_alive`` remains the stricter health
+        contract and stays false while a hard-lag incident is recovering.
+        Restarting a running monitor cannot heal historical lag and previously
+        trapped the control plane in start/probe/stop churn.
+        """
+        return self._task_running()
+
     def ensure_running(self) -> bool:
         """Restart the monitor task if supervision finds it stopped.
 
@@ -623,6 +634,7 @@ class EventLoopMonitor:
         )
         return {
             "alive": alive,
+            "running": self._task_running(),
             "last_lag_s": self._last_lag,
             "last_sample_at_unix": self._last_sample_at,
             "sample_age_s": round(sample_age_s, 4) if sample_age_s is not None else None,

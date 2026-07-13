@@ -19,6 +19,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -784,6 +785,30 @@ class TestDiagnosticsDashboard:
 # ═══════════════════════════════════════════════════════════════════════
 
 class TestAuditRegressions:
+    def test_fault_and_slo_timestamps_resolve_clock_at_record_time(self, monkeypatch):
+        import core.resilience.fault_taxonomy as fault_taxonomy
+        import slo.slo_monitor as slo_monitor
+
+        monkeypatch.setattr(fault_taxonomy.time, "time", lambda: 1234.5)
+
+        fault = fault_taxonomy.FaultRecord(
+            fault_id="F01",
+            severity=fault_taxonomy.FaultSeverity.CATASTROPHIC,
+            subsystem="clock-contract",
+        )
+        sample = slo_monitor.SLOSample(value=1.0)
+        alert = slo_monitor.SLOAlert(
+            slo_name="clock-contract",
+            severity=slo_monitor.AlertSeverity.INFO,
+            message="clock-contract",
+            burn_rate=0.0,
+            budget_remaining_pct=100.0,
+        )
+
+        assert fault.timestamp == 1234.5
+        assert sample.timestamp == 1234.5
+        assert alert.timestamp == 1234.5
+
     def test_fault_registry_status_does_not_deadlock(self):
         """status() used to call rpn_report() while holding the non-reentrant
         registry lock — the first health query hung its thread forever."""
@@ -864,6 +889,38 @@ class TestAuditRegressions:
         alerts = mon.status()["recent_alerts"]
         # Cooldown is 60s: a tight loop lands exactly one alert.
         assert len([a for a in alerts if a["slo"] == "boot_cold_p95_ms"]) == 1
+
+    def test_slo_alert_episode_uses_sparse_reminders_without_new_faults(self, monkeypatch):
+        import core.resilience.fault_taxonomy as fault_taxonomy
+        from slo.slo_monitor import SLOMonitor
+
+        faults = []
+        monkeypatch.setattr(
+            fault_taxonomy,
+            "get_fault_registry",
+            lambda: SimpleNamespace(
+                record_fault=lambda *args, **kwargs: faults.append((args, kwargs))
+            ),
+        )
+        mon = SLOMonitor()
+        name = "boot_cold_p95_ms"
+
+        mon.record(name, 999999.0)
+        mon._last_alert_at[name] -= mon.ALERT_COOLDOWN_S + 1.0
+        mon.record(name, 999999.0)
+
+        status = mon.status()
+        alerts = [a for a in status["recent_alerts"] if a["slo"] == name]
+        assert len(alerts) == 1
+        assert status["alert_episodes"][name]["suppressed"] == 1
+        assert len(faults) == 1
+
+        mon._last_alert_at[name] -= mon.ALERT_REMINDER_S + 1.0
+        mon.record(name, 999999.0)
+        alerts = [a for a in mon.status()["recent_alerts"] if a["slo"] == name]
+        assert len(alerts) == 2
+        assert alerts[-1]["notification_kind"] == "reminder"
+        assert len(faults) == 1
 
     def test_slo_concurrent_record_and_status(self):
         """Sample recording races status() window scans; the deque must be

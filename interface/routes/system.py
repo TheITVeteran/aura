@@ -2955,6 +2955,46 @@ async def api_system_incidents(request: Request, minutes: float = 60.0):
         )
 
 
+@router.get("/system/control-plane", tags=["health"])
+async def api_system_control_plane(request: Request):
+    """Return owner-only desired-state convergence and scheduler evidence."""
+
+    _require_internal(request)
+    control_plane = ServiceContainer.peek("runtime_control_plane", default=None)
+    if control_plane is None or not callable(getattr(control_plane, "get_status", None)):
+        return JSONResponse(
+            {
+                "schema": "aura.runtime_control_plane.diagnostics.v1",
+                "available": False,
+                "reason": "runtime_control_plane_not_registered",
+            },
+            status_code=503,
+        )
+    status = await _optional_threaded_status(
+        "runtime_control_plane",
+        control_plane.get_status,
+        timeout_s=1.0,
+        fallback={"alive": False, "ready": False},
+    )
+    scheduler_health = scheduler.get_health()
+    reconcile_task = dict(
+        (scheduler_health.get("task_details") or {}).get(
+            "runtime_control_plane_reconcile",
+            {},
+        )
+    )
+    return JSONResponse(
+        _json_safe(
+            {
+                "schema": "aura.runtime_control_plane.diagnostics.v1",
+                "available": not bool(status.get("_stale", False)),
+                "control_plane": status,
+                "reconcile_task": reconcile_task,
+            }
+        )
+    )
+
+
 @router.get("/system/memory/growth", tags=["health"])
 async def api_system_memory_growth(request: Request, top: int = 25):
     """Allocation-growth attribution for the idle-leak investigation.

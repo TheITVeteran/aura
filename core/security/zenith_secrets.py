@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
@@ -243,6 +244,7 @@ class _BoundedKeychainBackend:
             else max(0.01, float(timeout_s))
         )
         self._state_lock = threading.Lock()
+        self._idle = threading.Condition(self._state_lock)
         self._backend: KeychainBackend | None = None
         self._active_thread: threading.Thread | None = None
 
@@ -290,9 +292,10 @@ class _BoundedKeychainBackend:
                 if not bool(state["abandoned"]):
                     state["result"] = result
                     state["error"] = error
-            with self._state_lock:
+            with self._idle:
                 if self._active_thread is threading.current_thread():
                     self._active_thread = None
+                self._idle.notify_all()
             done.set()
 
         worker = threading.Thread(
@@ -300,10 +303,19 @@ class _BoundedKeychainBackend:
             name=f"aura-keychain-{operation}",
             daemon=True,
         )
-        with self._state_lock:
+        admission_deadline = time.monotonic() + self._timeout_s
+        with self._idle:
+            while self._active_thread is not None:
+                remaining = admission_deadline - time.monotonic()
+                if remaining <= 0.0:
+                    raise KeychainUnavailableError(
+                        "Keychain operation deferred because a previous native call "
+                        f"is still in progress after waiting {self._timeout_s:.2f}s"
+                    )
+                self._idle.wait(timeout=remaining)
             if self._active_thread is not None:
                 raise KeychainUnavailableError(
-                    "Keychain operation deferred while a previous native call is still in progress"
+                    "Keychain operation deferred because native-call admission did not converge"
                 )
             self._active_thread = worker
             worker.start()

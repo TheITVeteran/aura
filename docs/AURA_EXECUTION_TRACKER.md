@@ -13602,3 +13602,108 @@ Immediate next work and proof burden:
   The newly confirmed `MEMORY-LEAK-001` is also mandatory; passing crash triage
   does not establish bounded indefinite RSS. After current live proof, continue
   these and `STORAGE-GATEWAY-001` before any final multi-hour or 24-72 hour soak.
+
+## Checkpoint 2026-07-13-57: Boot-Owned Live Mind And Event-Loop Convergence
+
+This checkpoint advances `MIND-001`, `RUNTIME-001`, `FOREGROUND-LATENCY-001`,
+`DESKTOP-ACCESS-001`, `SELF-STATE-CHAT-001`, `FAULT-001`, `LIFECYCLE-001`,
+`OBSERVE-001`, `AUTONOMY-001`, and `LAUNCH-PROVENANCE-001`. It closes the
+bounded source defects found in the checkpoint-56 launched process. The signed
+app has not yet been rebuilt from this exact revision, so every launched item
+below remains `LIVE OPEN` until current-build GUI/API evidence replaces the old
+process evidence.
+
+Established one boot-owned live-mind lifecycle:
+
+- `LiveMindRuntime` now materializes and owns the eight required organs before
+  background cognition, morphogenesis, or the final registry lock:
+  `global_workspace`, `nociception`, `affect_grounding`, `drive_integration`,
+  `outcome_ledger`, `scientific_engine`, `unified_world_model`, and
+  `phenomenal_engine`. Boot fails closed if that required organ set cannot
+  become ready within its bounded activation budget.
+- One canonical snapshot assessor maps every required service to its exact
+  populated evidence section. Chat, boot probes, and runtime health no longer
+  carry divergent lists or accept a merely present service with an empty
+  snapshot as full-mind readiness.
+- Morphogenetic immune work now has a bounded serial worker queue and
+  transactional start/stop/restart. Self-healing restart is atomic, timed,
+  retry-bounded, cancellation-safe, and exposes worker/stall evidence rather
+  than allowing a callback timeout to strand partial lifecycle state.
+
+Closed the foreground-lag and control-plane churn chain:
+
+- Event-loop monitor lifecycle liveness is now distinct from lag health. A
+  hard-lag incident keeps `is_alive()` false until fresh recovery evidence
+  accrues, while the desired-state reconciler sees the still-running sampler
+  through `is_running()` and no longer stop/starts it into a circuit loop.
+- Legacy `virtual_memory()` now samples host memory without recursively walking
+  the process tree. Explicit process-accounting callers retain the full tree
+  path. Motor-cortex host telemetry is offloaded from the owner loop and
+  malformed samples return a failed reflex receipt instead of killing cadence.
+- Scheduler tasks now carry explicit deadlines, run/failure counts, timestamps,
+  duration, last error, and freshness. The critical control-plane heartbeat has
+  a 30-second deadline, and the owner-only `/api/system/control-plane` endpoint
+  exposes both convergence state and the exact reconcile-task evidence.
+
+Removed recurrent boot and observability amplification:
+
+- Bounded Keychain access serializes brief concurrent boot reads instead of
+  rejecting the second caller while preserving one native call, daemon-thread
+  containment, and hard timeout behavior for a genuinely stuck security daemon.
+- SLO alerts are episode/transition based with 15-minute reminders. Persistent
+  exhaustion no longer emits a new fault every minute or feeds identical fault
+  events back into failure pressure. Reminder state and suppressed counts are
+  observable, and dataclass timestamps resolve the active clock at record time
+  so randomized tests cannot retain a patched import-time clock.
+- A valid paired-device credential now takes precedence over loopback transport
+  locality in UI capability advertising. A proxied/local phone is no longer
+  told to send performance frames that authorization will correctly reject.
+- Autonomous metabolic swarm reflection is a tracked job with foreground and
+  resource admission, a 30-minute success cadence, meaningful-result checking,
+  and capped exponential failure backoff. Agency remains active without an
+  unbounded two-minute debate on every one-minute heartbeat.
+
+Hardened the real packaged launch boundary:
+
+- Desktop/headless launch always applies canonical runtime setup even when the
+  launcher already supplied `AURA_DESKTOP_RESOURCE_GUARD`. Inherited research
+  governance and disabled contracts are overwritten with production governance
+  and enforcement; the packaged guard can no longer bypass MLX ownership or
+  the rest of the live-runtime defaults.
+- This does not add per-action human approval. Foreground and autonomous work
+  continue through scoped/standing authority and causal effect verification.
+  `AUTONOMY-AUTHORITY-001` remains open for the complete revocable standing-
+  authority model rather than being mislabeled complete by this boot fix.
+
+Verification completed before shared-main reconciliation:
+
+- Live-mind/health focus passed `56/56`; morphogenesis/self-healing focus passed
+  `48/48`; real factory smoke populated all eight required organs twice with
+  zero unpopulated required sections.
+- The new scheduler, control-plane, resource, auth, metabolic, SLO, Keychain,
+  governance, and diagnostics focus passed `23/23`, followed by lifecycle and
+  motor boundary probes at `3/3`. Runtime stability passes `85/85` plus one
+  subtest. Reliability passes `105/105`; exact predecessor-order clock and SLO
+  regressions pass `132/132` after the dynamic-clock repair.
+- The broad integrated source matrix reached `701` passes. Six clock-window
+  failures exposed the import-time timestamp capture and were repaired at the
+  factory boundary; all six failed nodes and their exact predecessor ordering
+  then pass. Configured Ruff, Python compilation, and `git diff --check` pass on
+  every file touched by this checkpoint. The enterprise static ratchet, all
+  `37/37` production-readiness checks, and all `20/20` closeout-rubric criteria
+  pass on the exact pre-merge checkpoint tree.
+
+Immediate next work and proof burden:
+
+- Reconcile the concurrent Fable `7ccaacf7` full-mind/action-depth checkpoint
+  into shared `main` without dropping either side, rerun the overlapping chat,
+  OS-automation, live-mind, and integrated gates, then push the merged history.
+- Rebuild/install the signed app from the merged revision. Prove exact source
+  root/commit/signature/Python child, production governance, ready control
+  plane, fresh event-loop samples, concurrent desktop probes without fault
+  fanout, meaningful non-repeating autonomous reflection, original two-turn
+  self-condition chat, paired-device bootstrap, clean quit, and relaunch.
+- Continue `AUTONOMY-AUTHORITY-001`, `MEMORY-LEAK-001`,
+  `STORAGE-GATEWAY-001`, the remaining master-index work, and all bounded live
+  gates. Multi-hour and 24-72 hour soaks remain deferred until those shorter
+  requirements are green.

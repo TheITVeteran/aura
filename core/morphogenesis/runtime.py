@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 import time
 import traceback
@@ -19,6 +20,16 @@ from .registry import MorphogenesisRegistry
 from .types import MorphogenesisConfig, MorphogenSignal, SignalKind, stable_digest
 
 logger = logging.getLogger("Aura.Morphogenesis.Runtime")
+
+_MORPHOGENESIS_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 def _record_morphogenesis_runtime_degradation(
@@ -46,7 +57,7 @@ def _record_morphogenesis_runtime_degradation(
                 severity=severity,
                 action=action,
             )
-        except TypeError:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             logger.debug(
                 "Morphogenesis runtime degradation could not be recorded: %s",
                 signature_exc,
@@ -99,7 +110,23 @@ class MorphogeneticRuntime:
         self._hooks_wired = False
         self._last_hook_results: dict[str, Any] = {}
         self._stop_lock = asyncio.Lock()
+        self._restart_lock = asyncio.Lock()
         self._persisted_on_stop = False
+        queue_capacity = max(1, int(self.config.immunity_bridge_queue_capacity))
+        self._immunity_queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue(
+            maxsize=queue_capacity
+        )
+        self._immunity_pending_ids: set[str] = set()
+        self._immunity_task: asyncio.Task | None = None
+        self._immunity_inflight_id = ""
+        self._immunity_inflight_started_at = 0.0
+        self._immunity_enqueued = 0
+        self._immunity_processed = 0
+        self._immunity_failures = 0
+        self._immunity_deduplicated = 0
+        self._immunity_dropped = 0
+        self._last_immunity_error = ""
+        self._last_immunity_degradation_at = 0.0
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -107,6 +134,14 @@ class MorphogeneticRuntime:
         if not self.config.enabled:
             logger.info("MorphogeneticRuntime disabled by config.")
             return
+        self._consume_finished_task_failure(
+            self._task,
+            action="recovered a previously failed morphogenesis loop before restart",
+        )
+        self._consume_finished_task_failure(
+            self._immunity_task,
+            action="recovered a previously failed adaptive-immunity bridge worker before restart",
+        )
         try:
             self.registry.load()
         except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
@@ -119,23 +154,47 @@ class MorphogeneticRuntime:
         self._stopping.clear()
         self._persisted_on_stop = False
         self._started_at = time.time()
-        self._task = create_tracked_task(
-            self._run_loop(),
-            name="morphogenesis.runtime",
-        )
+        try:
+            self._task = create_tracked_task(
+                self._run_loop(),
+                name="morphogenesis.runtime",
+            )
+            if self.config.adaptive_immunity_bridge:
+                self._ensure_immunity_worker()
+        except _MORPHOGENESIS_RECOVERABLE_ERRORS:
+            task = self._task
+            self._task = None
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            raise
         logger.info("MorphogeneticRuntime started.")
 
     async def stop(self) -> None:
         async with self._stop_lock:
             self._stopping.set()
-            task = self._task
+            tasks = [
+                task
+                for task in (self._task, self._immunity_task)
+                if task is not None and task is not asyncio.current_task()
+            ]
             self._task = None
-            if task and task is not asyncio.current_task():
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass  # intentional cancellation of the owned loop
+            self._immunity_task = None
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                for result in results:
+                    if isinstance(result, asyncio.CancelledError) or result is None:
+                        continue
+                    if isinstance(result, BaseException):
+                        self._last_degradation_at = time.time()
+                        _record_morphogenesis_runtime_degradation(
+                            result,
+                            action="contained an owned morphogenesis task failure during lifecycle shutdown",
+                            severity="degraded",
+                        )
             if not self._persisted_on_stop:
                 try:
                     await asyncio.to_thread(self.registry.save)
@@ -149,9 +208,41 @@ class MorphogeneticRuntime:
                     )
             logger.info("MorphogeneticRuntime stopped.")
 
+    async def restart_async(self) -> None:
+        """Restart the complete owned runtime without leaking prior task failures."""
+
+        async with self._restart_lock:
+            await self.stop()
+            await self.start()
+            if self.config.enabled and not self.status()["running"]:
+                raise RuntimeError("morphogenesis runtime did not become ready after restart")
+
     async def on_stop_async(self) -> None:
         """ServiceContainer lifecycle hook — ensures clean shutdown."""
         await self.stop()
+
+    def _consume_finished_task_failure(
+        self,
+        task: asyncio.Task | None,
+        *,
+        action: str,
+    ) -> None:
+        if task is None or not task.done():
+            return
+        try:
+            error = task.exception()
+        except asyncio.CancelledError:
+            return
+        except _MORPHOGENESIS_RECOVERABLE_ERRORS as exc:
+            error = exc
+        if error is None:
+            return
+        self._last_degradation_at = time.time()
+        _record_morphogenesis_runtime_degradation(
+            error,
+            action=action,
+            severity="degraded",
+        )
 
     def emit_signal(self, signal: MorphogenSignal) -> None:
         if signal.ttl_ticks <= 0:
@@ -325,7 +416,7 @@ class MorphogeneticRuntime:
                 self._consecutive_tick_failures = 0
             except asyncio.CancelledError:
                 raise
-            except (ImportError, AttributeError, RuntimeError) as exc:
+            except Exception as exc:  # noqa: BLE001 - supervised loop boundary
                 self._consecutive_tick_failures += 1
                 self._last_degradation_at = time.time()
                 sleep_s = min(5.0, sleep_s * (1 + self._consecutive_tick_failures))
@@ -424,39 +515,148 @@ class MorphogeneticRuntime:
             pass  # no-op: intentional
 
     async def _bridge_signals_to_immunity(self, signals: Sequence[MorphogenSignal]) -> None:
-        for sig in signals[:8]:
-            kind = sig.kind.value if hasattr(sig.kind, "value") else str(sig.kind)
-            if kind not in {SignalKind.ERROR.value, SignalKind.EXCEPTION.value, SignalKind.DANGER.value, SignalKind.RESOURCE_PRESSURE.value}:
+        """Queue high-danger signals without coupling immune latency to a tick."""
+
+        if not self.config.adaptive_immunity_bridge or self._stopping.is_set():
+            return
+        self._ensure_immunity_worker()
+        eligible = sorted(
+            (
+                signal
+                for signal in signals
+                if self._is_immunity_signal(signal)
+            ),
+            key=lambda signal: (-float(signal.intensity), float(signal.timestamp)),
+        )
+        limit = max(1, int(self.config.immunity_bridge_max_enqueue_per_tick))
+        for sig in eligible[:limit]:
+            signal_id = str(sig.signal_id)
+            if signal_id in self._immunity_pending_ids:
+                self._immunity_deduplicated += 1
                 continue
-            if sig.intensity < 0.55:
+            event = self._immunity_event(sig)
+            try:
+                self._immunity_queue.put_nowait((signal_id, event))
+            except asyncio.QueueFull as exc:
+                self._immunity_dropped += 1
+                self._record_immunity_bridge_degradation(
+                    exc,
+                    action="kept morphogenesis responsive while the bounded adaptive-immunity bridge queue was full",
+                    extra={
+                        "queue_depth": self._immunity_queue.qsize(),
+                        "queue_capacity": self._immunity_queue.maxsize,
+                        "signal_kind": event["type"],
+                    },
+                )
                 continue
+            self._immunity_pending_ids.add(signal_id)
+            self._immunity_enqueued += 1
+
+    @staticmethod
+    def _is_immunity_signal(signal: MorphogenSignal) -> bool:
+        kind = signal.kind.value if hasattr(signal.kind, "value") else str(signal.kind)
+        return kind in {
+            SignalKind.ERROR.value,
+            SignalKind.EXCEPTION.value,
+            SignalKind.DANGER.value,
+            SignalKind.RESOURCE_PRESSURE.value,
+        } and float(signal.intensity) >= 0.55
+
+    @staticmethod
+    def _immunity_event(signal: MorphogenSignal) -> dict[str, Any]:
+        kind = signal.kind.value if hasattr(signal.kind, "value") else str(signal.kind)
+        return {
+            "type": kind,
+            "text": str(signal.payload.get("message") or signal.payload.get("error") or kind),
+            "subsystem": signal.subsystem,
+            "source": f"morphogenesis:{signal.source}",
+            "danger": float(signal.intensity),
+            "resource_pressure": float(
+                signal.intensity
+                if kind == SignalKind.RESOURCE_PRESSURE.value
+                else signal.payload.get("resource_pressure", 0.0)
+            ),
+            "stack_trace": str(signal.payload.get("stack_trace", ""))[-4000:],
+            "exception_type": str(signal.payload.get("exception_type", "")),
+            "timestamp": signal.timestamp,
+            "error_signature": str(
+                signal.payload.get("exception_type") or signal.payload.get("error") or kind
+            )[:120],
+        }
+
+    def _ensure_immunity_worker(self) -> None:
+        task = self._immunity_task
+        if task is not None and not task.done():
+            return
+        self._consume_finished_task_failure(
+            task,
+            action="recovered the adaptive-immunity bridge after its worker stopped unexpectedly",
+        )
+        self._immunity_task = create_tracked_task(
+            self._run_immunity_worker(),
+            name="morphogenesis.immunity_bridge",
+            owner="morphogenesis.runtime",
+        )
+
+    async def _run_immunity_worker(self) -> None:
+        while not self._stopping.is_set():
+            signal_id, event = await self._immunity_queue.get()
+            self._immunity_inflight_id = signal_id
+            self._immunity_inflight_started_at = time.time()
             try:
                 from core.adaptation.adaptive_immunity import get_adaptive_immune_system
+
                 immune = get_adaptive_immune_system()
-                event = {
-                    "type": kind,
-                    "text": str(sig.payload.get("message") or sig.payload.get("error") or kind),
-                    "subsystem": sig.subsystem,
-                    "source": f"morphogenesis:{sig.source}",
-                    "danger": float(sig.intensity),
-                    "resource_pressure": float(sig.intensity if kind == SignalKind.RESOURCE_PRESSURE.value else sig.payload.get("resource_pressure", 0.0)),
-                    "stack_trace": str(sig.payload.get("stack_trace", ""))[-4000:],
-                    "exception_type": str(sig.payload.get("exception_type", "")),
-                    "timestamp": sig.timestamp,
-                    "error_signature": str(sig.payload.get("exception_type") or sig.payload.get("error") or kind)[:120],
-                }
                 result = immune.observe_event(event)
-                if asyncio.iscoroutine(result):
-                    await asyncio.wait_for(result, timeout=3.0)
-            except (ImportError, AttributeError, RuntimeError) as exc:
-                self._last_degradation_at = time.time()
-                _record_morphogenesis_runtime_degradation(
+                if inspect.isawaitable(result):
+                    await result
+                self._immunity_processed += 1
+                self._last_immunity_error = ""
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - optional worker boundary
+                self._immunity_failures += 1
+                self._last_immunity_error = f"{type(exc).__name__}: {exc}"
+                self._record_immunity_bridge_degradation(
                     exc,
-                    action="kept morphogenesis tick active while adaptive immunity bridge skipped one signal",
-                    severity="warning",
-                    extra={"signal_kind": kind, "subsystem": sig.subsystem},
+                    action="contained one adaptive-immunity bridge failure while preserving the morphogenesis loop",
+                    extra={
+                        "signal_kind": event.get("type", "unknown"),
+                        "subsystem": event.get("subsystem", "unknown"),
+                    },
                 )
-                logger.debug("Adaptive immunity bridge skipped: %s", exc)
+            finally:
+                self._immunity_pending_ids.discard(signal_id)
+                self._immunity_inflight_id = ""
+                self._immunity_inflight_started_at = 0.0
+                self._immunity_queue.task_done()
+
+    def _record_immunity_bridge_degradation(
+        self,
+        error: BaseException,
+        *,
+        action: str,
+        extra: dict[str, object],
+    ) -> None:
+        self._last_degradation_at = time.time()
+        interval = max(1.0, float(self.config.immunity_bridge_degradation_interval_s))
+        if self._last_degradation_at - self._last_immunity_degradation_at < interval:
+            return
+        self._last_immunity_degradation_at = self._last_degradation_at
+        _record_morphogenesis_runtime_degradation(
+            error,
+            action=action,
+            severity="warning",
+            extra=extra,
+        )
+
+    async def wait_for_immunity_idle(self, *, timeout_s: float = 10.0) -> None:
+        """Wait for all accepted bridge work; intended for proof and shutdown gates."""
+
+        await asyncio.wait_for(
+            self._immunity_queue.join(),
+            timeout=max(0.05, float(timeout_s)),
+        )
 
     async def _maybe_record_episode(self, results: list[dict[str, Any]]) -> None:
         if not results:
@@ -524,6 +724,20 @@ class MorphogeneticRuntime:
         return max(counts.items(), key=lambda kv: kv[1])[0]
 
     def status(self) -> dict[str, Any]:
+        inflight_age_s = (
+            max(0.0, time.time() - self._immunity_inflight_started_at)
+            if self._immunity_inflight_started_at
+            else 0.0
+        )
+        bridge_worker_running = bool(
+            self._immunity_task and not self._immunity_task.done()
+        )
+        bridge_stalled = bool(
+            self._immunity_inflight_started_at
+            and inflight_age_s
+            >= max(1.0, float(self.config.immunity_bridge_stall_warning_s))
+        )
+        bridge_required = self.config.enabled and self.config.adaptive_immunity_bridge
         return {
             "enabled": self.config.enabled,
             "running": bool(self._task and not self._task.done()),
@@ -536,6 +750,24 @@ class MorphogeneticRuntime:
             "hooks_wired": self._hooks_wired,
             "last_hook_results": self._last_hook_results,
             "queued_signals": len(self._signals),
+            "immunity_bridge": {
+                "enabled": self.config.adaptive_immunity_bridge,
+                "healthy": bool(
+                    not bridge_required or (bridge_worker_running and not bridge_stalled)
+                ),
+                "worker_running": bridge_worker_running,
+                "stalled": bridge_stalled,
+                "queue_depth": self._immunity_queue.qsize(),
+                "queue_capacity": self._immunity_queue.maxsize,
+                "inflight_signal_id": self._immunity_inflight_id,
+                "inflight_age_s": round(inflight_age_s, 3),
+                "enqueued": self._immunity_enqueued,
+                "processed": self._immunity_processed,
+                "failures": self._immunity_failures,
+                "deduplicated": self._immunity_deduplicated,
+                "dropped": self._immunity_dropped,
+                "last_error": self._last_immunity_error,
+            },
             "field": self.field.to_dict(),
             "metabolism": self.metabolism.status(),
             "registry": self.registry.status(),

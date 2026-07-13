@@ -221,3 +221,82 @@ async def test_autonomous_thought_uses_safe_interval_when_runtime_value_is_inval
 
     assert ran == [True]
     assert tracker.tasks[0][0] == "metabolic.autonomous_thought"
+
+
+@pytest.mark.asyncio
+async def test_autonomous_reflection_is_cadenced_and_requires_meaningful_result(monkeypatch):
+    import core.coordinators.metabolic_coordinator as metabolic_module
+
+    tracker = _Tracker()
+    calls = []
+
+    async def _execute_tool(name, payload, *, is_background):
+        calls.append((name, payload, is_background))
+        return {"ok": True, "output": "A grounded internal consensus."}
+
+    orch = SimpleNamespace(
+        is_busy=False,
+        status=SimpleNamespace(state="idle"),
+        execute_tool=_execute_tool,
+    )
+    coord = MetabolicCoordinator(orch=orch)
+    coord._autonomous_reflection_interval_s = 3600.0
+    monkeypatch.setattr(metabolic_module, "get_task_tracker", lambda: tracker)
+    monkeypatch.setattr(
+        metabolic_module,
+        "background_activity_reason",
+        lambda *_args, **_kwargs: "",
+    )
+    now = time.time()
+
+    assert coord._maybe_schedule_autonomous_reflection(idle_time=600.0, now=now)
+    task = tracker.tasks[-1][1]
+    await task
+    await asyncio.sleep(0)
+
+    assert len(calls) == 1
+    assert coord.autonomous_reflection_status()["last_outcome"] == "completed"
+    assert not coord._maybe_schedule_autonomous_reflection(
+        idle_time=600.0,
+        now=now + 1.0,
+    )
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_autonomous_reflection_failure_uses_exponential_retry_backoff(monkeypatch):
+    import core.coordinators.metabolic_coordinator as metabolic_module
+
+    tracker = _Tracker()
+
+    async def _execute_tool(_name, _payload, *, is_background):
+        assert is_background is True
+        return {
+            "ok": True,
+            "output": "Swarm failed to produce a consensus (timeout or execution failure).",
+        }
+
+    coord = MetabolicCoordinator(
+        orch=SimpleNamespace(
+            is_busy=False,
+            status=SimpleNamespace(state="idle"),
+            execute_tool=_execute_tool,
+        )
+    )
+    coord._autonomous_reflection_interval_s = 3600.0
+    coord._autonomous_reflection_failure_backoff_s = 300.0
+    monkeypatch.setattr(metabolic_module, "get_task_tracker", lambda: tracker)
+    monkeypatch.setattr(
+        metabolic_module,
+        "background_activity_reason",
+        lambda *_args, **_kwargs: "",
+    )
+    now = time.time()
+
+    assert coord._maybe_schedule_autonomous_reflection(idle_time=600.0, now=now)
+    await tracker.tasks[-1][1]
+    status = coord.autonomous_reflection_status()
+
+    assert status["failure_count"] == 1
+    assert str(status["last_outcome"]).startswith("failed:")
+    assert coord._autonomous_reflection_next_eligible_at >= now + 299.0

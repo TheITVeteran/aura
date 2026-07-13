@@ -111,6 +111,50 @@ def test_native_keychain_timeout_is_single_flight_and_does_not_hold_shutdown():
     assert finished.wait(1.0)
 
 
+def test_native_keychain_serializes_brief_concurrent_boot_reads():
+    first_started = threading.Event()
+    release_first = threading.Event()
+    call_lock = threading.Lock()
+
+    class BrieflyBlockingNativeKeychain:
+        def __init__(self):
+            self.calls = 0
+
+        def get_password(self, _service, account):
+            with call_lock:
+                self.calls += 1
+                call_number = self.calls
+            if call_number == 1:
+                first_started.set()
+                release_first.wait(1.0)
+            return f"secret:{account}"
+
+        def set_password(self, _service, _account, _password):
+            raise AssertionError("write was not requested")
+
+    native = BrieflyBlockingNativeKeychain()
+    backend = secrets._BoundedKeychainBackend(lambda: native, timeout_s=0.25)
+    first_result = []
+
+    first = threading.Thread(
+        target=lambda: first_result.append(
+            backend.get_password("service", "first-account")
+        )
+    )
+    first.start()
+    assert first_started.wait(0.5)
+    timer = threading.Timer(0.03, release_first.set)
+    timer.start()
+    second = backend.get_password("service", "second-account")
+    first.join(timeout=1.0)
+    timer.cancel()
+
+    assert not first.is_alive()
+    assert first_result == ["secret:first-account"]
+    assert second == "secret:second-account"
+    assert native.calls == 2
+
+
 def test_zenith_secrets_source_has_no_subprocess_invocation():
     source = secrets.Path(secrets.__file__).read_text(encoding="utf-8")
 

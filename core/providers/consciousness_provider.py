@@ -2,12 +2,14 @@
 """
 
 import logging
-from core.runtime.service_registry import SERVICE_LIFETIME_SINGLETON
+from uuid import uuid4
+
 from core.runtime.service_access import (
     optional_service,
     resolve_epistemic_state,
     resolve_orchestrator,
 )
+from core.runtime.service_registry import SERVICE_LIFETIME_SINGLETON
 
 logger = logging.getLogger("Aura.Providers.Consciousness")
 
@@ -113,7 +115,7 @@ def register_consciousness_services(container):
     # 44. Self-Model & Identity
     def create_self_model():
         from core.self_model import SelfModel
-        from uuid import uuid4
+
         # We provide a default ID; orchestrator.start() will call .load() to restore real state
         return SelfModel(id=str(uuid4()))
     container.register('self_model', create_self_model, lifetime=SERVICE_LIFETIME_SINGLETON, required=True)
@@ -182,6 +184,18 @@ def register_consciousness_services(container):
         from core.cognition.scientific_engine import get_scientific_engine
         return get_scientific_engine()
     container.register('scientific_engine', create_scientific_engine, lifetime=SERVICE_LIFETIME_SINGLETON, required=False)
+
+    def create_live_mind_runtime():
+        from core.runtime.live_mind_runtime import get_live_mind_runtime
+
+        return get_live_mind_runtime()
+
+    container.register(
+        'live_mind_runtime',
+        create_live_mind_runtime,
+        lifetime=SERVICE_LIFETIME_SINGLETON,
+        required=True,
+    )
 
     # 52. Epistemic State (World Model)
     def create_epistemic_state():

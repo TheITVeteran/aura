@@ -565,6 +565,60 @@ class TestSelfHealingLoopSafety(unittest.IsolatedAsyncioTestCase):
         self.assertLess(time.perf_counter() - started, 0.12)
         self.assertGreater(watch.last_heartbeat_at, time.time() - 1.0)
 
+    async def test_restart_timeout_is_contained_and_reported(self):
+        from core.runtime.self_healing import SelfHealing
+
+        healer = SelfHealing()
+        healer._restart_timeout_s = 0.01
+        release = asyncio.Event()
+
+        async def stalled_restart():
+            await release.wait()
+
+        healer.watch(
+            "stalled_watch",
+            expected_interval_s=0.01,
+            restart_async=stalled_restart,
+        )
+        watch = healer._watches["stalled_watch"]
+        append_record = _AsyncCallRecorder()
+
+        with swap.object(healer, "_healing_defer_reason", return_value=""), \
+             swap.object(healer, "_append_record_async", new=append_record):
+            await asyncio.wait_for(healer._heal(watch, 10.0), timeout=0.25)
+
+        record = append_record.await_args.args[0]
+        self.assertEqual(record["result"], "restart_timeout_after_0.01s")
+        self.assertEqual(watch.restart_failures, 1)
+        self.assertIn("TimeoutError", watch.last_restart_error)
+        self.assertGreater(watch.last_heartbeat_at, time.time() - 1.0)
+
+    async def test_restart_failure_does_not_terminate_following_heal(self):
+        from core.runtime.self_healing import SelfHealing
+
+        healer = SelfHealing()
+        calls = 0
+
+        async def flaky_restart():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise TimeoutError("first attempt failed")
+
+        healer.watch("flaky_watch", expected_interval_s=0.01, restart_async=flaky_restart)
+        watch = healer._watches["flaky_watch"]
+        append_record = _AsyncCallRecorder()
+
+        with swap.object(healer, "_healing_defer_reason", return_value=""), \
+             swap.object(healer, "_append_record_async", new=append_record):
+            await healer._heal(watch, 10.0)
+            await healer._heal(watch, 10.0)
+
+        self.assertEqual(calls, 2)
+        self.assertEqual(append_record.await_args_list[-1].args[0]["result"], "restarted")
+        self.assertEqual(watch.restart_failures, 0)
+        self.assertEqual(watch.restarts, 1)
+
     async def test_inference_gate_foreground_dict_defers_healing_restart(self):
         from core.runtime.self_healing import SelfHealing
 

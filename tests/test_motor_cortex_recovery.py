@@ -7,6 +7,41 @@ from core.somatic import motor_cortex as mc
 
 
 @pytest.mark.asyncio
+async def test_health_reflex_offloads_host_telemetry(monkeypatch):
+    calls = []
+
+    async def _to_thread(fn):
+        calls.append(fn)
+        return 12.0, 34.0, 0.1
+
+    monkeypatch.setattr(mc.asyncio, "to_thread", _to_thread)
+
+    result = await mc._reflex_health_check({})
+
+    assert calls == [mc._sample_reflex_health_telemetry]
+    assert result == {
+        "success": True,
+        "summary": "health_ok",
+        "cpu": 12.0,
+        "mem_pct": 34.0,
+        "thermal": 0.1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_health_reflex_contains_malformed_host_telemetry(monkeypatch):
+    async def _to_thread(_fn):
+        raise ValueError("malformed host sample")
+
+    monkeypatch.setattr(mc.asyncio, "to_thread", _to_thread)
+
+    result = await mc._reflex_health_check({})
+
+    assert result["success"] is False
+    assert result["summary"] == "health_check_failed: malformed host sample"
+
+
+@pytest.mark.asyncio
 async def test_screen_capture_reflex_supports_sync_capture(monkeypatch):
     vision = SimpleNamespace(capture_frame=lambda: b"frame")
 

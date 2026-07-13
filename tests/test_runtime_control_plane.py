@@ -8,6 +8,7 @@ import pytest
 from core.runtime.control_plane import (
     CONTROL_PLANE_RECONCILE_INTERVAL_S,
     CONTROL_PLANE_RECONCILE_TASK_NAME,
+    CONTROL_PLANE_RECONCILE_TIMEOUT_S,
     AdmissionOutcome,
     AdmissionPriority,
     AdmissionRequest,
@@ -71,6 +72,7 @@ async def test_registered_reconciler_owns_periodic_recovery_from_boot_degradatio
     assert scheduler.spec is not None
     assert scheduler.spec.name == CONTROL_PLANE_RECONCILE_TASK_NAME
     assert scheduler.spec.tick_interval == CONTROL_PLANE_RECONCILE_INTERVAL_S
+    assert scheduler.spec.timeout_s == CONTROL_PLANE_RECONCILE_TIMEOUT_S
     assert scheduler.spec.critical is True
     assert scheduler.spec.metadata["contract"] == "desired_state_convergence"
 

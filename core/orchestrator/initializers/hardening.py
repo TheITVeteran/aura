@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from functools import partial
 from typing import Any
 
 from core.config import Environment, config
@@ -9,6 +10,10 @@ from core.runtime.service_registry import register_runtime_service
 logger = logging.getLogger(__name__)
 
 HARDENING_BOOT_TIMEOUT_SECONDS = 10.0
+
+
+def _noop_service_callback() -> None:
+    return None
 
 
 def _record_hardening_degradation(
@@ -289,16 +294,26 @@ async def init_hardening_layer(orchestrator: Any):
             if control_plane.has_service(component_name):
                 continue
             if component_name == "unified_runtime_pressure":
-                start = lambda: None
-                stop = lambda: None
-                probe = lambda component=component: component.runtime_pressure_snapshot()
+                start = _noop_service_callback
+                stop = _noop_service_callback
+                probe = component.runtime_pressure_snapshot
                 critical = True
                 restart_on_unhealthy = False
+            elif component_name == "event_loop_monitor":
+                start = component.start
+                stop = component.stop
+                # Lifecycle convergence and runtime health are separate. A
+                # hard-lag sample makes is_alive() false by design, but the
+                # sampling task is still running and must remain online long
+                # enough to prove recovery.
+                probe = component.is_running
+                critical = True
+                restart_on_unhealthy = True
             else:
-                start = getattr(component, "start", lambda: None)
-                stop = getattr(component, "stop", lambda: None)
-                probe = lambda component=component: _component_is_alive(component)
-                critical = component_name == "event_loop_monitor"
+                start = getattr(component, "start", _noop_service_callback)
+                stop = getattr(component, "stop", _noop_service_callback)
+                probe = partial(_component_is_alive, component)
+                critical = False
                 restart_on_unhealthy = True
             control_plane.register_service(
                 DesiredServiceSpec(

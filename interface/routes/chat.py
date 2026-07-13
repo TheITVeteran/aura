@@ -4202,57 +4202,10 @@ def _collect_live_chat_required_subsystems(
     }
 
 
-_LIVE_MIND_SNAPSHOT_REQUIRED_SERVICES = (
-    "global_workspace",
-    "nociception",
-    "affect_grounding",
-    "drive_integration",
-    "outcome_ledger",
-    "scientific_engine",
-    "unified_world_model",
-    "phenomenal_engine",
-)
-
-
 def _assess_live_mind_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(snapshot, dict) or not snapshot:
-        return {
-            "present": False,
-            "ready": False,
-            "missing_services": list(_LIVE_MIND_SNAPSHOT_REQUIRED_SERVICES),
-            "populated_sections": [],
-        }
-    services = snapshot.get("services_present")
-    if not isinstance(services, dict):
-        services = {}
-    missing = [
-        name
-        for name in _LIVE_MIND_SNAPSHOT_REQUIRED_SERVICES
-        if not bool(services.get(name))
-    ]
-    populated_sections = [
-        name
-        for name in (
-            "global_workspace",
-            "nociception",
-            "affect_grounding",
-            "drive_integration",
-            "outcome_ledger",
-            "scientific_engine",
-            "world_model",
-            "phenomenal_engine",
-            "phenomenal_knowing",
-            "recursive_self_knowing",
-            "automatic_self_knowing",
-        )
-        if bool(snapshot.get(name))
-    ]
-    return {
-        "present": True,
-        "ready": not missing and len(populated_sections) >= 6,
-        "missing_services": missing,
-        "populated_sections": populated_sections,
-    }
+    from core.runtime.live_mind_snapshot import assess_live_mind_snapshot
+
+    return assess_live_mind_snapshot(snapshot)
 
 
 def _build_live_turn_contract_payload(

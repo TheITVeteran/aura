@@ -43,6 +43,16 @@ from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.SelfHealing")
 
+_SELF_HEALING_RECOVERABLE_ERRORS = (
+    ImportError,
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
+
 _DIR = Path.home() / ".aura" / "data" / "self_healing"
 _DIR.mkdir(parents=True, exist_ok=True)
 _LEDGER = _DIR / "events.jsonl"
@@ -53,6 +63,20 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+def _bounded_env_float(
+    name: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+) -> float:
+    try:
+        configured = float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        configured = default
+    return min(maximum, max(minimum, configured))
 
 
 def _deep_repair_block_reason(origin: str = "self_healing_deep_repair") -> str:
@@ -84,6 +108,9 @@ class WatchEntry:
     restart_async: Callable[[], Awaitable[None]] | None = None
     container_key: str | None = None
     restarts: int = 0
+    restart_failures: int = 0
+    last_restart_at: float = 0.0
+    last_restart_error: str = ""
 
 
 class SelfHealing:
@@ -96,11 +123,18 @@ class SelfHealing:
         self._task: asyncio.Task | None = None
         self._running = False
         self._stop_lock = asyncio.Lock()
-        try:
-            configured_timeout = float(os.environ.get("AURA_SELF_HEALING_LEDGER_TIMEOUT_S", "5.0"))
-        except (TypeError, ValueError):
-            configured_timeout = 5.0
-        self._ledger_write_timeout_s = min(30.0, max(1.0, configured_timeout))
+        self._ledger_write_timeout_s = _bounded_env_float(
+            "AURA_SELF_HEALING_LEDGER_TIMEOUT_S",
+            5.0,
+            minimum=1.0,
+            maximum=30.0,
+        )
+        self._restart_timeout_s = _bounded_env_float(
+            "AURA_SELF_HEALING_RESTART_TIMEOUT_S",
+            15.0,
+            minimum=1.0,
+            maximum=120.0,
+        )
 
     def watch(
         self,
@@ -122,10 +156,14 @@ class SelfHealing:
         if w is None:
             return
         w.last_heartbeat_at = time.time()
+        if w.restart_failures:
+            w.restart_failures = 0
+            w.last_restart_error = ""
 
     async def start(self, *, interval: float = 5.0) -> None:
-        if self._running:
+        if self._running and self._task and not self._task.done():
             return
+        self._consume_loop_failure()
         self._running = True
 
         async def _loop():
@@ -138,7 +176,7 @@ class SelfHealing:
                         break
                     logger.warning("SelfHealing loop spuriously cancelled. Ignoring.")
                     continue
-                except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+                except Exception as e:  # noqa: BLE001 - watchdog loop boundary
                     record_degradation('self_healing', e)
                     logger.error("SelfHealing loop error: %s", e)
                     await asyncio.sleep(1.0)
@@ -167,6 +205,7 @@ class SelfHealing:
         return {
             "running": bool(self._running and self._task and not self._task.done()),
             "watch_count": len(self._watches),
+            "restart_timeout_s": self._restart_timeout_s,
             "deep_repairs_active": sum(
                 1 for task in self._deep_repairs.values() if not task.done()
             ),
@@ -175,11 +214,32 @@ class SelfHealing:
                     "heartbeat_age_s": round(max(0.0, now - watch.last_heartbeat_at), 2),
                     "expected_interval_s": watch.expected_interval_s,
                     "restart_count": watch.restarts,
+                    "restart_failure_count": watch.restart_failures,
+                    "last_restart_at": watch.last_restart_at,
+                    "last_restart_error": watch.last_restart_error,
                     "container_key": watch.container_key,
                 }
                 for name, watch in sorted(self._watches.items())
             },
         }
+
+    def _consume_loop_failure(self) -> None:
+        task = self._task
+        if task is None or not task.done():
+            return
+        try:
+            error = task.exception()
+        except asyncio.CancelledError:
+            return
+        except _SELF_HEALING_RECOVERABLE_ERRORS as exc:
+            error = exc
+        if error is not None:
+            record_degradation(
+                "self_healing",
+                error,
+                action="recovered the self-healing loop after its prior owned task failed",
+                receipt_required=True,
+            )
 
     async def _tick(self) -> None:
         now = time.time()
@@ -281,6 +341,7 @@ class SelfHealing:
             "name": w.name,
             "stale_for_s": age,
             "restart_count": w.restarts,
+            "restart_failure_count": w.restart_failures,
         }
         try:
             defer_reason = self._healing_defer_reason()
@@ -290,7 +351,7 @@ class SelfHealing:
                 await self._append_record_async(record)
                 return
 
-            if w.restarts >= 3:
+            if w.restarts >= 3 or w.restart_failures >= 3:
                 module_path = await asyncio.to_thread(self._module_path_for_watch, w)
                 block_reason = _deep_repair_block_reason("self_healing_watchdog_deep_repair")
                 if module_path and not block_reason:
@@ -299,10 +360,16 @@ class SelfHealing:
                         module_path,
                         reason="watchdog_restart_exhausted",
                         watch_name=w.name,
-                        metadata={"stale_for_s": age, "restart_count": w.restarts},
+                        metadata={
+                            "stale_for_s": age,
+                            "restart_count": w.restarts,
+                            "restart_failure_count": w.restart_failures,
+                            "last_restart_error": w.last_restart_error,
+                        },
                     )
                     record.update(scheduled)
                     w.restarts = 0
+                    w.restart_failures = 0
                     w.last_heartbeat_at = time.time()
                 else:
                     record["result"] = (
@@ -311,6 +378,7 @@ class SelfHealing:
                         else "deep_repair_failed_no_module_path"
                     )
                     w.restarts = 0
+                    w.restart_failures = 0
                     w.last_heartbeat_at = time.time()
                     await self._append_record_async(record)
                     return
@@ -321,32 +389,51 @@ class SelfHealing:
                 "deep_repair_failed_no_module_path",
                 "deep_repair_failed_no_lab",
             ):
-                restarted = False
-                if w.restart_async is not None:
-                    await w.restart_async()
-                    restarted = True
-                elif w.container_key:
-                    from core.container import ServiceContainer
-                    instance = ServiceContainer.get(w.container_key, default=None)
-                    if instance is not None and hasattr(instance, "restart_async"):
-                        await instance.restart_async()
-                        restarted = True
-                    elif instance is not None:
-                        stop = getattr(instance, "stop", None)
-                        start = getattr(instance, "start", None)
-                        if callable(stop) and callable(start):
-                            stopped = stop()
-                            if inspect.isawaitable(stopped):
-                                await stopped
-                            started = start()
-                            if inspect.isawaitable(started):
-                                await started
-                            restarted = True
+                try:
+                    restarted = await asyncio.wait_for(
+                        self._restart_watch(w),
+                        timeout=self._restart_timeout_s,
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except TimeoutError as exc:
+                    self._record_restart_failure(w, exc)
+                    record["result"] = (
+                        f"restart_timeout_after_{self._restart_timeout_s:g}s"
+                    )
+                    record["restart_failure_count"] = w.restart_failures
+                    record_degradation(
+                        "self_healing",
+                        exc,
+                        action=(
+                            f"contained timed-out restart for {w.name} and kept the "
+                            "self-healing loop alive"
+                        ),
+                        receipt_required=True,
+                    )
+                    restarted = False
+                except Exception as exc:  # noqa: BLE001 - watched-service boundary
+                    self._record_restart_failure(w, exc)
+                    record["result"] = f"restart_failed:{type(exc).__name__}:{exc}"
+                    record["restart_failure_count"] = w.restart_failures
+                    record_degradation(
+                        "self_healing",
+                        exc,
+                        action=(
+                            f"contained failed restart for {w.name} and kept the "
+                            "self-healing loop alive"
+                        ),
+                        receipt_required=True,
+                    )
+                    restarted = False
 
                 if restarted:
                     w.restarts += 1
+                    w.restart_failures = 0
+                    w.last_restart_error = ""
+                    w.last_restart_at = time.time()
                     record["result"] = "restarted"
-                else:
+                elif "result" not in record:
                     module_path = await asyncio.to_thread(self._module_path_for_watch, w)
                     block_reason = _deep_repair_block_reason(
                         "self_healing_restart_unavailable"
@@ -362,11 +449,59 @@ class SelfHealing:
                         )
                     else:
                         record["result"] = block_reason or "restart_interface_unavailable"
+                        w.restart_failures += 1
+                        w.last_restart_error = str(record["result"])
+                        record["restart_failure_count"] = w.restart_failures
                 w.last_heartbeat_at = time.time()
-        except (ImportError, AttributeError, RuntimeError) as exc:
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - watchdog repair boundary
             record_degradation('self_healing', exc)
-            record["result"] = f"restart_failed:{exc}"
+            self._record_restart_failure(w, exc)
+            record["result"] = f"restart_failed:{type(exc).__name__}:{exc}"
+            record["restart_failure_count"] = w.restart_failures
+            w.last_heartbeat_at = time.time()
         await self._append_record_async(record)
+
+    async def _restart_watch(self, w: WatchEntry) -> bool:
+        if w.restart_async is not None:
+            restarted = w.restart_async()
+            if inspect.isawaitable(restarted):
+                await restarted
+            return True
+        if not w.container_key:
+            return False
+
+        from core.container import ServiceContainer
+
+        instance = ServiceContainer.get(w.container_key, default=None)
+        if instance is None:
+            return False
+        restart = getattr(instance, "restart_async", None)
+        if callable(restart):
+            restarted = restart()
+            if inspect.isawaitable(restarted):
+                await restarted
+            return True
+
+        stop = getattr(instance, "stop", None)
+        start = getattr(instance, "start", None)
+        if not callable(stop) or not callable(start):
+            return False
+        stopped = stop()
+        if inspect.isawaitable(stopped):
+            await stopped
+        started = start()
+        if inspect.isawaitable(started):
+            await started
+        return True
+
+    @staticmethod
+    def _record_restart_failure(w: WatchEntry, error: BaseException) -> None:
+        w.restart_failures += 1
+        w.last_restart_at = time.time()
+        detail = str(error).strip() or "no error message"
+        w.last_restart_error = f"{type(error).__name__}: {detail}"
 
     def _module_path_for_watch(self, w: WatchEntry) -> str | None:
         if not w.container_key:

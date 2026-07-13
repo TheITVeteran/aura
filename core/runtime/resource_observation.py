@@ -335,7 +335,12 @@ class ResourceObserver(Protocol):
     @property
     def provenance(self) -> ObservationProvenance: ...
 
-    def memory(self, *, root_pid: int | None = None) -> MemoryObservation: ...
+    def memory(
+        self,
+        *,
+        root_pid: int | None = None,
+        include_process_tree: bool = True,
+    ) -> MemoryObservation: ...
 
     def disk(self, path: str | os.PathLike[str] = "/") -> DiskObservation: ...
 
@@ -588,7 +593,12 @@ class HostResourceObserver:
     def open_files(self, *, pid: int | None = None) -> tuple[str, ...]:
         return self.open_file_table(pid=pid).paths
 
-    def memory(self, *, root_pid: int | None = None) -> MemoryObservation:
+    def memory(
+        self,
+        *,
+        root_pid: int | None = None,
+        include_process_tree: bool = True,
+    ) -> MemoryObservation:
         provenance = self.provenance
         try:
             vm = psutil.virtual_memory()
@@ -615,20 +625,21 @@ class HostResourceObserver:
                 error=f"{type(exc).__name__}:{exc}",
             )
 
-        root = os.getpid() if root_pid is None else int(root_pid)
         process_rss = 0
         tree_rss = 0
-        try:
-            process = psutil.Process(root)
-            process_rss = int(getattr(process.memory_info(), "rss", 0) or 0)
-            tree_rss = process_rss
-            for child in process.children(recursive=True):
-                try:
-                    tree_rss += int(getattr(child.memory_info(), "rss", 0) or 0)
-                except (psutil.Error, OSError, RuntimeError, ValueError):
-                    continue
-        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
-            pass
+        if include_process_tree:
+            root = os.getpid() if root_pid is None else int(root_pid)
+            try:
+                process = psutil.Process(root)
+                process_rss = int(getattr(process.memory_info(), "rss", 0) or 0)
+                tree_rss = process_rss
+                for child in process.children(recursive=True):
+                    try:
+                        tree_rss += int(getattr(child.memory_info(), "rss", 0) or 0)
+                    except (psutil.Error, OSError, RuntimeError, ValueError):
+                        continue
+            except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
+                pass
         swap_total = 0
         swap_used = 0
         swap_free = 0
@@ -1166,8 +1177,13 @@ class SimulatedResourceObserver:
         with self._lock:
             self._open_files = tuple(str(path) for path in paths)
 
-    def memory(self, *, root_pid: int | None = None) -> MemoryObservation:
-        del root_pid
+    def memory(
+        self,
+        *,
+        root_pid: int | None = None,
+        include_process_tree: bool = True,
+    ) -> MemoryObservation:
+        del root_pid, include_process_tree
         with self._lock:
             return replace(self._memory, provenance=self.provenance)
 

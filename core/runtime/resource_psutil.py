@@ -76,7 +76,11 @@ def _host_counter(api: str, fields: tuple[str, ...]) -> Any:
 
 
 def virtual_memory() -> Any:
-    memory = get_resource_observer().memory()
+    # The psutil compatibility API promises host memory, not recursive process
+    # accounting. The latter walks every process parent on macOS and was being
+    # paid by hot-path callers every few seconds, including on the event loop.
+    # Explicit process-tree consumers still use ResourceObserver.memory().
+    memory = get_resource_observer().memory(include_process_tree=False)
     if memory.available:
         return SimpleNamespace(
             total=memory.total_bytes,

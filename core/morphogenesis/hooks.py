@@ -22,14 +22,12 @@ Influence map:
   - EpisodicMemory     → organ stabilisation events trigger memory consolidation
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
-
-
-import asyncio
+import inspect
 import logging
-import time
-from typing import Any, Dict, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Morphogenesis.Hooks")
 
@@ -80,8 +78,6 @@ def _morphogenesis_health_check():
         running = status.get("running", False)
         tick = status.get("tick", 0)
         last_error = status.get("last_tick_error", "")
-        queued = status.get("queued_signals", 0)
-
         # Check cell ecology health
         registry_status = status.get("registry", {})
         cell_count = registry_status.get("cells", 0)
@@ -93,6 +89,7 @@ def _morphogenesis_health_check():
         metabolism = status.get("metabolism", {})
         global_energy = metabolism.get("global_energy", 1.0)
         high_pressure = metabolism.get("high_pressure", False)
+        immunity_bridge = status.get("immunity_bridge", {}) or {}
 
         # Determine health
         issues = []
@@ -120,6 +117,17 @@ def _morphogenesis_health_check():
         if high_pressure:
             issues.append("high resource pressure")
 
+        if immunity_bridge.get("enabled") and not immunity_bridge.get("worker_running"):
+            issues.append("adaptive-immunity bridge worker stopped")
+            severity = "warning"
+
+        if immunity_bridge.get("stalled"):
+            issues.append(
+                "adaptive-immunity bridge stalled "
+                f"({float(immunity_bridge.get('inflight_age_s', 0.0)):.1f}s)"
+            )
+            severity = "warning"
+
         healthy = severity != "warning" and severity != "error"
 
         if issues:
@@ -133,14 +141,14 @@ def _morphogenesis_health_check():
             message=message,
             severity=severity,
         )
-    except (ImportError, AttributeError, RuntimeError) as exc:
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
         record_degradation('hooks', exc)
         from core.resilience.stability_guardian import HealthCheckResult
         return HealthCheckResult(
             name="morphogenesis",
-            healthy=True,
-            message=f"Morphogenesis check skipped: {exc}",
-            severity="info",
+            healthy=False,
+            message=f"Morphogenesis health probe failed: {type(exc).__name__}: {exc}",
+            severity="warning",
         )
 
 
@@ -153,21 +161,37 @@ def register_self_healing_watch() -> bool:
     if the runtime loop stalls, it gets auto-restarted.
     """
     try:
+        from core.container import ServiceContainer
         from core.runtime.self_healing import get_healer
 
         async def _restart_morphogenesis():
-            from core.container import ServiceContainer
             rt = ServiceContainer.get("morphogenetic_runtime", default=None)
-            if rt is not None:
-                logger.warning("🧬 SelfHealing restarting morphogenesis runtime...")
+            if rt is None:
+                raise RuntimeError("morphogenesis runtime is not registered")
+            logger.warning("🧬 SelfHealing restarting morphogenesis runtime...")
+            restart = getattr(rt, "restart_async", None)
+            if callable(restart):
+                result = restart()
+                if inspect.isawaitable(result):
+                    await result
+            else:
                 await rt.stop()
                 await rt.start()
-                logger.info("🧬 Morphogenesis runtime restarted by SelfHealing.")
+            status = rt.status()
+            if bool(getattr(rt.config, "enabled", True)) and not status.get("running", False):
+                raise RuntimeError("morphogenesis restart completed without a live runtime task")
+            logger.info("🧬 Morphogenesis runtime restarted by SelfHealing.")
+
+        runtime = ServiceContainer.get("morphogenetic_runtime", default=None)
+        tick_interval_s = float(
+            getattr(getattr(runtime, "config", None), "tick_interval_s", 1.0) or 1.0
+        )
+        expected_interval_s = min(60.0, max(5.0, tick_interval_s * 4.0))
 
         healer = get_healer()
         healer.watch(
             "morphogenesis_runtime",
-            expected_interval_s=60.0,  # Runtime ticks every 2-5s; allow wide margin
+            expected_interval_s=expected_interval_s,
             restart_async=_restart_morphogenesis,
             container_key="morphogenetic_runtime",
         )
@@ -192,7 +216,7 @@ def heartbeat_self_healing() -> None:
 # 3. MetabolicCoordinator ← field pressure modulates energy refill
 # ---------------------------------------------------------------------------
 
-def modulate_metabolic_energy() -> Optional[float]:
+def modulate_metabolic_energy() -> float | None:
     """Read morphogenesis field pressure and modulate the MetabolicCoordinator's
     energy refill rate. Returns the applied modifier or None.
 
@@ -240,7 +264,7 @@ def modulate_metabolic_energy() -> Optional[float]:
 # 4. InferenceGate ← metabolism pressure influences tier selection
 # ---------------------------------------------------------------------------
 
-def get_morphogenesis_routing_advice() -> Dict[str, Any]:
+def get_morphogenesis_routing_advice() -> dict[str, Any]:
     """Return routing advice based on morphogenetic state.
 
     InferenceGate can call this to decide whether to attempt the heavy
@@ -365,7 +389,7 @@ def emit_task_signal(
 # 6. EpisodicMemory ← organ stabilisation triggers consolidation
 # ---------------------------------------------------------------------------
 
-async def record_organ_formation_episode(organ_data: Dict[str, Any]) -> None:
+async def record_organ_formation_episode(organ_data: dict[str, Any]) -> None:
     """When a new organ is discovered, record it as a significant episode
     in episodic memory. This ensures long-term behavioural development:
     the system remembers which cell coalitions proved useful.
@@ -479,13 +503,13 @@ def get_cell_capability_boost(tool_name: str) -> float:
 # 9. Master wiring — called once during boot
 # ---------------------------------------------------------------------------
 
-async def wire_all_hooks() -> Dict[str, bool]:
+async def wire_all_hooks() -> dict[str, bool]:
     """Wire all morphogenesis hooks into the existing Aura subsystems.
 
     Called by integration.start_morphogenesis_runtime() after the runtime
     is started. Returns a dict of hook_name → success.
     """
-    results: Dict[str, bool] = {}
+    results: dict[str, bool] = {}
 
     results["stability_guardian"] = register_stability_guardian_check()
     results["self_healing"] = register_self_healing_watch()

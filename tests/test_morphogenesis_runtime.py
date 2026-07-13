@@ -353,11 +353,14 @@ async def test_immunity_bridge_routes_high_danger_signals(monkeypatch):
     )
 
     await rt._bridge_signals_to_immunity([danger_signal])
+    await rt.wait_for_immunity_idle(timeout_s=1.0)
 
     assert len(immune.events) == 1
     event = immune.events[0]
     assert event["type"] == SignalKind.ERROR.value
     assert event["danger"] >= 0.85
+    assert rt.status()["immunity_bridge"]["processed"] == 1
+    await rt.stop()
 
 
 @pytest.mark.asyncio
@@ -387,6 +390,142 @@ async def test_immunity_bridge_ignores_low_intensity(monkeypatch):
     await rt._bridge_signals_to_immunity([low_signal])
 
     assert immune.events == []
+    await rt.stop()
+
+
+@pytest.mark.asyncio
+async def test_immunity_bridge_is_async_deduplicated_and_bounded(monkeypatch):
+    """Slow immunity work must not block ticks or multiply requeued signals."""
+    import core.adaptation.adaptive_immunity as adaptive_immunity_module
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowImmuneSystem:
+        def __init__(self):
+            self.events = []
+
+        async def observe_event(self, event):
+            self.events.append(event)
+            started.set()
+            await release.wait()
+
+    immune = SlowImmuneSystem()
+    monkeypatch.setattr(adaptive_immunity_module, "get_adaptive_immune_system", lambda: immune)
+    rt = MorphogeneticRuntime(
+        config=MorphogenesisConfig(
+            adaptive_immunity_bridge=True,
+            immunity_bridge_queue_capacity=2,
+        )
+    )
+    signal = MorphogenSignal(
+        kind=SignalKind.EXCEPTION,
+        source="test",
+        subsystem="resilience",
+        intensity=0.9,
+        payload={"exception_type": "TimeoutError"},
+    )
+
+    await asyncio.wait_for(rt._bridge_signals_to_immunity([signal]), timeout=0.1)
+    await asyncio.wait_for(started.wait(), timeout=0.5)
+    await asyncio.wait_for(rt._bridge_signals_to_immunity([signal]), timeout=0.1)
+
+    status = rt.status()["immunity_bridge"]
+    assert status["inflight_signal_id"] == signal.signal_id
+    assert status["deduplicated"] == 1
+    assert len(immune.events) == 1
+
+    release.set()
+    await rt.wait_for_immunity_idle(timeout_s=1.0)
+    await rt.stop()
+
+
+@pytest.mark.asyncio
+async def test_immunity_bridge_queue_pressure_is_visible_and_nonfatal(monkeypatch):
+    import core.adaptation.adaptive_immunity as adaptive_immunity_module
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowImmuneSystem:
+        async def observe_event(self, _event):
+            started.set()
+            await release.wait()
+
+    monkeypatch.setattr(
+        adaptive_immunity_module,
+        "get_adaptive_immune_system",
+        lambda: SlowImmuneSystem(),
+    )
+    rt = MorphogeneticRuntime(
+        config=MorphogenesisConfig(
+            adaptive_immunity_bridge=True,
+            immunity_bridge_queue_capacity=1,
+            immunity_bridge_max_enqueue_per_tick=8,
+        )
+    )
+
+    def signal(index: int) -> MorphogenSignal:
+        return MorphogenSignal(
+            kind=SignalKind.ERROR,
+            source=f"source-{index}",
+            subsystem="resilience",
+            intensity=0.9 - index * 0.01,
+            payload={"error": f"failure-{index}"},
+        )
+
+    await rt._bridge_signals_to_immunity([signal(0)])
+    await asyncio.wait_for(started.wait(), timeout=0.5)
+    await rt._bridge_signals_to_immunity([signal(1), signal(2)])
+
+    status = rt.status()["immunity_bridge"]
+    assert status["queue_depth"] == 1
+    assert status["dropped"] == 1
+    assert status["worker_running"] is True
+
+    release.set()
+    await rt.wait_for_immunity_idle(timeout_s=1.0)
+    await rt.stop()
+
+
+@pytest.mark.asyncio
+async def test_immunity_bridge_contains_timeout_and_processes_next_signal(monkeypatch):
+    import core.adaptation.adaptive_immunity as adaptive_immunity_module
+    import core.morphogenesis.runtime as runtime_module
+
+    class FlakyImmuneSystem:
+        def __init__(self):
+            self.calls = 0
+
+        async def observe_event(self, _event):
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("slow numerical projection")
+
+    immune = FlakyImmuneSystem()
+    monkeypatch.setattr(adaptive_immunity_module, "get_adaptive_immune_system", lambda: immune)
+    monkeypatch.setattr(runtime_module, "record_degradation", lambda *_args, **_kwargs: None)
+    rt = MorphogeneticRuntime(config=MorphogenesisConfig(adaptive_immunity_bridge=True))
+    signals = [
+        MorphogenSignal(
+            kind=SignalKind.ERROR,
+            source=f"source-{index}",
+            subsystem="resilience",
+            intensity=0.9,
+            payload={"error": f"failure-{index}"},
+        )
+        for index in range(2)
+    ]
+
+    await rt._bridge_signals_to_immunity(signals)
+    await rt.wait_for_immunity_idle(timeout_s=1.0)
+
+    status = rt.status()["immunity_bridge"]
+    assert immune.calls == 2
+    assert status["failures"] == 1
+    assert status["processed"] == 1
+    assert status["worker_running"] is True
+    await rt.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +543,49 @@ def test_initiative_suppression_default():
     """When morphogenesis is offline, initiative should NOT be suppressed."""
     from core.morphogenesis.hooks import should_suppress_autonomous_initiative
     assert not should_suppress_autonomous_initiative()
+
+
+@pytest.mark.asyncio
+async def test_self_healing_hook_uses_atomic_runtime_restart(monkeypatch):
+    import core.runtime.self_healing as self_healing_module
+    from core.container import ServiceContainer
+    from core.morphogenesis.hooks import register_self_healing_watch
+
+    class Runtime:
+        def __init__(self):
+            self.config = types.SimpleNamespace(enabled=True, tick_interval_s=0.5)
+            self.restart_count = 0
+
+        async def restart_async(self):
+            self.restart_count += 1
+
+        async def stop(self):
+            raise AssertionError("atomic restart_async should own stop")
+
+        async def start(self):
+            raise AssertionError("atomic restart_async should own start")
+
+        def status(self):
+            return {"running": self.restart_count > 0}
+
+    class Healer:
+        def watch(self, name, **kwargs):
+            self.name = name
+            self.kwargs = kwargs
+
+    runtime = Runtime()
+    healer = Healer()
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("morphogenetic_runtime", runtime, required=False)
+    monkeypatch.setattr(self_healing_module, "get_healer", lambda: healer)
+    try:
+        assert register_self_healing_watch() is True
+        assert healer.name == "morphogenesis_runtime"
+        assert healer.kwargs["expected_interval_s"] == 5.0
+        await healer.kwargs["restart_async"]()
+        assert runtime.restart_count == 1
+    finally:
+        ServiceContainer.clear()
 
 
 def test_initiative_suppression_under_danger(monkeypatch):
@@ -603,9 +785,11 @@ async def test_runtime_start_falls_back_when_task_tracker_unavailable(monkeypatc
 
     await rt.start()
     assert rt.status()["running"]
-    assert tracker_lookups == 1
+    assert tracker_lookups == 2
     assert rt._task is not None
     assert not rt._task.done()
+    assert rt._immunity_task is not None
+    assert not rt._immunity_task.done()
     await rt.stop()
 
 
@@ -634,6 +818,55 @@ async def test_runtime_loop_failure_records_signal_and_backoff(monkeypatch):
     assert "tick failed" in status["last_tick_error"]
     assert any(signal.kind == SignalKind.ERROR for signal in rt._signals)
     assert "backed off" in str(recorded[0][2]["action"])
+
+
+@pytest.mark.asyncio
+async def test_runtime_loop_contains_timeout_and_remains_restartable(monkeypatch):
+    import core.morphogenesis.runtime as runtime_module
+
+    recorded = []
+    monkeypatch.setattr(
+        runtime_module,
+        "record_degradation",
+        lambda module, exc, **kwargs: recorded.append((module, exc, kwargs)),
+    )
+    rt = MorphogeneticRuntime(
+        config=MorphogenesisConfig(enabled=True, tick_interval_s=0.01)
+    )
+
+    async def timed_out_tick():
+        rt._stopping.set()
+        raise TimeoutError("immune observer exceeded its local budget")
+
+    rt.tick = timed_out_tick
+    await rt._run_loop()
+
+    assert rt.status()["consecutive_tick_failures"] == 1
+    assert "TimeoutError" in rt.status()["last_tick_error"]
+    assert recorded
+
+
+@pytest.mark.asyncio
+async def test_stop_contains_failure_from_already_finished_owned_task(monkeypatch):
+    import core.morphogenesis.runtime as runtime_module
+
+    recorded = []
+    monkeypatch.setattr(
+        runtime_module,
+        "record_degradation",
+        lambda module, exc, **kwargs: recorded.append((module, exc, kwargs)),
+    )
+    rt = MorphogeneticRuntime(config=MorphogenesisConfig(enabled=False))
+
+    async def fail():
+        raise TimeoutError("prior runtime failure")
+
+    rt._task = asyncio.create_task(fail())
+    await asyncio.sleep(0)
+    await rt.stop()
+
+    assert rt._task is None
+    assert any(isinstance(item[1], TimeoutError) for item in recorded)
 
 
 @pytest.mark.asyncio

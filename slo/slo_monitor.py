@@ -63,7 +63,7 @@ class SLODefinition:
 class SLOSample:
     """A single SLO measurement sample."""
     value: float
-    timestamp: float = field(default_factory=time.time)
+    timestamp: float = field(default_factory=lambda: time.time())
     violated: bool = False
 
 
@@ -75,7 +75,8 @@ class SLOAlert:
     message: str
     burn_rate: float
     budget_remaining_pct: float
-    timestamp: float = field(default_factory=time.time)
+    notification_kind: str = "transition"
+    timestamp: float = field(default_factory=lambda: time.time())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -84,6 +85,7 @@ class SLOAlert:
             "message": self.message[:200],
             "burn_rate": round(self.burn_rate, 2),
             "budget_remaining_pct": round(self.budget_remaining_pct, 1),
+            "notification_kind": self.notification_kind,
             "timestamp": self.timestamp,
         }
 
@@ -206,19 +208,29 @@ class SLOTracker:
 class SLOMonitor:
     """Central SLO monitor managing all SLO trackers.
 
-    Thread-safe. Alerts are rate-limited per SLO (ALERT_COOLDOWN_S) so a
-    persistently violating SLO cannot storm the log or the fault registry —
-    record() sits on hot paths (mind tick, Will decisions), so everything
-    past the cooldown gate must stay off the common case.
+    Thread-safe. Alerts are edge-triggered per SLO with sparse reminders, so a
+    persistent violation cannot storm the log or feed repeated copies into the
+    fault registry. ``record`` sits on hot paths (mind tick, Will decisions),
+    so repeated samples remain on a bounded suppression path.
     """
 
     ALERT_COOLDOWN_S = 60.0
+    ALERT_REMINDER_S = 900.0
+    _BUDGET_STATUS_RANK = {
+        BudgetStatus.UNKNOWN: -1,
+        BudgetStatus.OK: 0,
+        BudgetStatus.SLOW_BURN: 1,
+        BudgetStatus.FAST_BURN: 2,
+        BudgetStatus.EXHAUSTED: 3,
+    }
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._trackers: dict[str, SLOTracker] = {}
         self._alerts: deque[SLOAlert] = deque(maxlen=500)
         self._last_alert_at: dict[str, float] = {}
+        self._alert_episode_status: dict[str, BudgetStatus] = {}
+        self._suppressed_alerts: dict[str, int] = {}
         self._register_default_slos()
 
     def define(self, defn: SLODefinition) -> None:
@@ -233,18 +245,54 @@ class SLOMonitor:
             return True  # Unknown SLO — don't fail
 
         within = tracker.record(value)
-        if not within and self._alert_cooldown_expired(slo_name):
-            self._check_alert(tracker)
+        with self._lock:
+            episode_active = slo_name in self._alert_episode_status
+        if not within or episode_active:
+            self._evaluate_alert_episode(tracker)
         return within
 
-    def _alert_cooldown_expired(self, slo_name: str) -> bool:
+    def _evaluate_alert_episode(self, tracker: SLOTracker) -> None:
+        """Alert on state edges and sparse reminders, never every sample."""
+        slo_name = tracker.definition.name
+        status = tracker.budget_status()
         now = time.time()
+        recovered = False
+        notification_kind = ""
         with self._lock:
-            last = self._last_alert_at.get(slo_name, 0.0)
-            if (now - last) < self.ALERT_COOLDOWN_S:
-                return False
-            self._last_alert_at[slo_name] = now
-            return True
+            previous = self._alert_episode_status.get(slo_name)
+            if status == BudgetStatus.OK:
+                recovered = previous is not None
+                self._alert_episode_status.pop(slo_name, None)
+                self._last_alert_at.pop(slo_name, None)
+                self._suppressed_alerts.pop(slo_name, None)
+            else:
+                self._alert_episode_status[slo_name] = status
+                last_alert_at = self._last_alert_at.get(slo_name, 0.0)
+                first_alert = previous is None
+                worsened = bool(
+                    previous is not None
+                    and self._BUDGET_STATUS_RANK[status]
+                    > self._BUDGET_STATUS_RANK[previous]
+                )
+                reminder_due = bool(
+                    not first_alert
+                    and not worsened
+                    and (now - last_alert_at) >= self.ALERT_REMINDER_S
+                )
+                if first_alert or worsened:
+                    notification_kind = "transition"
+                elif reminder_due:
+                    notification_kind = "reminder"
+                else:
+                    self._suppressed_alerts[slo_name] = (
+                        self._suppressed_alerts.get(slo_name, 0) + 1
+                    )
+                if notification_kind:
+                    self._last_alert_at[slo_name] = now
+        if recovered:
+            logger.info("SLO RECOVERED: %s budget returned to OK", slo_name)
+        if notification_kind:
+            self._emit_alert(tracker, notification_kind=notification_kind)
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -266,14 +314,22 @@ class SLOMonitor:
                 "slo_count": len(self._trackers),
                 "slos": slo_statuses,
                 "recent_alerts": [a.to_dict() for a in list(self._alerts)[-10:]],
+                "alert_episodes": {
+                    name: {
+                        "status": status.value,
+                        "last_alert_at": self._last_alert_at.get(name),
+                        "suppressed": self._suppressed_alerts.get(name, 0),
+                    }
+                    for name, status in self._alert_episode_status.items()
+                },
             }
 
     def get_tracker(self, slo_name: str) -> SLOTracker | None:
         with self._lock:
             return self._trackers.get(slo_name)
 
-    def _check_alert(self, tracker: SLOTracker) -> None:
-        """Check if an SLO violation warrants an alert (cooldown already passed)."""
+    def _emit_alert(self, tracker: SLOTracker, *, notification_kind: str) -> None:
+        """Emit an episode transition or sparse reminder."""
         bs = tracker.budget_status()
         if bs == BudgetStatus.OK:
             return
@@ -293,14 +349,18 @@ class SLOMonitor:
                     f"burn_rate={burn:.1f}x, remaining={remaining:.0f}%",
             burn_rate=burn,
             budget_remaining_pct=remaining,
+            notification_kind=notification_kind,
         )
         with self._lock:
             self._alerts.append(alert)
 
         log_fn = logger.critical if severity == AlertSeverity.CRITICAL else logger.warning
-        log_fn("SLO ALERT: %s", alert.message)
+        log_fn("SLO ALERT [%s]: %s", notification_kind, alert.message)
 
-        # Record in fault taxonomy
+        # A reminder is observability, not a new fault. Re-recording the same
+        # exhausted budget fed failure pressure back into runtime policy.
+        if notification_kind == "reminder":
+            return
         try:
             from core.resilience.fault_taxonomy import get_fault_registry
             get_fault_registry().record_fault(

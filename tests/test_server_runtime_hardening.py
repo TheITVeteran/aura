@@ -1,8 +1,8 @@
 import asyncio
 import errno
 import gc
-import inspect
 import importlib
+import inspect
 import json
 import multiprocessing
 import os
@@ -18,8 +18,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.autonomy.proactive_communication import ProactiveCommunicationManager
 from core.autonomy.sleep_trigger import AutonomousSleepTrigger
-from core.ops.backup import BackupManager
 from core.bus.actor_bus import ActorBus
 from core.bus.local_pipe_bus import LocalPipeBus
 from core.bus.shared_mem_bus import SharedMemoryTransport
@@ -32,15 +32,15 @@ from core.intent.intent_gate import IntentClassifierQueue, RouteKind
 from core.kernel.bridge import AffectBridge
 from core.memory.memory_facade import MemoryFacade
 from core.memory_synthesizer import MemorySynthesizer
-from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.mind_tick import MindTick
 from core.motivation.engine import MotivationEngine
 from core.motivation.intention import DriveType, Intention
-from core.orchestrator.main import RobustOrchestrator
-from core.autonomy.proactive_communication import ProactiveCommunicationManager
+from core.ops.backup import BackupManager
 from core.ops.process_manager import ManagedProcess, ProcessConfig, ProcessManager
+from core.orchestrator.main import RobustOrchestrator
 from core.resilience.integrity_monitor import IntegrityReport, SystemIntegrityMonitor
 from core.resilience.stability_guardian import HealthCheckResult, StabilityGuardian
+from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.state.aura_state import AuraState
 from core.state.state_repository import StateRepository, get_state_shm_size_bytes
 from core.utils.concurrency import RobustLock
@@ -2376,7 +2376,9 @@ async def test_state_repository_proxy_commit_defers_and_replays_after_transport_
             self.fail = True
             self.calls = []
 
-        async def request(self, target, action, payload, timeout=None):
+        async def request(
+            self, target, action, payload, timeout=None  # noqa: ASYNC109
+        ):
             self.calls.append(
                 {
                     "target": target,
@@ -2541,7 +2543,9 @@ async def test_state_repository_repair_runtime_flushes_pending_proxy_commit(monk
         def __init__(self):
             self.calls = []
 
-        async def request(self, target, action, payload, timeout=None):
+        async def request(
+            self, target, action, payload, timeout=None  # noqa: ASYNC109
+        ):
             self.calls.append((target, action, payload["trace_id"], timeout))
             return {"ok": True}
 
@@ -2645,7 +2649,9 @@ async def test_state_repository_proxy_commit_uses_bounded_payload_for_proof_orig
         def has_actor(self, name):
             return name == "state_vault"
 
-        async def request(self, actor, msg_type, payload, timeout=5.0):
+        async def request(
+            self, actor, msg_type, payload, timeout=5.0  # noqa: ASYNC109
+        ):
             captured.update(
                 {
                     "actor": actor,
@@ -5154,7 +5160,7 @@ async def test_cognitive_background_learning_uses_named_tracker(monkeypatch):
             await release.wait()
 
     monkeypatch.setattr(
-        "core.container.ServiceContainer.get",
+        "core.orchestrator.mixins.cognitive_background.get_runtime_service",
         lambda name, default=None: _Belief() if name == "belief_revision_engine" else default,
     )
 
@@ -6378,8 +6384,8 @@ def test_conformance_event_delivery_demands_audit_for_every_event():
 
 
 def test_conformance_shutdown_ordering_rejects_swap():
-    from core.runtime.shutdown_coordinator import SHUTDOWN_PHASES
     from core.runtime.conformance import proof_shutdown_ordering
+    from core.runtime.shutdown_coordinator import SHUTDOWN_PHASES
 
     bad = proof_shutdown_ordering(["state_vault", "memory_commit", "actors"])
     assert bad.ok is False
@@ -7792,6 +7798,7 @@ async def test_boot_probes_round_trip_memory_and_state(tmp_path):
     assert "output_gate_dry_emit" in names
     assert "event_bus_loopback" in names
     assert "actor_supervisor" in names
+    assert "live_mind_snapshot" in names
     assert "event_loop_responsiveness" in names
 
 

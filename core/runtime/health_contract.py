@@ -51,6 +51,7 @@ REQUIRED_HEALTH_PROBE_GROUPS: dict[str, tuple[str, ...]] = {
     "tool_governance": ("unified_will", "authority_gateway", "capability_engine"),
     "workspace": ("inhibition_manager", "global_workspace"),
     "attention": ("attention_schema",),
+    "live_mind": ("live_mind_runtime",),
 }
 
 
@@ -210,6 +211,13 @@ RUNTIME_CONTRACT: list[ServiceRequirement] = [
         "output_gate",
         ServiceTier.CRITICAL,
         "Delivers responses to the user. Without it, Aura thinks but cannot speak.",
+        liveness_check="is_ready",
+    ),
+    ServiceRequirement(
+        "Live Mind Runtime",
+        "live_mind_runtime",
+        ServiceTier.CRITICAL,
+        "Boot-owned causal organs and snapshot contract required for grounded live desktop speech.",
         liveness_check="is_ready",
     ),
     ServiceRequirement(

@@ -214,6 +214,28 @@ def test_legacy_resource_facade_never_reaches_sabotaged_host_apis(
     assert process.num_fds() == 4
 
 
+def test_virtual_memory_fast_path_skips_recursive_process_accounting(
+    monkeypatch,
+    resource_observer,
+):
+    calls = []
+
+    class RecordingObserver:
+        def memory(self, **kwargs):
+            calls.append(kwargs)
+            return resource_observer.memory(**kwargs)
+
+    monkeypatch.setattr(
+        resource_psutil,
+        "get_resource_observer",
+        lambda: RecordingObserver(),
+    )
+
+    resource_psutil.virtual_memory()
+
+    assert calls == [{"include_process_tree": False}]
+
+
 def test_legacy_process_facade_scopes_reads_and_native_actions(
     monkeypatch,
     resource_observer,

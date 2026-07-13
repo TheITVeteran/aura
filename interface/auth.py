@@ -377,12 +377,34 @@ def request_access_profile(request: Request | None) -> dict[str, Any]:
     supplied = _extract_request_token(request)
     expected = str(config.api_token or "")
     host = _request_host(request)
+    paired_device = device_for_request(request)
     synthetic_internal_request = (
         not isinstance(request, Request)
         and host in {"test", "testclient", "unknown"}
-        and device_for_request(request) is None
+        and paired_device is None
     )
-    owner_authenticated = _is_trusted_local_host(_request_host(request)) or bool(
+    # An explicit paired credential defines the principal even when a reverse
+    # proxy or local transport makes the peer address look like loopback. UI
+    # capability advertising must agree with the later authorization decision.
+    if paired_device is not None:
+        return {
+            "surface": "paired_device",
+            "conversation_only": True,
+            "capabilities": {
+                "chat": True,
+                "sessions": True,
+                "websocket": True,
+                "world_read": True,
+                "desktop_control": False,
+                "performance_telemetry": False,
+                "voice_stream": False,
+                "interaction_signals": False,
+                "tools_catalog": False,
+                "learning_status": False,
+                "diagnostics": False,
+            },
+        }
+    owner_authenticated = _is_trusted_local_host(host) or bool(
         supplied
         and expected
         and not supplied.startswith("adt1.")
@@ -404,24 +426,6 @@ def request_access_profile(request: Request | None) -> dict[str, Any]:
                 "tools_catalog": True,
                 "learning_status": True,
                 "diagnostics": True,
-            },
-        }
-    if device_for_request(request) is not None:
-        return {
-            "surface": "paired_device",
-            "conversation_only": True,
-            "capabilities": {
-                "chat": True,
-                "sessions": True,
-                "websocket": True,
-                "world_read": True,
-                "desktop_control": False,
-                "performance_telemetry": False,
-                "voice_stream": False,
-                "interaction_signals": False,
-                "tools_catalog": False,
-                "learning_status": False,
-                "diagnostics": False,
             },
         }
     return {

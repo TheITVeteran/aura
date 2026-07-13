@@ -323,6 +323,19 @@ async def test_access_profile_advertises_paired_capability_boundary(paired_token
     assert profile["capabilities"]["desktop_control"] is False
 
 
+async def test_explicit_paired_identity_precedes_loopback_owner_in_access_profile(
+    paired_token,
+):
+    request = _remote_request("/api/ui/bootstrap", paired_token)
+    request.client.host = "127.0.0.1"
+
+    profile = auth.request_access_profile(request)
+
+    assert profile["surface"] == "paired_device"
+    assert profile["capabilities"]["performance_telemetry"] is False
+    assert profile["capabilities"]["diagnostics"] is False
+
+
 async def test_repeated_device_scope_denials_are_rate_limited(
     paired_token, caplog
 ):

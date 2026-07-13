@@ -210,24 +210,31 @@ async def _reflex_screen_capture(payload: dict[str, Any]) -> dict[str, Any]:
         return {"success": False, "summary": f"capture_failed: {exc}"}
 
 
+def _sample_reflex_health_telemetry() -> tuple[float, float, float]:
+    """Collect host telemetry away from the owner event loop."""
+    from core.runtime import resource_psutil as psutil
+
+    cpu = float(psutil.cpu_percent(interval=0) or 0.0)
+    memory_percent = float(psutil.virtual_memory().percent or 0.0)
+    thermal_pressure = 0.0
+    try:
+        temps = psutil.sensors_temperatures()
+        if temps:
+            first_key = next(iter(temps))
+            temp_c = temps[first_key][0].current
+            thermal_pressure = max(0.0, min(1.0, (temp_c - 60) / 40))
+    except (ImportError, OSError, AttributeError, IndexError, StopIteration, TypeError, ValueError):
+        pass
+    return cpu, memory_percent, thermal_pressure
+
+
 async def _reflex_health_check(payload: dict[str, Any]) -> dict[str, Any]:
     """Quick health telemetry sample and throttle if needed."""
+    del payload
     try:
-        from core.runtime import resource_psutil as psutil
-
-        cpu = psutil.cpu_percent(interval=0)
-        mem = psutil.virtual_memory()
-        thermal_pressure = 0.0
-
-        # macOS thermal state
-        try:
-            temps = psutil.sensors_temperatures()
-            if temps:
-                first_key = next(iter(temps))
-                temp_c = temps[first_key][0].current
-                thermal_pressure = max(0.0, min(1.0, (temp_c - 60) / 40))
-        except (ImportError, OSError, AttributeError):
-            pass  # no-op: intentional
+        cpu, memory_percent, thermal_pressure = await asyncio.to_thread(
+            _sample_reflex_health_telemetry
+        )
 
         throttle_action = None
         if thermal_pressure > 0.8 or cpu > 95:
@@ -254,7 +261,7 @@ async def _reflex_health_check(payload: dict[str, Any]) -> dict[str, Any]:
                     "success": False,
                     "summary": "thermal_throttle_publish_failed",
                     "cpu": cpu,
-                    "mem_pct": mem.percent,
+                    "mem_pct": memory_percent,
                     "thermal": round(thermal_pressure, 3),
                     "error": str(exc),
                 }
@@ -263,12 +270,12 @@ async def _reflex_health_check(payload: dict[str, Any]) -> dict[str, Any]:
             "success": True,
             "summary": throttle_action or "health_ok",
             "cpu": cpu,
-            "mem_pct": mem.percent,
+            "mem_pct": memory_percent,
             "thermal": round(thermal_pressure, 3),
         }
     except ImportError:
         return {"success": False, "summary": "psutil_not_available"}
-    except (AttributeError, RuntimeError, OSError) as exc:
+    except (AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
         _record_motor_degradation(
             exc,
             action="Returned a failed health-check receipt and preserved reflex loop cadence",

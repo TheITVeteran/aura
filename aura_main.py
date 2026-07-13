@@ -904,6 +904,24 @@ async def _boot_runtime_orchestrator(
     orchestrator = create_orchestrator()
     await bootstrap_aura(orchestrator)
 
+    # The desktop speech contract consumes already-live organs through a
+    # non-instantiating registry bridge. Materialize and behaviorally probe its
+    # required organs here, under the root lifecycle owner, before background
+    # work and registry lock can race the first user turn.
+    from core.runtime.live_mind_runtime import activate_live_mind_runtime
+
+    live_mind_report = await asyncio.wait_for(
+        asyncio.to_thread(activate_live_mind_runtime),
+        timeout=15.0,
+    )
+    if not bool(live_mind_report.get("ready")):
+        raise RuntimeError(
+            "Live-mind runtime failed boot activation: "
+            f"missing={live_mind_report.get('missing_services', [])} "
+            f"errors={live_mind_report.get('activation_errors', {})} "
+            f"quality={live_mind_report.get('snapshot_quality', {})}"
+        )
+
     # ── Morphogenetic self-organization runtime ───────────────────────
     # Starts bounded cell ecology, metabolism, and organ stabilizer.
     # Must boot after ServiceContainer is populated (bootstrap_aura)
@@ -3665,7 +3683,7 @@ def main():
 
     # Desktop/headless sessions boot the full canonical runtime. Resource
     # protection is independent from the reduced recovery-only safe-boot mode.
-    if (args.desktop or args.headless) and "AURA_DESKTOP_RESOURCE_GUARD" not in os.environ:
+    if args.desktop or args.headless:
         _disable_legacy_launchagent(
             quarantine_obsolete=True,
             reason="modern_desktop_launch",
@@ -3681,8 +3699,8 @@ def main():
         # harnesses. Harden governance at the launch boundary so AURA_MODE's
         # production/live claim cannot drift away from Will and contract
         # enforcement.
-        os.environ.setdefault("AURA_GOVERNANCE_MODE", "production")
-        os.environ.setdefault("AURA_CONTRACTS_ENFORCE", "1")
+        os.environ["AURA_GOVERNANCE_MODE"] = "production"
+        os.environ["AURA_CONTRACTS_ENFORCE"] = "1"
         # A normal desktop session is the complete Aura runtime.  Background
         # cognition stays admitted through the same RAM/foreground gates as
         # every other local generation; only an explicit recovery profile may

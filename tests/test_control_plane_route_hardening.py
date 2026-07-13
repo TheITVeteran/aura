@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from interface.routes import interaction_signals, performance, privacy, settings
+from interface.routes import interaction_signals, performance, privacy, settings, system
 
 
 @pytest.mark.asyncio
@@ -91,3 +91,43 @@ async def test_privacy_source_download_reports_bundle_failure(monkeypatch):
 
     assert called["write_bundle"] is True
     assert exc_info.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_control_plane_diagnostics_exposes_reconciler_freshness(monkeypatch):
+    plane = SimpleNamespace(
+        get_status=lambda: {
+            "alive": True,
+            "ready": False,
+            "services": {"event_loop_monitor": {"observed_state": "ready"}},
+        }
+    )
+    monkeypatch.setattr(system, "_require_internal", lambda _request: None)
+    monkeypatch.setattr(
+        system.ServiceContainer,
+        "peek",
+        staticmethod(
+            lambda name, default=None: plane
+            if name == "runtime_control_plane"
+            else default
+        ),
+    )
+    monkeypatch.setattr(
+        system.scheduler,
+        "get_health",
+        lambda: {
+            "task_details": {
+                "runtime_control_plane_reconcile": {
+                    "status": "ok",
+                    "freshness": "fresh",
+                }
+            }
+        },
+    )
+
+    response = await system.api_system_control_plane(SimpleNamespace())
+    payload = json.loads(response.body)
+
+    assert payload["available"] is True
+    assert payload["control_plane"]["ready"] is False
+    assert payload["reconcile_task"]["freshness"] == "fresh"

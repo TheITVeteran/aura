@@ -142,7 +142,7 @@ class FaultRecord:
     fault_id: str
     subsystem: str
     severity: FaultSeverity
-    timestamp: float = field(default_factory=time.time)
+    timestamp: float = field(default_factory=lambda: time.time())
     details: str = ""
     error_type: str = ""
     error_message: str = ""

@@ -247,6 +247,29 @@ async def probe_actor_supervisor() -> ProbeResult:
     return ProbeResult(name="actor_supervisor", ok=True)
 
 
+async def probe_live_mind_snapshot(*, runtime: Any = None) -> ProbeResult:
+    if runtime is None:
+        from core.runtime.live_mind_runtime import get_live_mind_runtime
+
+        runtime = get_live_mind_runtime()
+    status = await asyncio.to_thread(runtime.probe, lane={"origin": "boot_probe"})
+    if not bool(status.get("ready")):
+        return ProbeResult(
+            name="live_mind_snapshot",
+            ok=False,
+            detail=(
+                f"missing={status.get('missing_services', [])} "
+                f"errors={status.get('activation_errors', {})} "
+                f"quality={status.get('snapshot_quality', {})}"
+            ),
+        )
+    return ProbeResult(
+        name="live_mind_snapshot",
+        ok=True,
+        detail=f"organs={len(status.get('required_services', []))}",
+    )
+
+
 async def probe_event_loop_responsiveness(
     *,
     threshold_ms: float | None = None,
@@ -307,6 +330,7 @@ async def run_boot_probes(
         "output_gate_dry_emit": probe_output_gate_dry_emit,
         "event_bus_loopback": probe_event_bus_loopback,
         "actor_supervisor": probe_actor_supervisor,
+        "live_mind_snapshot": probe_live_mind_snapshot,
         "event_loop_responsiveness": probe_event_loop_responsiveness,
     }
     if extra_probes:

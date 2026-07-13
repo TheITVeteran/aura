@@ -553,8 +553,44 @@ def test_live_boot_proof_uses_readiness_heartbeat_contract():
 def test_desktop_boot_sets_hardened_governance_defaults():
     source = (PROJECT_ROOT / "aura_main.py").read_text()
 
-    assert 'os.environ.setdefault("AURA_GOVERNANCE_MODE", "production")' in source
-    assert 'os.environ.setdefault("AURA_CONTRACTS_ENFORCE", "1")' in source
+    assert "if args.desktop or args.headless:" in source
+    assert (
+        'if (args.desktop or args.headless) and "AURA_DESKTOP_RESOURCE_GUARD" not in os.environ:'
+        not in source
+    )
+    assert 'os.environ["AURA_GOVERNANCE_MODE"] = "production"' in source
+    assert 'os.environ["AURA_CONTRACTS_ENFORCE"] = "1"' in source
+
+
+def test_desktop_boot_overrides_inherited_weak_governance_when_guard_is_preconfigured(
+    monkeypatch,
+):
+    import aura_main
+
+    launchagent_calls = []
+    monkeypatch.setattr(sys, "argv", ["aura_main.py", "--desktop", "--stop"])
+    monkeypatch.setenv("AURA_DESKTOP_RESOURCE_GUARD", "1")
+    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "research")
+    monkeypatch.setenv("AURA_CONTRACTS_ENFORCE", "0")
+    monkeypatch.setattr(aura_main, "_maybe_relaunch_with_preferred_python", lambda: None)
+    monkeypatch.setattr(aura_main, "_ensure_reaper_manifest_env", lambda: None)
+    monkeypatch.setattr(
+        aura_main,
+        "_disable_legacy_launchagent",
+        lambda **kwargs: launchagent_calls.append(kwargs),
+    )
+    monkeypatch.setattr(aura_main, "stop_aura", lambda: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        aura_main.main()
+
+    assert exc_info.value.code == 0
+    assert aura_main.os.environ["AURA_GOVERNANCE_MODE"] == "production"
+    assert aura_main.os.environ["AURA_CONTRACTS_ENFORCE"] == "1"
+    assert aura_main.os.environ["AURA_LOCAL_BACKEND"] == "mlx"
+    assert launchagent_calls == [
+        {"quarantine_obsolete": True, "reason": "modern_desktop_launch"}
+    ]
 
 
 def test_live_boot_proof_requires_cognitive_organ_participation(monkeypatch, tmp_path):

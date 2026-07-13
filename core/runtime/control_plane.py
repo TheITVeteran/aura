@@ -33,6 +33,7 @@ logger = logging.getLogger("Aura.RuntimeControlPlane")
 
 CONTROL_PLANE_RECONCILE_TASK_NAME = "runtime_control_plane_reconcile"
 CONTROL_PLANE_RECONCILE_INTERVAL_S = 5.0
+CONTROL_PLANE_RECONCILE_TIMEOUT_S = 30.0
 
 _ADMISSION_RECEIPT_HEARTBEAT_FLAG = declare(
     "AURA_ADMISSION_RECEIPT_HEARTBEAT_S",
@@ -1716,6 +1717,7 @@ async def register_runtime_control_plane_reconciler(scheduler: Any) -> None:
             name=CONTROL_PLANE_RECONCILE_TASK_NAME,
             coro=reconcile_registered_runtime_control_plane,
             tick_interval=CONTROL_PLANE_RECONCILE_INTERVAL_S,
+            timeout_s=CONTROL_PLANE_RECONCILE_TIMEOUT_S,
             critical=True,
             priority=100,
             metadata={
@@ -1740,6 +1742,7 @@ __all__ = [
     "WorkClass",
     "CONTROL_PLANE_RECONCILE_INTERVAL_S",
     "CONTROL_PLANE_RECONCILE_TASK_NAME",
+    "CONTROL_PLANE_RECONCILE_TIMEOUT_S",
     "get_runtime_control_plane",
     "reconcile_registered_runtime_control_plane",
     "register_runtime_control_plane_reconciler",

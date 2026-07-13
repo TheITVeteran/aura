@@ -36,6 +36,8 @@ _METABOLIC_BOUNDARY_ERRORS = (
 _BOOT_WARMUP_CYCLES = 5
 _BCI_EVENT_POLL_SECONDS = 1.0
 _AUTONOMOUS_REFLECTION_TIMEOUT_SECONDS = 120.0
+_AUTONOMOUS_REFLECTION_INTERVAL_SECONDS = 1800.0
+_AUTONOMOUS_REFLECTION_FAILURE_BACKOFF_SECONDS = 300.0
 _RECOVERY_RESTART_PAUSE_SECONDS = 2.0
 _MAX_RECOVERY_DROPPED_MESSAGES = working_history_retention_policy(
     "AURA_METABOLIC_RECOVERY_DROPPED_MAX"
@@ -83,6 +85,21 @@ class MetabolicCoordinator:
         self._bg_llm_semaphore = asyncio.Semaphore(1) # Guard background LLM slots
         self._last_gc_time = 0
         self._is_processing = False  # Re-entry Guard
+        self._autonomous_reflection_interval_s = _coerce_float(
+            os.getenv("AURA_AUTONOMOUS_REFLECTION_INTERVAL_S"),
+            _AUTONOMOUS_REFLECTION_INTERVAL_SECONDS,
+            minimum=60.0,
+        )
+        self._autonomous_reflection_failure_backoff_s = _coerce_float(
+            os.getenv("AURA_AUTONOMOUS_REFLECTION_FAILURE_BACKOFF_S"),
+            _AUTONOMOUS_REFLECTION_FAILURE_BACKOFF_SECONDS,
+            minimum=30.0,
+        )
+        self._autonomous_reflection_last_attempt_at = 0.0
+        self._autonomous_reflection_last_completed_at = 0.0
+        self._autonomous_reflection_next_eligible_at = 0.0
+        self._autonomous_reflection_failure_count = 0
+        self._autonomous_reflection_last_outcome = "never_run"
 
         # Proactive Cleanup
         self._cleanup_stale_locks()
@@ -181,6 +198,151 @@ class MetabolicCoordinator:
         if message:
             return f"Self-reflection on current runtime status: {str(message)[:120]} ({details})"
         return f"Self-reflection on current runtime status: {details[:200]}"
+
+    @staticmethod
+    def _autonomous_reflection_result_ok(result) -> bool:
+        """Require a successful tool envelope with a non-empty swarm result."""
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            return False
+        output = result.get("output")
+        if output is None:
+            return False
+        if isinstance(output, (dict, list, tuple, set)):
+            return bool(output)
+        text = str(output).strip()
+        if not text:
+            return False
+        lowered = text.casefold()
+        return not any(
+            marker in lowered
+            for marker in (
+                "swarm capacity reached",
+                "swarm failed to produce",
+                "debate cancelled",
+                "execution failure",
+            )
+        )
+
+    def autonomous_reflection_status(self) -> dict[str, object]:
+        now = time.time()
+        return {
+            "last_attempt_at": self._autonomous_reflection_last_attempt_at or None,
+            "last_completed_at": self._autonomous_reflection_last_completed_at or None,
+            "next_eligible_at": self._autonomous_reflection_next_eligible_at or None,
+            "next_eligible_in_s": round(
+                max(0.0, self._autonomous_reflection_next_eligible_at - now),
+                3,
+            ),
+            "interval_s": self._autonomous_reflection_interval_s,
+            "failure_count": self._autonomous_reflection_failure_count,
+            "last_outcome": self._autonomous_reflection_last_outcome,
+        }
+
+    async def _run_autonomous_reflection(self) -> None:
+        orch = self.orch
+        if orch is None:
+            self._record_autonomous_reflection_failure("orchestrator_unavailable")
+            return
+        try:
+            result = await asyncio.wait_for(
+                orch.execute_tool(
+                    "swarm_debate",
+                    {
+                        "topic": self._reflection_topic_for_status(
+                            getattr(orch, "status", None)
+                        )
+                    },
+                    is_background=True,
+                ),
+                timeout=_AUTONOMOUS_REFLECTION_TIMEOUT_SECONDS,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError:
+            self._record_autonomous_reflection_failure("timeout")
+            return
+        except _METABOLIC_BOUNDARY_ERRORS as exc:
+            _record_metabolic_degradation(exc, action="autonomous reflection failed")
+            self._record_autonomous_reflection_failure(type(exc).__name__)
+            return
+
+        completed_at = time.time()
+        self._autonomous_reflection_last_completed_at = completed_at
+        if not self._autonomous_reflection_result_ok(result):
+            reason = "non_meaningful_result"
+            if isinstance(result, dict):
+                reason = str(result.get("error") or result.get("output") or reason)[:160]
+            self._record_autonomous_reflection_failure(reason, now=completed_at)
+            return
+        self._autonomous_reflection_failure_count = 0
+        self._autonomous_reflection_last_outcome = "completed"
+        self._autonomous_reflection_next_eligible_at = (
+            completed_at + self._autonomous_reflection_interval_s
+        )
+
+    def _record_autonomous_reflection_failure(
+        self,
+        reason: str,
+        *,
+        now: float | None = None,
+    ) -> None:
+        completed_at = float(now if now is not None else time.time())
+        self._autonomous_reflection_last_completed_at = completed_at
+        self._autonomous_reflection_failure_count += 1
+        backoff = min(
+            self._autonomous_reflection_interval_s,
+            self._autonomous_reflection_failure_backoff_s
+            * (2 ** min(8, max(0, self._autonomous_reflection_failure_count - 1))),
+        )
+        self._autonomous_reflection_next_eligible_at = completed_at + backoff
+        self._autonomous_reflection_last_outcome = f"failed:{str(reason)[:160]}"
+        logger.warning(
+            "Autonomous reflection failed (%s); retry eligible in %.0fs.",
+            reason,
+            backoff,
+        )
+
+    def _maybe_schedule_autonomous_reflection(
+        self,
+        *,
+        idle_time: float,
+        now: float,
+    ) -> bool:
+        orch = self.orch
+        if (
+            orch is None
+            or idle_time <= 300.0
+            or bool(getattr(orch, "is_busy", False))
+            or now < self._autonomous_reflection_next_eligible_at
+        ):
+            return False
+        policy_reason = background_activity_reason(
+            orch,
+            profile=IDLE_COGNITION_BACKGROUND_POLICY,
+            max_failure_pressure=0.20,
+        )
+        if policy_reason:
+            self._autonomous_reflection_last_outcome = f"deferred:{policy_reason}"
+            return False
+
+        self._autonomous_reflection_last_attempt_at = now
+        self._autonomous_reflection_last_outcome = "running"
+        # Reserve the cadence slot before task creation so a subsequent
+        # metabolic pulse cannot race a second debate into the same lane.
+        self._autonomous_reflection_next_eligible_at = (
+            now + self._autonomous_reflection_interval_s
+        )
+        task = self.track_metabolic_task(
+            "metabolic.autonomous_reflection",
+            self._run_autonomous_reflection(),
+        )
+        if task is None:
+            self._autonomous_reflection_last_outcome = "deferred:scheduler_unavailable"
+            self._autonomous_reflection_next_eligible_at = (
+                now + self._autonomous_reflection_failure_backoff_s
+            )
+            return False
+        return True
 
     # ------------------------------------------------------------------
     # Main Tick
@@ -483,23 +645,12 @@ class MetabolicCoordinator:
                 except TypeError as _e:
                     logger.debug('Ignored TypeError in metabolic_coordinator.py: %s', _e)
 
-            # 4. Trigger Autonomous Reflection if idle
-            if idle_time > 300 and not orch.is_busy:
-                try:
-                    # [STABILITY] Wrap in timeout to prevent metabolic cycle hangs
-                    await asyncio.wait_for(
-                        orch.execute_tool(
-                            "swarm_debate",
-                            {"topic": self._reflection_topic_for_status(getattr(orch, "status", None))},
-                            is_background=True,
-                        ),
-                        timeout=_AUTONOMOUS_REFLECTION_TIMEOUT_SECONDS,
-                    )
-                except TimeoutError as e:
-                    logger.debug("Metabolism: Autonomous reflection skipped or timed out: %s", e)
-                except _METABOLIC_BOUNDARY_ERRORS as e:
-                    _record_metabolic_degradation(e, action="autonomous reflection skipped")
-                    logger.debug("Metabolism: Autonomous reflection skipped: %s", e)
+            # 4. Trigger Autonomous Reflection if idle. This is a tracked job,
+            # not inline heartbeat work, and has explicit cadence/backoff.
+            self._maybe_schedule_autonomous_reflection(
+                idle_time=idle_time,
+                now=now,
+            )
             # Grounded Introspection — Latent Core Heartbeat
             if hasattr(orch, 'latent_core') and orch.latent_core:
                 try:

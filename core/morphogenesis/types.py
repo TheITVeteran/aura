@@ -4,7 +4,7 @@ import hashlib
 import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any
 
 
 def clamp01(value: float) -> float:
@@ -31,7 +31,7 @@ def stable_digest(*parts: Any, length: int = 16) -> str:
     return hashlib.sha256(raw).hexdigest()[:length]
 
 
-class SignalKind(str, Enum):
+class SignalKind(str, Enum):  # noqa: UP042 - preserve legacy str(Enum) contract
     TASK = "task"
     USER_NEED = "user_need"
     ERROR = "error"
@@ -49,7 +49,7 @@ class SignalKind(str, Enum):
     HEARTBEAT = "heartbeat"
 
 
-class CellRole(str, Enum):
+class CellRole(str, Enum):  # noqa: UP042 - preserve legacy str(Enum) contract
     STEM = "stem"
     SENSOR = "sensor"
     EFFECTOR = "effector"
@@ -60,7 +60,7 @@ class CellRole(str, Enum):
     ORGAN = "organ"
 
 
-class CellLifecycle(str, Enum):
+class CellLifecycle(str, Enum):  # noqa: UP042 - preserve legacy str(Enum) contract
     ACTIVE = "active"
     DORMANT = "dormant"
     HIBERNATING = "hibernating"
@@ -82,8 +82,8 @@ class MorphogenSignal:
     source: str
     subsystem: str
     intensity: float = 0.5
-    payload: Dict[str, Any] = field(default_factory=dict)
-    target_cell_id: Optional[str] = None
+    payload: dict[str, Any] = field(default_factory=dict)
+    target_cell_id: str | None = None
     ttl_ticks: int = 6
     timestamp: float = field(default_factory=time.time)
     signal_id: str = ""
@@ -97,7 +97,7 @@ class MorphogenSignal:
                 "sig_" + stable_digest(self.kind, self.source, self.subsystem, self.timestamp),
             )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "signal_id": self.signal_id,
             "kind": self.kind.value if isinstance(self.kind, SignalKind) else str(self.kind),
@@ -123,10 +123,10 @@ class CellManifest:
     name: str
     role: CellRole | str = CellRole.STEM
     subsystem: str = "generic"
-    capabilities: List[str] = field(default_factory=list)
-    consumes: List[str] = field(default_factory=list)
-    emits: List[str] = field(default_factory=list)
-    dependencies: List[str] = field(default_factory=list)
+    capabilities: list[str] = field(default_factory=list)
+    consumes: list[str] = field(default_factory=list)
+    emits: list[str] = field(default_factory=list)
+    dependencies: list[str] = field(default_factory=list)
     protected: bool = False
     criticality: float = 0.5
     baseline_energy: float = 0.35
@@ -137,18 +137,18 @@ class CellManifest:
     hibernation_threshold: float = 0.08
     max_parallel_tasks: int = 1
     timeout_s: float = 4.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def canonical_id(self) -> str:
         return f"cell_{stable_digest(self.name, self.role, self.subsystem)}"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["role"] = self.role.value if isinstance(self.role, CellRole) else str(self.role)
         return json_safe(data)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CellManifest":
+    def from_dict(cls, data: dict[str, Any]) -> CellManifest:
         payload = dict(data or {})
         role = payload.get("role", CellRole.STEM)
         try:
@@ -176,7 +176,7 @@ class CellState:
     confidence: float = 0.5
     quarantined_until: float = 0.0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data["lifecycle"] = (
             self.lifecycle.value if isinstance(self.lifecycle, CellLifecycle) else str(self.lifecycle)
@@ -184,7 +184,7 @@ class CellState:
         return json_safe(data)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "CellState":
+    def from_dict(cls, data: dict[str, Any]) -> CellState:
         payload = dict(data or {})
         lifecycle = payload.get("lifecycle", CellLifecycle.ACTIVE)
         try:
@@ -218,9 +218,13 @@ class MorphogenesisConfig:
     snapshot_every_ticks: int = 15
     episode_every_events: int = 10
     adaptive_immunity_bridge: bool = True
+    immunity_bridge_queue_capacity: int = 64
+    immunity_bridge_max_enqueue_per_tick: int = 8
+    immunity_bridge_degradation_interval_s: float = 60.0
+    immunity_bridge_stall_warning_s: float = 120.0
     strict_no_source_patch_apply: bool = True
     require_governance_for_mutation: bool = True
     runtime_name: str = "morphogenesis"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return json_safe(asdict(self))

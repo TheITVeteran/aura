@@ -517,6 +517,7 @@ def test_required_probe_groups_reject_partial_or_forged_payloads():
         "probe:tool_governance",
         "probe:workspace",
         "probe:attention",
+        "probe:live_mind",
     ]
 
 
@@ -531,6 +532,7 @@ def test_required_probe_blockers_fail_closed_on_malformed_payloads():
         "probe:tool_governance",
         "probe:workspace",
         "probe:attention",
+        "probe:live_mind",
     ]
 
 
@@ -562,6 +564,7 @@ def test_health_report_healthy_requires_required_probe_groups(monkeypatch):
         "probe:tool_governance",
         "probe:workspace",
         "probe:attention",
+        "probe:live_mind",
     ]
 
 
