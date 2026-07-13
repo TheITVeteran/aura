@@ -606,7 +606,15 @@ class ProactivePresence:
             from core.container import ServiceContainer
             tool_orch = ServiceContainer.get("tool_orchestrator", default=None)
             if tool_orch:
-                result = await tool_orch.execute_tool("web_search", {"query": "latest world news summary"})
+                result = await tool_orch.execute_tool(
+                    "web_search",
+                    {"query": "latest world news summary"},
+                    origin="proactive_presence",
+                    payload_context={
+                        "origin": "proactive_presence",
+                        "objective": "obtain a bounded real-world stimulus",
+                    },
+                )
                 if result and hasattr(result, "content"):
                     news = str(result.content)[:200]
         except (ImportError, AttributeError, RuntimeError) as e:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -12,6 +13,10 @@ from core.consciousness.substrate_authority import (
     AuthorizationDecision,
 )
 from core.container import ServiceContainer
+from core.executive.execution_policy import (
+    classify_execution_risk,
+    resolve_execution_effect_scope,
+)
 from core.executive.executive_core import (
     ActionType,
     DecisionOutcome,
@@ -19,6 +24,10 @@ from core.executive.executive_core import (
     IntentSource,
     _coerce_intent_source,
     _is_autonomous_research_source,
+)
+from core.executive.standing_authority import (
+    context_has_user_authority,
+    get_standing_authority_manager,
 )
 from core.runtime.errors import record_degradation
 from core.runtime.organism_status import get_organism_status
@@ -92,6 +101,7 @@ class AuthorityDecision:
     source: str | None = None
     failure_pressure: float = 0.0
     canonical_self_version: int | None = None
+    standing_authority_token: str | None = None
 
 
 class AuthorityGateway:
@@ -108,6 +118,10 @@ class AuthorityGateway:
 
     def __init__(self) -> None:
         self._capabilities = get_capability_manager()
+        self._standing_authority = get_standing_authority_manager()
+        self._standing_lease_lock = threading.RLock()
+        self._standing_leases_by_intent: dict[str, str] = {}
+        self._standing_leases_by_capability: dict[str, str] = {}
         self._current_posture = "defensive_sandboxed"
         self._active_tokens: dict[str, dict[str, Any]] = {}
 
@@ -620,29 +634,75 @@ class AuthorityGateway:
         if social_block is not None:
             return social_block
 
-        # ── Unified Will gate (canonical decision authority) ──
-        read_only_tools = {
-            "clock",
-            "environment_info",
-            "system_proprioception",
-            "query_beliefs",
-        }
         runtime_context = dict(context or {})
+        effect_scope = resolve_execution_effect_scope(tool_name, args)
+        risk_level = classify_execution_risk(
+            tool_name,
+            args,
+            effect_scope=effect_scope,
+        )
+        lease = await self._standing_authority.issue_child_lease(
+            tool_name,
+            args,
+            origin=source,
+            context=runtime_context,
+            user_authorized=context_has_user_authority(source, runtime_context),
+            effect_scope=effect_scope,
+            risk_level=risk_level,
+        )
+        if lease.approved:
+            runtime_context = dict(lease.context)
+        else:
+            runtime_context.update(
+                {
+                    "tool": tool_name,
+                    "skill": tool_name,
+                    "origin": source,
+                    "source": source,
+                    "authority_origin": source,
+                    "effect_scope": effect_scope,
+                    "risk_level": risk_level,
+                    "standing_authority_denial_reason": lease.reason,
+                    "standing_authority_receipt_id": lease.receipt_id,
+                }
+            )
+
+        # ── Unified Will gate (canonical decision authority) ──
         will_context = {
-            **runtime_context,
             **dict(args or {}),
+            **runtime_context,
             **self.active_user_presence_context(),
             "tool": tool_name,
             "skill": tool_name,
-            "effect_scope": "read_only" if tool_name in read_only_tools else "",
-            "read_only": tool_name in read_only_tools or bool(dict(args or {}).get("read_only")),
+            "authority_origin": source,
+            "effect_scope": effect_scope,
+            "risk_level": risk_level,
+            "read_only": effect_scope in {"read_only", "status"},
         }
         will_block, will_decision = self._will_gate(
             f"tool:{tool_name}", source, "tool_execution", priority, is_critical,
             context=will_context,
         )
         if will_block is not None:
+            if lease.token:
+                self._standing_authority.finalize_child_lease(
+                    lease.token,
+                    success=False,
+                    error=f"will_refused:{will_block.reason}",
+                )
             return will_block
+        if not lease.approved:
+            return AuthorityDecision(
+                approved=False,
+                outcome="rejected",
+                reason=f"standing_authority_denied:{lease.reason}",
+                constraints={
+                    "blocked": True,
+                    "standing_authority_receipt_id": lease.receipt_id,
+                },
+                domain="tool_execution",
+                source=source,
+            )
 
         blocked, substrate_constraints, receipt_id = self._substrate_preflight(
             content=f"tool:{tool_name} args:{str(args)[:100]}",
@@ -655,6 +715,11 @@ class AuthorityGateway:
             domain="tool_execution",
         )
         if blocked is not None:
+            self._standing_authority.finalize_child_lease(
+                lease.token,
+                success=False,
+                error=f"substrate_refused:{blocked.reason}",
+            )
             return blocked
 
         exec_core = self._get_executive_core()
@@ -682,6 +747,23 @@ class AuthorityGateway:
                 }
             )
             decision.capability_token_id = token.token_id
+            decision.standing_authority_token = lease.token
+            if lease.token:
+                with self._standing_lease_lock:
+                    self._standing_leases_by_intent[intent.intent_id] = lease.token
+                    self._standing_leases_by_capability[token.token_id] = lease.token
+            decision.constraints.update(
+                {
+                    "standing_authority_grant_id": lease.grant_id,
+                    "standing_authority_receipt_id": lease.receipt_id,
+                }
+            )
+        else:
+            self._standing_authority.finalize_child_lease(
+                lease.token,
+                success=False,
+                error=f"executive_refused:{decision.reason}",
+            )
         return decision
 
     async def authorize_environment_action(
@@ -1272,7 +1354,10 @@ class AuthorityGateway:
         *,
         executive_intent_id: str | None = None,
         capability_token_id: str | None = None,
+        standing_authority_token: str | None = None,
         success: bool = True,
+        result: Any = None,
+        error: str = "",
     ) -> dict[str, Any]:
         """Close an execution intent and revoke its capability token.
 
@@ -1284,6 +1369,13 @@ class AuthorityGateway:
         errors: list[str] = []
         intent_closed = executive_intent_id is None
         token_revoked = capability_token_id is None
+        with self._standing_lease_lock:
+            correlated_standing_token = (
+                standing_authority_token
+                or self._standing_leases_by_intent.get(str(executive_intent_id or ""))
+                or self._standing_leases_by_capability.get(str(capability_token_id or ""))
+            )
+        standing_authority_closed = correlated_standing_token is None
         if executive_intent_id:
             try:
                 self._get_executive_core().complete_intent(executive_intent_id, success=success)
@@ -1300,12 +1392,33 @@ class AuthorityGateway:
                 record_degradation('authority_gateway', exc, enforce_failure_policy=False)
                 logger.error("Capability token revoke failed: %s", exc, exc_info=True)
                 errors.append(f"capability_token:{type(exc).__name__}:{exc}")
+        if correlated_standing_token:
+            try:
+                standing_closure = self._standing_authority.finalize_child_lease(
+                    correlated_standing_token,
+                    success=success,
+                    result=result,
+                    error=error,
+                )
+                standing_authority_closed = bool(standing_closure.get("closed"))
+                errors.extend(str(item) for item in standing_closure.get("errors") or [])
+                if standing_authority_closed:
+                    with self._standing_lease_lock:
+                        if executive_intent_id:
+                            self._standing_leases_by_intent.pop(executive_intent_id, None)
+                        if capability_token_id:
+                            self._standing_leases_by_capability.pop(capability_token_id, None)
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation('authority_gateway', exc, enforce_failure_policy=False)
+                logger.error("Standing-authority lease closure failed: %s", exc, exc_info=True)
+                errors.append(f"standing_authority:{type(exc).__name__}:{exc}")
         return {
-            "closed": intent_closed and token_revoked,
+            "closed": intent_closed and token_revoked and standing_authority_closed,
             "mode": "authority_gateway",
             "success": bool(success),
             "intent_closed": intent_closed,
             "token_revoked": token_revoked,
+            "standing_authority_closed": standing_authority_closed,
             "errors": errors,
         }
 
@@ -1509,3 +1622,10 @@ def get_authority_gateway() -> AuthorityGateway:
             record_degradation('authority_gateway', exc, enforce_failure_policy=False)
             logger.error("AuthorityGateway registration failed: %s", exc, exc_info=True)
     return _instance
+
+
+def reset_authority_gateway() -> None:
+    """Drop process-local gateway state after shutdown or isolated test teardown."""
+
+    global _instance
+    _instance = None

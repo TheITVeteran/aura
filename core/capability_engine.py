@@ -43,6 +43,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError  # noqa: E402
 from core.config import config  # noqa: E402
 from core.container import ServiceContainer  # noqa: E402
 from core.exceptions import ContainerError  # noqa: E402
+from core.executive.execution_policy import (  # noqa: E402
+    classify_execution_risk,
+    resolve_execution_effect_scope,
+)
+from core.executive.standing_authority import (  # noqa: E402
+    AUTONOMOUS_AUTHORITY_ORIGINS,
+)
 from core.runtime.base_module import AuraBaseModule  # noqa: E402
 from core.runtime.service_access import (  # noqa: E402
     optional_service,
@@ -677,7 +684,9 @@ class Shell:
                 get_authority_gateway().finalize_tool_execution(
                     executive_intent_id=getattr(auth, "executive_intent_id", None),
                     capability_token_id=getattr(auth, "capability_token_id", None),
+                    standing_authority_token=getattr(auth, "standing_authority_token", None),
                     success=result.returncode == 0,
+                    result={"returncode": result.returncode},
                 )
             except (
                 ImportError,
@@ -703,7 +712,9 @@ class Shell:
                 get_authority_gateway().finalize_tool_execution(
                     executive_intent_id=getattr(auth, "executive_intent_id", None),
                     capability_token_id=getattr(auth, "capability_token_id", None),
+                    standing_authority_token=getattr(auth, "standing_authority_token", None),
                     success=False,
+                    error=str(e),
                 )
             except (
                 ImportError,
@@ -775,7 +786,9 @@ class WebClient:
                 get_authority_gateway().finalize_tool_execution(
                     executive_intent_id=getattr(auth, "executive_intent_id", None),
                     capability_token_id=getattr(auth, "capability_token_id", None),
+                    standing_authority_token=getattr(auth, "standing_authority_token", None),
                     success=ok,
+                    result={"ok": ok, "status": response.get("status")},
                 )
             except (
                 ImportError,
@@ -805,7 +818,9 @@ class WebClient:
                 get_authority_gateway().finalize_tool_execution(
                     executive_intent_id=getattr(auth, "executive_intent_id", None),
                     capability_token_id=getattr(auth, "capability_token_id", None),
+                    standing_authority_token=getattr(auth, "standing_authority_token", None),
                     success=False,
+                    error=str(e),
                 )
             except (
                 ImportError,
@@ -2390,14 +2405,11 @@ class CapabilityEngine(AuraBaseModule):
         params: dict[str, Any],
         ctx: dict[str, Any] | None = None,
     ) -> str:
-        base_scope = self._effect_scope_for(skill_name, meta)
-        if skill_name == "file_operation":
-            return self._workspace_file_io_scope(params) or base_scope
-        if skill_name == "computer_use":
-            return self._computer_use_effect_scope(params) or base_scope
-        if skill_name == "auto_refactor":
-            return self._auto_refactor_effect_scope(params)
-        return base_scope
+        return resolve_execution_effect_scope(
+            skill_name,
+            params,
+            declared_effect_scope=self._effect_scope_for(skill_name, meta),
+        )
 
     @staticmethod
     def _context_governed_execution(ctx: dict[str, Any], skill_name: str) -> bool:
@@ -2446,30 +2458,12 @@ class CapabilityEngine(AuraBaseModule):
         params: dict[str, Any],
         effect_scope: str,
     ) -> str:
-        if skill_name in _LIGHTWEIGHT_BACKGROUND_IO_SKILLS and effect_scope == "read_only":
-            return "low"
-        if skill_name == "run_code":
-            stateful = True
-            if isinstance(params, dict) and "stateful" in params:
-                stateful = bool(params.get("stateful"))
-            return "critical" if stateful else "high"
-        if skill_name == "auto_refactor":
-            if effect_scope == "privileged_mutation":
-                return "critical"
-            if effect_scope == "sandboxed_compute":
-                return "high"
-            return "low"
-        if skill_name in _CRITICAL_ACTION_SKILLS:
-            return "critical"
-        if effect_scope == "subprocess":
-            return "high"
-        if effect_scope in {"external_io", "state_mutation"}:
-            return "medium"
-        if meta.metabolic_cost >= 3:
-            return "high"
-        if meta.metabolic_cost >= 2:
-            return "medium"
-        return "low"
+        return classify_execution_risk(
+            skill_name,
+            params,
+            effect_scope=effect_scope,
+            metabolic_cost=meta.metabolic_cost,
+        )
 
     @staticmethod
     def _user_advocate_irreversible_for(
@@ -3212,6 +3206,8 @@ class CapabilityEngine(AuraBaseModule):
                 return "system"
             if self._is_user_facing_origin(candidate):
                 return candidate or "user"
+            if candidate in AUTONOMOUS_AUTHORITY_ORIGINS:
+                return candidate
         if bool(ctx.get("proof_run") or ctx.get("proof_validation") or ctx.get("sealed_validation")):
             return "system"
         if any(
@@ -3778,22 +3774,6 @@ class CapabilityEngine(AuraBaseModule):
 
                 constitution = get_constitutional_core(self.orchestrator)
                 constitutional_args = dict(params or {})
-                for context_key in (
-                    "allow_heuristic_desktop_plan",
-                    "desktop_execution_contract",
-                    "foreground_request",
-                    "local_desktop_action",
-                    "predicted_outcome",
-                    "explicit_authorization",
-                    "authorization",
-                    "scoped_authority",
-                    "user_explicitly_authorized",
-                    "user_requested_action",
-                    "user_visible_desktop_action",
-                    "verification_required",
-                ):
-                    if context_key in ctx and context_key not in constitutional_args:
-                        constitutional_args[context_key] = ctx[context_key]
 
                 tool_handle = await constitution.begin_tool_execution(
                     skill_name,

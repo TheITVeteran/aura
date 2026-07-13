@@ -364,7 +364,7 @@ class OvertActionLoop:
             "autonomous": True,
             "initiative": initiative,
             "priority": float(initiative.get("urgency", 0.7) or 0.7),
-            "scoped_authority": f"overt_action_loop:{action_id}:{skill}",
+            "requested_authority_scope": f"overt_action_loop:{action_id}:{skill}",
             "authorization": "governed_autonomous_overt_action",
             "action_selection": {
                 "provenance": selection.provenance,

@@ -73,11 +73,15 @@ async def test_curiosity_daemon_exploration_loop_routes_urgent_gap() -> None:
     await daemon.stop()
 
     assert tracker.calls == [{"force_refresh": True}]
-    assert will_gate.requests == ["research:testing"]
+    assert will_gate.requests == []
     assert capability_engine.calls == [
         (
             "web_search",
             {"query": "What is the local database syntax?"},
-            {"capability_token_id": "capability-token-123"},
+            {
+                "origin": "curiosity_daemon",
+                "source": "curiosity_daemon",
+                "objective": "research epistemic gap: testing",
+            },
         )
     ]

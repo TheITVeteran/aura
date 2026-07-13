@@ -2841,7 +2841,15 @@ Respond ONLY with a JSON array, no other text:
                         return await orch.execute_tool(
                             "web_search", {"query": query}, origin=origin
                         )
-                    return await orch.execute_tool("web_search", {"query": query})
+                    return await orch.execute_tool(
+                        "web_search",
+                        {"query": query},
+                        origin="autonomous_task_engine",
+                        payload_context={
+                            "origin": "autonomous_task_engine",
+                            "objective": "autonomous task research",
+                        },
+                    )
             except (ImportError, AttributeError, RuntimeError) as e:
                 record_degradation("autonomous_task_engine", e)
                 return f"Search failed: {e}"

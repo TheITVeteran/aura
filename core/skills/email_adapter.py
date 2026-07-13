@@ -277,7 +277,9 @@ class EmailAdapterSkill(BaseSkill):
             gateway.finalize_tool_execution(
                 executive_intent_id=getattr(auth, "executive_intent_id", None),
                 capability_token_id=getattr(auth, "capability_token_id", None),
+                standing_authority_token=getattr(auth, "standing_authority_token", None),
                 success=success,
+                result={"mode": mode, "success": success},
             )
             return {"authority_finalized": True, "authority_finalization_status": "ok"}
         except _EMAIL_RECOVERABLE_ERRORS as finalize_error:
@@ -319,9 +321,10 @@ class EmailAdapterSkill(BaseSkill):
             auth = await gateway.authorize_tool_execution(
                 "email_adapter",
                 payload,
-                source="skills.email_adapter",
+                source=str(context.get("source") or context.get("origin") or "skills.email_adapter"),
                 priority=priority,
                 is_critical=False,
+                context=dict(context or {}),
             )
             if not auth.approved:
                 return {

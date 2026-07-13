@@ -72,6 +72,10 @@ def test_actuator_registry_forwards_scoped_authority_context(monkeypatch):
             captured["verified"] = (name, capability_token_id)
             return True
 
+        def finalize_tool_execution(self, **kwargs):
+            captured["finalized"] = kwargs
+            return {"standing_authority_closed": True}
+
     class NeedsAuthorityActuator(BaseActuator):
         requires_authority = True
 
@@ -102,7 +106,7 @@ def test_actuator_registry_forwards_scoped_authority_context(monkeypatch):
         context={
             "source": "overt_action_loop",
             "priority": 0.45,
-            "scoped_authority": "overt_action_loop:abc123:needs_authority",
+            "requested_authority_scope": "overt_action_loop:abc123:needs_authority",
             "authorization": "governed_autonomous_overt_action",
         },
     )
@@ -111,8 +115,71 @@ def test_actuator_registry_forwards_scoped_authority_context(monkeypatch):
     assert captured["verified"] == ("needs_authority", "cap-test")
     assert captured["kwargs"]["source"] == "overt_action_loop"
     assert captured["kwargs"]["priority"] == 0.45
-    assert captured["kwargs"]["context"]["scoped_authority"] == "overt_action_loop:abc123:needs_authority"
+    assert captured["kwargs"]["context"]["requested_authority_scope"] == (
+        "overt_action_loop:abc123:needs_authority"
+    )
     assert captured["kwargs"]["context"]["authorization"] == "governed_autonomous_overt_action"
+    assert captured["finalized"]["capability_token_id"] == "cap-test"
+    assert captured["finalized"]["success"] is True
+
+
+def test_actuator_registry_finalizes_authority_when_token_verification_fails(monkeypatch):
+    from types import SimpleNamespace
+
+    from core.actuators.actuator_registry import ActuatorRegistry, ActuatorResult, BaseActuator
+
+    captured = {}
+
+    class FakeGateway:
+        async def authorize_tool_execution(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                approved=True,
+                executive_intent_id="intent-test",
+                capability_token_id="cap-test",
+                standing_authority_token="standing-test",
+            )
+
+        def verify_tool_access(self, *_args):
+            return False
+
+        def finalize_tool_execution(self, **kwargs):
+            captured.update(kwargs)
+            return {"standing_authority_closed": True}
+
+    class NeedsAuthorityActuator(BaseActuator):
+        requires_authority = True
+
+        @property
+        def name(self):
+            return "needs_authority"
+
+        @property
+        def description(self):
+            return "Test actuator requiring AuthorityGateway."
+
+        def validate_params(self, params):
+            return True
+
+        def execute(self, params):
+            return ActuatorResult(True, "must not run", {})
+
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway",
+        lambda: FakeGateway(),
+    )
+    registry = ActuatorRegistry()
+    registry.register(NeedsAuthorityActuator())
+
+    result = registry.execute_action("needs_authority", {"value": 1})
+
+    assert result.success is False
+    assert captured == {
+        "executive_intent_id": "intent-test",
+        "capability_token_id": "cap-test",
+        "standing_authority_token": "standing-test",
+        "success": False,
+        "result": {"success": False},
+    }
 
 
 def test_immune_executor_uses_safe_arithmetic_resolver():

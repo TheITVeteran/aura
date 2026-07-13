@@ -8,11 +8,11 @@ in the PhysicsWorldModel. All operations are sandboxed and validated.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -404,7 +404,7 @@ class ActuatorRegistry:
             logger.error("Failed to register CodeExecutionActuator: %s", e)
 
         try:
-            from core.actuators.web_actuators import WebSearchActuator, WebFetchActuator
+            from core.actuators.web_actuators import WebFetchActuator, WebSearchActuator
             self.register(WebSearchActuator())
             self.register(WebFetchActuator())
         except ImportError as e:
@@ -497,6 +497,26 @@ class ActuatorRegistry:
         authority_decision = None
         capability_token_id = None
 
+        # Reject deterministic local preflight failures before acquiring an
+        # authority lease. Once a lease is acquired, every path below closes it.
+        if getattr(actuator, "synthesized", False):
+            if actuator.trust_score < 0.2:
+                return ActuatorResult(
+                    False,
+                    f"Actuator '{name}' has trust score too low ({actuator.trust_score:.2f}) to execute",
+                    {},
+                )
+            if actuator.trust_score < 0.5:
+                logger.warning(
+                    "Executing low-trust synthesized actuator '%s' (trust=%.2f)",
+                    name,
+                    actuator.trust_score,
+                )
+                if not params:
+                    return ActuatorResult(
+                        False, "Low-trust actuator requires non-empty parameters", {}
+                    )
+
         if getattr(actuator, "requires_authority", False):
             try:
                 authority_decision = self._authorize_actuator(name, exec_params, dict(context or {}))
@@ -513,59 +533,51 @@ class ActuatorRegistry:
                     {},
                 )
             capability_token_id = getattr(authority_decision, "capability_token_id", None)
-            try:
-                from core.executive.authority_gateway import get_authority_gateway
 
-                if not get_authority_gateway().verify_tool_access(name, capability_token_id):
-                    return ActuatorResult(False, f"Capability token rejected for actuator '{name}'", {})
-            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                return ActuatorResult(
-                    False,
-                    f"Capability token verification failed for actuator '{name}': {type(exc).__name__}: {exc}",
-                    {},
-                )
-            exec_params["_aura_authorized"] = True
-            exec_params["_capability_token_id"] = capability_token_id
+        result: ActuatorResult | None = None
+        try:
+            if authority_decision is not None:
+                try:
+                    from core.executive.authority_gateway import get_authority_gateway
 
-        # Trust score gating: if synthesized and trust is extremely low, additional checks
-        if getattr(actuator, "synthesized", False):
-            if actuator.trust_score < 0.2:
-                return ActuatorResult(
-                    False,
-                    f"Actuator '{name}' has trust score too low ({actuator.trust_score:.2f}) to execute",
-                    {},
-                )
-            elif actuator.trust_score < 0.5:
-                # Run an additional parameter validation check and ensure they are sanitized
-                logger.warning(
-                    "Executing low-trust synthesized actuator '%s' (trust=%.2f)",
-                    name,
-                    actuator.trust_score,
-                )
-                if not params:
+                    if not get_authority_gateway().verify_tool_access(name, capability_token_id):
+                        return ActuatorResult(
+                            False, f"Capability token rejected for actuator '{name}'", {}
+                        )
+                except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     return ActuatorResult(
-                        False, "Low-trust actuator requires non-empty parameters", {}
+                        False,
+                        f"Capability token verification failed for actuator '{name}': {type(exc).__name__}: {exc}",
+                        {},
                     )
+                exec_params["_aura_authorized"] = True
+                exec_params["_capability_token_id"] = capability_token_id
 
-        if authority_decision is not None:
-            from core.governance_context import governed_scope_sync
+                from core.governance_context import governed_scope_sync
 
-            with governed_scope_sync(authority_decision):
+                with governed_scope_sync(authority_decision):
+                    result = actuator.execute(exec_params)
+            else:
                 result = actuator.execute(exec_params)
-        else:
-            result = actuator.execute(exec_params)
-        if authority_decision is not None:
-            try:
-                from core.executive.authority_gateway import get_authority_gateway
+            return result
+        finally:
+            if authority_decision is not None:
+                try:
+                    from core.executive.authority_gateway import get_authority_gateway
 
-                get_authority_gateway().finalize_tool_execution(
-                    executive_intent_id=getattr(authority_decision, "executive_intent_id", None),
-                    capability_token_id=capability_token_id,
-                    success=bool(result.success),
-                )
-            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                logger.error("Failed to finalize actuator authority receipt for %s: %s", name, exc)
-        return result
+                    get_authority_gateway().finalize_tool_execution(
+                        executive_intent_id=getattr(
+                            authority_decision, "executive_intent_id", None
+                        ),
+                        capability_token_id=capability_token_id,
+                        standing_authority_token=getattr(
+                            authority_decision, "standing_authority_token", None
+                        ),
+                        success=bool(result and result.success),
+                        result={"success": bool(result and result.success)},
+                    )
+                except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                    logger.error("Failed to finalize actuator authority receipt for %s: %s", name, exc)
 
 
 # Singleton Pattern

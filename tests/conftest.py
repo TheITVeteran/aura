@@ -232,8 +232,11 @@ def resource_observer(request, monkeypatch, tmp_path):
     monkeypatch.setenv("AURA_TEST_RUNTIME_ROOT", str(runtime_root))
 
     def _reset_resource_singletons():
+        from core.agency.capability_token import reset_token_store
         from core.brain.lane_admission import reset_lane_admission_controller_for_test
         from core.brain.llm.model_registry import reset_model_registry_caches_for_test
+        from core.executive.authority_gateway import reset_authority_gateway
+        from core.executive.standing_authority import reset_standing_authority_manager
         from core.resource.resource_governor import reset_resource_governor_for_test
         from core.runtime.control_plane import reset_runtime_control_plane
         from core.runtime.model_lane_control import reset_model_lane_controller_for_test
@@ -241,6 +244,9 @@ def resource_observer(request, monkeypatch, tmp_path):
         from core.runtime.runtime_pressure import reset_unified_runtime_pressure_for_test
 
         reset_runtime_control_plane()
+        reset_authority_gateway()
+        reset_standing_authority_manager()
+        reset_token_store()
         reset_unified_runtime_pressure_for_test()
         reset_lane_admission_controller_for_test()
         reset_model_lane_controller_for_test()

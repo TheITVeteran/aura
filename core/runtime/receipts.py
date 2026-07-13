@@ -32,7 +32,9 @@ from core.runtime.flags import FlagKind, declare
 
 logger = logging.getLogger("core.runtime.receipts")
 
-_HIGH_VOLUME_RECEIPT_KINDS = frozenset({"resource_admission", "workspace_gate"})
+_HIGH_VOLUME_RECEIPT_KINDS = frozenset(
+    {"autonomy", "resource_admission", "workspace_gate"}
+)
 _USER_FACING_OUTPUT_SINKS = frozenset(
     {
         "event_bus",

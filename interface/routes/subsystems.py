@@ -20,11 +20,14 @@ from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 from core.runtime.service_access import optional_service
 from interface.auth import _require_internal, _restore_owner_session_from_request, _verify_token
+from interface.routes.devices import _owner_authenticated
 
 logger = logging.getLogger("Aura.Server.Subsystems")
 
 router = APIRouter()
 SKILL_EXECUTE_BODY = Body(...)
+STANDING_AUTHORITY_GRANT_BODY = Body(...)
+STANDING_AUTHORITY_OPTIONAL_BODY = Body(default=None)
 _SKILL_EXECUTE_CONTEXT_KEYS = (
     "origin",
     "route",
@@ -48,6 +51,17 @@ _SKILL_EXECUTE_CONTEXT_KEYS = (
     "allow_partial",
     "requires_sources",
     "disable_auto_action_expectation",
+)
+_UNTRUSTED_CLIENT_AUTHORITY_KEYS = frozenset(
+    {
+        "authority_args_digest",
+        "capability_token",
+        "capability_token_id",
+        "scoped_authority",
+        "standing_authority_grant_id",
+        "standing_authority_receipt_id",
+        "standing_authority_token",
+    }
 )
 _CONSEQUENTIAL_SKILL_SCOPES = frozenset(
     {
@@ -76,6 +90,16 @@ _SUBSYSTEM_ROUTE_ERRORS = (
     ValueError,
     sqlite3.Error,
 )
+
+
+def _standing_authority_owner_evidence(request: Request) -> dict[str, Any]:
+    if not _owner_authenticated(request):
+        raise HTTPException(status_code=403, detail="Standing authority is owner-only")
+    return {
+        "authenticated_principal": "owner",
+        "internal_authenticated": True,
+        "user_explicitly_authorized": True,
+    }
 
 
 def _normalize_skill_execute_payload(params: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -130,6 +154,8 @@ def _apply_skill_execute_authority_context(
     """
 
     ctx = dict(context or {})
+    for key in _UNTRUSTED_CLIENT_AUTHORITY_KEYS:
+        ctx.pop(key, None)
     ctx.setdefault("origin", "live_skill_api")
     ctx.setdefault("surface", "desktop-ui")
     ctx.setdefault("source", "api.skill.execute")
@@ -139,10 +165,9 @@ def _apply_skill_execute_authority_context(
     ctx.setdefault("user_explicitly_authorized", True)
     ctx.setdefault("explicit_authorization", "internal_authenticated_skill_execute")
     ctx.setdefault("authorization", "internal_authenticated_skill_execute")
-    if not ctx.get("scoped_authority"):
-        route_slug = _slug_for_skill_context(ctx.get("route"), "api.skill.execute")
-        skill_slug = _slug_for_skill_context(skill_name, "skill")
-        ctx["scoped_authority"] = f"api_skill_execute:{route_slug}:{skill_slug}"
+    route_slug = _slug_for_skill_context(ctx.get("route"), "api.skill.execute")
+    skill_slug = _slug_for_skill_context(skill_name, "skill")
+    ctx["requested_authority_scope"] = f"api_skill_execute:{route_slug}:{skill_slug}"
     return ctx
 
 
@@ -939,6 +964,114 @@ async def api_skill_execute(
         record_degradation('subsystems', e)
         logger.error("Skill execution API failed: %s", e)
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+# ── Standing authority ──────────────────────────────────────
+
+@router.get("/authority/standing")
+async def api_standing_authority_status(
+    request: Request,
+    _: None = Depends(_require_internal),
+    __: None = Depends(_verify_token),
+):
+    """Return durable grants and live child-lease state for the owner."""
+    _standing_authority_owner_evidence(request)
+    from core.executive.standing_authority import get_standing_authority_manager
+
+    manager = get_standing_authority_manager()
+    try:
+        await manager.initialize()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return JSONResponse(manager.get_status())
+
+
+@router.post("/authority/standing/grants")
+async def api_standing_authority_install(
+    request: Request,
+    payload: dict[str, Any] = STANDING_AUTHORITY_GRANT_BODY,
+    _: None = Depends(_require_internal),
+    __: None = Depends(_verify_token),
+):
+    """Install or replace an owner-defined standing grant."""
+    evidence = _standing_authority_owner_evidence(request)
+    from core.executive.standing_authority import (
+        StandingAuthorityGrant,
+        get_standing_authority_manager,
+    )
+
+    grant_payload = dict(payload or {})
+    grant_payload["issuer"] = "owner_api"
+    grant_payload["built_in"] = False
+    try:
+        grant = StandingAuthorityGrant.from_dict(grant_payload)
+        result = await get_standing_authority_manager().install_grant(
+            grant,
+            actor="api",
+            evidence=evidence,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return JSONResponse(result, status_code=201)
+
+
+@router.post("/authority/standing/{grant_id}/revoke")
+async def api_standing_authority_revoke(
+    grant_id: str,
+    request: Request,
+    payload: dict[str, Any] | None = STANDING_AUTHORITY_OPTIONAL_BODY,
+    _: None = Depends(_require_internal),
+    __: None = Depends(_verify_token),
+):
+    """Revoke a grant and invalidate active child leases immediately."""
+    evidence = _standing_authority_owner_evidence(request)
+    from core.executive.standing_authority import get_standing_authority_manager
+
+    reason = str((payload or {}).get("reason") or "owner_revoked").strip()[:500]
+    try:
+        result = await get_standing_authority_manager().revoke_grant(
+            grant_id,
+            actor="api",
+            evidence=evidence,
+            reason=reason,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown standing grant: {grant_id}",
+        ) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return JSONResponse(result)
+
+
+@router.post("/authority/standing/{grant_id}/restore")
+async def api_standing_authority_restore(
+    grant_id: str,
+    request: Request,
+    _: None = Depends(_require_internal),
+    __: None = Depends(_verify_token),
+):
+    """Restore a previously revoked durable grant."""
+    evidence = _standing_authority_owner_evidence(request)
+    from core.executive.standing_authority import get_standing_authority_manager
+
+    try:
+        result = await get_standing_authority_manager().restore_grant(
+            grant_id,
+            actor="api",
+            evidence=evidence,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown standing grant: {grant_id}",
+        ) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    return JSONResponse(result)
 
 
 # ── Strategic Projects ────────────────────────────────────────

@@ -67,7 +67,10 @@ def test_skill_execute_authority_context_defaults_for_authenticated_api_call():
     assert context["user_requested_action"] is True
     assert context["user_explicitly_authorized"] is True
     assert context["explicit_authorization"] == "internal_authenticated_skill_execute"
-    assert context["scoped_authority"] == "api_skill_execute:api.skill.execute:program_dna_reconstruct"
+    assert context["requested_authority_scope"] == (
+        "api_skill_execute:api.skill.execute:program_dna_reconstruct"
+    )
+    assert "scoped_authority" not in context
 
 
 def test_skill_execute_authority_context_preserves_existing_scope():
@@ -77,7 +80,10 @@ def test_skill_execute_authority_context_preserves_existing_scope():
     )
 
     assert context["route"] == "desktop-ui.file"
-    assert context["scoped_authority"] == "existing_scope"
+    assert context["requested_authority_scope"] == (
+        "api_skill_execute:desktop-ui.file:file_operation"
+    )
+    assert "scoped_authority" not in context
 
 
 def test_skill_execute_payload_normalizer_preserves_direct_params():
@@ -185,10 +191,100 @@ async def test_skill_execute_forwards_scoped_authority_to_router(monkeypatch):
     payload = json.loads(response.body)
 
     assert payload["ok"] is True
-    assert recorded_context["scoped_authority"] == (
+    assert recorded_context["requested_authority_scope"] == (
         "api_skill_execute:api.skill.execute:program_dna_reconstruct"
     )
+    assert "scoped_authority" not in recorded_context
     assert recorded_context["user_explicitly_authorized"] is True
+
+
+@pytest.mark.asyncio
+async def test_standing_authority_status_requires_owner_and_initializes_manager(monkeypatch):
+    calls = []
+
+    class Manager:
+        async def initialize(self):
+            calls.append("initialize")
+
+        @staticmethod
+        def get_status():
+            return {"ready": True, "generation": 4}
+
+    monkeypatch.setattr(subsystems, "_owner_authenticated", lambda _request: True)
+    monkeypatch.setattr(
+        "core.executive.standing_authority.get_standing_authority_manager",
+        lambda: Manager(),
+    )
+
+    response = await subsystems.api_standing_authority_status(object(), None, None)
+
+    assert json.loads(response.body) == {"ready": True, "generation": 4}
+    assert calls == ["initialize"]
+
+    monkeypatch.setattr(subsystems, "_owner_authenticated", lambda _request: False)
+    with pytest.raises(HTTPException) as caught:
+        await subsystems.api_standing_authority_status(object(), None, None)
+    assert caught.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_standing_authority_control_routes_build_owner_evidence(monkeypatch):
+    calls = []
+
+    class Manager:
+        async def install_grant(self, grant, **kwargs):
+            calls.append(("install", grant, kwargs))
+            return {"ok": True, "grant_id": grant.grant_id}
+
+        async def revoke_grant(self, grant_id, **kwargs):
+            calls.append(("revoke", grant_id, kwargs))
+            return {"ok": True, "grant_id": grant_id}
+
+        async def restore_grant(self, grant_id, **kwargs):
+            calls.append(("restore", grant_id, kwargs))
+            return {"ok": True, "grant_id": grant_id}
+
+    manager = Manager()
+    monkeypatch.setattr(subsystems, "_owner_authenticated", lambda _request: True)
+    monkeypatch.setattr(
+        "core.executive.standing_authority.get_standing_authority_manager",
+        lambda: manager,
+    )
+    payload = {
+        "grant_id": "owner.custom-research",
+        "issuer": "client_spoof",
+        "description": "Custom read-only research",
+        "allowed_origins": ["curiosity_daemon"],
+        "allowed_tools": ["web_search"],
+        "allowed_effect_scopes": ["read_only"],
+        "max_risk": "low",
+        "max_actions": 5,
+        "window_seconds": 60,
+        "lease_ttl_seconds": 30,
+        "argument_policy": "public_research",
+        "built_in": True,
+    }
+
+    install_response = await subsystems.api_standing_authority_install(
+        object(), payload, None, None
+    )
+    revoke_response = await subsystems.api_standing_authority_revoke(
+        "owner.custom-research", object(), {"reason": "operator test"}, None, None
+    )
+    restore_response = await subsystems.api_standing_authority_restore(
+        "owner.custom-research", object(), None, None
+    )
+
+    assert install_response.status_code == 201
+    assert json.loads(revoke_response.body)["ok"] is True
+    assert json.loads(restore_response.body)["ok"] is True
+    installed_grant = calls[0][1]
+    assert installed_grant.issuer == "owner_api"
+    assert installed_grant.built_in is False
+    for _operation, _subject, kwargs in calls:
+        assert kwargs["actor"] == "api"
+        assert kwargs["evidence"]["authenticated_principal"] == "owner"
+        assert kwargs["evidence"]["user_explicitly_authorized"] is True
 
 
 @pytest.mark.asyncio

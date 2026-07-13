@@ -1,8 +1,8 @@
 """core/agi/curiosity_daemon.py — Decoupled Epistemic Curiosity Daemon
 ====================================================================
 A background actor daemon that runs out-of-band and periodically
-queries the EpistemicTracker for knowledge gaps. It triggers
-background explorations using an isolated token gate without
+queries the EpistemicTracker for knowledge gaps. It sends explorations through
+the canonical orchestrator or CapabilityEngine authority chain without
 clogging the main conversational thread.
 """
 
@@ -30,13 +30,17 @@ class AutonomousCuriosityDaemon:
         logger.info("AutonomousCuriosityDaemon initialized (interval: %ds).", interval_seconds)
 
     async def start(self, capability_engine: Any = None, will_gate: Any = None):
-        """Start the background exploration loop."""
+        """Start exploration; ``will_gate`` remains only for caller compatibility.
+
+        Authorization belongs to the canonical tool path. Calling a separate
+        token gate here would create an uncorrelated, double-authorization flow.
+        """
         if self._is_running:
             return
         self._is_running = True
 
         self._task = get_task_tracker().create_task(
-            self.start_exploration_loop(capability_engine, will_gate),
+            self.start_exploration_loop(capability_engine),
             name="AutonomousCuriosityDaemon",
         )
         logger.info("🚀 AutonomousCuriosityDaemon background task started.")
@@ -53,7 +57,7 @@ class AutonomousCuriosityDaemon:
             self._task = None
         logger.info("AutonomousCuriosityDaemon background task stopped.")
 
-    async def start_exploration_loop(self, capability_engine: Any = None, will_gate: Any = None):
+    async def start_exploration_loop(self, capability_engine: Any = None):
         """Periodic curiosity drive checks the epistemic tracker for missing domains or gaps."""
         while self._is_running:
             try:
@@ -74,51 +78,36 @@ class AutonomousCuriosityDaemon:
                         target_gap.description,
                     )
 
-                    # 3. Retrieve or resolve capability_engine and will_gate / authority_gateway
+                    # 3. Use the canonical orchestrator path so origin, standing
+                    # authority, Will, capability, execution, and closure stay one chain.
                     from core.container import ServiceContainer
 
                     resolved_engine = capability_engine or ServiceContainer.get(
                         "capability_engine", default=None
                     )
-                    resolved_gate = will_gate or ServiceContainer.get(
-                        "authority_gateway", default=None
-                    )
-
-                    if not resolved_gate:
-                        try:
-                            from core.executive.authority_gateway import get_authority_gateway
-
-                            resolved_gate = get_authority_gateway()
-                        except ImportError as _exc:
-                            logger.debug("Suppressed %s in core.agi.curiosity_daemon: %s", type(_exc).__name__, _exc)
-
-                    # 4. Generate/request capability token if we have a gate
-                    token = None
-                    if resolved_gate:
-                        if hasattr(resolved_gate, "request_background_token"):
-                            token = await resolved_gate.request_background_token(
-                                f"research:{target_domain}"
-                            )
-                        else:
-                            auth = await resolved_gate.authorize_tool_execution(
-                                "web_search",
-                                {"query": query},
-                                source="curiosity_daemon",
-                                priority=0.5,
-                                is_critical=False,
-                            )
-                            if auth.approved:
-                                token = getattr(auth, "capability_token_id", None)
-
-                    # 5. Execute search/exploration out-of-band via CapabilityEngine
-                    if resolved_engine:
-                        context = {"capability_token_id": token} if token else {}
+                    orchestrator = ServiceContainer.get("orchestrator", default=None)
+                    execution_context = {
+                        "origin": "curiosity_daemon",
+                        "source": "curiosity_daemon",
+                        "objective": f"research epistemic gap: {target_domain}",
+                    }
+                    if orchestrator is not None and hasattr(orchestrator, "execute_tool"):
+                        await orchestrator.execute_tool(
+                            "web_search",
+                            {"query": query},
+                            origin="curiosity_daemon",
+                            payload_context=execution_context,
+                        )
+                    elif resolved_engine:
                         await resolved_engine.execute(
-                            "web_search", {"query": query}, context=context
+                            "web_search",
+                            {"query": query},
+                            context=execution_context,
                         )
                     else:
                         logger.warning(
-                            "CapabilityEngine unavailable; background exploration skipped."
+                            "Canonical tool orchestrator and CapabilityEngine unavailable; "
+                            "background exploration skipped."
                         )
 
             except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as e:

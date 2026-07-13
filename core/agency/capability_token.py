@@ -17,15 +17,12 @@ shutdown.
 """
 from __future__ import annotations
 
-
 import logging
 import os
 import secrets
 import threading
 import time
-import uuid
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
 
 logger = logging.getLogger("Aura.CapabilityToken")
 
@@ -47,12 +44,12 @@ class CapabilityToken:
     process_gen: str = _PROCESS_GEN
     thread_id: int = field(default_factory=lambda: threading.get_ident())
     revoked: bool = False
-    revoked_reason: Optional[str] = None
-    consumed_at: Optional[float] = None
-    child_execution_receipt: Optional[str] = None
-    side_effects: List[str] = field(default_factory=list)
+    revoked_reason: str | None = None
+    consumed_at: float | None = None
+    child_execution_receipt: str | None = None
+    side_effects: list[str] = field(default_factory=list)
 
-    def is_expired(self, now: Optional[float] = None) -> bool:
+    def is_expired(self, now: float | None = None) -> bool:
         now = now or time.time()
         return (now - self.issued_at) > self.ttl_seconds
 
@@ -64,7 +61,7 @@ class CapabilityTokenStore:
     """In-process token registry with replay/expiry/cross-thread checks."""
 
     def __init__(self) -> None:
-        self._tokens: Dict[str, CapabilityToken] = {}
+        self._tokens: dict[str, CapabilityToken] = {}
         self._lock = threading.RLock()
 
     def issue(
@@ -121,7 +118,7 @@ class CapabilityTokenStore:
                 raise PermissionError(f"capability_token_wrong_action:{tok.requested_action}!={action}")
             return tok
 
-    def consume(self, token_str: str, *, child_receipt: str, side_effects: Optional[List[str]] = None) -> CapabilityToken:
+    def consume(self, token_str: str, *, child_receipt: str, side_effects: list[str] | None = None) -> CapabilityToken:
         with self._lock:
             tok = self._tokens.get(token_str)
             if tok is None:
@@ -151,12 +148,12 @@ class CapabilityTokenStore:
                     n += 1
             return n
 
-    def get(self, token_str: str) -> Optional[CapabilityToken]:
+    def get(self, token_str: str) -> CapabilityToken | None:
         with self._lock:
             return self._tokens.get(token_str)
 
 
-_STORE: Optional[CapabilityTokenStore] = None
+_STORE: CapabilityTokenStore | None = None
 
 
 def get_token_store() -> CapabilityTokenStore:
@@ -164,3 +161,12 @@ def get_token_store() -> CapabilityTokenStore:
     if _STORE is None:
         _STORE = CapabilityTokenStore()
     return _STORE
+
+
+def reset_token_store() -> None:
+    """Revoke and replace the process-local token generation (tests/restart)."""
+
+    global _STORE
+    if _STORE is not None:
+        _STORE.revoke_all(reason="token_store_reset")
+    _STORE = None

@@ -164,7 +164,15 @@ class AutonomyMixin:
                 continue
 
             try:
-                await self.execute_tool(name, args)
+                await self.execute_tool(
+                    name,
+                    args,
+                    origin="autonomy_reflection",
+                    payload_context={
+                        "origin": "autonomy_reflection",
+                        "objective": "background reflective action",
+                    },
+                )
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 _record_autonomy_degradation(
                     exc,

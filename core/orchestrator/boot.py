@@ -328,9 +328,11 @@ class OrchestratorBootMixin(
             ServiceContainer.register_instance("affect_facade", affect_facade)
 
             from core.executive.authority_gateway import get_authority_gateway
+            from core.executive.standing_authority import get_standing_authority_manager
             from core.will import get_will
 
             get_will()
+            get_standing_authority_manager()
             get_authority_gateway()
 
             logger.info(
@@ -423,6 +425,29 @@ class OrchestratorBootMixin(
                 self.setup()
                 if hasattr(self, "_async_init_threading"):
                     self._async_init_threading()
+                try:
+                    from core.executive.standing_authority import (
+                        get_standing_authority_manager,
+                    )
+
+                    await asyncio.wait_for(
+                        get_standing_authority_manager().initialize(),
+                        timeout=10.0,
+                    )
+                    logger.info("✓ [BOOT] Standing authority loaded with durable budgets and revocations.")
+                except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as authority_exc:
+                    _record_boot_degradation(
+                        authority_exc,
+                        action=(
+                            "continued boot with autonomous tool execution fail-closed until "
+                            "standing-authority state recovers"
+                        ),
+                        severity="degraded",
+                    )
+                    logger.error(
+                        "⚠️ [BOOT] Standing-authority state unavailable: %s",
+                        authority_exc,
+                    )
                 boot_profiler.mark("sync_bootstrap_and_threading")
 
                 try:

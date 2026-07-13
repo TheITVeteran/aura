@@ -9,6 +9,18 @@ import time
 from typing import Any
 
 from core.container import ServiceContainer
+from core.executive.execution_policy import (
+    classify_execution_risk,
+    resolve_execution_effect_scope,
+)
+from core.executive.standing_authority import (
+    AUTONOMOUS_AUTHORITY_ORIGINS,
+    PUBLIC_RESEARCH_TOOLS,
+    USER_FACING_AUTHORITY_ORIGINS,
+    coerce_authority_origin,
+    context_has_user_authority,
+    get_standing_authority_manager,
+)
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger(__name__)
@@ -22,44 +34,9 @@ _TOOL_EXECUTION_RECOVERABLE_ERRORS = (
     TypeError,
     ValueError,
 )
-_USER_FACING_TOOL_ORIGINS = {
-    "user",
-    "api",
-    "admin",
-    "desktop",
-    "desktop_ui",
-    "desktop-ui",
-    "voice",
-    "gui",
-    "ws",
-    "websocket",
-    "direct",
-    "external",
-    "frontend",
-    "native-shell",
-    "native_shell",
-    "ui",
-}
-_READ_ONLY_WEB_TOOLS = {
-    "free_search",
-    "grounded_search",
-    "search_web",
-    "web_search",
-}
-_AUTONOMOUS_WEB_TOOL_ORIGINS = {
-    "autonomy",
-    "background",
-    "background_reflection",
-    "curiosity",
-    "curiosity_daemon",
-    "curiosity_explorer",
-    "dream",
-    "intention_loop",
-    "overt_action_loop",
-    "research_cycle",
-    "subconscious_loop",
-    "temporal",
-}
+_USER_FACING_TOOL_ORIGINS = USER_FACING_AUTHORITY_ORIGINS
+_READ_ONLY_WEB_TOOLS = PUBLIC_RESEARCH_TOOLS
+_AUTONOMOUS_WEB_TOOL_ORIGINS = AUTONOMOUS_AUTHORITY_ORIGINS
 _UNSAFE_AUTONOMOUS_WEB_TOOL_MARKERS = {
     "api key",
     "brute force",
@@ -117,26 +94,8 @@ class ToolExecutionMixin:
 
     @classmethod
     def _coerce_tool_origin(cls, origin: Any) -> str:
-        normalized = cls._normalize_tool_origin(origin)
-        if not normalized:
-            return ""
-        if normalized in _USER_FACING_TOOL_ORIGINS:
-            return normalized
-        tokens = {token for token in normalized.split("_") if token}
-        for candidate in (
-            "user",
-            "api",
-            "voice",
-            "admin",
-            "gui",
-            "websocket",
-            "ws",
-            "direct",
-            "external",
-        ):
-            if candidate in tokens:
-                return candidate
-        return normalized
+        resolved = coerce_authority_origin(origin)
+        return "" if resolved == "unknown" and not str(origin or "").strip() else resolved
 
     def _resolve_tool_origin(
         self,
@@ -157,25 +116,10 @@ class ToolExecutionMixin:
         return "unknown"
 
     @staticmethod
-    def _tool_effect_scope(tool_name: Any) -> str:
+    def _tool_effect_scope(tool_name: Any, args: dict[str, Any] | None = None) -> str:
         """Return the conservative effect scope used by the autonomy gate."""
 
-        normalized = str(tool_name or "").strip().lower()
-        if normalized in {
-            "clock",
-            "free_search",
-            "get_time",
-            "grep_search",
-            "grounded_search",
-            "list_dir",
-            "read_file",
-            "search_web",
-            "status",
-            "view_file",
-            "web_search",
-        }:
-            return "read_only"
-        return "unknown"
+        return resolve_execution_effect_scope(tool_name, args)
 
     @staticmethod
     def _safe_autonomous_web_research_tool(
@@ -205,37 +149,6 @@ class ToolExecutionMixin:
             return False
         return not any(marker in text for marker in _UNSAFE_AUTONOMOUS_WEB_TOOL_MARKERS)
 
-    @classmethod
-    def _derive_scoped_authority(
-        cls,
-        *,
-        tool_name: Any,
-        origin: Any,
-        governance_context: dict[str, Any],
-        user_authorized: bool,
-        safe_autonomous_web: bool,
-    ) -> str:
-        existing = str(governance_context.get("scoped_authority") or "").strip()
-        if existing:
-            return existing
-
-        normalized_tool = str(tool_name or "tool").strip().lower() or "tool"
-        normalized_origin = cls._coerce_tool_origin(origin) or "unknown"
-
-        if user_authorized:
-            route = str(
-                governance_context.get("route")
-                or governance_context.get("governance_route")
-                or normalized_origin
-            ).strip()
-            route = route.replace(" ", "_") or normalized_origin
-            return f"foreground_user_requested:{route}:{normalized_tool}"
-
-        if safe_autonomous_web:
-            return f"autonomous_read_only_web:{normalized_origin}:{normalized_tool}"
-
-        return ""
-
     async def run_browser_task(self, url: str, task: str) -> Any:
         """Formalized browser task execution via skill router.
         Browser work goes through the same governed tool path as every other skill.
@@ -254,6 +167,9 @@ class ToolExecutionMixin:
         _constitution = None
         _tool_handle = None
         _constitutional_runtime_live = False
+        _standing_authority = None
+        _standing_authority_token: str | None = None
+        _standing_authority_closed = False
         kwargs = dict(kwargs or {})
         _origin = self._resolve_tool_origin(
             explicit_origin=kwargs.get("origin"),
@@ -268,6 +184,26 @@ class ToolExecutionMixin:
         )
 
         def _record_coding_tool_event(result: Any, *, success: bool, error: str = "") -> None:
+            nonlocal _standing_authority_closed
+            if (
+                _standing_authority is not None
+                and _standing_authority_token
+                and not _standing_authority_closed
+            ):
+                try:
+                    standing_closure = _standing_authority.finalize_child_lease(
+                        _standing_authority_token,
+                        success=success,
+                        result=result,
+                        error=error,
+                    )
+                    _standing_authority_closed = bool(standing_closure.get("closed"))
+                except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _authority_exc:
+                    _record_tool_degradation(
+                        _authority_exc,
+                        action="returned tool result after standing-authority closure degraded",
+                        severity="error",
+                    )
             try:
                 from core.runtime.coding_session_memory import get_coding_session_memory
 
@@ -313,16 +249,13 @@ class ToolExecutionMixin:
                 logger.debug("Constitutional tool completion failed: %s", _finish_exc)
                 return False
 
-        # Map tool name to risk level (shared by the autonomy, conscience, and will gates).
-        if tool_name in ("shell", "command", "run_command", "execute"):
-            risk_level = "critical"
-        elif tool_name in ("file_write", "write_file", "replace_file_content", "multi_replace_file_content", "write_to_file", "edit_file"):
-            risk_level = "high"
-        elif tool_name in ("browser", "read_file", "view_file", "list_dir", "grep_search"):
-            risk_level = "medium"
-        else:
-            risk_level = "low"
-        effect_scope = self._tool_effect_scope(tool_name)
+        # One canonical invocation classifier feeds autonomy, conscience, and Will.
+        effect_scope = self._tool_effect_scope(tool_name, args)
+        risk_level = classify_execution_risk(
+            tool_name,
+            args,
+            effect_scope=effect_scope,
+        )
 
         # Whether the owner explicitly drove this action (user-facing origin, or an
         # explicit authorization flag on the request context). Computed once so both
@@ -356,23 +289,68 @@ class ToolExecutionMixin:
             _origin,
             _payload_ctx if isinstance(_payload_ctx, dict) else None,
         )
-        user_authorized = self._coerce_tool_origin(_origin) in _USER_FACING_TOOL_ORIGINS or (
-            isinstance(_payload_ctx, dict)
-            and str(
-                _payload_ctx.get("user_explicitly_authorized")
-                or _payload_ctx.get("user_requested_action")
-                or ""
-            ).strip().lower() in {"1", "true", "yes"}
+        user_authorized = context_has_user_authority(
+            _origin,
+            _payload_ctx if isinstance(_payload_ctx, dict) else None,
         )
-        scoped_authority = self._derive_scoped_authority(
+        _standing_authority = get_standing_authority_manager()
+        authority_decision = await _standing_authority.issue_child_lease(
             tool_name=tool_name,
+            arguments=args,
             origin=_origin,
-            governance_context=governance_context,
+            context=governance_context,
             user_authorized=user_authorized,
-            safe_autonomous_web=_safe_autonomous_web,
+            effect_scope=effect_scope,
+            risk_level=risk_level,
         )
-        if scoped_authority:
-            governance_context["scoped_authority"] = scoped_authority
+        if not authority_decision.approved:
+            governance_context.update(
+                {
+                    "tool": tool_name,
+                    "skill": tool_name,
+                    "authority_origin": _origin,
+                    "effect_scope": effect_scope,
+                    "risk_level": risk_level,
+                    "standing_authority_denial_reason": authority_decision.reason,
+                    "standing_authority_receipt_id": authority_decision.receipt_id,
+                }
+            )
+            will_reason = ""
+            try:
+                from core.will import ActionDomain, get_will
+
+                denial_decision = get_will().decide(
+                    content=f"tool:{tool_name} args:{str(args)[:100]}",
+                    source=_origin,
+                    domain=ActionDomain.TOOL_EXECUTION,
+                    priority=0.7,
+                    context=governance_context,
+                )
+                if not denial_decision.is_approved():
+                    will_reason = str(denial_decision.reason or "")
+            except _TOOL_EXECUTION_RECOVERABLE_ERRORS as _will_err:
+                _record_tool_degradation(
+                    _will_err,
+                    action="kept tool denied after Unified Will denial receipt degraded",
+                    severity="error",
+                )
+            result = {
+                "ok": False,
+                "status": "standing_authority_denied",
+                "error": f"Standing authority denied: {authority_decision.reason}",
+                "authority_receipt_id": authority_decision.receipt_id,
+            }
+            if will_reason:
+                result["will_reason"] = will_reason
+            _record_coding_tool_event(
+                result,
+                success=False,
+                error=authority_decision.reason,
+            )
+            return result
+        governance_context = dict(authority_decision.context)
+        _standing_authority_token = authority_decision.token
+        kwargs["payload_context"] = dict(governance_context)
 
         # ── EDI PROGRESSIVE AUTONOMY GATE ────────────────────────────────
         edi = ServiceContainer.get("edi", default=None)
@@ -737,6 +715,7 @@ class ToolExecutionMixin:
                             handoff_result,
                             success=True,
                         )
+                        _record_coding_tool_event(handoff_result, success=True)
                         # Retry execution once
                         return await self.execute_tool(tool_name, args, **kwargs)
                     else:
@@ -759,7 +738,7 @@ class ToolExecutionMixin:
 
             # 2. Contextual Awareness
             context = {
-                **governance_context,
+                **kwargs,
                 "objective": self._current_objective,
                 "system": self.status.model_dump(),
                 "stealth": await self.stealth_mode.get_stealth_status()
@@ -770,7 +749,7 @@ class ToolExecutionMixin:
                 "liquid_state": self.liquid_state.get_status()
                 if hasattr(self, "liquid_state") and self.liquid_state
                 else {},
-                **kwargs,
+                **governance_context,
                 "orchestrator": self,
             }
 
@@ -808,6 +787,16 @@ class ToolExecutionMixin:
                     "Tool %s execution deferred: %s",
                     tool_name,
                     result.get("reason") or result.get("message") or "background_policy",
+                )
+                await _finish_constitutional_tool_execution(
+                    result,
+                    success=False,
+                    error=str(result.get("reason") or result.get("error") or "deferred"),
+                )
+                _record_coding_tool_event(
+                    result,
+                    success=False,
+                    error=str(result.get("reason") or result.get("error") or "deferred"),
                 )
                 return result
             logger.info("Tool %s execution completed: %s", tool_name, success)

@@ -1,8 +1,6 @@
 """core/curiosity_engine.py - Autonomous Learning and Exploration
 Aura can explore, learn, and satisfy her curiosity in the background.
 """
-from core.runtime.errors import record_degradation
-from core.utils.task_tracker import get_task_tracker
 import asyncio
 import logging
 import random
@@ -11,9 +9,11 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set
 
-from core.runtime.background_policy import background_activity_allowed
 from core.autonomy.research_goal_filter import research_query_for_goal
 from core.autonomy.topic_selection import conversation_topic, select_autonomous_topic
+from core.runtime.background_policy import background_activity_allowed
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.Curiosity")
 
@@ -273,6 +273,11 @@ class CuriosityEngine:
                             "deep": True,
                             "retain": True,
                             "num_results": 6,
+                        },
+                        origin="curiosity",
+                        payload_context={
+                            "origin": "curiosity",
+                            "objective": f"research curiosity topic: {clean_topic}",
                         },
                     )
                     

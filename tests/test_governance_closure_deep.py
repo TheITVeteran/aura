@@ -165,6 +165,9 @@ async def test_intention_audit_failure_cannot_skip_authority_closure(monkeypatch
         {
             "executive_intent_id": "intent-1",
             "capability_token_id": "token-1",
+            "standing_authority_token": None,
             "success": True,
+            "result": {"ok": True},
+            "error": "",
         }
     ]

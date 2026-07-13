@@ -82,6 +82,7 @@ class ToolExecutionHandle:
     capability_token_id: str | None = None
     authority_receipt_id: str | None = None
     will_receipt_id: str | None = None
+    standing_authority_token: str | None = None
 
 
 @dataclass
@@ -517,6 +518,7 @@ class ConstitutionalCore:
                 capability_token_id=authority_decision.capability_token_id,
                 authority_receipt_id=authority_decision.substrate_receipt_id,
                 will_receipt_id=authority_decision.will_receipt_id,
+                standing_authority_token=authority_decision.standing_authority_token,
             )
             self._emit_tool_event(
                 "approved" if approved else "rejected",
@@ -598,11 +600,36 @@ class ConstitutionalCore:
                 )
 
         gateway = self._get_authority_gateway()
+        standing_fallback = {
+            "closed": not handle.standing_authority_token,
+            "errors": [],
+        }
+        if gateway is None and handle.standing_authority_token:
+            try:
+                from core.executive.standing_authority import (
+                    get_standing_authority_manager,
+                )
+
+                standing_fallback = get_standing_authority_manager().finalize_child_lease(
+                    handle.standing_authority_token,
+                    success=success,
+                    result=result,
+                    error=error or "",
+                )
+            except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation('constitution', exc)
+                standing_fallback = {
+                    "closed": False,
+                    "errors": [f"standing_authority:{type(exc).__name__}:{exc}"],
+                }
         if gateway is not None:
             closure = gateway.finalize_tool_execution(
                 executive_intent_id=handle.executive_intent_id,
                 capability_token_id=handle.capability_token_id,
+                standing_authority_token=handle.standing_authority_token,
                 success=success,
+                result=result,
+                error=error or "",
             )
         elif handle.executive_intent_id:
             errors: list[str] = []
@@ -619,21 +646,30 @@ class ConstitutionalCore:
             else:
                 errors.append("executive_core_unavailable")
             closure = {
-                "closed": intent_closed and not handle.capability_token_id,
+                "closed": (
+                    intent_closed
+                    and not handle.capability_token_id
+                    and bool(standing_fallback.get("closed"))
+                ),
                 "mode": "executive_core_fallback",
                 "success": bool(success),
                 "intent_closed": intent_closed,
                 "token_revoked": not handle.capability_token_id,
-                "errors": errors,
+                "standing_authority_closed": bool(standing_fallback.get("closed")),
+                "errors": errors + list(standing_fallback.get("errors") or []),
             }
         else:
             closure = {
-                "closed": not handle.capability_token_id,
+                "closed": not handle.capability_token_id and bool(standing_fallback.get("closed")),
                 "mode": "no_gateway",
                 "success": bool(success),
                 "intent_closed": True,
                 "token_revoked": not handle.capability_token_id,
-                "errors": [] if not handle.capability_token_id else ["authority_gateway_unavailable"],
+                "standing_authority_closed": bool(standing_fallback.get("closed")),
+                "errors": (
+                    ([] if not handle.capability_token_id else ["authority_gateway_unavailable"])
+                    + list(standing_fallback.get("errors") or [])
+                ),
             }
         tool_name = str(handle.proposal.payload.get("tool_name", "unknown") or "unknown")
         self._emit_tool_event(

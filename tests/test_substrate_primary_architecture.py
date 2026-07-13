@@ -223,8 +223,8 @@ async def test_overt_action_loop_executes_verifies_and_receipts(tmp_path):
     _, _, context = fake_engine.calls[0]
     assert context["origin"] == "overt_action_loop"
     assert context["authorization"] == "governed_autonomous_overt_action"
-    assert context["scoped_authority"].startswith("overt_action_loop:")
-    assert context["scoped_authority"].endswith(":environment_info")
+    assert context["requested_authority_scope"].startswith("overt_action_loop:")
+    assert context["requested_authority_scope"].endswith(":environment_info")
     assert context["orchestrator"] is orchestrator
     assert context["action_selection"]["provenance"] == "structured:environment_info"
     assert context["action_expectation"]["required_evidence"] == ["result"]

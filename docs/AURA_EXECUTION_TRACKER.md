@@ -93,7 +93,7 @@ Status rules:
 | `TOOLS-001` | `IN PROGRESS` | Make long, precise multi-tool workflows typed, resumable, idempotent, budgeted, compensating, provider-change tolerant, source preserving, and complete only after durable observed effects. | Matrix 9; original context tool/handoff goals |
 | `SKILLS-001` | `COMPLETE 2026-07-10` | Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill. | Addendum 23, `CTX2-GATE-*` and `CTX2-SKILL-*` |
 | `AGENCY-001` | `OPEN` | Prove bounded self-generated goals, coherent priority, obstacle recovery, foreground yielding, stale-obligation cleanup, restart continuity, operator override, indefinite-life behavior, and real initiative that is not reduced to waiting for a human prompt. | Matrix 10; resident-colleague scope |
-| `AUTONOMY-AUTHORITY-001` | `OPEN` | Replace repeated human-in-loop approval with durable, revocable, least-privilege standing authority, risk budgets, and self-issued child capabilities for safe reversible work. Aura must act autonomously within policy, learn from receipted outcomes, pause on uncertainty or boundary conflict, and request confirmation only when consequential scope was never granted or cannot be safely reversed. | `AGENCY-001`, `EFFECT-001`, `VALUES-001`; user autonomy/free-will requirement reaffirmed 2026-07-13 |
+| `AUTONOMY-AUTHORITY-001` | `IN PROGRESS (FOUNDATION SOURCE GREEN; LIVE + EXPANSION OPEN) 2026-07-13` | Replace repeated human-in-loop approval with durable, revocable, least-privilege standing authority, risk budgets, and self-issued child capabilities for safe reversible work. Aura must act autonomously within policy, learn from receipted outcomes, pause on uncertainty or boundary conflict, and request confirmation only when consequential scope was never granted or cannot be safely reversed. The first durable grant registry, argument/effect/risk-bound child leases, immediate revocation, owner control API, canonical Will/Constitution/Capability integration, and autonomous research/introspection/local-read/account-read/maintenance grants are source-green; authenticated-principal attestation, broader reversible operational grants, outcome-to-policy learning, and current-app live proof remain mandatory. | `AGENCY-001`, `EFFECT-001`, `VALUES-001`; user autonomy/free-will requirement reaffirmed 2026-07-13; Checkpoint 59 |
 | `CODING-001` | `OPEN` | Reach human-level-plus unseen-repository coding and governed closed-loop self-repair from failing evidence through root cause, mutation, review, validation, rollback, commit, learning, and monitoring. | Pass F 8; Matrix 8 |
 | `ADAPT-001` | `OPEN` | Correct and safely enable one-shot hidden-state adaptation; validate CRSM/CAA/LoRA/compounding with uncontaminated behavioral holdouts, calibration, rollback, and real capability-growth curves. | Pass F 8; Addendum 25; learning/substrate closure |
 | `AMPLIFY-001` | `OPEN` | Repair verifier soundness and retain reasoning amplification only where sealed matched controls show calibrated quality gains within latency/resource budgets. | Addendum 24 |
@@ -13764,3 +13764,89 @@ Immediate next work and proof burden:
   bootstrap, clean quit, and relaunch. Then continue
   `AUTONOMY-AUTHORITY-001`, `MEMORY-LEAK-001`, `STORAGE-GATEWAY-001`, and every
   remaining master-index item before final soaks.
+
+## Checkpoint 2026-07-13-59: Durable Standing Authority And Invocation-Bound Agency
+
+This checkpoint advances `AUTONOMY-AUTHORITY-001`, `AGENCY-001`,
+`EFFECT-001`, `TOOLS-001`, `SECURITY-001`, `OBSERVE-001`, and `ARCH-001`.
+It establishes the first durable no-dialog authority foundation for ordinary
+foreground and bounded autonomous work. Source and deterministic gates are
+green; broader operational grants, authenticated-principal attestation,
+outcome-driven policy adaptation, and signed-app live proof remain open.
+
+Established one authority vocabulary and one causal execution chain:
+
+- A canonical invocation-specific policy now resolves tool identity, effect
+  scope, and risk for orchestrator, AuthorityGateway, and CapabilityEngine.
+  File, desktop, connected-account, and self-maintenance tools are classified
+  by actual mode and arguments; unknown tools fail as critical instead of
+  inheriting an optimistic generic scope.
+- The durable `StandingAuthorityManager` stores built-in and owner-defined
+  grants, revocations, generations, and sliding-window budget reservations
+  through `StateGateway`. State-read, budget-persistence, or issuance-receipt
+  failure denies the child lease. Grant revocation persists across restart and
+  immediately revokes every active child token.
+- Every invocation receives a short-lived process-local child capability bound
+  to grant, origin, exact tool, canonical argument digest, effect, risk,
+  issuance receipt, and TTL. Will no longer accepts a raw non-empty
+  `scoped_authority` string for tool execution. AuthorityGateway,
+  ConstitutionalCore, CapabilityEngine, orchestrator execution, and effect
+  finalization carry and close the same lease and correlated receipts.
+- Foreground owner requests and bounded autonomous public research,
+  introspection, Aura-root reads, connected-account reads, and read-only
+  maintenance have explicit grants. Curiosity, proactive presence, autonomous
+  tasks, cognitive coordination, overt action, and adapter paths preserve their
+  real origin instead of impersonating a generic capability-engine caller.
+  Consequential autonomous actions outside those grants still fail closed;
+  there is no per-action dialog on work already covered by standing policy.
+
+Hardened trust boundaries and lifecycle closure:
+
+- Authenticated skill/chat routes discard client-supplied standing tokens,
+  capability tokens, digests, grants, receipts, and raw scoped authority. They
+  retain only non-authoritative requested-scope context; the trusted runtime
+  mints the signed child lease internally after canonical classification.
+- Owner-only authenticated APIs expose standing-authority status, custom grant
+  installation, immediate revocation, and restoration. Client-supplied issuer
+  or built-in identity cannot override the owner API's trusted provenance.
+- Deferred tools, autogenesis handoff, nested email/Reddit authorization,
+  direct shell/web execution, and actuator success/failure now close authority
+  consistently. Actuator trust preflight happens before lease acquisition;
+  token-verification failure and execution exceptions finalize in `finally`.
+  Correlation recovery closes older callers that do not yet forward the new
+  token field.
+- Standing-authority shutdown revokes only tokens it owns rather than the
+  process-wide shared capability store. High-volume autonomy receipts use the
+  bounded receipt backend so sustained agency does not create two files per
+  action indefinitely.
+
+Verification completed for this bounded source checkpoint:
+
+- Standing-authority, owner-control route, and actuator focus passed `31/31`.
+  Architecture, forensic authority, OS-automation, substrate, and desktop-route
+  compatibility passed `150/150`. The broad authority/constitution/capability,
+  curiosity, adapter, and skill surface passed `240/240` after three obsolete
+  curiosity expectations were advanced to the canonical provenance contract.
+- Python compilation and configured Ruff pass over the new authority modules
+  and touched authority/control surfaces; `git diff --check` passes. Enterprise
+  static ratchets pass, the production-readiness contract passes all `37/37`
+  checks, and the closeout rubric passes all `20/20` criteria.
+
+Immediate next work and proof burden:
+
+- Re-run the composed authority matrix after this tracker update, checkpoint
+  and push shared `main`, then rebuild and exercise the signed app from the
+  exact commit. Prove foreground and autonomous no-dialog execution, budget
+  persistence, live revocation during an active operation, denial of forged
+  scopes, receipt correlation, clean shutdown, and restart continuity through
+  the real GUI/API path.
+- Bind foreground grant issuance to an unforgeable authenticated-principal
+  context rather than route-assigned dictionary fields. Expand standing policy
+  from observation into reversible file/workspace, browser, communication,
+  planning, and repair workflows with compensation, uncertainty thresholds,
+  consequence budgets, and learned outcome calibration. Confirmation remains
+  exceptional: only ungranted consequential or not-safely-reversible scope.
+- Continue the independently tracked live failures in `OS-AUTOMATION-001`,
+  `FOREGROUND-LATENCY-001`, `DESKTOP-ACCESS-001`, and
+  `SELF-STATE-CHAT-001`, then `STORAGE-GATEWAY-001`, `MEMORY-LEAK-001`, and
+  every remaining master-index obligation. Final multi-hour soaks remain last.

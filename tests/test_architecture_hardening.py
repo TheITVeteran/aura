@@ -37,8 +37,8 @@ from core.memory.knowledge_graph import PersistentKnowledgeGraph
 from core.memory.memory_facade import MemoryFacade
 from core.motivation.goal_hierarchy import GoalHierarchy
 from core.senses.continuous_perception import ContinuousPerceptionEngine
-from core.social.social_imagination import SocialImagination
 from core.social.relational_memory import RelationalMemoryAuthority
+from core.social.social_imagination import SocialImagination
 from core.state.aura_state import AuraState
 from core.utils import output_gate as output_gate_module
 from core.utils.output_gate import AutonomousOutputGate
@@ -1408,15 +1408,20 @@ async def test_orchestrator_execute_tool_derives_foreground_scoped_authority(
 
     assert result["ok"] is True
     assert will_contexts
-    assert will_contexts[0]["scoped_authority"] == (
-        "foreground_user_requested:chat.required_skill:web_search"
+    assert will_contexts[0]["scoped_authority"].startswith(
+        "standing:owner.foreground-request:"
     )
+    assert will_contexts[0]["standing_authority_token"]
+    assert will_contexts[0]["standing_authority_grant_id"] == "owner.foreground-request"
     assert orchestrator.router.execute.await_count == 1
     execution_context = orchestrator.router.execute.await_args.args[2]
     assert execution_context["orchestrator"] is orchestrator
-    assert execution_context["scoped_authority"] == (
-        "foreground_user_requested:chat.required_skill:web_search"
+    assert execution_context["scoped_authority"].startswith(
+        "standing:owner.foreground-request:"
     )
+    assert execution_context["authority_args_digest"] == will_contexts[0][
+        "authority_args_digest"
+    ]
 
 
 @pytest.mark.asyncio
@@ -1485,8 +1490,12 @@ async def test_orchestrator_execute_tool_derives_safe_autonomous_web_scope(
 
     assert result["ok"] is True
     assert will_contexts
-    assert will_contexts[0]["scoped_authority"] == (
-        "autonomous_read_only_web:curiosity:web_search"
+    assert will_contexts[0]["scoped_authority"].startswith(
+        "standing:aura.autonomous-public-research:"
+    )
+    assert will_contexts[0]["standing_authority_token"]
+    assert will_contexts[0]["standing_authority_grant_id"] == (
+        "aura.autonomous-public-research"
     )
     assert orchestrator.router.execute.await_count == 1
 
@@ -1523,10 +1532,86 @@ async def test_orchestrator_execute_tool_keeps_unsafe_autonomous_web_unscoped(
     )
 
     assert result["ok"] is False
-    assert "requires scoped authority" in result["error"]
-    assert will_contexts
-    assert "scoped_authority" not in will_contexts[0]
+    assert result["status"] == "standing_authority_denied"
+    assert "requires_narrower_security_scope" in result["error"]
+    assert len(will_contexts) == 1
+    assert "standing_authority_token" not in will_contexts[0]
+    assert "requires_narrower_security_scope" in will_contexts[0][
+        "standing_authority_denial_reason"
+    ]
     assert orchestrator.router.execute.await_count == 0
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_deferred_tool_result_closes_constitution_and_standing_lease(
+    orchestrator, monkeypatch
+):
+    ServiceContainer.register_instance("executive_core", object(), required=False)
+    ServiceContainer.lock_registration()
+    captured_contexts = []
+
+    class FakeDecision:
+        reason = "approved"
+
+        @staticmethod
+        def is_approved():
+            return True
+
+    class FakeWill:
+        def decide(self, **_kwargs):
+            return FakeDecision()
+
+    async def _begin(_tool_name, _args, **kwargs):
+        context = dict(kwargs.get("context") or {})
+        captured_contexts.append(context)
+        return SimpleNamespace(
+            approved=True,
+            capability_token_id="token-1",
+            standing_authority_token=context["standing_authority_token"],
+            constraints={},
+            decision=SimpleNamespace(reason="approved"),
+            executive_intent_id="intent-1",
+        )
+
+    constitution = SimpleNamespace(
+        begin_tool_execution=_begin,
+        finish_tool_execution=_AsyncCallRecorder(return_value={"closed": True}),
+    )
+    orchestrator.router = SimpleNamespace(
+        skills={"web_search": object()},
+        execute=_AsyncCallRecorder(
+            return_value={"ok": False, "status": "deferred", "reason": "quiet_window"}
+        ),
+    )
+    monkeypatch.setattr("core.will.get_will", lambda: FakeWill())
+    monkeypatch.setattr("core.constitution.get_constitutional_core", lambda *_a, **_k: constitution)
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway",
+        lambda: SimpleNamespace(verify_tool_access=lambda _skill, _token: True),
+    )
+
+    result = await orchestrator.execute_tool(
+        "web_search",
+        {"query": "public science"},
+        origin="curiosity",
+        payload_context={"objective": "bounded research"},
+    )
+
+    assert result["status"] == "deferred"
+    assert constitution.finish_tool_execution.await_count == 1
+    assert captured_contexts
+    from core.executive.standing_authority import get_standing_authority_manager
+
+    valid, reason, _ = get_standing_authority_manager().validate_context(
+        captured_contexts[0],
+        tool_name="web_search",
+        arguments={"query": "public science"},
+        origin="curiosity",
+        effect_scope="read_only",
+        risk_level="low",
+    )
+    assert valid is False
+    assert "revoked" in reason or "replay" in reason
 
 
 def test_knowledge_graph_blocks_memory_write_when_constitutional_gate_rejects(

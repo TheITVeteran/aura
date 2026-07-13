@@ -2,7 +2,12 @@
 
 When Aura's CuriosityEngine autonomously decides to explore a topic, it issues:
 
-    await self.orchestrator.execute_tool("web_search", {"query": ...})
+    await self.orchestrator.execute_tool(
+        "web_search",
+        {"query": ...},
+        origin="curiosity",
+        payload_context={...},
+    )
 
 These tests verify that path end-to-end:
 
@@ -33,7 +38,7 @@ if str(PROJECT_ROOT) not in sys.path:
 # Orchestrator-shaped test double (compositional — no monkey-patching).
 #
 # We implement the exact contract `CuriosityEngine._explore` requires:
-#   - .execute_tool(name, params)
+#   - .execute_tool(name, params, origin=..., payload_context=...)
 #   - .is_busy attribute
 #   - .liquid_state attribute (for curiosity level)
 #   - .kernel attribute (for volition check)
@@ -95,8 +100,22 @@ class StubOrchestrator:
         self._suppress_unsolicited_proactivity_until = 0.0
         self._foreground_user_quiet_until = 0.0
 
-    async def execute_tool(self, tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
-        self.calls.append({"tool": tool_name, "params": dict(params)})
+    async def execute_tool(
+        self,
+        tool_name: str,
+        params: Dict[str, Any],
+        *,
+        origin: str,
+        payload_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        self.calls.append(
+            {
+                "tool": tool_name,
+                "params": dict(params),
+                "origin": origin,
+                "payload_context": dict(payload_context),
+            }
+        )
         if tool_name != "web_search":
             return {"ok": False, "error": f"unknown tool: {tool_name}"}
         return dict(self._search_result)
@@ -136,6 +155,9 @@ async def test_curiosity_explore_triggers_web_search():
     assert params.get("deep") is True
     assert params.get("retain") is True
     assert params.get("num_results") == 6
+    assert web_calls[0]["origin"] == "curiosity"
+    assert web_calls[0]["payload_context"]["origin"] == "curiosity"
+    assert "Vela Incident 1979" in web_calls[0]["payload_context"]["objective"]
 
     # The result was stored in the knowledge graph.
     assert orch.knowledge_graph.stored, "Search result must be added to the knowledge graph"

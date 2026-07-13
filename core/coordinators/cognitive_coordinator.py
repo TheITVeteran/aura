@@ -245,30 +245,48 @@ class CognitiveCoordinator:
             return None
         msg_lower = message.lower()
         if any(kw in msg_lower for kw in ["search the web", "look up", "google", "find out about"]):
-            return await self._execute_direct_search(message)
+            return await self._execute_direct_search(message, origin=origin)
         if any(kw in msg_lower for kw in ["run a self-diag", "diagnose yourself", "system check"]):
-            return await self._execute_direct_diag()
+            return await self._execute_direct_diag(origin=origin)
         return None
 
-    async def _execute_direct_search(self, message: str):
+    async def _execute_direct_search(self, message: str, *, origin: str = "user"):
         orch = self.orch
         query_match = re.search(r"(?:search (?:the web )?for|look up|google)\s+(.+)", message, re.IGNORECASE)
         query = query_match.group(1).strip().strip("'\"") if query_match else message
         logger.info("🔍 DIRECT SKILL: web_search('%s')", query)
         try:
             orch._emit_telemetry("Skill: web_search 🔧", f"Searching: {query}")
-            return await orch.execute_tool("web_search", {"query": query})
+            return await orch.execute_tool(
+                "web_search",
+                {"query": query},
+                origin=origin,
+                payload_context={
+                    "origin": origin,
+                    "route": "cognitive_coordinator.direct_search",
+                    "user_requested_action": True,
+                },
+            )
         except _COGNITIVE_BOUNDARY_ERRORS as e:
             _record_cognitive_degradation(e, action="direct web search shortcut failed")
             logger.debug("Direct search failed: %s", e)
             return None
 
-    async def _execute_direct_diag(self):
+    async def _execute_direct_diag(self, *, origin: str = "user"):
         orch = self.orch
         logger.info("🔍 DIRECT SKILL: self_diagnosis")
         try:
             orch._emit_telemetry("Skill: self_diagnosis 🔧", "Running diagnostics...")
-            return await orch.execute_tool("self_diagnosis", {})
+            return await orch.execute_tool(
+                "self_diagnosis",
+                {},
+                origin=origin,
+                payload_context={
+                    "origin": origin,
+                    "route": "cognitive_coordinator.direct_diagnosis",
+                    "user_requested_action": True,
+                },
+            )
         except _COGNITIVE_BOUNDARY_ERRORS as e:
             _record_cognitive_degradation(e, action="direct self-diagnosis shortcut failed")
             logger.debug("Direct diag failed: %s", e)
@@ -793,7 +811,15 @@ class CognitiveCoordinator:
                                 orch._emit_thought_stream(f"Speaking: {message}")
                         else:
                             try:
-                                await orch.execute_tool(name, args)
+                                await orch.execute_tool(
+                                    name,
+                                    args,
+                                    origin="cognitive_coordinator",
+                                    payload_context={
+                                        "origin": "cognitive_coordinator",
+                                        "objective": "autonomous cognitive reflection",
+                                    },
+                                )
                             except _COGNITIVE_BOUNDARY_ERRORS as tool_exc:
                                 _record_cognitive_degradation(
                                     tool_exc,

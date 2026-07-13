@@ -295,17 +295,18 @@ def test_os_automation_does_not_auto_confirm_without_full_user_authority(
     )
 
 
-def test_capability_engine_forwards_scoped_authority_to_constitutional_args():
+def test_capability_engine_keeps_authority_out_of_tool_arguments():
     source = (Path(__file__).resolve().parents[1] / "core" / "capability_engine.py").read_text(
         encoding="utf-8"
     )
 
-    bridge_start = source.index("for context_key in (")
-    bridge_end = source.index("):", bridge_start)
-    bridge_keys = source[bridge_start:bridge_end]
+    gate_start = source.index("constitutional_args = dict(params or {})")
+    gate_end = source.index("tool_handle = await constitution.begin_tool_execution", gate_start)
+    argument_bridge = source[gate_start:gate_end]
 
-    assert '"scoped_authority"' in bridge_keys
-    assert '"explicit_authorization"' in bridge_keys
+    assert "for context_key" not in argument_bridge
+    assert "scoped_authority" not in argument_bridge
+    assert "standing_authority_token" not in argument_bridge
 
 
 def test_user_visible_web_interlocutor_auto_confirms_foreground_request():

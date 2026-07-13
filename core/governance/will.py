@@ -1745,6 +1745,29 @@ class UnifiedWill:
                 or context.get("authority")
                 or context.get("capability_token")
             )
+            authority_validation_reason = ""
+            if domain == ActionDomain.TOOL_EXECUTION:
+                try:
+                    from core.executive.standing_authority import (
+                        validate_standing_authority_context,
+                    )
+
+                    has_scoped_authority, authority_validation_reason = (
+                        validate_standing_authority_context(
+                            context,
+                            tool_name=context.get("tool") or context.get("skill"),
+                            origin=context.get("authority_origin")
+                            or context.get("origin")
+                            or context.get("source"),
+                            effect_scope=context.get("effect_scope"),
+                            risk_level=context.get("risk_level"),
+                        )
+                    )
+                except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+                    has_scoped_authority = False
+                    authority_validation_reason = (
+                        f"standing_authority_validation_unavailable:{type(exc).__name__}"
+                    )
             has_lab_gate = bool(
                 context.get("lab_promotion_gate")
                 or context.get("promotion_gate")
@@ -1766,7 +1789,14 @@ class UnifiedWill:
                     reasons.append("denied_by_default: external_action requires explicit authorization in context")
                     return WillOutcome.REFUSE, "; ".join(reasons), constraints
             elif not has_scoped_authority:
-                reasons.append(f"denied_by_default: {domain.value} requires scoped authority in context")
+                detail = (
+                    f" ({authority_validation_reason})"
+                    if domain == ActionDomain.TOOL_EXECUTION and authority_validation_reason
+                    else ""
+                )
+                reasons.append(
+                    f"denied_by_default: {domain.value} requires validated scoped authority{detail}"
+                )
                 return WillOutcome.REFUSE, "; ".join(reasons), constraints
 
         # ── Identity gate (hardest constraint) ──────────────────────
