@@ -159,6 +159,26 @@ async def record_practice(result: dict[str, Any]) -> None:
     except _LEDGER_ERRORS as exc:
         record_degradation("worlds.curriculum.ledger", exc)
         logger.error("Failed to record practice result: %s", exc)
+    _feed_learning_loop(result)
+
+
+def _feed_learning_loop(result: dict[str, Any]) -> None:
+    """Embodied practice is trainable signal, not just measurement: each
+    scored attempt flows into the PracticeDirector so the compounding
+    learning loop can weigh embodied domains against everything else."""
+    try:
+        from core.learning.deliberate_practice import get_practice_director
+
+        kind = str(result.get("task", {}).get("kind", "unknown"))
+        get_practice_director().observe(
+            domain=f"embodied.{kind}",
+            attempts=1,
+            correct=1 if result.get("success") else 0,
+            source="world_curriculum",
+            receipt=f"practice_ledger:{result.get('at')}",
+        )
+    except _LEDGER_ERRORS + (ImportError, AttributeError) as exc:
+        record_degradation("worlds.curriculum.learning_feed", exc)
 
 
 def practice_summary(limit: int = 200) -> dict[str, Any]:

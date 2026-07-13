@@ -95,3 +95,26 @@ def test_device_presence_becomes_world_state_belief(tmp_path, monkeypatch):
     assert belief is not None
     assert belief["name"] == "presence phone"
     dp.reset_device_registry_for_tests(tmp_path / "unused.json")
+
+
+async def test_practice_feeds_the_learning_loop(tmp_path, monkeypatch):
+    import core.learning.deliberate_practice as dp_mod
+
+    observed = []
+
+    class _Director:
+        def observe(self, **kwargs):
+            observed.append(kwargs)
+
+    monkeypatch.setattr(dp_mod, "get_practice_director", lambda: _Director())
+    monkeypatch.setattr(curriculum, "ledger_path",
+                        lambda: tmp_path / "practice_ledger.jsonl")
+
+    result = run_task(generate_task(7, "navigate", size=16))
+    await curriculum.record_practice(result)
+
+    assert len(observed) == 1
+    assert observed[0]["domain"] == "embodied.navigate"
+    assert observed[0]["attempts"] == 1
+    assert observed[0]["correct"] == (1 if result["success"] else 0)
+    assert observed[0]["source"] == "world_curriculum"
