@@ -603,6 +603,42 @@ async def test_shutdown_verdict_blocks_on_unfinished_non_owner_task(
 
 
 @pytest.mark.asyncio
+async def test_shutdown_verdict_blocks_on_tracker_blind_pending_task(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """A pending task the TRACKER cannot see must still block the final
+    verdict: the loop's own task table is the second witness (2026-07-12
+    register: clean=True over a live task with an empty tracker census)."""
+    monkeypatch.setenv(
+        "AURA_SHUTDOWN_REPORT_PATH",
+        str(tmp_path / "shutdown_report.json"),
+    )
+    release = asyncio.Event()
+
+    async def _invisible() -> None:
+        await release.wait()
+
+    # Deliberately NOT tracker-created: plain loop task.
+    ghost = asyncio.get_running_loop().create_task(_invisible())
+    await asyncio.sleep(0)
+
+    payload = shutdown_coordinator.publish_shutdown_verdict(
+        coordinator_report={"clean": True},
+        container_report={"clean": True},
+        runtime_hygiene_report={"clean": True},
+        stage="unit_test_tracker_blind",
+        final=True,
+    )
+
+    assert payload["verdict"]["clean"] is False
+    assert "tasks_remaining_after_final_sweep" in payload["verdict"]["blockers"]
+    assert payload["components"]["final_tasks"]["effective_count"] >= 1
+    release.set()
+    await ghost
+
+
+@pytest.mark.asyncio
 async def test_task_tracker_final_sweep_preserves_teardown_owner() -> None:
     from core.utils.task_tracker import TaskTracker
 

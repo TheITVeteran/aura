@@ -806,10 +806,33 @@ def publish_shutdown_verdict(
             blockers.append("final_task_snapshot_unavailable")
         else:
             final_task_count = final_tasks.get("count", 0)
+            # A final verdict must be CONSERVATIVE: the tracker's view is one
+            # witness, the loop's own task table is another. Any pending task
+            # the tracker cannot see (lost visibility, foreign creation) must
+            # still block — a clean verdict over a live task is a lie. The
+            # 2026-07-12 register carried exactly that shape: clean=True
+            # while a lingering task existed, tracker census empty.
+            loop_pending = 0
+            try:
+                current = asyncio.current_task()
+                loop_pending = sum(
+                    1
+                    for task in asyncio.all_tasks()
+                    if not task.done() and task is not current
+                )
+            except RuntimeError:
+                loop_pending = 0  # no running loop: sync teardown context
             if not isinstance(final_task_count, int):
                 blockers.append("final_task_snapshot_unavailable")
-            elif final_task_count > 0:
-                blockers.append("tasks_remaining_after_final_sweep")
+            else:
+                effective = max(final_task_count, loop_pending)
+                if isinstance(final_tasks, dict):
+                    final_tasks["loop_pending"] = loop_pending
+                    final_tasks["effective_count"] = effective
+                if effective > 0:
+                    blockers.append("tasks_remaining_after_final_sweep")
+                if loop_pending > final_task_count >= 0:
+                    blockers.append("untracked_pending_tasks")
 
     target = shutdown_verdict_path()
     history_target = _shutdown_verdict_history_path(target)
