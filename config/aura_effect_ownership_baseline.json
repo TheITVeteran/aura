@@ -4161,22 +4161,6 @@
       "scope": "<module>.LocalLogTransport.send"
     },
     {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/social/conversational_profile.py",
-      "scope": "<module>.ConversationalProfiler.save"
-    },
-    {
-      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/social/dialogue_cognition.py",
-      "scope": "<module>.DialogueCognitionEngine.save"
-    },
-    {
       "callee": "<file_write_gateway>.ensure_directory",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -4223,6 +4207,14 @@
       "count": 1,
       "path": "core/social/relational_memory.py",
       "scope": "<module>.RelationalMemoryAuthority._save_locked"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().delete_file",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/social/relational_memory.py",
+      "scope": "<module>.RelationalMemoryAuthority.quarantine_legacy_snapshot_file"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -11657,22 +11649,6 @@
       "scope": "<module>"
     },
     {
-      "callee": "self._storage_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/social/conversational_profile.py",
-      "scope": "<module>.ConversationalProfiler.__init__"
-    },
-    {
-      "callee": "self._storage_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/social/dialogue_cognition.py",
-      "scope": "<module>.DialogueCognitionEngine.__init__"
-    },
-    {
       "callee": "self._data_path.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13594,6 +13570,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "1634e27b576d5cc25676a53b9e608ca3ee0afdb505bd112890cbeb814507dc7b",
+  "inventory_sha256": "3da721f1a628dac0416f7bf263c17a2ad643668215b92418fa8934f6daec1a68",
   "schema_version": 1
 }

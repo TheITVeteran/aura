@@ -16,10 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **canonical person-model/profile
-  consolidation and mind/state authority (`MEMORY-001`, `MIND-001`, `STATE-001`,
-  `CTX3-SOCIAL-001..002`)**, following the identity-scoped encrypted relational
-  memory implementation recorded in Checkpoint 42. `CTX2-LANE-001..004` and
+- Current bounded implementation milestone: **remaining relational-intelligence,
+  social-imagination, humor, and person-model consolidation (`MEMORY-001`,
+  `MIND-001`, `STATE-001`, `CTX3-SOCIAL-001..002`)**, following the canonical
+  profile/dialogue adapters recorded in Checkpoint 43. `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
   Signal-safe terminal shutdown (`CTX2-SHUTDOWN-001..003`) and the fail-closed
@@ -1030,11 +1030,12 @@ evidence into a metaphysical, legal, or comparative claim.
      `SharedGround` are now storage-free adapters over one encrypted, versioned,
      identity-scoped authority with expiring/revocable persistence/recall/prompt
      grants, quarantine, attribution, export, and deletion. Still consolidate
-     conversational profile, dialogue cognition, relational intelligence,
-     social imagination, humor, and every other person representation into that
-     authority; connect terminal action receipts to observed social outcomes;
-     add complete user-facing style/boundary controls; and measure trust
-     calibration, correction burden, continuity, and recovery in launched
+     conversational profile and dialogue cognition are now computation/formatting
+     adapters over that authority. Still consolidate relational intelligence,
+     social imagination, humor, and every other person representation; connect
+     terminal action receipts to observed social outcomes; add complete
+     user-facing style/boundary controls; and measure trust calibration,
+     correction burden, continuity, and recovery in launched
      multi-session trials. Persuasion, dependency creation, and engagement
      maximization remain prohibited success metrics.
 
@@ -12198,3 +12199,89 @@ Authoritative remaining relational-memory and person-model work:
   switch, interleaved users, device-scope, prompt-injection, and long-gap trials.
   Keep the final multi-hour and 24-72 hour soaks deferred until these and every
   other shorter gate are green.
+
+## Checkpoint 2026-07-12-43: Canonical Profile and Dialogue Memory
+
+This checkpoint advances `MEMORY-001`, `SOCIAL-001`, `CTX3-SOCIAL-002`,
+`ARCH-001`, `PRIVACY-001`, and `FAULT-001`. It converts conversational-profile
+and dialogue-cognition user state into authority-owned exact-agent snapshots.
+It does not close relational intelligence, social imagination, humor, Theory of
+Mind consolidation, user controls, signed receipts, or launched longitudinal
+proof.
+
+Implemented versioned authority snapshots and session isolation:
+
+- Added finite deterministic JSON snapshots with explicit namespace, schema,
+  kind, confidence, provenance, and adapter-only prompt policy. Snapshot content
+  is encrypted inside the same AES-GCM envelope, exact-agent purpose grants are
+  checked on read and write, one logical namespace upserts instead of growing an
+  unbounded history, and generic relational prompts cannot dump raw profile JSON.
+- Fixed canonical deduplication to update snapshot content and metadata rather
+  than only timestamps. Added session overlays: a recall/prompt-only session can
+  adapt over an existing durable profile in memory without modifying encrypted
+  disk state. The overlay shadows the durable record during that process,
+  disappears on restart, and collapses back to one durable record only after
+  persistence is explicitly reauthorized.
+- Added exact-agent legacy profile quarantine. Old conversational and dialogue
+  JSON files are encrypted and verified before deletion; their user keys become
+  non-reversible asserted-identity digests, not trusted attribution. Claiming
+  selects only the confirming user's matching digest. Other users remain
+  quarantined, and `source:*` dialogue training/attractor profiles are explicitly
+  non-claimable.
+
+Implemented storage-free profile and dialogue adapters:
+
+- Removed the conversational profiler's independent JSON writer, raw directory
+  creation, load owner, and five-turn crash-loss cadence. Its working profile and
+  bounded phrase evidence are read from and flushed to one versioned
+  `derived_profile` snapshot. No consent means no inference or cache; session
+  consent learns ephemerally; deletion immediately invalidates cached views;
+  prompt use performs a separate exact-agent `prompt` authorization.
+- Removed dialogue cognition's independent JSON writer, raw directory creation,
+  load owner, and three-turn persistence cadence. Exact-agent preferences now use
+  one `dialogue_preference` snapshot. Built-in source-attractor templates and
+  explicitly ingested source corpora remain non-user model data and cannot enter
+  relational quarantine claims.
+- Changed live conversational learning from `persist`-only admission to `recall`
+  admission for these two adapters. Remember-always remains durable because the
+  authority separately checks `persist`; session-only now actually learns within
+  the session instead of silently doing nothing.
+- Replaced synchronous transcript reads and directory scans inside async dialogue
+  methods with thread-offloaded operations. Modernized and strict-typed the full
+  dialogue module and removed tests' dependence on globally injected filesystem
+  helpers.
+
+Verification completed for this checkpoint:
+
+- Authority, profile, dialogue, exact-agent runtime, strict-ratchet, deletion,
+  migration, and source-attractor coverage passed `46/46`. Regressions prove no
+  inference without consent, durable restart, session non-durability, overlay
+  disk non-mutation, exact-agent prompt exclusion, cache invalidation after
+  deletion, matching-only legacy claim, non-claimable source profiles, and
+  adapter-only JSON prompt isolation.
+- Whole-tree compile and configured Ruff passed. Strict MyPy grew from `58` to
+  `60` production files. Governance passes at `1,800` recognized calls in
+  `1,696` buckets; removing two independent file writers and two raw directory
+  mutations reduced acknowledged migration debt from `1,683` to `1,680` calls.
+- Enterprise static and collection ratchets, all 37 production-readiness checks,
+  source hygiene, the 2,562-file security scan, 13/13 cognitive-gate ownership,
+  75/75 skill discovery/live-registry parity, model-load ownership,
+  resource-observation ownership, and the 20-point closeout rubric passed.
+
+Authoritative remaining person-model consolidation work:
+
+- Convert relational intelligence, social imagination, humor, joy, user profile,
+  profile manager, relationship graph, and every remaining duplicate person
+  representation into authority-owned versioned projections. Remove independent
+  files, passive/global counters, raw-message topic excerpts, hidden intimacy or
+  trust inflation, and duplicate confidence/freshness logic.
+- Reconcile overlapping style, dialogue, vulnerability, conflict, entertainment,
+  values, goals, boundaries, shared-reference, humor, and social hypotheses into
+  one typed person-model schema with writer ownership, evidence receipts,
+  correction, conflict resolution, decay, uncertainty, and causal outcome
+  learning. Formatting engines may project that schema but may not own another
+  truth store.
+- Add central signed consent/action receipts, complete user-facing controls, key
+  rotation/recovery, and launched identity-switch, multiuser, deletion, restart,
+  crash, prompt-injection, and long-gap proof. Final multi-hour and 24-72 hour
+  soaks remain deferred until all shorter requirements are green.

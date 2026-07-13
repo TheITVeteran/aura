@@ -1,11 +1,50 @@
 import pytest
 
 from core.social.dialogue_cognition import DialogueCognitionEngine, get_dialogue_cognition
+from core.social.relational_memory import RelationalMemoryAuthority
+
+
+def _engine(tmp_path):
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"d" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    authority.grant_consent(
+        "bryan",
+        kinds=["dialogue_preference"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="dialogue-test-consent",
+    )
+    return (
+        DialogueCognitionEngine(
+            storage_path=tmp_path / "dialogue.json",
+            authority=authority,
+        ),
+        authority,
+    )
+
+
+def _bare_engine(tmp_path):
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"d" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    return (
+        DialogueCognitionEngine(
+            storage_path=tmp_path / "dialogue.json",
+            authority=authority,
+        ),
+        authority,
+    )
 
 
 @pytest.mark.asyncio
 async def test_dialogue_cognition_learns_callback_repair_and_banter(tmp_path):
-    engine = DialogueCognitionEngine(storage_path=tmp_path / "dialogue.json")
+    engine, _ = _engine(tmp_path)
 
     await engine.update_from_interaction(
         "bryan",
@@ -35,7 +74,7 @@ async def test_dialogue_cognition_learns_callback_repair_and_banter(tmp_path):
 
 @pytest.mark.asyncio
 async def test_dialogue_cognition_transcript_ingest_builds_profile(tmp_path):
-    engine = DialogueCognitionEngine(storage_path=tmp_path / "dialogue.json")
+    engine, _ = _engine(tmp_path)
 
     transcript = """
 Aura: That weird little callback still works.
@@ -55,7 +94,7 @@ Bryan: no, wait, keep the banter but answer the point first
 
 @pytest.mark.asyncio
 async def test_dialogue_cognition_injects_move_guidance_for_disclosure_and_playful_questions(tmp_path):
-    engine = DialogueCognitionEngine(storage_path=tmp_path / "dialogue.json")
+    engine, _ = _engine(tmp_path)
 
     await engine.update_from_interaction(
         "bryan",
@@ -90,25 +129,31 @@ def test_get_dialogue_cognition_registers_service(monkeypatch, tmp_path):
 
     ServiceContainer.clear()
     monkeypatch.setattr(module, "_dialogue_cognition", None)
-    monkeypatch.setattr(module, "DialogueCognitionEngine", lambda: DialogueCognitionEngine(storage_path=tmp_path / "dialogue.json"))
+    engine, _ = _engine(tmp_path)
+    monkeypatch.setattr(module, "DialogueCognitionEngine", lambda: engine)
 
     engine = get_dialogue_cognition()
 
     assert engine is ServiceContainer.get("dialogue_cognition")
 
 
-def test_dialogue_cognition_save_uses_internal_file_write_governance(monkeypatch, tmp_path):
-    monkeypatch.setattr("core.runtime.file_write_gateway.governance_runtime_active", lambda: True)
-
-    engine = DialogueCognitionEngine(storage_path=tmp_path / "dialogue.json")
+def test_dialogue_cognition_save_uses_relational_memory_authority(tmp_path):
+    engine, authority = _engine(tmp_path)
     engine.get_profile("bryan").interactions_analyzed = 1
     engine.save()
 
-    assert (tmp_path / "dialogue.json").exists()
+    assert not (tmp_path / "dialogue.json").exists()
+    snapshot = authority.load_snapshot(
+        "bryan",
+        namespace="dialogue_cognition:v1",
+        kind="dialogue_preference",
+    )
+    assert snapshot is not None
+    assert snapshot["profile"]["interactions_analyzed"] == 1
 
 
 def test_dialogue_cognition_source_blueprints_exist_without_corpora(tmp_path):
-    engine = DialogueCognitionEngine(storage_path=tmp_path / "dialogue.json")
+    engine, _ = _engine(tmp_path)
 
     source_block = engine.get_source_context_injection(["sypha", "edi", "lucy", "kokoro", "ashley_too", "mirana", "sara_v3"])
 
@@ -125,9 +170,9 @@ def test_dialogue_cognition_source_blueprints_exist_without_corpora(tmp_path):
 
 @pytest.mark.asyncio
 async def test_dialogue_cognition_can_ingest_transcript_directory(tmp_path):
-    engine = DialogueCognitionEngine(storage_path=tmp_path / "dialogue.json")
+    engine, _ = _engine(tmp_path)
     corpus = tmp_path / "corpus"
-    get_task_tracker().create_task(get_storage_gateway().create_dir(corpus, cause='test_dialogue_cognition_can_ingest_transcript_directory'))
+    corpus.mkdir()
     (corpus / "one.txt").write_text("Aura: That callback still lands.\nBryan: yeah, keep the banter but answer first\n", encoding="utf-8")
     (corpus / "two.txt").write_text("Aura: You sound tired.\nBryan: honestly I've been exhausted lately\n", encoding="utf-8")
 
@@ -140,7 +185,7 @@ async def test_dialogue_cognition_can_ingest_transcript_directory(tmp_path):
 
 @pytest.mark.asyncio
 async def test_dialogue_cognition_handles_branch_resumption_and_declarative_continuation(tmp_path):
-    engine = DialogueCognitionEngine(storage_path=tmp_path / "dialogue.json")
+    engine, _ = _engine(tmp_path)
 
     await engine.update_from_interaction(
         "bryan",
@@ -167,9 +212,9 @@ async def test_dialogue_cognition_handles_branch_resumption_and_declarative_cont
 
 @pytest.mark.asyncio
 async def test_dialogue_cognition_source_corpus_deepens_blueprint(tmp_path):
-    engine = DialogueCognitionEngine(storage_path=tmp_path / "dialogue.json")
+    engine, _ = _engine(tmp_path)
     corpus = tmp_path / "sypha"
-    get_task_tracker().create_task(get_storage_gateway().create_dir(corpus, cause='test_dialogue_cognition_source_corpus_deepens_blueprint'))
+    corpus.mkdir()
     (corpus / "scene.txt").write_text(
         "Sypha Belnades: No, wait, answer the point first.\n"
         "Speaker: Fine, but the bit still lands.\n"
@@ -183,3 +228,45 @@ async def test_dialogue_cognition_source_corpus_deepens_blueprint(tmp_path):
 
     assert "Sypha Belnades" in source_block
     assert "learned pattern" in source_block
+
+
+@pytest.mark.asyncio
+async def test_dialogue_user_learning_requires_consent_but_sources_do_not(tmp_path):
+    engine, authority = _bare_engine(tmp_path)
+
+    profile = await engine.update_from_interaction(
+        "bryan",
+        "keep the banter but answer first",
+        "I can do both.",
+    )
+
+    assert profile.interactions_analyzed == 0
+    assert engine.get_context_injection("bryan", source_ids=["edi"]).startswith(
+        "## DIALOGUE SOURCE ATTRACTORS"
+    )
+    assert authority.status()["record_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_dialogue_session_overlay_is_not_durable_and_delete_clears_cache(tmp_path):
+    engine, authority = _bare_engine(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["dialogue_preference"],
+        operations=["recall", "prompt"],
+        receipt_id="session-dialogue",
+    )
+
+    await engine.update_from_interaction(
+        "bryan",
+        "keep the banter but answer first",
+        "I can do both.",
+    )
+    learned = engine.get_profile("bryan")
+    assert learned.interactions_analyzed == 1
+    assert authority.status()["durable_record_count"] == 0
+
+    authority.delete_agent("bryan", authorization_receipt_id="delete-dialogue")
+
+    assert engine.get_profile("bryan").interactions_analyzed == 0
+    assert "DIALOGUE PRAGMATICS" not in engine.get_context_injection("bryan")

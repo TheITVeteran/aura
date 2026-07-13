@@ -337,6 +337,154 @@ def test_failed_consent_replacement_preserves_prior_policy(tmp_path, monkeypatch
     assert original_export["revoked_at"] is None
 
 
+def test_structured_snapshot_upserts_one_authority_record_and_stays_out_of_generic_prompt(
+    tmp_path,
+):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-profile",
+    )
+
+    first, _ = authority.upsert_snapshot(
+        "bryan",
+        namespace="conversational_profile:v1",
+        kind="derived_profile",
+        payload={"directness": 0.4, "turns": 3},
+        confidence=0.3,
+        provenance="conversational_profile.heuristics",
+    )
+    second, _ = authority.upsert_snapshot(
+        "bryan",
+        namespace="conversational_profile:v1",
+        kind="derived_profile",
+        payload={"directness": 0.8, "turns": 4},
+        confidence=0.4,
+        provenance="conversational_profile.heuristics",
+    )
+
+    assert second.record_id == first.record_id
+    assert authority.status()["record_count"] == 1
+    assert authority.load_snapshot(
+        "bryan",
+        namespace="conversational_profile:v1",
+        kind="derived_profile",
+        purpose="prompt",
+    ) == {"directness": 0.8, "turns": 4}
+    assert authority.prompt_block("bryan") == ""
+    assert authority.load_snapshot(
+        "alice",
+        namespace="conversational_profile:v1",
+        kind="derived_profile",
+    ) is None
+
+
+def test_legacy_profile_quarantine_claims_only_matching_exact_agent(tmp_path):
+    legacy = tmp_path / "conversational_profiles.json"
+    legacy.write_text(
+        json.dumps(
+            {
+                "profiles": {
+                    "bryan": {"user_id": "bryan", "interactions_analyzed": 7},
+                    "alice": {"user_id": "alice", "interactions_analyzed": 9},
+                },
+                "phrase_counters": {"bryan": {"exact phrase": 3}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    authority = _authority(tmp_path)
+
+    migrated = authority.quarantine_legacy_snapshot_file(
+        legacy,
+        namespace="conversational_profile:v1",
+        kind="derived_profile",
+    )
+
+    assert migrated == 2
+    assert not legacy.exists()
+    authority.grant_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-bryan",
+    )
+    receipt = authority.claim_legacy_records(
+        "bryan",
+        confirmation_receipt_id="claim-bryan",
+        confirmed=True,
+    )
+    assert len(receipt.record_ids) == 1
+    snapshot = authority.load_snapshot(
+        "bryan",
+        namespace="conversational_profile:v1",
+        kind="derived_profile",
+    )
+    assert snapshot == {
+        "profile": {"interactions_analyzed": 7, "user_id": "bryan"},
+        "phrase_counts": {"exact phrase": 3},
+    }
+    assert authority.status()["legacy_quarantine_count"] == 1
+
+
+def test_session_snapshot_overlay_never_rewrites_prior_durable_value(tmp_path):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="durable-grant",
+    )
+    authority.upsert_snapshot(
+        "bryan",
+        namespace="conversational_profile:v1",
+        kind="derived_profile",
+        payload={"turns": 1},
+        confidence=0.2,
+        provenance="test",
+    )
+    authority.replace_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["recall", "prompt"],
+        receipt_id="session-grant",
+    )
+    before_overlay = (tmp_path / "relational.json").read_bytes()
+
+    overlay, receipt = authority.upsert_snapshot(
+        "bryan",
+        namespace="conversational_profile:v1",
+        kind="derived_profile",
+        payload={"turns": 2},
+        confidence=0.3,
+        provenance="test",
+    )
+
+    assert overlay.durable is False
+    assert receipt.durable is False
+    assert authority.load_snapshot(
+        "bryan",
+        namespace="conversational_profile:v1",
+        kind="derived_profile",
+    ) == {"turns": 2}
+    assert (tmp_path / "relational.json").read_bytes() == before_overlay
+
+    restored = _authority(tmp_path)
+    restored.grant_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["recall", "prompt"],
+        receipt_id="new-session-grant",
+    )
+    assert restored.load_snapshot(
+        "bryan",
+        namespace="conversational_profile:v1",
+        kind="derived_profile",
+    ) == {"turns": 1}
+
+
 def test_legacy_adapters_share_one_exact_agent_authority(tmp_path):
     authority = _authority(tmp_path)
     authority.grant_consent(

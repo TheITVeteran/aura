@@ -77,3 +77,6 @@ core/brain/cognitive_situation.py
 core/social/relational_memory.py
 core/memory/social_memory.py
 core/memory/shared_ground.py
+# Authority-backed person-model adapters (2026-07-12)
+core/social/conversational_profile.py
+core/social/dialogue_cognition.py

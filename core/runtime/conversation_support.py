@@ -356,7 +356,7 @@ async def update_conversational_intelligence(
 
     try:
         profiler = service_access.optional_service("conversational_profiler", default=None)
-        if profiler and relational_memory_allows(user_id, "derived_profile", "persist"):
+        if profiler and relational_memory_allows(user_id, "derived_profile", "recall"):
             await profiler.update_from_interaction(user_id, user_input, aura_response, {})
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         _record_conversation_degradation(
@@ -370,7 +370,7 @@ async def update_conversational_intelligence(
         if dialogue and relational_memory_allows(
             user_id,
             "dialogue_preference",
-            "persist",
+            "recall",
         ):
             await dialogue.update_from_interaction(user_id, user_input, aura_response, {})
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:

@@ -1,15 +1,18 @@
 from __future__ import annotations
-from core.runtime.errors import record_degradation
 
-
-import json
+import asyncio
 import logging
-import os
 import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
+from core.runtime.errors import record_degradation
+from core.social.relational_memory import (
+    RelationalMemoryAuthority,
+    get_relational_memory_authority,
+)
 
 logger = logging.getLogger("Aura.DialogueCognition")
 
@@ -71,8 +74,10 @@ _STOPWORDS = {
     "like", "just", "really", "kind", "sort", "mean", "again", "still", "were", "been",
 }
 _SOURCE_PROFILE_PREFIX = "source:"
+_SNAPSHOT_NAMESPACE = "dialogue_cognition:v1"
+_SNAPSHOT_KIND = "dialogue_preference"
 
-_DIALOGUE_SOURCE_CATALOG: Dict[str, Dict[str, str]] = {
+_DIALOGUE_SOURCE_CATALOG: dict[str, dict[str, str]] = {
     "sypha": {
         "label": "Sypha Belnades",
         "notes": "rapid scholar-banter, moral courage, bright precision under pressure",
@@ -147,23 +152,28 @@ class DialogueCognitionProfile:
     declarative_continuation_preference: float = 0.5
     branching_tolerance: float = 0.5
     metaphor_affinity: float = 0.5
-    discourse_markers: List[str] = field(default_factory=list)
-    shared_reference_bank: List[str] = field(default_factory=list)
+    discourse_markers: list[str] = field(default_factory=list)
+    shared_reference_bank: list[str] = field(default_factory=list)
     interactions_analyzed: int = 0
     confidence: float = 0.0
     last_updated: float = field(default_factory=time.time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "DialogueCognitionProfile":
+    def from_dict(cls, data: dict[str, Any]) -> DialogueCognitionProfile:
         allowed = {field_name for field_name in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in data.items() if k in allowed})
 
 
 class DialogueCognitionEngine:
-    def __init__(self, storage_path: Optional[Path] = None):
+    def __init__(
+        self,
+        storage_path: Path | None = None,
+        *,
+        authority: RelationalMemoryAuthority | None = None,
+    ):
         if storage_path is None:
             try:
                 from core.config import config
@@ -171,55 +181,84 @@ class DialogueCognitionEngine:
                 storage_path = config.paths.data_dir / "dialogue_cognition.json"
             except (ImportError, AttributeError, RuntimeError):
                 storage_path = Path("data") / "dialogue_cognition.json"
-        self._storage_path = Path(storage_path)
-        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
-        self._profiles: Dict[str, DialogueCognitionProfile] = {}
-        self._load()
-
-    def _load(self) -> None:
-        if not self._storage_path.exists():
-            return
-        try:
-            payload = json.loads(self._storage_path.read_text(encoding="utf-8"))
-            for user_id, data in (payload.get("profiles", {}) or {}).items():
-                self._profiles[user_id] = DialogueCognitionProfile.from_dict(data)
-        except (OSError, ConnectionError, TimeoutError) as exc:
-            record_degradation('dialogue_cognition', exc)
-            logger.debug("DialogueCognition load skipped: %s", exc)
+        self._legacy_path = Path(storage_path)
+        self._authority = authority or get_relational_memory_authority()
+        self._profiles: dict[str, DialogueCognitionProfile] = {}
+        self._authority.quarantine_legacy_snapshot_file(
+            self._legacy_path,
+            namespace=_SNAPSHOT_NAMESPACE,
+            kind=_SNAPSHOT_KIND,
+        )
 
     def save(self) -> None:
-        try:
-            payload = {"profiles": {user_id: profile.to_dict() for user_id, profile in self._profiles.items()}}
-            from core.governance_context import local_internal_governed_scope
-            from core.runtime.file_write_gateway import get_file_write_gateway
+        for user_id, profile in list(self._profiles.items()):
+            if not user_id.startswith(_SOURCE_PROFILE_PREFIX):
+                self._persist_profile(profile)
 
-            with local_internal_governed_scope("dialogue_cognition.save", domain="file_write"):
-                get_file_write_gateway().write_text(
-                    self._storage_path,
-                    json.dumps(payload, indent=2),
-                    encoding="utf-8",
-                    source="dialogue_cognition.save",
-                )
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('dialogue_cognition', exc)
-            logger.debug("DialogueCognition save skipped: %s", exc)
+    def _persist_profile(self, profile: DialogueCognitionProfile) -> None:
+        if not self._authority.allows(profile.user_id, _SNAPSHOT_KIND, "recall"):
+            return
+        try:
+            self._authority.upsert_snapshot(
+                profile.user_id,
+                namespace=_SNAPSHOT_NAMESPACE,
+                kind=_SNAPSHOT_KIND,
+                payload={"profile": profile.to_dict()},
+                confidence=profile.confidence,
+                provenance="dialogue_cognition.heuristics",
+            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("dialogue_cognition", exc)
+            logger.debug("DialogueCognition authority save skipped: %s", exc)
+
+    def _profile_for_purpose(
+        self,
+        user_id: str,
+        *,
+        purpose: str,
+    ) -> DialogueCognitionProfile | None:
+        if not self._authority.allows(user_id, _SNAPSHOT_KIND, purpose):
+            self._profiles.pop(user_id, None)
+            return None
+        payload = self._authority.load_snapshot(
+            user_id,
+            namespace=_SNAPSHOT_NAMESPACE,
+            kind=_SNAPSHOT_KIND,
+            purpose=purpose,
+        )
+        if payload is not None:
+            profile_data = payload.get("profile", payload)
+            if isinstance(profile_data, dict):
+                profile = DialogueCognitionProfile.from_dict(profile_data)
+                profile.user_id = user_id
+                self._profiles[user_id] = profile
+        return self._profiles.get(user_id)
 
     def get_profile(self, user_id: str) -> DialogueCognitionProfile:
-        if user_id not in self._profiles:
-            self._profiles[user_id] = DialogueCognitionProfile(user_id=user_id)
-        return self._profiles[user_id]
+        if user_id.startswith(_SOURCE_PROFILE_PREFIX):
+            if user_id not in self._profiles:
+                self._profiles[user_id] = DialogueCognitionProfile(user_id=user_id)
+            return self._profiles[user_id]
+        profile = self._profile_for_purpose(user_id, purpose="recall")
+        if profile is not None:
+            return profile
+        if self._authority.allows(user_id, _SNAPSHOT_KIND, "recall"):
+            profile = DialogueCognitionProfile(user_id=user_id)
+            self._profiles[user_id] = profile
+            return profile
+        return DialogueCognitionProfile(user_id=user_id)
 
     def normalize_source_id(self, source_id: str) -> str:
         key = " ".join(str(source_id or "").strip().lower().replace("_", " ").split())
         return _DIALOGUE_SOURCE_ALIASES.get(key, key.replace(" ", "_"))
 
-    def default_source_ids(self) -> List[str]:
+    def default_source_ids(self) -> list[str]:
         return list(_DIALOGUE_SOURCE_CATALOG.keys())
 
     def _source_profile_id(self, source_id: str) -> str:
         return f"{_SOURCE_PROFILE_PREFIX}{self.normalize_source_id(source_id)}"
 
-    def get_source_profile(self, source_id: str) -> Optional[DialogueCognitionProfile]:
+    def get_source_profile(self, source_id: str) -> DialogueCognitionProfile | None:
         return self._profiles.get(self._source_profile_id(source_id))
 
     async def update_from_interaction(
@@ -227,8 +266,15 @@ class DialogueCognitionEngine:
         user_id: str,
         user_message: str,
         aura_response: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> DialogueCognitionProfile:
+        is_source_profile = user_id.startswith(_SOURCE_PROFILE_PREFIX)
+        if not is_source_profile and not self._authority.allows(
+            user_id,
+            _SNAPSHOT_KIND,
+            "recall",
+        ):
+            return DialogueCognitionProfile(user_id=user_id)
         profile = self.get_profile(user_id)
         text = str(user_message or "").strip()
         if not text:
@@ -275,12 +321,13 @@ class DialogueCognitionEngine:
             limit=8,
         )
         profile.confidence = min(1.0, profile.interactions_analyzed / 8.0)
-        if profile.interactions_analyzed % 3 == 0:
-            self.save()
+        self._profiles[user_id] = profile
+        if not is_source_profile:
+            self._persist_profile(profile)
         return profile
 
     async def ingest_transcript(self, user_id: str, transcript: str, aura_speaker: str = "Aura") -> DialogueCognitionProfile:
-        turns: List[tuple[str, str]] = []
+        turns: list[tuple[str, str]] = []
         for raw_line in str(transcript or "").splitlines():
             if ":" not in raw_line:
                 continue
@@ -296,7 +343,7 @@ class DialogueCognitionEngine:
 
     async def ingest_transcript_file(self, user_id: str, transcript_path: Path | str, aura_speaker: str = "Aura") -> DialogueCognitionProfile:
         path = Path(transcript_path)
-        transcript = path.read_text(encoding="utf-8")
+        transcript = await asyncio.to_thread(path.read_text, encoding="utf-8")
         return await self.ingest_transcript(user_id, transcript, aura_speaker=aura_speaker)
 
     async def ingest_transcript_directory(
@@ -309,9 +356,17 @@ class DialogueCognitionEngine:
     ) -> DialogueCognitionProfile:
         root = Path(directory)
         profile = self.get_profile(user_id)
-        for transcript_path in sorted(root.glob(pattern)):
-            if transcript_path.is_file():
-                profile = await self.ingest_transcript_file(user_id, transcript_path, aura_speaker=aura_speaker)
+        transcript_paths = await asyncio.to_thread(
+            self._transcript_files,
+            root,
+            pattern,
+        )
+        for transcript_path in transcript_paths:
+            profile = await self.ingest_transcript_file(
+                user_id,
+                transcript_path,
+                aura_speaker=aura_speaker,
+            )
         return profile
 
     async def ingest_source_transcript(
@@ -319,7 +374,7 @@ class DialogueCognitionEngine:
         source_id: str,
         transcript: str,
         *,
-        source_speaker: Optional[str] = None,
+        source_speaker: str | None = None,
     ) -> DialogueCognitionProfile:
         canonical = self.normalize_source_id(source_id)
         default_label = _DIALOGUE_SOURCE_CATALOG.get(canonical, {}).get("label", canonical.replace("_", " ").title())
@@ -334,10 +389,10 @@ class DialogueCognitionEngine:
         source_id: str,
         transcript_path: Path | str,
         *,
-        source_speaker: Optional[str] = None,
+        source_speaker: str | None = None,
     ) -> DialogueCognitionProfile:
         path = Path(transcript_path)
-        transcript = path.read_text(encoding="utf-8")
+        transcript = await asyncio.to_thread(path.read_text, encoding="utf-8")
         return await self.ingest_source_transcript(source_id, transcript, source_speaker=source_speaker)
 
     async def ingest_source_transcript_directory(
@@ -346,28 +401,36 @@ class DialogueCognitionEngine:
         directory: Path | str,
         *,
         pattern: str = "*.txt",
-        source_speaker: Optional[str] = None,
+        source_speaker: str | None = None,
     ) -> DialogueCognitionProfile:
         root = Path(directory)
         canonical = self.normalize_source_id(source_id)
         profile = self.get_profile(self._source_profile_id(canonical))
-        for transcript_path in sorted(root.glob(pattern)):
-            if transcript_path.is_file():
-                profile = await self.ingest_source_transcript_file(
-                    canonical,
-                    transcript_path,
-                    source_speaker=source_speaker,
-                )
+        transcript_paths = await asyncio.to_thread(
+            self._transcript_files,
+            root,
+            pattern,
+        )
+        for transcript_path in transcript_paths:
+            profile = await self.ingest_source_transcript_file(
+                canonical,
+                transcript_path,
+                source_speaker=source_speaker,
+            )
         return profile
+
+    @staticmethod
+    def _transcript_files(root: Path, pattern: str) -> list[Path]:
+        return [path for path in sorted(root.glob(pattern)) if path.is_file()]
 
     async def ingest_source_corpora(
         self,
-        corpora: Dict[str, Path | str],
+        corpora: dict[str, Path | str],
         *,
         pattern: str = "*.txt",
-        speakers: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, DialogueCognitionProfile]:
-        loaded: Dict[str, DialogueCognitionProfile] = {}
+        speakers: dict[str, str] | None = None,
+    ) -> dict[str, DialogueCognitionProfile]:
+        loaded: dict[str, DialogueCognitionProfile] = {}
         for source_id, directory in (corpora or {}).items():
             loaded[self.normalize_source_id(source_id)] = await self.ingest_source_transcript_directory(
                 source_id,
@@ -382,10 +445,10 @@ class DialogueCognitionEngine:
         user_id: str,
         current_text: str = "",
         *,
-        source_ids: Optional[List[str]] = None,
+        source_ids: list[str] | None = None,
     ) -> str:
-        profile = self.get_profile(user_id)
-        if profile.interactions_analyzed < 2:
+        profile = self._profile_for_purpose(user_id, purpose="prompt")
+        if profile is None or profile.interactions_analyzed < 2:
             user_block = ""
         else:
             user_block = self._profile_context_injection(profile, current_text)
@@ -395,9 +458,9 @@ class DialogueCognitionEngine:
             return f"{user_block}\n{source_block}"
         return user_block or source_block
 
-    def get_source_context_injection(self, source_ids: Optional[List[str]] = None) -> str:
+    def get_source_context_injection(self, source_ids: list[str] | None = None) -> str:
         selected = source_ids or self.default_source_ids()
-        lines: List[str] = []
+        lines: list[str] = []
         for source_id in selected:
             canonical = self.normalize_source_id(source_id)
             profile = self.get_source_profile(canonical)
@@ -527,7 +590,7 @@ class DialogueCognitionEngine:
         )
 
     def _compact_profile_summary(self, profile: DialogueCognitionProfile) -> str:
-        traits: List[str] = [profile.stance_style.replace("_", " ")]
+        traits: list[str] = [profile.stance_style.replace("_", " ")]
         if profile.answer_first_preference > 0.6:
             traits.append("answer-first")
         if profile.attunement_preference > 0.6:
@@ -559,7 +622,7 @@ class DialogueCognitionEngine:
             "tentative": len(_TENTATIVE_MARKERS.findall(text)),
             "earnest": len(_EARNEST_MARKERS.findall(text)),
         }
-        winner = max(scores, key=scores.get)
+        winner = max(scores, key=lambda name: scores[name])
         return winner if scores[winner] > 0 else current
 
     def _detect_disagreement_style(self, text: str, current: str) -> str:
@@ -665,11 +728,11 @@ class DialogueCognitionEngine:
             return "A substantive statement can carry the turn. You do not need to end with a prompt just to keep the conversation alive."
         return "Respond to the actual conversational move instead of prompt-hunting or filling space."
 
-    def _extract_discourse_markers(self, text: str) -> List[str]:
+    def _extract_discourse_markers(self, text: str) -> list[str]:
         lowered = f" {text.lower()} "
         return [marker for marker in _DISCOURSE_MARKERS if f" {marker} " in lowered]
 
-    def _extract_shared_references(self, user_message: str, aura_response: str) -> List[str]:
+    def _extract_shared_references(self, user_message: str, aura_response: str) -> list[str]:
         if not aura_response:
             return []
         aura_tokens = [token.lower() for token in _TOKEN_PATTERN.findall(aura_response)]
@@ -681,8 +744,8 @@ class DialogueCognitionEngine:
             shared.append(token)
         return self._merge_markers([], shared, limit=3)
 
-    def _merge_markers(self, existing: List[str], incoming: List[str], limit: int = 6) -> List[str]:
-        merged: List[str] = []
+    def _merge_markers(self, existing: list[str], incoming: list[str], limit: int = 6) -> list[str]:
+        merged: list[str] = []
         seen = set()
         for item in [*(existing or []), *(incoming or [])]:
             normalized = " ".join(str(item).strip().lower().split())
@@ -696,7 +759,7 @@ class DialogueCognitionEngine:
         return (1.0 - alpha) * float(current) + alpha * float(target)
 
 
-_dialogue_cognition: Optional[DialogueCognitionEngine] = None
+_dialogue_cognition: DialogueCognitionEngine | None = None
 
 
 def get_dialogue_cognition() -> DialogueCognitionEngine:

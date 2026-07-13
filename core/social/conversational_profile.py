@@ -9,7 +9,6 @@ with periodic deep LLM analysis for pattern refinement.
 
 import json
 import logging
-import os
 import re
 import time
 from collections import defaultdict
@@ -18,6 +17,10 @@ from pathlib import Path
 from typing import Any
 
 from core.runtime.errors import record_degradation
+from core.social.relational_memory import (
+    RelationalMemoryAuthority,
+    get_relational_memory_authority,
+)
 
 logger = logging.getLogger("Aura.Social")
 
@@ -27,6 +30,8 @@ logger = logging.getLogger("Aura.Social")
 
 _EMA_ALPHA = 0.15  # Exponential moving average smoothing factor
 _DEEP_ANALYSIS_INTERVAL = 20  # Trigger LLM analysis every N interactions
+_SNAPSHOT_NAMESPACE = "conversational_profile:v1"
+_SNAPSHOT_KIND = "derived_profile"
 _HUMOR_MARKERS = re.compile(
     r"(lol|lmao|haha|heh|rofl|😂|🤣|😆|💀|dead|dying|hilarious|funny|"
     r"cracking up|that killed me|i can't|im dead)",
@@ -147,62 +152,95 @@ class ConversationalProfile:
 class ConversationalProfiler:
     """Builds and incrementally updates per-user conversational profiles."""
 
-    def __init__(self, storage_path: Path | None = None):
+    def __init__(
+        self,
+        storage_path: Path | None = None,
+        *,
+        authority: RelationalMemoryAuthority | None = None,
+    ):
         if storage_path is None:
             try:
                 from core.config import config
                 storage_path = config.paths.data_dir / "conversational_profiles.json"
             except (ImportError, AttributeError, RuntimeError):
                 storage_path = Path.home() / ".aura" / "data" / "conversational_profiles.json"
-        self._storage_path = Path(storage_path)
-        self._storage_path.parent.mkdir(parents=True, exist_ok=True)
+        self._legacy_path = Path(storage_path)
+        self._authority = authority or get_relational_memory_authority()
         self._profiles: dict[str, ConversationalProfile] = {}
         self._pacing_history: dict[str, list[float]] = defaultdict(list)  # user_id -> [timestamps]
         self._phrase_counter: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-        self._load()
-        logger.info("ConversationalProfiler initialized (%d profiles loaded)", len(self._profiles))
+        migrated = self._authority.quarantine_legacy_snapshot_file(
+            self._legacy_path,
+            namespace=_SNAPSHOT_NAMESPACE,
+            kind=_SNAPSHOT_KIND,
+        )
+        logger.info(
+            "ConversationalProfiler initialized (authority-backed, %d legacy profiles quarantined)",
+            migrated,
+        )
 
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
 
-    def _load(self) -> None:
-        if not self._storage_path.exists():
-            return
-        try:
-            with open(self._storage_path) as f:
-                raw = json.load(f)
-            for uid, data in raw.get("profiles", {}).items():
-                try:
-                    self._profiles[uid] = ConversationalProfile.from_dict(data)
-                except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                    record_degradation('conversational_profile', exc)
-                    logger.warning("Skipping corrupt profile for '%s': %s", uid, exc)
-            # Restore phrase counters if present
-            for uid, phrases in raw.get("phrase_counters", {}).items():
-                self._phrase_counter[uid] = defaultdict(int, phrases)
-        except (OSError, ConnectionError, TimeoutError) as exc:
-            record_degradation('conversational_profile', exc)
-            logger.error("Failed to load conversational profiles: %s", exc)
-
     def save(self) -> None:
-        """Atomic write to disk."""
-        try:
-            payload = {
-                "profiles": {uid: p.to_dict() for uid, p in self._profiles.items()},
-                "phrase_counters": {uid: dict(pc) for uid, pc in self._phrase_counter.items()},
-            }
-            from core.runtime.file_write_gateway import get_file_write_gateway
+        """Flush cached exact-agent profiles through the canonical authority."""
+        for profile in list(self._profiles.values()):
+            self._persist_profile(profile)
 
-            get_file_write_gateway().write_text(
-                self._storage_path,
-                json.dumps(payload, indent=2),
-                source="conversational_profile.save",
+    def _persist_profile(self, profile: ConversationalProfile) -> None:
+        if not self._authority.allows(profile.user_id, _SNAPSHOT_KIND, "recall"):
+            return
+        payload = {
+            "profile": profile.to_dict(),
+            "phrase_counts": dict(self._phrase_counter.get(profile.user_id, {})),
+        }
+        try:
+            self._authority.upsert_snapshot(
+                profile.user_id,
+                namespace=_SNAPSHOT_NAMESPACE,
+                kind=_SNAPSHOT_KIND,
+                payload=payload,
+                confidence=profile.confidence,
+                provenance="conversational_profile.heuristics",
             )
-            logger.debug("Conversational profiles saved (%d users)", len(self._profiles))
-        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-            record_degradation('conversational_profile', exc)
-            logger.error("Failed to save conversational profiles: %s", exc)
+        except (RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("conversational_profile", exc)
+            logger.error("Failed to persist conversational profile: %s", exc)
+
+    def _profile_for_purpose(
+        self,
+        user_id: str,
+        *,
+        purpose: str,
+    ) -> ConversationalProfile | None:
+        if not self._authority.allows(user_id, _SNAPSHOT_KIND, purpose):
+            self._profiles.pop(user_id, None)
+            self._phrase_counter.pop(user_id, None)
+            return None
+        payload = self._authority.load_snapshot(
+            user_id,
+            namespace=_SNAPSHOT_NAMESPACE,
+            kind=_SNAPSHOT_KIND,
+            purpose=purpose,
+        )
+        if payload is not None:
+            profile_data = payload.get("profile", payload)
+            if isinstance(profile_data, dict):
+                profile = ConversationalProfile.from_dict(profile_data)
+                profile.user_id = user_id
+                self._profiles[user_id] = profile
+            phrase_counts = payload.get("phrase_counts")
+            if isinstance(phrase_counts, dict):
+                self._phrase_counter[user_id] = defaultdict(
+                    int,
+                    {
+                        str(key)[:200]: max(0, int(value))
+                        for key, value in list(phrase_counts.items())[:500]
+                        if isinstance(value, int)
+                    },
+                )
+        return self._profiles.get(user_id)
 
     # ------------------------------------------------------------------
     # Public API
@@ -210,10 +248,14 @@ class ConversationalProfiler:
 
     def get_profile(self, user_id: str) -> ConversationalProfile:
         """Get an existing profile or create a fresh one."""
-        if user_id not in self._profiles:
-            self._profiles[user_id] = ConversationalProfile(user_id=user_id)
-            logger.debug("Created new conversational profile for '%s'", user_id)
-        return self._profiles[user_id]
+        profile = self._profile_for_purpose(user_id, purpose="recall")
+        if profile is not None:
+            return profile
+        if self._authority.allows(user_id, _SNAPSHOT_KIND, "recall"):
+            profile = ConversationalProfile(user_id=user_id)
+            self._profiles[user_id] = profile
+            return profile
+        return ConversationalProfile(user_id=user_id)
 
     async def update_from_interaction(
         self,
@@ -237,6 +279,8 @@ class ConversationalProfiler:
         if reaction_signals is None:
             reaction_signals = {}
 
+        if not self._authority.allows(user_id, _SNAPSHOT_KIND, "recall"):
+            return ConversationalProfile(user_id=user_id)
         profile = self.get_profile(user_id)
         now = reaction_signals.get("timestamp", time.time())
 
@@ -293,15 +337,16 @@ class ConversationalProfiler:
         if profile.interactions_analyzed % _DEEP_ANALYSIS_INTERVAL == 0:
             await self._deep_llm_analysis(user_id, profile)
 
-        # Persist every 5 interactions to avoid excessive I/O
-        if profile.interactions_analyzed % 5 == 0:
-            self.save()
+        self._profiles[user_id] = profile
+        self._persist_profile(profile)
 
         return profile
 
     def get_context_injection(self, user_id: str) -> str:
         """Produce a formatted markdown block for LLM system prompt injection."""
-        profile = self.get_profile(user_id)
+        profile = self._profile_for_purpose(user_id, purpose="prompt")
+        if profile is None:
+            return ""
 
         if profile.interactions_analyzed < 3:
             return ""  # Not enough data yet
