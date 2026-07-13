@@ -32,13 +32,16 @@ anything between harvest and verdict.
 
 ## Honest observations
 
-- **Attached 0.312 vs gate 0.50**: the gate evaluates via
-  `mlx_lm.load(model, adapter_path=…)` in a fresh process; the hot-attach
-  measures the in-place wrap. Both beat base and detach restores exactly,
-  but the gap between load-path and wrap-path effective weights is a real,
-  open observation — tracked for investigation before specialists serve
-  user-facing traffic (routing is background-only and env-gated off by
-  default, `AURA_EXPERT_LORA_ROUTING`).
+- **Attached 0.312 vs gate 0.50 — RESOLVED (2026-07-13)**: a logit-parity
+  probe on the same 4-bit base with a synthetic non-identity adapter
+  (moves final-token logits by max|Δ|≈34) measured the two paths
+  **bit-identical** (max|Δ|=0.000000 load-vs-wrap; detach restores base at
+  0.000000). The effective weights do NOT differ; the score gap was
+  harness-side — the gate's bare-prompt `heldout_eval` vs the worker
+  generation path's chat template/sampling. Pinned by
+  `tests/test_expert_adapter_parity.py` (marked `model`/`live`, run on
+  demand). Routing (`AURA_EXPERT_LORA_ROUTING`) remains default-off pending
+  ordinary live validation, no longer blocked on a weight-path mystery.
 - The first proof attempt (same pipeline, `arithmetic_chain`) was REFUSED:
   the base already scores 1.000 on that domain gate, so no gain was
   claimable — the gate held instead of manufacturing a specialist. That
