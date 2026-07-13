@@ -132,3 +132,52 @@ def test_invalid_rotational_construction_rejected():
     with pytest.raises(PhysicsError):
         Body(body_id="x", shape="sphere", position=(0, 0, 0),
              velocity=(0, 0, 0), rolling_resistance=-1.0)
+
+
+# ── Sequential impulse solver: the stacking proof ────────────────
+
+def test_sphere_stack_stays_standing():
+    """Three stacked spheres under gravity: warm-started sequential
+    impulses hold the stack; single-pass solvers collapse or jitter."""
+    world = PhysicsWorld(dt=1.0 / 120.0)
+    world.add_body(_plane())
+    for i in range(3):
+        world.add_body(Body(
+            body_id=f"s{i}", shape="sphere",
+            position=(0.0, 0.0, 0.5 + i * 1.0),
+            velocity=(0.0, 0.0, 0.0), mass=1.0, radius=0.5,
+            restitution=0.0, friction=0.8))
+    world.step(1800)  # 15 seconds
+    for i in range(3):
+        body = world.body(f"s{i}")
+        # Each sphere still in its layer, horizontally centered, asleep.
+        assert abs(float(body.position[2]) - (0.5 + i * 1.0)) < 0.08, (i, body.position)
+        assert abs(float(body.position[0])) < 0.05
+        assert body.sleeping, f"s{i} never settled"
+
+
+def test_box_stack_on_plane_settles():
+    world = PhysicsWorld(dt=1.0 / 120.0)
+    world.add_body(_plane())
+    for i in range(3):
+        world.add_body(Body(
+            body_id=f"crate{i}", shape="box",
+            position=(0.0, 0.0, 0.5 + i * 1.001),
+            velocity=(0.0, 0.0, 0.0), mass=2.0,
+            half_extents=(0.5, 0.5, 0.5),
+            restitution=0.0, friction=0.8))
+    world.step(1800)
+    for i in range(3):
+        body = world.body(f"crate{i}")
+        assert abs(float(body.position[2]) - (0.5 + i * 1.0)) < 0.08
+        assert body.sleeping
+
+
+def test_warm_start_cache_evicts_separated_pairs():
+    world = PhysicsWorld(dt=1.0 / 120.0)
+    world.add_body(_plane())
+    world.add_body(_ball(vel=(0.0, 0.0, 3.0)))  # launched upward
+    world.step(1)
+    world.step(30)  # airborne: contact gone
+    assert ("ball", "ground") not in world._contact_cache
+    assert ("ground", "ball") not in world._contact_cache

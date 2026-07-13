@@ -51,6 +51,11 @@ _POSITION_CORRECTION = 0.8
 # the standard resting-contact treatment that lets bodies settle instead
 # of micro-bouncing forever on gravity's per-tick velocity kick.
 _RESTITUTION_SPEED_THRESHOLD = 0.15
+# Explicit wake requires a decisively fast impact. Slow contacts that
+# actually move a body still keep it awake through the sleep-state speed
+# check; this threshold only stops the penetration/separation limit
+# cycle of settled stacks (~2 ticks of free fall) from faking hits.
+_WAKE_SPEED_THRESHOLD = 0.3
 
 
 class PhysicsError(ValueError):
@@ -196,20 +201,38 @@ class Contact:
     body_b: str
     normal: np.ndarray  # from a toward b
     penetration: float
-    impulse: float = 0.0
+    impulse: float = 0.0            # accumulated normal impulse this tick
+    friction_impulse: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    restitution_bias: float = 0.0   # target separating speed (e · approach)
+    k_normal: float = 0.0           # effective mass along the normal
+    r_a: np.ndarray | None = None   # contact arm on a (spheres only)
+    r_b: np.ndarray | None = None
 
 
 class PhysicsWorld:
     """A deterministic rigid-body world with a fixed timestep."""
 
-    def __init__(self, *, gravity: float = -9.81, dt: float = 1.0 / 120.0):
+    def __init__(
+        self,
+        *,
+        gravity: float = -9.81,
+        dt: float = 1.0 / 120.0,
+        velocity_iterations: int = 8,
+    ):
         if dt <= 0.0 or dt > 0.1:
             raise PhysicsError("dt must be in (0, 0.1]")
+        if not 1 <= int(velocity_iterations) <= 64:
+            raise PhysicsError("velocity_iterations must be in [1, 64]")
         self.gravity = np.array([0.0, 0.0, float(gravity)], dtype=np.float64)
         self.dt = float(dt)
+        self.velocity_iterations = int(velocity_iterations)
         self.bodies: dict[str, Body] = {}
         self.tick = 0
         self.last_contacts: list[Contact] = []
+        # Warm-start cache: last tick's accumulated impulses per pair.
+        # Re-applying them as the solver's starting point is what makes
+        # stacked bodies converge instead of jittering (Box2D technique).
+        self._contact_cache: dict[tuple[str, str], tuple[float, np.ndarray]] = {}
 
     # ── population ─────────────────────────────────────────────
 
@@ -237,7 +260,7 @@ class PhysicsWorld:
             self._integrate()
             contacts = self._detect_contacts()
             self._resolve_contacts(contacts)
-            self._update_sleep_state()
+            self._update_sleep_state(contacts)
             self.last_contacts = contacts
             self.tick += 1
 
@@ -350,79 +373,132 @@ class PhysicsWorld:
     # ── collision response ─────────────────────────────────────
 
     def _resolve_contacts(self, contacts: list[Contact]) -> None:
+        """Sequential impulse solver (Box2D-style): warm-started
+        accumulated impulses iterated to convergence, friction clamped to
+        the Coulomb disk of the accumulated normal impulse, restitution as
+        a velocity bias from the pre-solve approach speed."""
+        solvable: list[Contact] = []
         for contact in contacts:
             a, b = self.bodies[contact.body_a], self.bodies[contact.body_b]
             inv_mass_sum = a.inverse_mass + b.inverse_mass
             if inv_mass_sum <= 0.0:
                 continue
-            normal = contact.normal
-            relative_velocity = b.velocity - a.velocity
-            approach_speed = float(relative_velocity @ normal)
-
-            if approach_speed < 0.0:
-                restitution = (
-                    min(a.restitution, b.restitution)
-                    if -approach_speed > _RESTITUTION_SPEED_THRESHOLD
-                    else 0.0
+            # Island sleeping: a contact whose every dynamic participant is
+            # asleep is skipped outright — no warm-start nudges, no
+            # correction creep. Settled stacks stay settled.
+            if (a.is_static or a.sleeping) and (b.is_static or b.sleeping):
+                continue
+            contact.k_normal = inv_mass_sum
+            contact.r_a = a.radius * contact.normal if a.inverse_inertia > 0.0 else None
+            contact.r_b = -b.radius * contact.normal if b.inverse_inertia > 0.0 else None
+            approach_speed = float((b.velocity - a.velocity) @ contact.normal)
+            if -approach_speed > _RESTITUTION_SPEED_THRESHOLD:
+                contact.restitution_bias = (
+                    -min(a.restitution, b.restitution) * approach_speed
                 )
-                impulse = -(1.0 + restitution) * approach_speed / inv_mass_sum
-                impulse_vector = impulse * normal
-                a.velocity = a.velocity - impulse_vector * a.inverse_mass
-                b.velocity = b.velocity + impulse_vector * b.inverse_mass
-                contact.impulse = impulse
-                # Only a genuine hit wakes bodies; the per-tick micro-impulse
-                # of a resting contact must not reset the sleep counter.
-                if -approach_speed > _RESTITUTION_SPEED_THRESHOLD:
-                    self._wake(a)
-                    self._wake(b)
+            if -approach_speed > _WAKE_SPEED_THRESHOLD:
+                # A genuine hit wakes bodies; resting micro-contacts and
+                # settling limit cycles don't.
+                self._wake(a)
+                self._wake(b)
+            solvable.append(contact)
 
-                # Coulomb friction at the CONTACT POINT: the relative
-                # velocity includes each sphere's surface motion (ω × r),
-                # and the impulse exchanges linear and angular momentum —
-                # this is what makes sliding balls spin up into rolling.
-                r_a = a.radius * normal if a.inverse_inertia > 0.0 else None
-                r_b = -b.radius * normal if b.inverse_inertia > 0.0 else None
+        # Warm start AFTER all approach speeds are read: applying cached
+        # impulses mid-setup would contaminate the next contact's reading
+        # and fake a "hit" every tick, defeating sleep.
+        for contact in solvable:
+            cached = self._contact_cache.get((contact.body_a, contact.body_b))
+            if cached is not None:
+                cached_normal, cached_friction = cached
+                contact.impulse = cached_normal
+                contact.friction_impulse = cached_friction.copy()
+                self._apply_contact_impulse(
+                    self.bodies[contact.body_a],
+                    self.bodies[contact.body_b],
+                    contact,
+                    cached_normal * contact.normal + cached_friction,
+                )
+
+        for _ in range(self.velocity_iterations):
+            for contact in solvable:
+                a, b = self.bodies[contact.body_a], self.bodies[contact.body_b]
+                normal = contact.normal
+
+                # Normal constraint: reach the restitution target speed,
+                # accumulated impulse clamped non-negative (no pulling).
+                normal_speed = float((b.velocity - a.velocity) @ normal)
+                delta = -(normal_speed - contact.restitution_bias) / contact.k_normal
+                new_total = max(0.0, contact.impulse + delta)
+                delta = new_total - contact.impulse
+                contact.impulse = new_total
+                if delta != 0.0:
+                    self._apply_contact_impulse(a, b, contact, delta * normal)
+
+                # Friction: drive the contact-point tangential velocity to
+                # zero, accumulated impulse clamped to the Coulomb disk.
                 contact_velocity = b.velocity - a.velocity
-                if r_b is not None:
-                    contact_velocity = contact_velocity + np.cross(b.angular_velocity, r_b)
-                if r_a is not None:
-                    contact_velocity = contact_velocity - np.cross(a.angular_velocity, r_a)
-                tangent_velocity = contact_velocity - float(contact_velocity @ normal) * normal
+                if contact.r_b is not None:
+                    contact_velocity = contact_velocity + np.cross(
+                        b.angular_velocity, contact.r_b)
+                if contact.r_a is not None:
+                    contact_velocity = contact_velocity - np.cross(
+                        a.angular_velocity, contact.r_a)
+                tangent_velocity = (
+                    contact_velocity - float(contact_velocity @ normal) * normal
+                )
                 tangent_speed = float(np.linalg.norm(tangent_velocity))
-                if tangent_speed > 1e-9:
-                    tangent = tangent_velocity / tangent_speed
-                    friction = math.sqrt(a.friction * b.friction)
-                    # Effective mass along the tangent, with rotational terms.
-                    k_tangent = inv_mass_sum
-                    if r_a is not None:
-                        arm = np.cross(r_a, tangent)
-                        k_tangent += a.inverse_inertia * float(arm @ arm)
-                    if r_b is not None:
-                        arm = np.cross(r_b, tangent)
-                        k_tangent += b.inverse_inertia * float(arm @ arm)
-                    friction_impulse = min(tangent_speed / k_tangent, friction * impulse)
-                    friction_vector = friction_impulse * tangent
-                    a.velocity = a.velocity + friction_vector * a.inverse_mass
-                    b.velocity = b.velocity - friction_vector * b.inverse_mass
-                    if r_a is not None:
-                        a.angular_velocity = a.angular_velocity + (
-                            a.inverse_inertia * np.cross(r_a, friction_vector)
-                        )
-                    if r_b is not None:
-                        b.angular_velocity = b.angular_velocity - (
-                            b.inverse_inertia * np.cross(r_b, friction_vector)
-                        )
+                if tangent_speed <= 1e-12:
+                    continue
+                tangent = tangent_velocity / tangent_speed
+                k_tangent = contact.k_normal
+                if contact.r_a is not None:
+                    arm = np.cross(contact.r_a, tangent)
+                    k_tangent += a.inverse_inertia * float(arm @ arm)
+                if contact.r_b is not None:
+                    arm = np.cross(contact.r_b, tangent)
+                    k_tangent += b.inverse_inertia * float(arm @ arm)
+                desired = contact.friction_impulse - (tangent_speed / k_tangent) * tangent
+                # Project onto the tangent plane and clamp to μ·λ_normal.
+                desired = desired - float(desired @ normal) * normal
+                budget = math.sqrt(a.friction * b.friction) * contact.impulse
+                magnitude = float(np.linalg.norm(desired))
+                if magnitude > budget:
+                    desired = desired * (budget / magnitude if magnitude > 0.0 else 0.0)
+                delta_vec = desired - contact.friction_impulse
+                contact.friction_impulse = desired
+                if float(delta_vec @ delta_vec) > 0.0:
+                    self._apply_contact_impulse(a, b, contact, delta_vec)
 
-                # Rolling resistance: a small decelerating budget against
-                # sustained rolling, proportional to the normal impulse.
-                self._apply_rolling_resistance(a, b, normal, impulse)
-
-            # Positional projection so resting bodies don't sink.
+        # Post-solve, once per contact: rolling drag + position projection.
+        self._contact_cache = {}
+        for contact in solvable:
+            a, b = self.bodies[contact.body_a], self.bodies[contact.body_b]
+            self._contact_cache[(contact.body_a, contact.body_b)] = (
+                contact.impulse, contact.friction_impulse.copy())
+            if contact.impulse > 0.0:
+                self._apply_rolling_resistance(a, b, contact.normal, contact.impulse)
             correction = max(contact.penetration - _PENETRATION_SLOP, 0.0)
             if correction > 0.0:
-                offset = (_POSITION_CORRECTION * correction / inv_mass_sum) * normal
+                offset = (
+                    _POSITION_CORRECTION * correction / contact.k_normal
+                ) * contact.normal
                 a.position = a.position - offset * a.inverse_mass
                 b.position = b.position + offset * b.inverse_mass
+
+    @staticmethod
+    def _apply_contact_impulse(
+        a: Body, b: Body, contact: Contact, impulse_on_b: np.ndarray
+    ) -> None:
+        """Apply an impulse (+ on b, − on a) at the contact, updating
+        angular velocity through each sphere's contact arm."""
+        a.velocity = a.velocity - impulse_on_b * a.inverse_mass
+        b.velocity = b.velocity + impulse_on_b * b.inverse_mass
+        if contact.r_a is not None:
+            a.angular_velocity = a.angular_velocity - (
+                a.inverse_inertia * np.cross(contact.r_a, impulse_on_b))
+        if contact.r_b is not None:
+            b.angular_velocity = b.angular_velocity + (
+                b.inverse_inertia * np.cross(contact.r_b, impulse_on_b))
 
     @staticmethod
     def _apply_rolling_resistance(a: Body, b: Body, normal: np.ndarray, impulse: float) -> None:
@@ -445,21 +521,48 @@ class PhysicsWorld:
         body.sleeping = False
         body.still_ticks = 0
 
-    def _update_sleep_state(self) -> None:
-        for body in self._dynamic_bodies():
-            speed = float(np.linalg.norm(body.velocity))
-            if body.inverse_inertia > 0.0:
-                # A spinning body is not at rest even if its center is.
-                speed += float(np.linalg.norm(body.angular_velocity)) * body.radius
-            if speed < _SLEEP_SPEED:
-                body.still_ticks += 1
-                if body.still_ticks >= _SLEEP_TICKS:
-                    body.sleeping = True
-                    body.velocity[:] = 0.0
-                    body.angular_velocity[:] = 0.0
+    @staticmethod
+    def _body_motion_speed(body: Body) -> float:
+        speed = float(np.linalg.norm(body.velocity))
+        if body.inverse_inertia > 0.0:
+            # A spinning body is not at rest even if its center is.
+            speed += float(np.linalg.norm(body.angular_velocity)) * body.radius
+        return speed
+
+    def _update_sleep_state(self, contacts: list[Contact]) -> None:
+        """Island sleeping (Box2D discipline): bodies connected by contacts
+        sleep and wake as a unit. A stack sleeps only when every member is
+        still; one moving member keeps — or wakes — the whole island."""
+        dynamic = self._dynamic_bodies()
+        parent: dict[str, str] = {body.body_id: body.body_id for body in dynamic}
+
+        def find(node: str) -> str:
+            while parent[node] != node:
+                parent[node] = parent[parent[node]]
+                node = parent[node]
+            return node
+
+        for contact in contacts:
+            if contact.body_a in parent and contact.body_b in parent:
+                parent[find(contact.body_a)] = find(contact.body_b)
+
+        islands: dict[str, list[Body]] = {}
+        for body in dynamic:
+            islands.setdefault(find(body.body_id), []).append(body)
+
+        for members in islands.values():
+            if all(self._body_motion_speed(b) < _SLEEP_SPEED for b in members):
+                for body in members:
+                    body.still_ticks += 1
+                if all(b.still_ticks >= _SLEEP_TICKS for b in members):
+                    for body in members:
+                        body.sleeping = True
+                        body.velocity[:] = 0.0
+                        body.angular_velocity[:] = 0.0
             else:
-                body.still_ticks = 0
-                body.sleeping = False
+                for body in members:
+                    body.still_ticks = 0
+                    body.sleeping = False
 
     # ── observability ──────────────────────────────────────────
 
