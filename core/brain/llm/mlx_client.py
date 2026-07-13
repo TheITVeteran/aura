@@ -4089,8 +4089,9 @@ class MLXLocalClient:
                     severity="warning",
                     foreground_request=True,
                 )
-            logger.warning(
-                "⏸️ [MLX] Model-load admission denied for %s: %s "
+            admission_logger = logger.warning if foreground_request else logger.info
+            admission_logger(
+                "⏸️ [MLX] Model-load admission deferred for %s: %s "
                 "(receipt=%s, recheck_in=%.1fs)",
                 os.path.basename(self.model_path),
                 admission_exc.reason,

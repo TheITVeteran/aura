@@ -6,6 +6,15 @@ from core.memory.memory_write_gateway import ConcreteMemoryWriteGateway
 from core.runtime.gateways import MemoryWriteRequest
 
 
+def test_default_gateway_uses_hermetic_runtime_root(monkeypatch, tmp_path):
+    runtime_root = tmp_path / "aura-runtime"
+    monkeypatch.setenv("AURA_TEST_RUNTIME_ROOT", str(runtime_root))
+
+    gateway = ConcreteMemoryWriteGateway(governance_decide=lambda **_kwargs: False)
+
+    assert gateway.root == runtime_root / "memory"
+
+
 @pytest.mark.asyncio
 async def test_memory_write_gateway_denies_async_governance_outage(tmp_path):
     attempted = {"governance": False}

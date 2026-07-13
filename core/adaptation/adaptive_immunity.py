@@ -1794,7 +1794,7 @@ class AdaptiveImmuneSystem:
             from core.adaptation.immune_executor import get_immune_executor
 
             executor = get_immune_executor()
-            exec_res = executor.execute_rule(
+            exec_res = await executor.execute_rule_async(
                 acting_cell.behavioral_rule,
                 context={
                     "source": "adaptive_immune_system",

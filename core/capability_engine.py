@@ -29,6 +29,7 @@ logger = logging.getLogger("core.capability_engine")
 _TOOL_AFFORDANCE_SCAN_BUDGET_SECONDS = 0.05
 _TOOL_AFFORDANCE_SCAN_LIMIT = 192
 _CATALOG_LOCK_BOOTSTRAP = threading.Lock()
+_VERIFIED_STANDING_AUTHORITY = object()
 
 try:
     from RestrictedPython import compile_restricted, safe_builtins, utility_builtins
@@ -2577,6 +2578,13 @@ class CapabilityEngine(AuraBaseModule):
         effect_scope: str,
     ) -> bool:
         """Return one confirmation decision for cooldown and advocate review."""
+        # AuthorityGateway has already matched the signed child lease to this
+        # exact tool invocation.  Treat that durable standing grant as the
+        # confirmation contract it represents instead of asking the owner a
+        # second time.  The identity sentinel cannot be supplied by JSON/API
+        # callers, so raw context fields never manufacture this decision.
+        if ctx.get("_standing_authority_verified") is _VERIFIED_STANDING_AUTHORITY:
+            return True
         explicitly_confirmed = bool(
             params.get("confirmed")
             or params.get("user_confirmed")
@@ -2613,6 +2621,28 @@ class CapabilityEngine(AuraBaseModule):
                 effect_scope,
             )
         )
+
+    @staticmethod
+    def _record_verified_standing_authority(
+        ctx: dict[str, Any],
+        tool_handle: Any,
+    ) -> bool:
+        """Record trusted standing-authority provenance from an approved handle."""
+        standing_token = str(
+            getattr(tool_handle, "standing_authority_token", "") or ""
+        ).strip()
+        constraints = dict(getattr(tool_handle, "constraints", {}) or {})
+        grant_id = str(constraints.get("standing_authority_grant_id") or "").strip()
+        if not standing_token or not grant_id:
+            return False
+        ctx["_standing_authority_verified"] = _VERIFIED_STANDING_AUTHORITY
+        ctx["standing_authority_grant_id"] = grant_id
+        receipt_id = str(
+            constraints.get("standing_authority_receipt_id") or ""
+        ).strip()
+        if receipt_id:
+            ctx["standing_authority_receipt_id"] = receipt_id
+        return True
 
     @staticmethod
     def _action_description_for_user_advocate(
@@ -3811,6 +3841,7 @@ class CapabilityEngine(AuraBaseModule):
                     ):
                         ctx["capability_token_id"] = capability_token_id
                         ctx["_capability_token_verified"] = True
+                        self._record_verified_standing_authority(ctx, tool_handle)
                     else:
                         return {
                             "ok": False,

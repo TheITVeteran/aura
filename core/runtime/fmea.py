@@ -61,7 +61,7 @@ class FailureMode:
     notes: str = ""
 
 
-FMEA_VERSION = "1.0"
+FMEA_VERSION = "1.1"
 
 FMEA_REGISTRY: tuple[FailureMode, ...] = (
     # ── Model-serving lane ─────────────────────────────────────────
@@ -226,6 +226,51 @@ FMEA_REGISTRY: tuple[FailureMode, ...] = (
         detection_modules=("core.resilience.stall_watchdog",),
         mitigation_modules=("core.runtime.service_registry",),
         occurrences=("2026-07-09 caught live via SIGUSR1 (e422e5de)",),
+    ),
+    FailureMode(
+        id="FM-LOOP-004",
+        subsystem="core/actuators/actuator_registry.py + async action callers",
+        mode="Synchronous actuator bridge blocks the owner loop and crosses thread-bound authority",
+        cause="Async callers invoked execute_action(), which moved AuthorityGateway onto a new "
+        "thread/event loop and synchronously waited; standing child leases are issuing-thread-bound",
+        effect="The owner event loop stalls for the full action duration, while lease validation or "
+        "closure can fail on a different thread from issuance",
+        blast_radius=BlastRadius.ORGANISM,
+        severity=Severity.CRITICAL,
+        detection="Owner-thread lifecycle regression plus a behavioral event-loop callback probe; "
+        "sync bridge rejects active event loops",
+        mitigation="Canonical execute_action_async keeps authorization, verification, and closure on "
+        "the owner loop while explicitly blocking actuator bodies run in worker threads",
+        detection_modules=("core.actuators.actuator_registry",),
+        mitigation_modules=(
+            "core.actuators.actuator_registry",
+            "core.runtime.overt_action_loop",
+            "core.adaptation.immune_executor",
+        ),
+        notes="Structurally reachable in the pre-checkpoint-60 action graph; focused tests reproduce "
+        "the loop-blocking dependency and thread-ownership mismatch without executing external effects.",
+    ),
+    FailureMode(
+        id="FM-ACTION-001",
+        subsystem="core/consciousness/closed_loop.py output receptor",
+        mode="Generated prose is parsed as an actuator command",
+        cause="The inference callback regex-parsed JSON and function-like text, simulated it, then "
+        "called ActuatorRegistry directly instead of observing a typed executed-action receipt",
+        effect="Model narration can mutate world state, bypass canonical action selection, and feed a "
+        "false success/failure signal back into the substrate",
+        blast_radius=BlastRadius.ORGANISM,
+        severity=Severity.CRITICAL,
+        detection="Negative regression proves action-looking generated text leaves world and substrate "
+        "unchanged; positive regression accepts only observed action outcomes",
+        mitigation="OutputReceptor limits generated language to bounded affective feedback; overt action "
+        "execution sends verified outcomes through notify_closed_loop_action_outcome",
+        detection_modules=("core.consciousness.closed_loop",),
+        mitigation_modules=(
+            "core.consciousness.closed_loop",
+            "core.runtime.overt_action_loop",
+        ),
+        notes="Structurally reachable before checkpoint 60 for any generated JSON containing an actuator "
+        "field, including actions that were never selected or executed by the canonical agency spine.",
     ),
     # ── Phi / consciousness compute ────────────────────────────────
     FailureMode(

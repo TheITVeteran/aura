@@ -379,7 +379,7 @@ class OvertActionLoop:
 
         if registry.get_actuator(skill) is not None:
             try:
-                actuator_res = registry.execute_action(
+                actuator_res = await registry.execute_action_async(
                     skill,
                     params,
                     context=governance_context,
@@ -445,6 +445,30 @@ class OvertActionLoop:
         result.result_summary = self._summarize_result(raw)
         if not result.verified and not result.error:
             result.error = str(raw.get("error") or raw.get("status") or "verification_failed") if isinstance(raw, dict) else "verification_failed"
+        try:
+            from core.consciousness.closed_loop import (
+                notify_closed_loop_action_outcome,
+            )
+
+            notify_closed_loop_action_outcome(
+                skill,
+                success=bool(isinstance(raw, dict) and raw.get("ok", False)),
+                verified=result.verified,
+                updates=(
+                    dict(raw.get("updates") or {})
+                    if isinstance(raw, dict) and isinstance(raw.get("updates"), dict)
+                    else {}
+                ),
+                error=result.error,
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "overt_action_loop",
+                exc,
+                severity="warning",
+                action="preserved action result after closed-loop feedback failed",
+                extra={"action_id": action_id, "skill": skill},
+            )
         return self._finish(result, raw_result=raw)
 
     @classmethod

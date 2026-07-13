@@ -42,16 +42,6 @@ _CLOSED_LOOP_RECOVERABLE_ERRORS = (
 )
 
 
-def _finite_float_or_none(value: Any) -> float | None:
-    try:
-        candidate = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(candidate):
-        return None
-    return candidate
-
-
 def _emit_closed_loop_fault(
     error: BaseException,
     *,
@@ -140,6 +130,10 @@ class LoopState:
     last_output_received_at: float = 0.0
     last_output_valence_delta: float = 0.0
     last_output_affect_keywords: list[str] = field(default_factory=list)
+    last_action_outcome_at: float = 0.0
+    last_action_name: str = ""
+    last_action_success: bool | None = None
+    last_action_verified: bool | None = None
     phi_estimate: float = 0.0
     phi_threshold_met: bool = False
 
@@ -164,287 +158,245 @@ class OutputReceptor:
         self._lock = threading.Lock()
 
     def receive_output(self, generated_text: str) -> tuple[np.ndarray, float] | None:
-        """Process generated text, parse action impulses, run simulation, execute actions, and return delta."""
-        if not generated_text or len(generated_text.strip()) < 5:
+        """Feed bounded linguistic affect back without treating prose as an action."""
+        text = str(generated_text or "").strip()
+        if len(text) < 5:
             return None
 
-        service_container: Any | None = None
-        substrate = None
-        try:
-            from core.container import ServiceContainer as _ServiceContainer
+        import re
 
-            service_container = _ServiceContainer
-            substrate = service_container.get("conscious_substrate", default=None)
-            if substrate is not None and hasattr(substrate, "x"):
-                self.ensure_dimension(len(substrate.x))
-        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
-            _emit_closed_loop_fault(
-                exc,
-                action="skipped output-to-substrate feedback because substrate lookup failed",
-                severity="warning",
-                stage="output_receptor_substrate_lookup",
-            )
-            logger.debug("OutputReceptor substrate lookup failed: %s", exc)
-        # Parse action impulses from text
-        try:
-            import json
-            import re
+        words = set(re.findall(r"[a-z']+", text.lower()))
+        positive = len(
+            words
+            & {
+                "calm",
+                "care",
+                "clear",
+                "connected",
+                "curious",
+                "glad",
+                "good",
+                "safe",
+                "steady",
+                "well",
+                "wonderful",
+            }
+        )
+        negative = len(
+            words
+            & {
+                "afraid",
+                "angry",
+                "bad",
+                "confused",
+                "distressed",
+                "frustrated",
+                "hurt",
+                "sad",
+                "uncertain",
+                "unwell",
+                "worried",
+            }
+        )
+        arousal = len(
+            words
+            & {
+                "alarm",
+                "excited",
+                "immediately",
+                "now",
+                "surprised",
+                "urgent",
+            }
+        )
+        curiosity = len(
+            words & {"curious", "explore", "how", "learn", "question", "why", "wonder"}
+        )
 
-            from core.actuators.actuator_registry import get_actuator_registry
-            from core.sensors.sensor_registry import get_sensor_registry
-            from core.world.world_model import (
-                PhysicsWorldModel,
-                WorldEntity,
-                get_physics_world_model,
-            )
-        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
-            _emit_closed_loop_fault(
-                exc,
-                action="skipped action-grounded output feedback because sensorimotor dependencies were unavailable",
-                severity="degraded",
-                stage="output_receptor_dependency_import",
-            )
-            return None
-
-        actions_found = []
-        # 1. Parse JSON blocks
-        json_matches = re.findall(r"\{.*?\}", generated_text)
-        for match in json_matches:
-            try:
-                data = json.loads(match)
-                if isinstance(data, dict) and "actuator" in data:
-                    actions_found.append((data["actuator"], data.get("params", {})))
-            except json.JSONDecodeError as _exc:
-                logger.debug("Suppressed %s in core.consciousness.closed_loop: %s", type(_exc).__name__, _exc)
-
-        # 2. Parse functional format (e.g. reroute_vessel(Vessel_Alpha, 90, 15))
-        if not actions_found:
-            match = re.search(
-                r"reroute_vessel\s*\(\s*['\"]?(\w+)['\"]?,\s*([\d\.]+),\s*([\d\.]+)\s*\)",
-                generated_text,
-            )
-            if match:
-                v_id, heading, speed = match.groups()
-                heading_f = _finite_float_or_none(heading)
-                speed_f = _finite_float_or_none(speed)
-                if heading_f is not None and speed_f is not None:
-                    actions_found.append(
-                        (
-                            "reroute_vessel",
-                            {"vessel_id": v_id, "heading": heading_f, "speed": speed_f},
-                        )
-                    )
-
-            match = re.search(
-                r"reallocate_flow\s*\(\s*['\"]?(\w+)['\"]?,\s*['\"]?(\w+)['\"]?,\s*([\d\.]+)\s*\)",
-                generated_text,
-            )
-            if match:
-                src, tgt, amt = match.groups()
-                amount_f = _finite_float_or_none(amt)
-                if amount_f is not None:
-                    actions_found.append(
-                        (
-                            "reallocate_flow",
-                            {"source_id": src, "target_id": tgt, "amount": amount_f},
-                        )
-                    )
-
-        if not actions_found:
-            return None
-
-        sim_actions = []
-        for name, params in actions_found:
-            if not isinstance(params, dict):
-                _emit_closed_loop_fault(
-                    ValueError(f"action params for {name!r} were not a mapping"),
-                    action="skipped malformed action impulse parameters",
-                    severity="warning",
-                    stage="output_receptor_action_params",
-                    extra={"action": str(name)},
-                )
-                continue
-            if name == "reroute_vessel":
-                sim_actions.append(
-                    {
-                        "type": "reroute",
-                        "entity_id": params.get("vessel_id"),
-                        "heading": params.get("heading"),
-                        "speed": params.get("speed"),
-                    }
-                )
-            elif name == "reallocate_flow":
-                sim_actions.append(
-                    {
-                        "type": "transfer",
-                        "entity_id": params.get("source_id"),
-                        "target_id": params.get("target_id"),
-                        "amount": params.get("amount"),
-                    }
-                )
-
-        sim_state: dict[str, Any] = {"entities": {}}
-        try:
-            world_model = get_physics_world_model()
-            sim_model = PhysicsWorldModel()
-            sim_model.entities = {}
-            for ent in world_model.entities.values():
-                sim_model.add_entity(
-                    WorldEntity(
-                        entity_id=ent.entity_id,
-                        kind=ent.kind,
-                        capacity=ent.capacity,
-                        load=ent.load,
-                        flow_rate=ent.flow_rate,
-                        max_flow_rate=ent.max_flow_rate,
-                        latency=ent.latency,
-                        coordinates=ent.coordinates,
-                        attributes=ent.attributes.copy(),
-                    )
-                )
-            sim_state = sim_model.simulate(10.0, actions=sim_actions)
-        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            _emit_closed_loop_fault(
-                exc,
-                action="executed actuator path without simulated expectation update",
-                severity="warning",
-                stage="output_receptor_expectation_simulation",
-                extra={"actions": [name for name, _ in actions_found]},
-            )
-
-        # Store the simulated expectations in ClosedCausalLoop
-        loop = None
-        if service_container is not None:
-            try:
-                loop = service_container.get("closed_causal_loop", default=None)
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                _emit_closed_loop_fault(
-                    exc,
-                    action="executed actuator path without closed-loop expectation sink",
-                    severity="warning",
-                    stage="output_receptor_loop_lookup",
-                )
-        if loop is not None and hasattr(loop, "_simulated_expectations"):
-            loop._simulated_expectations = {}
-            entities = sim_state.get("entities", {})
-            for eid, ent in entities.items():
-                if eid == "Port_East":
-                    loop._simulated_expectations["port_east_load"] = ent.get("load", 0.0)
-                    loop._simulated_expectations["port_east_latency"] = ent.get("latency", 0.0)
-                elif eid == "Port_West":
-                    loop._simulated_expectations["port_west_load"] = ent.get("load", 0.0)
-                    loop._simulated_expectations["port_west_latency"] = ent.get("latency", 0.0)
-                elif eid == "Vessel_Alpha":
-                    loop._simulated_expectations["vessel_alpha_speed"] = ent.get("flow_rate", 0.0)
-                elif eid == "Warehouse_Central":
-                    loop._simulated_expectations["warehouse_load"] = ent.get("load", 0.0)
-                    loop._simulated_expectations["warehouse_latency"] = ent.get("latency", 0.0)
-            try:
-                loop._simulated_expectations["system_cpu_usage"] = (
-                    get_sensor_registry().read_all().get("system_cpu_usage", 0.0)
-                )
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                _emit_closed_loop_fault(
-                    exc,
-                    action="stored simulated expectations without system CPU reading",
-                    severity="warning",
-                    stage="output_receptor_expectation_sensor_read",
-                )
-
-        # Coordinate/execute actions
-        try:
-            actuator_registry = get_actuator_registry()
-        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-            _emit_closed_loop_fault(
-                exc,
-                action="failed closed before actuator execution because actuator registry was unavailable",
-                severity="critical",
-                stage="output_receptor_actuator_registry",
-                extra={"actions": [name for name, _ in actions_found]},
-            )
-            return None
-
-        all_success = True
-        execution_messages = []
-        for name, params in actions_found:
-            try:
-                res = actuator_registry.execute_action(name, params)
-            except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                _emit_closed_loop_fault(
-                    exc,
-                    action="converted actuator execution exception into failed action result",
-                    severity="degraded",
-                    stage="output_receptor_actuator_execution",
-                    extra={"action": name},
-                )
-                all_success = False
-                execution_messages.append(f"{name} raised {type(exc).__name__}")
-                continue
-            if not res.success:
-                all_success = False
-            execution_messages.append(res.message)
-
-        # Construct physical action-grounded delta vector
         delta = np.zeros(self._neuron_count, dtype=np.float32)
-        if all_success:
-            delta[0] = 0.35  # Valence (joy/success)
-            delta[1] = 0.20  # Arousal (active execution)
-            delta[3] = -0.30  # Frustration (reduced)
-            delta[4] = 0.25  # Curiosity (explore)
-        else:
-            delta[0] = -0.35  # Valence (fail)
-            delta[1] = 0.15  # Arousal
-            delta[3] = 0.40  # Frustration (increased)
-            delta[4] = 0.10  # Curiosity
-
+        self._set_delta(delta, 0, max(-0.22, min(0.22, (positive - negative) * 0.055)))
+        self._set_delta(
+            delta,
+            1,
+            max(0.0, min(0.14, arousal * 0.035 + min(text.count("!"), 2) * 0.02)),
+        )
+        self._set_delta(
+            delta,
+            3,
+            max(-0.12, min(0.18, negative * 0.045 - positive * 0.018)),
+        )
+        self._set_delta(
+            delta,
+            4,
+            max(0.0, min(0.16, curiosity * 0.04 + min(text.count("?"), 2) * 0.02)),
+        )
         magnitude = float(np.linalg.norm(delta))
+        if magnitude <= 1e-8:
+            return None
+        return self._inject_delta(
+            delta,
+            magnitude,
+            source="generated_output_affect",
+            metadata={"text_length": len(text)},
+        )
 
-        # Inject into substrate
+    def receive_action_outcome(
+        self,
+        action_name: str,
+        *,
+        success: bool,
+        verified: bool | None = None,
+        updates: dict[str, Any] | None = None,
+        error: str = "",
+    ) -> tuple[np.ndarray, float] | None:
+        """Feed an observed action result back into the substrate.
+
+        This is the only action-grounded output path. Callers provide the
+        receipted execution outcome; generated language is never parsed into an
+        actuator invocation.
+        """
+        delta = np.zeros(self._neuron_count, dtype=np.float32)
+        if success and verified is not False:
+            self._set_delta(delta, 0, 0.30)
+            self._set_delta(delta, 1, 0.16)
+            self._set_delta(delta, 3, -0.24)
+            self._set_delta(delta, 4, 0.18)
+        elif success:
+            self._set_delta(delta, 0, 0.08)
+            self._set_delta(delta, 1, 0.10)
+            self._set_delta(delta, 3, 0.12)
+            self._set_delta(delta, 4, 0.16)
+        else:
+            self._set_delta(delta, 0, -0.30)
+            self._set_delta(delta, 1, 0.14)
+            self._set_delta(delta, 3, 0.34)
+            self._set_delta(delta, 4, 0.08)
+
+        self._schedule_action_expectation_refresh()
+        magnitude = float(np.linalg.norm(delta))
+        return self._inject_delta(
+            delta,
+            magnitude,
+            source="observed_action_outcome",
+            metadata={
+                "action": str(action_name or "unknown")[:120],
+                "success": bool(success),
+                "verified": verified,
+                "update_keys": sorted(str(key)[:80] for key in (updates or {}))[:32],
+                "error_type": str(error or "").split(":", 1)[0][:120],
+            },
+        )
+
+    @staticmethod
+    def _set_delta(delta: np.ndarray, index: int, value: float) -> None:
+        if 0 <= index < len(delta):
+            delta[index] = float(value)
+
+    def _refresh_action_expectations(self) -> None:
         try:
-            if substrate:
-                injection = substrate.inject_stimulus(delta, weight=OUTPUT_FEEDBACK_WEIGHT)
-                if inspect.isawaitable(injection):
-                    try:
-                        task = get_task_tracker().create_task(
-                            injection,
-                            name="ClosedCausalLoop.output_feedback",
-                        )
-                    except (RuntimeError, TypeError, ValueError) as exc:
-                        close = getattr(injection, "close", None)
-                        if callable(close):
-                            close()
-                        raise RuntimeError("failed to schedule output feedback injection") from exc
-                    if isinstance(task, asyncio.Task):
-                        task.add_done_callback(self._observe_injection_task)
-                with self._lock:
-                    self._receive_count += 1
-                    self._total_injected_energy += magnitude
-                    self._last_receive_time = time.time()
+            from core.container import ServiceContainer
+            from core.sensors.sensor_registry import get_sensor_registry
 
-                logger.info(
-                    "OutputReceptor: executed action %s, injected delta (mag=%.3f) from output",
-                    actions_found,
-                    magnitude,
-                )
-                return delta, magnitude
+            loop = ServiceContainer.get("closed_causal_loop", default=None)
+            if loop is None or not hasattr(loop, "_simulated_expectations"):
+                return
+            registry = get_sensor_registry()
+            registry.sync_from_world_model()
+            loop._simulated_expectations = registry.read_all()
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
             _emit_closed_loop_fault(
-                RuntimeError("no conscious substrate available for output feedback"),
-                action="recorded action affect without substrate injection",
+                exc,
+                action="kept action outcome feedback after expectation refresh failed",
                 severity="warning",
-                stage="output_receptor_no_substrate",
-                extra={"actions": [name for name, _ in actions_found]},
+                stage="output_receptor_action_expectation_refresh",
+            )
+
+    def _schedule_action_expectation_refresh(self) -> None:
+        """Refresh physical expectations without stalling an active owner loop."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            self._refresh_action_expectations()
+            return
+
+        refresh = asyncio.to_thread(self._refresh_action_expectations)
+        try:
+            get_task_tracker().create_task(
+                refresh,
+                name="ClosedCausalLoop.action_expectation_refresh",
+            )
+        except (RuntimeError, TypeError, ValueError) as exc:
+            refresh.close()
+            _emit_closed_loop_fault(
+                exc,
+                action="kept action feedback after expectation refresh scheduling failed",
+                severity="warning",
+                stage="output_receptor_action_expectation_schedule",
+            )
+
+    def _inject_delta(
+        self,
+        delta: np.ndarray,
+        magnitude: float,
+        *,
+        source: str,
+        metadata: dict[str, Any],
+    ) -> tuple[np.ndarray, float] | None:
+        try:
+            from core.container import ServiceContainer
+
+            substrate = ServiceContainer.get("conscious_substrate", default=None)
+            if substrate is None:
+                _emit_closed_loop_fault(
+                    RuntimeError("no conscious substrate available for output feedback"),
+                    action="recorded output feedback without substrate injection",
+                    severity="warning",
+                    stage="output_receptor_no_substrate",
+                    extra={"source": source, **metadata},
+                )
+                return None
+            if hasattr(substrate, "x"):
+                self.ensure_dimension(len(substrate.x))
+                if len(delta) != self._neuron_count:
+                    resized = np.zeros(self._neuron_count, dtype=np.float32)
+                    copy_count = min(len(delta), len(resized))
+                    resized[:copy_count] = delta[:copy_count]
+                    delta = resized
+                    magnitude = float(np.linalg.norm(delta))
+
+            injection = substrate.inject_stimulus(delta, weight=OUTPUT_FEEDBACK_WEIGHT)
+            if inspect.isawaitable(injection):
+                try:
+                    task = get_task_tracker().create_task(
+                        injection,
+                        name="ClosedCausalLoop.output_feedback",
+                    )
+                except (RuntimeError, TypeError, ValueError) as exc:
+                    close = getattr(injection, "close", None)
+                    if callable(close):
+                        close()
+                    raise RuntimeError("failed to schedule output feedback injection") from exc
+                if isinstance(task, asyncio.Task):
+                    task.add_done_callback(self._observe_injection_task)
+            with self._lock:
+                self._receive_count += 1
+                self._total_injected_energy += magnitude
+                self._last_receive_time = time.time()
+            logger.info(
+                "OutputReceptor: injected %s delta (mag=%.3f)",
+                source,
+                magnitude,
             )
             return delta, magnitude
-        except (RuntimeError, AttributeError, TypeError, ValueError) as e:
+        except (AttributeError, ImportError, RuntimeError, TypeError, ValueError) as exc:
             _emit_closed_loop_fault(
-                e,
-                action="dropped output-to-substrate feedback after injection scheduling failed",
+                exc,
+                action="dropped output-to-substrate feedback after injection failed",
                 severity="degraded",
                 stage="output_receptor_injection",
+                extra={"source": source, **metadata},
             )
-            logger.debug("OutputReceptor injection failed: %s", e)
-
-        return None
+            return None
 
     @staticmethod
     def _observe_injection_task(task: asyncio.Task) -> None:
@@ -1312,6 +1264,33 @@ class ClosedCausalLoop:
             self._loop_state.last_output_received_at = time.time()
             self._loop_state.last_output_valence_delta = val_delta
 
+    def on_action_outcome(
+        self,
+        action_name: str,
+        *,
+        success: bool,
+        verified: bool | None = None,
+        updates: dict[str, Any] | None = None,
+        error: str = "",
+    ) -> None:
+        """Receive feedback only from an executed action's observed outcome."""
+        result = self._output_receptor.receive_action_outcome(
+            action_name,
+            success=success,
+            verified=verified,
+            updates=updates,
+            error=error,
+        )
+        if result is not None:
+            delta, _magnitude = result
+            self._phi_witness.record_output_affect(
+                float(delta[0]) if len(delta) > 0 else 0.0
+            )
+        self._loop_state.last_action_outcome_at = time.time()
+        self._loop_state.last_action_name = str(action_name or "")[:120]
+        self._loop_state.last_action_success = bool(success)
+        self._loop_state.last_action_verified = verified
+
     def get_free_energy_narrative(self) -> str:
         """The current free energy as phenomenological language."""
         fe = self._loop_state.current_free_energy
@@ -1467,6 +1446,35 @@ def get_running_closed_loop() -> ClosedCausalLoop | None:
     if loop is None or not getattr(loop, "is_running", False):
         return None
     return loop
+
+
+def notify_closed_loop_action_outcome(
+    action_name: str,
+    *,
+    success: bool,
+    verified: bool | None = None,
+    updates: dict[str, Any] | None = None,
+    error: str = "",
+) -> None:
+    loop = get_running_closed_loop()
+    if loop is None:
+        return
+    try:
+        loop.on_action_outcome(
+            action_name,
+            success=success,
+            verified=verified,
+            updates=updates,
+            error=error,
+        )
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        _emit_closed_loop_fault(
+            exc,
+            action="protected action path from closed-loop outcome callback failure",
+            severity="degraded",
+            stage="closed_loop_notify_action_outcome",
+            extra={"action": str(action_name or "")[:120]},
+        )
 
 
 def notify_closed_loop_output(generated_text: str) -> None:

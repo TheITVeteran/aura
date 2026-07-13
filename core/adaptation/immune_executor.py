@@ -10,6 +10,7 @@ them into physical actions via the ActuatorRegistry.
 from __future__ import annotations
 
 import ast
+import asyncio
 import logging
 import math
 import operator
@@ -155,15 +156,11 @@ class ImmuneHeuristicExecutor:
             return float(_ALLOWED_UNARYOPS[type(node.op)](self._eval_ast_node(node.operand)))
         raise ValueError(f"unsupported expression node: {type(node).__name__}")
 
-    def _authorize_execution(self, context: dict[str, Any]) -> tuple[bool, str, str]:
-        """Authorize an immune behavioral rule before it reaches any actuator.
-
-        Behavioral rules are evolved background policies, not user requests.  They
-        must never run just because a live chat turn happened to surface anomaly
-        telemetry.  The only ungated path is an explicitly isolated simulation
-        context used by causal-fitness and coevolution labs.
-        """
-
+    def _authorization_preflight(
+        self,
+        context: dict[str, Any],
+    ) -> tuple[bool | None, str, str]:
+        """Classify simulation, denial, deferral, or required authority."""
         source = str(context.get("source") or "").strip().lower()
         simulation_only = bool(
             context.get("isolated_simulation")
@@ -172,7 +169,6 @@ class ImmuneHeuristicExecutor:
         )
         if simulation_only:
             return True, "simulation_authorized", "isolated simulation context"
-
         if source not in self._MAINTENANCE_SOURCES:
             return (
                 False,
@@ -203,14 +199,19 @@ class ImmuneHeuristicExecutor:
                 "governance_denied",
                 "background policy unavailable for immune behavioral rule",
             )
-
         if defer_reason:
             return (
                 False,
                 "deferred",
                 f"immune behavioral action deferred by maintenance policy: {defer_reason}",
             )
+        return None, "authority_required", "adaptive maintenance requires authority"
 
+    def _authorize_execution(self, context: dict[str, Any]) -> tuple[bool, str, str]:
+        """Authorize a synchronous immune behavioral rule before actuation."""
+        allowed, status, message = self._authorization_preflight(context)
+        if allowed is not None:
+            return allowed, status, message
         try:
             from core.executive.authority_gateway import get_authority_gateway
 
@@ -226,7 +227,6 @@ class ImmuneHeuristicExecutor:
                 "governance_denied",
                 "AuthorityGateway unavailable for immune behavioral rule",
             )
-
         if not getattr(decision, "approved", False):
             reason = str(getattr(decision, "reason", "") or "").strip()
             return (
@@ -234,8 +234,103 @@ class ImmuneHeuristicExecutor:
                 "governance_denied",
                 f"immune behavioral action denied by AuthorityGateway: {reason}",
             )
-
         return True, "authorized", "adaptive maintenance authorized"
+
+    async def _authorize_execution_async(
+        self,
+        context: dict[str, Any],
+    ) -> tuple[bool, str, str]:
+        """Keep blocking policy observation off-loop and authority on-loop."""
+        allowed, status, message = await asyncio.to_thread(
+            self._authorization_preflight,
+            context,
+        )
+        if allowed is not None:
+            return allowed, status, message
+        try:
+            from core.executive.authority_gateway import get_authority_gateway
+
+            decision = await get_authority_gateway().authorize_state_mutation(
+                "adaptive_immune_system",
+                "adaptive_immune_behavioral_rule",
+                priority=float(context.get("priority", 0.68) or 0.68),
+            )
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.warning("Immune behavioral rule AuthorityGateway probe failed: %s", exc)
+            return (
+                False,
+                "governance_denied",
+                "AuthorityGateway unavailable for immune behavioral rule",
+            )
+        if not getattr(decision, "approved", False):
+            reason = str(getattr(decision, "reason", "") or "").strip()
+            return (
+                False,
+                "governance_denied",
+                f"immune behavioral action denied by AuthorityGateway: {reason}",
+            )
+        return True, "authorized", "adaptive maintenance authorized"
+
+    @staticmethod
+    def _schedule_missing_actuator_synthesis(
+        actuator_name: str,
+        sensors_data: dict[str, float],
+    ) -> None:
+        logger.warning(
+            "Actuator '%s' not found. Launching open-ended actuator synthesis...",
+            actuator_name,
+        )
+        try:
+            from core.actuators.actuator_synthesis import (
+                SynthesisRequest,
+                get_actuator_synthesizer,
+            )
+            from core.utils.task_tracker import get_task_tracker
+            from core.world.world_model import get_physics_world_model
+
+            world_snapshot = {
+                entity_id: {
+                    "kind": entity.kind,
+                    "load": entity.load,
+                    "capacity": entity.capacity,
+                    "flow_rate": entity.flow_rate,
+                    "latency": entity.latency,
+                }
+                for entity_id, entity in get_physics_world_model().entities.items()
+            }
+            request = SynthesisRequest(
+                problem_description=(
+                    f"Action requested but actuator '{actuator_name}' is not found in the registry."
+                ),
+                failed_actuators=[actuator_name],
+                sensor_context=sensors_data,
+                world_model_snapshot=world_snapshot,
+                urgency=0.8,
+            )
+
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop and loop.is_running():
+                get_task_tracker().create_task(
+                    get_actuator_synthesizer().request_synthesis(request),
+                    name=f"actuator_synthesis_{actuator_name}",
+                )
+                return
+
+            import threading
+
+            def run_synthesis() -> None:
+                asyncio.run(get_actuator_synthesizer().request_synthesis(request))
+
+            threading.Thread(
+                target=run_synthesis,
+                daemon=True,
+                name=f"actuator-synthesis-{actuator_name}",
+            ).start()
+        except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+            logger.error("Failed to trigger background actuator synthesis: %s", exc)
 
     def execute_rule(
         self,
@@ -340,60 +435,7 @@ class ImmuneHeuristicExecutor:
 
             # Trigger dynamic synthesis if actuator is missing
             if not res.success and ("not found" in res.message or "not registered" in res.message):
-                logger.warning(
-                    "Actuator '%s' not found. Launching open-ended actuator synthesis...",
-                    actuator_name,
-                )
-                try:
-                    import asyncio
-
-                    from core.actuators.actuator_synthesis import (
-                        SynthesisRequest,
-                        get_actuator_synthesizer,
-                    )
-                    from core.utils.task_tracker import get_task_tracker
-
-                    # Snapshot sensor context and world model
-                    from core.world.world_model import get_physics_world_model
-
-                    world_snapshot = {
-                        eid: {
-                            "kind": ent.kind,
-                            "load": ent.load,
-                            "capacity": ent.capacity,
-                            "flow_rate": ent.flow_rate,
-                            "latency": ent.latency,
-                        }
-                        for eid, ent in get_physics_world_model().entities.items()
-                    }
-
-                    req = SynthesisRequest(
-                        problem_description=f"Action requested but actuator '{actuator_name}' is not found in the registry.",
-                        failed_actuators=[actuator_name],
-                        sensor_context=sensors_data,
-                        world_model_snapshot=world_snapshot,
-                        urgency=0.8,
-                    )
-
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        loop = None
-
-                    if loop and loop.is_running():
-                        get_task_tracker().create_task(
-                            get_actuator_synthesizer().request_synthesis(req),
-                            name=f"actuator_synthesis_{actuator_name}",
-                        )
-                    else:
-                        import threading
-
-                        def run_synthesis(request=req) -> None:
-                            asyncio.run(get_actuator_synthesizer().request_synthesis(request))
-
-                        threading.Thread(target=run_synthesis, daemon=True).start()
-                except (ImportError, RuntimeError, TypeError, ValueError) as exc:
-                    logger.error("Failed to trigger background actuator synthesis: %s", exc)
+                self._schedule_missing_actuator_synthesis(actuator_name, sensors_data)
 
             executed_actions.append(
                 {
@@ -411,6 +453,106 @@ class ImmuneHeuristicExecutor:
         # Sync telemetry again post-execution
         registry.sync_from_world_model()
 
+        return {
+            "conditions_met": True,
+            "actions_executed": executed_actions,
+            "success": overall_success,
+            "status": "executed" if executed_actions else "no_actions_executed",
+            "message": "; ".join(messages),
+        }
+
+    async def execute_rule_async(
+        self,
+        rule: dict[str, Any],
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Async runtime path for immune actions and their authority lifecycle."""
+        context = dict(context or {})
+        authorized, status, message = await self._authorize_execution_async(context)
+        if not authorized:
+            return {
+                "conditions_met": False,
+                "actions_executed": [],
+                "success": False,
+                "status": status,
+                "deferred": status == "deferred",
+                "message": message,
+            }
+
+        registry = get_sensor_registry()
+        registry.sync_from_world_model()
+        sensors_data = registry.read_all()
+        conditions = list(rule.get("conditions", []) or [])
+        actions = list(rule.get("actions", []) or [])
+
+        if not actions:
+            return {
+                "conditions_met": False,
+                "actions_executed": [],
+                "success": True,
+                "status": "no_actions",
+                "message": "No actions to execute.",
+            }
+        if not all(self.evaluate_condition(condition, sensors_data) for condition in conditions):
+            return {
+                "conditions_met": False,
+                "actions_executed": [],
+                "success": True,
+                "status": "conditions_not_met",
+                "message": "Conditions not satisfied, skipped execution.",
+            }
+
+        actuator_registry = get_actuator_registry()
+        executed_actions: list[dict[str, Any]] = []
+        messages: list[str] = []
+        overall_success = True
+        for action in actions:
+            actuator_name = str(action.get("actuator") or "").strip()
+            if not actuator_name:
+                logger.warning("Action missing 'actuator' identifier")
+                overall_success = False
+                continue
+            resolved_params = self.resolve_params(
+                dict(action.get("params", {}) or {}),
+                sensors_data,
+            )
+            logger.info(
+                "Executing immune action '%s' with params: %s",
+                actuator_name,
+                resolved_params,
+            )
+            result = await actuator_registry.execute_action_async(
+                actuator_name,
+                resolved_params,
+                context={
+                    "source": context.get("source") or "adaptive_immune_system",
+                    "priority": float(context.get("priority", 0.68) or 0.68),
+                    "is_critical": bool(context.get("is_critical", False)),
+                    "isolated_simulation": bool(
+                        context.get("isolated_simulation", False)
+                    ),
+                },
+            )
+            if not result.success and (
+                "not found" in result.message or "not registered" in result.message
+            ):
+                self._schedule_missing_actuator_synthesis(
+                    actuator_name,
+                    sensors_data,
+                )
+            executed_actions.append(
+                {
+                    "actuator": actuator_name,
+                    "params": resolved_params,
+                    "success": result.success,
+                    "message": result.message,
+                }
+            )
+            overall_success = overall_success and result.success
+            messages.append(result.message)
+
+        registry.sync_from_world_model()
         return {
             "conditions_met": True,
             "actions_executed": executed_actions,

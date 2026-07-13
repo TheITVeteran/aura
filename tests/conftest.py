@@ -237,11 +237,13 @@ def resource_observer(request, monkeypatch, tmp_path):
         from core.brain.llm.model_registry import reset_model_registry_caches_for_test
         from core.executive.authority_gateway import reset_authority_gateway
         from core.executive.standing_authority import reset_standing_authority_manager
+        from core.memory.memory_write_gateway import reset_memory_write_gateway
         from core.resource.resource_governor import reset_resource_governor_for_test
         from core.runtime.control_plane import reset_runtime_control_plane
         from core.runtime.model_lane_control import reset_model_lane_controller_for_test
         from core.runtime.receipts import reset_receipt_store
         from core.runtime.runtime_pressure import reset_unified_runtime_pressure_for_test
+        from core.state.state_gateway import reset_state_gateway
 
         reset_runtime_control_plane()
         reset_authority_gateway()
@@ -253,6 +255,8 @@ def resource_observer(request, monkeypatch, tmp_path):
         reset_resource_governor_for_test()
         reset_model_registry_caches_for_test()
         reset_receipt_store()
+        reset_memory_write_gateway()
+        reset_state_gateway()
 
     host_markers = ("host_observation", "live", "hardware", "longrun")
     host_backed = any(request.node.get_closest_marker(name) for name in host_markers)

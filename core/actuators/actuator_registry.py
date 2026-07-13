@@ -12,7 +12,6 @@ import asyncio
 import logging
 import math
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -52,6 +51,7 @@ class BaseActuator(ABC):
     requires_authority: bool = False
     generation: int = 0
     source_code: str | None = None
+    blocking_execution: bool = True
 
     @property
     @abstractmethod
@@ -181,6 +181,8 @@ class SandboxedSynthesizedActuator(BaseActuator):
 class RerouteVesselActuator(BaseActuator):
     """Actuator to adjust headings and speeds of maritime vessel edges."""
 
+    blocking_execution = False
+
     @property
     def name(self) -> str:
         return "reroute_vessel"
@@ -252,6 +254,8 @@ class RerouteVesselActuator(BaseActuator):
 
 class ReallocateFlowActuator(BaseActuator):
     """Actuator to transfer assets/cargo from one inventory node to another."""
+
+    blocking_execution = False
 
     @property
     def name(self) -> str:
@@ -457,38 +461,73 @@ class ActuatorRegistry:
         return [act for act in self.actuators.values() if getattr(act, "synthesized", False)]
 
     @staticmethod
-    def _run_coroutine_sync(coro: Any) -> Any:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return asyncio.run(coro)
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            return executor.submit(asyncio.run, coro).result()
-
-    @staticmethod
-    def _authorize_actuator(name: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
+    async def _authorize_actuator(
+        name: str,
+        params: dict[str, Any],
+        context: dict[str, Any],
+    ) -> Any:
         from core.executive.authority_gateway import get_authority_gateway
 
         gateway = get_authority_gateway()
-        return ActuatorRegistry._run_coroutine_sync(
-            gateway.authorize_tool_execution(
-                name,
-                params,
-                source=str(context.get("source") or "actuator_registry"),
-                priority=float(context.get("priority", 0.7) or 0.7),
-                is_critical=bool(context.get("is_critical", False)),
-                context=dict(context or {}),
-            )
+        return await gateway.authorize_tool_execution(
+            name,
+            params,
+            source=str(context.get("source") or "actuator_registry"),
+            priority=float(context.get("priority", 0.7) or 0.7),
+            is_critical=bool(context.get("is_critical", False)),
+            context=dict(context or {}),
         )
 
-    def execute_action(
+    @staticmethod
+    def _execute_actuator_body(
+        actuator: BaseActuator,
+        params: dict[str, Any],
+        authority_decision: Any,
+    ) -> ActuatorResult:
+        if authority_decision is None:
+            return actuator.execute(params)
+
+        from core.governance_context import governed_scope_sync
+
+        with governed_scope_sync(authority_decision):
+            return actuator.execute(params)
+
+    @staticmethod
+    def _preflight_actuator(
+        actuator: BaseActuator,
+        name: str,
+        params: dict[str, Any],
+    ) -> ActuatorResult | None:
+        if not getattr(actuator, "synthesized", False):
+            return None
+        if actuator.trust_score < 0.2:
+            return ActuatorResult(
+                False,
+                f"Actuator '{name}' has trust score too low ({actuator.trust_score:.2f}) to execute",
+                {},
+            )
+        if actuator.trust_score < 0.5:
+            logger.warning(
+                "Executing low-trust synthesized actuator '%s' (trust=%.2f)",
+                name,
+                actuator.trust_score,
+            )
+            if not params:
+                return ActuatorResult(
+                    False,
+                    "Low-trust actuator requires non-empty parameters",
+                    {},
+                )
+        return None
+
+    async def execute_action_async(
         self,
         name: str,
         params: dict[str, Any],
         *,
         context: dict[str, Any] | None = None,
     ) -> ActuatorResult:
-        """Safely retrieves and executes a physical action primitive."""
+        """Execute one actuator without blocking the runtime owner loop."""
         actuator = self.get_actuator(name)
         if not actuator:
             return ActuatorResult(False, f"Actuator '{name}' not found", {})
@@ -496,30 +535,22 @@ class ActuatorRegistry:
         exec_params = dict(params or {})
         authority_decision = None
         capability_token_id = None
+        result: ActuatorResult | None = None
+        cancellation: asyncio.CancelledError | None = None
 
         # Reject deterministic local preflight failures before acquiring an
         # authority lease. Once a lease is acquired, every path below closes it.
-        if getattr(actuator, "synthesized", False):
-            if actuator.trust_score < 0.2:
-                return ActuatorResult(
-                    False,
-                    f"Actuator '{name}' has trust score too low ({actuator.trust_score:.2f}) to execute",
-                    {},
-                )
-            if actuator.trust_score < 0.5:
-                logger.warning(
-                    "Executing low-trust synthesized actuator '%s' (trust=%.2f)",
-                    name,
-                    actuator.trust_score,
-                )
-                if not params:
-                    return ActuatorResult(
-                        False, "Low-trust actuator requires non-empty parameters", {}
-                    )
+        preflight = self._preflight_actuator(actuator, name, exec_params)
+        if preflight is not None:
+            return preflight
 
         if getattr(actuator, "requires_authority", False):
             try:
-                authority_decision = self._authorize_actuator(name, exec_params, dict(context or {}))
+                authority_decision = await self._authorize_actuator(
+                    name,
+                    exec_params,
+                    dict(context or {}),
+                )
             except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 return ActuatorResult(
                     False,
@@ -534,7 +565,6 @@ class ActuatorRegistry:
                 )
             capability_token_id = getattr(authority_decision, "capability_token_id", None)
 
-        result: ActuatorResult | None = None
         try:
             if authority_decision is not None:
                 try:
@@ -553,13 +583,66 @@ class ActuatorRegistry:
                 exec_params["_aura_authorized"] = True
                 exec_params["_capability_token_id"] = capability_token_id
 
-                from core.governance_context import governed_scope_sync
-
-                with governed_scope_sync(authority_decision):
-                    result = actuator.execute(exec_params)
+            if getattr(actuator, "blocking_execution", True):
+                execution_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        self._execute_actuator_body,
+                        actuator,
+                        exec_params,
+                        authority_decision,
+                    ),
+                    name=f"actuator:{name}",
+                )
+                while not execution_task.done():
+                    try:
+                        await asyncio.shield(execution_task)
+                    except asyncio.CancelledError as exc:
+                        if cancellation is None:
+                            cancellation = exc
+                        # Python threads cannot be cancelled safely. Continue
+                        # observing the bounded body despite repeated caller
+                        # cancellation so lease closure records the real result.
+                        continue
+                result = execution_task.result()
+                if cancellation is not None:
+                    # Python threads cannot be cancelled safely. Observe the
+                    # bounded actuator to completion so authority closure and
+                    # outcome receipts describe what really happened, then
+                    # propagate cancellation to the caller.
+                    logger.info(
+                        "Actuator '%s' completed after caller cancellation; "
+                        "closing authority before propagating cancellation",
+                        name,
+                    )
             else:
-                result = actuator.execute(exec_params)
-            return result
+                result = self._execute_actuator_body(
+                    actuator,
+                    exec_params,
+                    authority_decision,
+                )
+            if not isinstance(result, ActuatorResult):
+                result = ActuatorResult(
+                    False,
+                    f"Actuator '{name}' returned invalid result type {type(result).__name__}",
+                    {},
+                )
+        except asyncio.CancelledError:
+            raise
+        except (
+            ImportError,
+            OSError,
+            RuntimeError,
+            AttributeError,
+            LookupError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            logger.exception("Actuator '%s' raised during execution", name)
+            result = ActuatorResult(
+                False,
+                f"Actuator '{name}' raised {type(exc).__name__}: {exc}",
+                {},
+            )
         finally:
             if authority_decision is not None:
                 try:
@@ -578,6 +661,34 @@ class ActuatorRegistry:
                     )
                 except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     logger.error("Failed to finalize actuator authority receipt for %s: %s", name, exc)
+
+        if cancellation is not None:
+            raise cancellation
+        return result or ActuatorResult(False, f"Actuator '{name}' produced no result", {})
+
+    def execute_action(
+        self,
+        name: str,
+        params: dict[str, Any],
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> ActuatorResult:
+        """Synchronous bridge for callers that do not own an event loop.
+
+        Async runtime code must await :meth:`execute_action_async`; blocking an
+        active owner loop here would invalidate both latency and thread-bound
+        standing-authority guarantees.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(
+                self.execute_action_async(name, params, context=context)
+            )
+        raise RuntimeError(
+            "execute_action cannot run on an active event loop; "
+            "await execute_action_async instead"
+        )
 
 
 # Singleton Pattern

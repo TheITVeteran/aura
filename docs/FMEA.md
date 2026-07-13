@@ -4,7 +4,7 @@
 > (`make fmea-doc`). Do not edit by hand — a drift test regenerates
 > and compares this file on every suite run.
 
-Registry version: `1.0` — 20 modes (2 catastrophic, 9 critical, 7 major, 2 minor); 1 open mitigation gap(s), 0 open detection gap(s).
+Registry version: `1.1` — 22 modes (2 catastrophic, 11 critical, 7 major, 2 minor); 1 open mitigation gap(s), 0 open detection gap(s).
 
 Every entry is REAL: it either occurred live (occurrences cite when)
 or is a structurally-reachable state found by analysis. Gaps are
@@ -118,6 +118,30 @@ explicit and pinned by an allowlist test that only shrinks.
 - **Detection modules:** `core.resilience.stall_watchdog`
 - **Mitigation modules:** `core.runtime.service_registry`
 - **Recorded occurrences:** 2026-07-09 caught live via SIGUSR1 (e422e5de)
+
+## FM-LOOP-004 — Synchronous actuator bridge blocks the owner loop and crosses thread-bound authority
+
+- **Subsystem:** core/actuators/actuator_registry.py + async action callers
+- **Severity / blast radius:** critical / organism
+- **Cause:** Async callers invoked execute_action(), which moved AuthorityGateway onto a new thread/event loop and synchronously waited; standing child leases are issuing-thread-bound
+- **Effect:** The owner event loop stalls for the full action duration, while lease validation or closure can fail on a different thread from issuance
+- **Detection:** Owner-thread lifecycle regression plus a behavioral event-loop callback probe; sync bridge rejects active event loops
+- **Mitigation:** Canonical execute_action_async keeps authorization, verification, and closure on the owner loop while explicitly blocking actuator bodies run in worker threads
+- **Detection modules:** `core.actuators.actuator_registry`
+- **Mitigation modules:** `core.actuators.actuator_registry`, `core.runtime.overt_action_loop`, `core.adaptation.immune_executor`
+- **Notes:** Structurally reachable in the pre-checkpoint-60 action graph; focused tests reproduce the loop-blocking dependency and thread-ownership mismatch without executing external effects.
+
+## FM-ACTION-001 — Generated prose is parsed as an actuator command
+
+- **Subsystem:** core/consciousness/closed_loop.py output receptor
+- **Severity / blast radius:** critical / organism
+- **Cause:** The inference callback regex-parsed JSON and function-like text, simulated it, then called ActuatorRegistry directly instead of observing a typed executed-action receipt
+- **Effect:** Model narration can mutate world state, bypass canonical action selection, and feed a false success/failure signal back into the substrate
+- **Detection:** Negative regression proves action-looking generated text leaves world and substrate unchanged; positive regression accepts only observed action outcomes
+- **Mitigation:** OutputReceptor limits generated language to bounded affective feedback; overt action execution sends verified outcomes through notify_closed_loop_action_outcome
+- **Detection modules:** `core.consciousness.closed_loop`
+- **Mitigation modules:** `core.consciousness.closed_loop`, `core.runtime.overt_action_loop`
+- **Notes:** Structurally reachable before checkpoint 60 for any generated JSON containing an actuator field, including actions that were never selected or executed by the canonical agency spine.
 
 ## FM-PHI-001 — Pool-child death cascades into a fail-closed CRITICAL storm on thread fallback
 

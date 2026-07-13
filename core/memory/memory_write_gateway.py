@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import re
 import time
 import uuid
@@ -66,6 +67,13 @@ SCHEMA_VERSIONS = {
 }
 
 
+def _default_memory_root() -> Path:
+    test_runtime_root = str(os.environ.get("AURA_TEST_RUNTIME_ROOT") or "").strip()
+    if test_runtime_root:
+        return Path(test_runtime_root) / "memory"
+    return Path.home() / ".aura" / "memory"
+
+
 class ConcreteMemoryWriteGateway(MemoryWriteGatewayBase):
     """Single canonical memory write authority.
 
@@ -80,7 +88,7 @@ class ConcreteMemoryWriteGateway(MemoryWriteGatewayBase):
         root: Path | None = None,
         governance_decide: Callable[..., Any] | None = None,
     ):
-        self.root = Path(root) if root else (Path.home() / ".aura" / "memory")
+        self.root = Path(root) if root else _default_memory_root()
         self.root.mkdir(parents=True, exist_ok=True)
         self._governance = governance_decide
         self._mutation_lock = asyncio.Lock()

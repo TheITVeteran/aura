@@ -246,6 +246,49 @@ def test_explicit_foreground_os_automation_auto_confirms_user_request():
     )
 
 
+def test_signed_standing_authority_satisfies_advocate_without_second_prompt():
+    context = {"origin": "overt_action_loop"}
+    handle = SimpleNamespace(
+        standing_authority_token="CT-signed-child-lease",
+        constraints={
+            "standing_authority_grant_id": "builtin.autonomous.local_read",
+            "standing_authority_receipt_id": "autonomy-test-receipt",
+        },
+    )
+
+    assert CapabilityEngine._record_verified_standing_authority(context, handle)
+    assert CapabilityEngine._user_advocate_confirmed_for(
+        "read_file",
+        {"path": "README.md"},
+        context,
+        "overt_action_loop",
+        "low",
+        "read_only",
+    )
+    assert context["standing_authority_grant_id"] == (
+        "builtin.autonomous.local_read"
+    )
+    assert "standing_authority_token" not in context
+
+
+def test_raw_standing_authority_context_cannot_spoof_advocate_confirmation():
+    context = {
+        "origin": "overt_action_loop",
+        "_standing_authority_verified": True,
+        "standing_authority_token": "caller-controlled",
+        "standing_authority_grant_id": "builtin.autonomous.local_read",
+    }
+
+    assert not CapabilityEngine._user_advocate_confirmed_for(
+        "os_automation",
+        {"goal": "Open Notes", "execute": True},
+        context,
+        "overt_action_loop",
+        "high",
+        "foreground_desktop_control",
+    )
+
+
 @pytest.mark.parametrize(
     ("context", "source", "risk"),
     [

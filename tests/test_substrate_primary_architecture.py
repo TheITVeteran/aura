@@ -443,7 +443,7 @@ async def test_overt_action_loop_applies_expectations_to_actuator_path(
         def get_actuator(self, name):
             return FakeActuator() if name == "code_execution" else None
 
-        def execute_action(self, name, params, *, context=None):
+        async def execute_action_async(self, name, params, *, context=None):
             return ActuatorResult(
                 success=True,
                 message="Sandbox launch returned success without output evidence.",

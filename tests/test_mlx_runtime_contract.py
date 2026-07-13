@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import logging
 import os
 import sys
 import types
@@ -604,6 +605,7 @@ async def test_non_primary_background_recovery_still_yields(monkeypatch):
 @pytest.mark.asyncio
 async def test_model_load_admission_denial_backoff_suppresses_background_retry_storm(
     monkeypatch,
+    caplog,
 ):
     from core.brain.llm import mlx_client
     from core.brain.llm.mlx_client import MLXLocalClient
@@ -623,6 +625,7 @@ async def test_model_load_admission_denial_backoff_suppresses_background_retry_s
     monkeypatch.setattr(mlx_client, "_model_load_admission_context", _denied)
     monkeypatch.setattr(mlx_client, "_foreground_owner_active", lambda: False)
     monkeypatch.setattr(mlx_client, "_background_deferral_active", lambda *_a, **_k: None)
+    caplog.set_level(logging.INFO, logger="LLM.MLX")
 
     first = await client._ensure_worker_alive(request_is_background=True)
     second = await client._ensure_worker_alive(request_is_background=True)
@@ -636,6 +639,13 @@ async def test_model_load_admission_denial_backoff_suppresses_background_retry_s
     assert status["receipt_id"] == "receipt-1"
     assert status["denial_count"] == 1
     assert status["suppressed_calls"] == 1
+    background_messages = [
+        record
+        for record in caplog.records
+        if "Model-load admission deferred" in record.getMessage()
+    ]
+    assert background_messages
+    assert all(record.levelno == logging.INFO for record in background_messages)
 
     # User-facing work bypasses a background retry delay and asks the current
     # control plane directly; admission policy, not stale client state, decides.

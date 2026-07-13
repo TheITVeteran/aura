@@ -1,4 +1,8 @@
+import asyncio
 import math
+import threading
+
+import pytest
 
 from core.actuators.actuator_registry import get_actuator_registry
 from core.adaptation.immune_executor import ImmuneHeuristicExecutor
@@ -182,6 +186,195 @@ def test_actuator_registry_finalizes_authority_when_token_verification_fails(mon
     }
 
 
+@pytest.mark.asyncio
+async def test_async_actuator_keeps_authority_lifecycle_on_owner_thread(monkeypatch):
+    from types import SimpleNamespace
+
+    from core.actuators.actuator_registry import ActuatorRegistry, ActuatorResult, BaseActuator
+
+    owner_thread = threading.get_ident()
+    observed = {}
+
+    class FakeGateway:
+        async def authorize_tool_execution(self, *_args, **_kwargs):
+            observed["authorize_thread"] = threading.get_ident()
+            return SimpleNamespace(
+                approved=True,
+                reason="approved",
+                executive_intent_id="intent-async",
+                capability_token_id="cap-async",
+                standing_authority_token="standing-async",
+            )
+
+        def verify_tool_access(self, *_args):
+            observed["verify_thread"] = threading.get_ident()
+            return True
+
+        def finalize_tool_execution(self, **kwargs):
+            observed["finalize_thread"] = threading.get_ident()
+            observed["closure"] = kwargs
+            return {"closed": True, "standing_authority_closed": True}
+
+    class BlockingActuator(BaseActuator):
+        requires_authority = True
+
+        @property
+        def name(self):
+            return "blocking_authority_probe"
+
+        @property
+        def description(self):
+            return "Records execution-thread ownership."
+
+        def validate_params(self, params):
+            return True
+
+        def execute(self, params):
+            observed["execute_thread"] = threading.get_ident()
+            return ActuatorResult(True, "ok", {"ran": True})
+
+    gateway = FakeGateway()
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway",
+        lambda: gateway,
+    )
+    registry = ActuatorRegistry()
+    registry.register(BlockingActuator())
+
+    result = await registry.execute_action_async(
+        "blocking_authority_probe",
+        {"value": 1},
+        context={"source": "overt_action_loop"},
+    )
+
+    assert result.success is True
+    assert observed["authorize_thread"] == owner_thread
+    assert observed["verify_thread"] == owner_thread
+    assert observed["finalize_thread"] == owner_thread
+    assert observed["execute_thread"] != owner_thread
+    assert observed["closure"]["standing_authority_token"] == "standing-async"
+
+
+@pytest.mark.asyncio
+async def test_sync_actuator_bridge_rejects_active_event_loop():
+    from core.actuators.actuator_registry import ActuatorRegistry
+
+    registry = ActuatorRegistry()
+    with pytest.raises(RuntimeError, match="await execute_action_async"):
+        registry.execute_action(
+            "reroute_vessel",
+            {"vessel_id": "Vessel_Alpha", "heading": 90.0, "speed": 10.0},
+        )
+
+
+@pytest.mark.asyncio
+async def test_blocking_actuator_does_not_stall_event_loop():
+    from core.actuators.actuator_registry import ActuatorRegistry, ActuatorResult, BaseActuator
+
+    release = threading.Event()
+
+    class BlockingActuator(BaseActuator):
+        @property
+        def name(self):
+            return "event_loop_probe"
+
+        @property
+        def description(self):
+            return "Waits for an event-loop callback from a worker thread."
+
+        def validate_params(self, params):
+            return True
+
+        def execute(self, params):
+            released = release.wait(timeout=0.5)
+            return ActuatorResult(released, "released" if released else "timed out", {})
+
+    registry = ActuatorRegistry()
+    registry.register(BlockingActuator())
+    loop = asyncio.get_running_loop()
+    loop.call_later(0.02, release.set)
+    started = loop.time()
+
+    result = await registry.execute_action_async("event_loop_probe", {})
+
+    assert result.success is True
+    assert loop.time() - started < 0.3
+
+
+@pytest.mark.asyncio
+async def test_cancelled_actuator_closes_authority_after_real_completion(monkeypatch):
+    from types import SimpleNamespace
+
+    from core.actuators.actuator_registry import ActuatorRegistry, ActuatorResult, BaseActuator
+
+    started = threading.Event()
+    release = threading.Event()
+    observed = {}
+
+    class FakeGateway:
+        async def authorize_tool_execution(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                approved=True,
+                reason="approved",
+                executive_intent_id="intent-cancel",
+                capability_token_id="cap-cancel",
+                standing_authority_token="standing-cancel",
+            )
+
+        def verify_tool_access(self, *_args):
+            return True
+
+        def finalize_tool_execution(self, **kwargs):
+            observed["closure"] = kwargs
+            observed["body_finished_before_closure"] = release.is_set()
+            return {"closed": True}
+
+    class BlockingActuator(BaseActuator):
+        requires_authority = True
+
+        @property
+        def name(self):
+            return "cancel_completion_probe"
+
+        @property
+        def description(self):
+            return "Waits until the test releases its non-cancellable worker."
+
+        def validate_params(self, params):
+            return True
+
+        def execute(self, params):
+            started.set()
+            release.wait(timeout=1.0)
+            return ActuatorResult(True, "completed", {"completed": True})
+
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway",
+        lambda: FakeGateway(),
+    )
+    registry = ActuatorRegistry()
+    registry.register(BlockingActuator())
+
+    execution = asyncio.create_task(
+        registry.execute_action_async("cancel_completion_probe", {})
+    )
+    assert await asyncio.to_thread(started.wait, 0.5)
+    execution.cancel()
+    await asyncio.sleep(0)
+    assert "closure" not in observed
+    execution.cancel()
+    await asyncio.sleep(0)
+    assert "closure" not in observed
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await execution
+
+    assert observed["body_finished_before_closure"] is True
+    assert observed["closure"]["success"] is True
+    assert observed["closure"]["standing_authority_token"] == "standing-cancel"
+
+
 def test_immune_executor_uses_safe_arithmetic_resolver():
     executor = ImmuneHeuristicExecutor()
     sensors = {"port_east_load": 800.0}
@@ -191,6 +384,38 @@ def test_immune_executor_uses_safe_arithmetic_resolver():
 
     blocked = executor.resolve_params({"amount": "$port_east_load / 0"}, sensors)
     assert blocked["amount"] == "$port_east_load / 0"
+
+
+@pytest.mark.asyncio
+async def test_async_immune_authority_decision_stays_on_owner_thread(monkeypatch):
+    from types import SimpleNamespace
+
+    owner_thread = threading.get_ident()
+    observed = {}
+    executor = ImmuneHeuristicExecutor()
+    monkeypatch.setattr(
+        executor,
+        "_authorization_preflight",
+        lambda _context: (None, "authority_required", "authority required"),
+    )
+
+    class FakeGateway:
+        async def authorize_state_mutation(self, *_args, **_kwargs):
+            observed["authority_thread"] = threading.get_ident()
+            return SimpleNamespace(approved=True)
+
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway",
+        lambda: FakeGateway(),
+    )
+
+    authorized, status, _message = await executor._authorize_execution_async(
+        {"source": "adaptive_immune_system"}
+    )
+
+    assert authorized is True
+    assert status == "authorized"
+    assert observed["authority_thread"] == owner_thread
 
 
 def test_immune_executor_requires_authorized_context_before_actuation():

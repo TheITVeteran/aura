@@ -1,3 +1,7 @@
+import asyncio
+import threading
+import time
+
 import numpy as np
 import pytest
 
@@ -19,24 +23,69 @@ class MockSubstrate:
         return None
 
 
-def test_output_receptor_action_parsing_and_simulation():
-    # Register a substrate fixture in ServiceContainer.
+def test_generated_action_text_is_not_an_actuator_channel():
+    from core.world.world_model import get_physics_world_model
+
     sub = MockSubstrate()
     ServiceContainer.register("conscious_substrate", sub)
+    receptor = OutputReceptor(neuron_count=64)
+    vessel = get_physics_world_model().get_entity("Vessel_Alpha")
+    before = (vessel.coordinates, vessel.flow_rate, dict(vessel.attributes))
 
+    text = "Aura suggests we: reroute_vessel(Vessel_Alpha, 270.0, 22.0)"
+    assert receptor.receive_output(text) is None
+    after = (vessel.coordinates, vessel.flow_rate, dict(vessel.attributes))
+
+    assert after == before
+    assert np.count_nonzero(sub.x) == 0
+
+
+def test_observed_action_outcome_drives_closed_loop_feedback():
+    sub = MockSubstrate()
+    ServiceContainer.register("conscious_substrate", sub)
     receptor = OutputReceptor(neuron_count=64)
 
-    # 1. Verbal text with action call
-    text = "Aura suggests we: reroute_vessel(Vessel_Alpha, 270.0, 22.0)"
-    res = receptor.receive_output(text)
+    result = receptor.receive_action_outcome(
+        "reroute_vessel",
+        success=True,
+        verified=True,
+        updates={"Vessel_Alpha": {"heading": 270.0, "speed": 22.0}},
+    )
 
-    assert res is not None
-    delta, magnitude = res
+    assert result is not None
+    delta, magnitude = result
     assert magnitude > 0.0
-    # Positive valence/arousal should have been set
-    assert delta[0] > 0.0  # Valence
-    assert delta[1] > 0.0  # Arousal
-    assert delta[3] < 0.0  # Frustration should be reduced
+    assert delta[0] > 0.0
+    assert delta[1] > 0.0
+    assert delta[3] < 0.0
+    assert np.count_nonzero(sub.x) > 0
+
+
+@pytest.mark.asyncio
+async def test_action_outcome_refresh_does_not_block_owner_loop(monkeypatch):
+    sub = MockSubstrate()
+    ServiceContainer.register("conscious_substrate", sub)
+    receptor = OutputReceptor(neuron_count=64)
+    refresh_finished = threading.Event()
+
+    def slow_refresh():
+        time.sleep(0.15)
+        refresh_finished.set()
+
+    monkeypatch.setattr(receptor, "_refresh_action_expectations", slow_refresh)
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    result = receptor.receive_action_outcome(
+        "reroute_vessel",
+        success=True,
+        verified=True,
+        updates={"Vessel_Alpha": {"heading": 270.0}},
+    )
+
+    assert result is not None
+    assert loop.time() - started < 0.05
+    assert await asyncio.to_thread(refresh_finished.wait, 0.5)
 
 
 def test_output_receptor_survives_container_lookup_failure(monkeypatch):
@@ -53,12 +102,10 @@ def test_output_receptor_survives_container_lookup_failure(monkeypatch):
     )
 
     receptor = OutputReceptor(neuron_count=64)
-    res = receptor.receive_output("reroute_vessel(Vessel_Alpha, 270.0, 20.0)")
+    res = receptor.receive_output("A wonderful, curious, connected response.")
 
-    assert res is not None
-    assert any(event[1].get("stage") == "output_receptor_substrate_lookup" for event in events)
-    assert any(event[1].get("stage") == "output_receptor_loop_lookup" for event in events)
-    assert any(event[1].get("stage") == "output_receptor_no_substrate" for event in events)
+    assert res is None
+    assert any(event[1].get("stage") == "output_receptor_injection" for event in events)
 
 
 def test_output_receptor_rejects_malformed_numeric_action_text():
@@ -86,7 +133,12 @@ async def test_output_receptor_observes_async_injection_failure(monkeypatch):
     )
 
     receptor = OutputReceptor(neuron_count=64)
-    assert receptor.receive_output("reroute_vessel(Vessel_Alpha, 270.0, 20.0)") is not None
+    assert receptor.receive_action_outcome(
+        "reroute_vessel",
+        success=True,
+        verified=True,
+        updates={"Vessel_Alpha": {"heading": 270.0}},
+    ) is not None
 
     await asyncio_sleep()
     assert any(event[1].get("stage") == "output_receptor_injection_task" for event in events)
