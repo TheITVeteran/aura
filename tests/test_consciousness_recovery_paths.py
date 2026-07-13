@@ -651,8 +651,11 @@ def test_liquid_substrate_bridge_affect_failure_is_visible(monkeypatch):
         _update_liquid_pacing=lambda: None,
         _gather_agentic_context=lambda _message: {},
     )
+    # The bridge resolves through the runtime-service seam now; patch the
+    # seam it actually reads, not the container classmethod beneath it.
     monkeypatch.setattr(
-        "core.container.ServiceContainer.get",
+        liquid_substrate_bridge,
+        "get_runtime_service",
         lambda name, default=None: substrate if name == "liquid_substrate" else default,
     )
 
@@ -1967,8 +1970,11 @@ def test_resource_stakes_signal_failures_are_visible(monkeypatch, tmp_path):
         "record_degradation",
         lambda module, exc: recorded.append((module, type(exc).__name__)),
     )
+    # The engine resolves through the runtime-service seam now; patch the
+    # seam it actually reads, not the container classmethod beneath it.
     monkeypatch.setattr(
-        "core.container.ServiceContainer.get",
+        resource_stakes,
+        "get_runtime_service",
         lambda _name, default=None: types.SimpleNamespace(
             apply_event=_FailingCallable("neurochemical event unavailable")
         ),

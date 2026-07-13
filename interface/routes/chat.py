@@ -4379,17 +4379,23 @@ def _build_live_turn_contract_payload(
         "cognitive_engine_self_condition_grounding",
         "cognitive_engine_bounded_planning",
     }
-    accepted_cognitive_path = bool(
+    # SPEAKER-IDENTITY proofs: did Aura's real cognitive engine author this
+    # text (vs repair machinery / legacy fallback speaking in her voice)?
+    # These are never waived — theater must never serve as Aura speech.
+    authentic_cognitive_reply = bool(
         engine_think_invoked
         and engine_reply_accepted
         and not engine_reply_failed
         and not bounded_contract_used
         and not legacy_fallback_used
+        and confidence == "high"
+        and response_path in accepted_full_mind_response_paths
+    )
+    accepted_cognitive_path = bool(
+        authentic_cognitive_reply
         and architecture_context_bound
         and live_mind_snapshot_bound
         and live_mind_controls_structurally_bound
-        and confidence == "high"
-        and response_path in accepted_full_mind_response_paths
     )
     subsystems = _collect_live_chat_required_subsystems(
         lane,
@@ -4402,12 +4408,45 @@ def _build_live_turn_contract_payload(
         and accepted_cognitive_path
         and required_subsystems_ok
     )
+    # STATE-COMPLETENESS proofs, named individually so a refusal (or a
+    # degraded-disclosure delivery) can say exactly what was missing —
+    # a live incident was diagnosed blind because the refusal log printed
+    # three flags that all turned out to be fine.
+    missing_proofs: list[str] = []
+    if not engine_think_invoked:
+        missing_proofs.append("engine_think_not_invoked")
+    if engine_reply_failed:
+        missing_proofs.append("engine_reply_failed")
+    if not engine_reply_accepted:
+        missing_proofs.append("engine_reply_not_accepted")
+    if bounded_contract_used:
+        missing_proofs.append("bounded_repair_authored_text")
+    if legacy_fallback_used:
+        missing_proofs.append("legacy_fallback_authored_text")
+    if confidence != "high":
+        missing_proofs.append(f"confidence:{confidence or 'unset'}")
+    if response_path not in accepted_full_mind_response_paths:
+        missing_proofs.append(f"response_path:{response_path or 'unset'}")
+    if not architecture_context_bound:
+        missing_proofs.append("architecture_context_unbound")
+    if not live_mind_snapshot_bound:
+        missing_proofs.append("live_mind_snapshot_not_ready")
+    if not live_mind_controls_structurally_bound:
+        missing_proofs.append("live_mind_controls_unbound")
+    if not required_subsystems_ok:
+        missing_proofs.extend(
+            f"subsystem:{name}"
+            for name, healthy in sorted(subsystems.items())
+            if not healthy
+        )
     return {
         "desktop_cognitive_engine_required": bool(desktop_required),
         "request_surface": str(request_surface or ""),
         "response_confidence": str(response_confidence or ""),
         "status": str(status or ""),
         "response_path": response_path,
+        "authentic_cognitive_reply": authentic_cognitive_reply,
+        "full_mind_missing_proofs": missing_proofs,
         "engine_think_invoked": engine_think_invoked,
         "cognitive_engine_reply_accepted": engine_reply_accepted,
         "cognitive_engine_reply_failed": engine_reply_failed,
@@ -15020,15 +15059,25 @@ async def api_chat_regenerate(
                     reply_source=reply_source,
                 )
                 if not bool(regen_contract.get("full_mind_path")):
-                    logger.error(
-                        "Desktop regenerate CognitiveEngine candidate did not prove full mind path "
-                        "(path=%s, accepted=%s, bounded=%s); failing closed.",
-                        regen_contract.get("response_path"),
-                        regen_contract.get("cognitive_engine_reply_accepted"),
-                        regen_contract.get("bounded_contract_used"),
-                    )
-                    reply_text = None
-                    lane = regen_lane
+                    if bool(regen_contract.get("authentic_cognitive_reply")):
+                        # Authentic mind-authored regenerate with only
+                        # state-completeness proofs missing: serve with the
+                        # degradation disclosed, never a fail-closed apology.
+                        logger.warning(
+                            "Desktop regenerate served with DEGRADED full-mind proof "
+                            "(authentic cognitive reply; missing: %s).",
+                            ",".join(regen_contract.get("full_mind_missing_proofs") or ()),
+                        )
+                        _regen_turn_trace["full_mind_proof_degraded"] = True
+                        lane = regen_lane
+                    else:
+                        logger.error(
+                            "Desktop regenerate CognitiveEngine candidate did not prove "
+                            "authorship (missing: %s); failing closed.",
+                            ",".join(regen_contract.get("full_mind_missing_proofs") or ()),
+                        )
+                        reply_text = None
+                        lane = regen_lane
 
         if desktop_requires_cognitive_engine and not reply_text:
             lane = _mark_conversation_lane_state(
@@ -16017,11 +16066,23 @@ async def api_chat(
                 recovered,
                 memory_state_evidence=desktop_memory_state_evidence,
             ):
+                if bool(getattr(recovered_assessment, "hard_failure", False)):
+                    # Leaks, artifacts, corrupted language, unsupported
+                    # claims — never user-facing, whatever the alternative.
+                    logger.warning(
+                        "Desktop CognitiveEngine recovery still failed reliability "
+                        "gate (hard: %s).",
+                        ",".join(getattr(recovered_assessment, "reasons", ()) or ()),
+                    )
+                    return None
+                # Soft coverage nits (a missing follow-up question, a list
+                # count) on a LAST-RESORT recovery: the only alternative is
+                # a fail-closed apology, which reads as fragility over a
+                # working mind. Serve the genuine reply and disclose.
                 logger.warning(
-                    "Desktop CognitiveEngine recovery still failed reliability gate (%s).",
+                    "Desktop recovery served despite soft reliability reasons (%s).",
                     ",".join(getattr(recovered_assessment, "reasons", ()) or ()),
                 )
-                return None
 
             recovered_lane = _collect_conversation_lane_status()
             recovery_contract = _build_live_turn_contract_payload(
@@ -16034,14 +16095,23 @@ async def api_chat(
                 turn_trace=recovery_trace,
             )
             if not bool(recovery_contract.get("full_mind_path")):
-                logger.warning(
-                    "Desktop CognitiveEngine recovery produced text but did not prove full-mind path "
-                    "(path=%s, accepted=%s, bounded=%s).",
-                    recovery_contract.get("response_path"),
-                    recovery_contract.get("cognitive_engine_reply_accepted"),
-                    recovery_contract.get("bounded_contract_used"),
-                )
-                return None
+                if bool(recovery_contract.get("authentic_cognitive_reply")):
+                    # Authentic mind-authored text with only state-completeness
+                    # proofs missing (self-healing window): serve with the
+                    # degradation disclosed — never an apology over a live mind.
+                    logger.warning(
+                        "Desktop recovery served with DEGRADED full-mind proof "
+                        "(authentic cognitive reply; missing: %s).",
+                        ",".join(recovery_contract.get("full_mind_missing_proofs") or ()),
+                    )
+                    recovery_trace["full_mind_proof_degraded"] = True
+                else:
+                    logger.warning(
+                        "Desktop CognitiveEngine recovery produced text but did not prove "
+                        "authorship (missing: %s).",
+                        ",".join(recovery_contract.get("full_mind_missing_proofs") or ()),
+                    )
+                    return None
 
             logger.info("✅ Degraded desktop turn recovered through CognitiveEngine full-mind path.")
             _live_turn_trace.update(recovery_trace)
@@ -17060,26 +17130,48 @@ async def api_chat(
                             reply_source=reply_source,
                         )
                         if not bool(candidate_contract.get("full_mind_path")):
-                            if (
-                                bool(candidate_contract.get("cognitive_engine_reply_accepted"))
-                                and _looks_like_desktop_objective(_semantic_user_message)
-                                and reply_text
-                            ):
-                                _live_turn_trace["desktop_internal_artifact_draft"] = reply_text
-                                _live_turn_trace["desktop_internal_artifact_draft_path"] = str(
-                                    candidate_contract.get("response_path") or reply_source
-                                )[:120]
-                            logger.error(
-                                "Desktop CognitiveEngine candidate did not prove full mind path "
-                                "(path=%s, accepted=%s, bounded=%s); failing closed instead of "
-                                "serving repair text as Aura speech.",
-                                candidate_contract.get("response_path"),
-                                candidate_contract.get("cognitive_engine_reply_accepted"),
-                                candidate_contract.get("bounded_contract_used"),
-                            )
-                            reply_text = None
-                            reply_source = ""
-                            lane = contract_lane
+                            if bool(candidate_contract.get("authentic_cognitive_reply")):
+                                # Her real mind authored this text (think invoked,
+                                # accepted, high confidence, not repair/legacy) —
+                                # only STATE-COMPLETENESS proofs are missing
+                                # (snapshot readiness, control receipts, subsystem
+                                # health during self-healing). Discarding a genuine
+                                # reply here served fail-closed apologies over a
+                                # live mind on basic conversation (2026-07-13,
+                                # live). Serve it, disclose the degradation in the
+                                # contract, and name the missing proofs.
+                                logger.warning(
+                                    "Desktop turn served with DEGRADED full-mind proof "
+                                    "(authentic cognitive reply; missing: %s).",
+                                    ",".join(
+                                        candidate_contract.get("full_mind_missing_proofs")
+                                        or ()
+                                    ),
+                                )
+                                _live_turn_trace["full_mind_proof_degraded"] = True
+                                lane = contract_lane
+                            else:
+                                if (
+                                    bool(candidate_contract.get("cognitive_engine_reply_accepted"))
+                                    and _looks_like_desktop_objective(_semantic_user_message)
+                                    and reply_text
+                                ):
+                                    _live_turn_trace["desktop_internal_artifact_draft"] = reply_text
+                                    _live_turn_trace["desktop_internal_artifact_draft_path"] = str(
+                                        candidate_contract.get("response_path") or reply_source
+                                    )[:120]
+                                logger.error(
+                                    "Desktop CognitiveEngine candidate did not prove authorship "
+                                    "(missing: %s); failing closed instead of serving repair "
+                                    "text as Aura speech.",
+                                    ",".join(
+                                        candidate_contract.get("full_mind_missing_proofs")
+                                        or ()
+                                    ),
+                                )
+                                reply_text = None
+                                reply_source = ""
+                                lane = contract_lane
                         else:
                             lane = contract_lane
                     logger.debug(

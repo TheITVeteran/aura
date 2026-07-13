@@ -421,8 +421,10 @@ def test_personality_filter_response_uses_data_honesty_floor(monkeypatch):
         def vet_output(self, text, confidence=None):
             return text.replace("proven qualia", "functional state evidence")
 
+    # The honesty floor resolves through the runtime-service seam now;
+    # patch the seam the guard actually reads.
     monkeypatch.setattr(
-        "core.container.ServiceContainer.get",
+        "core.runtime.derived_runtime_context.get_runtime_service",
         lambda name, default=None: Data() if name == "data" else default,
     )
     out = PersonalityEngine().filter_response("I have proven qualia.")

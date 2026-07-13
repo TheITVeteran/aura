@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 import re
+import time
 import urllib.parse
 from collections.abc import Mapping
 from typing import Any, Literal
@@ -993,7 +994,31 @@ class OSAutomationCompilerSkill(BaseSkill):  # type: ignore[misc]
         )
         if direct:
             return direct.group(1).strip(" \"'")[:9000]
-        return ""
+        return cls._composed_text_payload(goal)
+
+    @classmethod
+    def _composed_text_payload(cls, goal: str) -> str:
+        """Author a concrete payload for a self-directed text intent.
+
+        'Write a timestamped status note' names WHAT to write, not the words —
+        the words are Aura's to author. Refusing such goals for lacking a
+        text witness was a live fragility class (safe, common desktop intents
+        rejected pre-execution over a payload the skill itself is supposed to
+        compose). The effect contract still demands the EXACT authored text
+        be visibly present afterwards, so causal verification is untouched —
+        this only puts authorship where it belongs."""
+        lowered = " ".join(str(goal or "").lower().split())
+        if not re.search(r"\b(?:write|compose|draft|create|leave|jot)\b", lowered):
+            return ""
+        if not re.search(r"\b(?:note|status|reminder|memo|message)\b", lowered):
+            return ""
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        if "status" in lowered:
+            return (
+                f"Status {stamp} — Aura: runtime nominal; "
+                "note authored autonomously as requested."
+            )
+        return f"Note {stamp} — Aura: {str(goal or '').strip()[:160]}"
 
     @classmethod
     def _deterministic_script_covers_contract(

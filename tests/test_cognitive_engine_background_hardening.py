@@ -569,7 +569,11 @@ async def test_cognitive_engine_capability_inventory_contract_uses_catalog_witho
     assert captured == {}
     assert thought.metadata["response_path"] == "cognitive_engine_capability_catalog_grounding"
     assert thought.metadata["live_mind_controls_bound"] is True
-    assert thought.metadata["live_mind_controls_worker_applied"] is True
+    # A structured floor never runs the model worker; the honest receipt says
+    # so (applied=False) while generation_required=False keeps the contract
+    # satisfied. Pinning worker_applied=True here would demand a false claim.
+    assert thought.metadata["live_mind_controls_worker_applied"] is False
+    assert thought.metadata["live_mind_generation_required"] is False
 
 
 @pytest.mark.asyncio

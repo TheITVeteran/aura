@@ -791,7 +791,17 @@ class TestOwnerAutonomyGating(unittest.TestCase):
             )
             self.assertTrue(result_fallback["ok"])
             self.assertTrue(result_fallback["effect_verified"])
-            self.assertEqual(result_fallback["compiler"]["fallback"], "deterministic_intent_compiler")
+            # The deterministic intent compiler must carry this goal — as the
+            # PRIMARY compiler when it covers the contract up front (the skill
+            # now authors the note payload itself, so no LLM round-trip is
+            # needed), or as the fallback after a malformed LLM reply. Either
+            # seat satisfies the guarantee that a broken compiler reply can't
+            # break a safe, common desktop intent.
+            compiler_receipt = result_fallback["compiler"]
+            self.assertIn(
+                "deterministic_intent_compiler",
+                {compiler_receipt.get("mode"), compiler_receipt.get("fallback")},
+            )
             self.assertIn("tell application \"Notes\"", result_fallback["script"])
             self.assertNotIn("Aura governed desktop automation", result_fallback["script"])
             self.assertNotIn("host automation receipt", result_fallback["script"].lower())
@@ -803,6 +813,22 @@ class TestOwnerAutonomyGating(unittest.TestCase):
             )
             self.assertFalse(safe)
             self.assertIn("separately governed shell lane", reason)
+
+            # A goal the deterministic compiler cannot cover must still reach
+            # the LLM compiler — and that call runs foreground, on the primary
+            # tier, without strategies (compiling automation is a user-facing
+            # act, never background reasoning).
+            cog.response = (
+                "```applescript\ntell application \"System Settings\" to activate\n```"
+            )
+            llm_params = OSAutomationInput(
+                goal="Open System Settings and select the Appearance pane.",
+                script_type="applescript",
+            )
+            asyncio.run(
+                skill.safe_execute(llm_params, {"source": "unit", "user_requested_action": True})
+            )
+            self.assertTrue(cog.calls, "LLM compiler was never consulted for an uncovered goal")
             self.assertFalse(cog.calls[0]["is_background"])
             self.assertEqual(cog.calls[0]["prefer_tier"], "primary")
             self.assertFalse(cog.calls[0]["use_strategies"])

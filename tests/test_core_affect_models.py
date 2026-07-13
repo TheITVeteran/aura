@@ -157,8 +157,6 @@ async def test_narrative_thread_refresh_failure_writes_degraded_snapshot(monkeyp
 
 
 def test_emotional_coloring_uses_memory_affect_and_liquid_state(monkeypatch):
-    from core.container import ServiceContainer
-
     class EpisodicMemory:
         async def search(self, topic, limit=5):
             assert topic == "deployment"
@@ -172,10 +170,11 @@ def test_emotional_coloring_uses_memory_affect_and_liquid_state(monkeypatch):
         "memory": SimpleNamespace(episodic=EpisodicMemory()),
         "liquid_state": SimpleNamespace(get_valence=lambda: 0.2),
     }
+    # EmotionalColoring resolves through the runtime-service seam now;
+    # patch the seam it actually reads, not the container classmethod.
     monkeypatch.setattr(
-        ServiceContainer,
-        "get",
-        classmethod(lambda cls, name, default=None: services.get(name, default)),
+        "core.affect.emotional_coloring.get_runtime_service",
+        lambda name, default=None: services.get(name, default),
     )
 
     texture = asyncio.run(EmotionalColoring().get_texture_for_topic("deployment"))
