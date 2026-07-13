@@ -6,13 +6,15 @@ incidents can enter the existing self-modification error pipeline with cooldowns
 """
 from __future__ import annotations
 
-import logging
-import time
 import asyncio
+import logging
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
+
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.Resilience.DegradationRepair")
 
@@ -269,25 +271,33 @@ class DegradationRepairRouter:
     @staticmethod
     def _schedule_coro(coro: Any, *, label: str) -> None:
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
+            def _run_in_thread() -> None:
+                try:
+                    asyncio.run(coro)
+                except asyncio.CancelledError:
+                    return
+                except (RuntimeError, OSError, TypeError, ValueError) as exc:
+                    logger.warning("%s thread failed: %s", label, exc)
+
             thread = threading.Thread(
-                target=lambda: asyncio.run(coro),
+                target=_run_in_thread,
                 name=f"aura-{label}",
                 daemon=True,
             )
             thread.start()
             return
 
-        task = loop.create_task(coro, name=label)
-
-        def _consume(done: asyncio.Task) -> None:
-            try:
-                done.result()
-            except (RuntimeError, TypeError, ValueError) as exc:
-                logger.debug("%s failed: %s", label, exc)
-
-        task.add_done_callback(_consume)
+        try:
+            create_tracked_task(
+                coro,
+                name=label,
+                owner="degradation_repair_router",
+                bounded=True,
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            logger.warning("%s task scheduling failed: %s", label, exc)
 
 
 _router: DegradationRepairRouter | None = None

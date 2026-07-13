@@ -39,6 +39,7 @@ from core.runtime.shutdown_coordinator import (
     get_shutdown_coordinator,
     is_shutdown_requested,
 )
+from core.runtime.task_ownership import create_tracked_task
 from core.runtime.version import VERSION, version_string
 from core.scheduler import scheduler
 from core.tools.runtime_tools import get_runtime_state
@@ -2030,7 +2031,11 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
     task = _DESKTOP_ACCESS_PROBE_TASKS.get(loop)
     shared = task is not None and not task.done()
     if task is None or task.done():
-        task = loop.create_task(_probe_desktop_access_summary(allow_probe=True))
+        task = create_tracked_task(
+            _probe_desktop_access_summary(allow_probe=True),
+            name="system.desktop_access.shared_probe",
+            owner="system.desktop_access",
+        )
         _DESKTOP_ACCESS_PROBE_TASKS[loop] = task
 
         def _clear(completed: asyncio.Task[dict[str, Any]]) -> None:

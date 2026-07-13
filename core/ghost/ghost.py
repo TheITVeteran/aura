@@ -31,7 +31,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from core.container import ServiceContainer
 from core.ghost import provenance as prov
@@ -49,6 +49,7 @@ from core.ghost.ghost_line import (
     get_ghost_line,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.task_ownership import create_tracked_task
 from core.service_names import ServiceNames
 
 logger = logging.getLogger("Aura.Ghost")
@@ -130,11 +131,11 @@ class GhostSnapshot:
 class Ghost:
     """The composed, live Ghost substrate."""
 
-    def __init__(self, *, line: Optional[GhostLine] = None):
+    def __init__(self, *, line: GhostLine | None = None):
         self._line = line or get_ghost_line()
         self._guard = get_ghost_hack_guard()
         self._integration = get_system_integration()
-        self._last_snapshot: Optional[GhostSnapshot] = None
+        self._last_snapshot: GhostSnapshot | None = None
         self._last_guard_risk: float = 0.0
         self._last_puppet_pressure: float = 0.0
         self._advancing = False
@@ -227,7 +228,7 @@ class Ghost:
         self._last_snapshot = snap
         return snap
 
-    def _digest(self, snap: GhostSnapshot, me: Optional[dict[str, Any]] = None) -> SelfDigest:
+    def _digest(self, snap: GhostSnapshot, me: dict[str, Any] | None = None) -> SelfDigest:
         me = me or self._read_canonical()
         narrative = me["narrative"].strip()
         return SelfDigest(
@@ -292,7 +293,22 @@ class Ghost:
             finally:
                 self._advancing = False
             return
-        task = loop.create_task(self._advance_task(digest, substrate, trigger, cause))
+        try:
+            task = create_tracked_task(
+                self._advance_task(digest, substrate, trigger, cause),
+                name="ghost.line_advance",
+                owner="ghost",
+                bounded=True,
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            self._advancing = False
+            record_degradation(
+                "ghost",
+                exc,
+                severity="debug",
+                action="ghost line advance was not scheduled",
+            )
+            return
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
 
@@ -374,7 +390,7 @@ class Ghost:
         self,
         text: str,
         *,
-        source: Optional[str] = None,
+        source: str | None = None,
         recall_hits: Any = None,
         internally_originated: bool = False,
     ) -> dict[str, Any]:
@@ -405,7 +421,7 @@ class Ghost:
         }
 
     # ── public: the one governed identity door ───────────────────────────
-    def rebase(self, *, authorized: bool, cause: str = "") -> Optional[dict[str, Any]]:
+    def rebase(self, *, authorized: bool, cause: str = "") -> dict[str, Any] | None:
         """Record an explicit, authorized identity change so it is logged as a
         legitimate rebase rather than a discontinuity.
 
@@ -449,7 +465,7 @@ class Ghost:
 # Singleton
 # ─────────────────────────────────────────────────────────────────────────────
 
-_GHOST: Optional[Ghost] = None
+_GHOST: Ghost | None = None
 
 
 def get_ghost() -> Ghost:

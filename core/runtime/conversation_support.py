@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -9,6 +10,7 @@ from core.runtime.coding_session_memory import (
     get_coding_session_memory,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.task_ownership import create_tracked_task
 from core.runtime.turn_analysis import analyze_turn
 
 logger = logging.getLogger("Aura.ConversationSupport")
@@ -74,26 +76,47 @@ def _is_goal_context_priority(objective: str) -> bool:
     )
 
 
-def resolve_primary_user_id(state: Any) -> str:
+def _normalize_agent_id(value: Any) -> str | None:
+    normalized = " ".join(str(value or "").strip().split())[:160]
+    return normalized or None
+
+
+def resolve_exact_partner_id(state: Any) -> str | None:
+    """Resolve a live partner without inventing a cross-session identity."""
+
     try:
         estimator = service_access.optional_service("other_agent_model", default=None)
-        active_agent = str(getattr(estimator, "active_agent_id", "") or "").strip()
+        active_agent = _normalize_agent_id(getattr(estimator, "active_agent_id", ""))
         if active_agent:
-            return active_agent[:160]
+            return active_agent
 
         cognition = getattr(state, "cognition", None)
-        current_partner = str(getattr(cognition, "current_partner", "") or "").strip()
+        current_partner = _normalize_agent_id(getattr(cognition, "current_partner", ""))
         if current_partner:
-            return current_partner[:160]
+            return current_partner
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        _record_conversation_degradation(
+            exc,
+            action="left exact conversation partner unresolved after identity lookup failed",
+        )
+        logger.debug("Exact conversation partner lookup failed: %s", exc)
+    return None
 
+
+def resolve_primary_user_id(state: Any) -> str:
+    exact_partner = resolve_exact_partner_id(state)
+    if exact_partner:
+        return exact_partner
+
+    try:
         world = getattr(state, "world", None)
         for collection_name in ("relationship_graph", "known_entities"):
             collection = getattr(world, collection_name, {}) or {}
             if isinstance(collection, dict) and len(collection) == 1:
-                normalized = str(next(iter(collection))).strip().lower()
+                normalized = _normalize_agent_id(next(iter(collection)))
                 if normalized:
-                    return normalized[:160]
-    except (RuntimeError, AttributeError, TypeError) as _exc:
+                    return normalized
+    except (RuntimeError, AttributeError, TypeError, ValueError) as _exc:
         _record_conversation_degradation(
             _exc,
             action="fell back to local user id after exact partner lookup failed",
@@ -118,22 +141,37 @@ def relational_memory_allows(user_id: str, kind: str, operation: str) -> bool:
         return False
 
 
-async def record_shared_ground_callbacks(response_text: str) -> None:
+async def record_shared_ground_callbacks(
+    response_text: str,
+    *,
+    agent_id: str | None = None,
+) -> None:
     try:
         from core.memory.shared_ground import get_shared_ground
 
         shared_ground = get_shared_ground()
-        if not shared_ground.entries:
+        exact_agent_id = _normalize_agent_id(agent_id) or _normalize_agent_id(
+            shared_ground.active_agent_id
+        )
+        if exact_agent_id is None:
+            logger.debug("Shared-ground callback skipped: no exact active partner.")
             return
 
+        entries = shared_ground.get_top_entries(
+            shared_ground.MAX_ENTRIES,
+            agent_id=exact_agent_id,
+        )
         resp_lower = response_text.lower()
-        for entry in shared_ground.entries:
+        for entry in entries:
             ref_words = entry.reference.lower().split()
             matches = sum(1 for word in ref_words if len(word) > 3 and word in resp_lower)
             if matches >= 2:
-                shared_ground.record_callback(entry.reference)
+                shared_ground.record_callback(
+                    entry.reference,
+                    agent_id=exact_agent_id,
+                )
                 logger.debug("SharedGround callback recorded: %s", entry.reference)
-    except (ImportError, AttributeError, RuntimeError) as _exc:
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _exc:
         _record_conversation_degradation(
             _exc,
             action="skipped shared-ground callback recording after shared-ground store failed",
@@ -349,14 +387,27 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
 
 
 async def update_conversational_intelligence(
-    user_input: str, aura_response: str, state: Any
+    user_input: str,
+    aura_response: str,
+    state: Any,
+    *,
+    agent_id: str | None = None,
 ) -> None:
-    user_id = resolve_primary_user_id(state)
+    exact_agent_id = _normalize_agent_id(agent_id) or resolve_exact_partner_id(state)
 
     try:
         profiler = service_access.optional_service("conversational_profiler", default=None)
-        if profiler and relational_memory_allows(user_id, "derived_profile", "recall"):
-            await profiler.update_from_interaction(user_id, user_input, aura_response, {})
+        if exact_agent_id and profiler and relational_memory_allows(
+            exact_agent_id,
+            "derived_profile",
+            "recall",
+        ):
+            await profiler.update_from_interaction(
+                exact_agent_id,
+                user_input,
+                aura_response,
+                {},
+            )
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         _record_conversation_degradation(
             exc,
@@ -366,12 +417,17 @@ async def update_conversational_intelligence(
 
     try:
         dialogue = service_access.resolve_dialogue_cognition(default=None)
-        if dialogue and relational_memory_allows(
-            user_id,
+        if exact_agent_id and dialogue and relational_memory_allows(
+            exact_agent_id,
             "dialogue_preference",
             "recall",
         ):
-            await dialogue.update_from_interaction(user_id, user_input, aura_response, {})
+            await dialogue.update_from_interaction(
+                exact_agent_id,
+                user_input,
+                aura_response,
+                {},
+            )
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         _record_conversation_degradation(
             exc,
@@ -381,13 +437,17 @@ async def update_conversational_intelligence(
 
     try:
         humor = service_access.optional_service("humor_engine", default=None)
-        if humor and relational_memory_allows(user_id, "style_preference", "recall"):
+        if exact_agent_id and humor and relational_memory_allows(
+            exact_agent_id,
+            "style_preference",
+            "recall",
+        ):
             dynamics = service_access.resolve_conversational_dynamics(default=None)
             if dynamics:
                 humor.update_banter_state(
                     user_input,
                     dynamics.get_current_state(),
-                    user_id=user_id,
+                    user_id=exact_agent_id,
                 )
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         _record_conversation_degradation(
@@ -421,11 +481,18 @@ async def update_conversational_intelligence(
 
     try:
         rel_intel = service_access.optional_service("relational_intelligence", default=None)
-        if rel_intel and relational_memory_allows(user_id, "derived_profile", "recall"):
+        if exact_agent_id and rel_intel and relational_memory_allows(
+            exact_agent_id,
+            "derived_profile",
+            "recall",
+        ):
             dynamics = service_access.resolve_conversational_dynamics(default=None)
             dynamics_state = dynamics.get_current_state() if dynamics else None
             await rel_intel.update_from_interaction(
-                user_id, user_input, aura_response, dynamics_state
+                exact_agent_id,
+                user_input,
+                aura_response,
+                dynamics_state,
             )
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         _record_conversation_degradation(
@@ -436,18 +503,73 @@ async def update_conversational_intelligence(
 
     try:
         social_imagination = service_access.resolve_social_imagination(default=None)
-        if social_imagination and relational_memory_allows(
-            user_id,
+        if exact_agent_id and social_imagination and relational_memory_allows(
+            exact_agent_id,
             "social_imagination",
             "recall",
         ):
-            await social_imagination.update_from_interaction(user_id, user_input, aura_response, {})
+            await social_imagination.update_from_interaction(
+                exact_agent_id,
+                user_input,
+                aura_response,
+                {},
+            )
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         _record_conversation_degradation(
             exc,
             action="skipped social imagination update for this exchange",
         )
         logger.debug("SocialImagination update skipped: %s", exc)
+
+
+async def _run_conversation_support_updates(
+    user_input: str,
+    aura_response: str,
+    state: Any,
+    *,
+    agent_id: str | None,
+) -> None:
+    await update_conversational_intelligence(
+        user_input,
+        aura_response,
+        state,
+        agent_id=agent_id,
+    )
+    await record_shared_ground_callbacks(
+        aura_response,
+        agent_id=agent_id,
+    )
+
+
+def schedule_conversation_support_updates(
+    user_input: str,
+    aura_response: str,
+    state: Any,
+) -> asyncio.Task[Any] | None:
+    """Schedule one bounded, named owner for post-generation social updates."""
+
+    if not str(user_input or "").strip() or not str(aura_response or "").strip():
+        return None
+    exact_agent_id = resolve_exact_partner_id(state)
+    awaitable = _run_conversation_support_updates(
+        str(user_input),
+        str(aura_response),
+        state,
+        agent_id=exact_agent_id,
+    )
+    try:
+        return create_tracked_task(
+            awaitable,
+            name="conversation_support.turn_updates",
+            owner="response_generation",
+            bounded=True,
+        )
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        _record_conversation_degradation(
+            exc,
+            action="skipped post-generation conversation updates after owned task scheduling failed",
+        )
+        return None
 
 
 def _conversation_emotional_valence(user_input: str) -> float:
@@ -526,13 +648,22 @@ async def record_conversation_experience(
         repo = service_access.resolve_state_repository(default=None)
         state_obj = getattr(repo, "_current", None) if repo is not None else None
 
-    user_id = resolve_primary_user_id(state_obj)
+    exact_agent_id = resolve_exact_partner_id(state_obj)
+    user_id = exact_agent_id or "local_user"
     importance = _conversation_importance(user_input)
     emotional_valence = _conversation_emotional_valence(user_input)
     analysis = analyze_turn(user_input)
 
-    await update_conversational_intelligence(user_input, aura_response, state_obj)
-    await record_shared_ground_callbacks(aura_response)
+    await update_conversational_intelligence(
+        user_input,
+        aura_response,
+        state_obj,
+        agent_id=exact_agent_id,
+    )
+    await record_shared_ground_callbacks(
+        aura_response,
+        agent_id=exact_agent_id,
+    )
 
     try:
         get_coding_session_memory().record_conversation_turn(

@@ -31,6 +31,7 @@ from core.config import get_config
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.task_ownership import create_tracked_task
 from core.worlds.embodied import EmbodiedAgent
 from core.worlds.generation import WorldBlueprint, generate_world
 from core.worlds.physics import Body, PhysicsError, PhysicsWorld
@@ -827,7 +828,11 @@ class WorldHost:
                     source="worlds.host",
                 )
 
-        write_task = asyncio.create_task(_write(), name=f"world-persist:{world.world_id}")
+        write_task = create_tracked_task(
+            _write(),
+            name=f"world-persist:{world.world_id}",
+            owner="world_host.persistence",
+        )
         cancellation_pending = False
         try:
             while not write_task.done():

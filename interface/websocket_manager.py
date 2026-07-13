@@ -13,13 +13,14 @@ import os
 import random
 import time
 import uuid
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from fastapi import WebSocket
 
 from core.runtime.errors import record_degradation
 from core.runtime.shutdown_coordinator import is_shutdown_requested
+from core.runtime.task_ownership import create_tracked_task
 
 try:
     from websockets.exceptions import ConnectionClosed
@@ -57,6 +58,21 @@ type BroadcastQueue = asyncio.PriorityQueue[BroadcastItem]
 type ClientItem = tuple[int, float, str]
 type ClientQueue = asyncio.PriorityQueue[ClientItem]
 type TaskSpawner = Callable[..., asyncio.Task[Any]]
+
+
+def _spawn_websocket_task(
+    awaitable: Awaitable[Any],
+    *,
+    name: str | None = None,
+) -> asyncio.Task[Any]:
+    return cast(
+        asyncio.Task[Any],
+        create_tracked_task(
+            awaitable,
+            name=name,
+            owner="websocket_manager",
+        ),
+    )
 
 
 def _env_positive_int(name: str, default: int, *, minimum: int = 1) -> int:
@@ -342,7 +358,7 @@ class WebSocketManager:
         self._heartbeat_tasks: dict[WebSocket, asyncio.Task[Any]] = {}
         self._lock = asyncio.Lock()
         self._heartbeat_interval = 20.0
-        self._task_spawner = task_spawner or asyncio.create_task
+        self._task_spawner = task_spawner or _spawn_websocket_task
 
     def set_task_spawner(self, spawner: TaskSpawner) -> None:
         """Set the task spawner function (e.g. _spawn_server_task)."""

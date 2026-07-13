@@ -57,6 +57,28 @@ def create(coro):
     assert "raw_async_task" not in kinds
 
 
+def test_lint_blocks_event_loop_create_task_in_production_file() -> None:
+    kinds = _findings(
+        """
+async def main(loop, coro):
+    loop.create_task(coro)
+"""
+    )
+
+    assert "raw_async_task" in kinds
+
+
+def test_lint_allows_canonical_tracker_create_task() -> None:
+    kinds = _findings(
+        """
+async def main(task_tracker, coro):
+    task_tracker.create_task(coro, name="owned")
+"""
+    )
+
+    assert "raw_async_task" not in kinds
+
+
 def test_lint_blocks_asyncio_subprocess_shell() -> None:
     kinds = _findings(
         """

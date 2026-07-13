@@ -1,8 +1,12 @@
 import asyncio
 import contextvars
 import inspect
+import itertools
 import logging
+import threading
 import time
+import uuid
+import weakref
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
@@ -112,8 +116,10 @@ def mark_task_protected(task: asyncio.Task[Any], *, owner: str = "task_tracker")
 
 @dataclass
 class TaskRecord:
+    lifecycle_id: str
     task_id: int
     name: str
+    owner: str
     tracker: str
     supervision: str
     source: str
@@ -124,6 +130,7 @@ class TaskRecord:
     failed: bool = False
     finished_at: float | None = None
     exception: str | None = None
+    outcome: str = "running"
     last_heartbeat: float = field(default_factory=time.monotonic)
 
     def age_s(self, now: float | None = None) -> float:
@@ -135,8 +142,10 @@ class TaskRecord:
         if self.finished_at is not None:
             duration = max(0.0, self.finished_at - self.created_at)
         return {
+            "lifecycle_id": self.lifecycle_id,
             "task_id": self.task_id,
             "name": self.name,
+            "owner": self.owner,
             "tracker": self.tracker,
             "supervision": self.supervision,
             "source": self.source,
@@ -145,6 +154,7 @@ class TaskRecord:
             "done": self.done,
             "cancelled": self.cancelled,
             "failed": self.failed,
+            "outcome": self.outcome,
             "finished_at": self.finished_at,
             "duration_s": duration,
             "exception": self.exception,
@@ -162,9 +172,16 @@ class TaskTracker:
 
     def __init__(self, name: str = "Global", max_concurrent: int = 20):
         self.name = name
+        self._state_lock = threading.RLock()
         self.tasks: set[asyncio.Task] = set()
         self._max_concurrent = max_concurrent
-        self._semaphore: asyncio.Semaphore | None = None  # Lazy init
+        self._semaphores: dict[
+            int,
+            tuple[
+                weakref.ReferenceType[asyncio.AbstractEventLoop],
+                asyncio.Semaphore,
+            ],
+        ] = {}
         self._high_water = 0
         self._total_tracked = 0
         self._total_observed = 0
@@ -172,22 +189,42 @@ class TaskTracker:
         self._cancelled_total = 0
         self._failed_total = 0
         self._shutdown_suppressed_total = 0
+        self._tracker_instance_id = uuid.uuid4().hex[:12]
+        self._lifecycle_sequence = itertools.count(1)
         self._records: dict[int, TaskRecord] = {}
         self._recently_completed: deque[dict[str, Any]] = deque(maxlen=128)
         self._installed_loop_factories: dict[int, Any] = {}
         self._max_records_in_memory = 256  # Bounded history of completed tasks
 
     def _get_semaphore(self) -> asyncio.Semaphore:
-        """Lazy-init semaphore (must be in event loop context)."""
-        if self._semaphore is None:
-            self._semaphore = asyncio.Semaphore(self._max_concurrent)
-        return self._semaphore
+        """Return the bounded-work semaphore owned by the current event loop."""
+
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+        with self._state_lock:
+            existing = self._semaphores.get(loop_id)
+            if existing is not None and existing[0]() is loop:
+                return existing[1]
+
+            semaphore = asyncio.Semaphore(self._max_concurrent)
+            self._semaphores[loop_id] = (weakref.ref(loop), semaphore)
+            if len(self._semaphores) > 64:
+                stale_loop_ids = [
+                    candidate_id
+                    for candidate_id, (loop_ref, _semaphore) in self._semaphores.items()
+                    if loop_ref() is None
+                    or bool(getattr(loop_ref(), "is_closed", lambda: True)())
+                ]
+                for candidate_id in stale_loop_ids:
+                    self._semaphores.pop(candidate_id, None)
+            return semaphore
 
     def track(
         self,
         coro_or_task,
         name: str | None = None,
         *,
+        owner: str | None = None,
         allow_during_shutdown: bool = False,
     ) -> asyncio.Task:
         """Track a new task or coroutine (no concurrency limit)."""
@@ -218,8 +255,15 @@ class TaskTracker:
                     source="track:explicit_shutdown_owner",
                     outcome="allowed_teardown",
                 )
-        self._total_tracked += 1
-        self._attach(task, name=name, supervision="explicit", source="track")
+        with self._state_lock:
+            self._total_tracked += 1
+        self._attach(
+            task,
+            name=name,
+            owner=owner,
+            supervision="explicit",
+            source="track",
+        )
         return task
 
     # Compatibility methods for components calling track_task or create_task.
@@ -232,9 +276,22 @@ class TaskTracker:
     def create_task(self, coro_or_task, name: str | None = None, **kwargs: Any) -> asyncio.Task:
         return self.track(coro_or_task, name=name, **kwargs)
 
-    def observe(self, task: asyncio.Task, name: str | None = None, source: str = "loop_factory") -> asyncio.Task:
+    def observe(
+        self,
+        task: asyncio.Task,
+        name: str | None = None,
+        source: str = "loop_factory",
+        *,
+        owner: str | None = None,
+    ) -> asyncio.Task:
         """Observe a task created outside the tracker so it still gets cleaned up and audited."""
-        self._attach(task, name=name, supervision="implicit", source=source)
+        self._attach(
+            task,
+            name=name,
+            owner=owner,
+            supervision="implicit",
+            source=source,
+        )
         return task
 
     def bounded_track(
@@ -242,6 +299,7 @@ class TaskTracker:
         coro,
         name: str | None = None,
         *,
+        owner: str | None = None,
         allow_during_shutdown: bool = False,
     ) -> asyncio.Task:
         """Track a task WITH concurrency limiting via semaphore.
@@ -279,8 +337,15 @@ class TaskTracker:
                 end_shutdown_task_creation_scope(token)
         if allow_during_shutdown:
             self._mark_shutdown_critical(task)
-        self._total_tracked += 1
-        self._attach(task, name=name, supervision="explicit", source="bounded_track")
+        with self._state_lock:
+            self._total_tracked += 1
+        self._attach(
+            task,
+            name=name,
+            owner=owner,
+            supervision="explicit",
+            source="bounded_track",
+        )
         return task
 
     def _suppress_shutdown_start(self, awaitable: Any, *, name: str | None, source: str) -> asyncio.Task:
@@ -293,7 +358,8 @@ class TaskTracker:
         teardown.
         """
         close_awaitable(awaitable)
-        self._shutdown_suppressed_total += 1
+        with self._state_lock:
+            self._shutdown_suppressed_total += 1
         _record_shutdown_task_event(name=name, source=source, outcome="suppressed")
 
         async def _shutdown_suppressed() -> None:
@@ -314,8 +380,15 @@ class TaskTracker:
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("task_tracker", exc)
             logger.debug("TaskTracker[%s]: failed to annotate suppressed task: %s", self.name, exc)
-        self._total_tracked += 1
-        self._attach(task, name=name, supervision="explicit", source=f"{source}:shutdown_suppressed")
+        with self._state_lock:
+            self._total_tracked += 1
+        self._attach(
+            task,
+            name=name,
+            owner="runtime_shutdown",
+            supervision="explicit",
+            source=f"{source}:shutdown_suppressed",
+        )
         logger.debug(
             "TaskTracker[%s]: suppressed late task start during runtime shutdown (name=%s source=%s).",
             self.name,
@@ -356,7 +429,8 @@ class TaskTracker:
                 and not teardown_allowed
             ):
                 close_awaitable(coro)
-                tracker._shutdown_suppressed_total += 1
+                with tracker._state_lock:
+                    tracker._shutdown_suppressed_total += 1
                 _record_shutdown_task_event(
                     name=str(kwargs.get("name") or "raw_asyncio_task"),
                     source="loop_factory",
@@ -439,17 +513,18 @@ class TaskTracker:
         """Return a sample of long-lived tasks that may need inspection."""
         now = time.monotonic()
         stale: list[dict[str, Any]] = []
-        for task in list(self.tasks):
-            if task.done():
-                continue
-            record = self._records.get(id(task))
-            if record is None:
-                continue
-            if record.age_s(now) < min_age_s:
-                continue
-            if not include_supervised and record.supervision == "explicit":
-                continue
-            stale.append(record.to_dict(now))
+        with self._state_lock:
+            for task in list(self.tasks):
+                if task.done():
+                    continue
+                record = self._records.get(id(task))
+                if record is None:
+                    continue
+                if record.age_s(now) < min_age_s:
+                    continue
+                if not include_supervised and record.supervision == "explicit":
+                    continue
+                stale.append(record.to_dict(now))
         stale.sort(key=lambda item: item["age_s"], reverse=True)
         return stale
 
@@ -459,9 +534,10 @@ class TaskTracker:
         if not target_task:
             return
             
-        record = self._records.get(id(target_task))
-        if record:
-            record.last_heartbeat = time.monotonic()
+        with self._state_lock:
+            record = self._records.get(id(target_task))
+            if record:
+                record.last_heartbeat = time.monotonic()
 
     def _mark_supervised(self, task: asyncio.Task) -> None:
         try:
@@ -477,6 +553,7 @@ class TaskTracker:
         task: asyncio.Task,
         *,
         name: str | None,
+        owner: str | None,
         supervision: str,
         source: str,
     ) -> None:
@@ -495,36 +572,65 @@ class TaskTracker:
                 extra={"source": source, "name": str(name or "")},
             )
             return
-        task_name = name or task.get_name()
+        coroutine = self._describe_task(task)
+        runtime_name = str(task.get_name() or "").strip()
+        task_name = str(name or "").strip()
+        if not task_name:
+            task_name = coroutine if runtime_name.startswith("Task-") else runtime_name
+        task_name = task_name or "unknown_task"
+        task_owner = str(owner or "").strip() or coroutine or "unknown_owner"
         task_id = id(task)
-        record = self._records.get(task_id)
-        if record is None:
-            record = TaskRecord(
-                task_id=task_id,
-                name=task_name,
-                tracker=self.name,
-                supervision=supervision,
-                source=source,
-                created_at=time.monotonic(),
-                coroutine=self._describe_task(task),
-            )
-            self._records[task_id] = record
-            self.tasks.add(task)
-            task.add_done_callback(self._on_task_done)
-            self._total_observed += 1
-        else:
-            if name:
-                record.name = task_name
-            if record.source == "loop_factory" and source != "loop_factory":
-                record.source = source
-            if supervision == "explicit":
-                record.supervision = "explicit"
+        with self._state_lock:
+            record = self._records.get(task_id)
+            if record is not None and (
+                getattr(task, "_aura_task_lifecycle_id", None) != record.lifecycle_id
+            ):
+                # Completed task records intentionally outlive their Task objects for
+                # bounded diagnostics. CPython may reuse the object id while that
+                # record is retained; treating the new task as the old one skips the
+                # done callback and leaves its exception unobserved.
+                record = None
+            if record is None:
+                lifecycle_sequence = next(self._lifecycle_sequence)
+                record = TaskRecord(
+                    lifecycle_id=(
+                        f"{self.name}:{self._tracker_instance_id}:"
+                        f"{lifecycle_sequence:012d}"
+                    ),
+                    task_id=task_id,
+                    name=task_name,
+                    owner=task_owner,
+                    tracker=self.name,
+                    supervision=supervision,
+                    source=source,
+                    created_at=time.monotonic(),
+                    coroutine=coroutine,
+                )
+                self._records[task_id] = record
+                self.tasks.add(task)
+                task.add_done_callback(self._on_task_done)
+                self._total_observed += 1
+            else:
+                if name:
+                    record.name = task_name
+                if owner:
+                    record.owner = task_owner
+                if record.source == "loop_factory" and source != "loop_factory":
+                    record.source = source
+                if supervision == "explicit":
+                    record.supervision = "explicit"
+
+            task_done = task.done()
+            if not task_done:
+                self._high_water = max(self._high_water, len(self.tasks))
 
         try:
             task._aura_task_tracker = self.name
             task._aura_task_supervision = record.supervision
             task._aura_task_source = record.source
             task._aura_task_created_at = record.created_at
+            task._aura_task_lifecycle_id = record.lifecycle_id
+            task._aura_task_owner = record.owner
             if record.supervision == "explicit":
                 self._mark_supervised(task)
             elif not hasattr(task, "_aura_supervised"):
@@ -533,10 +639,8 @@ class TaskTracker:
             record_degradation('task_tracker', exc)
             logger.debug("TaskTracker[%s]: failed to annotate task: %s", self.name, exc)
 
-        if task.done():
+        if task_done:
             self._on_task_done(task)
-        else:
-            self._high_water = max(self._high_water, len(self.tasks))
 
     def _describe_task(self, task: asyncio.Task) -> str:
         try:
@@ -549,62 +653,100 @@ class TaskTracker:
         return repr(coro)
 
     def _on_task_done(self, task: asyncio.Task) -> None:
-        self.tasks.discard(task)
-        record = self._records.get(id(task))
-        if record is None or record.done:
-            return
-
-        record.done = True
-        record.finished_at = time.monotonic()
-        self._completed_total += 1
-
-        if task.cancelled():
-            record.cancelled = True
-            self._cancelled_total += 1
-        else:
+        cancelled = bool(task.cancelled())
+        terminal_exception: BaseException | None = None
+        observation_error: BaseException | None = None
+        if not cancelled:
             try:
-                exc = task.exception()
+                terminal_exception = task.exception()
             except asyncio.CancelledError:
-                record.cancelled = True
-                self._cancelled_total += 1
+                cancelled = True
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
-                record_degradation('task_tracker', exc)
+                observation_error = exc
+
+        with self._state_lock:
+            self.tasks.discard(task)
+            record = self._records.get(id(task))
+            if record is None or record.done:
+                # Reading task.exception() above is deliberate even at this early
+                # return. It prevents a missing/stale record from becoming
+                # "Task exception was never retrieved" at garbage collection.
+                return
+
+            record.done = True
+            record.finished_at = time.monotonic()
+            self._completed_total += 1
+
+            if cancelled:
+                record.cancelled = True
+                record.outcome = "cancelled"
+                self._cancelled_total += 1
+            elif observation_error is not None:
                 record.failed = True
-                record.exception = f"{type(exc).__name__}: {exc}"
+                record.outcome = "observation_error"
+                record.exception = (
+                    f"{type(observation_error).__name__}: {observation_error}"
+                )
+                self._failed_total += 1
+            elif terminal_exception is not None:
+                record.failed = True
+                record.outcome = "failed"
+                record.exception = (
+                    f"{type(terminal_exception).__name__}: {terminal_exception}"
+                )
                 self._failed_total += 1
             else:
-                if exc is not None:
-                    record.failed = True
-                    record.exception = f"{type(exc).__name__}: {exc}"
-                    self._failed_total += 1
-                    logger.warning(
-                        "TaskTracker[%s]: task %s failed: %s",
-                        self.name,
-                        record.name,
-                        record.exception,
-                    )
+                record.outcome = "succeeded"
 
-        self._recently_completed.append(record.to_dict())
-        
-        # CRITICAL FIX: Clean up old records to prevent unbounded memory growth
-        # This was causing 114GB memory leak - keeping ALL completed task records forever
-        if len(self._records) > self._max_records_in_memory:
-            # Find and remove oldest completed records
-            completed_records = [
-                (task_id, rec) for task_id, rec in self._records.items() 
-                if rec.done and rec.finished_at is not None
-            ]
-            if completed_records:
-                # Sort by finish time, remove oldest 25% of completed records
-                completed_records.sort(key=lambda x: x[1].finished_at or 0)
-                remove_count = max(1, len(completed_records) // 4)
-                for task_id, _ in completed_records[:remove_count]:
-                    del self._records[task_id]
+            terminal_receipt = record.to_dict()
+            self._recently_completed.append(terminal_receipt)
+
+            if len(self._records) > self._max_records_in_memory:
+                completed_records = [
+                    (task_id, candidate)
+                    for task_id, candidate in self._records.items()
+                    if candidate.done and candidate.finished_at is not None
+                ]
+                if completed_records:
+                    completed_records.sort(
+                        key=lambda item: item[1].finished_at or 0
+                    )
+                    remove_count = max(1, len(completed_records) // 4)
+                    for task_id, _candidate in completed_records[:remove_count]:
+                        del self._records[task_id]
+
+        if observation_error is not None:
+            try:
+                record_degradation("task_tracker", observation_error)
+            except RuntimeError as degradation_error:
+                logger.error(
+                    "TaskTracker[%s]: terminal observation degradation failed: %s",
+                    self.name,
+                    degradation_error,
+                )
+        elif terminal_exception is not None:
+            logger.warning(
+                "TaskTracker[%s]: task %s failed: %s",
+                self.name,
+                record.name,
+                record.exception,
+                extra={"aura_task_terminal": terminal_receipt},
+            )
+        logger.debug(
+            "TaskTracker[%s]: terminal task receipt %s outcome=%s owner=%s name=%s",
+            self.name,
+            record.lifecycle_id,
+            record.outcome,
+            record.owner,
+            record.name,
+            extra={"aura_task_terminal": terminal_receipt},
+        )
 
     @property
     def active_count(self) -> int:
         """Number of currently active (not done) tasks."""
-        return len(self.tasks)
+        with self._state_lock:
+            return len(self.tasks)
 
     async def shutdown(self, timeout: float = 5.0) -> dict[str, Any]:  # noqa: ASYNC109
         """Cancel and wait for all tracked tasks.
@@ -619,11 +761,12 @@ class TaskTracker:
         """
         started = time.monotonic()
         current_task = asyncio.current_task()
-        all_pending = {
-            task
-            for task in self.tasks
-            if not task.done() and task is not current_task
-        }
+        with self._state_lock:
+            all_pending = {
+                task
+                for task in self.tasks
+                if not task.done() and task is not current_task
+            }
         shutdown_critical = {
             task for task in all_pending if getattr(task, "_aura_shutdown_critical", False)
         }
@@ -720,7 +863,8 @@ class TaskTracker:
             logger.warning("%d tasks still pending after bounded cancellation.", len(remaining))
         remaining_tasks = []
         for task in remaining[:20]:
-            record = self._records.get(id(task))
+            with self._state_lock:
+                record = self._records.get(id(task))
             _record_shutdown_task_event(
                 name=record.name if record is not None else task.get_name(),
                 source=record.source if record is not None else "unknown",
@@ -744,20 +888,21 @@ class TaskTracker:
             "duration_seconds": round(time.monotonic() - started, 6),
         }
 
-    def cleanup_old_records(self, max_age_s: float = 300.0):
+    def cleanup_old_records(self, max_age_s: float = 300.0) -> int:
         """Explicitly clean up task records older than max_age_s.
         
         Called periodically to prevent unbounded memory growth from completed tasks.
         """
         now = time.monotonic()
         removed = 0
-        for task_id in list(self._records.keys()):
-            record = self._records[task_id]
-            if record.done and record.finished_at is not None:
-                age = now - record.finished_at
-                if age > max_age_s:
-                    del self._records[task_id]
-                    removed += 1
+        with self._state_lock:
+            for task_id in list(self._records.keys()):
+                record = self._records[task_id]
+                if record.done and record.finished_at is not None:
+                    age = now - record.finished_at
+                    if age > max_age_s:
+                        del self._records[task_id]
+                        removed += 1
         if removed > 0:
             logger.debug("TaskTracker[%s]: cleaned up %d old records", self.name, removed)
         return removed
@@ -766,32 +911,38 @@ class TaskTracker:
         explicit_active = 0
         implicit_active = 0
         shutdown_critical_active = 0
-        for task in list(self.tasks):
-            record = self._records.get(id(task))
-            if record is None:
-                continue
-            if record.supervision == "explicit":
-                explicit_active += 1
-            else:
-                implicit_active += 1
-            if getattr(task, "_aura_shutdown_critical", False):
-                shutdown_critical_active += 1
+        with self._state_lock:
+            active_tasks = list(self.tasks)
+            for task in active_tasks:
+                record = self._records.get(id(task))
+                if record is None:
+                    continue
+                if record.supervision == "explicit":
+                    explicit_active += 1
+                else:
+                    implicit_active += 1
+                if getattr(task, "_aura_shutdown_critical", False):
+                    shutdown_critical_active += 1
+            counters = {
+                "active": len(active_tasks),
+                "high_water": self._high_water,
+                "total_tracked": self._total_tracked,
+                "total_observed": self._total_observed,
+                "completed_total": self._completed_total,
+                "cancelled_total": self._cancelled_total,
+                "failed_total": self._failed_total,
+                "shutdown_suppressed_total": self._shutdown_suppressed_total,
+                "loop_semaphore_count": len(self._semaphores),
+                "recently_completed": list(self._recently_completed)[-5:],
+            }
         stale_tasks = self.get_stale_tasks(min_age_s=300.0)
         return {
-            "active": self.active_count,
-            "high_water": self._high_water,
-            "total_tracked": self._total_tracked,
-            "total_observed": self._total_observed,
+            **counters,
             "explicit_active": explicit_active,
             "implicit_active": implicit_active,
             "shutdown_critical_active": shutdown_critical_active,
-            "completed_total": self._completed_total,
-            "cancelled_total": self._cancelled_total,
-            "failed_total": self._failed_total,
-            "shutdown_suppressed_total": self._shutdown_suppressed_total,
             "max_concurrent": self._max_concurrent,
             "stale_tasks": stale_tasks[:5],
-            "recently_completed": list(self._recently_completed)[-5:],
         }
 
     def get_active_task_snapshot(
@@ -808,28 +959,33 @@ class TaskTracker:
                 current = asyncio.current_task()
             except RuntimeError:
                 current = None
-        active = [
-            task
-            for task in list(self.tasks)
-            if not task.done() and task is not current
-        ]
-        samples: list[dict[str, Any]] = []
-        for task in active[: max(0, int(limit))]:
-            record = self._records.get(id(task))
-            samples.append(
-                {
-                    "name": record.name if record is not None else task.get_name(),
-                    "source": record.source if record is not None else "unknown",
-                    "supervision": (
-                        record.supervision if record is not None else "unknown"
-                    ),
-                    "shutdown_critical": bool(
-                        getattr(task, "_aura_shutdown_critical", False)
-                    ),
-                    "protected": bool(getattr(task, "_aura_protected", False)),
-                    "loop_running": task.get_loop().is_running(),
-                }
-            )
+        with self._state_lock:
+            active = [
+                task
+                for task in list(self.tasks)
+                if not task.done() and task is not current
+            ]
+            samples: list[dict[str, Any]] = []
+            for task in active[: max(0, int(limit))]:
+                record = self._records.get(id(task))
+                samples.append(
+                    {
+                        "name": record.name if record is not None else task.get_name(),
+                        "owner": record.owner if record is not None else "unknown",
+                        "lifecycle_id": (
+                            record.lifecycle_id if record is not None else "unknown"
+                        ),
+                        "source": record.source if record is not None else "unknown",
+                        "supervision": (
+                            record.supervision if record is not None else "unknown"
+                        ),
+                        "shutdown_critical": bool(
+                            getattr(task, "_aura_shutdown_critical", False)
+                        ),
+                        "protected": bool(getattr(task, "_aura_protected", False)),
+                        "loop_running": task.get_loop().is_running(),
+                    }
+                )
         return {"count": len(active), "tasks": samples}
 
 

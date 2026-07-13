@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from core.runtime.errors import record_degradation
+from core.runtime.task_ownership import create_tracked_task
 from core.utils.task_tracker import get_task_tracker
 
 from .global_workspace import GlobalWorkspace
@@ -122,14 +123,23 @@ class ConsciousnessCore:
     def start(self):
         """Wake up"""
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.substrate.start())
+            asyncio.get_running_loop()
         except RuntimeError:
             try:
                 asyncio.run(self.substrate.start())
             except (RuntimeError, OSError, TypeError, ValueError) as exc:
                 record_degradation("conscious_core.substrate_start", exc)
                 logger.debug("Failed to run substrate start synchronously: %s", exc)
+        else:
+            try:
+                create_tracked_task(
+                    self.substrate.start(),
+                    name="conscious_core.substrate_start",
+                    owner="conscious_core",
+                )
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("conscious_core.substrate_start", exc)
+                logger.debug("Failed to schedule substrate start: %s", exc)
         self.running = True
 
         # Start the Volition Monitor (The "Will" task)
@@ -138,6 +148,7 @@ class ConsciousnessCore:
                 self.monitor_task = get_task_tracker().create_task(
                     self._volition_loop(),
                     name="conscious_core.volition_loop",
+                    owner="conscious_core",
                     )
             except RuntimeError as exc:
                 record_degradation("conscious_core", exc)
@@ -147,14 +158,23 @@ class ConsciousnessCore:
         """Sleep"""
         self.running = False
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.substrate.stop())
+            asyncio.get_running_loop()
         except RuntimeError:
             try:
                 asyncio.run(self.substrate.stop())
             except (RuntimeError, OSError, TypeError, ValueError) as exc:
                 record_degradation("conscious_core.substrate_stop", exc)
                 logger.debug("Failed to run substrate stop synchronously: %s", exc)
+        else:
+            try:
+                create_tracked_task(
+                    self.substrate.stop(),
+                    name="conscious_core.substrate_stop",
+                    owner="conscious_core",
+                )
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("conscious_core.substrate_stop", exc)
+                logger.debug("Failed to schedule substrate stop: %s", exc)
         if hasattr(self, 'monitor_task') and self.monitor_task:
             self.monitor_task.cancel()
 
@@ -241,7 +261,11 @@ class ConsciousnessCore:
         """Hook called when user speaks"""
         # Spike arousal and valence (Attention)
         stimulus = np.random.randn(64) * 0.5 # Simplified embedding
-        get_task_tracker().create_task(self.substrate.inject_stimulus(stimulus))
+        get_task_tracker().create_task(
+            self.substrate.inject_stimulus(stimulus),
+            name="conscious_core.input_stimulus",
+            owner="conscious_core",
+        )
 
     def get_state(self) -> dict[str, Any]:
         """API Payload for Qualia Explorer"""

@@ -23,7 +23,7 @@ from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.subprocess_gateway import get_subprocess_gateway
-from core.utils.task_tracker import get_task_tracker
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.CapabilityDiscovery")
 
@@ -102,16 +102,23 @@ class CapabilityDiscovery:
         self._started = True
         self._report = self._report or CapabilityReport()
         try:
-            self._scan_task = get_task_tracker().create_task(
+            self._scan_task = create_tracked_task(
                 self._run_initial_scan(),
                 name="capability_discovery.initial_scan",
+                owner="capability_discovery",
+                bounded=True,
             )
-        except (RuntimeError, AttributeError, TypeError):
-            self._scan_task = asyncio.create_task(
-                self._run_initial_scan(),
-                name="capability_discovery.initial_scan",
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            record_degradation(
+                "capability_discovery.initial_scan",
+                exc,
+                action="left capability report at explicit unknown defaults after scan scheduling failed",
             )
-        logger.info("CapabilityDiscovery ONLINE — initial scan scheduled")
+            self._scan_task = None
+        if self._scan_task is None:
+            logger.warning("CapabilityDiscovery ONLINE — initial scan was not scheduled")
+        else:
+            logger.info("CapabilityDiscovery ONLINE — initial scan scheduled")
 
     async def _run_initial_scan(self) -> None:
         try:

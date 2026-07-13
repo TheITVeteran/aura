@@ -16,16 +16,15 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **owned conversation-support task
-  lifecycle (`ASYNC-TASK-001`) plus launched proof of the source-green
-  self-condition, desktop-access, and event-loop pressure repairs
-  (`SELF-STATE-CHAT-001`, `DESKTOP-ACCESS-001`, `FOREGROUND-LATENCY-001`,
-  `LAUNCH-PROVENANCE-001`)**, followed by joy/social
+- Current bounded implementation milestone: **launched proof of the source-green
+  owned-task, self-condition, desktop-access, and event-loop pressure repairs
+  (`ASYNC-TASK-001`, `SELF-STATE-CHAT-001`, `DESKTOP-ACCESS-001`,
+  `FOREGROUND-LATENCY-001`, `LAUNCH-PROVENANCE-001`)**, followed by joy/social
   self-state separation and the remaining typed canonical person-model
   consolidation (`MEMORY-001`, `MIND-001`, `STATE-001`,
-  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 52 establish the current
-  social, OS-automation, runtime-pressure, desktop-access, and self-condition
-  source boundaries; none substitutes for launched desktop behavior.
+  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 53 establish the current
+  social, OS-automation, runtime-pressure, desktop-access, self-condition, and
+  owned-task source boundaries; none substitutes for launched desktop behavior.
   `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
@@ -71,6 +70,7 @@ Status rules:
 | `SCOPE-001` | `OPEN` | Build the machine-readable requirement-to-proof control plane, assign every prompt/context obligation a stable ID, enforce evidence-backed transitions, and generate zero-unmapped coverage. | Matrix 1; Pass F 12-13; checkpoint hygiene |
 | `EXPECT-001` | `IN PROGRESS` | Complete Fable's Aura Expectation Engine so natural-language intent becomes causal acceptance criteria, observed-effect verdicts, repair, persistence, and follow-through across every action path. | Pass F 1 and 14; Matrix 9 |
 | `EFFECT-001` | `IN PROGRESS` | Put file, network, browser, OS, memory, model, patch, self-repair, social, and environmental effects through canonical authority, transaction, compensation, and reconstructable receipt boundaries. | Pass F 5; Matrix 9 and 11 |
+| `STORAGE-GATEWAY-001` | `OPEN 2026-07-13` | Remove the seven remaining production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Preserve bootstrap/crash/rollback availability through explicit gateway primitives and fault-injection tests rather than linter exemptions. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoint 53 production-surface audit |
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
 | `RESOURCE-001` | `COMPLETE 2026-07-12` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. | Pass F 3; Addendum 22; Checkpoint 34 |
@@ -116,7 +116,7 @@ Status rules:
 | `OPERATIONS-001` | `OPEN` | Make clean install, first boot, doctor, model acquisition, permissions, migration, update, backup/restore, rollback, uninstall, crash triage, and release channels reproducible and boring. | Pass F 10; Matrix 15 |
 | `REPO-001` | `OPEN` | Drain type, effect, cancellation, lifecycle, concurrency, dependency, dead-code, scaffolding/stub, configuration, documentation, and runtime/proof artifact-placement debt across every tracked source file. | Pass F 12; Matrix 11, 12, and 18 |
 | `LIFECYCLE-001` | `IN PROGRESS 2026-07-13` | Make every bounded test and runtime command terminate after its result: identify and close the non-daemon thread/process/resource owner that leaves `tests/test_skill_surface_contracts.py` alive after `99/99`, add leak detection, and prove clean interpreter exit without hiding the owner behind forced termination. | `FAULT-001`, `REPO-001`, `VALIDATE-001`; post-summary process-exit defect discovered during Checkpoint 49/50 validation |
-| `ASYNC-TASK-001` | `OPEN 2026-07-13` | Eliminate every unobserved async task failure and require owned task identity, completion observation, cancellation, and structured terminal evidence. First reproduce and root-fix the live `conversation_support.py` task whose empty `agent_id` raised `ValueError` under “Task exception was never retrieved.” | `FAULT-001`, `LIFECYCLE-001`, `CONVERSATION-001`; live desktop log evidence 2026-07-13 |
+| `ASYNC-TASK-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate every unobserved async task failure and require owned task identity, completion observation, cancellation, and structured terminal evidence. First reproduce and root-fix the live `conversation_support.py` task whose empty `agent_id` raised `ValueError` under “Task exception was never retrieved.” | `FAULT-001`, `LIFECYCLE-001`, `CONVERSATION-001`; Checkpoint 53; live desktop log evidence 2026-07-13 |
 | `LAUNCH-PROVENANCE-001` | `IN PROGRESS 2026-07-13` | Make the signed resident Aura.app the canonical launcher, pin its source root and commit provenance to current `main`, reject stale/worktree drift, keep the native bridge resident, and expose launched root/commit/signature evidence in readiness and proof. The next live proof must replace the observed Python process running from `.claude/worktrees/fable-improvement-pass` without a resident Aura.app process. | `OPERATIONS-001`, `RUNTIME-001`, `DESKTOP-ACCESS-001`, `VALIDATE-001`; live process evidence 2026-07-13 |
 | `PROOF-001` | `OPEN` | Purify all proof runners against leakage, copied answers, stale artifacts, fallback success, runner-solved work, environment dependence, and unsupported claims; separate builder/solver/evaluator/signer. | Pass F 9; Matrix 16 |
 | `REPLICATION-001` | `OPEN` | Produce clean-machine setup, external challenge packs, source/SBOM/claims packages, replay commands, hashes, negative controls, and independent replication of every important causal result. | Matrix 16-17; Addendum 31 |
@@ -13243,3 +13243,94 @@ Immediate next work and proof burden:
   standing autonomous authority, every remaining master-index item,
   clean-machine/release proof, and final multi-hour and 24-72 hour soaks remain
   open and tracked.
+
+## Checkpoint 2026-07-13-53: Owned Async Lifecycle And Exact Social Identity
+
+This checkpoint advances `ASYNC-TASK-001`, `FAULT-001`, `LIFECYCLE-001`,
+`CONVERSATION-001`, and `OBSERVE-001`. Source is green; launched proof remains
+open because the process that emitted the defect is still running from the
+stale `.claude/worktrees/fable-improvement-pass` root rather than current
+`main`.
+
+Reproduced the live failure instead of treating its symptom:
+
+- The 2026-07-13 runtime trace identifies anonymous `Task-6381`, created for
+  `record_shared_ground_callbacks()`, failing when the shared-ground adapter
+  queried relational memory with an empty active `agent_id`. Response generation
+  launched this callback and conversational-model updates as two independent,
+  unnamed background tasks.
+- The canonical tracker already had a done callback, but retained completed
+  records by Python object ID. When CPython reused an ID, `_attach()` treated the
+  new task as an old completed task, skipped its completion callback, and
+  `_on_task_done()` returned before reading an exception when record evidence
+  was absent or stale. The tracker also shared one `asyncio.Semaphore` across
+  Aura's multiple event loops, which is invalid under cross-loop contention.
+
+Established one real ownership boundary:
+
+- Response generation now creates one named, bounded
+  `conversation_support.turn_updates` task owned by `response_generation`.
+  Exact partner identity is resolved before scheduling and passed immutably to
+  both conversational-model and shared-ground work. Identity-less turns may
+  update only the global conversation model; person-specific profile, humor,
+  relationship, dialogue, and social-imagination mutation abstain.
+- Shared-ground reads and callback updates preserve the scheduled exact agent
+  even if the process-wide active partner changes. Missing identity is a normal
+  empty-read/false-update result at the compatibility adapter, not an invalid
+  relational-authority query or invented `local_user` relationship.
+- Task records now carry process-distinct lifecycle IDs, semantic names,
+  explicit owners, supervision source, coroutine identity, terminal outcome,
+  duration, cancellation, and exception evidence. The active snapshot exposes
+  the same owner/lifecycle identity. Terminal exceptions are consumed before
+  any record-dependent early return, and completed-ID reuse always creates a
+  fresh lifecycle.
+- Tracker lifecycle mutation is lock-protected across worker loops. Bounded
+  queues are event-loop local, stale loop queues are bounded, shutdown still
+  cancels and observes local and foreign-loop tasks, and cancellation emits a
+  structured terminal receipt rather than being misclassified as failure.
+
+Removed the remaining production raw-task paths:
+
+- Capability discovery, cancellation-shielded world persistence, WebSocket
+  pumps/heartbeats, desktop-access single-flight probing, Ghost-line advance,
+  conscious-substrate start/stop/stimulus, degradation repair, and autonomous
+  repair now use canonical tracked ownership with names and owners. No-loop
+  repair fallbacks synchronously observe their coroutine inside the dedicated
+  daemon thread instead of creating an orphan event-loop task.
+- The production-surface linter now detects `loop.create_task()` families in
+  addition to direct `asyncio.create_task()`. A source scan reports zero raw
+  production task calls outside the canonical task-owner implementation.
+  The same deeper linter still reports seven direct file-write bypasses; these
+  remain open under the newly explicit `STORAGE-GATEWAY-001` and are not hidden
+  behind an exemption or a false full-gate pass.
+
+Verification completed for this source checkpoint:
+
+- Exact-agent, task-ID-reuse, cancellation, terminal-receipt, loop-local
+  semaphore, conversation-support, and strict-owner regressions pass `15/15`.
+  The initial focused slice passed `10/10`; the broader conversation,
+  relational-memory, response-generation, strict-owner, and shutdown matrix
+  passed `154/154` in 187 seconds.
+- The complete changed-surface functional battery passed `623/623` in 466
+  seconds across capability discovery, hosted-world durability and physics,
+  WebSockets, desktop probe single-flight, Ghost continuity, conscious-core
+  integration, autonomous/degradation repair, and production-linter contracts.
+  The WebSocket/linter subset independently reran `105/105` after its strict
+  generic typing correction.
+- Configured Ruff and selected compile checks pass. Strict MyPy is green across
+  all 77 configured production files. The enterprise static ratchet passes,
+  `git diff --check` is clean, and the direct raw-task proof reports zero
+  unowned production calls.
+
+Immediate next work and proof burden:
+
+- Reconcile and push this checkpoint on `main`, then replace the stale worktree
+  launch with the signed resident app built from the exact pushed revision.
+  Exercise the original shared-ground callback, task failure/cancellation,
+  self-condition chat, desktop probes, and foreground model admission while
+  verifying launched root, commit, bridge identity, and absence of new asyncio
+  orphan events.
+- Close `STORAGE-GATEWAY-001`, then continue joy/social self-state separation,
+  canonical person consolidation, standing autonomous authority, and every
+  remaining master-index item. Multi-hour and 24-72 hour soaks remain deferred
+  until all shorter gates are green.

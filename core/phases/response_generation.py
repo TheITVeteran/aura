@@ -23,13 +23,11 @@ from core.phases.response_contract import build_response_contract
 from core.runtime import background_policy, response_policy
 from core.runtime.connectivity import render_connectivity_prompt_block
 from core.runtime.conversation_support import (
-    record_shared_ground_callbacks,
-    update_conversational_intelligence,
+    schedule_conversation_support_updates,
 )
 from core.runtime.desktop_task_contract import desktop_task_action_sentence
 from core.runtime.errors import record_degradation
 from core.synthesis import stabilize_user_facing_response, strip_meta_commentary
-from core.utils.task_tracker import get_task_tracker
 
 from ..state.aura_state import AuraState, CognitiveMode
 from . import BasePhase
@@ -1890,18 +1888,13 @@ class ResponseGenerationPhase(BasePhase):
             # Set last_response so RepairPhase can inspect and clean it
             new_state.cognition.last_response = str(cleaned_response)
 
-            # SharedGround callback detection — fire-and-forget background task
-            # Detect when Aura's response references an established shared-ground entry
-            # and record the callback so salience scores accumulate over time.
-            if cleaned_response:
-                get_task_tracker().create_task(record_shared_ground_callbacks(cleaned_response))
-
-            # ── Conversational Intelligence Updates (fire-and-forget) ──
-            # Update all person-specific models from this exchange.
-            if cleaned_response and objective:
-                get_task_tracker().create_task(
-                    update_conversational_intelligence(str(objective), str(cleaned_response), state)
-                )
+            # One bounded owner observes conversational model updates and
+            # shared-ground callbacks under the same stable partner identity.
+            schedule_conversation_support_updates(
+                str(objective or ""),
+                str(cleaned_response or ""),
+                state,
+            )
 
             # ── SUBSTRATE VOICE: Follow-up decision ──────────────────────
             # Ask the substrate if a follow-up is warranted. This is organic,

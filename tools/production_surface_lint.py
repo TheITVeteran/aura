@@ -220,7 +220,15 @@ class AstLinter(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call) -> None:
         name = self._call_name(node)
-        if name in {"asyncio.create_task", "asyncio.ensure_future"}:
+        task_owner = name.rsplit(".", 2)[-2] if name.endswith(".create_task") else ""
+        raw_loop_task = task_owner in {
+            "loop",
+            "event_loop",
+            "running_loop",
+            "target_loop",
+            "main_loop",
+        } or task_owner.endswith("_loop")
+        if name in {"asyncio.create_task", "asyncio.ensure_future"} or raw_loop_task:
             if self.rel == "core/runtime/task_ownership.py" and name == "asyncio.create_task":
                 self.generic_visit(node)
                 return

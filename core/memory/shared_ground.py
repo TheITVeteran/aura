@@ -63,6 +63,8 @@ class SharedGroundBuffer:
 
     @property
     def entries(self) -> list[SharedGroundEntry]:
+        if not str(self.active_agent_id or "").strip():
+            return []
         records = self.authority.query(
             self.active_agent_id,
             kinds=["shared_ground"],
@@ -98,7 +100,9 @@ class SharedGroundBuffer:
         return self._entry(record)
 
     def record_callback(self, reference: str, *, agent_id: str | None = None) -> bool:
-        resolved_agent = str(agent_id or self.active_agent_id)
+        resolved_agent = str(agent_id or self.active_agent_id).strip()
+        if not resolved_agent:
+            return False
         normalized = reference.strip().lower()
         for entry in self.get_top_entries(self.MAX_ENTRIES, agent_id=resolved_agent):
             candidate = entry.reference.strip().lower()
@@ -112,8 +116,11 @@ class SharedGroundBuffer:
         *,
         agent_id: str | None = None,
     ) -> list[SharedGroundEntry]:
+        resolved_agent = str(agent_id or self.active_agent_id).strip()
+        if not resolved_agent:
+            return []
         records = self.authority.query(
-            str(agent_id or self.active_agent_id),
+            resolved_agent,
             kinds=["shared_ground"],
             purpose="recall",
             limit=max_entries,
@@ -126,7 +133,9 @@ class SharedGroundBuffer:
         *,
         agent_id: str | None = None,
     ) -> str:
-        resolved_agent = str(agent_id or self.active_agent_id)
+        resolved_agent = str(agent_id or self.active_agent_id).strip()
+        if not resolved_agent:
+            return ""
         entries = self.authority.query(
             resolved_agent,
             kinds=["shared_ground"],

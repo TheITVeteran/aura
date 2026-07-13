@@ -76,29 +76,39 @@ def create_tracked_task(
     awaitable: Awaitable[Any],
     *,
     name: str | None = None,
+    owner: str | None = None,
     bounded: bool = False,
     on_done: Callable[[asyncio.Task], Any] | None = None,
     cancel_on_fail: bool = True,
 ) -> asyncio.Task:
     tracker = _get_tracker()
     task: asyncio.Task | None = None
+    task_kwargs: dict[str, Any] = {"name": name}
+    if owner is not None:
+        task_kwargs["owner"] = owner
     try:
         if tracker is not None:
             if bounded and hasattr(tracker, "bounded_track"):
-                task = tracker.bounded_track(awaitable, name=name)
+                task = tracker.bounded_track(awaitable, **task_kwargs)
             elif hasattr(tracker, "create_task"):
-                task = tracker.create_task(awaitable, name=name)
+                task = tracker.create_task(awaitable, **task_kwargs)
             elif hasattr(tracker, "track_task"):
-                task = tracker.track_task(awaitable, name=name)
+                task = tracker.track_task(awaitable, **task_kwargs)
             elif hasattr(tracker, "track"):
-                task = tracker.track(awaitable, name=name)
+                task = tracker.track(awaitable, **task_kwargs)
 
         if task is None:
             task = _create_owned_asyncio_task(awaitable, name=name)
             if tracker is not None:
                 try:
                     if hasattr(tracker, "observe"):
-                        tracker.observe(task, name=name, source="task_ownership_fallback")
+                        observe_kwargs: dict[str, Any] = {
+                            "name": name,
+                            "source": "task_ownership_fallback",
+                        }
+                        if owner is not None:
+                            observe_kwargs["owner"] = owner
+                        tracker.observe(task, **observe_kwargs)
                     elif hasattr(tracker, "track_task"):
                         tracker.track_task(task, name=name)
                 except (RuntimeError, AttributeError, TypeError) as exc:
@@ -118,6 +128,7 @@ def fire_and_forget(
     awaitable: Awaitable[Any],
     *,
     name: str | None = None,
+    owner: str | None = None,
     bounded: bool = False,
     log_exceptions: bool = True,
 ) -> asyncio.Task | None:
@@ -134,7 +145,13 @@ def fire_and_forget(
             logger.warning("Background task %s failed: %s", name or task.get_name(), exc, exc_info=exc)
 
     try:
-        return create_tracked_task(awaitable, name=name, bounded=bounded, on_done=_log_done)
+        return create_tracked_task(
+            awaitable,
+            name=name,
+            owner=owner,
+            bounded=bounded,
+            on_done=_log_done,
+        )
     except RuntimeError:
         close_awaitable(awaitable)
         return None

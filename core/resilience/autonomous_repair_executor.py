@@ -12,8 +12,11 @@ import hashlib
 import logging
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable
+from typing import Any
+
+from core.runtime.task_ownership import create_tracked_task
 
 logger = logging.getLogger("Aura.Resilience.AutonomousRepair")
 
@@ -214,7 +217,7 @@ class AutonomousRepairExecutor:
                 }
             )
             return result
-        except (asyncio.TimeoutError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        except (TimeoutError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
             logger.warning("Autonomous repair failed for %s: %s", request.fingerprint, exc)
             result.update(
                 {
@@ -237,25 +240,33 @@ class AutonomousRepairExecutor:
     @staticmethod
     def _schedule(coro: Any) -> None:
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
+            def _run_in_thread() -> None:
+                try:
+                    asyncio.run(coro)
+                except asyncio.CancelledError:
+                    return
+                except (RuntimeError, OSError, TypeError, ValueError) as exc:
+                    logger.warning("Autonomous repair thread failed: %s", exc)
+
             thread = threading.Thread(
-                target=lambda: asyncio.run(coro),
+                target=_run_in_thread,
                 name="aura-autonomous-repair",
                 daemon=True,
             )
             thread.start()
             return
 
-        task = loop.create_task(coro, name="aura-autonomous-repair")
-
-        def _consume(done: asyncio.Task) -> None:
-            try:
-                done.result()
-            except (RuntimeError, TypeError, ValueError) as exc:
-                logger.debug("Autonomous repair task finished with handled error: %s", exc)
-
-        task.add_done_callback(_consume)
+        try:
+            create_tracked_task(
+                coro,
+                name="aura-autonomous-repair",
+                owner="autonomous_repair_executor",
+                bounded=True,
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            logger.warning("Autonomous repair task scheduling failed: %s", exc)
 
 
 _EXECUTOR: AutonomousRepairExecutor | None = None
