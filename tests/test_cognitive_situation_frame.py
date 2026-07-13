@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from core.brain.cognitive_engine import CognitiveEngine
@@ -13,6 +15,7 @@ from core.container import ServiceContainer
 from core.phases.response_generation import ResponseGenerationPhase
 from core.planning.task_decomposer import TaskDecomposer
 from core.social.other_agent_model import OtherAgentStateEstimator
+from core.social.relational_memory import RelationalMemoryAuthority
 from core.state.aura_state import AuraState, CognitiveMode
 
 
@@ -253,16 +256,31 @@ def test_fused_perception_changes_attention_routing_response_and_planning() -> N
 
 
 def test_calibrated_social_rupture_changes_response_routing_and_planning(tmp_path) -> None:
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"c" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    authority.grant_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["recall"],
+        receipt_id="cognitive-social-consent",
+    )
     estimator = OtherAgentStateEstimator(
         storage_path=tmp_path / "agents.json",
+        authority=authority,
         autosave=False,
     )
-    for _ in range(4):
+    for index in range(4):
         estimator.observe_message(
             "bryan",
-            "I am frustrated, this is still broken and urgent",
+            "I am frustrated. I need this now.",
+            evidence_digest=hashlib.sha256(
+                f"cognitive-frustration-{index}".encode()
+            ).hexdigest(),
         )
-        estimator.observe_outcome("bryan", success=False, weight=0.7)
     ServiceContainer.register_instance("other_agent_model", estimator, required=False)
     state = AuraState.default()
 
@@ -279,7 +297,7 @@ def test_calibrated_social_rupture_changes_response_routing_and_planning(tmp_pat
     assert frame.routing_bias["social_confirmation_required"] is True
     assert frame.routing_bias["social_response_brevity"] is True
     assert frame.sampling_bias["max_tokens_factor"] <= 0.9
-    assert "relationship-repair" in frame.attention_targets
+    assert "interaction-repair" in frame.attention_targets
     assert any(
         "confirm consequential" in constraint
         for constraint in frame.causal_effects["social_planning_constraints"]
@@ -304,14 +322,37 @@ def test_calibrated_social_rupture_changes_response_routing_and_planning(tmp_pat
 
 
 def test_social_situation_uses_requested_agent_not_last_or_spoofed_context(tmp_path) -> None:
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"c" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    for agent_id in ("alice", "bryan"):
+        authority.grant_consent(
+            agent_id,
+            kinds=["derived_profile"],
+            operations=["recall"],
+            receipt_id=f"cognitive-social-consent-{agent_id}",
+        )
     estimator = OtherAgentStateEstimator(
         storage_path=tmp_path / "agents.json",
+        authority=authority,
         autosave=False,
     )
-    estimator.observe_message("alice", "thank you, everything is perfect")
-    for _ in range(4):
-        estimator.observe_message("bryan", "ugh this is broken and frustrating")
-        estimator.observe_outcome("bryan", success=False, weight=0.7)
+    estimator.observe_message(
+        "alice",
+        "hello",
+        evidence_digest=hashlib.sha256(b"alice-turn").hexdigest(),
+    )
+    for index in range(4):
+        estimator.observe_message(
+            "bryan",
+            "I am frustrated.",
+            evidence_digest=hashlib.sha256(
+                f"bryan-turn-{index}".encode()
+            ).hexdigest(),
+        )
     assert estimator.active_agent_id == "bryan"
     ServiceContainer.register_instance("other_agent_model", estimator, required=False)
 
@@ -334,6 +375,19 @@ def test_social_situation_uses_requested_agent_not_last_or_spoofed_context(tmp_p
     assert frame.social_repair_pressure < 0.5
     assert frame.social_summary["social_rupture_risk"] < 0.5
     assert frame.routing_bias["social_repair_required"] is False
+
+
+def test_cognitive_situation_has_no_synthetic_agent_without_exact_identity() -> None:
+    ServiceContainer.clear()
+
+    frame = CognitiveSituationEngine().frame(
+        "Review the current state.",
+        state=AuraState.default(),
+        context={},
+    )
+
+    assert frame.agent_id == ""
+    assert frame.social_summary == {}
 
 
 def test_unknown_social_state_requests_clarity_without_diagnosis_or_repair(tmp_path) -> None:

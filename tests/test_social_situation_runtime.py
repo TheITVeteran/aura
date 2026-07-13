@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from types import SimpleNamespace
 
 import pytest
@@ -13,9 +14,11 @@ from core.social.relational_memory import RelationalMemoryAuthority
 class FakeEstimator:
     def __init__(self) -> None:
         self.events: list[tuple[str, object]] = []
+        self.evidence_digests: list[str] = []
 
     def observe_message(self, user_id, message, **kwargs):
         self.events.append(("observe", (user_id, message, kwargs.get("persist"))))
+        self.evidence_digests.append(kwargs.get("evidence_digest", ""))
 
     def cognitive_snapshot(self, user_id, _now=None):
         self.events.append(("snapshot", user_id))
@@ -30,8 +33,13 @@ class FakeEstimator:
         self.events.append(("persist", True))
         return True
 
-    def record_response(self, user_id, response_text):
-        self.events.append(("response", (user_id, response_text)))
+    def record_response(self, user_id, response_text, delivery_receipt_id):
+        self.events.append(
+            (
+                "response",
+                (user_id, response_text, delivery_receipt_id),
+            )
+        )
 
 
 class FakeObserverContext:
@@ -126,8 +134,14 @@ def test_only_delivered_response_is_paired_to_exact_user() -> None:
         harness._record_delivered_social_response(
             {"user_id": "bryan"},
             "verified response",
+            "output-receipt-test",
         )
-        assert estimator.events == [("response", ("bryan", "verified response"))]
+        assert estimator.events == [
+            (
+                "response",
+                ("bryan", "verified response", "output-receipt-test"),
+            )
+        ]
     finally:
         ServiceContainer.clear()
 
@@ -148,9 +162,26 @@ async def test_emit_records_feedback_context_only_after_successful_delivery() ->
             metadata={"voice": True},
         )
         assert harness.output_gate.emitted == [
-            ("delivered", "user", "primary", {"metadata": {"voice": True}})
+            (
+                "delivered",
+                "user",
+                "primary",
+                {
+                    "metadata": {
+                        "voice": True,
+                        "recipient_principal_digest": hashlib.sha256(
+                            b"bryan"
+                        ).hexdigest(),
+                    }
+                },
+            )
         ]
-        assert estimator.events == [("response", ("bryan", "delivered"))]
+        assert estimator.events == [
+            (
+                "response",
+                ("bryan", "delivered", "output-receipt-test"),
+            )
+        ]
 
         harness.output_gate = FakeOutputGate(confirm=False)
         assert await harness._emit_user_response(
@@ -158,7 +189,12 @@ async def test_emit_records_feedback_context_only_after_successful_delivery() ->
             "unconfirmed",
             origin="user",
         ) is None
-        assert estimator.events == [("response", ("bryan", "delivered"))]
+        assert estimator.events == [
+            (
+                "response",
+                ("bryan", "delivered", "output-receipt-test"),
+            )
+        ]
 
         harness.output_gate = FakeOutputGate(fail=True)
         with pytest.raises(RuntimeError, match="delivery failed"):
@@ -167,7 +203,12 @@ async def test_emit_records_feedback_context_only_after_successful_delivery() ->
                 "not delivered",
                 origin="user",
             )
-        assert estimator.events == [("response", ("bryan", "delivered"))]
+        assert estimator.events == [
+            (
+                "response",
+                ("bryan", "delivered", "output-receipt-test"),
+            )
+        ]
     finally:
         ServiceContainer.clear()
 
@@ -194,7 +235,11 @@ def test_missing_social_identity_abstains_without_creating_a_synthetic_user() ->
 
     try:
         assert harness._observe_social_turn(context, "hello", None) == ""
-        harness._record_delivered_social_response(context, "response")
+        harness._record_delivered_social_response(
+            context,
+            "response",
+            "output-receipt-test",
+        )
     finally:
         ServiceContainer.clear()
 
@@ -226,6 +271,49 @@ async def test_malformed_social_snapshot_cannot_block_objective_presence() -> No
         ServiceContainer.clear()
 
     assert observer.events[0][0] == "presence"
+
+
+@pytest.mark.asyncio
+async def test_repeated_identical_turns_receive_distinct_event_evidence(tmp_path) -> None:
+    from core.social.other_agent_model import OtherAgentStateEstimator
+
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"e" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    authority.grant_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["recall"],
+        receipt_id="incoming-social-consent",
+    )
+    estimator = OtherAgentStateEstimator(
+        storage_path=tmp_path / "legacy.json",
+        authority=authority,
+        autosave=False,
+    )
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("other_agent_model", estimator, required=False)
+    harness = Harness()
+
+    try:
+        harness._observe_social_turn(
+            {"user_id": "bryan"},
+            "I am frustrated.",
+            None,
+        )
+        harness._observe_social_turn(
+            {"user_id": "bryan"},
+            "I am frustrated.",
+            None,
+        )
+        await asyncio.gather(*harness.tasks)
+    finally:
+        ServiceContainer.clear()
+
+    assert estimator.estimate("bryan").observations == 2
 
 
 def test_explicit_user_commands_control_exact_agent_relational_memory(tmp_path) -> None:

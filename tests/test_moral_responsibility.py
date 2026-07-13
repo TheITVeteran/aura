@@ -1,11 +1,35 @@
 """Moral responsibility: owed amends, responsibility attribution, accountability checks."""
 from __future__ import annotations
 
+import hashlib
 from types import SimpleNamespace
 
 import pytest
 
 from core.values.moral_responsibility import MoralResponsibility, get_moral_responsibility
+
+
+def _social_estimator(tmp_path):
+    from core.social.other_agent_model import OtherAgentStateEstimator
+    from core.social.relational_memory import RelationalMemoryAuthority
+
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"m" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    authority.grant_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["recall"],
+        receipt_id="moral-social-consent",
+    )
+    return OtherAgentStateEstimator(
+        storage_path=tmp_path / "legacy.json",
+        authority=authority,
+        autosave=False,
+    )
 
 
 @pytest.fixture
@@ -60,6 +84,89 @@ def test_owed_amends_includes_broken_commitment(mr):
 
 def test_singleton_stable():
     assert get_moral_responsibility() is get_moral_responsibility()
+
+
+def test_explicit_frustration_alone_does_not_prove_aura_owes_social_amends(
+    mr,
+    monkeypatch,
+    tmp_path,
+):
+    import core.social.other_agent_model as other_agent_module
+
+    estimator = _social_estimator(tmp_path)
+    for index in range(3):
+        estimator.observe_message(
+            "bryan",
+            "I am frustrated.",
+            evidence_digest=hashlib.sha256(
+                f"frustration-{index}".encode()
+            ).hexdigest(),
+        )
+    monkeypatch.setattr(other_agent_module, "_instance", estimator)
+
+    assert not any(
+        amend.kind == "social_rupture"
+        for amend in mr.owed_amends(agent_id="bryan")
+    )
+
+
+def test_confirmed_negative_response_feedback_can_create_specific_amend(
+    mr,
+    monkeypatch,
+    tmp_path,
+):
+    import core.social.other_agent_model as other_agent_module
+    from core.runtime.receipts import (
+        OutputReceipt,
+        get_receipt_store,
+        reset_receipt_store,
+    )
+
+    estimator = _social_estimator(tmp_path)
+    reset_receipt_store()
+    store = get_receipt_store(tmp_path / "receipts")
+    response = "candidate response"
+    digest = hashlib.sha256(response.encode("utf-8")).hexdigest()[:16]
+    for index in range(2):
+        receipt = store.emit(
+            OutputReceipt(
+                cause="test",
+                origin="user",
+                target="primary",
+                digest=digest,
+                metadata={
+                    "delivery_stage": "transport_accepted",
+                    "accepted_sinks": ["reply_queue"],
+                    "recipient_principal_digest": hashlib.sha256(
+                        b"bryan"
+                    ).hexdigest(),
+                },
+            )
+        )
+        assert estimator.record_response(
+            "bryan",
+            response,
+            receipt.receipt_id,
+        )
+        estimator.observe_message(
+            "bryan",
+            "that didn't work",
+            evidence_digest=hashlib.sha256(
+                f"negative-feedback-{index}".encode()
+            ).hexdigest(),
+        )
+    monkeypatch.setattr(other_agent_module, "_instance", estimator)
+    try:
+        social_amends = [
+            amend
+            for amend in mr.owed_amends(agent_id="bryan")
+            if amend.kind == "social_rupture"
+        ]
+    finally:
+        reset_receipt_store()
+
+    assert social_amends
+    assert "confirmed response failure" in social_amends[0].owed_action
 
 
 def test_unity_binds_owed_amends(monkeypatch):

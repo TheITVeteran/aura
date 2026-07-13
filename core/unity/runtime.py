@@ -314,9 +314,21 @@ class UnityRuntime:
             est = get_other_agent_model().estimate(agent_id)
             if est.overall_confidence < 0.15:
                 return []  # we don't actually know enough to assert their state
-            dominant = max(est.affect.items(), key=lambda kv: kv[1])[0] if est.affect else "neutral"
+            supported = [
+                (name, est.affect.get(name, 0.0), confidence)
+                for name, confidence in est.affect_confidence.items()
+                if name != "engagement" and confidence >= 0.15
+            ]
+            if not supported:
+                return []
+            dominant, _, dominant_confidence = max(
+                supported,
+                key=lambda item: item[2],
+            )
             summary = _normalize_text(
-                f"{agent_id}: reads {dominant}, rupture-risk {est.social_rupture_risk:.2f}", 160
+                f"{agent_id}: {dominant} hypothesis confidence {dominant_confidence:.2f}; "
+                f"interaction-caution {est.social_rupture_risk:.2f}",
+                160,
             )
             return [
                 BoundContent(
@@ -324,11 +336,11 @@ class UnityRuntime:
                     modality="social",
                     source="other_agent_model",
                     summary=summary,
-                    salience=_clamp(0.4 + 0.5 * est.social_rupture_risk),
+                    salience=_clamp(0.3 + 0.4 * est.social_rupture_risk),
                     confidence=_clamp(est.overall_confidence),   # honest: our actual certainty
                     timestamp=time.time(),
                     ownership="world",
-                    action_relevance=_clamp(0.4 + 0.6 * est.social_rupture_risk),
+                    action_relevance=_clamp(0.3 + 0.5 * est.social_rupture_risk),
                     affective_charge=_clamp(est.affect.get("valence", 0.0), -1.0, 1.0),
                 )
             ]
@@ -422,7 +434,7 @@ class UnityRuntime:
             return []
 
     def _accountability_contents(self, state: Any) -> list[BoundContent]:
-        """Bind owed amends (broken/overdue commitments, social ruptures) into the moment.
+        """Bind owed amends and confirmed response-repair obligations into the moment.
 
         Moral responsibility made causal: when Aura owes an acknowledgment or repair, it enters
         the unified state as a high-salience, high-action-relevance content, so taking

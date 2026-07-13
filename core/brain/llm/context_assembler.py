@@ -955,11 +955,29 @@ class ContextAssembler:
             )
 
         # ── Social Intelligence Layer (wired for ALL interactions) ──────────
-        # Use the exact active-agent estimate; never select an arbitrary dict entry.
+        # Prefer the causal request principal, then the exact situation frame.
+        # The process-global active agent is compatibility-only for legacy paths.
         social_block = ""
+        agent_id = ""
         try:
+            from core.runtime.principal_context import current_relational_principal
+
             estimator = ServiceContainer.get("other_agent_model", default=None)
-            agent_id = str(getattr(estimator, "active_agent_id", "") or "")
+            agent_id = current_relational_principal()
+            if not agent_id:
+                situation_frame = response_mods.get(
+                    "cognitive_situation_frame"
+                ) or mods.get("cognitive_situation_frame")
+                if isinstance(situation_frame, dict):
+                    agent_id = " ".join(
+                        str(situation_frame.get("agent_id") or "").strip().split()
+                    )[:160]
+            if not agent_id:
+                agent_id = " ".join(
+                    str(getattr(estimator, "active_agent_id", "") or "")
+                    .strip()
+                    .split()
+                )[:160]
             if (
                 not cognitive_situation_context
                 and estimator

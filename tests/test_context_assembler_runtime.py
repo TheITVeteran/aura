@@ -1,5 +1,6 @@
 from core.brain.llm.context_assembler import ContextAssembler
 from core.container import ServiceContainer
+from core.runtime.principal_context import relational_principal_scope
 from core.social.relational_memory import RelationalMemoryAuthority
 from core.state.aura_state import AuraState
 
@@ -169,6 +170,52 @@ def test_context_assembler_injects_only_consented_exact_agent_memory(tmp_path):
 
     assert "Keep the project codename private." in prompt
     assert "ALICE_PRIVATE_BOUNDARY" not in prompt
+
+
+def test_request_scoped_principal_overrides_process_global_active_agent(tmp_path):
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"k" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    for agent_id, content in (
+        ("bryan", "BRYAN_PRIVATE_BOUNDARY"),
+        ("alice", "ALICE_PRIVATE_BOUNDARY"),
+    ):
+        authority.grant_consent(
+            agent_id,
+            kinds=["boundary"],
+            operations=["persist", "recall", "prompt"],
+            receipt_id=f"grant-{agent_id}",
+        )
+        authority.record(agent_id, kind="boundary", content=content)
+
+    class Estimator:
+        active_agent_id = "bryan"
+
+        def __init__(self):
+            self.requested_agents = []
+
+        def context_injection(self, agent_id):
+            self.requested_agents.append(agent_id)
+            return f"agent={agent_id}"
+
+    estimator = Estimator()
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("other_agent_model", estimator, required=False)
+    ServiceContainer.register_instance("relational_memory", authority, required=False)
+
+    try:
+        with relational_principal_scope("alice"):
+            prompt = ContextAssembler.build_system_prompt(AuraState.default())
+    finally:
+        ServiceContainer.clear()
+
+    assert estimator.requested_agents == ["alice"]
+    assert "agent=alice" in prompt
+    assert "ALICE_PRIVATE_BOUNDARY" in prompt
+    assert "BRYAN_PRIVATE_BOUNDARY" not in prompt
 
 
 def test_deep_conversation_keeps_compact_continuity():

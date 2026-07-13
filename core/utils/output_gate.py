@@ -4,7 +4,6 @@ Standardizes which messages reach the User (Primary) vs. Background (Secondary).
 Prevents "Autonomous Pollution" where background search results flood the chat.
 """
 import asyncio
-import hashlib
 import logging
 import time
 import weakref
@@ -157,9 +156,24 @@ class AutonomousOutputGate:
         metadata: dict[str, Any] | None = None,
     ) -> str | None:
         try:
-            from core.runtime.receipts import OutputReceipt, get_receipt_store
+            from core.runtime.receipts import (
+                OutputReceipt,
+                digest_output_content,
+                get_receipt_store,
+            )
 
-            digest = hashlib.sha256(str(content or "").encode("utf-8")).hexdigest()[:16]
+            digest = digest_output_content(content)
+            recipient_principal_digest = str(
+                (metadata or {}).get("recipient_principal_digest") or ""
+            ).strip().casefold()
+            if not (
+                len(recipient_principal_digest) == 64
+                and all(
+                    character in "0123456789abcdef"
+                    for character in recipient_principal_digest
+                )
+            ):
+                recipient_principal_digest = ""
             receipt = OutputReceipt(
                 cause=f"output_gate:{origin}",
                 origin=str(origin or "system"),
@@ -172,6 +186,7 @@ class AutonomousOutputGate:
                     "autonomous": bool((metadata or {}).get("autonomous", False)),
                     "accepted_sinks": list((metadata or {}).get("accepted_sinks", [])),
                     "delivery_stage": "transport_accepted",
+                    "recipient_principal_digest": recipient_principal_digest,
                 },
             )
             stored = await asyncio.to_thread(get_receipt_store().emit, receipt)

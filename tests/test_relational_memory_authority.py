@@ -8,6 +8,12 @@ import pytest
 from core.container import ServiceContainer
 from core.memory.shared_ground import SharedGroundBuffer
 from core.memory.social_memory import SocialMemory
+from core.runtime.memory_consent import (
+    MemoryConsentMode,
+    apply_relational_memory_command,
+    is_delete_all_relational_memory_command,
+    parse_consent_command,
+)
 from core.social.relational_memory import (
     LEGACY_UNSCOPED_AGENT,
     RelationalMemoryAuthority,
@@ -644,3 +650,82 @@ def test_authority_has_no_synthetic_active_agent_without_estimator(tmp_path):
     authority = _authority(tmp_path)
 
     assert authority.active_agent_id == ""
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("Aura, please remember always now.", MemoryConsentMode.REMEMBER_ALWAYS),
+        ("session only please", MemoryConsentMode.SESSION_ONLY),
+        ("Could you go private mode now?", MemoryConsentMode.PRIVATE_MODE),
+        ("ask before remembering", MemoryConsentMode.ASK_BEFORE_REMEMBERING),
+    ],
+)
+def test_relational_consent_parser_accepts_explicit_commands(command, expected):
+    assert parse_consent_command(command) is expected
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "Do not remember always.",
+        "The documentation says 'remember always'.",
+        "Remember always that my project is private.",
+        "Can you explain what session only means?",
+        "I will always remember this.",
+    ],
+)
+def test_relational_consent_parser_rejects_mentions_and_negations(statement):
+    assert parse_consent_command(statement) is None
+
+
+def test_canonical_relational_command_applies_exact_agent_policy(tmp_path):
+    authority = _authority(tmp_path)
+
+    result = apply_relational_memory_command(
+        authority,
+        "bryan",
+        "Aura, remember always.",
+        receipt_id="authenticated-chat-command",
+    )
+
+    assert result is not None
+    assert result["mode"] == "remember_always"
+    assert result["persistence_allowed"] is True
+    assert authority.allows("bryan", "derived_profile", "persist") is True
+    assert authority.allows("alice", "derived_profile", "persist") is False
+
+
+def test_canonical_private_mode_revokes_without_deleting_records(tmp_path):
+    authority = _authority(tmp_path)
+    apply_relational_memory_command(authority, "bryan", "remember always")
+    authority.record("bryan", kind="boundary", content="private boundary")
+
+    result = apply_relational_memory_command(authority, "bryan", "go private")
+
+    assert result is not None
+    assert result["mode"] == "private_mode"
+    assert authority.allows("bryan", "boundary", "recall") is False
+    assert authority.status()["record_count"] == 1
+
+
+def test_canonical_delete_all_command_deletes_exact_agent_only(tmp_path):
+    authority = _authority(tmp_path)
+    apply_relational_memory_command(authority, "bryan", "remember always")
+    apply_relational_memory_command(authority, "alice", "remember always")
+    authority.record("bryan", kind="milestone", content="bryan record")
+    authority.record("alice", kind="milestone", content="alice record")
+
+    result = apply_relational_memory_command(
+        authority,
+        "bryan",
+        "please forget everything about me",
+    )
+
+    assert is_delete_all_relational_memory_command(
+        "please forget everything about me"
+    )
+    assert result is not None
+    assert result["mode"] == "deleted"
+    assert authority.query("bryan") == []
+    assert authority.query("alice")[0].content == "alice record"

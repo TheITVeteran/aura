@@ -5,9 +5,8 @@ contribute BoundContent to gather_contents — rather than being consulted as si
 """
 from __future__ import annotations
 
+import hashlib
 from types import SimpleNamespace
-
-import pytest
 
 from core.unity.runtime import UnityRuntime
 
@@ -20,7 +19,7 @@ def _state(objective="", partner=""):
 
 
 def test_felt_state_binds_when_in_pain(monkeypatch):
-    from core.affect.nociception import get_nociception_engine, DamageChannel
+    from core.affect.nociception import DamageChannel, get_nociception_engine
     eng = get_nociception_engine()
     eng.reset()
     eng.register_damage(DamageChannel.MEMORY_CORRUPTION, 0.9)
@@ -59,17 +58,39 @@ def test_formal_objective_is_not_low_confidence_noise():
     assert all(c.confidence >= 0.5 for c in epi)
 
 
-def test_social_binds_when_interlocutor_known():
-    from core.social.other_agent_model import get_other_agent_model
-    oam = get_other_agent_model()
-    # seed a few observations so the estimate has real confidence
-    for _ in range(6):
-        oam.observe_signal("bryan", presence=0.8, affiliation=0.6, threat=0.4)
+def test_social_binds_when_interlocutor_known(tmp_path, monkeypatch):
+    import core.social.other_agent_model as other_agent_module
+    from core.social.relational_memory import RelationalMemoryAuthority
+
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"u" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    authority.grant_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["recall"],
+        receipt_id="unity-social-consent",
+    )
+    estimator = other_agent_module.OtherAgentStateEstimator(
+        storage_path=tmp_path / "legacy.json",
+        authority=authority,
+        autosave=False,
+    )
+    estimator.observe_message(
+        "bryan",
+        "I am frustrated.",
+        evidence_digest=hashlib.sha256(b"unity-social-turn").hexdigest(),
+    )
+    monkeypatch.setattr(other_agent_module, "_instance", estimator)
 
     contents = UnityRuntime().gather_contents(_state(objective="hi", partner="bryan"))
     social = [c for c in contents if c.modality == "social"]
     assert social, "other-agent estimate did not bind into the unified contents"
     assert social[0].source == "other_agent_model"
+    assert "hypothesis" in social[0].summary
     # confidence is our ACTUAL certainty about them, not a guess asserted as fact
     assert 0.0 < social[0].confidence <= 1.0
 

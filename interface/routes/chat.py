@@ -27,6 +27,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 from core.brain.live_mind_contract import normalize_live_mind_surface_control_receipt
 from core.brain.llm.cloud_errors import cloud_call_error_types
@@ -41,6 +42,8 @@ from core.runtime.desktop_task_contract import (
     desktop_task_planning_schema,
 )
 from core.runtime.errors import describe_error, record_degradation
+from core.runtime.receipts import digest_output_content, digest_principal_binding
+from core.runtime.service_access import optional_service
 from core.runtime.shutdown_coordinator import (
     is_shutdown_requested,
     record_shutdown_admission_event,
@@ -136,14 +139,228 @@ def _chat_idempotency_cache_key(
     return str(session_id or "default"), str(raw_key)
 
 
+def _authenticated_chat_principal(request: Request | None) -> str:
+    if request is None:
+        return ""
+    try:
+        return " ".join(
+            str(relational_principal_id_for_request(request) or "").strip().split()
+        )[:160]
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.relational_principal", exc)
+        return ""
+
+
+def _chat_turn_session_key(request: Request | None, body: Any) -> str:
+    try:
+        paired = paired_device_session_id(request) if request is not None else None
+    except _CHAT_RECOVERABLE_ERRORS:
+        paired = None
+    supplied = str(getattr(body, "session_id", "") or "").strip()
+    if paired:
+        return paired[:240]
+    if supplied:
+        return supplied[:240]
+    client = getattr(request, "client", None) if request is not None else None
+    return str(getattr(client, "host", "default") or "default")[:240]
+
+
+def _observe_authenticated_chat_turn(
+    request: Request | None,
+    body: Any,
+) -> str:
+    """Apply exact-agent consent and observe the original HTTP chat turn."""
+    principal = _authenticated_chat_principal(request)
+    message = str(getattr(body, "message", "") or "")
+    if not principal or not message:
+        return principal
+    if len(message.encode("utf-8", errors="replace")) > MAX_CHAT_MESSAGE_BYTES:
+        return principal
+
+    session_key = _chat_turn_session_key(request, body)
+    idempotency_key = (
+        str(request.headers.get("X-Idempotency-Key") or "").strip()[:240]
+        if request is not None
+        else ""
+    )
+    observed_at = time.time()
+    event_nonce = (
+        f"idempotency:{idempotency_key}"
+        if idempotency_key
+        else f"request:{uuid.uuid4().hex}"
+    )
+    evidence_digest = hashlib.sha256(
+        f"http-chat-v1\n{principal}\n{session_key}\n{event_nonce}\n{message}".encode(
+            "utf-8",
+            errors="replace",
+        )
+    ).hexdigest()
+
+    try:
+        authority = optional_service("relational_memory")
+        if authority is not None:
+            from core.runtime.memory_consent import apply_relational_memory_command
+
+            control = apply_relational_memory_command(
+                authority,
+                principal,
+                message,
+                receipt_id=f"chat-command-{evidence_digest}",
+            )
+            if control is not None and request is not None:
+                request.state.relational_memory_control = control
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.relational_memory_control",
+            exc,
+            action="continued the authenticated turn after relational memory control failed",
+        )
+
+    try:
+        estimator = optional_service("other_agent_model")
+        if estimator is None or not hasattr(estimator, "observe_message"):
+            return principal
+        estimator.observe_message(
+            principal,
+            message,
+            now=observed_at,
+            persist=False,
+            evidence_digest=evidence_digest,
+        )
+        snapshot = (
+            estimator.cognitive_snapshot(principal, observed_at)
+            if hasattr(estimator, "cognitive_snapshot")
+            else None
+        )
+        observer = optional_service("recursive_tom")
+        if observer is not None and hasattr(observer, "observe_agent"):
+            observer.observe_agent(
+                principal,
+                kind="conversation_turn",
+                strength=0.8,
+                evidence_digest=evidence_digest,
+                observed_at=observed_at,
+            )
+        if (
+            observer is not None
+            and isinstance(snapshot, dict)
+            and hasattr(observer, "register_interaction")
+        ):
+            snapshot.setdefault("evidence_digest", evidence_digest)
+            snapshot.setdefault("at", observed_at)
+            observer.register_interaction(principal, snapshot)
+        if hasattr(estimator, "save_if_due"):
+            get_task_tracker().track(
+                asyncio.to_thread(estimator.save_if_due),
+                name="chat.other_agent_model_persist",
+            )
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.other_agent_observation",
+            exc,
+            action="continued the authenticated turn without social-state observation",
+        )
+    return principal
+
+
+async def _record_http_chat_delivery(
+    response_text: str,
+    *,
+    principal: str,
+    session_key: str,
+    status_code: int,
+    status: str,
+) -> None:
+    """Emit and consume a principal-bound receipt after the HTTP body is sent."""
+    if not response_text or not principal:
+        return
+
+    def _record() -> None:
+        from core.runtime.receipts import OutputReceipt, get_receipt_store
+
+        principal_digest = digest_principal_binding(principal)
+        receipt = get_receipt_store().emit(
+            OutputReceipt(
+                cause="chat_http_response",
+                origin="api",
+                target="primary",
+                digest=digest_output_content(response_text),
+                metadata={
+                    "accepted_sinks": ["http_response_body"],
+                    "delivery_stage": "transport_accepted",
+                    "recipient_principal_digest": principal_digest,
+                    "session_digest": hashlib.sha256(
+                        session_key.encode("utf-8", errors="replace")
+                    ).hexdigest(),
+                    "status": status[:120],
+                    "status_code": int(status_code),
+                },
+            )
+        )
+        estimator = optional_service("other_agent_model")
+        if estimator is not None and hasattr(estimator, "record_response"):
+            estimator.record_response(
+                principal,
+                response_text,
+                receipt.receipt_id,
+            )
+
+    try:
+        await asyncio.to_thread(_record)
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "chat.http_delivery_receipt",
+            exc,
+            action="reported HTTP delivery without opening an unreceipted feedback window",
+        )
+
+
+def _attach_http_chat_delivery_receipt(
+    response: JSONResponse,
+    *,
+    request: Request | None,
+    body: Any,
+    payload: dict[str, Any],
+) -> None:
+    response_text = str(payload.get("response") or "").strip()
+    principal = _authenticated_chat_principal(request)
+    if not response_text or not principal:
+        return
+    session_key = _chat_turn_session_key(request, body)
+    status = str(payload.get("status") or "")
+    existing_background = response.background
+
+    async def _after_send() -> None:
+        try:
+            if existing_background is not None:
+                await existing_background()
+        finally:
+            await _record_http_chat_delivery(
+                response_text,
+                principal=principal,
+                session_key=session_key,
+                status_code=response.status_code,
+                status=status,
+            )
+
+    response.background = BackgroundTask(_after_send)
+
+
 def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[..., Any]:
     """Fail closed on response metadata even when the route returns early."""
 
     @wraps(handler)
     async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+        body = kwargs.get("body")
+        if body is None and args:
+            body = args[0]
         request = kwargs.get("request")
         if request is None and len(args) > 1:
             request = args[1]
+        if isinstance(body, Request):
+            request = body
+            body = None
+        _observe_authenticated_chat_turn(request, body)
         conversation_only = bool(
             request_access_profile(request).get("conversation_only", True)
         )
@@ -160,10 +377,8 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
                 },
                 status_code=exc.status_code,
             )
-        if not conversation_only:
-            return response
-        if not isinstance(response, JSONResponse):
-            return JSONResponse(
+        if conversation_only and not isinstance(response, JSONResponse):
+            response = JSONResponse(
                 {
                     "response": "The paired conversation response used an unsupported format.",
                     "status": "paired_response_format_rejected",
@@ -171,19 +386,31 @@ def _paired_chat_response_boundary(handler: Callable[..., Any]) -> Callable[...,
                 },
                 status_code=500,
             )
-        try:
-            payload = json.loads(bytes(response.body))
-            projected = _paired_chat_response_payload(payload)
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
-            record_degradation("chat.paired_response_projection", exc)
-            projected = {
-                "response": "The paired conversation response could not be projected safely.",
-                "status": "paired_response_projection_failed",
-                "response_confidence": "failed",
-            }
-            response.status_code = 500
-        response.body = response.render(projected)
-        response.headers["content-length"] = str(len(response.body))
+        payload: dict[str, Any] = {}
+        if isinstance(response, JSONResponse):
+            try:
+                decoded = json.loads(bytes(response.body))
+                payload = decoded if isinstance(decoded, dict) else {}
+                if conversation_only:
+                    payload = _paired_chat_response_payload(payload)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                record_degradation("chat.paired_response_projection", exc)
+                if conversation_only:
+                    payload = {
+                        "response": "The paired conversation response could not be projected safely.",
+                        "status": "paired_response_projection_failed",
+                        "response_confidence": "failed",
+                    }
+                    response.status_code = 500
+            if conversation_only:
+                response.body = response.render(payload)
+                response.headers["content-length"] = str(len(response.body))
+            _attach_http_chat_delivery_receipt(
+                response,
+                request=request,
+                body=body,
+                payload=payload,
+            )
         return response
 
     return _wrapped
@@ -565,7 +792,7 @@ async def _emit_chat_output_receipt(
     try:
         from core.runtime.receipts import OutputReceipt, get_receipt_store
 
-        digest = hashlib.sha256(str(reply_text or "").encode("utf-8")).hexdigest()[:16]
+        digest = digest_output_content(reply_text)
         receipt = OutputReceipt(
             cause=str(cause or "chat_response"),
             origin=str(origin or "api"),
@@ -5030,6 +5257,7 @@ async def _run_cognitive_engine_chat_turn(
     source: str = "chat_api",
     require_engine: bool = False,
     conversation_only_surface: bool = False,
+    principal_id: str = "",
     turn_trace: dict[str, Any] | None = None,
 ) -> str | None:
     """Run a live desktop/user chat turn through CognitiveEngine.
@@ -5336,6 +5564,9 @@ async def _run_cognitive_engine_chat_turn(
             ),
         },
     }
+    exact_principal = " ".join(str(principal_id or "").strip().split())[:160]
+    if exact_principal:
+        context["user_id"] = exact_principal
     if require_engine:
         # This is a hard live-SLA cap shared by both the compact speech lane and
         # the deeper phase stack.  Previously only the compact lane carried the
@@ -5856,20 +6087,23 @@ async def _run_cognitive_engine_chat_turn(
         )
 
         async def repair_engine_think_operation():
+            from core.runtime.principal_context import relational_principal_scope
+
             repair_cycle_timeout_s = _inner_cognitive_cycle_timeout(
                 repair_timeout,
                 protected_foreground=bool(require_engine),
             )
-            return await engine.think(
-                repair_directive,
-                context=retry_context,
-                mode=mode,
-                origin=origin,
-                foreground_request=True,
-                is_background=False,
-                priority=True,
-                timeout_s=repair_cycle_timeout_s,
-            )
+            with relational_principal_scope(exact_principal):
+                return await engine.think(
+                    repair_directive,
+                    context=retry_context,
+                    mode=mode,
+                    origin=origin,
+                    foreground_request=True,
+                    is_background=False,
+                    priority=True,
+                    timeout_s=repair_cycle_timeout_s,
+                )
 
         repair_timeout = max(5.0, min(timeout_s, _DESKTOP_COGNITIVE_REPAIR_TIMEOUT_S))
         try:
@@ -6033,18 +6267,21 @@ async def _run_cognitive_engine_chat_turn(
         return None
     
     async def engine_think_operation():
+        from core.runtime.principal_context import relational_principal_scope
+
         if turn_trace is not None:
             turn_trace["engine_think_invoked"] = True
-        return await engine.think(
-            engine_user_message,
-            context=context,
-            mode=mode,
-            origin=origin,
-            foreground_request=True,
-            is_background=False,
-            priority=True,
-            timeout_s=engine_cycle_timeout_s,
-        )
+        with relational_principal_scope(exact_principal):
+            return await engine.think(
+                engine_user_message,
+                context=context,
+                mode=mode,
+                origin=origin,
+                foreground_request=True,
+                is_background=False,
+                priority=True,
+                timeout_s=engine_cycle_timeout_s,
+            )
     
     try:
         thought = await _execute_cognitive_operation(
@@ -14538,6 +14775,7 @@ async def api_activate_cheat_code(
 
 
 @router.post("/chat/regenerate")
+@_paired_chat_response_boundary
 async def api_chat_regenerate(
     request: Request,
     _: None = Depends(_require_internal),
@@ -14610,6 +14848,7 @@ async def api_chat_regenerate(
                 lane=dict(lane or {}),
                 source="desktop_ui_regenerate" if desktop_requires_cognitive_engine else "chat_regenerate",
                 require_engine=desktop_requires_cognitive_engine,
+                principal_id=_resolve_exact_profile_user_id(request),
                 turn_trace=_regen_turn_trace,
             )
             if reply_text:
@@ -14899,6 +15138,24 @@ async def api_chat(
     _original_user_message: str = body.message
     _resume_prefix_for_response: str = ""
     _grounded_recall_context: str = ""
+    _relational_memory_control = getattr(
+        getattr(request, "state", None),
+        "relational_memory_control",
+        None,
+    )
+    if isinstance(_relational_memory_control, dict):
+        body.message = (
+            "[CANONICAL RELATIONAL MEMORY CONTROL RESULT]\n"
+            + json.dumps(
+                _relational_memory_control,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            + "\n[END RELATIONAL MEMORY CONTROL RESULT]\n"
+            + "Answer the user's memory-control request from this result; do not claim a mode or persistence outcome beyond it.\n\n"
+            + body.message
+        )
     if _defensive_context and not is_benchmark:
         body.message = f"{_defensive_context}{body.message}"
     try:
@@ -15572,6 +15829,7 @@ async def api_chat(
                     source="desktop_ui_recovery",
                     require_engine=True,
                     conversation_only_surface=conversation_only_surface,
+                    principal_id=_profile_user_id,
                     turn_trace=recovery_trace,
                 )
             except _CHAT_RECOVERABLE_ERRORS as rec_exc:
@@ -16606,6 +16864,7 @@ async def api_chat(
                     ),
                     require_engine=True,
                     conversation_only_surface=conversation_only_surface,
+                    principal_id=_profile_user_id,
                     turn_trace=_live_turn_trace,
                 )
                 if reply_text:

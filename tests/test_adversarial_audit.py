@@ -1,6 +1,8 @@
 """Adversarial self-audit: the epistemic checklist, grounded in receipts + agent estimate."""
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from core.cognition.adversarial_audit import (
@@ -49,7 +51,6 @@ def test_claimed_action_with_confirmation_passes_action_check(auditor):
 
 
 def test_receipt_verified_via_will(auditor, monkeypatch):
-    import core.cognition.adversarial_audit as aa
 
     class _Will:
         def verify_receipt(self, rid):
@@ -99,11 +100,39 @@ def test_user_projection_low_confidence_flagged(auditor):
     assert not _finding(r, "user_projection").passed
 
 
-def test_user_projection_grounded_when_estimate_confident(auditor, monkeypatch):
+def test_user_projection_grounded_when_estimate_confident(
+    auditor,
+    monkeypatch,
+    tmp_path,
+):
     import core.social.other_agent_model as oam
-    est = oam.OtherAgentStateEstimator(storage_path=None, autosave=False)
-    for _ in range(5):
-        est.observe_message("bryan", "ugh this is so frustrating and broken again")
+    from core.social.relational_memory import RelationalMemoryAuthority
+
+    authority = RelationalMemoryAuthority(
+        tmp_path / "social-relational.json",
+        encryption_key=b"a" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    authority.grant_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["recall"],
+        receipt_id="audit-social-consent",
+    )
+    est = oam.OtherAgentStateEstimator(
+        storage_path=tmp_path / "legacy-social.json",
+        authority=authority,
+        autosave=False,
+    )
+    for index in range(5):
+        est.observe_message(
+            "bryan",
+            "I am frustrated.",
+            evidence_digest=hashlib.sha256(
+                f"audit-frustration-{index}".encode()
+            ).hexdigest(),
+        )
     monkeypatch.setattr(oam, "_instance", est)
     r = auditor.audit("You seem frustrated.", agent_id="bryan")
     assert _finding(r, "user_projection").passed

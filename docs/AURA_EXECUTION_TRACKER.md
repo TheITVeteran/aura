@@ -16,10 +16,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Other-agent estimator authority,
-  joy-social, and remaining canonical person-model consolidation
+- Current bounded implementation milestone: **Joy/social self-state separation
+  and the remaining typed canonical person-model consolidation
   (`MEMORY-001`, `MIND-001`, `STATE-001`, `CTX3-SOCIAL-001..002`)**, following
-  the evidence-bounded ToM/observer checkpoint recorded in Checkpoint 48.
+  the authority-backed estimator and delivered-feedback checkpoint recorded in
+  Checkpoint 49.
   `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
@@ -12790,6 +12791,118 @@ Authoritative remaining canonical-person work:
 - Retire or integrate the dormant SQLite/world graph owners and raw
   `AuraState.world.relationship_graph` prompt path. Add signed consent/action
   receipts, key rotation/recovery, desktop/API controls, and launched
+  multiuser, identity-switch, deletion, restart, crash, adversarial,
+  failed-delivery, long-gap, and GUI proof. Final multi-hour and 24-72 hour
+  soaks remain deferred until these and every other shorter requirement are
+  green.
+
+## Checkpoint 2026-07-12-49: Authority-Bound Social Estimation and Delivered Feedback
+
+This checkpoint advances `MEMORY-001`, `SOCIAL-001`, `STATE-001`,
+`CONVERSATION-001`, `ARCH-001`, `SECURITY-001`, `PRIVACY-001`, and
+`FAULT-001`. It removes the remaining standalone other-agent JSON owner,
+binds social observation to the authenticated exact principal, and permits
+response feedback only after durable proof that the exact response was
+accepted by a recognized user-facing transport for that principal. It does
+not close joy/social self-state, the typed canonical person schema, complete
+user controls, launched multiuser/GUI proof, or final soaks.
+
+Implemented authority-backed other-agent estimation:
+
+- Replaced plaintext `other_agent_models.json`, raw directory creation, and
+  independent save/load/delete ownership with a bounded
+  `other_agent_state:v1` `derived_profile` projection in canonical encrypted
+  relational-memory authority. Exact-agent consent is rechecked for recall,
+  prompt use, persistence, restart, session-only behavior, and targeted
+  deletion; legacy files enter unscoped encrypted quarantine and cannot be
+  attributed automatically.
+- Removed raw goals, request-goal extraction, response text, reactions,
+  timing/length/hour-as-emotion, affiliation-as-trust, generic outcome-based
+  satisfaction, and uncalibrated person forecasts. The estimator accepts only
+  bounded explicit first-person affect statements, explicit beliefs about
+  Aura, authenticated presence, sourced corrections, unique SHA-256 evidence,
+  and explicit feedback tied to one confirmed delivered response. Ambiguous,
+  stale, replayed, malformed, unconsented, or cross-agent evidence abstains.
+- Added lock-protected mutation, dirty-versus-authority cache semantics,
+  persistence rollback, finite-value sanitization, bounded replay history,
+  pending-response capacity, and 24-hour negative-repair evidence retention.
+  Retained repair lineage contains receipt/evidence digests and timestamps,
+  never raw feedback; confirmed positive feedback clears obsolete lineage.
+
+Bound exact identity and delivery evidence:
+
+- Added an exact-principal `ContextVar` with scoped restoration and bound the
+  HTTP cognition, repair, and regenerate paths to the principal authenticated
+  once at request ingress. Context assembly and Theory of Mind use that request
+  scope before any legacy active-agent compatibility state; missing identity
+  abstains rather than becoming `unknown`, `local_user`, or the first cache key.
+- Observed the original authenticated user turn once before cognition with a
+  replay-stable evidence digest. Canonical relational-memory commands are exact
+  standalone controls shared by HTTP and legacy ingress, so privacy commands
+  cannot piggyback arbitrary content and session-only consent is not made
+  durable.
+- Added one canonical transport-output proof contract. A social feedback
+  window opens only after the response body or output transport accepts the
+  exact content and a durable `OutputReceipt` matches output kind, primary
+  target, canonical content digest, recognized nonempty sink list,
+  `transport_accepted` stage, and SHA-256 exact-principal binding. Constant-time
+  digest comparison rejects wrong response, wrong principal, malformed sink,
+  unknown sink, scalar sink, missing receipt ID, wrong stage/kind/target, and
+  pre-send audit receipts. HTTP background delivery preserves pre-existing
+  Starlette background work and does not claim delivery before body send.
+
+Reconciled downstream social consumers:
+
+- Routed cognitive situation, context assembly, canonical Theory of Mind,
+  social situation, intuition, values, moral responsibility, and unity through
+  the same estimator snapshot and exact identity. These consumers label affect
+  as hypotheses, carry identity scope/abstention/confidence/repair evidence,
+  and describe confirmed response repair rather than relationship rupture or
+  observed emotion truth.
+- Made task outcomes incapable of asserting person satisfaction or trust,
+  required repair evidence before social moral-amendment pressure, and removed
+  synthetic relationship language from caution/attention directives. The
+  compatibility Theory-of-Mind response adapter now enforces the same exact
+  content/principal transport proof as the canonical estimator.
+- Removed the estimator's two raw file-write effect buckets and ratcheted
+  governance to `1,785` recognized calls in `1,681` buckets with `1,665` calls
+  remaining migration debt. Strict MyPy grew from 75 to 77 production files,
+  adding canonical principal context and relational-memory command handling.
+
+Verification completed for this checkpoint:
+
+- Focused delivery-proof, estimator, canonical ToM, relational authority, and
+  HTTP-boundary tests passed `70/70`. Regressions cover no-consent and
+  cross-agent isolation, encrypted restart, session non-durability, malformed
+  snapshots, replay idempotency, concurrent observation, authority refresh and
+  rollback, raw-data exclusion, feedback expiry/ambiguity, wrong content and
+  principal receipts, post-send ordering, regenerate binding, background-task
+  preservation, and exact privacy controls.
+- The post-integration auth, output, architecture, social, moral, unity,
+  strict-ratchet, skill-catalog, and subprocess matrix passed `472/472` in 432
+  seconds. The full desktop/effect/failure-preservation lane passed `94/94`,
+  and the complete registered-skill surface passed `99/99` without launching an
+  MLX worker for the OS-automation contract probe.
+- Enterprise static and all `37/37` production-readiness checks, whole-tree
+  compile, configured Ruff, source hygiene, `13/13` cognitive gates,
+  governance, strict MyPy, the `2,563`-file security scan, `104/104` smoke
+  tests, and the independent `20/20` closeout rubric passed on the merged tree.
+  No launched-runtime, GUI, multiuser, clean-machine, or soak claim is made by
+  this checkpoint.
+
+Authoritative remaining canonical-person work:
+
+- Audit joy, bonding, and generalized social affect as Aura self-state. Route
+  any person-specific familiarity, preference, trust, boundary, repair, or
+  relationship claim through exact-agent authority with explicit evidence and
+  abstention rather than passive rapport or intimacy implications.
+- Define one versioned typed canonical person schema and projection registry
+  spanning profile facts, dialogue, humor, shared ground, topology, boundaries,
+  social hypotheses, outcomes, source receipts, contradiction, correction,
+  freshness, retention, decay, redaction, and exclusive writer ownership.
+- Retire or integrate dormant SQLite/world graph owners and raw
+  `AuraState.world.relationship_graph` prompt state. Add signed consent/action
+  receipts, key rotation/recovery, complete desktop/API controls, and launched
   multiuser, identity-switch, deletion, restart, crash, adversarial,
   failed-delivery, long-gap, and GUI proof. Final multi-hour and 24-72 hour
   soaks remain deferred until these and every other shorter requirement are

@@ -1127,6 +1127,14 @@ class RelationalMemoryAuthority:
                 for agent_id, model in raw.items()
                 if isinstance(model, dict)
             }
+        if namespace == "other_agent_state:v1":
+            agents = raw.get("agents")
+            agents = agents if isinstance(agents, dict) else {}
+            return {
+                str(agent_id): {"model": model}
+                for agent_id, model in agents.items()
+                if isinstance(model, dict)
+            }
         return {}
 
     def _prepare_grant(

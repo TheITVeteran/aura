@@ -724,6 +724,11 @@ class TheoryOfMindEngine:
     @staticmethod
     def _active_social_user_id() -> str:
         try:
+            from core.runtime.principal_context import current_relational_principal
+
+            scoped = str(current_relational_principal() or "")[:160]
+            if scoped:
+                return scoped
             estimator = optional_service("other_agent_model")
             active = " ".join(
                 str(getattr(estimator, "active_agent_id", "") or "").strip().split()
@@ -868,19 +873,21 @@ class TheoryOfMindEngine:
         delivery_receipt_id: str = "",
     ) -> bool:
         """Refresh from the canonical delivered-response estimator, never keywords."""
-        del response_text, user_reaction
+        del user_reaction
         resolved = _bounded_text(user_id, 160)
         if not resolved or not delivery_receipt_id:
             return False
         try:
-            from core.runtime.receipts import OutputReceipt, get_receipt_store
+            from core.runtime.receipts import (
+                get_receipt_store,
+                validate_transport_output_receipt,
+            )
 
             receipt = get_receipt_store().get(delivery_receipt_id)
-            if (
-                not isinstance(receipt, OutputReceipt)
-                or receipt.target not in {"primary", "both"}
-                or receipt.metadata.get("delivery_stage") != "transport_accepted"
-                or not receipt.metadata.get("accepted_sinks")
+            if not validate_transport_output_receipt(
+                receipt,
+                content=response_text,
+                principal=resolved,
             ):
                 return False
         except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError):

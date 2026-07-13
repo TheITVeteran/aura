@@ -11,7 +11,6 @@ and tool-governance posture through the same live path.
 
 from __future__ import annotations
 
-from core.runtime.service_access import optional_service
 import hashlib
 import math
 import re
@@ -21,6 +20,7 @@ from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
+from core.runtime.service_access import optional_service
 
 _WORD_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9_'-]{2,}")
 _SEMANTIC_RE = re.compile(
@@ -217,7 +217,7 @@ class CognitiveSituationFrame:
     metacognition_pressure: float
     social_uncertainty: float
     social_repair_pressure: float
-    agent_id: str = "unknown"
+    agent_id: str = ""
     keywords: list[str] = field(default_factory=list)
     semantic_interpretations: list[dict[str, Any]] = field(default_factory=list)
     analogy_bridges: list[dict[str, str]] = field(default_factory=list)
@@ -499,7 +499,7 @@ class CognitiveSituationEngine:
             embodied_affordances=embodied_affordances,
         )
         if social_repair >= 0.45:
-            attention_targets.extend(["relationship-repair", "user-boundaries"])
+            attention_targets.extend(["interaction-repair", "user-boundaries"])
         elif social_hits and social_uncertainty >= 0.55:
             attention_targets.append("social-ambiguity")
         fusion_directives = fusion_summary.get("directives")
@@ -528,7 +528,7 @@ class CognitiveSituationEngine:
         )
         if action_hits and social_repair >= 0.50:
             social_constraints.append(
-                "confirm consequential or irreversible action while relational repair is active"
+                "confirm consequential or irreversible action while evidence-backed interaction caution is active"
             )
         if social_hits and social_uncertainty >= 0.65:
             social_constraints.append(
@@ -621,7 +621,7 @@ class CognitiveSituationEngine:
             metacognition_pressure=metacognition,
             social_uncertainty=social_uncertainty,
             social_repair_pressure=social_repair,
-            agent_id=_compact(social_summary.get("agent_id"), limit=160) or "unknown",
+            agent_id=_compact(social_summary.get("agent_id"), limit=160),
             keywords=words,
             semantic_interpretations=interpretations,
             analogy_bridges=bridges,
@@ -667,14 +667,18 @@ class CognitiveSituationEngine:
                     "schema_version",
                     "agent_id",
                     "identity_verified",
+                    "identity_scoped",
+                    "abstained",
                     "confidence",
                     "freshness_s",
                     "observations",
                     "response_feedback_context",
+                    "repair_evidence",
                     "evidence_digest",
                     "affect_hypotheses",
                     "likely_goals",
                     "beliefs_about_aura",
+                    "belief_confidence",
                     "social_rupture_risk",
                     "recommendation",
                     "planning_constraints",

@@ -9,6 +9,8 @@ from core.consciousness.theory_of_mind import AgentModel, TheoryOfMindEngine
 from core.container import ServiceContainer
 from core.runtime.receipts import (
     OutputReceipt,
+    digest_output_content,
+    digest_principal_binding,
     get_receipt_store,
     reset_receipt_store,
 )
@@ -309,15 +311,17 @@ def test_confirmed_output_refreshes_only_from_canonical_estimator(tom, tmp_path)
     )
     reset_receipt_store()
     store = get_receipt_store(tmp_path / "receipts")
+    response_text = "raw response must not persist"
     receipt = store.emit(
         OutputReceipt(
             cause="test",
             origin="user",
             target="primary",
-            digest="response-digest",
+            digest=digest_output_content(response_text),
             metadata={
                 "delivery_stage": "transport_accepted",
                 "accepted_sinks": ["reply_queue"],
+                "recipient_principal_digest": digest_principal_binding("bryan"),
             },
         )
     )
@@ -326,7 +330,7 @@ def test_confirmed_output_refreshes_only_from_canonical_estimator(tom, tmp_path)
     try:
         assert tom.update_from_response(
             "bryan",
-            "raw response must not persist",
+            response_text,
             "raw reaction must not persist",
             delivery_receipt_id=receipt.receipt_id,
         ) is True
@@ -343,6 +347,57 @@ def test_confirmed_output_refreshes_only_from_canonical_estimator(tom, tmp_path)
     assert "raw response" not in encoded
     assert "raw reaction" not in encoded
     assert tom.known_selves["bryan"].social_confidence == pytest.approx(0.8)
+
+
+@pytest.mark.parametrize(
+    ("receipt_response", "receipt_principal"),
+    [
+        ("a different response", "bryan"),
+        ("exact response", "alice"),
+    ],
+)
+def test_response_projection_rejects_mismatched_delivery_proof(
+    tom,
+    tmp_path,
+    receipt_response,
+    receipt_principal,
+):
+    class _Estimator:
+        @staticmethod
+        def cognitive_snapshot(user_id):
+            return _social_snapshot(user_id, response_feedback=True)
+
+    reset_receipt_store()
+    store = get_receipt_store(tmp_path / "receipts")
+    receipt = store.emit(
+        OutputReceipt(
+            cause="test",
+            origin="user",
+            target="primary",
+            digest=digest_output_content(receipt_response),
+            metadata={
+                "delivery_stage": "transport_accepted",
+                "accepted_sinks": ["reply_queue"],
+                "recipient_principal_digest": digest_principal_binding(
+                    receipt_principal
+                ),
+            },
+        )
+    )
+    before = tom.known_selves.copy()
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("other_agent_model", _Estimator(), required=False)
+    try:
+        assert tom.update_from_response(
+            "bryan",
+            "exact response",
+            delivery_receipt_id=receipt.receipt_id,
+        ) is False
+    finally:
+        ServiceContainer.clear()
+        reset_receipt_store()
+
+    assert tom.known_selves == before
 
 
 def test_malformed_snapshot_is_bounded_and_does_not_crash_prompt(tmp_path):

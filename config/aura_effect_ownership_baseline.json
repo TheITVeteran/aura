@@ -4121,22 +4121,6 @@
       "scope": "<module>.LocalLogTransport.send"
     },
     {
-      "callee": "<file_write_gateway>.ensure_directory",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/social/other_agent_model.py",
-      "scope": "<module>.OtherAgentStateEstimator.save"
-    },
-    {
-      "callee": "<file_write_gateway>.write_text",
-      "canonical_owner": false,
-      "category": "file_write_gateway",
-      "count": 1,
-      "path": "core/social/other_agent_model.py",
-      "scope": "<module>.OtherAgentStateEstimator.save"
-    },
-    {
       "callee": "<file_write_gateway>.delete_file",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -13466,6 +13450,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "b18528837d3cd6293b1e769f65df8afb4d374d83afbcda29d0b255629f43cfba",
+  "inventory_sha256": "bca74fac0442da828656c2891c2d29a1dbf0ba52729478cc4e5723dcde8b02d4",
   "schema_version": 1
 }

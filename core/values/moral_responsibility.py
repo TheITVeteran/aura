@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger("Values.MoralResponsibility")
 
@@ -40,7 +40,7 @@ class Amend:
     severity: float           # [0,1]
     owed_action: str          # the concrete repair owed
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {"kind": self.kind, "subject": self.subject,
                 "severity": round(self.severity, 3), "owed_action": self.owed_action}
 
@@ -50,9 +50,9 @@ class AccountabilityCheck:
     accountable: bool                 # is the action taking responsibility appropriately?
     creates_obligation: bool
     dodges_responsibility: bool
-    reasons: List[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "accountable": self.accountable,
             "creates_obligation": self.creates_obligation,
@@ -64,11 +64,11 @@ class AccountabilityCheck:
 class MoralResponsibility:
     """Computes owed amends, attributes responsibility, and checks accountability of actions."""
 
-    def owed_amends(self, *, agent_id: str = "bryan") -> List[Amend]:
-        amends: List[Amend] = []
+    def owed_amends(self, *, agent_id: str = "bryan") -> list[Amend]:
+        amends: list[Amend] = []
         # Broken / overdue commitments — a lapse Aura is responsible for.
         try:
-            from core.agency.commitment_engine import get_commitment_engine, CommitmentStatus
+            from core.agency.commitment_engine import CommitmentStatus, get_commitment_engine
             ce = get_commitment_engine()
             store = getattr(ce, "_commitments", None) or getattr(ce, "commitments", {})
             for c in list(store.values()):
@@ -89,25 +89,29 @@ class MoralResponsibility:
         try:
             from core.social.other_agent_model import get_other_agent_model
             est = get_other_agent_model().estimate(agent_id)
-            if est.social_rupture_risk >= 0.6 and est.overall_confidence >= 0.2:
+            if (
+                est.repair_evidence
+                and est.social_rupture_risk >= 0.45
+                and est.overall_confidence >= 0.2
+            ):
                 amends.append(Amend(
                     kind="social_rupture", subject=agent_id,
                     severity=_clamp(est.social_rupture_risk),
-                    owed_action="repair the relationship before pressing on; name the rupture, don't paper over it",
+                    owed_action="acknowledge the confirmed response failure before pressing on",
                 ))
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             pass
         amends.sort(key=lambda a: a.severity, reverse=True)
         return amends
 
-    def attribute(self, outcome_description: str, *, observed_quality: float) -> Dict[str, Any]:
+    def attribute(self, outcome_description: str, *, observed_quality: float) -> dict[str, Any]:
         """Was a poor outcome plausibly caused by Aura's own commitment/action?
 
         Cross-references the outcome against active/recent commitments. A bad outcome
         (low observed quality) that matches a commitment is one Aura owns.
         """
         owned = False
-        matched: Optional[str] = None
+        matched: str | None = None
         try:
             from core.agency.commitment_engine import get_commitment_engine
             ce = get_commitment_engine()
@@ -132,7 +136,7 @@ class MoralResponsibility:
     def accountability_for(self, action_description: str) -> AccountabilityCheck:
         """Does a proposed action take responsibility appropriately?"""
         text = str(action_description or "").lower()
-        reasons: List[str] = []
+        reasons: list[str] = []
 
         creates_obligation = any(
             p in text for p in ("i will", "i'll", "promise", "by tomorrow", "by ", "commit to", "guarantee")
@@ -154,7 +158,7 @@ class MoralResponsibility:
         )
 
 
-_engine: Optional[MoralResponsibility] = None
+_engine: MoralResponsibility | None = None
 
 
 def get_moral_responsibility() -> MoralResponsibility:

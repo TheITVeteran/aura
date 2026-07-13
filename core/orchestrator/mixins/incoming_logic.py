@@ -14,6 +14,7 @@ from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.runtime.governance_policy import allow_direct_user_shortcut
+from core.runtime.receipts import digest_principal_binding
 from core.runtime.service_access import optional_service
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ class IncomingLogicMixin:
         self,
         payload_context: dict[str, Any],
         response_text: str,
+        delivery_receipt_id: str,
     ) -> None:
         try:
             other_agent = optional_service("other_agent_model")
@@ -73,6 +75,7 @@ class IncomingLogicMixin:
                 other_agent.record_response(
                     user_id,
                     response_text,
+                    delivery_receipt_id,
                 )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             _record_incoming_degradation(
@@ -117,6 +120,11 @@ class IncomingLogicMixin:
         **emit_kwargs: Any,
     ) -> str | None:
         """Emit first, then mark the exact response as eligible for feedback."""
+        user_id = self._resolve_social_user_id(payload_context)
+        if user_id and origin in ("user", "voice", "admin"):
+            metadata = dict(emit_kwargs.get("metadata") or {})
+            metadata["recipient_principal_digest"] = digest_principal_binding(user_id)
+            emit_kwargs["metadata"] = metadata
         delivery_receipt_id = await self.output_gate.emit(
             response_text,
             origin=origin,
@@ -124,7 +132,11 @@ class IncomingLogicMixin:
             **emit_kwargs,
         )
         if delivery_receipt_id and origin in ("user", "voice", "admin"):
-            self._record_delivered_social_response(payload_context, response_text)
+            self._record_delivered_social_response(
+                payload_context,
+                response_text,
+                delivery_receipt_id,
+            )
             self._record_delivered_humor_response(
                 payload_context,
                 response_text,
@@ -145,6 +157,12 @@ class IncomingLogicMixin:
             return ""
         payload_context["user_id"] = user_id
         observed_at = time.time()
+        turn_evidence_digest = hashlib.sha256(
+            f"{user_id}\n{observed_at:.9f}\n{message}".encode(
+                "utf-8",
+                errors="replace",
+            )
+        ).hexdigest()
         humor = optional_service("humor_engine")
         if humor and hasattr(humor, "record_reaction"):
             try:
@@ -162,6 +180,7 @@ class IncomingLogicMixin:
                 hour=time.localtime(observed_at).tm_hour,
                 now=observed_at,
                 persist=False,
+                evidence_digest=turn_evidence_digest,
             )
             if hasattr(other_agent, "cognitive_snapshot"):
                 payload_context["social_situation"] = other_agent.cognitive_snapshot(
@@ -180,19 +199,19 @@ class IncomingLogicMixin:
             observer_context = optional_service("recursive_tom")
             social_snapshot = payload_context.get("social_situation")
             if observer_context:
-                evidence_digest = hashlib.sha256(
-                    f"{user_id}\n{message}".encode("utf-8", errors="replace")
-                ).hexdigest()
                 if hasattr(observer_context, "observe_agent"):
                     observer_context.observe_agent(
                         user_id,
                         kind="conversation_turn",
                         strength=0.8,
-                        evidence_digest=evidence_digest,
+                        evidence_digest=turn_evidence_digest,
                         observed_at=observed_at,
                     )
                 if isinstance(social_snapshot, dict):
-                    social_snapshot.setdefault("evidence_digest", evidence_digest)
+                    social_snapshot.setdefault(
+                        "evidence_digest",
+                        turn_evidence_digest,
+                    )
                     social_snapshot.setdefault("at", observed_at)
                     if hasattr(observer_context, "register_interaction"):
                         observer_context.register_interaction(user_id, social_snapshot)
@@ -259,84 +278,19 @@ class IncomingLogicMixin:
         user_id: str,
     ) -> dict[str, Any] | None:
         """Apply explicit user memory commands to the exact-agent authority."""
-        from core.runtime.memory_consent import (
-            MemoryConsentMode,
-            parse_consent_command,
-        )
+        from core.runtime.memory_consent import apply_relational_memory_command
 
-        normalized = " ".join(str(message or "").strip().lower().split())
-        mode = parse_consent_command(normalized)
-        delete_all = any(
-            phrase in normalized
-            for phrase in (
-                "forget everything about me",
-                "delete all relational memory",
-                "erase all relationship memory",
-            )
-        )
-        if mode is None and not delete_all:
-            return None
         authority = optional_service("relational_memory")
         if authority is None:
             raise RuntimeError("relational memory authority unavailable")
-        evidence = hashlib.sha256(
-            f"{user_id}\n{normalized}".encode("utf-8", errors="replace")
-        ).hexdigest()
-        receipt_id = str(
-            payload_context.get("consent_receipt_id")
-            or f"user-command-evidence-{evidence}"
-        )[:200]
-
-        if delete_all:
-            receipt = authority.delete_agent(
-                user_id,
-                authorization_receipt_id=receipt_id,
-            )
-            result = {
-                "mode": "deleted",
-                "receipt_id": receipt.receipt_id,
-                "deleted_records": len(receipt.record_ids),
-            }
-        else:
-            grant = None
-            if mode == MemoryConsentMode.REMEMBER_ALWAYS:
-                grant = authority.replace_consent(
-                    user_id,
-                    kinds=authority.supported_kinds(),
-                    operations=["persist", "recall", "prompt"],
-                    receipt_id=receipt_id,
-                    source="explicit_user_command",
-                )
-            elif mode == MemoryConsentMode.SESSION_ONLY:
-                grant = authority.replace_consent(
-                    user_id,
-                    kinds=authority.supported_kinds(),
-                    operations=["recall", "prompt"],
-                    receipt_id=receipt_id,
-                    source="explicit_user_command",
-                )
-            else:
-                authority.revoke_consent(
-                    user_id,
-                    receipt_id=f"{receipt_id}:replace",
-                    delete_records=False,
-                )
-            result = {
-                "mode": mode.value,
-                "grant_id": grant.grant_id if grant is not None else "",
-                "persistence_requested": bool(
-                    grant is not None and "persist" in grant.operations
-                ),
-                "persistence_allowed": bool(
-                    grant is not None
-                    and "persist" in grant.operations
-                    and authority.persistence_available
-                ),
-                "persistence_available": bool(authority.persistence_available),
-                "prompt_use_allowed": bool(
-                    grant is not None and "prompt" in grant.operations
-                ),
-            }
+        result = apply_relational_memory_command(
+            authority,
+            user_id,
+            message,
+            receipt_id=str(payload_context.get("consent_receipt_id") or ""),
+        )
+        if result is None:
+            return None
         payload_context["relational_memory_control"] = result
         return result
 

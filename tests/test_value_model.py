@@ -1,6 +1,8 @@
 """Bounded value model: learned preferences fenced by an immutable constitution."""
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 
 from core.values.value_model import (
@@ -90,11 +92,35 @@ def test_reversible_liked_action_proceeds(vm):
 
 # ── protect future self from present impulse (cross-wire to agent estimate) ──
 
-def test_strained_user_plus_high_stakes_slows_down(vm, monkeypatch):
+def test_strained_user_plus_high_stakes_slows_down(vm, monkeypatch, tmp_path):
     import core.social.other_agent_model as oam
-    est = oam.OtherAgentStateEstimator(storage_path=None, autosave=False)
-    for _ in range(3):
-        est.observe_message("bryan", "ugh i'm exhausted, this is so frustrating, asap")
+    from core.social.relational_memory import RelationalMemoryAuthority
+
+    authority = RelationalMemoryAuthority(
+        tmp_path / "social-relational.json",
+        encryption_key=b"v" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    authority.grant_consent(
+        "bryan",
+        kinds=["derived_profile"],
+        operations=["recall"],
+        receipt_id="value-social-consent",
+    )
+    est = oam.OtherAgentStateEstimator(
+        storage_path=tmp_path / "legacy-social.json",
+        authority=authority,
+        autosave=False,
+    )
+    for index in range(3):
+        est.observe_message(
+            "bryan",
+            "I am exhausted. I am frustrated. I need this now.",
+            evidence_digest=hashlib.sha256(
+                f"strained-{index}".encode()
+            ).hexdigest(),
+        )
     monkeypatch.setattr(oam, "_instance", est)
 
     j = vm.evaluate(ActionDescriptor("irreversible migration", reversible=False, confirmed=False,
@@ -140,7 +166,11 @@ def test_retrieve_returns_relevant_value_statements(vm):
 def test_value_model_backs_router_value_store(tmp_path, monkeypatch):
     # The router's previously-empty VALUE store can be backed by the value model.
     import core.values.value_model as vmod
-    from core.memory.intentional_retrieval import IntentionalRetriever, MemoryStoreType, RetrievalIntent
+    from core.memory.intentional_retrieval import (
+        IntentionalRetriever,
+        MemoryStoreType,
+        RetrievalIntent,
+    )
 
     vm = BoundedValueModel(storage_path=tmp_path / "v.json", autosave=False)
     vm.set_preference("ask before deploying", 0.9, strength=0.9)

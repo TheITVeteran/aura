@@ -8,6 +8,8 @@ durable, schema-versioned, and queryable.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -31,6 +33,16 @@ from core.runtime.flags import FlagKind, declare
 logger = logging.getLogger("core.runtime.receipts")
 
 _HIGH_VOLUME_RECEIPT_KINDS = frozenset({"resource_admission", "workspace_gate"})
+_USER_FACING_OUTPUT_SINKS = frozenset(
+    {
+        "event_bus",
+        "http_response_body",
+        "multimodal_renderer",
+        "mycelial_ui",
+        "reply_queue",
+        "voice_engine",
+    }
+)
 _HOT_INDEX_LIMIT_FLAG = declare(
     "AURA_RECEIPT_HOT_INDEX_LIMIT",
     kind=FlagKind.INT,
@@ -167,6 +179,70 @@ class OutputReceipt(_ReceiptBase):
     target: str = ""
     digest: str = ""
     governance_receipt_id: str | None = None
+
+
+def digest_output_content(content: Any) -> str:
+    """Return the canonical bounded digest for an exact delivered response."""
+    return hashlib.sha256(
+        str(content or "").encode("utf-8", errors="replace")
+    ).hexdigest()[:16]
+
+
+def digest_principal_binding(principal: Any) -> str:
+    """Return a non-reversible binding for one exact authenticated principal."""
+    exact_principal = str(principal or "")
+    if not exact_principal:
+        return ""
+    try:
+        encoded = exact_principal.encode("utf-8", errors="strict")
+    except UnicodeError:
+        return ""
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def validate_transport_output_receipt(
+    receipt: object,
+    *,
+    content: Any,
+    principal: Any,
+) -> bool:
+    """Fail closed unless a durable output proof matches content and principal."""
+    if not isinstance(receipt, OutputReceipt) or not receipt.receipt_id:
+        return False
+    if receipt.kind != "output" or receipt.target not in {"primary", "both"}:
+        return False
+    metadata = receipt.metadata
+    if not isinstance(metadata, dict):
+        return False
+    accepted_sinks = metadata.get("accepted_sinks")
+    if (
+        not isinstance(accepted_sinks, list)
+        or not accepted_sinks
+        or any(
+            not isinstance(sink, str) or sink not in _USER_FACING_OUTPUT_SINKS
+            for sink in accepted_sinks
+        )
+    ):
+        return False
+    if metadata.get("delivery_stage") != "transport_accepted":
+        return False
+    expected_content_digest = digest_output_content(content)
+    expected_principal_digest = digest_principal_binding(principal)
+    actual_content_digest = receipt.digest
+    actual_principal_digest = metadata.get("recipient_principal_digest")
+    if (
+        not expected_principal_digest
+        or not isinstance(actual_content_digest, str)
+        or not isinstance(actual_principal_digest, str)
+    ):
+        return False
+    return hmac.compare_digest(
+        actual_content_digest,
+        expected_content_digest,
+    ) and hmac.compare_digest(
+        actual_principal_digest,
+        expected_principal_digest,
+    )
 
 
 @dataclass
