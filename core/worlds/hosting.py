@@ -25,13 +25,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from numpy.typing import NDArray
 
 from core.config import get_config
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
-from core.runtime.task_ownership import create_tracked_task
 from core.worlds.embodied import EmbodiedAgent
 from core.worlds.generation import WorldBlueprint, generate_world
 from core.worlds.physics import Body, PhysicsError, PhysicsWorld
@@ -449,9 +447,8 @@ class WorldHost:
             raise PhysicsError("conjured shape must be sphere or box")
         mass = float(spec.get("mass", 1.0) or 0.0)
         radius = float(spec.get("radius", 0.4) or 0.4)
-        half_extents = np.asarray(
-            tuple(float(x) for x in (spec.get("half_extents") or (0.4, 0.4, 0.4))),
-            dtype=np.float64,
+        half_extents = tuple(
+            float(x) for x in (spec.get("half_extents") or (0.4, 0.4, 0.4))
         )
         if not 0.0 <= mass <= 1000.0:
             raise PhysicsError("mass must be in [0, 1000]")
@@ -462,17 +459,11 @@ class WorldHost:
         body = Body(
             body_id=body_id,
             shape=shape,
-            position=np.asarray(
-                tuple(float(x) for x in (spec.get("at") or (0.0, 0.0, 2.0))),
-                dtype=np.float64,
-            ),
-            velocity=np.asarray(
-                tuple(float(x) for x in (spec.get("velocity") or (0.0, 0.0, 0.0))),
-                dtype=np.float64,
-            ),
+            position=np.array([float(x) for x in (spec.get("at") or (0.0, 0.0, 2.0))]),
+            velocity=np.array([float(x) for x in (spec.get("velocity") or (0.0, 0.0, 0.0))]),
             mass=mass,
             radius=radius,
-            half_extents=half_extents,
+            half_extents=np.array(half_extents),
             restitution=min(1.0, max(0.0, float(spec.get("restitution", 0.4) or 0.0))),
             friction=min(2.0, max(0.0, float(spec.get("friction", 0.5) or 0.0))),
             rolling_resistance=min(0.2, max(0.0, float(
@@ -516,8 +507,8 @@ class WorldHost:
         size = blueprint.size
         heights = np.asarray(blueprint.heightfield, dtype=np.float64)
         grid_x = np.arange(size) - size / 2.0 + 0.5
-        gx: NDArray[np.float64]
-        gy: NDArray[np.float64]
+        gx: np.ndarray
+        gy: np.ndarray
         gx, gy = np.meshgrid(grid_x, grid_x, indexing="ij")
         distance = np.sqrt((gx - float(x)) ** 2 + (gy - float(y)) ** 2)
         falloff = np.clip(1.0 - distance / float(radius), 0.0, 1.0)
@@ -558,20 +549,14 @@ class WorldHost:
                 world.physics.add_body(Body(
                     body_id=f"terrain_{i}_{j}",
                     shape="box",
-                    position=np.asarray(
-                        (
-                            (i + 0.5) * cell - size / 2.0,
-                            (j + 0.5) * cell - size / 2.0,
-                            height / 2.0,
-                        ),
-                        dtype=np.float64,
-                    ),
-                    velocity=np.zeros(3, dtype=np.float64),
+                    position=np.array([
+                        (i + 0.5) * cell - size / 2.0,
+                        (j + 0.5) * cell - size / 2.0,
+                        height / 2.0,
+                    ]),
+                    velocity=np.array([0.0, 0.0, 0.0]),
                     mass=0.0,
-                    half_extents=np.asarray(
-                        (cell / 2.0, cell / 2.0, max(height / 2.0, 1e-3)),
-                        dtype=np.float64,
-                    ),
+                    half_extents=np.array([cell / 2.0, cell / 2.0, max(height / 2.0, 1e-3)]),
                     restitution=0.2,
                     friction=0.9,
                 ))
@@ -618,10 +603,8 @@ class WorldHost:
             body_id = f"{kind}_{stamp}_{index}"
             world.physics.add_body(Body(
                 body_id=body_id, shape="box",
-                position=np.asarray(base + offset, dtype=np.float64),
-                velocity=np.zeros(3, dtype=np.float64),
-                mass=0.0 if static else 2.0,
-                half_extents=np.full(3, half, dtype=np.float64),
+                position=base + offset, velocity=np.array([0.0, 0.0, 0.0]),
+                mass=0.0 if static else 2.0, half_extents=np.array([half, half, half]),
                 restitution=0.2, friction=0.8,
             ))
             made.append(body_id)
@@ -828,11 +811,7 @@ class WorldHost:
                     source="worlds.host",
                 )
 
-        write_task = create_tracked_task(
-            _write(),
-            name=f"world-persist:{world.world_id}",
-            owner="world_host.persistence",
-        )
+        write_task = asyncio.create_task(_write(), name=f"world-persist:{world.world_id}")
         cancellation_pending = False
         try:
             while not write_task.done():

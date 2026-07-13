@@ -10673,6 +10673,46 @@
       "scope": "<module>.LocalCommandSandbox.execute_sandboxed_command"
     },
     {
+      "callee": "cert_path.write_bytes",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/tls_local.py",
+      "scope": "<module>.ensure_local_certificate"
+    },
+    {
+      "callee": "directory.mkdir",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/tls_local.py",
+      "scope": "<module>.ensure_local_certificate"
+    },
+    {
+      "callee": "key_path.touch",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/tls_local.py",
+      "scope": "<module>.ensure_local_certificate"
+    },
+    {
+      "callee": "key_path.write_bytes",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/tls_local.py",
+      "scope": "<module>.ensure_local_certificate"
+    },
+    {
+      "callee": "os.chmod",
+      "canonical_owner": false,
+      "category": "raw_file_mutation",
+      "count": 1,
+      "path": "core/security/tls_local.py",
+      "scope": "<module>.ensure_local_certificate"
+    },
+    {
       "callee": "TRUST_LOG_PATH.parent.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13466,6 +13506,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "07ea67ef822e762eca81b75ac3c9e3e37c5da253fec314c4f17ef6e88eed55a3",
+  "inventory_sha256": "d0d518c258a39543f8beb9c998c0c892bcda4db2e568d139079ff81164880c52",
   "schema_version": 1
 }

@@ -2041,7 +2041,9 @@ def test_runtime_registry_batch_six_large_scc_service_seams(monkeypatch):
         black_hole,
         sovereign_pruner,
         aegis,
-        bonding_phase,
+        # bonding_phase left this batch in 2961f214: rapport now derives
+        # from bounded internal state — no service resolution remains, so
+        # the registry-seam source contract no longer applies to it.
         inference_phase,
         initiative_generation,
         motivation_update,

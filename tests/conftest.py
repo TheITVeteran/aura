@@ -471,6 +471,24 @@ def service_container():
 
     _close_service_instances()
     ServiceContainer.clear()
+    try:
+        # The personality accessor latches the container's value into a
+        # module global that ServiceContainer.clear() cannot purge — a
+        # registered test double would otherwise leak into every later test
+        # (2026-07-12 order-dependence register).
+        from core.brain.personality_engine import reset_personality_engine_for_test
+
+        reset_personality_engine_for_test()
+    except ImportError:
+        pass
+    try:
+        # A leaked primary-inference lease defers all background LLM work in
+        # later tests for up to 90s (same register, phenomenology victim).
+        from core.runtime.backpressure import reset_backpressure_for_test
+
+        reset_backpressure_for_test()
+    except ImportError:
+        pass
 
     # Restore original registry
     if hasattr(ServiceContainer, "_registry"):

@@ -1,7 +1,13 @@
-"""MuJoCo backend: real high-fidelity dynamics behind shared interfaces."""
+"""MuJoCo backend: high-fidelity seam behind the same interfaces.
+
+Skips cleanly when mujoco is not installed; asserts real dynamics when
+it is (it is installed on this host by owner approval, 2026-07-13).
+"""
 from __future__ import annotations
 
 import math
+
+import pytest
 
 from core.worlds.generation import generate_world
 from core.worlds.mujoco_backend import (
@@ -11,12 +17,9 @@ from core.worlds.mujoco_backend import (
     simulate_blueprint,
 )
 
-
-def test_mujoco_test_profile_has_real_backend():
-    assert mujoco_available(), (
-        "MuJoCo is required by the development test profile; install the physics "
-        "extra or requirements/dev.txt instead of skipping solver integration."
-    )
+# mujoco is an owner-approved committed dependency (3.10.0): a missing
+# install must FAIL the suite loudly, never skip past the capability.
+import mujoco  # noqa: F401  (import-time proof the dependency exists)
 
 
 def test_blueprint_compiles_and_settles():

@@ -1146,6 +1146,22 @@ def get_personality_engine() -> PersonalityEngine:
                     logger.warning("Failed to register PersonalityEngine in container: %s", e)
     return _personality_engine
 
+
+def reset_personality_engine_for_test() -> None:
+    """Clear the module-global singleton latch.
+
+    get_personality_engine() captures whatever the container held at first
+    call — including a test's registered double — and ServiceContainer.clear()
+    cannot purge this module global, so a stale double leaked into every
+    later test (2026-07-12 order-dependence register: local_agent_client and
+    memory_facade victims died on the deepening test's SimpleNamespace).
+    Test-named per the repo convention; production never resets identity.
+    """
+    global _personality_engine
+    with _pe_lock:
+        _personality_engine = None
+
+
 def integrate_personality_into_conversation(orchestrator):
     """Legacy wrapper for PersonalityEngine integration (v14.1)."""
     engine = get_personality_engine()

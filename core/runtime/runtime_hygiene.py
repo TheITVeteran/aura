@@ -310,6 +310,8 @@ class RuntimeHygieneManager:
             int(os.getenv("AURA_RUNTIME_HYGIENE_TRACEMALLOC_FRAMES", "1") or 1),
         )
         self._tracemalloc_started_by_hygiene = False
+        self._tracemalloc_baseline: Any = None
+        self._tracemalloc_baseline_at: float = 0.0
         self._stop_lock = asyncio.Lock()
         self._shutdown_started = False
         self._shutdown_complete = False
@@ -577,6 +579,74 @@ class RuntimeHygieneManager:
         self._shutdown_complete = False
         self._last_shutdown_report = None
         self._stop_lock = asyncio.Lock()
+
+    def allocation_growth(self, top_n: int = 25) -> dict[str, Any]:
+        """Attribute allocation GROWTH by call site since the baseline.
+
+        First call under tracing arms the baseline snapshot; later calls
+        return the top-N tracebacks by size growth. This is the surface the
+        275MB/h idle-leak investigation needed: totals say THAT memory
+        grows, only site diffs say WHERE (launch with
+        AURA_RUNTIME_HYGIENE_TRACEMALLOC=1 and FRAMES>=10 for usable
+        tracebacks). CPU-heavy on large heaps — callers run it off-loop.
+        """
+        if not tracemalloc.is_tracing():
+            return {
+                "available": False,
+                "reason": "tracemalloc_off",
+                "hint": "launch with AURA_RUNTIME_HYGIENE_TRACEMALLOC=1 "
+                        "AURA_RUNTIME_HYGIENE_TRACEMALLOC_FRAMES=10",
+            }
+        try:
+            snapshot = tracemalloc.take_snapshot().filter_traces((
+                tracemalloc.Filter(False, tracemalloc.__file__),
+                tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
+                tracemalloc.Filter(False, "<frozen importlib._bootstrap_external>"),
+            ))
+        except (RuntimeError, MemoryError, ValueError) as exc:
+            record_degradation('runtime_hygiene', exc)
+            return {"available": False, "reason": f"snapshot_failed:{type(exc).__name__}"}
+
+        traced_mb = tracemalloc.get_traced_memory()[0] / 1e6
+        if self._tracemalloc_baseline is None:
+            self._tracemalloc_baseline = snapshot
+            self._tracemalloc_baseline_at = time.time()
+            return {
+                "available": True,
+                "baseline_set": True,
+                "baseline_at": self._tracemalloc_baseline_at,
+                "traced_mb": round(traced_mb, 1),
+                "frames": self.tracemalloc_frames,
+            }
+
+        top_n = max(1, min(int(top_n), 100))
+        stats = snapshot.compare_to(self._tracemalloc_baseline, "traceback")
+        sites = [
+            {
+                "size_diff_kb": round(stat.size_diff / 1024.0, 1),
+                "count_diff": stat.count_diff,
+                "size_kb": round(stat.size / 1024.0, 1),
+                # format() emits two lines per frame (File + source); depth
+                # follows tracemalloc.start(frames), so cap rather than slice
+                # by our own frames setting or the File lines vanish.
+                "traceback": stat.traceback.format()[-24:],
+            }
+            for stat in stats[:top_n]
+        ]
+        return {
+            "available": True,
+            "baseline_set": False,
+            "baseline_at": self._tracemalloc_baseline_at,
+            "window_s": round(time.time() - self._tracemalloc_baseline_at, 1),
+            "traced_mb": round(traced_mb, 1),
+            "growth_mb_total": round(sum(s.size_diff for s in stats) / 1e6, 1),
+            "top_sites": sites,
+        }
+
+    def rearm_allocation_baseline(self) -> None:
+        """Drop the baseline so the next allocation_growth() re-arms it."""
+        self._tracemalloc_baseline = None
+        self._tracemalloc_baseline_at = 0.0
 
     def capture_sample(self) -> MemorySample:
         memory = self.resource_observer.memory()

@@ -86,6 +86,24 @@ def cognition_inference_active() -> bool:
         return True
 
 
+def reset_backpressure_for_test() -> None:
+    """Clear process-global backpressure state between tests.
+
+    A test that enters primary_inference_lease() without a clean exit (or
+    accumulates failure streaks) leaks a fresh lease into every later test
+    for up to _PRIMARY_LEASE_MAX_AGE_S — deferring all background LLM work
+    (2026-07-12 order-dependence register: the phenomenology narrative
+    victim saw its router double never called). Test-named per convention.
+    """
+    global _primary_lease_count, _primary_lease_fresh_at
+    with _primary_lease_lock:
+        _primary_lease_count = 0
+        _primary_lease_fresh_at = 0.0
+    with _lock:
+        _counters.clear()
+        _last_event_at.clear()
+
+
 def primary_inference_active() -> bool:
     """The single signal low-priority background LLM work should yield to before
     starting: True when EITHER the foreground chat lane or the mind_tick

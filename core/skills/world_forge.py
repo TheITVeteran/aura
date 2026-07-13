@@ -145,37 +145,9 @@ class WorldForgeInput(BaseModel):  # type: ignore[misc]
 
 _SIMULATION_SCOPE = (
     "Bounded deterministic classical simulation with full rigid-body dynamics: "
-    "rotational spheres and oriented boxes (SAT manifolds, tensor inertia). "
-    "This backend is simulation-only and exposes no VR-renderer or physical-transfer capability."
+    "rotational spheres and oriented boxes (SAT manifolds, tensor inertia); "
+    "a VR renderer and physical-world transfer remain outside this scope."
 )
-
-
-def _simulation_capability_evidence() -> dict[str, Any]:
-    """Return an immutable-by-construction capability envelope for routing."""
-
-    return {
-        "schema": "aura.world_forge.capabilities.v1",
-        "backend": "classical_simulation",
-        "supported": {
-            "persistent_worlds": True,
-            "procedural_generation": True,
-            "rigid_body_6dof": True,
-            "oriented_box_sat_manifolds": True,
-            "tensor_inertia": True,
-            "counterfactual_forking": True,
-            "embodied_agent": True,
-        },
-        "integration_surfaces": {
-            "vr_renderer": {
-                "available": False,
-                "reason": "outside_world_forge_backend",
-            },
-            "physical_world_transfer": {
-                "available": False,
-                "reason": "requires_governed_hardware_adapter_and_transfer_proof",
-            },
-        },
-    }
 
 
 class WorldForgeSkill(BaseSkill):  # type: ignore[misc]
@@ -466,6 +438,5 @@ class WorldForgeSkill(BaseSkill):  # type: ignore[misc]
             "ok": True,
             "action": action,
             "simulation_scope": _SIMULATION_SCOPE,
-            "simulation_capabilities": _simulation_capability_evidence(),
             **payload,
         }

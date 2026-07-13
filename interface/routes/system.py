@@ -2694,6 +2694,38 @@ async def api_system_incidents(request: Request, minutes: float = 60.0):
         )
 
 
+@router.get("/system/memory/growth", tags=["health"])
+async def api_system_memory_growth(request: Request, top: int = 25):
+    """Allocation-growth attribution for the idle-leak investigation.
+
+    Requires a launch with AURA_RUNTIME_HYGIENE_TRACEMALLOC=1 (opt-in;
+    ~2x allocation overhead). First call arms the baseline snapshot;
+    later calls return the top-N call sites by size growth since the
+    baseline — the direct answer to 'WHAT is growing', not just how much.
+    """
+    try:
+        from core.runtime.runtime_hygiene import get_runtime_hygiene
+
+        hygiene = get_runtime_hygiene()
+        if not hasattr(hygiene, "allocation_growth"):
+            return JSONResponse(
+                {"available": False, "reason": "runtime_hygiene_unavailable"},
+                status_code=200,
+            )
+        report = await asyncio.to_thread(hygiene.allocation_growth, top)
+        return JSONResponse(_json_safe(report))
+    except _SYSTEM_RECOVERABLE_ERRORS as exc:
+        record_degradation(
+            "system",
+            exc,
+            action="returned unavailable memory-growth report after hygiene failure",
+        )
+        return JSONResponse(
+            {"available": False, "reason": "memory_growth_failed"},
+            status_code=200,
+        )
+
+
 @router.get("/system/learning", tags=["health"])
 async def api_system_learning(request: Request):
     """The weight-learning stack's live state, receipts included.

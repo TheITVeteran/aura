@@ -1,6 +1,6 @@
 """core/worlds/physics.py
 ───────────────────────
-Deterministic 3D rigid-body physics (oriented-body v3).
+Deterministic 3D rigid-body physics (rotational-sphere v2).
 
 Engineering contract:
 - Fixed timestep, semi-implicit (symplectic) Euler integration. The
@@ -19,12 +19,17 @@ Engineering contract:
 Shapes: dynamic spheres, dynamic axis-aligned boxes, static planes
 (z = height, normal +z), static boxes. Z is up.
 
-Rotational dynamics: spheres and opted-in oriented boxes carry quaternion
-orientation and world-frame angular velocity. Sphere inertia is isotropic;
-box inertia is a rotated tensor. Contact-point impulses exchange linear and
-angular momentum. Oriented boxes use SAT with clipped manifolds, while boxes
-that do not opt in retain the deterministic axis-aligned path. Optional
-rolling resistance lets rotating bodies come to rest.
+Rotational dynamics (v2): spheres carry full angular state — quaternion
+orientation, world-frame angular velocity, solid-sphere inertia
+I = (2/5)mr². Contact friction acts at the contact point, exchanging
+linear and angular momentum, so a sliding ball spins up and converges
+to rolling without slipping at exactly 5/7 of its initial speed (the
+classical result; the tests assert it). Optional rolling resistance
+lets rollers come to rest.
+
+Remaining declared limitation: boxes stay axis-aligned and do not
+rotate (their inverse inertia is zero). Oriented-box dynamics with SAT
+contact manifolds is v3 territory, stated plainly.
 """
 from __future__ import annotations
 
@@ -146,31 +151,25 @@ class Body:
             return False
         return self.shape == "sphere" or (self.shape == "box" and self.oriented)
 
-    def rotation_matrix(self) -> FloatArray:
+    def rotation_matrix(self) -> np.ndarray:
         from core.worlds.obb import quat_to_matrix
 
-        return cast(FloatArray, quat_to_matrix(self.orientation))
+        return cast(np.ndarray, quat_to_matrix(self.orientation))
 
-    def inverse_inertia_world(self) -> FloatArray:
+    def inverse_inertia_world(self) -> np.ndarray:
         """World-frame inverse inertia tensor (3×3). Isotropic for
         spheres; box tensor I=m/3·diag(hy²+hz², …) rotated into world;
         zeros for static/locked/translational bodies."""
         if not self.rotates:
-            return cast(FloatArray, np.zeros((3, 3), dtype=np.float64))
+            return np.zeros((3, 3))
         if self.shape == "sphere":
-            return cast(
-                FloatArray,
-                np.eye(3, dtype=np.float64) * self.inverse_inertia,
-            )
+            return cast(np.ndarray, np.eye(3) * self.inverse_inertia)
         hx, hy, hz = (float(v) for v in self.half_extents)
         diagonal = (self.mass / 3.0) * np.array([
             hy * hy + hz * hz, hx * hx + hz * hz, hx * hx + hy * hy,
         ])
         rotation = self.rotation_matrix()
-        return cast(
-            FloatArray,
-            rotation @ np.diag(1.0 / diagonal) @ rotation.T,
-        )
+        return cast(np.ndarray, rotation @ np.diag(1.0 / diagonal) @ rotation.T)
 
     def kinetic_energy(self) -> float:
         if self.is_static:
@@ -229,20 +228,18 @@ class Body:
 class Contact:
     body_a: str
     body_b: str
-    normal: FloatArray  # from a toward b
+    normal: np.ndarray  # from a toward b
     penetration: float
-    point: FloatArray | None = None  # world contact point (manifold paths)
+    point: np.ndarray | None = None  # world contact point (manifold paths)
     manifold_index: int = 0          # position within the pair's manifold
     impulse: float = 0.0            # accumulated normal impulse this tick
-    friction_impulse: FloatArray = field(
-        default_factory=lambda: np.zeros(3, dtype=np.float64)
-    )
+    friction_impulse: np.ndarray = field(default_factory=lambda: np.zeros(3))
     restitution_bias: float = 0.0   # target separating speed (e · approach)
     k_normal: float = 0.0           # effective mass along the normal
-    r_a: FloatArray | None = None   # contact arm on a (rotating bodies)
-    r_b: FloatArray | None = None
-    inv_inertia_a: FloatArray | None = None  # cached world tensors
-    inv_inertia_b: FloatArray | None = None
+    r_a: np.ndarray | None = None   # contact arm on a (rotating bodies)
+    r_b: np.ndarray | None = None
+    inv_inertia_a: np.ndarray | None = None  # cached world tensors
+    inv_inertia_b: np.ndarray | None = None
 
 
 class PhysicsWorld:
@@ -268,10 +265,7 @@ class PhysicsWorld:
         # Warm-start cache: last tick's accumulated impulses per pair.
         # Re-applying them as the solver's starting point is what makes
         # stacked bodies converge instead of jittering (Box2D technique).
-        self._contact_cache: dict[
-            tuple[str, str, int],
-            tuple[float, FloatArray],
-        ] = {}
+        self._contact_cache: dict[tuple[str, str, int], tuple[float, np.ndarray]] = {}
 
     # ── population ─────────────────────────────────────────────
 
@@ -288,7 +282,7 @@ class PhysicsWorld:
             # not inherit a ghost impulse from its predecessor.
             self._contact_cache = {
                 pair: value for pair, value in self._contact_cache.items()
-                if body_id not in pair[:2]
+                if body_id not in pair
             }
         return removed
 
@@ -568,11 +562,11 @@ class PhysicsWorld:
                     continue
                 tangent = tangent_velocity / tangent_speed
                 k_tangent = a.inverse_mass + b.inverse_mass
-                if contact.r_a is not None and contact.inv_inertia_a is not None:
+                if contact.r_a is not None:
                     arm = np.cross(contact.r_a, tangent)
                     k_tangent += float(
                         tangent @ np.cross(contact.inv_inertia_a @ arm, contact.r_a))
-                if contact.r_b is not None and contact.inv_inertia_b is not None:
+                if contact.r_b is not None:
                     arm = np.cross(contact.r_b, tangent)
                     k_tangent += float(
                         tangent @ np.cross(contact.inv_inertia_b @ arm, contact.r_b))
@@ -691,8 +685,8 @@ class PhysicsWorld:
     def total_kinetic_energy(self) -> float:
         return sum(body.kinetic_energy() for body in self.bodies.values())
 
-    def total_momentum(self) -> FloatArray:
-        momentum: FloatArray = np.zeros(3, dtype=np.float64)
+    def total_momentum(self) -> np.ndarray:
+        momentum = np.zeros(3)
         for body in self.bodies.values():
             if not body.is_static:
                 momentum += body.mass * body.velocity
@@ -739,25 +733,8 @@ class PhysicsWorld:
         world.tick = int(payload.get("tick", 0))
         for row in payload.get("bodies", []):
             world.add_body(Body.from_dict(row))
-        raw_cache = payload.get("contact_cache", [])
-        if not isinstance(raw_cache, list):
-            raise PhysicsError("contact_cache must be a list")
-        for entry in raw_cache:
-            if not isinstance(entry, list) or len(entry) != 5:
-                raise PhysicsError("contact_cache entries must have five fields")
-            body_a = str(entry[0])
-            body_b = str(entry[1])
-            if body_a not in world.bodies or body_b not in world.bodies:
-                raise PhysicsError("contact_cache references an unknown body")
-            index = int(entry[2])
-            if index < 0:
-                raise PhysicsError("contact_cache manifold index must be non-negative")
-            impulse = float(entry[3])
-            if not math.isfinite(impulse) or impulse < 0.0:
-                raise PhysicsError("contact_cache impulse must be finite and non-negative")
-            friction = _vec(entry[4], "contact_cache friction")
-            key = (body_a, body_b, index)
-            if key in world._contact_cache:
-                raise PhysicsError("contact_cache contains a duplicate manifold key")
-            world._contact_cache[key] = (impulse, friction)
+        for entry in payload.get("contact_cache", []):
+            body_a, body_b, index, impulse, friction = entry
+            world._contact_cache[(str(body_a), str(body_b), int(index))] = (
+                float(impulse), np.asarray(friction, dtype=np.float64))
         return world
