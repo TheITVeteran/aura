@@ -32,9 +32,25 @@ class RayBackend:
         self.active = False
         if _RAY_AVAILABLE:
             try:
-                # Eagerly initialize ray if not already initialized
+                # Eagerly initialize ray if not already initialized — with
+                # BOUNDED resources. Ray's defaults reserve ~30% of host RAM
+                # for the object store; on the 64GB host already carrying a
+                # wired 32B model that is a memory bomb, not a default.
                 if not ray.is_initialized():
-                    ray.init(ignore_reinit_error=True)
+                    import os
+
+                    cpus = max(1, min(int(os.environ.get("AURA_RAY_CPUS", "2")), 8))
+                    store_mb = max(
+                        128,
+                        min(int(os.environ.get("AURA_RAY_OBJECT_STORE_MB", "256")), 2048),
+                    )
+                    ray.init(
+                        ignore_reinit_error=True,
+                        num_cpus=cpus,
+                        object_store_memory=store_mb * 1024 * 1024,
+                        include_dashboard=False,
+                        logging_level=logging.WARNING,
+                    )
                 self.active = True
                 logger.info("⚡ Ray distributed backend connected successfully.")
             except _RAY_RECOVERABLE_ERRORS as e:
@@ -63,4 +79,7 @@ class RayBackend:
 
         logger.info("⚡ Swarm Ray: dispatching %d tasks to cluster...", len(tasks))
         ray_refs = [ray_task_runner.remote(t) for t in tasks]
+        # A worker exception propagates here as a RayTaskError (which
+        # subclasses the original error type). The cluster and this driver
+        # survive it — callers handle or re-raise as with any task failure.
         return ray.get(ray_refs)
