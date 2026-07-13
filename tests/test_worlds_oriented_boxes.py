@@ -11,7 +11,7 @@ import math
 import numpy as np
 import pytest
 
-from core.worlds import Body, PhysicsWorld
+from core.worlds import Body, PhysicsError, PhysicsWorld
 from core.worlds.obb import quat_to_matrix
 
 
@@ -121,3 +121,24 @@ def test_oriented_state_survives_serialization():
     resumed.step(200)
     assert resumed.state_digest() == reference.state_digest()
     assert resumed.body("crate").oriented is True
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        ["ground", "crate", 0, float("nan"), [0.0, 0.0, 0.0]],
+        ["ground", "missing", 0, 0.1, [0.0, 0.0, 0.0]],
+        ["ground", "crate", -1, 0.1, [0.0, 0.0, 0.0]],
+        ["ground", "crate", 0, 0.1, [0.0, 0.0]],
+        ["ground", "crate"],
+    ],
+)
+def test_oriented_restart_rejects_malformed_warm_start_cache(entry):
+    world = PhysicsWorld(dt=1.0 / 240.0)
+    world.add_body(_plane())
+    world.add_body(_obox())
+    payload = world.to_dict()
+    payload["contact_cache"] = [entry]
+
+    with pytest.raises(PhysicsError):
+        PhysicsWorld.from_dict(payload)

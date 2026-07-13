@@ -13220,6 +13220,13 @@ Verification completed for this source checkpoint:
   ownership, and resource-observation subgates green. It correctly reports
   `full_closeout_complete=false` and `full_semantic_review_current=false`;
   mechanical enumeration is not being presented as semantic completion.
+- Post-rebase reconciliation over the incoming OBB/6-DoF commits replaced the
+  world-forge prose-only boundary with a versioned structured capability
+  envelope, migrated warm-start cache typing to manifold keys, validated every
+  persisted cache entry before restart, and updated the stale v2 solver
+  contract to the actual oriented-body v3 behavior. Strict MyPy remains green
+  across 77 files and the reconciled physics/OBB/world-forge matrix passes
+  `76/76`; the enterprise static ratchet remains green.
 
 Immediate next work and proof burden:
 

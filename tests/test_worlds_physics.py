@@ -450,6 +450,13 @@ async def test_world_forge_skill_end_to_end(host):
         {"action": "create", "world_id": "skilltest", "seed": 5, "size": 16, "theme": "arena"}, {}
     )
     assert created["ok"], created
+    capabilities = created["simulation_capabilities"]
+    assert capabilities["schema"] == "aura.world_forge.capabilities.v1"
+    assert capabilities["supported"]["oriented_box_sat_manifolds"] is True
+    assert capabilities["integration_surfaces"]["vr_renderer"] == {
+        "available": False,
+        "reason": "outside_world_forge_backend",
+    }
     stepped = await skill.execute({"action": "step", "world_id": "skilltest", "ticks": 120}, {})
     assert stepped["ok"] and stepped["world"]["tick"] == 120
     inspected = await skill.execute({"action": "inspect", "world_id": "skilltest"}, {})
