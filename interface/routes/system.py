@@ -399,18 +399,15 @@ router = APIRouter()
 _DESKTOP_ACCESS_CACHE_TTL_S = _env_positive_float("AURA_DESKTOP_ACCESS_CACHE_TTL_S", 30.0)
 _DESKTOP_ACCESS_DEGRADED_CACHE_TTL_S = _env_positive_float(
     "AURA_DESKTOP_ACCESS_DEGRADED_CACHE_TTL_S",
-    2.0,
+    15.0,
 )
 _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S = _env_positive_float(
     "AURA_DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S",
     6.0,
 )
-# Consecutive direct-probe timeout streaks per permission type (backpressure doctrine).
-_DIRECT_PROBE_TIMEOUT_STREAKS: dict[str, int] = {}
-
 _DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S = _env_positive_float(
     "AURA_DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S",
-    0.6,
+    2.0,
 )
 _DESKTOP_ACCESS_MENU_CLOCK_TIMEOUT_S = _env_positive_float(
     "AURA_DESKTOP_ACCESS_MENU_CLOCK_TIMEOUT_S",
@@ -453,6 +450,18 @@ _boot_health_cache: dict[str, Any] = {
 _desktop_access_cache: dict[str, Any] = {
     "captured_at": 0.0,
     "payload": None,
+}
+_DESKTOP_ACCESS_PROBE_TASKS: dict[
+    asyncio.AbstractEventLoop,
+    asyncio.Task[dict[str, Any]],
+] = {}
+_DESKTOP_ACCESS_PROBE_STATE_LOCK = threading.Lock()
+_DESKTOP_ACCESS_PROBE_STATE: dict[str, Any] = {
+    "total_timeouts": 0,
+    "total_failures": 0,
+    "active_streaks": {},
+    "last_issue": "",
+    "last_issue_at_unix": 0.0,
 }
 _desktop_access_request_state: dict[str, Any] = {}
 
@@ -589,10 +598,14 @@ def _desktop_access_empty_payload() -> dict[str, Any]:
         "blocking_permissions": [],
         "reported_blocking_permissions": [],
         "direct_blocking_permissions": [],
+        "unverified_permissions": [],
+        "reported_probe_unavailable_permissions": [],
+        "direct_probe_unavailable_permissions": [],
         "direct_probe_available": False,
         "cache_age_s": 0.0,
         "cache_stale": False,
         "probe_mode": "empty",
+        "probe_runtime": _desktop_access_probe_state_snapshot(),
     }
 
 
@@ -622,6 +635,99 @@ def _desktop_access_cached_copy(
     copied["probe_mode"] = probe_mode
     copied["cache_ttl_s"] = _desktop_access_cache_ttl(payload)
     return copied
+
+
+def _desktop_access_probe_state_snapshot() -> dict[str, Any]:
+    with _DESKTOP_ACCESS_PROBE_STATE_LOCK:
+        return {
+            "total_timeouts": int(
+                _DESKTOP_ACCESS_PROBE_STATE.get("total_timeouts", 0) or 0
+            ),
+            "total_failures": int(
+                _DESKTOP_ACCESS_PROBE_STATE.get("total_failures", 0) or 0
+            ),
+            "active_streaks": dict(
+                _DESKTOP_ACCESS_PROBE_STATE.get("active_streaks", {}) or {}
+            ),
+            "last_issue": str(
+                _DESKTOP_ACCESS_PROBE_STATE.get("last_issue", "") or ""
+            ),
+            "last_issue_at_unix": float(
+                _DESKTOP_ACCESS_PROBE_STATE.get("last_issue_at_unix", 0.0) or 0.0
+            ),
+        }
+
+
+def _record_desktop_access_probe_issue(
+    probe: str,
+    target: str,
+    exc: BaseException,
+) -> tuple[str, int]:
+    issue = "timeout" if isinstance(exc, TimeoutError) else "probe_error"
+    key = f"{probe}:{target}"
+    with _DESKTOP_ACCESS_PROBE_STATE_LOCK:
+        streaks = _DESKTOP_ACCESS_PROBE_STATE.setdefault("active_streaks", {})
+        streak = int(streaks.get(key, 0) or 0) + 1
+        streaks[key] = streak
+        counter = "total_timeouts" if issue == "timeout" else "total_failures"
+        _DESKTOP_ACCESS_PROBE_STATE[counter] = int(
+            _DESKTOP_ACCESS_PROBE_STATE.get(counter, 0) or 0
+        ) + 1
+        detail = str(exc)[:240] or type(exc).__name__
+        _DESKTOP_ACCESS_PROBE_STATE["last_issue"] = f"{key}:{detail}"
+        _DESKTOP_ACCESS_PROBE_STATE["last_issue_at_unix"] = time.time()
+    if streak == 1 or streak % 15 == 0:
+        logger.warning(
+            "Desktop access diagnostic %s for %s (%s, streak=%d)",
+            issue,
+            target,
+            detail,
+            streak,
+        )
+    else:
+        logger.debug(
+            "Desktop access diagnostic %s for %s suppressed (streak=%d)",
+            issue,
+            target,
+            streak,
+        )
+    return issue, streak
+
+
+def _mark_desktop_access_probe_success(probe: str, target: str) -> None:
+    key = f"{probe}:{target}"
+    with _DESKTOP_ACCESS_PROBE_STATE_LOCK:
+        streaks = _DESKTOP_ACCESS_PROBE_STATE.setdefault("active_streaks", {})
+        recovered = int(streaks.pop(key, 0) or 0)
+    if recovered:
+        logger.info(
+            "Desktop access diagnostic recovered for %s after %d failed samples",
+            target,
+            recovered,
+        )
+
+
+def _desktop_access_probe_unavailable(
+    guard: Any,
+    ptype: Any,
+    *,
+    probe: str,
+    exc: BaseException,
+) -> dict[str, Any]:
+    target = str(getattr(ptype, "name", ptype) or "unknown").lower()
+    issue, streak = _record_desktop_access_probe_issue(probe, target, exc)
+    guidance_getter = getattr(guard, "get_guidance", None)
+    guidance = guidance_getter(ptype) if callable(guidance_getter) else ""
+    return {
+        "granted": False,
+        "status": issue,
+        "guidance": guidance,
+        "detail": str(exc)[:240] or type(exc).__name__,
+        "direct_probe": probe == "direct",
+        "probe_unavailable": True,
+        "retryable": True,
+        "failure_streak": streak,
+    }
 
 
 # ── Collector Helpers ─────────────────────────────────────────
@@ -1422,7 +1528,7 @@ def _collect_voice_summary() -> dict[str, Any]:
     return summary
 
 
-async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[str, Any]:
+async def _probe_desktop_access_summary(*, allow_probe: bool = True) -> dict[str, Any]:
     cached_payload = _desktop_access_cache.get("payload")
     cached_at = float(_desktop_access_cache.get("captured_at", 0.0) or 0.0)
     if (
@@ -1463,6 +1569,7 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                     asyncio.to_thread(probe_native_desktop_bridge, force=False),
                     timeout=max(0.2, _DESKTOP_ACCESS_NATIVE_PROBE_TIMEOUT_S),
                 )
+                _mark_desktop_access_probe_success("native_bridge", "resident")
                 payload["native_bridge_probe"] = (
                     native_probe if isinstance(native_probe, dict)
                     else {"ok": False, "error": f"invalid:{type(native_probe).__name__}"}
@@ -1478,15 +1585,18 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                 )
                 native_ready = resident_native_ready
             except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
-                record_degradation(
-                    "system.desktop_access.native_bridge_probe",
+                issue, streak = _record_desktop_access_probe_issue(
+                    "native_bridge",
+                    "resident",
                     exc,
-                    action="continued with Python TCC probes after resident Aura.app bridge probe failed",
-                    severity="warning",
                 )
                 payload["native_bridge_probe"] = {
                     "ok": False,
                     "error": str(exc)[:240] or type(exc).__name__,
+                    "status": issue,
+                    "probe_unavailable": True,
+                    "retryable": True,
+                    "failure_streak": streak,
                 }
 
         guard = ServiceContainer.get("permission_guard", default=None) or get_permission_guard()
@@ -1496,34 +1606,67 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                 try:
                     payload["process_identity"] = identity_probe()
                 except _SYSTEM_RECOVERABLE_ERRORS as exc:
-                    record_degradation(
-                        "system.desktop_access.process_identity",
+                    _record_desktop_access_probe_issue(
+                        "identity",
+                        "current_process",
                         exc,
-                        action="continued desktop access summary without process identity",
-                        severity="debug",
                     )
             if not native_ready:
-                screen = await guard.check_permission(PermissionType.SCREEN, force=False)
-                accessibility = await guard.check_permission(PermissionType.ACCESSIBILITY, force=False)
-                automation = await guard.check_permission(PermissionType.AUTOMATION, force=False)
+                async def _bounded_reported_probe(ptype: Any) -> dict[str, Any]:
+                    target = ptype.name.lower()
+                    try:
+                        result = await asyncio.wait_for(
+                            guard.check_permission(ptype, force=False),
+                            timeout=max(0.2, _DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S),
+                        )
+                        _mark_desktop_access_probe_success("reported", target)
+                        return result if isinstance(result, dict) else {
+                            "granted": False,
+                            "status": "invalid_probe_result",
+                            "guidance": "",
+                            "detail": f"got {type(result).__name__}",
+                        }
+                    except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
+                        return _desktop_access_probe_unavailable(
+                            guard,
+                            ptype,
+                            probe="reported",
+                            exc=exc,
+                        )
+
+                screen, accessibility, automation = await asyncio.gather(
+                    _bounded_reported_probe(PermissionType.SCREEN),
+                    _bounded_reported_probe(PermissionType.ACCESSIBILITY),
+                    _bounded_reported_probe(PermissionType.AUTOMATION),
+                )
                 payload["screen_recording"] = screen
                 payload["accessibility"] = accessibility
                 payload["automation"] = automation
                 payload["frontmost_app"] = str(automation.get("detail", "") or "")
-                direct_probe = getattr(guard, "check_permission_direct", None)
+                direct_probe = getattr(guard, "check_permission_direct_local", None)
+                if not callable(direct_probe):
+                    direct_probe = getattr(guard, "check_permission_direct", None)
                 if callable(direct_probe):
+                    reported_by_type = {
+                        PermissionType.SCREEN: screen,
+                        PermissionType.ACCESSIBILITY: accessibility,
+                        PermissionType.AUTOMATION: automation,
+                    }
+
                     async def _bounded_direct_probe(ptype: Any) -> dict[str, Any]:
-                        streak_key = ptype.name.lower()
+                        target = ptype.name.lower()
+                        reported = reported_by_type.get(ptype, {})
+                        if isinstance(reported, dict) and reported.get("probe_unavailable"):
+                            inherited = dict(reported)
+                            inherited["direct_probe"] = True
+                            inherited["probe_source"] = "reported_probe"
+                            return inherited
                         try:
                             result = await asyncio.wait_for(
                                 direct_probe(ptype),
                                 timeout=max(0.2, _DESKTOP_ACCESS_DIRECT_PROBE_TIMEOUT_S),
                             )
-                            if _DIRECT_PROBE_TIMEOUT_STREAKS.pop(streak_key, 0):
-                                logger.info(
-                                    "Desktop %s direct probe recovered after timeouts",
-                                    streak_key,
-                                )
+                            _mark_desktop_access_probe_success("direct", target)
                             return result if isinstance(result, dict) else {
                                 "granted": False,
                                 "status": "invalid_probe_result",
@@ -1532,35 +1675,12 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                                 "direct_probe": True,
                             }
                         except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
-                            # The UI polls this endpoint every minute; a probe
-                            # that times out persistently is expected
-                            # backpressure, not a fresh incident per poll.
-                            # Record on the FIRST failure and every 15th;
-                            # in between, log quietly (streak doctrine).
-                            streak = _DIRECT_PROBE_TIMEOUT_STREAKS.get(streak_key, 0) + 1
-                            _DIRECT_PROBE_TIMEOUT_STREAKS[streak_key] = streak
-                            if streak == 1 or streak % 15 == 0:
-                                record_degradation(
-                                    "system.desktop_access.direct_probe",
-                                    exc,
-                                    action=(
-                                        f"marked {streak_key} direct permission unavailable "
-                                        f"without discarding other probes (streak={streak})"
-                                    ),
-                                    severity="warning",
-                                )
-                            else:
-                                logger.debug(
-                                    "Desktop %s direct probe timeout (streak %d, suppressed)",
-                                    streak_key, streak,
-                                )
-                            return {
-                                "granted": False,
-                                "status": "probe_failed",
-                                "guidance": getattr(guard, "get_guidance", lambda _ptype: "")(ptype),
-                                "detail": str(exc)[:240],
-                                "direct_probe": True,
-                            }
+                            return _desktop_access_probe_unavailable(
+                                guard,
+                                ptype,
+                                probe="direct",
+                                exc=exc,
+                            )
 
                     try:
                         direct_screen, direct_accessibility, direct_automation = await asyncio.gather(
@@ -1572,11 +1692,10 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                         payload["direct_accessibility"] = direct_accessibility
                         payload["direct_automation"] = direct_automation
                     except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
-                        record_degradation(
-                            "system",
+                        _record_desktop_access_probe_issue(
+                            "direct_group",
+                            "permissions",
                             exc,
-                            action="continued desktop access summary after direct permission probe failed",
-                            severity="warning",
                         )
 
         native_bridge = payload.get("native_bridge_probe")
@@ -1630,10 +1749,60 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
         direct_screen_granted = bool((payload["direct_screen_recording"] or {}).get("granted"))
         direct_accessibility_granted = bool((payload["direct_accessibility"] or {}).get("granted"))
         direct_automation_granted = bool((payload["direct_automation"] or {}).get("granted"))
+        unavailable_statuses = {
+            "",
+            "unknown",
+            "deferred",
+            "timeout",
+            "probe_error",
+            "probe_failed",
+            "invalid_probe_result",
+            "dependency_missing",
+            "resident_bridge_required",
+            "unverified_assertion",
+            "asserted_env",
+        }
+
+        def _probe_has_evidence(result: Any) -> bool:
+            return bool(
+                isinstance(result, dict)
+                and not result.get("probe_unavailable")
+                and str(result.get("status") or "").lower()
+                not in unavailable_statuses
+            )
+
+        reported_results = {
+            "screen_recording": payload["screen_recording"],
+            "accessibility": payload["accessibility"],
+            "automation": payload["automation"],
+        }
+        direct_results = {
+            "screen_recording": payload["direct_screen_recording"],
+            "accessibility": payload["direct_accessibility"],
+            "automation": payload["direct_automation"],
+        }
+        reported_probe_unavailable_permissions = [
+            name for name, result in reported_results.items()
+            if not _probe_has_evidence(result)
+        ]
+        direct_probe_unavailable_permissions = [
+            name for name, result in direct_results.items()
+            if not _probe_has_evidence(result)
+        ]
+        unverified_permissions = [
+            name for name in reported_results
+            if not _probe_has_evidence(direct_results[name])
+            and not _probe_has_evidence(reported_results[name])
+        ]
+        payload["reported_probe_unavailable_permissions"] = (
+            reported_probe_unavailable_permissions
+        )
+        payload["direct_probe_unavailable_permissions"] = (
+            direct_probe_unavailable_permissions
+        )
+        payload["unverified_permissions"] = unverified_permissions
         direct_probe_available = any(
-            str((payload[key] or {}).get("status") or "").lower() not in {"", "unknown", "deferred"}
-            or bool((payload[key] or {}).get("direct_probe"))
-            for key in ("direct_screen_recording", "direct_accessibility", "direct_automation")
+            _probe_has_evidence(result) for result in direct_results.values()
         )
         payload["direct_probe_available"] = direct_probe_available
         payload["reported_screen_capture_ready"] = screen_granted
@@ -1642,19 +1811,30 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
         payload["direct_screen_capture_ready"] = direct_screen_granted
         payload["direct_desktop_control_ready"] = direct_accessibility_granted and bool(payload["pyautogui_ready"])
         payload["direct_screen_text_ready"] = direct_automation_granted and direct_accessibility_granted
-        payload["screen_capture_ready"] = direct_screen_granted if direct_probe_available else screen_granted
+        effective_screen_granted = (
+            direct_screen_granted
+            if _probe_has_evidence(payload["direct_screen_recording"])
+            else screen_granted
+        )
+        effective_accessibility_granted = (
+            direct_accessibility_granted
+            if _probe_has_evidence(payload["direct_accessibility"])
+            else accessibility_granted
+        )
+        effective_automation_granted = (
+            direct_automation_granted
+            if _probe_has_evidence(payload["direct_automation"])
+            else automation_granted
+        )
+        payload["screen_capture_ready"] = effective_screen_granted
         payload["desktop_control_ready"] = (
-            direct_accessibility_granted if direct_probe_available else accessibility_granted
+            effective_accessibility_granted
         ) and bool(payload["pyautogui_ready"])
         payload["screen_text_ready"] = (
-            direct_automation_granted and direct_accessibility_granted
-            if direct_probe_available
-            else automation_granted and accessibility_granted
+            effective_automation_granted and effective_accessibility_granted
         )
         payload["menu_clock_ready"] = (
-            direct_automation_granted and direct_accessibility_granted
-            if direct_probe_available
-            else automation_granted and accessibility_granted
+            effective_automation_granted and effective_accessibility_granted
         )
         if payload["menu_clock_ready"]:
             from core.skills.computer_use import ComputerUseSkill
@@ -1667,7 +1847,6 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                         text = skill._read_menu_clock_macos()
                     return {"ready": True, "text": text[:240]}
                 except _SYSTEM_RECOVERABLE_ERRORS as exc:
-                    record_degradation('system', exc)
                     return {"ready": False, "error": str(exc)[:240]}
 
             try:
@@ -1676,11 +1855,10 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
                     timeout=max(0.25, _DESKTOP_ACCESS_MENU_CLOCK_TIMEOUT_S),
                 )
             except (TimeoutError, *_SYSTEM_RECOVERABLE_ERRORS) as exc:
-                record_degradation(
-                    "system.desktop_access.menu_clock_probe",
+                _record_desktop_access_probe_issue(
+                    "menu_clock",
+                    "system_events",
                     exc,
-                    action="returned desktop access summary without blocking on menu bar clock",
-                    severity="warning",
                 )
                 menu_clock_probe = {
                     "ready": False,
@@ -1728,9 +1906,13 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
         ]
         payload["reported_blocking_permissions"] = reported_blocking_permissions
         payload["direct_blocking_permissions"] = direct_blocking_permissions
-        payload["blocking_permissions"] = (
-            direct_blocking_permissions if direct_probe_available else reported_blocking_permissions
-        )
+        payload["blocking_permissions"] = [
+            name for name, granted in (
+                ("screen_recording", effective_screen_granted),
+                ("accessibility", effective_accessibility_granted),
+                ("automation", effective_automation_granted),
+            ) if not granted
+        ]
         payload["permission_confidence"] = (
             "direct"
             if all(direct_primary_ready) else
@@ -1740,6 +1922,8 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
             if direct_probe_available and all(reported_primary_ready) and payload["permission_assumptions"] else
             "asserted_env"
             if all(reported_primary_ready) and payload["permission_assumptions"] else
+            "unavailable"
+            if unverified_permissions and not any(primary_ready) else
             "unverified"
             if payload["permission_assumptions"] else
             "blocked"
@@ -1747,12 +1931,14 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
         payload["overall_status"] = (
             "ready"
             if all(direct_primary_ready) else
-            "partial"
-            if any(direct_primary_ready) or (not direct_probe_available and any(primary_ready)) else
             "claims_only"
             if direct_probe_available and all(reported_primary_ready) and payload["permission_assumptions"] else
             "assumed_ready"
             if all(reported_primary_ready) and payload["permission_assumptions"] else
+            "partial"
+            if any(direct_primary_ready) or (not direct_probe_available and any(primary_ready)) else
+            "probe_unavailable"
+            if unverified_permissions and not any(primary_ready) else
             "partial"
             if any(
                 bool((payload[key] or {}).get("granted"))
@@ -1761,6 +1947,10 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
             "blocked"
         )
         diagnosis: list[str] = []
+        if payload.get("unverified_permissions"):
+            diagnosis.append(
+                "One or more passive permission probes were unavailable; Aura is preserving the distinction between unknown and macOS-denied access."
+            )
         signature = {}
         if isinstance(payload.get("effective_app_identity"), dict):
             signature = payload["effective_app_identity"].get("code_signature") or {}
@@ -1817,10 +2007,51 @@ async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[s
         record_degradation('system', exc)
         logger.debug("Desktop access summary collection failed: %s", exc)
     payload["captured_at_unix"] = time.time()
+    payload["probe_runtime"] = _desktop_access_probe_state_snapshot()
     payload["cache_ttl_s"] = _desktop_access_cache_ttl(payload)
     _desktop_access_cache["captured_at"] = time.monotonic()
     _desktop_access_cache["payload"] = payload
     return payload
+
+
+async def _collect_desktop_access_summary(*, allow_probe: bool = True) -> dict[str, Any]:
+    """Share one full desktop probe per event loop and preserve it on caller cancel."""
+    cached_payload = _desktop_access_cache.get("payload")
+    cached_at = float(_desktop_access_cache.get("captured_at", 0.0) or 0.0)
+    if (
+        isinstance(cached_payload, dict)
+        and (time.monotonic() - cached_at) < _desktop_access_cache_ttl(cached_payload)
+    ):
+        return _desktop_access_cached_copy(cached_payload, captured_at=cached_at)
+    if not allow_probe:
+        return await _probe_desktop_access_summary(allow_probe=False)
+
+    loop = asyncio.get_running_loop()
+    task = _DESKTOP_ACCESS_PROBE_TASKS.get(loop)
+    shared = task is not None and not task.done()
+    if task is None or task.done():
+        task = loop.create_task(_probe_desktop_access_summary(allow_probe=True))
+        _DESKTOP_ACCESS_PROBE_TASKS[loop] = task
+
+        def _clear(completed: asyncio.Task[dict[str, Any]]) -> None:
+            if _DESKTOP_ACCESS_PROBE_TASKS.get(loop) is completed:
+                _DESKTOP_ACCESS_PROBE_TASKS.pop(loop, None)
+            if completed.cancelled():
+                return
+            try:
+                completed.exception()
+            except (asyncio.CancelledError, asyncio.InvalidStateError):
+                return
+
+        task.add_done_callback(_clear)
+
+    result = await asyncio.shield(task)
+    if not shared:
+        return result
+    copied = dict(result)
+    copied["probe_mode"] = "shared_probe"
+    copied["singleflight_shared"] = True
+    return copied
 
 
 @router.get("/system/desktop-access")

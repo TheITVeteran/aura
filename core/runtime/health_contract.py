@@ -866,10 +866,17 @@ def _runtime_pressure_status() -> ServiceStatus:
                 continue
             last_lag = float(status.get("last_lag_s", 0.0) or 0.0)
             failure_reason = str(status.get("last_failure_reason", "") or "")
-            details.append(f"{key}.last_lag_s={last_lag:.2f}")
+            sample_fresh = status.get("sample_fresh")
+            if sample_fresh is False:
+                details.append(
+                    f"{key}.lag_sample_stale age_s="
+                    f"{float(status.get('sample_age_s', 0.0) or 0.0):.2f}"
+                )
+            else:
+                details.append(f"{key}.last_lag_s={last_lag:.2f}")
             if failure_reason:
                 blockers.append(f"{key}:{failure_reason}")
-            elif last_lag >= lag_threshold:
+            elif sample_fresh is not False and last_lag >= lag_threshold:
                 blocker = f"{key}.last_lag_s {last_lag:.2f} >= {lag_threshold:.2f}"
                 blockers.append(blocker)
                 if boot_grace_active:

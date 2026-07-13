@@ -29,8 +29,14 @@ from core.runtime.subprocess_gateway import get_subprocess_gateway
 _BRIDGE_FLAG = "--native-desktop-bridge"
 _PROBE_READY_TTL_S = 30.0
 _PROBE_DEGRADED_TTL_S = 2.0
-_PROBE_LOCK = threading.Lock()
+_PROBE_JOIN_TIMEOUT_S = 0.35
+_PROBE_LOCK = threading.Condition()
 _PROBE_CACHE: tuple[float, dict[str, Any]] = (0.0, {})
+_PROBE_IN_FLIGHT = False
+_PROBE_STARTED_AT = 0.0
+_CODE_SIGNATURE_CACHE_TTL_S = 300.0
+_CODE_SIGNATURE_CACHE_LOCK = threading.Lock()
+_CODE_SIGNATURE_CACHE: dict[str, tuple[int, float, dict[str, Any]]] = {}
 _EFFECT_DOMAINS = (
     "environment_action",
     "external_action",
@@ -59,7 +65,7 @@ def _code_signature_summary(executable: Path | None) -> dict[str, Any]:
     try:
         completed = get_subprocess_gateway().run(
             ["codesign", "-dv", "--verbose=4", str(executable)],
-            timeout=5.0,
+            timeout=1.5,
             read_only=True,
             capture_output=True,
             source="native_desktop_bridge.codesign_identity",
@@ -132,6 +138,34 @@ def _code_signature_summary(executable: Path | None) -> dict[str, Any]:
         summary["configured_codesign_identity"] = cert_name
     if re.search(r"\badhoc\b", text, flags=re.IGNORECASE):
         summary["adhoc"] = True
+    return summary
+
+
+def _cached_code_signature_summary(executable: Path | None) -> dict[str, Any]:
+    """Cache immutable signing evidence without extending the probe critical path."""
+    if executable is None:
+        return _code_signature_summary(None)
+    try:
+        identity_revision = int(executable.stat().st_mtime_ns)
+    except OSError:
+        identity_revision = 0
+    cache_key = str(executable)
+    now = time.monotonic()
+    with _CODE_SIGNATURE_CACHE_LOCK:
+        cached = _CODE_SIGNATURE_CACHE.get(cache_key)
+        if (
+            cached is not None
+            and cached[0] == identity_revision
+            and now - cached[1] < _CODE_SIGNATURE_CACHE_TTL_S
+        ):
+            return dict(cached[2])
+    summary = _code_signature_summary(executable)
+    with _CODE_SIGNATURE_CACHE_LOCK:
+        _CODE_SIGNATURE_CACHE[cache_key] = (
+            identity_revision,
+            time.monotonic(),
+            dict(summary),
+        )
     return summary
 
 
@@ -285,6 +319,7 @@ def invoke_native_desktop_bridge(
     read_only: bool = False,
     timeout: float = 12.0,
     prefer_one_shot: bool = False,
+    allow_one_shot: bool = True,
     **payload: Any,
 ) -> dict[str, Any]:
     if not read_only:
@@ -300,6 +335,15 @@ def invoke_native_desktop_bridge(
     if resident is not None:
         resident.setdefault("bridge_transport", "resident_ipc")
         return resident
+
+    if not allow_one_shot:
+        return {
+            "ok": False,
+            "error": "resident_bridge_unavailable",
+            "bridge_transport": "unavailable",
+            "resident_bridge_running": False,
+            "retryable": True,
+        }
 
     return _invoke_one_shot_bridge(
         command,
@@ -346,35 +390,83 @@ def _invoke_one_shot_bridge(
 
 
 def probe_native_desktop_bridge(*, force: bool = False, prefer_one_shot: bool = False) -> dict[str, Any]:
-    global _PROBE_CACHE
+    """Return bounded bridge evidence without serializing callers behind bridge I/O.
+
+    Production readiness is resident-only. A one-shot launcher is available only
+    when explicitly requested for diagnosis; it must never make the live desktop
+    surface look resident or occupy the production cache.
+    """
+    global _PROBE_CACHE, _PROBE_IN_FLIGHT, _PROBE_STARTED_AT
 
     now = time.monotonic()
-    with _PROBE_LOCK:
-        captured_at, cached = _PROBE_CACHE
-        if not force and not prefer_one_shot and cached and (now - captured_at) < _probe_cache_ttl(cached):
-            cached_result = dict(cached)
-            cached_result["cache_hit"] = True
-            cached_result["cache_age_s"] = round(max(0.0, now - captured_at), 3)
-            return cached_result
+    if not prefer_one_shot:
+        with _PROBE_LOCK:
+            captured_at, cached = _PROBE_CACHE
+            if not force and cached and (now - captured_at) < _probe_cache_ttl(cached):
+                cached_result = dict(cached)
+                cached_result["cache_hit"] = True
+                cached_result["cache_age_s"] = round(max(0.0, now - captured_at), 3)
+                return cached_result
+
+            if _PROBE_IN_FLIGHT:
+                owner_started_at = _PROBE_STARTED_AT
+                _PROBE_LOCK.wait(timeout=_PROBE_JOIN_TIMEOUT_S)
+                captured_at, cached = _PROBE_CACHE
+                if cached and captured_at >= owner_started_at:
+                    shared_result = dict(cached)
+                    shared_result["cache_hit"] = True
+                    shared_result["singleflight_shared"] = True
+                    shared_result["cache_age_s"] = round(
+                        max(0.0, time.monotonic() - captured_at),
+                        3,
+                    )
+                    return shared_result
+                return {
+                    "ok": False,
+                    "error": "native_desktop_bridge_probe_in_flight",
+                    "bridge_transport": "pending",
+                    "probe_state": "in_flight",
+                    "retryable": True,
+                    "cache_hit": False,
+                    "in_flight_age_s": round(
+                        max(0.0, time.monotonic() - owner_started_at),
+                        3,
+                    ),
+                }
+
+            _PROBE_IN_FLIGHT = True
+            _PROBE_STARTED_AT = now
+
+    try:
         try:
             result = invoke_native_desktop_bridge(
                 "probe",
                 read_only=True,
                 timeout=5.0,
                 prefer_one_shot=prefer_one_shot,
+                allow_one_shot=prefer_one_shot,
             )
         except (OSError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
             result = {
                 "ok": False,
                 "error": f"{type(exc).__name__}: {exc}",
             }
-        result["bridge_executable"] = str(bridge_executable() or "")
-        result["code_signature"] = _code_signature_summary(bridge_executable())
+        executable = bridge_executable()
+        result["bridge_executable"] = str(executable or "")
+        result["code_signature"] = _cached_code_signature_summary(executable)
         result["cache_hit"] = False
         result["captured_at_unix"] = time.time()
         result["cache_ttl_s"] = _probe_cache_ttl(result)
-        _PROBE_CACHE = (now, dict(result))
+        if not prefer_one_shot:
+            with _PROBE_LOCK:
+                _PROBE_CACHE = (time.monotonic(), dict(result))
         return result
+    finally:
+        if not prefer_one_shot:
+            with _PROBE_LOCK:
+                _PROBE_IN_FLIGHT = False
+                _PROBE_STARTED_AT = 0.0
+                _PROBE_LOCK.notify_all()
 
 
 class NativePyAutoGUI:

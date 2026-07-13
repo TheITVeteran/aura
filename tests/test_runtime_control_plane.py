@@ -56,6 +56,41 @@ async def test_background_admission_fails_closed_under_memory_pressure(tmp_path)
 
 
 @pytest.mark.asyncio
+async def test_background_admission_recovers_after_fresh_healthy_loop_sample():
+    pressure = {
+        "loop_lag_s": 0.0,
+        "loop_lag_sample_age_s": 20.0,
+        "loop_lag_sample_fresh": False,
+        "loop_monitor_alive": True,
+    }
+    controller = ResourceAdmissionController(pressure_provider=lambda: dict(pressure))
+    controller._pressure_cache_s = 0.0
+
+    def request() -> AdmissionRequest:
+        return AdmissionRequest(
+            owner="mlx.model_load:background",
+            work_class=WorkClass.MODEL_LOAD,
+            priority=AdmissionPriority.BACKGROUND,
+            timeout_s=0,
+        )
+
+    stale = await controller.acquire(request())
+
+    assert stale.outcome == AdmissionOutcome.DEFERRED
+    assert stale.reason == "event_loop_signal_unavailable"
+
+    pressure.update(
+        loop_lag_s=0.012,
+        loop_lag_sample_age_s=0.05,
+        loop_lag_sample_fresh=True,
+    )
+    recovered = await controller.acquire(request())
+
+    assert recovered.admitted is True
+    await controller.release(recovered.lease_id)
+
+
+@pytest.mark.asyncio
 async def test_repeated_unaudited_denials_coalesce_until_state_changes(
     monkeypatch,
     tmp_path,

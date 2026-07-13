@@ -791,6 +791,12 @@ def test_desktop_access_summary_preserves_native_bridge_success_when_automation_
     monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
     monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
     monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (object(), None))
+    degradations = []
+    monkeypatch.setattr(
+        system_routes,
+        "record_degradation",
+        lambda *args, **kwargs: degradations.append((args, kwargs)),
+    )
     monkeypatch.setattr(
         "core.security.native_desktop_bridge.probe_native_desktop_bridge",
         lambda force=False, prefer_one_shot=False: {"ok": False, "error": "native_bridge_unavailable"},
@@ -809,9 +815,132 @@ def test_desktop_access_summary_preserves_native_bridge_success_when_automation_
     assert payload["screen_text_ready"] is False
     assert payload["direct_screen_recording"]["status"] == "active_native_bridge"
     assert payload["direct_accessibility"]["status"] == "active_native_bridge"
-    assert payload["direct_automation"]["status"] == "probe_failed"
+    assert payload["direct_automation"]["status"] == "timeout"
+    assert payload["direct_automation"]["probe_unavailable"] is True
     assert payload["blocking_permissions"] == ["automation"]
     assert payload["overall_status"] == "partial"
+    assert degradations == []
+
+
+def test_desktop_access_summary_singleflights_concurrent_pollers(monkeypatch):
+    import core.security.permission_guard as permission_guard_module
+    from interface.routes import system as system_routes
+
+    class _Guard:
+        def current_process_identity(self):
+            return {"pid": 789, "bundle_identifier": "org.python.python"}
+
+        async def check_permission(self, ptype, force=False):
+            del force
+            return {"granted": False, "status": "denied", "guidance": ptype.name}
+
+        async def check_permission_direct(self, ptype):
+            return {
+                "granted": False,
+                "status": "denied",
+                "guidance": ptype.name,
+                "direct_probe": True,
+            }
+
+    native_calls = []
+
+    def _native_probe(force=False, prefer_one_shot=False):
+        native_calls.append((force, prefer_one_shot))
+        time.sleep(0.05)
+        return {"ok": False, "error": "resident_bridge_unavailable"}
+
+    monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
+    monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (None, "denied"))
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+        _native_probe,
+    )
+
+    original_cache = dict(system_routes._desktop_access_cache)
+    system_routes._desktop_access_cache["captured_at"] = 0.0
+    system_routes._desktop_access_cache["payload"] = None
+    try:
+        async def _scenario():
+            return await asyncio.gather(
+                system_routes._collect_desktop_access_summary(),
+                system_routes._collect_desktop_access_summary(),
+            )
+
+        first, second = asyncio.run(_scenario())
+    finally:
+        system_routes._desktop_access_cache.update(original_cache)
+
+    assert native_calls == [(False, False)]
+    assert first["overall_status"] == "blocked"
+    assert second["singleflight_shared"] is True
+    assert second["probe_mode"] == "shared_probe"
+
+
+def test_desktop_access_summary_preserves_unknown_when_all_probes_timeout(monkeypatch):
+    import core.security.permission_guard as permission_guard_module
+    from interface.routes import system as system_routes
+
+    class _Guard:
+        def current_process_identity(self):
+            return {"pid": 789, "bundle_identifier": "org.python.python"}
+
+        async def check_permission(self, ptype, force=False):
+            del force
+            raise TimeoutError(f"{ptype.name} probe timed out")
+
+        async def check_permission_direct(self, ptype):
+            raise AssertionError(f"must not duplicate timed-out {ptype.name} probe")
+
+        def get_guidance(self, ptype):
+            return f"grant {ptype.name}"
+
+    degradations = []
+    monkeypatch.setattr(permission_guard_module, "get_permission_guard", lambda: _Guard())
+    monkeypatch.setattr(system_routes.ServiceContainer, "get", staticmethod(lambda name, default=None: default))
+    monkeypatch.setattr("core.skills._pyautogui_runtime.get_pyautogui", lambda: (None, "unknown"))
+    monkeypatch.setattr(
+        "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+        lambda force=False, prefer_one_shot=False: {
+            "ok": False,
+            "error": "resident_bridge_unavailable",
+        },
+    )
+    monkeypatch.setattr(
+        system_routes,
+        "record_degradation",
+        lambda *args, **kwargs: degradations.append((args, kwargs)),
+    )
+
+    original_cache = dict(system_routes._desktop_access_cache)
+    system_routes._desktop_access_cache["captured_at"] = 0.0
+    system_routes._desktop_access_cache["payload"] = None
+    try:
+        payload = asyncio.run(system_routes._collect_desktop_access_summary())
+    finally:
+        system_routes._desktop_access_cache.update(original_cache)
+
+    assert payload["overall_status"] == "probe_unavailable"
+    assert payload["permission_confidence"] == "unavailable"
+    assert payload["unverified_permissions"] == [
+        "screen_recording",
+        "accessibility",
+        "automation",
+    ]
+    assert payload["blocking_permissions"] == [
+        "screen_recording",
+        "accessibility",
+        "automation",
+    ]
+    assert all(
+        payload[key]["status"] == "timeout"
+        for key in (
+            "direct_screen_recording",
+            "direct_accessibility",
+            "direct_automation",
+        )
+    )
+    assert degradations == []
 
 
 def test_desktop_access_summary_reports_ready_when_signed_native_bridge_has_all_grants(monkeypatch):

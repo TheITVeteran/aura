@@ -1,4 +1,6 @@
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -31,7 +33,10 @@ def test_native_bridge_probe_uses_read_only_canonical_subprocess(monkeypatch, tm
     monkeypatch.setattr(bridge, "get_subprocess_gateway", lambda: _Gateway())
     bridge._PROBE_CACHE = (0.0, {})
 
-    result = bridge.probe_native_desktop_bridge(force=True)
+    result = bridge.probe_native_desktop_bridge(
+        force=True,
+        prefer_one_shot=True,
+    )
 
     assert result["ok"] is True
     assert result["accessibility"] is True
@@ -73,10 +78,15 @@ def test_native_bridge_does_not_hold_negative_probe_cache_for_ready_ttl(monkeypa
                     ),
                     returncode=0,
                 )
-            return SimpleNamespace(stdout=json.dumps(results.pop(0)), stderr="", returncode=0)
+            raise AssertionError("resident probe must not launch a one-shot bridge")
+
+    def _resident_probe(_command, *, timeout, **_payload):
+        assert timeout <= 3.0
+        return results.pop(0)
 
     monkeypatch.setattr(bridge, "bridge_executable", lambda: executable)
     monkeypatch.setattr(bridge, "get_subprocess_gateway", lambda: _Gateway())
+    monkeypatch.setattr(bridge, "_invoke_resident_bridge", _resident_probe)
     bridge._PROBE_CACHE = (0.0, {})
 
     first = bridge.probe_native_desktop_bridge(force=False)
@@ -89,6 +99,70 @@ def test_native_bridge_does_not_hold_negative_probe_cache_for_ready_ttl(monkeypa
     assert second["ok"] is True
     assert second["accessibility"] is True
     assert results == []
+
+
+def test_native_bridge_default_probe_never_launches_one_shot(monkeypatch, tmp_path):
+    from core.security import native_desktop_bridge as bridge
+
+    executable = tmp_path / "aura-launcher"
+    executable.write_text("bridge", encoding="utf-8")
+    executable.chmod(0o755)
+    monkeypatch.setattr(bridge, "bridge_executable", lambda: executable)
+    monkeypatch.setattr(bridge, "_invoke_resident_bridge", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        bridge,
+        "_invoke_one_shot_bridge",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("production readiness launched a one-shot bridge")
+        ),
+    )
+    monkeypatch.setattr(bridge, "_cached_code_signature_summary", lambda _path: {})
+    bridge._PROBE_CACHE = (0.0, {})
+
+    result = bridge.probe_native_desktop_bridge(force=True)
+
+    assert result["ok"] is False
+    assert result["error"] == "resident_bridge_unavailable"
+    assert result["bridge_transport"] == "unavailable"
+
+
+def test_native_bridge_probe_singleflights_concurrent_callers(monkeypatch, tmp_path):
+    from core.security import native_desktop_bridge as bridge
+
+    executable = tmp_path / "aura-launcher"
+    executable.write_text("bridge", encoding="utf-8")
+    executable.chmod(0o755)
+    calls = []
+
+    def _resident_probe(_command, *, timeout, **_payload):
+        calls.append(timeout)
+        time.sleep(0.08)
+        return {
+            "ok": True,
+            "screen_recording": True,
+            "accessibility": True,
+            "automation": True,
+            "bridge_transport": "resident_ipc",
+        }
+
+    monkeypatch.setattr(bridge, "bridge_executable", lambda: executable)
+    monkeypatch.setattr(bridge, "_invoke_resident_bridge", _resident_probe)
+    monkeypatch.setattr(bridge, "_cached_code_signature_summary", lambda _path: {})
+    bridge._PROBE_CACHE = (0.0, {})
+    bridge._PROBE_IN_FLIGHT = False
+    bridge._PROBE_STARTED_AT = 0.0
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first_future = executor.submit(bridge.probe_native_desktop_bridge, force=True)
+        time.sleep(0.01)
+        second_future = executor.submit(bridge.probe_native_desktop_bridge, force=True)
+        first = first_future.result(timeout=1.0)
+        second = second_future.result(timeout=1.0)
+
+    assert calls == [3.0]
+    assert first["ok"] is True
+    assert second["ok"] is True
+    assert second["singleflight_shared"] is True
 
 
 def test_local_certificate_is_a_stable_tcc_identity_without_team_id(monkeypatch, tmp_path):

@@ -100,6 +100,34 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(direct["status"], "denied")
         self.assertTrue(direct["direct_probe"])
 
+    async def test_reported_and_direct_reads_share_fresh_os_evidence(self):
+        guard = PermissionGuard()
+        calls = 0
+
+        def screen_preflight():
+            nonlocal calls
+            calls += 1
+            return {
+                "granted": True,
+                "status": "active",
+                "guidance": "",
+            }
+
+        guard._screen_preflight_probe = screen_preflight
+
+        with patch(
+            "core.security.native_desktop_bridge.probe_native_desktop_bridge",
+            return_value={"ok": False},
+        ):
+            reported = await guard.check_permission(PermissionType.SCREEN)
+            direct = await guard.check_permission_direct_local(PermissionType.SCREEN)
+
+        self.assertTrue(reported["granted"])
+        self.assertTrue(direct["granted"])
+        self.assertTrue(direct["direct_probe"])
+        self.assertTrue(direct["cache_hit"])
+        self.assertEqual(calls, 1)
+
     async def test_env_permission_assertion_is_ignored_without_explicit_test_gate(self):
         guard = PermissionGuard()
         guard._screen_preflight_probe = lambda: {
@@ -200,7 +228,7 @@ class TestPermissionGuardCache(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result["granted"])
         self.assertEqual(result["status"], "denied")
         self.assertNotIn("native_bridge", result)
-        self.assertEqual(calls, [(False, False), (False, False)])
+        self.assertEqual(calls, [(False, False)])
 
     async def test_effective_check_falls_back_to_current_process_when_native_bridge_denies(self):
         guard = PermissionGuard()

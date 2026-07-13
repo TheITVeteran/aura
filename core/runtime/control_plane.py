@@ -106,6 +106,9 @@ class PressureSnapshot:
     disk_percent: float = 0.0
     disk_free_bytes: int = 0
     loop_lag_s: float = 0.0
+    loop_lag_sample_age_s: float = 0.0
+    loop_lag_sample_fresh: bool = True
+    loop_monitor_alive: bool | None = None
     shutdown_requested: bool = False
     red_zones: tuple[str, ...] = ()
     suspended_capabilities: tuple[str, ...] = ()
@@ -136,6 +139,18 @@ class PressureSnapshot:
             disk_percent=max(0.0, float(raw.get("disk_percent") or 0.0)),
             disk_free_bytes=max(0, int(raw.get("disk_free_bytes") or 0)),
             loop_lag_s=max(0.0, float(raw.get("loop_lag_s") or 0.0)),
+            loop_lag_sample_age_s=max(
+                0.0,
+                float(raw.get("loop_lag_sample_age_s") or 0.0),
+            ),
+            loop_lag_sample_fresh=bool(
+                raw.get("loop_lag_sample_fresh", True)
+            ),
+            loop_monitor_alive=(
+                bool(raw.get("loop_monitor_alive"))
+                if raw.get("loop_monitor_alive") is not None
+                else None
+            ),
             shutdown_requested=bool(raw.get("shutdown_requested", False)),
             red_zones=tuple(str(item) for item in raw.get("red_zones") or ()),
             suspended_capabilities=tuple(
@@ -380,7 +395,15 @@ class ResourceAdmissionController:
 
             conditions = get_component_conditions("resource_admission")
             unavailable = "pressure_provider_unavailable" in snapshot.red_zones
-            ready = not snapshot.shutdown_requested and not unavailable
+            loop_signal_unavailable = (
+                snapshot.loop_monitor_alive is False
+                or not snapshot.loop_lag_sample_fresh
+            )
+            ready = (
+                not snapshot.shutdown_requested
+                and not unavailable
+                and not loop_signal_unavailable
+            )
             conditions.set(
                 ConditionType.READY,
                 ready,
@@ -389,6 +412,8 @@ class ResourceAdmissionController:
                     if snapshot.shutdown_requested
                     else "PressureProviderUnavailable"
                     if unavailable
+                    else "EventLoopSignalUnavailable"
+                    if loop_signal_unavailable
                     else "PressureObserved"
                 ),
                 message=(
@@ -503,6 +528,14 @@ class ResourceAdmissionController:
             if request.priority >= AdmissionPriority.MAINTENANCE:
                 return f"serious_thermal_pressure_{pressure.thermal_level}", False
 
+        if (
+            (
+                pressure.loop_monitor_alive is False
+                or not pressure.loop_lag_sample_fresh
+            )
+            and request.priority >= AdmissionPriority.MAINTENANCE
+        ):
+            return "event_loop_signal_unavailable", False
         if (
             pressure.loop_lag_s >= cls.LOOP_LAG_BACKGROUND_S
             and request.priority >= AdmissionPriority.MAINTENANCE

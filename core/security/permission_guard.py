@@ -46,6 +46,8 @@ class PermissionGuard(AuraBaseModule):
         super().__init__("PermissionGuard")
         self._cache: dict[PermissionType, dict[str, Any]] = {}
         self._cache_ts: dict[PermissionType, float] = {}
+        self._direct_cache: dict[PermissionType, dict[str, Any]] = {}
+        self._direct_cache_ts: dict[PermissionType, float] = {}
         # Granted TCC permissions don't get revoked silently, so we cache for
         # 5 minutes once active. Denied/deferred entries still re-probe in 15s.
         self._cache_ttl_s: float = 15.0
@@ -108,16 +110,38 @@ class PermissionGuard(AuraBaseModule):
 
         self._cache[ptype] = result
         self._cache_ts[ptype] = now
+        if (
+            ptype
+            in {
+                PermissionType.SCREEN,
+                PermissionType.ACCESSIBILITY,
+                PermissionType.AUTOMATION,
+            }
+            and str(result.get("status") or "")
+            not in {"asserted_env", "assumed", "unverified_assertion"}
+        ):
+            direct_evidence = dict(result)
+            direct_evidence["direct_probe"] = True
+            direct_evidence["cache_hit"] = False
+            direct_evidence["captured_at_unix"] = time.time()
+            self._direct_cache[ptype] = direct_evidence
+            self._direct_cache_ts[ptype] = time.monotonic()
         return result
 
-    async def check_permission_direct(self, ptype: PermissionType) -> dict[str, Any]:
-        """Probe the OS directly, bypassing env assertions and cached results.
+    async def check_permission_direct(
+        self,
+        ptype: PermissionType,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Return recent direct OS evidence without honoring env assertions.
 
         ``check_permission`` intentionally honors ``AURA_ASSUME_*`` for local
         launch modes where the controlling parent process owns the TCC grant.
         Health and demo-readiness surfaces also need to know whether macOS
         itself can prove the grant for the current process identity. This method
-        provides that stricter evidence without mutating the normal cache.
+        provides that stricter evidence in a separate, short-lived evidence
+        cache so a polling UI cannot create unbounded OS probe work.
         """
         # The signed Aura.app bridge is the authority for desktop control.  The
         # cognitive runtime is usually a Python child; Python's own TCC state
@@ -131,7 +155,33 @@ class PermissionGuard(AuraBaseModule):
         if native_result is not None:
             direct = dict(native_result)
             direct["direct_probe"] = True
+            self._direct_cache[ptype] = direct
+            self._direct_cache_ts[ptype] = time.monotonic()
             return direct
+
+        return await self.check_permission_direct_local(ptype, force=force)
+
+    async def check_permission_direct_local(
+        self,
+        ptype: PermissionType,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Return direct evidence for this process without re-entering Aura.app."""
+        now = time.monotonic()
+        cached = self._direct_cache.get(ptype)
+        cached_at = float(self._direct_cache_ts.get(ptype, 0.0) or 0.0)
+        if cached is not None and not force:
+            ttl = (
+                self._cache_ttl_granted_s
+                if cached.get("granted")
+                else self._cache_ttl_s
+            )
+            if now - cached_at < ttl:
+                result = dict(cached)
+                result["cache_hit"] = True
+                result["cache_age_s"] = round(max(0.0, now - cached_at), 3)
+                return result
 
         local_result: dict[str, Any] | None = None
         if ptype == PermissionType.SCREEN:
@@ -145,6 +195,10 @@ class PermissionGuard(AuraBaseModule):
         if local_result is not None and local_result.get("granted"):
             direct = dict(local_result)
             direct["direct_probe"] = True
+            direct["cache_hit"] = False
+            direct["captured_at_unix"] = time.time()
+            self._direct_cache[ptype] = dict(direct)
+            self._direct_cache_ts[ptype] = time.monotonic()
             return direct
         if local_result is not None:
             result = local_result
@@ -162,7 +216,11 @@ class PermissionGuard(AuraBaseModule):
         elif ptype == PermissionType.CAMERA:
             result = await self._check_camera_permission()
         elif ptype == PermissionType.ACCESSIBILITY:
-            result = await self._check_accessibility_permission()
+            result = {
+                "granted": False,
+                "status": "deferred",
+                "guidance": self.get_guidance(PermissionType.ACCESSIBILITY),
+            }
         elif ptype == PermissionType.AUTOMATION:
             result = await self._check_automation_permission()
         else:
@@ -177,6 +235,10 @@ class PermissionGuard(AuraBaseModule):
             direct["granted"] = False
             direct["status"] = "unverified_assertion"
             direct["guidance"] = self.get_guidance(ptype)
+        direct["cache_hit"] = False
+        direct["captured_at_unix"] = time.time()
+        self._direct_cache[ptype] = dict(direct)
+        self._direct_cache_ts[ptype] = time.monotonic()
         return direct
 
     async def _native_bridge_permission_result(
@@ -280,7 +342,6 @@ class PermissionGuard(AuraBaseModule):
                     "guidance": "" if granted else self.get_guidance(PermissionType.SCREEN),
                 }
         except _PERMISSION_RECOVERABLE_ERRORS as exc:
-            record_degradation("permission_guard", exc)
             self.logger.debug("Quartz screen preflight unavailable: %s", exc)
         return None
 
@@ -300,7 +361,6 @@ class PermissionGuard(AuraBaseModule):
                 "guidance": "" if granted else self.get_guidance(PermissionType.ACCESSIBILITY),
             }
         except _PERMISSION_RECOVERABLE_ERRORS as exc:
-            record_degradation("permission_guard", exc)
             self.logger.debug("Accessibility preflight unavailable: %s", exc)
         return None
 
@@ -466,7 +526,6 @@ class PermissionGuard(AuraBaseModule):
                 if frontmost:
                     frontmost_name = str(frontmost.localizedName() or "")
             except _PERMISSION_RECOVERABLE_ERRORS as exc:
-                record_degradation("permission_guard.frontmost_application", exc)
                 self.logger.debug("Unable to read frontmost application during automation probe: %s", exc)
 
             payload: dict[str, Any] = {
@@ -478,7 +537,6 @@ class PermissionGuard(AuraBaseModule):
                 payload["detail"] = frontmost_name[:160]
             return payload
         except _PERMISSION_RECOVERABLE_ERRORS as exc:
-            record_degradation("permission_guard", exc)
             detail = str(exc)
             normalized = detail.lower()
             if "not authorized" in normalized or "-1743" in normalized:
@@ -497,9 +555,6 @@ class PermissionGuard(AuraBaseModule):
 
     async def _check_screen_permission(self) -> dict[str, Any]:
         """Probe screen-recording status without forcing a screenshot during boot."""
-        native_result = await self._native_bridge_permission_result(PermissionType.SCREEN)
-        if native_result is not None:
-            return native_result
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, self._screen_preflight_probe)
         if result is not None:
@@ -573,11 +628,6 @@ class PermissionGuard(AuraBaseModule):
         )
 
     async def _check_accessibility_permission(self) -> dict[str, Any]:
-        # The resident app bridge is the production authority; one-shot probes
-        # are diagnostic-only and must not make the desktop surface look ready.
-        native_result = await self._native_bridge_permission_result(PermissionType.ACCESSIBILITY)
-        if native_result is not None:
-            return native_result
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, self._accessibility_preflight_probe)
         if result is not None:

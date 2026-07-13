@@ -724,6 +724,13 @@ async def _model_load_admission_context(
             decision.reason,
             receipt_id=decision.receipt_id,
         )
+    clear_admission_backoff = getattr(
+        client,
+        "_clear_model_load_admission_backoff",
+        None,
+    )
+    if callable(clear_admission_backoff):
+        clear_admission_backoff()
 
     lease_released = False
 
@@ -1848,6 +1855,14 @@ class MLXLocalClient:
         self._active_generations = 0
         self._warmup_attempted = False
         self._warmup_in_flight = False
+        self._model_load_admission_state_lock = _threading.Lock()
+        self._model_load_admission_backoff_until = 0.0
+        self._model_load_admission_backoff_until_unix = 0.0
+        self._model_load_admission_denial_reason = ""
+        self._model_load_admission_denial_receipt_id = ""
+        self._model_load_admission_denial_count = 0
+        self._model_load_admission_suppressed_count = 0
+        self._model_load_admission_denied_at = 0.0
         self._consecutive_empty: int = 0  # [STABILITY v53] Explicit init — was missing
         self._expected_cancel_reason = ""
         self._expected_cancel_budget = 0
@@ -1911,6 +1926,82 @@ class MLXLocalClient:
 
     def _is_deep_solver_lane(self) -> bool:
         return _model_path_is_deep_solver(self.model_path)
+
+    @staticmethod
+    def _model_load_admission_backoff_seconds(reason: str, count: int) -> float:
+        normalized = str(reason or "").lower()
+        attempt = max(1, int(count))
+        if normalized.startswith("event_loop_lag_") or normalized == "event_loop_signal_unavailable":
+            base_s, cap_s = 3.0, 30.0
+        elif "memory_pressure" in normalized or "thermal_pressure" in normalized:
+            base_s, cap_s = 15.0, 300.0
+        elif normalized in {
+            "runtime_shutdown_requested",
+            "background_capability_suspended",
+            "large_model_capability_suspended",
+        }:
+            base_s, cap_s = 30.0, 300.0
+        else:
+            base_s, cap_s = 10.0, 120.0
+        return min(cap_s, base_s * (2 ** min(attempt - 1, 5)))
+
+    def _model_load_admission_backoff_active(self) -> bool:
+        with self._model_load_admission_state_lock:
+            active = time.monotonic() < float(
+                self._model_load_admission_backoff_until or 0.0
+            )
+            if active:
+                self._model_load_admission_suppressed_count += 1
+            return active
+
+    def _note_model_load_admission_denial(
+        self,
+        reason: str,
+        *,
+        receipt_id: str,
+    ) -> float:
+        with self._model_load_admission_state_lock:
+            normalized = str(reason or "resource_admission_denied")
+            if normalized == self._model_load_admission_denial_reason:
+                self._model_load_admission_denial_count += 1
+            else:
+                self._model_load_admission_denial_reason = normalized
+                self._model_load_admission_denial_count = 1
+            backoff_s = self._model_load_admission_backoff_seconds(
+                normalized,
+                self._model_load_admission_denial_count,
+            )
+            now_monotonic = time.monotonic()
+            now_unix = time.time()
+            self._model_load_admission_backoff_until = now_monotonic + backoff_s
+            self._model_load_admission_backoff_until_unix = now_unix + backoff_s
+            self._model_load_admission_denial_receipt_id = str(receipt_id or "")
+            self._model_load_admission_denied_at = now_unix
+            self._model_load_admission_suppressed_count = 0
+            return backoff_s
+
+    def _clear_model_load_admission_backoff(self) -> None:
+        with self._model_load_admission_state_lock:
+            self._model_load_admission_backoff_until = 0.0
+            self._model_load_admission_backoff_until_unix = 0.0
+            self._model_load_admission_denial_reason = ""
+            self._model_load_admission_denial_receipt_id = ""
+            self._model_load_admission_denial_count = 0
+            self._model_load_admission_suppressed_count = 0
+            self._model_load_admission_denied_at = 0.0
+
+    def _model_load_admission_status(self) -> dict[str, Any]:
+        with self._model_load_admission_state_lock:
+            return {
+                "backing_off": time.monotonic()
+                < float(self._model_load_admission_backoff_until or 0.0),
+                "retry_at_unix": self._model_load_admission_backoff_until_unix,
+                "reason": self._model_load_admission_denial_reason,
+                "receipt_id": self._model_load_admission_denial_receipt_id,
+                "denial_count": self._model_load_admission_denial_count,
+                "suppressed_calls": self._model_load_admission_suppressed_count,
+                "last_denied_at_unix": self._model_load_admission_denied_at,
+            }
 
     def _mark_progress(self) -> None:
         self._last_progress_at = time.time()
@@ -2625,6 +2716,7 @@ class MLXLocalClient:
             "last_transition_at": self._lane_transition_at,
             "warmup_attempted": self._warmup_attempted,
             "warmup_in_flight": self._warmup_in_flight,
+            "model_load_admission": self._model_load_admission_status(),
             "active_generations": int(self._active_generations),
             "process_started_at": self._process_started_at,
             "current_request_started_at": self._current_request_started_at,
@@ -3817,6 +3909,7 @@ class MLXLocalClient:
 
         # Fast path: if worker is already alive, don't acquire the gate
         if self._process and self._process.is_alive() and self._init_done:
+            self._clear_model_load_admission_backoff()
             self._check_lane_state_staleness()  # [STABILITY v51]
             recurrent_depth_status = _normalize_recurrent_depth_status(
                 self._recurrent_depth_status,
@@ -3837,6 +3930,8 @@ class MLXLocalClient:
 
         # Slow path: admission owns whether model loading may proceed; the
         # spawn gate remains the mechanical single-spawn mutex beneath it.
+        if request_is_background and self._model_load_admission_backoff_active():
+            return False
         try:
             async with _model_load_admission_context(
                 self,
@@ -3858,20 +3953,27 @@ class MLXLocalClient:
             # outer transaction consequence.
             if self._lane_state != "failed" or not str(self._lane_error or ""):
                 self._set_lane_state("recovering", admission_exc.reason)
-            self._record_degraded_event(
-                "model_load_admission_denied",
-                detail=(
-                    f"{os.path.basename(self.model_path)}:{admission_exc.reason}:"
-                    f"receipt={admission_exc.receipt_id or 'none'}"
-                ),
-                severity="warning",
-                foreground_request=foreground_request,
+            backoff_s = self._note_model_load_admission_denial(
+                admission_exc.reason,
+                receipt_id=admission_exc.receipt_id,
             )
+            if foreground_request:
+                self._record_degraded_event(
+                    "model_load_admission_denied",
+                    detail=(
+                        f"{os.path.basename(self.model_path)}:{admission_exc.reason}:"
+                        f"receipt={admission_exc.receipt_id or 'none'}"
+                    ),
+                    severity="warning",
+                    foreground_request=True,
+                )
             logger.warning(
-                "⏸️ [MLX] Model-load admission denied for %s: %s (receipt=%s)",
+                "⏸️ [MLX] Model-load admission denied for %s: %s "
+                "(receipt=%s, recheck_in=%.1fs)",
                 os.path.basename(self.model_path),
                 admission_exc.reason,
                 admission_exc.receipt_id or "none",
+                backoff_s,
             )
             return False
         except TimeoutError as gate_exc:

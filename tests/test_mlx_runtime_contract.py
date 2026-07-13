@@ -599,3 +599,47 @@ async def test_non_primary_background_recovery_still_yields(monkeypatch):
     result = await client._ensure_worker_alive(request_is_background=True)
     assert reached == []
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_model_load_admission_denial_backoff_suppresses_background_retry_storm(
+    monkeypatch,
+):
+    from core.brain.llm import mlx_client
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient("/models/Qwen2.5-1.5B-Instruct-4bit")
+    attempts = []
+
+    @contextlib.asynccontextmanager
+    async def _denied(_client, *, foreground_request):
+        attempts.append(foreground_request)
+        raise mlx_client._ModelLoadAdmissionDeniedError(
+            "event_loop_lag_3.638s",
+            receipt_id=f"receipt-{len(attempts)}",
+        )
+        yield  # pragma: no cover - required async-contextmanager shape
+
+    monkeypatch.setattr(mlx_client, "_model_load_admission_context", _denied)
+    monkeypatch.setattr(mlx_client, "_foreground_owner_active", lambda: False)
+    monkeypatch.setattr(mlx_client, "_background_deferral_active", lambda *_a, **_k: None)
+
+    first = await client._ensure_worker_alive(request_is_background=True)
+    second = await client._ensure_worker_alive(request_is_background=True)
+
+    assert first is False
+    assert second is False
+    assert attempts == [False]
+    status = client.get_lane_status()["model_load_admission"]
+    assert status["backing_off"] is True
+    assert status["reason"] == "event_loop_lag_3.638s"
+    assert status["receipt_id"] == "receipt-1"
+    assert status["denial_count"] == 1
+    assert status["suppressed_calls"] == 1
+
+    # User-facing work bypasses a background retry delay and asks the current
+    # control plane directly; admission policy, not stale client state, decides.
+    foreground = await client._ensure_worker_alive(foreground_request=True)
+
+    assert foreground is False
+    assert attempts == [False, True]

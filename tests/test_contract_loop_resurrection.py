@@ -10,6 +10,7 @@ anywhere in the tree.
 from __future__ import annotations
 
 import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -49,8 +50,59 @@ class TestUnifiedRuntimePressure:
     def test_singleton_accessor(self):
         assert rp.get_unified_runtime_pressure() is rp.get_unified_runtime_pressure()
 
+    def test_stale_lag_is_retained_as_history_but_not_current_pressure(self, monkeypatch):
+        from core.runtime.resource_observation import SimulatedResourceObserver
+
+        monitor = SimpleNamespace(
+            get_status=lambda: {
+                "alive": True,
+                "last_lag_s": 3.638,
+                "last_sample_at_unix": time.time() - 20.0,
+                "sample_age_s": 20.0,
+                "sample_fresh": False,
+            }
+        )
+        monkeypatch.setattr(
+            "core.runtime.service_registry.get_runtime_service",
+            lambda name, default=None: monitor if name == "event_loop_monitor" else default,
+        )
+        observer = SimulatedResourceObserver(
+            scenario_id="stale-loop-sample",
+            memory_percent=40.0,
+        )
+
+        snapshot = UnifiedRuntimePressure(observer=observer).runtime_pressure_snapshot()
+
+        assert snapshot["loop_lag_s"] == 0.0
+        assert snapshot["last_observed_loop_lag_s"] == 3.638
+        assert snapshot["loop_lag_sample_fresh"] is False
+        assert "loop_lag_observation_stale" in snapshot["red_zones"]
+
 
 class TestEventLoopMonitorThreadRevival:
+    def test_healthy_tick_replaces_current_lag_without_erasing_breach_history(self):
+        from core.utils.concurrency import EventLoopMonitor
+
+        class _RunningTask:
+            def done(self):
+                return False
+
+        monitor = EventLoopMonitor(threshold=0.5)
+        monitor._task = _RunningTask()
+        monitor._started_at = time.perf_counter()
+        monitor._capture_lag_sample(3.638)
+        monitor._last_breach_lag = 3.638
+        monitor._last_breach_at = time.time()
+
+        monitor._capture_lag_sample(0.012)
+        status = monitor.get_status()
+
+        assert status["alive"] is True
+        assert status["sample_fresh"] is True
+        assert status["last_lag_s"] == 0.012
+        assert status["peak_lag_s"] == 3.638
+        assert status["last_breach_lag_s"] == 3.638
+
     def test_foreign_thread_hands_restart_to_owner_loop(self):
         from core.utils.concurrency import EventLoopMonitor
 

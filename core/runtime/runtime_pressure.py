@@ -47,19 +47,44 @@ class UnifiedRuntimePressure:
         observer = self._observer or get_resource_observer()
 
         loop_lag_s = 0.0
+        observed_loop_lag_s = 0.0
         monitor_alive = None
+        loop_sample_at = 0.0
+        loop_sample_age_s: float | None = None
+        loop_sample_fresh = True
+        loop_sample_metadata_available = False
         try:
             from core.runtime.service_registry import get_runtime_service
 
             monitor = get_runtime_service("event_loop_monitor", default=None)
             status = monitor.get_status() if monitor is not None else {}
             if isinstance(status, dict):
-                loop_lag_s = float(status.get("last_lag_s", 0.0) or 0.0)
-                monitor_alive = bool(status.get("alive", False))
+                observed_loop_lag_s = max(
+                    0.0,
+                    float(status.get("last_lag_s", 0.0) or 0.0),
+                )
+                if status:
+                    monitor_alive = bool(status.get("alive", False))
+                if "sample_fresh" in status:
+                    loop_sample_metadata_available = True
+                    loop_sample_fresh = bool(status.get("sample_fresh", False))
+                    loop_sample_at = float(status.get("last_sample_at_unix", 0.0) or 0.0)
+                    raw_age = status.get("sample_age_s")
+                    loop_sample_age_s = (
+                        max(0.0, float(raw_age)) if raw_age is not None else None
+                    )
+                loop_lag_s = observed_loop_lag_s if loop_sample_fresh else 0.0
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             logger.debug("Pressure snapshot: loop-lag source unavailable: %s", exc)
         snapshot["loop_lag_s"] = round(loop_lag_s, 4)
+        snapshot["last_observed_loop_lag_s"] = round(observed_loop_lag_s, 4)
         snapshot["loop_monitor_alive"] = monitor_alive
+        snapshot["loop_lag_sample_at_unix"] = loop_sample_at
+        snapshot["loop_lag_sample_age_s"] = (
+            round(loop_sample_age_s, 4) if loop_sample_age_s is not None else None
+        )
+        snapshot["loop_lag_sample_fresh"] = loop_sample_fresh
+        snapshot["loop_lag_sample_metadata_available"] = loop_sample_metadata_available
 
         memory_pct = 0.0
         memory_rss_mb = 0.0
@@ -130,6 +155,10 @@ class UnifiedRuntimePressure:
         red_zones = []
         if loop_lag_s >= _LOOP_LAG_RED_S:
             red_zones.append(f"loop_lag_{loop_lag_s:.1f}s")
+        if monitor_alive is False:
+            red_zones.append("loop_monitor_unavailable")
+        elif loop_sample_metadata_available and not loop_sample_fresh:
+            red_zones.append("loop_lag_observation_stale")
         if memory_pct >= _MEMORY_RED_PCT:
             red_zones.append(f"memory_{memory_pct:.0f}pct")
         if thermal_level >= _THERMAL_RED_LEVEL:

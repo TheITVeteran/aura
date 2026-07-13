@@ -16,10 +16,11 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **live desktop-access timeout and
-  foreground event-loop stall elimination plus canonical self-feeling
-  conversation grounding (`DESKTOP-ACCESS-001`, `FOREGROUND-LATENCY-001`,
-  `SELF-STATE-CHAT-001`)**, followed by joy/social
+- Current bounded implementation milestone: **canonical self-feeling
+  conversation grounding (`SELF-STATE-CHAT-001`) plus launched proof of the
+  source-green desktop-access and event-loop pressure repairs
+  (`DESKTOP-ACCESS-001`, `FOREGROUND-LATENCY-001`,
+  `LAUNCH-PROVENANCE-001`)**, followed by joy/social
   self-state separation and the remaining typed canonical person-model
   consolidation (`MEMORY-001`, `MIND-001`, `STATE-001`,
   `CTX3-SOCIAL-001..002`). Checkpoints 49 and 50 establish the current social
@@ -73,7 +74,7 @@ Status rules:
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
 | `RESOURCE-001` | `COMPLETE 2026-07-12` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. | Pass F 3; Addendum 22; Checkpoint 34 |
-| `FOREGROUND-LATENCY-001` | `IN PROGRESS 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, and background activity. | `PERF-001`, `RUNTIME-001`, `FAULT-001`; live `event_loop_lag_3.638s` MLX admission denial at 00:32 on 2026-07-13 |
+| `FOREGROUND-LATENCY-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, and background activity. | `PERF-001`, `RUNTIME-001`, `FAULT-001`; Checkpoint 51; live `event_loop_lag_3.638s` MLX admission denial at 00:32 on 2026-07-13 |
 | `SHUTDOWN-001` | `COMPLETE 2026-07-11` | Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes. | Addendum 32, `CTX2-SHUTDOWN-001..003` |
 | `FAULT-001` | `IN PROGRESS` | Drain the FMEA and degradation-policy backlog: root-fix broad catches, swallowed cancellation, false success/health, partial mutation, retry storms, leaks, and noisy fallback at their originating layer. | Pass F 4; Matrix 12 |
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
@@ -84,7 +85,7 @@ Status rules:
 | `SELF-STATE-CHAT-001` | `IN PROGRESS 2026-07-13` | Make direct questions about Aura's own condition use one fresh canonical self-state projection with calibrated uncertainty and conversational continuity; host telemetry may support but must never replace the answer. Prove the launched desktop path cannot route "are you okay/feeling fine" into a generic RAM/CPU status response. | `CONVERSATION-001`, `MIND-001`, `STATE-001`; live defect at 00:27-00:28 on 2026-07-13 |
 | `SUBSTRATE-001` | `OPEN` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. | Matrix 2-3; Addendum 20 and 29 |
 | `DESKTOP-001` | `IN PROGRESS 2026-07-12` | Generalize computer use into perception-plan-act-observe-repair loops over browser, files, Notes/Docs/PDF/images, dialogs, focus, permissions, changed layouts, and multi-app workflows. | Pass F 7; Matrix 7; Checkpoint 38 |
-| `DESKTOP-ACCESS-001` | `IN PROGRESS 2026-07-13` | Eliminate repeated resident-bridge/direct TCC probe timeouts from the launched desktop path. Separate expected permission latency from faults, deduplicate concurrent probes, preserve successful dimensions, use truthful cached/readiness conditions, and prevent one probe timeout from producing duplicate degradation, fault, and affective-strain amplification. | `DESKTOP-001`, `FAULT-001`, `RUNTIME-001`; live `system.desktop_access.*_probe` timeout defects at 00:28 on 2026-07-13 |
+| `DESKTOP-ACCESS-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate repeated resident-bridge/direct TCC probe timeouts from the launched desktop path. Separate expected permission latency from faults, deduplicate concurrent probes, preserve successful dimensions, use truthful cached/readiness conditions, and prevent one probe timeout from producing duplicate degradation, fault, and affective-strain amplification. | `DESKTOP-001`, `FAULT-001`, `RUNTIME-001`; Checkpoint 51; live `system.desktop_access.*_probe` timeout defects at 00:28 on 2026-07-13 |
 | `TOOLS-001` | `IN PROGRESS` | Make long, precise multi-tool workflows typed, resumable, idempotent, budgeted, compensating, provider-change tolerant, source preserving, and complete only after durable observed effects. | Matrix 9; original context tool/handoff goals |
 | `SKILLS-001` | `COMPLETE 2026-07-10` | Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill. | Addendum 23, `CTX2-GATE-*` and `CTX2-SKILL-*` |
 | `AGENCY-001` | `OPEN` | Prove bounded self-generated goals, coherent priority, obstacle recovery, foreground yielding, stale-obligation cleanup, restart continuity, operator override, indefinite-life behavior, and real initiative that is not reduced to waiting for a human prompt. | Matrix 10; resident-colleague scope |
@@ -115,6 +116,8 @@ Status rules:
 | `OPERATIONS-001` | `OPEN` | Make clean install, first boot, doctor, model acquisition, permissions, migration, update, backup/restore, rollback, uninstall, crash triage, and release channels reproducible and boring. | Pass F 10; Matrix 15 |
 | `REPO-001` | `OPEN` | Drain type, effect, cancellation, lifecycle, concurrency, dependency, dead-code, scaffolding/stub, configuration, documentation, and runtime/proof artifact-placement debt across every tracked source file. | Pass F 12; Matrix 11, 12, and 18 |
 | `LIFECYCLE-001` | `IN PROGRESS 2026-07-13` | Make every bounded test and runtime command terminate after its result: identify and close the non-daemon thread/process/resource owner that leaves `tests/test_skill_surface_contracts.py` alive after `99/99`, add leak detection, and prove clean interpreter exit without hiding the owner behind forced termination. | `FAULT-001`, `REPO-001`, `VALIDATE-001`; post-summary process-exit defect discovered during Checkpoint 49/50 validation |
+| `ASYNC-TASK-001` | `OPEN 2026-07-13` | Eliminate every unobserved async task failure and require owned task identity, completion observation, cancellation, and structured terminal evidence. First reproduce and root-fix the live `conversation_support.py` task whose empty `agent_id` raised `ValueError` under “Task exception was never retrieved.” | `FAULT-001`, `LIFECYCLE-001`, `CONVERSATION-001`; live desktop log evidence 2026-07-13 |
+| `LAUNCH-PROVENANCE-001` | `IN PROGRESS 2026-07-13` | Make the signed resident Aura.app the canonical launcher, pin its source root and commit provenance to current `main`, reject stale/worktree drift, keep the native bridge resident, and expose launched root/commit/signature evidence in readiness and proof. The next live proof must replace the observed Python process running from `.claude/worktrees/fable-improvement-pass` without a resident Aura.app process. | `OPERATIONS-001`, `RUNTIME-001`, `DESKTOP-ACCESS-001`, `VALIDATE-001`; live process evidence 2026-07-13 |
 | `PROOF-001` | `OPEN` | Purify all proof runners against leakage, copied answers, stale artifacts, fallback success, runner-solved work, environment dependence, and unsupported claims; separate builder/solver/evaluator/signer. | Pass F 9; Matrix 16 |
 | `REPLICATION-001` | `OPEN` | Produce clean-machine setup, external challenge packs, source/SBOM/claims packages, replay commands, hashes, negative controls, and independent replication of every important causal result. | Matrix 16-17; Addendum 31 |
 | `AUDIT-001` | `OPEN` | Complete first and independent second every-line semantic passes, rerun the entire criticism/question corpus code-first, add every surviving gap, and make only evidence-defensible final assessments. | Pass F 12; Matrix 18; original assessment questions |
@@ -13028,3 +13031,101 @@ Immediate launched-desktop defects carried forward:
   remain next after these direct live blockers. Final multi-hour and 24-72 hour
   soaks remain deferred until all shorter source, deterministic, fault,
   lifecycle, launched desktop, GUI, and clean-machine gates are green.
+
+## Checkpoint 2026-07-13-51: Fresh Runtime Pressure and Non-Affective Desktop Diagnostics
+
+This checkpoint advances `FOREGROUND-LATENCY-001`, `DESKTOP-ACCESS-001`,
+`FAULT-001`, `RUNTIME-001`, `PERF-001`, `OBSERVE-001`, and `DESKTOP-001`.
+It closes the source-level causal chain that turned one desktop diagnostic
+delay into repeated permission faults, affective strain, a retained stale lag
+sample, and a model-admission retry storm. Launched behavior remains open until
+the signed resident app is rebuilt and started from current `main`; this source
+checkpoint does not treat the stale fable-worktree runtime as proof.
+
+Implemented current, fresh scheduling-pressure truth:
+
+- Event-loop monitoring now captures every tick, not only threshold breaches.
+  Current lag, sample time/age/freshness, lifetime peak, last breach, breach
+  streak, and hard-failure recovery are distinct evidence. A healthy tick
+  replaces current pressure without erasing forensic breach history; a dead,
+  restarted, or stale monitor cannot publish its previous task's sample as
+  current.
+- Unified runtime pressure preserves stale lag as
+  `last_observed_loop_lag_s` but sets current `loop_lag_s` to zero and publishes
+  an explicit stale/unavailable red zone. Resource admission fails background
+  work closed when the scheduling signal itself is unavailable and resumes
+  after a fresh healthy sample. Runtime health no longer reuses stale lag as a
+  current blocker.
+- MLX model-load clients now apply lock-protected, reason-classed exponential
+  admission backoff before the spawn path. One actual recheck retains its
+  audited receipt; duplicate background calls during the same pressure epoch
+  are suppressed and counted. Foreground work bypasses a background retry
+  delay for a fresh control-plane decision, and successful admission or a live
+  worker clears stale denial state.
+
+Implemented bounded desktop-access evidence:
+
+- Production bridge readiness is resident-only. Ordinary probes can no longer
+  launch a transient one-shot Aura.app and mistake its TCC identity for the
+  resident product; one-shot transport requires an explicit diagnostic request
+  and never populates the production cache.
+- Native probing now performs slow IPC outside its synchronization lock,
+  single-flights concurrent callers, returns bounded in-flight state instead of
+  queuing extra bridge work, caches code-signature evidence by executable
+  revision, and caps first-run signature inspection below the route deadline.
+- PermissionGuard performs one native lookup per check, retains direct OS
+  evidence in a separate bounded cache, and exposes a local-direct path that
+  cannot re-enter the bridge. Passive screen, accessibility, automation, and
+  frontmost-app diagnostics no longer call the degradation/fault pipeline for
+  expected probe unavailability.
+- The desktop route shares one cancellation-shielded full probe across
+  concurrent pollers, bounds all reported and direct dimensions, reuses the
+  first OS evidence instead of probing twice, and caches degraded results long
+  enough to prevent a polling storm. Timeout/error streaks remain visible as
+  diagnostic counters and recovery logs without entering nociception,
+  resilience frustration, or fault taxonomy.
+- Permission output now distinguishes direct denial from unavailable evidence.
+  It preserves successful dimensions, reports `probe_unavailable` and
+  `unverified_permissions` when no conclusive OS result exists, and never turns
+  a timeout into a false macOS-denied claim.
+
+Verification completed for this source checkpoint:
+
+- The final integrated permission, native bridge, runtime pressure, health
+  contract, resource admission, MLX, lane-admission, and server-runtime matrix
+  passed `464/464` in 179 seconds. Earlier complete focused matrices passed
+  `463/463` in 198 seconds after the MLX retry layer and `421/421` in 171
+  seconds before it, so the final unknown-evidence and locking refinements were
+  exercised on top of both prior baselines.
+- New regressions prove healthy lag replacement with retained breach history,
+  stale-sample exclusion, admission recovery, resident-only transport,
+  process-level and route-level single-flight behavior, reported/direct OS
+  evidence reuse, all-timeout unknown-versus-denied semantics, zero diagnostic
+  `record_degradation()` calls, and foreground bypass of background MLX
+  backoff.
+- The whole-checkpoint bounded gate battery is green on this exact tree:
+  source hygiene, enterprise static and collection gates, compile-all,
+  configured Ruff, strict MyPy across 77 files, all 13 cognitive gates, model
+  ownership (`28` paths, `40` references, zero findings), resource observation
+  (`2,675` files, zero findings), security scan (`2,563` files, zero findings),
+  and the `37/37` production-readiness contract all pass. The governance
+  baseline remains exactly matched at `1,785` calls, `1,681` buckets, and
+  `1,665` debt; the bounded smoke suite passes `104/104` in 38 seconds.
+  The enterprise closeout rubric independently passes all `20/20` criteria.
+
+Immediate next work and proof burden:
+
+- `SELF-STATE-CHAT-001` remains the next implementation milestone: direct and
+  follow-up questions about Aura's condition must use one fresh canonical
+  self-state projection, never substitute host RAM/CPU status, and must prevent
+  a misgrounded response from becoming learned dream/insight evidence.
+- `LAUNCH-PROVENANCE-001` records the discovered runtime drift explicitly. The
+  process serving the observed desktop session had its CWD in
+  `.claude/worktrees/fable-improvement-pass`, and no resident Aura.app launcher
+  process was present. Rebuild/start from current `main`, prove root/commit and
+  resident bridge identity, then exercise desktop access, model admission, and
+  chat through the actual GUI before either source-green item can close.
+- `ASYNC-TASK-001` preserves the separate live `conversation_support.py`
+  unobserved-task `ValueError` for root-cause repair. `LIFECYCLE-001`, standing
+  autonomy authority, joy/social person-state separation, the full remaining
+  master index, final GUI/clean-machine gates, and all soaks remain open.

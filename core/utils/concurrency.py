@@ -405,6 +405,11 @@ class EventLoopMonitor:
         self._stop_event = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._last_lag: float = 0.0
+        self._last_sample_at: float = 0.0
+        self._last_sample_monotonic: float = 0.0
+        self._peak_lag: float = 0.0
+        self._last_breach_lag: float = 0.0
+        self._last_breach_at: float = 0.0
         self._consecutive_breaches: int = 0
         self._started_at: float = 0.0
         self._last_failure_at: float = 0.0
@@ -485,6 +490,11 @@ class EventLoopMonitor:
             return
         self._stop_event.clear()
         self._started_at = time.perf_counter()
+        # A restarted monitor must not publish the previous task's final sample
+        # as current scheduling pressure while its first new tick is pending.
+        self._last_lag = 0.0
+        self._last_sample_at = 0.0
+        self._last_sample_monotonic = 0.0
         self._task = get_task_tracker().create_task(self._run())
         mark_task_protected(self._task, owner="event_loop_monitor")
         try:
@@ -565,6 +575,13 @@ class EventLoopMonitor:
         if not self._task_running():
             self.ensure_running()
             return False
+        freshness_budget_s = self._sample_freshness_budget_s()
+        now = time.perf_counter()
+        if self._last_sample_monotonic > 0.0:
+            if now - self._last_sample_monotonic > freshness_budget_s:
+                return False
+        elif self._started_at > 0.0 and now - self._started_at > freshness_budget_s:
+            return False
         if self._last_failure_at:
             stable_for = time.time() - self._last_failure_at
             if (
@@ -574,10 +591,46 @@ class EventLoopMonitor:
                 return False
         return True
 
+    def _sample_freshness_budget_s(self) -> float:
+        """Maximum age at which a lag sample still describes current pressure."""
+        return max(2.0, float(self.interval) * 3.0)
+
+    def _capture_lag_sample(
+        self,
+        lag: float,
+        *,
+        sampled_at: float | None = None,
+        sampled_monotonic: float | None = None,
+    ) -> None:
+        current = max(0.0, float(lag))
+        self._last_lag = current
+        self._last_sample_at = float(sampled_at if sampled_at is not None else time.time())
+        self._last_sample_monotonic = float(
+            sampled_monotonic if sampled_monotonic is not None else time.perf_counter()
+        )
+        self._peak_lag = max(self._peak_lag, current)
+
     def get_status(self) -> dict[str, Any]:
+        alive = self.is_alive()
+        sample_age_s = (
+            max(0.0, time.perf_counter() - self._last_sample_monotonic)
+            if self._last_sample_monotonic > 0.0
+            else None
+        )
+        sample_fresh = bool(
+            sample_age_s is not None
+            and sample_age_s <= self._sample_freshness_budget_s()
+        )
         return {
-            "alive": self.is_alive(),
+            "alive": alive,
             "last_lag_s": self._last_lag,
+            "last_sample_at_unix": self._last_sample_at,
+            "sample_age_s": round(sample_age_s, 4) if sample_age_s is not None else None,
+            "sample_fresh": sample_fresh,
+            "sample_freshness_budget_s": self._sample_freshness_budget_s(),
+            "peak_lag_s": self._peak_lag,
+            "last_breach_lag_s": self._last_breach_lag,
+            "last_breach_at_unix": self._last_breach_at,
             "consecutive_breaches": self._consecutive_breaches,
             "last_failure_at": self._last_failure_at,
             "last_failure_reason": self._last_failure_reason,
@@ -597,6 +650,12 @@ class EventLoopMonitor:
             end_time = time.perf_counter()
             actual_elapsed = end_time - start_time
             lag = actual_elapsed - self.interval
+            sampled_at = time.time()
+            self._capture_lag_sample(
+                lag,
+                sampled_at=sampled_at,
+                sampled_monotonic=end_time,
+            )
             threshold, context = self._lag_threshold_for_context()
             in_startup_grace = (
                 self.startup_grace > 0
@@ -605,10 +664,11 @@ class EventLoopMonitor:
             )
 
             if lag > threshold and not in_startup_grace:
-                self._last_lag = lag
+                self._last_breach_lag = max(0.0, lag)
+                self._last_breach_at = sampled_at
                 self._consecutive_breaches += 1
                 if lag >= self.hard_failure_threshold:
-                    self._last_failure_at = time.time()
+                    self._last_failure_at = sampled_at
                     self._last_failure_reason = (
                         f"hard event-loop lag {lag:.4f}s exceeded {self.hard_failure_threshold:.2f}s"
                     )

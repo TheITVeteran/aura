@@ -324,6 +324,33 @@ def test_runtime_pressure_probe_rejects_hard_event_loop_lag(monkeypatch):
     assert "event_loop_monitor.last_lag_s" in (status.error or "")
 
 
+def test_runtime_pressure_probe_does_not_reuse_stale_event_loop_lag(monkeypatch):
+    from core.container import ServiceContainer
+    from core.runtime import health_contract
+
+    class LagMonitor:
+        def get_status(self):
+            return {
+                "last_lag_s": 12.5,
+                "last_failure_reason": "",
+                "sample_fresh": False,
+                "sample_age_s": 20.0,
+            }
+
+    def fake_get(cls, name, default=None):
+        if name == "event_loop_monitor":
+            return LagMonitor()
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", classmethod(fake_get))
+
+    status = health_contract._runtime_pressure_status()
+
+    assert status.present is True
+    assert status.liveness_ok is True
+    assert status.error is None
+
+
 def test_runtime_pressure_boot_grace_defers_only_explicit_warmup_lag(monkeypatch):
     from core.container import ServiceContainer
     from core.runtime import health_contract
