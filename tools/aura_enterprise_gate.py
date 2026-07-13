@@ -88,6 +88,8 @@ ALLOW_SUBPROCESS = {
     "tools/box/parent_controller.py",
     # Operator/CI drivers that orchestrate child processes by design:
     "tools/run_test_chunks.py",
+    # The release checklist runner spawns the make gates it enforces:
+    "tools/release_preflight.py",
     "tests/test_architecture_quality_gate.py",
     # Flight-recorder SIGKILL proof: crash-survivability can only be proven
     # by really killing a separate child process mid-write and reading the

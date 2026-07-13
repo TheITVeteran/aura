@@ -1,0 +1,78 @@
+{
+  "checks": [
+    {
+      "duration_s": 0.41,
+      "exit_code": 0,
+      "name": "compile",
+      "purpose": "every Python file parses (core + tests)",
+      "status": "pass",
+      "tail": ""
+    },
+    {
+      "duration_s": 0.16,
+      "exit_code": 0,
+      "name": "lint",
+      "purpose": "ruff three-pass (surface E9, critical F-codes, curated files)",
+      "status": "pass",
+      "tail": ""
+    },
+    {
+      "duration_s": 53.59,
+      "exit_code": 0,
+      "name": "smoke",
+      "purpose": "~100 contract tests, the fast behavioral floor",
+      "status": "pass",
+      "tail": ""
+    },
+    {
+      "duration_s": 6.33,
+      "exit_code": 0,
+      "name": "governance_lint",
+      "purpose": "no ungoverned consequential calls; effect-ownership baseline holds",
+      "status": "pass",
+      "tail": ""
+    },
+    {
+      "duration_s": 4.71,
+      "exit_code": 0,
+      "name": "security_scan",
+      "purpose": "local security scan",
+      "status": "pass",
+      "tail": ""
+    },
+    {
+      "duration_s": 16.6,
+      "exit_code": 0,
+      "name": "enterprise_gate",
+      "purpose": "static ratchets (placeholders, silent excepts, subprocess allowlist\u2026)",
+      "status": "pass",
+      "tail": ""
+    },
+    {
+      "duration_s": 10.45,
+      "exit_code": 0,
+      "name": "production_gate",
+      "purpose": "production readiness contract",
+      "status": "pass",
+      "tail": ""
+    },
+    {
+      "duration_s": 0.08,
+      "exit_code": 0,
+      "name": "fresh_hard_deaths",
+      "purpose": "crash triage: no hard deaths in the last 24h (exit honored, no '|| true')",
+      "status": "pass",
+      "tail": ""
+    }
+  ],
+  "deferred_gates": {
+    "endurance_soak": "needs a live instance and hours \u2014 always the LAST gate before sign-off",
+    "full_suite_6_chunks": "certification step \u2014 ~7,400 tests, run via tools/run_test_chunks.py",
+    "startup_budget_probe": "needs a live boot \u2014 release-train step (tools/live_surface_probe.py)"
+  },
+  "duration_s": 92.33,
+  "finished_at": 1783966899.6351511,
+  "schema": "aura.preflight.v1",
+  "started_at": 1783966807.3099241,
+  "verdict": "PASS"
+}

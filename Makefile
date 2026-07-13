@@ -56,6 +56,10 @@ triage:
 	@echo "🩻 Categorizing the crash-forensics record into incident classes..."
 	@$(PYTHON) tools/crash_triage.py --window-days 7 --out artifacts/reliability/triage.json || true
 
+release-preflight:
+	@echo "🛫 Running the pinned release checklist..."
+	@$(PYTHON) tools/release_preflight.py
+
 nonparametric-proof:
 	@echo "🧠 Proving one-shot foreground non-parametric recall on the real reflex model..."
 	@$(PYTHON) tools/nonparametric_proof.py

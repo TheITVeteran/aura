@@ -1,0 +1,293 @@
+{
+  "class_count": 19,
+  "classes": [
+    {
+      "count": 19,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "resource_observation.py:_process_from_handle"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783956867.txt",
+      "fingerprint": "stall:resource_observation.py:_process_from_handle:5-10s",
+      "first_seen": 1783956525.0814633,
+      "first_seen_iso": "2026-07-13T08:28:45",
+      "kind": "stall",
+      "last_seen": 1783956868.6958163,
+      "last_seen_iso": "2026-07-13T08:34:28"
+    },
+    {
+      "count": 9,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "resource_observation.py:memory"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783956877.txt",
+      "fingerprint": "stall:resource_observation.py:memory:5-10s",
+      "first_seen": 1783925929.0766134,
+      "first_seen_iso": "2026-07-12T23:58:49",
+      "kind": "stall",
+      "last_seen": 1783956878.0753653,
+      "last_seen_iso": "2026-07-13T08:34:38"
+    },
+    {
+      "count": 4,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "atomic_writer.py:atomic_write_bytes"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783938555.txt",
+      "fingerprint": "stall:atomic_writer.py:atomic_write_bytes:5-10s",
+      "first_seen": 1783923271.4202337,
+      "first_seen_iso": "2026-07-12T23:14:31",
+      "kind": "stall",
+      "last_seen": 1783938556.2040298,
+      "last_seen_iso": "2026-07-13T03:29:16"
+    },
+    {
+      "count": 4,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "liquid_substrate.py:_state_snapshot_locked"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783934624.txt",
+      "fingerprint": "stall:liquid_substrate.py:_state_snapshot_locked:5-10s",
+      "first_seen": 1783924104.285851,
+      "first_seen_iso": "2026-07-12T23:28:24",
+      "kind": "stall",
+      "last_seen": 1783934625.1639123,
+      "last_seen_iso": "2026-07-13T02:23:45"
+    },
+    {
+      "count": 2,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "resource_stakes.py:_load_state"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783956704.txt",
+      "fingerprint": "stall:resource_stakes.py:_load_state:5-10s",
+      "first_seen": 1783923960.1982815,
+      "first_seen_iso": "2026-07-12T23:26:00",
+      "kind": "stall",
+      "last_seen": 1783956707.1439989,
+      "last_seen_iso": "2026-07-13T08:31:47"
+    },
+    {
+      "count": 2,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "qualia_engine.py:_cosine_similarity"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783925728.txt",
+      "fingerprint": "stall:qualia_engine.py:_cosine_similarity:5-10s",
+      "first_seen": 1783924869.629364,
+      "first_seen_iso": "2026-07-12T23:41:09",
+      "kind": "stall",
+      "last_seen": 1783925732.963313,
+      "last_seen_iso": "2026-07-12T23:55:32"
+    },
+    {
+      "count": 2,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "safe_imports.py:guarded_import"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783956568.txt",
+      "fingerprint": "stall:safe_imports.py:guarded_import:5-10s",
+      "first_seen": 1783956562.548073,
+      "first_seen_iso": "2026-07-13T08:29:22",
+      "kind": "stall",
+      "last_seen": 1783956570.226763,
+      "last_seen_iso": "2026-07-13T08:29:30"
+    },
+    {
+      "count": 1,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "server.py:emit"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783925274.txt",
+      "fingerprint": "stall:server.py:emit:5-10s",
+      "first_seen": 1783925275.0172994,
+      "first_seen_iso": "2026-07-12T23:47:55",
+      "kind": "stall",
+      "last_seen": 1783925275.0172994,
+      "last_seen_iso": "2026-07-12T23:47:55"
+    },
+    {
+      "count": 1,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "dimensional_expansion.py:_compute_residual"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783925368.txt",
+      "fingerprint": "stall:dimensional_expansion.py:_compute_residual:5-10s",
+      "first_seen": 1783925371.27079,
+      "first_seen_iso": "2026-07-12T23:49:31",
+      "kind": "stall",
+      "last_seen": 1783925371.27079,
+      "last_seen_iso": "2026-07-12T23:49:31"
+    },
+    {
+      "count": 1,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "dimensional_expansion.py:_update_contribution_scores"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783925635.txt",
+      "fingerprint": "stall:dimensional_expansion.py:_update_contribution_scores:5-10s",
+      "first_seen": 1783925637.1941383,
+      "first_seen_iso": "2026-07-12T23:53:57",
+      "kind": "stall",
+      "last_seen": 1783925637.1941383,
+      "last_seen_iso": "2026-07-12T23:53:57"
+    },
+    {
+      "count": 1,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "atomic_writer.py:_fsync_file"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783925871.txt",
+      "fingerprint": "stall:atomic_writer.py:_fsync_file:5-10s",
+      "first_seen": 1783925874.6298227,
+      "first_seen_iso": "2026-07-12T23:57:54",
+      "kind": "stall",
+      "last_seen": 1783925874.6298227,
+      "last_seen_iso": "2026-07-12T23:57:54"
+    },
+    {
+      "count": 1,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "model_registry.py:get_model_path"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783925974.txt",
+      "fingerprint": "stall:model_registry.py:get_model_path:5-10s",
+      "first_seen": 1783925975.2556214,
+      "first_seen_iso": "2026-07-12T23:59:35",
+      "kind": "stall",
+      "last_seen": 1783925975.2556214,
+      "last_seen_iso": "2026-07-12T23:59:35"
+    },
+    {
+      "count": 1,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "memory_monitor.py:_process_tree_rss_gb"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783926436.txt",
+      "fingerprint": "stall:memory_monitor.py:_process_tree_rss_gb:5-10s",
+      "first_seen": 1783926440.794899,
+      "first_seen_iso": "2026-07-13T00:07:20",
+      "kind": "stall",
+      "last_seen": 1783926440.794899,
+      "last_seen_iso": "2026-07-13T00:07:20"
+    },
+    {
+      "count": 1,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "neural_mesh.py:_refresh_cached_snapshots"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783936476.txt",
+      "fingerprint": "stall:neural_mesh.py:_refresh_cached_snapshots:5-10s",
+      "first_seen": 1783936481.3930645,
+      "first_seen_iso": "2026-07-13T02:54:41",
+      "kind": "stall",
+      "last_seen": 1783936481.3930645,
+      "last_seen_iso": "2026-07-13T02:54:41"
+    },
+    {
+      "count": 1,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "atomic_writer.py:_fsync_dir"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783956677.txt",
+      "fingerprint": "stall:atomic_writer.py:_fsync_dir:5-10s",
+      "first_seen": 1783956680.3896208,
+      "first_seen_iso": "2026-07-13T08:31:20",
+      "kind": "stall",
+      "last_seen": 1783956680.3896208,
+      "last_seen_iso": "2026-07-13T08:31:20"
+    },
+    {
+      "count": 1,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "adaptive_immunity.py:_save_state"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783956715.txt",
+      "fingerprint": "stall:adaptive_immunity.py:_save_state:5-10s",
+      "first_seen": 1783956719.1963966,
+      "first_seen_iso": "2026-07-13T08:31:59",
+      "kind": "stall",
+      "last_seen": 1783956719.1963966,
+      "last_seen_iso": "2026-07-13T08:31:59"
+    },
+    {
+      "count": 1,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "adaptive_immunity.py:to_dict"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783956778.txt",
+      "fingerprint": "stall:adaptive_immunity.py:to_dict:5-10s",
+      "first_seen": 1783956779.165574,
+      "first_seen_iso": "2026-07-13T08:32:59",
+      "kind": "stall",
+      "last_seen": 1783956779.165574,
+      "last_seen_iso": "2026-07-13T08:32:59"
+    },
+    {
+      "count": 1,
+      "detail": {
+        "bucket": "5-10s",
+        "thread_kind": "event_loop",
+        "top_frame": "runtime_manifest.py:_source_owner"
+      },
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/stalls/stall_1783956818.txt",
+      "fingerprint": "stall:runtime_manifest.py:_source_owner:5-10s",
+      "first_seen": 1783956819.6602237,
+      "first_seen_iso": "2026-07-13T08:33:39",
+      "kind": "stall",
+      "last_seen": 1783956819.6602237,
+      "last_seen_iso": "2026-07-13T08:33:39"
+    },
+    {
+      "count": 30,
+      "detail": {},
+      "example_receipt": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs/memory/sentinel.log#2026-07-13T08:35:52-0700",
+      "fingerprint": "orderly_exit:sigterm_guard",
+      "first_seen": 1783889636.0,
+      "first_seen_iso": "2026-07-12T13:53:56",
+      "kind": "orderly_exit",
+      "last_seen": 1783956952.0,
+      "last_seen_iso": "2026-07-13T08:35:52"
+    }
+  ],
+  "collector_errors": [],
+  "generated_at": 1783966899.5964642,
+  "generated_at_iso": "2026-07-13T11:21:39",
+  "hard_death_total": 0,
+  "root": "/Users/bryan/.aura/live-source/.claude/worktrees/fable-improvement-pass/data/error_logs",
+  "schema": "aura.crash_triage.v1",
+  "window_days": 1.0
+}
