@@ -3,13 +3,13 @@ the main execution loop, and cognitive retries.
 
 Extracted from orchestrator.py as part of the God Object decomposition.
 """
-from core.runtime.errors import Severity, record_degradation
 import asyncio
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from core.runtime.background_policy import background_loop_start_reason
+from core.runtime.errors import Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger(__name__)
@@ -57,7 +57,6 @@ class LifecycleCoordinator:
 
         while orch.status.running and not orch._stop_event.is_set():
             try:
-                loop_start = time.time()
                 did_work = await orch._process_cycle()
 
                 # Dynamic Backoff
@@ -202,13 +201,15 @@ class LifecycleCoordinator:
             ):
                 if hasattr(orch.consciousness, 'start'):
                     res = orch.consciousness.start()
-                    if res and hasattr(res, '__await__'): await res
+                    if res and hasattr(res, '__await__'):
+                        await res
             elif background_start_block:
                 logger.info("Consciousness background loop not started: %s", background_start_block)
             if not background_start_block and hasattr(orch, 'curiosity') and orch.curiosity:
                 if hasattr(orch.curiosity, 'start'):
                     res = orch.curiosity.start()
-                    if res and hasattr(res, '__await__'): await res
+                    if res and hasattr(res, '__await__'):
+                        await res
                 logger.info("✓ Curiosity background loop started")
             elif background_start_block:
                 logger.info("Curiosity background loop not started: %s", background_start_block)
@@ -216,7 +217,8 @@ class LifecycleCoordinator:
             if not background_start_block and hasattr(orch, 'proactive_comm') and orch.proactive_comm:
                 if hasattr(orch.proactive_comm, 'start'):
                     res = orch.proactive_comm.start()
-                    if res and hasattr(res, '__await__'): await res
+                    if res and hasattr(res, '__await__'):
+                        await res
                 logger.info("✓ Proactive Communication loop started")
             elif background_start_block:
                 logger.info("Proactive Communication loop not started: %s", background_start_block)
@@ -259,7 +261,8 @@ class LifecycleCoordinator:
             if hasattr(orch, 'cognition') and orch.cognition:
                 if hasattr(orch.cognition, 'initialize'):
                     res = orch.cognition.initialize()
-                    if res and hasattr(res, '__await__'): await res
+                    if res and hasattr(res, '__await__'):
+                        await res
                 logger.info("✓ Advanced Cognitive Layer (Learning, Memory, Beliefs) initialized")
             # Start Phase 5: Autonomic Core heartbeat
             if hasattr(orch, 'autonomic_core') and orch.autonomic_core:
@@ -290,7 +293,7 @@ class LifecycleCoordinator:
         """
         from core.container import ServiceContainer
 
-        REQUIRED_SERVICES = [
+        required_services = [
             "subsystem_audit",
             "event_bus",
             "mycelial_network",
@@ -302,7 +305,7 @@ class LifecycleCoordinator:
         ]
 
         ready = 0
-        for name in REQUIRED_SERVICES:
+        for name in required_services:
             try:
                 svc = ServiceContainer.get(name, default=None)
                 if svc is not None:
@@ -319,7 +322,7 @@ class LifecycleCoordinator:
                 logger.debug("Boot barrier: %s failed to instantiate: %s", name, e)
 
         logger.info("Boot barrier: %d/%d core services ready. Background loops may proceed.",
-                     ready, len(REQUIRED_SERVICES))
+                     ready, len(required_services))
 
     async def stop(self):
         """Signal the orchestrator to stop gracefully."""
@@ -400,8 +403,15 @@ class LifecycleCoordinator:
                 orch.dream_cycle.stop()
             if getattr(orch, "hardware_manager", None):
                 await orch.hardware_manager.stop()
-            from core.container import ServiceContainer
-            await ServiceContainer.shutdown()
+            if (
+                str(getattr(orch, "_aura_container_shutdown_owner", "lifecycle"))
+                != "graceful_shutdown"
+            ):
+                from core.container import ServiceContainer
+
+                await ServiceContainer.shutdown()
+            else:
+                logger.info("ServiceContainer teardown deferred to the process root.")
         except (ImportError, AttributeError, RuntimeError) as e:
             _record_lifecycle_degradation(
                 e,

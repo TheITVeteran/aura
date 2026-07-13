@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -25,10 +26,15 @@ class _FakeProcess:
 
 
 class _FakeSubprocessGateway:
-    def __init__(self, process: _FakeProcess) -> None:
+    def __init__(self, process: subprocess.CompletedProcess[str] | _FakeProcess) -> None:
         self.process = process
+        self.run_calls: list[dict[str, object]] = []
         self.spawn_calls: list[dict[str, object]] = []
         self.shell_calls: list[dict[str, object]] = []
+
+    async def run_async(self, argv, **kwargs):
+        self.run_calls.append({"argv": list(argv), **kwargs})
+        return self.process
 
     async def spawn_async(self, argv, **kwargs):
         self.spawn_calls.append({"argv": list(argv), **kwargs})
@@ -52,7 +58,9 @@ def test_script_ast_guard_blocks_destructive_applescript() -> None:
 async def test_applescript_runner_uses_subprocess_gateway(monkeypatch) -> None:
     from core.capabilities import host_automation
 
-    gateway = _FakeSubprocessGateway(_FakeProcess(stdout=b"Notes\n"))
+    gateway = _FakeSubprocessGateway(
+        subprocess.CompletedProcess(["osascript"], 0, "Notes\n", "")
+    )
     monkeypatch.setattr(host_automation, "get_subprocess_gateway", lambda: gateway)
 
     receipt = await AppleScriptRunner.run(
@@ -63,16 +71,19 @@ async def test_applescript_runner_uses_subprocess_gateway(monkeypatch) -> None:
 
     assert receipt.success is True
     assert receipt.result == "Notes"
-    assert gateway.spawn_calls[0]["argv"][:2] == ["osascript", "-e"]
-    assert gateway.spawn_calls[0]["read_only"] is True
-    assert gateway.spawn_calls[0]["source"] == "unit.host_automation.frontmost"
+    assert gateway.run_calls[0]["argv"][:2] == ["osascript", "-e"]
+    assert gateway.run_calls[0]["read_only"] is True
+    assert gateway.run_calls[0]["source"] == "unit.host_automation.frontmost"
+    assert gateway.run_calls[0]["timeout"] == 10.0
 
 
 @pytest.mark.asyncio
 async def test_host_applescript_inspection_is_read_only_and_not_action_logged(monkeypatch) -> None:
     from core.capabilities import host_automation
 
-    gateway = _FakeSubprocessGateway(_FakeProcess(stdout=b"Finder\n"))
+    gateway = _FakeSubprocessGateway(
+        subprocess.CompletedProcess(["osascript"], 0, "Finder\n", "")
+    )
     monkeypatch.setattr(host_automation, "get_subprocess_gateway", lambda: gateway)
     provider = HostAutomationProvider()
 
@@ -84,8 +95,8 @@ async def test_host_applescript_inspection_is_read_only_and_not_action_logged(mo
 
     assert receipt.success is True
     assert receipt.action == "inspect_applescript"
-    assert gateway.spawn_calls[0]["read_only"] is True
-    assert gateway.spawn_calls[0]["source"] == "unit.host_automation.inspection"
+    assert gateway.run_calls[0]["read_only"] is True
+    assert gateway.run_calls[0]["source"] == "unit.host_automation.inspection"
     assert provider.get_recent_receipts() == []
 
 

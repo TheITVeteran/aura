@@ -6,6 +6,45 @@ from types import SimpleNamespace
 import pytest
 
 
+def test_resident_bridge_uses_exact_launcher_pid_without_process_table_scan(
+    monkeypatch,
+    tmp_path,
+):
+    from core.runtime import resource_observation
+    from core.security import native_desktop_bridge as bridge
+
+    executable = tmp_path / "Aura.app" / "Contents" / "MacOS" / "aura-launcher"
+    executable.parent.mkdir(parents=True)
+    executable.write_text("launcher", encoding="utf-8")
+    process = SimpleNamespace(
+        pid=4242,
+        exe=str(executable),
+        cmdline=(str(executable),),
+    )
+
+    class ExactObserver:
+        def __init__(self):
+            self.requested: list[int] = []
+
+        def process(self, pid):
+            self.requested.append(pid)
+            return process if pid == 4242 else None
+
+        def processes(self):
+            raise AssertionError("resident identity must not scan the process table")
+
+    observer = ExactObserver()
+    monkeypatch.setenv("AURA_NATIVE_BRIDGE_PID", "4242")
+    monkeypatch.setenv(
+        "AURA_NATIVE_BRIDGE_PID_FILE",
+        str(tmp_path / "missing-launcher.lock"),
+    )
+    monkeypatch.setattr(resource_observation, "get_resource_observer", lambda: observer)
+
+    assert bridge._resident_bridge_process_running(executable) is True
+    assert observer.requested == [4242]
+
+
 def test_native_bridge_probe_uses_read_only_canonical_subprocess(monkeypatch, tmp_path):
     from core.security import native_desktop_bridge as bridge
 

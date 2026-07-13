@@ -87,12 +87,15 @@ class WatchEntry:
 
 
 class SelfHealing:
+    shutdown_timeout_s = 8.0
+
     def __init__(self) -> None:
         self._watches: dict[str, WatchEntry] = {}
         self._deep_repairs: dict[str, asyncio.Task] = {}
         self._module_path_cache: dict[str, str | None] = {}
         self._task: asyncio.Task | None = None
         self._running = False
+        self._stop_lock = asyncio.Lock()
         try:
             configured_timeout = float(os.environ.get("AURA_SELF_HEALING_LEDGER_TIMEOUT_S", "5.0"))
         except (TypeError, ValueError):
@@ -143,14 +146,21 @@ class SelfHealing:
         self._task = create_tracked_task(_loop(), name="SelfHealing")
 
     async def stop(self) -> None:
-        self._running = False
-        if self._task is not None:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass  # no-op: intentional
+        async with self._stop_lock:
+            self._running = False
+            owned_tasks = [
+                task
+                for task in (self._task, *self._deep_repairs.values())
+                if task is not None
+                and task is not asyncio.current_task()
+                and not task.done()
+            ]
             self._task = None
+            for task in owned_tasks:
+                task.cancel()
+            if owned_tasks:
+                await asyncio.gather(*owned_tasks, return_exceptions=True)
+            self._deep_repairs.clear()
 
     def get_status(self) -> dict[str, Any]:
         now = time.time()

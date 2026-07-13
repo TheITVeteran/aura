@@ -65,6 +65,8 @@ class MorphogeneticRuntime:
       - enforces caps on signals, cells, organs and actions per tick
     """
 
+    shutdown_timeout_s = 8.0
+
     def __init__(
         self,
         *,
@@ -96,6 +98,8 @@ class MorphogeneticRuntime:
         self._last_degradation_at = 0.0
         self._hooks_wired = False
         self._last_hook_results: dict[str, Any] = {}
+        self._stop_lock = asyncio.Lock()
+        self._persisted_on_stop = False
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -113,6 +117,7 @@ class MorphogeneticRuntime:
                 severity="degraded",
             )
         self._stopping.clear()
+        self._persisted_on_stop = False
         self._started_at = time.time()
         self._task = create_tracked_task(
             self._run_loop(),
@@ -121,24 +126,28 @@ class MorphogeneticRuntime:
         logger.info("MorphogeneticRuntime started.")
 
     async def stop(self) -> None:
-        self._stopping.set()
-        task = self._task
-        if task:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass  # no-op: intentional
-        try:
-            await asyncio.to_thread(self.registry.save)
-        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
-            self._last_degradation_at = time.time()
-            _record_morphogenesis_runtime_degradation(
-                exc,
-                action="completed morphogenesis shutdown while registry save failed; in-memory state was preserved until process exit",
-                severity="critical",
-            )
-        logger.info("MorphogeneticRuntime stopped.")
+        async with self._stop_lock:
+            self._stopping.set()
+            task = self._task
+            self._task = None
+            if task and task is not asyncio.current_task():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass  # intentional cancellation of the owned loop
+            if not self._persisted_on_stop:
+                try:
+                    await asyncio.to_thread(self.registry.save)
+                    self._persisted_on_stop = True
+                except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as exc:
+                    self._last_degradation_at = time.time()
+                    _record_morphogenesis_runtime_degradation(
+                        exc,
+                        action="completed morphogenesis shutdown while registry save failed; in-memory state was preserved until process exit",
+                        severity="critical",
+                    )
+            logger.info("MorphogeneticRuntime stopped.")
 
     async def on_stop_async(self) -> None:
         """ServiceContainer lifecycle hook — ensures clean shutdown."""

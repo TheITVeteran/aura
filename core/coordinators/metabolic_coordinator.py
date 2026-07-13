@@ -327,22 +327,6 @@ class MetabolicCoordinator:
                     _record_metabolic_degradation(exc, action="resource-governor sample skipped")
                     logger.debug("Resource governor sample unavailable: %s", exc)
 
-                try:
-                    from core.runtime.control_plane import get_runtime_control_plane
-
-                    control_report = await get_runtime_control_plane().reconcile_once()
-                    if not control_report.get("critical_ready", True):
-                        logger.warning(
-                            "Runtime control plane has unresolved critical desired state: %s",
-                            control_report.get("services", {}),
-                        )
-                except _METABOLIC_BOUNDARY_ERRORS as exc:
-                    _record_metabolic_degradation(
-                        exc,
-                        action="runtime control-plane reconciliation skipped",
-                    )
-                    logger.debug("Runtime control-plane reconcile unavailable: %s", exc)
-
             # ── Initiative Overflow: cap adjustment ───────────────────
             if cycle_count > 0 and cycle_count % 60 == 0:
                 try:

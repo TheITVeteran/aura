@@ -88,6 +88,72 @@ def _install_auxiliary_feeds(monkeypatch, *, broken=False):
 
 
 @pytest.mark.asyncio
+async def test_structured_publish_uses_governed_candidate_ingress(monkeypatch):
+    from core.consciousness.global_workspace import ContentType, GlobalWorkspace
+
+    checked_sources: list[str] = []
+
+    class HealthyInhibition:
+        instance_id = "inhibition-publish"
+
+        async def is_inhibited(self, source):
+            checked_sources.append(source)
+            return False
+
+    _install_services(monkeypatch, inhibition=HealthyInhibition())
+    workspace = GlobalWorkspace()
+
+    accepted = await workspace.publish(
+        priority=0.8,
+        source="Swarm::ag-123",
+        payload={"status": "completed", "result_length": 42},
+        reason="Swarm internal monologue step completed",
+        content_type=ContentType.META,
+    )
+
+    assert accepted is True
+    assert checked_sources == ["Swarm::ag-123"]
+    candidate = workspace._candidates[0]
+    assert candidate.source == "Swarm::ag-123"
+    assert candidate.content_type is ContentType.META
+    assert candidate.metadata == {
+        "schema": "aura.workspace.signal.v1",
+        "reason": "Swarm internal monologue step completed",
+        "payload": {"status": "completed", "result_length": 42},
+    }
+
+
+@pytest.mark.asyncio
+async def test_structured_publish_rejects_unattributed_signal(monkeypatch):
+    from core.consciousness.global_workspace import GlobalWorkspace
+
+    _install_services(monkeypatch)
+    with pytest.raises(ValueError, match="source must be non-empty"):
+        await GlobalWorkspace().publish(priority=0.5, source=" ", payload={})
+
+
+@pytest.mark.asyncio
+async def test_structured_publish_bounds_large_payload_with_reconstructable_digest(monkeypatch):
+    import hashlib
+    import json
+
+    from core.consciousness.global_workspace import GlobalWorkspace
+
+    _install_services(monkeypatch)
+    payload = {"result": "x" * 70_000}
+    payload_json = json.dumps(payload, ensure_ascii=True, default=str, sort_keys=True)
+    workspace = GlobalWorkspace()
+
+    assert await workspace.publish(priority=0.5, source="bounded-producer", payload=payload)
+
+    preserved = workspace._candidates[0].metadata["payload"]
+    assert preserved["truncated"] is True
+    assert preserved["original_bytes"] == len(payload_json.encode("utf-8"))
+    assert preserved["sha256"] == hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+    assert len(preserved["preview"]) == 4096
+
+
+@pytest.mark.asyncio
 async def test_workspace_records_auxiliary_failures_without_losing_winner(monkeypatch):
     from core.consciousness.global_workspace import CognitiveCandidate, GlobalWorkspace
 

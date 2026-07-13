@@ -31,6 +31,9 @@ from core.runtime.flags import FlagKind, declare
 
 logger = logging.getLogger("Aura.RuntimeControlPlane")
 
+CONTROL_PLANE_RECONCILE_TASK_NAME = "runtime_control_plane_reconcile"
+CONTROL_PLANE_RECONCILE_INTERVAL_S = 5.0
+
 _ADMISSION_RECEIPT_HEARTBEAT_FLAG = declare(
     "AURA_ADMISSION_RECEIPT_HEARTBEAT_S",
     kind=FlagKind.FLOAT,
@@ -1683,6 +1686,46 @@ def reset_runtime_control_plane() -> None:
         _CONTROL_PLANE = None
 
 
+async def reconcile_registered_runtime_control_plane() -> dict[str, Any]:
+    """Advance the initialized control plane without constructing one implicitly."""
+    from core.container import ServiceContainer
+
+    control_plane = ServiceContainer.peek("runtime_control_plane", default=None)
+    if control_plane is None:
+        raise RuntimeError("runtime control plane is not registered")
+    reconcile = getattr(control_plane, "reconcile_once", None)
+    if not callable(reconcile):
+        raise TypeError("registered runtime control plane lacks reconcile_once")
+    report = reconcile()
+    if inspect.isawaitable(report):
+        report = await report
+    if not isinstance(report, dict):
+        raise TypeError("runtime control plane reconcile_once returned a non-dictionary report")
+    return report
+
+
+async def register_runtime_control_plane_reconciler(scheduler: Any) -> None:
+    """Register the canonical desired-state heartbeat with Aura's scheduler."""
+    from core.scheduler import TaskSpec
+
+    register = getattr(scheduler, "register", None)
+    if not callable(register):
+        raise TypeError("runtime scheduler lacks register")
+    await register(
+        TaskSpec(
+            name=CONTROL_PLANE_RECONCILE_TASK_NAME,
+            coro=reconcile_registered_runtime_control_plane,
+            tick_interval=CONTROL_PLANE_RECONCILE_INTERVAL_S,
+            critical=True,
+            priority=100,
+            metadata={
+                "owner": "core.runtime.control_plane",
+                "contract": "desired_state_convergence",
+            },
+        )
+    )
+
+
 __all__ = [
     "AdmissionDecision",
     "AdmissionOutcome",
@@ -1695,6 +1738,10 @@ __all__ = [
     "ResourceAdmissionController",
     "RuntimeControlPlane",
     "WorkClass",
+    "CONTROL_PLANE_RECONCILE_INTERVAL_S",
+    "CONTROL_PLANE_RECONCILE_TASK_NAME",
     "get_runtime_control_plane",
+    "reconcile_registered_runtime_control_plane",
+    "register_runtime_control_plane_reconciler",
     "reset_runtime_control_plane",
 ]

@@ -6,6 +6,8 @@ import time
 import pytest
 
 from core.runtime.control_plane import (
+    CONTROL_PLANE_RECONCILE_INTERVAL_S,
+    CONTROL_PLANE_RECONCILE_TASK_NAME,
     AdmissionOutcome,
     AdmissionPriority,
     AdmissionRequest,
@@ -16,12 +18,68 @@ from core.runtime.control_plane import (
     ResourceAdmissionController,
     RuntimeControlPlane,
     WorkClass,
+    register_runtime_control_plane_reconciler,
 )
 from core.runtime.receipts import ReceiptStore
 
 
 def _normal_pressure() -> PressureSnapshot:
     return PressureSnapshot(memory_percent=42.0, thermal_level=0, loop_lag_s=0.01)
+
+
+@pytest.mark.asyncio
+async def test_registered_reconciler_owns_periodic_recovery_from_boot_degradation(
+    monkeypatch,
+):
+    from core.container import ServiceContainer
+
+    healthy = False
+    plane = RuntimeControlPlane(
+        admission=ResourceAdmissionController(pressure_provider=_normal_pressure)
+    )
+    plane.register_service(
+        DesiredServiceSpec(
+            name="boot_pressure",
+            critical=True,
+            restart_on_unhealthy=False,
+        ),
+        start=lambda: None,
+        stop=lambda: None,
+        probe=lambda: healthy,
+        adopt_running=True,
+    )
+    first = await plane.reconcile_once()
+    assert first["services"]["boot_pressure"]["observed_state"] == "degraded"
+    assert plane.is_ready() is False
+
+    monkeypatch.setattr(
+        ServiceContainer,
+        "peek",
+        staticmethod(lambda name, default=None: plane if name == "runtime_control_plane" else default),
+    )
+
+    class RecordingScheduler:
+        def __init__(self):
+            self.spec = None
+
+        async def register(self, spec):
+            self.spec = spec
+
+    scheduler = RecordingScheduler()
+    await register_runtime_control_plane_reconciler(scheduler)
+
+    assert scheduler.spec is not None
+    assert scheduler.spec.name == CONTROL_PLANE_RECONCILE_TASK_NAME
+    assert scheduler.spec.tick_interval == CONTROL_PLANE_RECONCILE_INTERVAL_S
+    assert scheduler.spec.critical is True
+    assert scheduler.spec.metadata["contract"] == "desired_state_convergence"
+
+    healthy = True
+    report = await scheduler.spec.coro()
+
+    assert report["critical_ready"] is True
+    assert report["converged"] is True
+    assert plane.is_ready() is True
 
 
 @pytest.mark.asyncio
@@ -169,12 +227,13 @@ async def test_zero_receipt_heartbeat_disables_coalescing(monkeypatch, tmp_path)
         pressure_provider=lambda: PressureSnapshot(memory_percent=94.0),
         receipt_store=store,
     )
-    request = lambda: AdmissionRequest(
-        owner="maintenance",
-        work_class=WorkClass.BACKGROUND,
-        priority=AdmissionPriority.BACKGROUND,
-        timeout_s=0,
-    )
+    def request() -> AdmissionRequest:
+        return AdmissionRequest(
+            owner="maintenance",
+            work_class=WorkClass.BACKGROUND,
+            priority=AdmissionPriority.BACKGROUND,
+            timeout_s=0,
+        )
 
     first = await controller.acquire(request())
     second = await controller.acquire(request())

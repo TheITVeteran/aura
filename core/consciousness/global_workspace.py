@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
+import json
 import logging
+import math
 import os
 import random
 import time
@@ -49,6 +52,8 @@ _INHIBITION_GATE_TIMEOUT_FLAG = declare(
     description="Maximum time allowed for the workspace global-inhibition safety gate",
     owner="core.consciousness.global_workspace",
 )
+_MAX_STRUCTURED_SIGNAL_BYTES = 64 * 1024
+_MAX_STRUCTURED_SIGNAL_PREVIEW_CHARS = 4096
 
 
 def _record_workspace_degradation(
@@ -123,6 +128,7 @@ class CognitiveCandidate:
     submitted_at: float = field(default_factory=time.time)
     gate_instance_id: str = field(default="", repr=False)
     gate_checked_at: float = field(default=0.0, repr=False)
+    metadata: dict[str, Any] = field(default_factory=dict, compare=False)
 
     @property
     def salience(self) -> float:
@@ -387,6 +393,61 @@ class GlobalWorkspace:
     # ------------------------------------------------------------------
     # Submission API — called by subsystems every heartbeat tick
     # ------------------------------------------------------------------
+
+    async def publish(
+        self,
+        *,
+        priority: float,
+        source: str,
+        payload: dict[str, Any],
+        reason: str = "",
+        content_type: ContentType = ContentType.UNKNOWN,
+    ) -> bool:
+        """Admit a structured signal through the canonical workspace gate.
+
+        Older infrastructure producers publish structured work items. This
+        adapter preserves that payload while routing the signal through the
+        same inhibition and competition path as every native candidate.
+        """
+        normalized_source = " ".join(str(source or "").strip().split())[:160]
+        if not normalized_source:
+            raise ValueError("workspace signal source must be non-empty")
+        if not isinstance(payload, dict):
+            raise TypeError("workspace signal payload must be a dictionary")
+        try:
+            normalized_priority = float(priority)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("workspace signal priority must be numeric") from exc
+        if not math.isfinite(normalized_priority):
+            raise ValueError("workspace signal priority must be finite")
+        normalized_priority = max(0.0, min(1.0, normalized_priority))
+        normalized_reason = " ".join(str(reason or "").strip().split())[:500]
+        content = normalized_reason or f"Structured workspace signal from {normalized_source}"
+        payload_json = json.dumps(payload, ensure_ascii=True, default=str, sort_keys=True)
+        payload_bytes = payload_json.encode("utf-8")
+        if len(payload_bytes) <= _MAX_STRUCTURED_SIGNAL_BYTES:
+            preserved_payload: dict[str, Any] = json.loads(payload_json)
+        else:
+            preserved_payload = {
+                "truncated": True,
+                "original_bytes": len(payload_bytes),
+                "sha256": hashlib.sha256(payload_bytes).hexdigest(),
+                "preview": payload_json[:_MAX_STRUCTURED_SIGNAL_PREVIEW_CHARS],
+            }
+        metadata = {
+            "schema": "aura.workspace.signal.v1",
+            "reason": normalized_reason,
+            "payload": preserved_payload,
+        }
+        return await self.submit(
+            CognitiveCandidate(
+                content=content,
+                source=normalized_source,
+                priority=normalized_priority,
+                content_type=content_type,
+                metadata=metadata,
+            )
+        )
 
     def _resolve_global_inhibition(self) -> InhibitionManager:
         manager = ServiceContainer.get("inhibition_manager", default=None)

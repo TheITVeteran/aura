@@ -2376,6 +2376,11 @@ async def _stop_orchestrator_once(
     if orchestrator is None or getattr(orchestrator, "_aura_stop_invoked", False):
         return
     orchestrator._aura_stop_invoked = True
+    # The process root always follows orchestrator teardown with
+    # GracefulShutdown, which is the canonical owner of ServiceContainer.
+    # Mark that ownership before stopping the orchestrator so the same service
+    # hooks cannot run twice in one lifecycle.
+    orchestrator._aura_container_shutdown_owner = "graceful_shutdown"
     if request_global_shutdown:
         request_shutdown(reason)
     stop = getattr(orchestrator, "stop", None)

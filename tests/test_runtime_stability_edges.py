@@ -516,6 +516,33 @@ class TestStallWatchdogRecovery(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSelfHealingLoopSafety(unittest.IsolatedAsyncioTestCase):
+    async def test_stop_drains_loop_and_deep_repair_ownership(self):
+        from core.runtime.self_healing import SelfHealing
+
+        healer = SelfHealing()
+        cancelled: list[str] = []
+
+        async def owned_task(name: str) -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append(name)
+
+        loop_task = asyncio.create_task(owned_task("loop"))
+        repair_task = asyncio.create_task(owned_task("repair"))
+        healer._task = loop_task
+        healer._running = True
+        healer._deep_repairs["core/example.py"] = repair_task
+        await asyncio.sleep(0)
+
+        await healer.stop()
+
+        self.assertCountEqual(cancelled, ["loop", "repair"])
+        self.assertTrue(loop_task.done())
+        self.assertTrue(repair_task.done())
+        self.assertEqual(healer.get_status()["deep_repairs_active"], 0)
+        self.assertGreaterEqual(healer.shutdown_timeout_s, 5.0)
+
     async def test_ledger_write_timeout_does_not_block_tick(self):
         from core.runtime.self_healing import SelfHealing
 

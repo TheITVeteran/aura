@@ -25,6 +25,7 @@ import hashlib
 import logging
 import os
 import re
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -215,19 +216,16 @@ class AppleScriptRunner:
         try:
             from core.governance_context import local_internal_governed_scope
             with local_internal_governed_scope(source, domain="tool_execution"):
-                proc = await get_subprocess_gateway().spawn_async(
+                completed = await get_subprocess_gateway().run_async(
                     ["osascript", "-e", script],
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
+                    timeout=timeout,
                     read_only=read_only,
+                    capture_output=True,
                     source=source,
                 )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-            success = proc.returncode == 0
-            result = stdout.decode("utf-8", errors="replace").strip() if stdout else ""
-            error = stderr.decode("utf-8", errors="replace").strip() if stderr and not success else ""
+            success = completed.returncode == 0
+            result = str(completed.stdout or "").strip()
+            error = str(completed.stderr or "").strip() if not success else ""
 
             return AutomationReceipt(
                 action="execute_applescript",
@@ -239,7 +237,7 @@ class AppleScriptRunner:
                 duration_ms=(time.time() - start) * 1000,
                 script_hash=hashlib.sha256(script.encode()).hexdigest()[:16],
             )
-        except TimeoutError:
+        except (TimeoutError, subprocess.TimeoutExpired):
             return AutomationReceipt(
                 action="execute_applescript",
                 target=script[:200],

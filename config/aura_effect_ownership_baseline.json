@@ -12521,6 +12521,14 @@
       "scope": "<module>.CodeTruthEngine._ruff"
     },
     {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/capabilities/host_automation.py",
+      "scope": "<module>.AppleScriptRunner.run"
+    },
+    {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run",
       "canonical_owner": false,
       "category": "subprocess_gateway",
@@ -13546,6 +13554,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "62f2e871c5f716038b68bec3c300ad0d4f5744e11d693db3032b141c406cdc9b",
+  "inventory_sha256": "a0220689593fbd9a4c05883ec3a4d3302b8bf442caa055f34bd88901ee4f7313",
   "schema_version": 1
 }

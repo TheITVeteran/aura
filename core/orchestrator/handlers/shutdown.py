@@ -155,6 +155,53 @@ async def _gracefully_stop_actor_via_bus(
     return False
 
 
+async def _shutdown_service_container(orch: RobustOrchestrator) -> dict[str, object] | None:
+    """Close registered services unless the process root owns final teardown."""
+
+    container_owner = str(
+        getattr(orch, "_aura_container_shutdown_owner", "orchestrator")
+    )
+    if container_owner == "graceful_shutdown":
+        logger.info("ServiceContainer teardown deferred to the process root.")
+        return None
+
+    try:
+        from core.container import ServiceContainer
+
+        container_shutdown_report = await asyncio.wait_for(
+            ServiceContainer.shutdown(),
+            timeout=50.0,
+        )
+        orch._container_shutdown_report = container_shutdown_report
+        if container_shutdown_report.get("clean") is not True:
+            error = RuntimeError(
+                "ServiceContainer shutdown completed with failures: "
+                f"{sorted(container_shutdown_report.get('failed_hooks', {}))[:10]}"
+            )
+            _record_shutdown_degradation(
+                error,
+                action="preserved degraded service-container shutdown evidence",
+                severity="degraded",
+            )
+            logger.error("%s", error)
+        return container_shutdown_report
+    except TimeoutError:
+        _record_shutdown_degradation(
+            TimeoutError("ServiceContainer shutdown timed out"),
+            action="continued shutdown after ServiceContainer shutdown timed out",
+            severity="degraded",
+        )
+        logger.error("ServiceContainer shutdown timed out")
+    except (ImportError, AttributeError, RuntimeError) as exc:
+        _record_shutdown_degradation(
+            exc,
+            action="continued shutdown after ServiceContainer shutdown failed",
+            severity="degraded",
+        )
+        logger.error("Error during ServiceContainer shutdown: %s", exc)
+    return None
+
+
 async def orchestrator_shutdown(orch: RobustOrchestrator) -> None:
     """Gracefully shut down all orchestrator subsystems in priority order."""
     if hasattr(orch, "status") and not orch.status.running:
@@ -425,43 +472,7 @@ async def _orchestrator_shutdown_impl(orch: RobustOrchestrator) -> None:
         )
         logger.debug("Agent delegator stop error: %s", exc)
 
-    try:
-        from core.container import ServiceContainer
-
-        container_shutdown_report = await asyncio.wait_for(
-            ServiceContainer.shutdown(
-                hook_timeout_s=1.5,
-                total_timeout_s=12.0,
-                exclude={"runtime_hygiene"},
-            ),
-            timeout=14.0,
-        )
-        orch._container_shutdown_report = container_shutdown_report
-        if container_shutdown_report.get("clean") is not True:
-            error = RuntimeError(
-                "ServiceContainer shutdown completed with failures: "
-                f"{sorted(container_shutdown_report.get('failed_hooks', {}))[:10]}"
-            )
-            _record_shutdown_degradation(
-                error,
-                action="preserved degraded service-container shutdown evidence",
-                severity="degraded",
-            )
-            logger.error("%s", error)
-    except TimeoutError:
-        _record_shutdown_degradation(
-            TimeoutError("ServiceContainer shutdown timed out"),
-            action="continued shutdown after ServiceContainer shutdown timed out",
-            severity="degraded",
-        )
-        logger.error("ServiceContainer shutdown timed out")
-    except (ImportError, AttributeError, RuntimeError) as exc:
-        _record_shutdown_degradation(
-            exc,
-            action="continued shutdown after ServiceContainer shutdown failed",
-            severity="degraded",
-        )
-        logger.error("Error during ServiceContainer shutdown: %s", exc)
+    await _shutdown_service_container(orch)
 
     if hasattr(orch, "_event_loop_monitor") and orch._event_loop_monitor:
         try:

@@ -857,8 +857,8 @@ class ServiceContainer:
     async def shutdown(
         cls,
         *,
-        hook_timeout_s: float = 1.5,
-        total_timeout_s: float = 12.0,
+        hook_timeout_s: float = 5.0,
+        total_timeout_s: float = 45.0,
         exclude: Collection[str] | None = None,
     ) -> dict[str, Any]:
         """Cleanup singleton services in reverse order and return durable evidence."""

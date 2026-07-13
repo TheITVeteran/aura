@@ -35,6 +35,28 @@ def test_shutdown_latch_is_visible_before_grace_flag_io(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
+async def test_process_root_marks_single_container_shutdown_owner() -> None:
+    from aura_main import _stop_orchestrator_once
+
+    observed_owner: list[str] = []
+
+    class _Orchestrator:
+        async def stop(self) -> None:
+            observed_owner.append(self._aura_container_shutdown_owner)
+
+    orchestrator = _Orchestrator()
+
+    await _stop_orchestrator_once(
+        orchestrator,
+        reason="test_root_owner",
+        request_global_shutdown=False,
+    )
+
+    assert observed_owner == ["graceful_shutdown"]
+    assert orchestrator._aura_stop_invoked is True
+
+
+@pytest.mark.asyncio
 async def test_global_asyncio_patch_preserves_explicit_shutdown_task_scope() -> None:
     from core.utils.asyncio_patch import install_asyncio_task_patch
     from core.utils.task_tracker import (

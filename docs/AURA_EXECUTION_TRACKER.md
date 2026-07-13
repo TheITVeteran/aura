@@ -76,6 +76,7 @@ Status rules:
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
 | `RESOURCE-001` | `COMPLETE 2026-07-12` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. | Pass F 3; Addendum 22; Checkpoint 34 |
+| `MEMORY-LEAK-001` | `OPEN (H1 CONFIRMED) 2026-07-13` | Attribute and eliminate the measured 350-450 MB/hour idle orchestrator RSS growth without relying on restart, pressure-triggered reclamation, model-worker exclusion, or a raised limit. Use allocation-growth evidence plus owned cache/queue/task/resource cardinalities to identify every contributor; add bounded-growth and release regressions, prove a stable live plateau across idle and ordinary interaction, and retain restart/crash continuity. | `RESOURCE-001`, `RUNTIME-001`, `FAULT-001`, `PERF-001`; two independent 45/70-minute idle windows in `docs/SYSTEMS_MATURITY_2026_07_12.md`; attribution attempt `never_ready` remains open |
 | `FOREGROUND-LATENCY-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, and background activity. | `PERF-001`, `RUNTIME-001`, `FAULT-001`; Checkpoint 51; live `event_loop_lag_3.638s` MLX admission denial at 00:32 on 2026-07-13 |
 | `SHUTDOWN-001` | `COMPLETE 2026-07-11` | Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes. | Addendum 32, `CTX2-SHUTDOWN-001..003` |
 | `FAULT-001` | `IN PROGRESS` | Drain the FMEA and degradation-policy backlog: root-fix broad catches, swallowed cancellation, false success/health, partial mutation, retry storms, leaks, and noisy fallback at their originating layer. | Pass F 4; Matrix 12 |
@@ -87,6 +88,7 @@ Status rules:
 | `SELF-STATE-CHAT-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make direct questions about Aura's own condition use one fresh canonical self-state projection with calibrated uncertainty and conversational continuity; host telemetry may support but must never replace the answer. Prove the launched desktop path cannot route "are you okay/feeling fine" into a generic RAM/CPU status response. | `CONVERSATION-001`, `MIND-001`, `STATE-001`; Checkpoint 52; live defect at 00:27-00:28 on 2026-07-13 |
 | `SUBSTRATE-001` | `OPEN` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. | Matrix 2-3; Addendum 20 and 29 |
 | `DESKTOP-001` | `IN PROGRESS 2026-07-12` | Generalize computer use into perception-plan-act-observe-repair loops over browser, files, Notes/Docs/PDF/images, dialogs, focus, permissions, changed layouts, and multi-app workflows. | Pass F 7; Matrix 7; Checkpoint 38 |
+| `OS-AUTOMATION-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make every bounded OS inspection/effect use the canonical governed automation and subprocess contracts without blocking the event loop during process creation, leaking child ownership, reducing generality to app-specific scripts, or claiming success before objective effect verification. Exercise periodic browser/window/clipboard perception and foreground desktop actions together under live lag budgets. | `DESKTOP-001`, `EFFECT-001`, `FOREGROUND-LATENCY-001`, `TOOLS-001`; live SIGUSR1 stack in `AppleScriptRunner -> spawn_async -> create_subprocess_exec` on 2026-07-13 |
 | `DESKTOP-ACCESS-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate repeated resident-bridge/direct TCC probe timeouts from the launched desktop path. Separate expected permission latency from faults, deduplicate concurrent probes, preserve successful dimensions, use truthful cached/readiness conditions, and prevent one probe timeout from producing duplicate degradation, fault, and affective-strain amplification. | `DESKTOP-001`, `FAULT-001`, `RUNTIME-001`; Checkpoint 51; live `system.desktop_access.*_probe` timeout defects at 00:28 on 2026-07-13 |
 | `TOOLS-001` | `IN PROGRESS` | Make long, precise multi-tool workflows typed, resumable, idempotent, budgeted, compensating, provider-change tolerant, source preserving, and complete only after durable observed effects. | Matrix 9; original context tool/handoff goals |
 | `SKILLS-001` | `COMPLETE 2026-07-10` | Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill. | Addendum 23, `CTX2-GATE-*` and `CTX2-SKILL-*` |
@@ -105,6 +107,7 @@ Status rules:
 | `MULTIMODAL-001` | `IN PROGRESS 2026-07-12` | Preserve the canonical bounded event-time fusion and causal cognition path while completing every producer, consented visual speech, calibrated situation modeling, live hardware/occlusion evaluation, and longitudinal action/repair evidence. | Capability Addendum 33, `CTX3-PERCEPT-*` |
 | `SOCIAL-001` | `IN PROGRESS 2026-07-12` | Preserve the exact-agent calibrated live situation path while unifying identity-scoped relational memory, consent/boundary history, cultural and power-context uncertainty, multi-party reasoning, outcome learning, and longitudinal live repair evidence without manipulation or intimacy overclaim. | Capability Addendum 33, `CTX3-SOCIAL-*`; Checkpoints 41-45 |
 | `MULTIAGENT-001` | `OPEN` | Generalize complex subagent management into typed delegation, scoped authority, budget/deadline ownership, shared-world coordination, conflict arbitration, cancellation, recovery, and end-to-end accountability. | Capability Addendum 33, `CTX3-SUBAGENT-*` |
+| `WORKSPACE-INGRESS-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Give every structured subsystem, swarm, and distributed signal one typed, attributed, bounded ingress into the canonical GlobalWorkspace. Compatibility producers must preserve payload provenance while still passing inhibition and competition; API drift must not emit repeated degradations or amplify synthetic affective strain. Prove live swarm start/completion and hive ingestion without `publish`/`submit` contract faults. | `ARCH-001`, `SUBSTRATE-001`, `MULTIAGENT-001`, `FAULT-001`; live repeated `GlobalWorkspace` missing `publish` faults on 2026-07-13 |
 | `DISTRIBUTED-001` | `IN PROGRESS 2026-07-12` | Support governed distributed embodiment and execution across heterogeneous network devices with capability negotiation, identity/attestation, partition tolerance, idempotency, safety interlocks, compensation, and truthful degraded operation. | Capability Addendum 33, `CTX3-DIST-*` |
 | `VALUES-001` | `OPEN` | Turn preference/value formation, strategic modeling, and manipulation resistance into provenance-bearing, corrigible, constitutionally bounded, longitudinally stable causal mechanisms with conflict and rollback evidence. | Capability Addendum 33, `CTX3-VALUE-*` |
 | `NEUROSIM-001` | `OPEN` | Establish scientifically bounded high-fidelity neural simulation and connectome mapping/tuning with explicit model assumptions, measurable prediction/control objectives, causal ablations, safe optimization, and rollback. | Capability Addendum 33, `CTX3-NEURO-*` |
@@ -13515,3 +13518,87 @@ Immediate next work and proof burden:
   Then drain `STORAGE-GATEWAY-001` and continue every remaining master-index
   item. Multi-hour and 24-72 hour soaks remain deferred until all shorter gates
   are green.
+
+## Checkpoint 2026-07-13-56: Deterministic Control Plane, Workspace Ingress, And Root-Owned Shutdown
+
+This checkpoint advances `RUNTIME-001`, `OS-AUTOMATION-001`,
+`WORKSPACE-INGRESS-001`, `FOREGROUND-LATENCY-001`, `DESKTOP-ACCESS-001`,
+`LIFECYCLE-001`, `ASYNC-TASK-001`, `FAULT-001`, `ARCH-001`, and
+`LAUNCH-PROVENANCE-001`. Source and bounded gates are green. The signed app has
+not yet been rebuilt from this exact commit, so the affected launched items
+remain `LIVE OPEN`.
+
+Converted the checkpoint-55 live evidence into deterministic owners:
+
+- Runtime-control-plane reconciliation is now a dedicated critical scheduler
+  task with a five-second cadence. It borrows only an initialized control plane
+  and publishes typed success/failure evidence. Reconciliation is no longer an
+  incidental branch of a 60-second metabolic callback whose independently
+  changing cycle counter could miss its exact modulo condition forever.
+- `GlobalWorkspace.publish()` is now a governed compatibility ingress into the
+  canonical submit/inhibition/competition path. It validates source, priority,
+  and structured payloads; preserves attribution; and bounds oversized payloads
+  with digest, byte count, and preview evidence. Swarm lifecycle telemetry can
+  no longer repeatedly fail on API drift and amplify synthetic affective strain.
+- AppleScript execution now uses the canonical bounded, thread-offloaded
+  subprocess gateway one-shot instead of creating a subprocess on Aura's main
+  loop. The reviewed gateway owner is recorded in the exact effect-ownership
+  ratchet. Resident native-bridge discovery now probes exact launcher PID,
+  parent, and lock-file identities without full process-table `Path.resolve()`
+  scanning; the Swift launcher passes its exact PID to the Python child.
+
+Established one process-root shutdown verdict:
+
+- Desktop/server process roots mark `GracefulShutdown` as the one
+  `ServiceContainer` teardown owner before orchestrator stop. Standalone
+  orchestrator and lifecycle hosts retain complete teardown, while the normal
+  app path cannot execute hundreds of service hooks twice and replay stale
+  first-pass failures into the terminal verdict.
+- Default per-hook and whole-container budgets now reflect real persistence
+  work rather than a 1.5-second blanket. Morphogenesis stop is single-flight,
+  clears its loop owner, and persists exactly once. Self-healing stop owns,
+  cancels, observes, and clears both its watchdog and every deep-repair task.
+  Direct regressions prove root ownership and both service lifecycle contracts.
+
+Live evidence that remains to be replaced by the rebuilt app:
+
+- The checkpoint-55 app stayed unhealthy for more than 17 minutes because
+  `runtime_control_plane` never reconciled. A live SIGUSR1 sample identified the
+  simultaneous main-loop AppleScript spawn and resident-bridge process scan.
+  The same interval repeatedly emitted missing `GlobalWorkspace.publish`
+  degradations and eventually produced hard event-loop lag.
+- Native app quit reaped both launcher and Python child within 2.5 seconds, but
+  the old two-pass container report retained `self_healing:stop` and
+  `morphogenetic_runtime:on_stop_async` timeouts. This checkpoint closes the
+  source causes; only a clean current-build terminal report can close live proof.
+
+Verification completed for this source checkpoint:
+
+- Control-plane/workspace/native-bridge/desktop/launcher focus passed `105/105`;
+  scheduler/metabolic/hardening/swarm adjacency passed `96/96`; and additional
+  workspace/delegator/hive coverage passed `21/21`. The complete shutdown,
+  graceful-coordinator, morphogenesis, runtime-stability, and orchestrator
+  compatibility matrix passed `178/178` plus one subtest.
+- Configured Ruff and Python compilation pass over every touched source and
+  test. Swift typecheck, `git diff --check`, and strict MyPy across all `78`
+  configured production anchors pass. Enterprise static, all `37/37`
+  production-readiness checks, and all `20/20` closeout-rubric criteria pass.
+- The new pinned release preflight passes all eight gates: whole-source compile,
+  lint, smoke behavior, exact governance inventory, security scan, enterprise
+  ratchets, production contract, and fresh hard-death triage. Its explicit
+  deferred set remains the full six-chunk certification suite, live startup
+  budget, and endurance soak.
+
+Immediate next work and proof burden:
+
+- Commit and push this checkpoint on current shared `main`; rebuild, install,
+  and launch the signed `/Applications/Aura.app` from that exact revision. Prove
+  launch identity and readiness, concurrent desktop probes, original two-turn
+  self-condition chat, healthy foreground/background MLX recovery, swarm
+  workspace telemetry, clean app quit, terminal container/hygiene evidence, and
+  successful relaunch through the real GUI/API path.
+- `AUTONOMY-AUTHORITY-001` remains open: foreground no-dialog execution is not a
+  substitute for standing, revocable authority for safe self-initiated action.
+  The newly confirmed `MEMORY-LEAK-001` is also mandatory; passing crash triage
+  does not establish bounded indefinite RSS. After current live proof, continue
+  these and `STORAGE-GATEWAY-001` before any final multi-hour or 24-72 hour soak.

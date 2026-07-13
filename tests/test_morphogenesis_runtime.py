@@ -122,6 +122,28 @@ async def test_morphogenesis_status_is_json_safe():
     assert "tick" in serialised
 
 
+@pytest.mark.asyncio
+async def test_morphogenesis_stop_is_single_flight_and_persists_once():
+    class _Registry:
+        def __init__(self) -> None:
+            self.save_calls = 0
+
+        def save(self) -> None:
+            self.save_calls += 1
+
+    registry = _Registry()
+    rt = MorphogeneticRuntime(
+        config=MorphogenesisConfig(enabled=False),
+        registry=registry,  # type: ignore[arg-type]
+    )
+
+    await asyncio.gather(rt.stop(), rt.stop())
+
+    assert registry.save_calls == 1
+    assert rt._task is None
+    assert rt.shutdown_timeout_s >= 5.0
+
+
 # ---------------------------------------------------------------------------
 # 4. Field diffusion across tissue edges
 # ---------------------------------------------------------------------------

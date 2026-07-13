@@ -64,6 +64,7 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert "NSRunningApplication.runningApplications(withBundleIdentifier:" in swift
     assert "NSApp.terminate(nil)" in swift
     assert "releaseAppInstanceLock" in swift
+    assert 'env["AURA_NATIVE_BRIDGE_PID"] = String(ProcessInfo.processInfo.processIdentifier)' in swift
     assert '--open-gui-window' in swift
     assert "replacementReason(expectedSemver:" in swift
     assert "launcherReady || systemReady || conversationOperational" in swift

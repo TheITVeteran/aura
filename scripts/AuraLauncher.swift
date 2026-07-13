@@ -1684,6 +1684,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         env.removeValue(forKey: "AURA_DESKTOP_ALLOW_SECONDARY_MODEL_REPAIR")
         env["AURA_LOCAL_BACKEND"] = "mlx"
         env["AURA_LAUNCHED_FROM_APP"] = "1"
+        env["AURA_NATIVE_BRIDGE_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         env["AURA_DESKTOP_RESOURCE_GUARD"] = "1"
         env["AURA_ENABLE_BACKGROUND_COGNITION"] = "1"
         env["AURA_ENABLE_DESKTOP_BACKGROUND_LOCAL_LLM"] = "1"

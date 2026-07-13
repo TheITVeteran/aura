@@ -1859,6 +1859,9 @@ class RobustOrchestrator(
         await scheduler.register(
             TaskSpec(name="subsystem_audit", coro=self._pulse_subsystem_audit, tick_interval=5.0)
         )
+        from core.runtime.control_plane import register_runtime_control_plane_reconciler
+
+        await register_runtime_control_plane_reconciler(scheduler)
         # v48 DEPRECATION: The legacy 'cognitive_cycle' is disabled in favor of
         # the MindTick loop (Sovereign mode). Running both causes queue race conditions
         # and double-processing instability.

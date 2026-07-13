@@ -171,14 +171,14 @@ def _cached_code_signature_summary(executable: Path | None) -> dict[str, Any]:
 
 def _candidate_executables() -> tuple[Path, ...]:
     configured = str(os.getenv("AURA_NATIVE_DESKTOP_BRIDGE", "") or "").strip()
-    project_root = Path(__file__).resolve().parents[2]
+    project_root = Path(__file__).absolute().parents[2]
     candidates = [
         Path(configured).expanduser() if configured else None,
         Path("/Applications/Aura.app/Contents/MacOS/aura-launcher"),
         project_root / "dist" / "Aura.app" / "Contents" / "MacOS" / "aura-launcher",
     ]
     return tuple(
-        candidate.resolve()
+        Path(os.path.abspath(os.path.expanduser(str(candidate))))
         for candidate in candidates
         if candidate is not None and candidate.is_file() and os.access(candidate, os.X_OK)
     )
@@ -194,7 +194,7 @@ def native_desktop_bridge_identity(*, executable: Path | None = None) -> dict[st
 
     candidate = executable or bridge_executable()
     if candidate is not None:
-        candidate = candidate.expanduser().resolve(strict=False)
+        candidate = Path(os.path.abspath(os.path.expanduser(str(candidate))))
     return {
         "bridge_executable": str(candidate or ""),
         "resident_running": _resident_bridge_process_running(candidate),
@@ -235,31 +235,53 @@ def _resident_bridge_process_running(executable: Path | None = None) -> bool:
     executable = executable or bridge_executable()
     if executable is None:
         return False
+    expected = os.path.normcase(
+        os.path.normpath(os.path.abspath(os.path.expanduser(str(executable))))
+    )
+    candidate_pids: list[int] = []
+    for raw_pid in (os.getenv("AURA_NATIVE_BRIDGE_PID", ""), os.getppid()):
+        try:
+            pid = int(raw_pid)
+        except (TypeError, ValueError):
+            continue
+        if pid > 1 and pid not in candidate_pids:
+            candidate_pids.append(pid)
+    launcher_lock = Path(
+        os.getenv(
+            "AURA_NATIVE_BRIDGE_PID_FILE",
+            "~/.aura/locks/desktop-app-instance.lock",
+        )
+    ).expanduser()
     try:
-        executable_resolved = executable.resolve()
-    except OSError:
-        executable_resolved = executable
+        lock_pid = int(launcher_lock.read_text(encoding="utf-8").strip().splitlines()[0])
+        if lock_pid > 1 and lock_pid not in candidate_pids:
+            candidate_pids.append(lock_pid)
+    except (OSError, IndexError, TypeError, ValueError):
+        pass
+
+    def _matches(value: Any) -> bool:
+        text = str(value or "").strip()
+        if not text:
+            return False
+        observed = os.path.normcase(
+            os.path.normpath(os.path.abspath(os.path.expanduser(text)))
+        )
+        return observed == expected
+
     try:
         from core.runtime.resource_observation import get_resource_observer
 
-        for process in get_resource_observer().processes():
+        observer = get_resource_observer()
+        for pid in candidate_pids:
             try:
-                proc_exe = process.exe
-                if proc_exe:
-                    try:
-                        if Path(proc_exe).resolve() == executable_resolved:
-                            return True
-                    except OSError:
-                        if Path(proc_exe) == executable:
-                            return True
+                process = observer.process(pid)
+                if process is None:
+                    continue
+                if _matches(process.exe):
+                    return True
                 cmdline = process.cmdline
-                if cmdline:
-                    try:
-                        if Path(str(cmdline[0])).resolve() == executable_resolved:
-                            return True
-                    except OSError:
-                        if Path(str(cmdline[0])) == executable:
-                            return True
+                if cmdline and _matches(cmdline[0]):
+                    return True
             except (OSError, TypeError, ValueError):
                 continue
     except (ImportError, OSError, RuntimeError, TypeError, ValueError):

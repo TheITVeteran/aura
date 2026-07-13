@@ -8,16 +8,17 @@ import pytest
 from core.container import ServiceContainer
 from core.orchestrator.handlers.shutdown import (
     _gracefully_stop_actor_via_bus,
+    _shutdown_service_container,
     orchestrator_shutdown,
 )
 from core.orchestrator.mixins.boot.boot_cognitive import BootCognitiveMixin
 from core.orchestrator.mixins.boot.boot_resilience import BootResilienceMixin
 from core.orchestrator.mixins.output_formatter import OutputFormatterMixin
-from core.runtime.errors import get_degradation_tracker
 from core.runtime.control_plane import (
     get_runtime_control_plane,
     reset_runtime_control_plane,
 )
+from core.runtime.errors import get_degradation_tracker
 
 
 class _BootProbe(BootCognitiveMixin):
@@ -72,6 +73,23 @@ class AsyncCallFixture:
 
     def assert_not_called(self):
         assert self.calls == []
+
+
+@pytest.mark.asyncio
+async def test_process_root_is_single_service_container_shutdown_owner(monkeypatch):
+    service_shutdown = AsyncCallFixture()
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.shutdown",
+        service_shutdown,
+    )
+    orch = SimpleNamespace(
+        _aura_container_shutdown_owner="graceful_shutdown",
+    )
+
+    report = await _shutdown_service_container(orch)
+
+    assert report is None
+    service_shutdown.assert_not_called()
 
 
 @pytest.mark.asyncio
