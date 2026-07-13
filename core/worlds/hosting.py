@@ -32,12 +32,13 @@ from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.worlds.embodied import EmbodiedAgent
 from core.worlds.generation import WorldBlueprint, generate_world
-from core.worlds.physics import PhysicsError, PhysicsWorld
+from core.worlds.physics import Body, PhysicsError, PhysicsWorld
 
 logger = logging.getLogger("Aura.Worlds")
 
 MAX_TICKS_PER_STEP = 10_000
 MAX_WORLDS = 64
+MAX_BODIES_PER_WORLD = 512
 _JOURNAL_CAP = 500
 _IMPULSE_JOURNAL_THRESHOLD = 2.0
 _SCHEMA_VERSION = 1
@@ -429,6 +430,186 @@ class WorldHost:
             staged.updated_at = time.time()
             await self._commit_existing(world, staged)
             return result
+
+    # ── authorship: conjure, banish, sculpt, environment ───────
+
+    async def conjure_body(self, world_id: str, spec: dict[str, Any]) -> dict[str, Any]:
+        """Add a body of Aura's design. Bounded (count, size, mass) but
+        otherwise hers: dynamic or static, any material in range."""
+        world = self.load_world(world_id)
+        if len(world.physics.bodies) >= MAX_BODIES_PER_WORLD:
+            raise PhysicsError(f"body cap ({MAX_BODIES_PER_WORLD}) reached")
+        body_id = str(spec.get("body_id", "") or "").strip().lower()
+        if not _WORLD_ID_PATTERN.match(body_id):
+            raise PhysicsError("body_id must be 1-64 chars of a-z 0-9 _ -")
+        shape = str(spec.get("shape", "sphere") or "sphere")
+        if shape not in {"sphere", "box"}:
+            raise PhysicsError("conjured shape must be sphere or box")
+        mass = float(spec.get("mass", 1.0) or 0.0)
+        radius = float(spec.get("radius", 0.4) or 0.4)
+        half_extents = tuple(
+            float(x) for x in (spec.get("half_extents") or (0.4, 0.4, 0.4))
+        )
+        if not 0.0 <= mass <= 1000.0:
+            raise PhysicsError("mass must be in [0, 1000]")
+        if shape == "sphere" and not 0.05 <= radius <= 5.0:
+            raise PhysicsError("radius must be in [0.05, 5.0]")
+        if shape == "box" and not all(0.05 <= x <= 10.0 for x in half_extents):
+            raise PhysicsError("half_extents must each be in [0.05, 10.0]")
+        body = Body(
+            body_id=body_id,
+            shape=shape,
+            position=tuple(float(x) for x in (spec.get("at") or (0.0, 0.0, 2.0))),
+            velocity=tuple(float(x) for x in (spec.get("velocity") or (0.0, 0.0, 0.0))),
+            mass=mass,
+            radius=radius,
+            half_extents=half_extents,
+            restitution=min(1.0, max(0.0, float(spec.get("restitution", 0.4) or 0.0))),
+            friction=min(2.0, max(0.0, float(spec.get("friction", 0.5) or 0.0))),
+            rolling_resistance=min(0.2, max(0.0, float(
+                spec.get("rolling_resistance", 0.02) or 0.0))),
+        )
+        world.physics.add_body(body)
+        world.record("conjured", {
+            "body": body_id, "shape": shape, "mass": mass,
+            "at": [float(x) for x in body.position],
+        })
+        world.updated_at = time.time()
+        await self._persist(world)
+        return world.summary()
+
+    async def banish_body(self, world_id: str, body_id: str) -> dict[str, Any]:
+        """Remove a body of her choosing. Agents are inhabitants, not
+        furniture — they cannot be banished through this surface."""
+        world = self.load_world(world_id)
+        body_id = str(body_id or "").strip().lower()
+        if body_id in world.agents:
+            raise PhysicsError("agents cannot be banished; they are inhabitants")
+        if not world.physics.remove_body(body_id):
+            raise PhysicsError(f"unknown body '{body_id}'")
+        world.record("banished", {"body": body_id})
+        world.updated_at = time.time()
+        await self._persist(world)
+        return world.summary()
+
+    async def sculpt_terrain(
+        self, world_id: str, x: float, y: float, radius: float, delta: float
+    ) -> dict[str, Any]:
+        """Reshape the land: raise or carve the heightfield around (x, y)
+        with a smooth falloff, then rebuild the terrain colliders."""
+        world = self.load_world(world_id)
+        if not 0.5 <= radius <= 16.0:
+            raise PhysicsError("sculpt radius must be in [0.5, 16.0]")
+        if not -10.0 <= delta <= 10.0:
+            raise PhysicsError("sculpt delta must be in [-10, 10]")
+        blueprint = world.blueprint
+        size = blueprint.size
+        heights = np.asarray(blueprint.heightfield, dtype=np.float64)
+        grid_x = np.arange(size) - size / 2.0 + 0.5
+        gx, gy = np.meshgrid(grid_x, grid_x, indexing="ij")
+        distance = np.sqrt((gx - float(x)) ** 2 + (gy - float(y)) ** 2)
+        falloff = np.clip(1.0 - distance / float(radius), 0.0, 1.0)
+        # Smooth (cosine) brush, heights clamped to sane terrain bounds.
+        brush = float(delta) * (0.5 - 0.5 * np.cos(np.pi * falloff))
+        heights = np.clip(heights + brush, 0.0, 30.0)
+        blueprint.heightfield = [[round(float(h), 6) for h in row] for row in heights]
+        self._rebuild_terrain(world)
+        world.record("sculpted", {
+            "at": [float(x), float(y)], "radius": float(radius),
+            "delta": float(delta),
+        })
+        world.updated_at = time.time()
+        await self._persist(world)
+        return world.summary()
+
+    def _rebuild_terrain(self, world: HostedWorld) -> None:
+        """Re-derive terrain colliders from the (possibly sculpted)
+        heightfield, matching the blueprint realization sampling."""
+        terrain_ids = [
+            key for key in world.physics.bodies if key.startswith("terrain_")
+        ]
+        columns = max(
+            (int(key.split("_")[1]) for key in terrain_ids), default=7
+        ) + 1
+        for key in terrain_ids:
+            world.physics.remove_body(key)
+        heights = np.asarray(world.blueprint.heightfield, dtype=np.float64)
+        size = world.blueprint.size
+        cell = size / columns
+        for i in range(columns):
+            for j in range(columns):
+                sample_x = min(int((i + 0.5) * cell), size - 1)
+                sample_y = min(int((j + 0.5) * cell), size - 1)
+                height = float(heights[sample_x, sample_y])
+                if height < 0.05:
+                    continue
+                world.physics.add_body(Body(
+                    body_id=f"terrain_{i}_{j}",
+                    shape="box",
+                    position=(
+                        (i + 0.5) * cell - size / 2.0,
+                        (j + 0.5) * cell - size / 2.0,
+                        height / 2.0,
+                    ),
+                    velocity=(0.0, 0.0, 0.0),
+                    mass=0.0,
+                    half_extents=(cell / 2.0, cell / 2.0, max(height / 2.0, 1e-3)),
+                    restitution=0.2,
+                    friction=0.9,
+                ))
+
+    async def set_environment(self, world_id: str, *, gravity: float) -> dict[str, Any]:
+        """World-level choices: gravity from near-weightless to heavy."""
+        world = self.load_world(world_id)
+        if not -30.0 <= gravity <= 0.0:
+            raise PhysicsError("gravity must be in [-30, 0]")
+        world.physics.gravity[2] = float(gravity)
+        # A gravity change is world news: everything sleeping should feel it.
+        for body in world.physics.bodies.values():
+            if not body.is_static:
+                body.sleeping = False
+                body.still_ticks = 0
+        world.record("environment", {"gravity": float(gravity)})
+        world.updated_at = time.time()
+        await self._persist(world)
+        return world.summary()
+
+    async def conjure_structure(
+        self, world_id: str, *, kind: str, at: tuple[float, float, float],
+        span: int = 4, static: bool = True,
+    ) -> dict[str, Any]:
+        """Composed designs: wall, tower, or stairs raised in one act."""
+        if kind not in {"wall", "tower", "stairs"}:
+            raise PhysicsError("structure kind must be wall, tower, or stairs")
+        if not 1 <= int(span) <= 16:
+            raise PhysicsError("span must be in [1, 16]")
+        world = self.load_world(world_id)
+        if len(world.physics.bodies) + span > MAX_BODIES_PER_WORLD:
+            raise PhysicsError(f"body cap ({MAX_BODIES_PER_WORLD}) reached")
+        base = np.asarray(at, dtype=np.float64)
+        half = 0.5
+        stamp = world.physics.tick
+        made: list[str] = []
+        for index in range(int(span)):
+            if kind == "wall":
+                offset = np.array([index * 2 * half, 0.0, half])
+            elif kind == "tower":
+                offset = np.array([0.0, 0.0, half + index * 2 * half])
+            else:  # stairs: forward and up
+                offset = np.array([index * 2 * half, 0.0, half + index * half])
+            body_id = f"{kind}_{stamp}_{index}"
+            world.physics.add_body(Body(
+                body_id=body_id, shape="box",
+                position=tuple(base + offset), velocity=(0.0, 0.0, 0.0),
+                mass=0.0 if static else 2.0, half_extents=(half, half, half),
+                restitution=0.2, friction=0.8,
+            ))
+            made.append(body_id)
+        world.record("structure", {"kind": kind, "bodies": made,
+                                   "at": [float(v) for v in at]})
+        world.updated_at = time.time()
+        await self._persist(world)
+        return {**world.summary(), "bodies_created": made}
 
     # ── counterfactual forking ─────────────────────────────────
 

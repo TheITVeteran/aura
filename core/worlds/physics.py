@@ -243,7 +243,15 @@ class PhysicsWorld:
         return body
 
     def remove_body(self, body_id: str) -> bool:
-        return self.bodies.pop(body_id, None) is not None
+        removed = self.bodies.pop(body_id, None) is not None
+        if removed:
+            # Purge warm-start entries: a future body reusing this id must
+            # not inherit a ghost impulse from its predecessor.
+            self._contact_cache = {
+                pair: value for pair, value in self._contact_cache.items()
+                if body_id not in pair
+            }
+        return removed
 
     def body(self, body_id: str) -> Body:
         try:

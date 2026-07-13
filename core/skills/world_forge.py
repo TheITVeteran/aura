@@ -37,6 +37,11 @@ WorldAction = Literal[
     "compare",
     "practice",
     "practice_summary",
+    "conjure",
+    "banish",
+    "sculpt",
+    "environment",
+    "structure",
 ]
 AgentCommand = Literal[
     "proprioception",
@@ -85,6 +90,21 @@ class WorldForgeInput(BaseModel):  # type: ignore[misc]
     top: int = Field(default=8, ge=1, le=64)
     recent_events: int = Field(default=10, ge=0, le=500)
     kind: Literal["navigate", "fetch"] = "navigate"
+    # Authorship: conjure / banish / sculpt / environment / structure.
+    shape: Literal["sphere", "box"] = "sphere"
+    at: tuple[float, float, float] | None = None
+    body_radius: float = Field(default=0.4, ge=0.05, le=5.0, allow_inf_nan=False)
+    half_extents: tuple[float, float, float] | None = None
+    mass: float = Field(default=1.0, ge=0.0, le=1000.0, allow_inf_nan=False)
+    restitution: float = Field(default=0.4, ge=0.0, le=1.0, allow_inf_nan=False)
+    friction: float = Field(default=0.5, ge=0.0, le=2.0, allow_inf_nan=False)
+    rolling_resistance: float = Field(default=0.02, ge=0.0, le=0.2, allow_inf_nan=False)
+    gravity: float | None = Field(default=None, ge=-30.0, le=0.0, allow_inf_nan=False)
+    sculpt_radius: float = Field(default=3.0, ge=0.5, le=16.0, allow_inf_nan=False)
+    delta: float | None = Field(default=None, ge=-10.0, le=10.0, allow_inf_nan=False)
+    structure: Literal["wall", "tower", "stairs"] = "wall"
+    span: int = Field(default=4, ge=1, le=16)
+    static: bool = True
 
     @field_validator("impulse", "target")  # type: ignore[untyped-decorator]
     @classmethod
@@ -109,6 +129,16 @@ class WorldForgeInput(BaseModel):  # type: ignore[misc]
             raise ValueError("agent navigate command requires target")
         if self.action == "agent" and self.command == "walk" and self.ticks > 6_000:
             raise ValueError("agent walk command supports at most 6000 ticks")
+        if self.action == "conjure" and (self.body_id is None or self.at is None):
+            raise ValueError("conjure requires body_id and at")
+        if self.action == "banish" and self.body_id is None:
+            raise ValueError("banish requires body_id")
+        if self.action == "sculpt" and (self.target is None or self.delta is None):
+            raise ValueError("sculpt requires target (x, y) and delta")
+        if self.action == "environment" and self.gravity is None:
+            raise ValueError("environment requires gravity")
+        if self.action == "structure" and self.at is None:
+            raise ValueError("structure requires at")
         return self
 
 
@@ -126,8 +156,10 @@ class WorldForgeSkill(BaseSkill):  # type: ignore[misc]
         "translational dynamics plus rotational sphere dynamics (gravity, collisions, "
         "friction), an embodied agent "
         "body (walk, look via raycasts, jump, grasp, throw, navigate with A*), "
-        "counterfactual world-forking, and a journal of what happened. Worlds "
-        "survive restarts."
+        "counterfactual world-forking, embodied practice with scored tasks, and "
+        "full authorship: conjure and banish bodies, sculpt terrain, raise "
+        "walls/towers/stairs, and choose the gravity. Worlds survive restarts "
+        "and remember their history."
     )
     effect_scope = "state_mutation"
     input_model = WorldForgeInput
@@ -301,6 +333,65 @@ class WorldForgeSkill(BaseSkill):  # type: ignore[misc]
                         f"{report['bodies_compared']} shared bodies; "
                         f"identical={report['identical']}."
                     ),
+                )
+            if action == "conjure":
+                summary = await host.conjure_body(request.world_id or "", {
+                    "body_id": request.body_id,
+                    "shape": request.shape,
+                    "at": request.at,
+                    "mass": request.mass,
+                    "radius": request.body_radius,
+                    "half_extents": request.half_extents,
+                    "restitution": request.restitution,
+                    "friction": request.friction,
+                    "rolling_resistance": request.rolling_resistance,
+                })
+                return self._ok(
+                    action, world=summary,
+                    summary=f"Conjured {request.shape} '{request.body_id}' at "
+                            f"{list(request.at or ())} in '{summary['world_id']}'.",
+                )
+            if action == "banish":
+                summary = await host.banish_body(
+                    request.world_id or "", request.body_id or "")
+                return self._ok(
+                    action, world=summary,
+                    summary=f"Banished '{request.body_id}' from "
+                            f"'{summary['world_id']}'.",
+                )
+            if action == "sculpt":
+                target = request.target or (0.0, 0.0)
+                summary = await host.sculpt_terrain(
+                    request.world_id or "",
+                    float(target[0]), float(target[1]),
+                    request.sculpt_radius, float(request.delta or 0.0),
+                )
+                verb = "Raised" if (request.delta or 0.0) >= 0 else "Carved"
+                return self._ok(
+                    action, world=summary,
+                    summary=f"{verb} the land around {list(target)} by "
+                            f"{request.delta} in '{summary['world_id']}'.",
+                )
+            if action == "environment":
+                summary = await host.set_environment(
+                    request.world_id or "", gravity=float(request.gravity or -9.81))
+                return self._ok(
+                    action, world=summary,
+                    summary=f"Set gravity to {request.gravity} m/s² in "
+                            f"'{summary['world_id']}'.",
+                )
+            if action == "structure":
+                result = await host.conjure_structure(
+                    request.world_id or "",
+                    kind=request.structure,
+                    at=request.at or (0.0, 0.0, 0.0),
+                    span=request.span,
+                    static=request.static,
+                )
+                return self._ok(
+                    action, world=result,
+                    summary=f"Raised a {request.structure} of {request.span} at "
+                            f"{list(request.at or ())} in '{request.world_id}'.",
                 )
             if action == "practice":
                 from core.worlds.curriculum import (
