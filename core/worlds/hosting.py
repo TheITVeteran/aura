@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from core.config import get_config
 from core.governance_context import local_internal_governed_scope
@@ -447,8 +448,9 @@ class WorldHost:
             raise PhysicsError("conjured shape must be sphere or box")
         mass = float(spec.get("mass", 1.0) or 0.0)
         radius = float(spec.get("radius", 0.4) or 0.4)
-        half_extents = tuple(
-            float(x) for x in (spec.get("half_extents") or (0.4, 0.4, 0.4))
+        half_extents = np.asarray(
+            tuple(float(x) for x in (spec.get("half_extents") or (0.4, 0.4, 0.4))),
+            dtype=np.float64,
         )
         if not 0.0 <= mass <= 1000.0:
             raise PhysicsError("mass must be in [0, 1000]")
@@ -459,8 +461,14 @@ class WorldHost:
         body = Body(
             body_id=body_id,
             shape=shape,
-            position=tuple(float(x) for x in (spec.get("at") or (0.0, 0.0, 2.0))),
-            velocity=tuple(float(x) for x in (spec.get("velocity") or (0.0, 0.0, 0.0))),
+            position=np.asarray(
+                tuple(float(x) for x in (spec.get("at") or (0.0, 0.0, 2.0))),
+                dtype=np.float64,
+            ),
+            velocity=np.asarray(
+                tuple(float(x) for x in (spec.get("velocity") or (0.0, 0.0, 0.0))),
+                dtype=np.float64,
+            ),
             mass=mass,
             radius=radius,
             half_extents=half_extents,
@@ -507,6 +515,8 @@ class WorldHost:
         size = blueprint.size
         heights = np.asarray(blueprint.heightfield, dtype=np.float64)
         grid_x = np.arange(size) - size / 2.0 + 0.5
+        gx: NDArray[np.float64]
+        gy: NDArray[np.float64]
         gx, gy = np.meshgrid(grid_x, grid_x, indexing="ij")
         distance = np.sqrt((gx - float(x)) ** 2 + (gy - float(y)) ** 2)
         falloff = np.clip(1.0 - distance / float(radius), 0.0, 1.0)
@@ -547,14 +557,20 @@ class WorldHost:
                 world.physics.add_body(Body(
                     body_id=f"terrain_{i}_{j}",
                     shape="box",
-                    position=(
-                        (i + 0.5) * cell - size / 2.0,
-                        (j + 0.5) * cell - size / 2.0,
-                        height / 2.0,
+                    position=np.asarray(
+                        (
+                            (i + 0.5) * cell - size / 2.0,
+                            (j + 0.5) * cell - size / 2.0,
+                            height / 2.0,
+                        ),
+                        dtype=np.float64,
                     ),
-                    velocity=(0.0, 0.0, 0.0),
+                    velocity=np.zeros(3, dtype=np.float64),
                     mass=0.0,
-                    half_extents=(cell / 2.0, cell / 2.0, max(height / 2.0, 1e-3)),
+                    half_extents=np.asarray(
+                        (cell / 2.0, cell / 2.0, max(height / 2.0, 1e-3)),
+                        dtype=np.float64,
+                    ),
                     restitution=0.2,
                     friction=0.9,
                 ))
@@ -601,8 +617,10 @@ class WorldHost:
             body_id = f"{kind}_{stamp}_{index}"
             world.physics.add_body(Body(
                 body_id=body_id, shape="box",
-                position=tuple(base + offset), velocity=(0.0, 0.0, 0.0),
-                mass=0.0 if static else 2.0, half_extents=(half, half, half),
+                position=np.asarray(base + offset, dtype=np.float64),
+                velocity=np.zeros(3, dtype=np.float64),
+                mass=0.0 if static else 2.0,
+                half_extents=np.full(3, half, dtype=np.float64),
                 restitution=0.2, friction=0.8,
             ))
             made.append(body_id)
