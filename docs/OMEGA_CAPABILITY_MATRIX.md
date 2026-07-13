@@ -156,12 +156,21 @@ descent loop.
 - **VR headset rendering**: no headset hardware; /worlds WebGL viewer
   is the display surface. WebXR entry is a browser flag away when
   hardware exists.
-- **Live k8s/ray cluster proof**: swarm backends are unit-verified;
-  no cluster exists on this LAN.
 - **Heterogeneous device fleet**: iot_bridge/hardware_manager verified
   against mocks + this host; more device kinds need more devices.
-- **Open-vocabulary lip reading**: bounded-vocabulary decoding is real
-  and tested; word-open VSR models (AV-HuBERT family) carry research
-  licenses whose acceptance is an owner decision, recorded as such.
 - **Rapport**: fusion, presence, and memory make it *grounded*; whether
   it improved is judged in conversation with Bryan, not in a unit test.
+
+### Closed since (owner grants, 2026-07-13)
+
+- **Live Ray cluster proof** — CLOSED (`5775118c`). A real bounded Ray
+  instance runs the actual RayBackend: tasks execute in separate worker
+  processes (verified PIDs), resources honor the bound, worker crashes
+  are contained. `tests/test_swarm_ray_live.py`. (k8s specifically still
+  needs a real cluster; the ray path — the same swarm seam — is proven.)
+- **Open-vocabulary lip reading** — CLOSED as a pipeline (`f5481462`).
+  Complete CTC greedy+beam decoding, ONNX preprocessing/inference,
+  license-surfacing loader; proven end-to-end against a real in-test
+  trained ONNX model. Frontier-accuracy weights remain a documented,
+  provider-license-gated drop-in (the license is the provider's term,
+  not code) — `core/perception/vsr_ctc.py`, `vsr_onnx_backend.py`.
