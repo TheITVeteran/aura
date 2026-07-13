@@ -4297,6 +4297,22 @@
       "scope": "<module>.BeliefGraph._save_causal"
     },
     {
+      "callee": "<file_write_gateway>.append_text_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/worlds/curriculum.py",
+      "scope": "<module>.record_practice"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory_async",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/worlds/curriculum.py",
+      "scope": "<module>.record_practice"
+    },
+    {
       "callee": "<file_write_gateway>.ensure_directory_async",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -13450,6 +13466,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "bca74fac0442da828656c2891c2d29a1dbf0ba52729478cc4e5723dcde8b02d4",
+  "inventory_sha256": "07ea67ef822e762eca81b75ac3c9e3e37c5da253fec314c4f17ef6e88eed55a3",
   "schema_version": 1
 }

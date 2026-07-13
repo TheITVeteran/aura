@@ -35,6 +35,8 @@ WorldAction = Literal[
     "agent",
     "fork",
     "compare",
+    "practice",
+    "practice_summary",
 ]
 AgentCommand = Literal[
     "proprioception",
@@ -82,6 +84,7 @@ class WorldForgeInput(BaseModel):  # type: ignore[misc]
     other_id: str | None = Field(default=None, pattern=_ID_PATTERN)
     top: int = Field(default=8, ge=1, le=64)
     recent_events: int = Field(default=10, ge=0, le=500)
+    kind: Literal["navigate", "fetch"] = "navigate"
 
     @field_validator("impulse", "target")  # type: ignore[untyped-decorator]
     @classmethod
@@ -92,7 +95,7 @@ class WorldForgeInput(BaseModel):  # type: ignore[misc]
 
     @model_validator(mode="after")  # type: ignore[untyped-decorator]
     def validate_action_requirements(self) -> WorldForgeInput:
-        if self.action != "list" and self.world_id is None:
+        if self.action not in {"list", "practice", "practice_summary"} and self.world_id is None:
             raise ValueError(f"world_id is required for action {self.action!r}")
         if self.action == "impulse" and (self.body_id is None or self.impulse is None):
             raise ValueError("impulse action requires body_id and impulse")
@@ -297,6 +300,39 @@ class WorldForgeSkill(BaseSkill):  # type: ignore[misc]
                         f"{report['bodies_diverged']} body states diverged across "
                         f"{report['bodies_compared']} shared bodies; "
                         f"identical={report['identical']}."
+                    ),
+                )
+            if action == "practice":
+                from core.worlds.curriculum import (
+                    generate_task,
+                    record_practice,
+                    run_task,
+                )
+
+                task = generate_task(request.seed, request.kind, size=request.size)
+                result = run_task(task, max_ticks=request.max_ticks)
+                await record_practice(result)
+                return self._ok(
+                    action,
+                    **result,
+                    summary=(
+                        f"Practice {task.kind} (seed {task.seed}): "
+                        f"{'success' if result['success'] else 'failure'}, "
+                        f"score {result['score']} in {result['ticks_used']} ticks."
+                    ),
+                )
+            if action == "practice_summary":
+                from core.worlds.curriculum import practice_summary
+
+                trend = practice_summary()
+                return self._ok(
+                    action,
+                    trend=trend,
+                    summary=(
+                        f"{trend['attempts']} attempts, success rate "
+                        f"{trend['success_rate']}, recent "
+                        f"{trend.get('recent_success_rate')}."
+                        if trend["attempts"] else "No practice recorded yet."
                     ),
                 )
             return {"ok": False, "error": f"Unknown world_forge action '{action}'"}

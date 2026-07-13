@@ -107,6 +107,7 @@ class DevicePairingRegistry:
     _challenge: _PairingChallenge | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _last_seen_dirty_since: float = 0.0
+    _presence_noted_at: dict[str, float] = field(default_factory=dict)
 
     # ── construction ────────────────────────────────────────────
 
@@ -236,7 +237,28 @@ class DevicePairingRegistry:
             device.last_seen = now
             if not self._last_seen_dirty_since:
                 self._last_seen_dirty_since = now
-            return device
+        self._note_presence(device, now)
+        return device
+
+    def _note_presence(self, device: PairedDevice, now: float) -> None:
+        """Surface device reachability as a world-state belief (throttled):
+        'Bryan is reachable on his phone' becomes a perceptual fact with a
+        TTL, so Aura's cognition can act on presence and its expiry."""
+        if now - self._presence_noted_at.get(device.device_id, 0.0) < 60.0:
+            return
+        self._presence_noted_at[device.device_id] = now
+        try:
+            from core.world_state import get_world_state
+
+            get_world_state().set_belief(
+                f"device_presence.{device.device_id}",
+                {"device_id": device.device_id, "name": device.name, "last_seen": now},
+                confidence=0.95,
+                source="device_pairing",
+                ttl=600.0,
+            )
+        except _REGISTRY_ERRORS as exc:
+            record_degradation("security.device_pairing.presence", exc)
 
     # ── administration ──────────────────────────────────────────
 
