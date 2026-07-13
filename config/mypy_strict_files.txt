@@ -73,3 +73,7 @@ core/perception/visual_speech_auto_avsr.py
 core/social/other_agent_model.py
 core/consciousness/theory_of_mind.py
 core/brain/cognitive_situation.py
+# Identity-scoped relational memory authority (2026-07-12)
+core/social/relational_memory.py
+core/memory/social_memory.py
+core/memory/shared_ground.py

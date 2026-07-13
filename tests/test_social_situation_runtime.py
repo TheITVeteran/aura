@@ -7,6 +7,7 @@ import pytest
 
 from core.container import ServiceContainer
 from core.orchestrator.mixins.incoming_logic import IncomingLogicMixin
+from core.social.relational_memory import RelationalMemoryAuthority
 
 
 class FakeEstimator:
@@ -143,3 +144,56 @@ def test_social_user_id_resolution_never_selects_an_unrelated_agent() -> None:
 
     harness.user_identity = {}
     assert harness._resolve_social_user_id({}) == "local_user"
+
+
+def test_explicit_user_commands_control_exact_agent_relational_memory(tmp_path) -> None:
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"k" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("relational_memory", authority, required=False)
+    harness = Harness()
+
+    try:
+        context = {}
+        remember = harness._apply_relational_memory_control(
+            context,
+            "remember always",
+            "bryan",
+        )
+        assert remember is not None
+        assert remember["persistence_allowed"] is True
+        assert authority.allows("bryan", "boundary", "persist") is True
+
+        session = harness._apply_relational_memory_control(
+            context,
+            "session only",
+            "bryan",
+        )
+        assert session is not None
+        assert session["persistence_allowed"] is False
+        assert session["prompt_use_allowed"] is True
+        assert authority.allows("bryan", "boundary", "persist") is False
+        assert authority.allows("bryan", "boundary", "prompt") is True
+
+        private = harness._apply_relational_memory_control(
+            context,
+            "private mode",
+            "bryan",
+        )
+        assert private is not None
+        assert private["prompt_use_allowed"] is False
+        assert authority.allows("bryan", "boundary", "prompt") is False
+
+        deleted = harness._apply_relational_memory_control(
+            context,
+            "forget everything about me",
+            "bryan",
+        )
+        assert deleted is not None
+        assert deleted["mode"] == "deleted"
+    finally:
+        ServiceContainer.clear()

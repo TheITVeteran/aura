@@ -830,7 +830,7 @@ class ContextAssembler:
             # Relational register from SocialContextPhase (ToM rapport)
             relational_register = mods.get("relational_register", "warm")
             register_hints = {
-                "intimate": "- **REGISTER**: Deep familiarity — be direct, personal, unfiltered. Callbacks, inside jokes, low guard.\n",
+                "established": "- **REGISTER**: Established collaboration — be specific and direct while preserving normal boundaries.\n",
                 "warm": "- **REGISTER**: Trusted — be genuine, a bit playful. No walls, but no oversharing.\n",
                 "cordial": "- **REGISTER**: Still building rapport — be warm but measured. Let connection develop naturally.\n",
             }
@@ -956,6 +956,7 @@ class ContextAssembler:
 
         # ── Social Intelligence Layer (wired for ALL interactions) ──────────
         # Use the exact active-agent estimate; never select an arbitrary dict entry.
+        social_block = ""
         try:
             estimator = ServiceContainer.get("other_agent_model", default=None)
             agent_id = str(getattr(estimator, "active_agent_id", "") or "")
@@ -972,8 +973,23 @@ class ContextAssembler:
             record_degradation('context_assembler', _e)
             logger.debug("ToM injection failed (non-critical): %s", _e)
 
-        # Legacy SocialMemory and SharedGround stores are intentionally excluded here:
-        # neither is identity-scoped, so injecting either can cross user boundaries.
+        # Identity-scoped relational memory is prompt-eligible only under an exact grant.
+        relational_block = ""
+        try:
+            relational_memory = ServiceContainer.get("relational_memory", default=None)
+            if (
+                relational_memory
+                and agent_id
+                and hasattr(relational_memory, "prompt_block")
+            ):
+                relational_block = str(
+                    relational_memory.prompt_block(agent_id) or ""
+                ).strip()
+                if relational_block:
+                    base += f"\n{relational_block}\n"
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as _e:
+            record_degradation('context_assembler', _e)
+            logger.debug("Relational memory injection failed (non-critical): %s", _e)
 
         # 2. OpinionEngine: inject held position if topic overlaps current objective
         try:
@@ -1129,10 +1145,17 @@ class ContextAssembler:
             head = base[:head_budget]
             tail = base[-tail_budget:] if tail_budget else ""
 
+            priority_middle_blocks = (
+                str(relational_block or "").strip(),
+                str(social_block or "").strip(),
+                str(continuity_block or "").strip(),
+            )
+            essential_middle_blocks.extend(
+                candidate for candidate in priority_middle_blocks if candidate
+            )
             for candidate in (
                 str(identity_rag_context or "").strip(),
                 str(cognitive_metrics or "").strip(),
-                str(continuity_block or "").strip(),
                 str(imagination_context or "").strip(),
                 str(bicameral_context or "").strip(),
                 str(world_context or "").strip(),

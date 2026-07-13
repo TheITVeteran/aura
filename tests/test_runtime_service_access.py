@@ -62,6 +62,11 @@ def test_resolve_dialogue_cognition_uses_factory_when_service_missing(monkeypatc
 def test_build_conversational_context_blocks_aggregates_registered_services(service_container):
     state = AuraState.default()
     state.world.known_entities = {"Bryan": {"name": "Bryan"}}
+    service_container.register_instance(
+        "relational_memory",
+        SimpleNamespace(allows=lambda user_id, kind, operation: True),
+        required=False,
+    )
 
     service_container.register_instance(
         "conversational_profiler",
@@ -131,6 +136,12 @@ def test_build_conversational_context_blocks_prioritizes_coding_and_task_context
     state.world.known_entities = {"Bryan": {"name": "Bryan"}}
 
     service_container.register_instance(
+        "relational_memory",
+        SimpleNamespace(allows=lambda user_id, kind, operation: True),
+        required=False,
+    )
+
+    service_container.register_instance(
         "conversational_profiler",
         SimpleNamespace(get_context_injection=lambda user_id: f"profile:{user_id}"),
         required=False,
@@ -156,6 +167,40 @@ def test_build_conversational_context_blocks_prioritizes_coding_and_task_context
     assert blocks[0].startswith("## CODING WORKING SET")
     assert blocks[1].startswith("## TASK CONTINUITY")
     assert "profile:bryan" in blocks
+
+
+def test_primary_user_resolution_prefers_canonical_active_agent(service_container):
+    state = AuraState.default()
+    state.world.known_entities = {
+        "alice": {"name": "Alice"},
+        "unrelated-device": {"name": "Device"},
+    }
+    service_container.register_instance(
+        "other_agent_model",
+        SimpleNamespace(active_agent_id="bryan"),
+        required=False,
+    )
+
+    assert conversation_support.resolve_primary_user_id(state) == "bryan"
+
+
+def test_unconsented_profile_is_not_injected(service_container):
+    state = AuraState.default()
+    state.cognition.current_partner = "bryan"
+    service_container.register_instance(
+        "conversational_profiler",
+        SimpleNamespace(get_context_injection=lambda user_id: "PRIVATE_PROFILE_LEAK"),
+        required=False,
+    )
+    service_container.register_instance(
+        "relational_memory",
+        SimpleNamespace(allows=lambda user_id, kind, operation: False),
+        required=False,
+    )
+
+    blocks = conversation_support.build_conversational_context_blocks(state)
+
+    assert all("PRIVATE_PROFILE_LEAK" not in block for block in blocks)
 
 
 def test_build_conversational_context_blocks_includes_goal_engine_state(monkeypatch, service_container):

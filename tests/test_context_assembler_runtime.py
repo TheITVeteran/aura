@@ -1,5 +1,6 @@
 from core.brain.llm.context_assembler import ContextAssembler
 from core.container import ServiceContainer
+from core.social.relational_memory import RelationalMemoryAuthority
 from core.state.aura_state import AuraState
 
 
@@ -117,6 +118,57 @@ def test_context_assembler_excludes_unscoped_legacy_relationship_memory():
         ServiceContainer.clear()
 
     assert "PRIVATE_OTHER_USER_RELATIONSHIP" not in prompt
+
+
+def test_context_assembler_injects_only_consented_exact_agent_memory(tmp_path):
+    authority = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"k" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    authority.grant_consent(
+        "bryan",
+        kinds=["boundary"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-1",
+    )
+    authority.record(
+        "bryan",
+        kind="boundary",
+        content="Keep the project codename private.",
+    )
+    authority.grant_consent(
+        "alice",
+        kinds=["boundary"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-2",
+    )
+    authority.record(
+        "alice",
+        kind="boundary",
+        content="ALICE_PRIVATE_BOUNDARY",
+    )
+
+    estimator = type(
+        "Estimator",
+        (),
+        {
+            "active_agent_id": "bryan",
+            "context_injection": lambda self, agent_id: f"agent={agent_id}",
+        },
+    )()
+    ServiceContainer.clear()
+    ServiceContainer.register_instance("other_agent_model", estimator, required=False)
+    ServiceContainer.register_instance("relational_memory", authority, required=False)
+
+    try:
+        prompt = ContextAssembler.build_system_prompt(AuraState.default())
+    finally:
+        ServiceContainer.clear()
+
+    assert "Keep the project codename private." in prompt
+    assert "ALICE_PRIVATE_BOUNDARY" not in prompt
 
 
 def test_deep_conversation_keeps_compact_continuity():

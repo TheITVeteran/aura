@@ -1,99 +1,144 @@
-"""core/memory/social_memory.py
-Social Memory & Narrative Engine.
-Tracks relationship milestones, shared context, and social depth.
-"""
-from core.runtime.errors import record_degradation
-import json
-import logging
+"""Compatibility adapter over the identity-scoped relational memory authority."""
+from __future__ import annotations
+
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Any
+
 from core.runtime.base_module import AuraBaseModule
-from core.runtime.atomic_writer import atomic_write_text
+from core.social.relational_memory import (
+    RelationalMemoryAuthority,
+    get_relational_memory_authority,
+)
 
+
+@dataclass(frozen=True)
 class RelationshipMilestone:
-    def __init__(self, description: str, timestamp: Optional[float] = None, importance: float = 0.5):
-        self.description = description
-        self.timestamp = timestamp if timestamp is not None else time.time()
-        self.importance = importance
+    description: str
+    timestamp: float = 0.0
+    importance: float = 0.5
+    record_id: str = ""
 
-    def to_dict(self):
+    def to_dict(self) -> dict[str, Any]:
         return {
             "description": self.description,
             "timestamp": self.timestamp,
-            "importance": self.importance
+            "importance": self.importance,
+            "record_id": self.record_id,
         }
 
-class SocialMemory(AuraBaseModule):
-    def __init__(self, data_path: Optional[Path] = None):
+
+class SocialMemory(AuraBaseModule):  # type: ignore[misc]
+    """Legacy API with no independent storage or relationship-depth owner."""
+
+    def __init__(
+        self,
+        data_path: Path | None = None,
+        *,
+        authority: RelationalMemoryAuthority | None = None,
+    ) -> None:
         super().__init__("SocialMemory")
-        if not data_path:
-            from core.config import config
-            data_path = config.paths.data_dir / "memory" / "social_memory.json"
-        
-        self.data_path = data_path
-        self.data_path.parent.mkdir(parents=True, exist_ok=True)
-        self.milestones: List[RelationshipMilestone] = []
-        self.relationship_depth = 0.0
-        self.shared_context_keys: List[str] = []
-        self._load()
+        self.data_path = Path(data_path) if data_path is not None else None
+        self.authority = authority or get_relational_memory_authority()
 
-    def _load(self):
-        if self.data_path.exists():
-            try:
-                with open(self.data_path, 'r') as f:
-                    data = json.load(f)
-                    self.milestones = [RelationshipMilestone(**m) for m in data.get("milestones", []) if isinstance(m, dict)]
-                    self.relationship_depth = data.get("depth", 0.0)
-                    self.shared_context_keys = data.get("shared_keys", [])
-            except (OSError, ConnectionError, TimeoutError) as e:
-                record_degradation('social_memory', e)
-                if self.logger:
-                    self.logger.error("Failed to load social memory: %s", e)
+    @property
+    def active_user_id(self) -> str:
+        return self.authority.active_agent_id
 
-    def save(self):
-        try:
-            atomic_write_text(
-                self.data_path,
-                json.dumps({
-                    "milestones": [m.to_dict() for m in self.milestones],
-                    "depth": self.relationship_depth,
-                    "shared_keys": self.shared_context_keys
-                }, indent=2),
-            )
-        except (ImportError, AttributeError, RuntimeError, OSError, TypeError, ValueError) as e:
-            record_degradation('social_memory', e)
-            self.logger.error("Failed to save social memory: %s", e)
-
-    def record_milestone(self, description: str, importance: float = 0.5):
-        """Adds a new milestone and increases relationship depth."""
-        milestone = RelationshipMilestone(description, importance=importance)
-        self.milestones.append(milestone)
-        self.relationship_depth = min(1.0, self.relationship_depth + (importance * 0.05))
-        self.logger.info("💌 Social Milestone Recorded: %s", description)
-        self.save()
-
-    def add_shared_context(self, key: str):
-        if key not in self.shared_context_keys:
-            self.shared_context_keys.append(key)
-            self.relationship_depth = min(1.0, self.relationship_depth + 0.01)
-            self.save()
-
-    def get_social_context(self) -> str:
-        """Returns a string representing the social relationship for the LLM."""
-        depth_label = "Acquaintance"
-        if self.relationship_depth > 0.8: depth_label = "Peak Synchrony"
-        elif self.relationship_depth > 0.6: depth_label = "Deep Collaborator"
-        elif self.relationship_depth > 0.4: depth_label = "Trusted Peer"
-        elif self.relationship_depth > 0.2: depth_label = "Friendly Explorer"
-        
-        m_list = [m.description for m in self.milestones[-3:]]
-        milestones_str = ", ".join(m_list) if m_list else "None yet"
-        
-        return (
-            f"[SOCIAL RELATIONSHIP]\n"
-            f"- Status: {depth_label}\n"
-            f"- Depth: {self.relationship_depth:.2f}\n"
-            f"- Recent Milestones: {milestones_str}\n"
-            f"- Shared Knowledge Keys: {len(self.shared_context_keys)}"
+    @property
+    def milestones(self) -> list[RelationshipMilestone]:
+        records = self.authority.query(
+            self.active_user_id,
+            kinds=["milestone"],
+            purpose="recall",
+            limit=100,
         )
+        return [
+            RelationshipMilestone(
+                description=record.content,
+                timestamp=record.created_at,
+                importance=record.confidence,
+                record_id=record.record_id,
+            )
+            for record in records
+        ]
+
+    @property
+    def shared_context_keys(self) -> list[str]:
+        return [
+            record.content
+            for record in self.authority.query(
+                self.active_user_id,
+                kinds=["shared_ground"],
+                purpose="recall",
+                limit=100,
+            )
+        ]
+
+    @property
+    def relationship_depth(self) -> float:
+        records = self.authority.query(
+            self.active_user_id,
+            kinds=["milestone", "outcome", "repair", "shared_ground"],
+            purpose="recall",
+            limit=100,
+        )
+        if not records:
+            return 0.0
+        evidence = sum(record.confidence for record in records)
+        return min(1.0, evidence / 20.0)
+
+    @relationship_depth.setter
+    def relationship_depth(self, _value: Any) -> None:
+        # Depth is derived from consented evidence; passive increments are ignored.
+        return
+
+    def save(self) -> bool:
+        return self.authority.save()
+
+    def record_milestone(
+        self,
+        description: str,
+        importance: float = 0.5,
+        *,
+        user_id: str | None = None,
+        provenance: str = "social_memory_adapter",
+    ) -> RelationshipMilestone:
+        agent_id = str(user_id or self.active_user_id)
+        record, _receipt = self.authority.record(
+            agent_id,
+            kind="milestone",
+            content=description,
+            confidence=importance,
+            provenance=provenance,
+        )
+        return RelationshipMilestone(
+            description=record.content,
+            timestamp=record.created_at or time.time(),
+            importance=record.confidence,
+            record_id=record.record_id,
+        )
+
+    def add_shared_context(
+        self,
+        key: str,
+        *,
+        user_id: str | None = None,
+    ) -> str:
+        record, _receipt = self.authority.record(
+            str(user_id or self.active_user_id),
+            kind="shared_ground",
+            content=key,
+            provenance="social_memory_adapter",
+        )
+        return record.record_id
+
+    def get_social_context(self, user_id: str | None = None) -> str:
+        return self.authority.prompt_block(str(user_id or self.active_user_id))
+
+    def get_status(self) -> dict[str, Any]:
+        status = dict(self.authority.status())
+        status["module"] = "SocialMemoryAdapter"
+        status["canonical_owner"] = "relational_memory"
+        return status

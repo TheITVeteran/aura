@@ -380,7 +380,6 @@ class CognitiveCoordinator:
             ctx["theory_of_mind"] = orch.mind_model.get_context_for_brain()
         if hasattr(orch, 'social') and orch.social:
             ctx["social_narrative"] = orch.social.get_social_context()
-            orch.social.relationship_depth = min(1.0, orch.social.relationship_depth + 0.001)
         if getattr(orch, "strategic_planner", None) and getattr(orch, "project_store", None):
             try:
                 active_projects = orch.project_store.get_active_projects()

@@ -16,10 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **identity-scoped relational memory
-  and canonical mind/state authority (`MEMORY-001`, `MIND-001`, `STATE-001`,
-  `CTX3-SOCIAL-001..002`)**, following the calibrated live social-situation
-  implementation recorded in Checkpoint 41. `CTX2-LANE-001..004` and
+- Current bounded implementation milestone: **canonical person-model/profile
+  consolidation and mind/state authority (`MEMORY-001`, `MIND-001`, `STATE-001`,
+  `CTX3-SOCIAL-001..002`)**, following the identity-scoped encrypted relational
+  memory implementation recorded in Checkpoint 42. `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
   Signal-safe terminal shutdown (`CTX2-SHUTDOWN-001..003`) and the fail-closed
@@ -72,7 +72,7 @@ Status rules:
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
 | `MIND-001` | `OPEN` | Prove one boot-identified canonical self, workspace, substrate, welfare/homeostasis, consciousness cycle, identity, executive authority, and memory authority on the exact live path. | Matrix 3; Addendum 19 |
 | `STATE-001` | `OPEN` | Build the versioned canonical state catalog and inspectable causal graph with writer authority, freshness, arbitration, persistence, model-swap semantics, redaction, and action-to-learning traces. | Addendum 20 |
-| `MEMORY-001` | `OPEN` | Unify memory write/read authority and cross-store semantic retrieval; add provenance, conflict/freshness handling, exact live consumption proof, deletion, and symmetric observed rollback. | Addendum 26 |
+| `MEMORY-001` | `IN PROGRESS 2026-07-12` | Preserve the encrypted exact-agent relational-memory authority while unifying every remaining memory writer/reader, cross-store semantic retrieval, provenance, conflict/freshness handling, exact live consumption proof, deletion, key rotation, and symmetric observed rollback. | Addendum 26; Checkpoint 42 |
 | `CONVERSATION-001` | `IN PROGRESS 2026-07-12` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. | Pass F 6; Matrix 6 |
 | `SUBSTRATE-001` | `OPEN` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. | Matrix 2-3; Addendum 20 and 29 |
 | `DESKTOP-001` | `IN PROGRESS 2026-07-12` | Generalize computer use into perception-plan-act-observe-repair loops over browser, files, Notes/Docs/PDF/images, dialogs, focus, permissions, changed layouts, and multi-app workflows. | Pass F 7; Matrix 7; Checkpoint 38 |
@@ -1026,11 +1026,15 @@ evidence into a metaphysical, legal, or comparative claim.
      exact response opens a bounded feedback window; stale or unrelated praise
      cannot inflate capability/trust, while concrete repair pressure changes the
      live response and planning path. Raw messages, transient goals, and response
-     bodies are excluded from estimator persistence. Still replace the quarantined
-     global SocialMemory/SharedGround stores with consented identity-scoped,
-     versioned, deletable memory; connect terminal action receipts to observed
-     social outcomes; add user-controlled style/boundary controls; and measure
-     trust calibration, correction burden, continuity, and recovery in launched
+     bodies are excluded from estimator persistence. `SocialMemory` and
+     `SharedGround` are now storage-free adapters over one encrypted, versioned,
+     identity-scoped authority with expiring/revocable persistence/recall/prompt
+     grants, quarantine, attribution, export, and deletion. Still consolidate
+     conversational profile, dialogue cognition, relational intelligence,
+     social imagination, humor, and every other person representation into that
+     authority; connect terminal action receipts to observed social outcomes;
+     add complete user-facing style/boundary controls; and measure trust
+     calibration, correction burden, continuity, and recovery in launched
      multi-session trials. Persuasion, dependency creation, and engagement
      maximization remain prohibited success metrics.
 
@@ -12085,3 +12089,112 @@ Authoritative remaining situation and social work:
   tool failure, user interruption, and adversarial manipulation. Measure social
   calibration, correction burden, continuity, outcome quality, latency, and
   leakage before any broad social-intelligence closure or final soak.
+
+## Checkpoint 2026-07-12-42: Encrypted Identity-Scoped Relational Memory
+
+This checkpoint advances `MEMORY-001`, `SOCIAL-001`, `CTX3-SOCIAL-002`,
+`ARCH-001`, `PRIVACY-001`, `SECURITY-001`, and `FAULT-001`. It replaces the
+independent global SocialMemory and SharedGround persistence owners with one
+exact-agent authority. It does not close consolidation of the remaining person
+models, central signed consent receipts, key rotation/recovery, user-facing
+controls, or launched multi-session and multiuser proof.
+
+Implemented canonical authority, consent, and encryption:
+
+- Added one strict-typed `RelationalMemoryAuthority` for identity, consent,
+  retention, provenance, confidence, sensitivity, prompt eligibility, export,
+  deletion, and legacy migration. Exact normalized agent identity is mandatory;
+  cross-agent recall and prompt use are denied. Supported records cover
+  boundaries, consent, profile and dialogue preferences, milestones, outcomes,
+  repairs, shared ground, social imagination, and style preferences.
+- Added operation-scoped `persist`, `recall`, and `prompt` grants with explicit
+  evidence receipts, expiry, replacement, and revocation. Session-only grants
+  remain in memory and do not survive restart. Persistence is unavailable
+  unless a 256-bit key is supplied or durably provisioned through the existing
+  Keychain secret owner; failed Keychain provisioning removes the transient
+  environment value and keeps the authority honestly session-only.
+- Encrypted the complete durable envelope, including identity, grants, content,
+  provenance, and metadata, with AES-256-GCM and authenticated schema context.
+  Atomic governed writes are read back and decrypted before success. A missing
+  or wrong key locks an existing store instead of treating it as empty or
+  overwriting it; export and deletion fail closed while locked.
+- Made record, consent revocation, exact-agent deletion, legacy attribution, and
+  callback-use updates transactional. Failed encrypted commits restore the
+  previous live state; a failed first write can remain explicitly session-only,
+  while a failed duplicate update preserves the prior durable record and emits
+  a non-durable failure receipt. Already-expired records and grants are rejected
+  before mutation.
+- Bounded records per agent, total records, metadata, receipt history, content,
+  source, and evidence digests. Duplicate evidence updates rather than
+  multiplying records. Prompt entries are deterministic JSON data under an
+  anti-instruction boundary and cannot be represented as facts about hidden
+  feelings or intent.
+
+Implemented migration and live-path unity:
+
+- Replaced SocialMemory and SharedGround storage with compatibility adapters
+  over the authority. They resolve only the verified active agent, expose
+  consent-gated copies, and create no independent files. Passive turn-count
+  rapport inflation and the residual intimate/unfiltered register mapping are
+  removed.
+- Migrated legacy `social_memory.json` and `shared_ground.json` content into an
+  encrypted `legacy_unscoped` quarantine. Plaintext sources are deleted only
+  after encrypted save and readback succeed. Quarantined records cannot enter a
+  prompt or be claimed until the user explicitly confirms attribution and has
+  persistence consent for every original record kind.
+- Added the exact-agent relational block to `ContextAssembler` and protected it
+  during bounded 16k prompt compression. Conversation profile, dialogue
+  preference, relational-intelligence, and social-imagination read/write paths
+  now require matching authority grants; no arbitrary first/default user or
+  installation-specific owner identity is used.
+- Added governed live commands for remember-always, session-only, private or
+  ask-before mode, and exact-agent relational deletion. Command results expose
+  whether persistence was requested, actually available, and active rather than
+  reporting policy permission as durable success.
+- Registered the authority before its adapters and made failed initialization
+  explicit. Adapter construction cannot silently create a second owner or
+  rebind a process-wide SharedGround instance to a different authority.
+
+Verification completed for this checkpoint:
+
+- The initial broad social, context, profile, dialogue, memory, and live-path
+  matrix passed `227/227`. After transaction and prompt-quoting hardening, the
+  broader exact-agent matrix passed `103/103`; after atomic consent replacement,
+  the final directly affected matrix passed `42/42`. Dedicated authority and
+  scanner coverage totals `18` tests. Regressions cover ciphertext nonleakage,
+  restart, wrong-key lockout, session expiry, grant scope and replacement,
+  failed persistence rollback, duplicate preservation, deletion/export
+  authorization, legacy quarantine and claim, cross-user exclusion, compression
+  preservation, governed commands, and one-authority adapter equivalence.
+- Whole-tree compile and configured Ruff passed. Strict MyPy grew from `55` to
+  `58` production files. Enterprise static and collection ratchets, source
+  hygiene, all 37 production-readiness checks, the 2,562-file security scan,
+  13/13 cognitive-gate ownership, 75/75 skill discovery/live-registry parity,
+  model-load ownership, and resource-observation ownership passed.
+- Governance ownership passes at `1,803` recognized effect calls in `1,699`
+  buckets. Replacing four legacy file mutations with three governed authority
+  operations reduced the acknowledged migration backlog from `1,684` to
+  `1,683`; that broader debt remains open and is not represented as closure.
+
+Authoritative remaining relational-memory and person-model work:
+
+- Consolidate conversational profile, dialogue cognition, relational
+  intelligence, social imagination, humor, joy, Theory of Mind, and every other
+  person representation into versioned authority-owned schemas. Remove their
+  independent files, hidden default identities, duplicate confidence/freshness
+  rules, and unscoped global mutable state; add conflict resolution, correction,
+  semantic retrieval, schema migration, and causal observed-outcome learning.
+- Bind grants, deletion, export, correction, and legacy attribution to the
+  central tamper-evident receipt store and authenticated device/user authority.
+  Add key versioning, rotation, backup, restore, recovery, revocation, doctor
+  diagnostics, crash-safe migration, and an operator-visible locked/degraded
+  state without exposing identity or content.
+- Add complete desktop and API controls for per-kind retention, purpose, expiry,
+  ask-before use, correction, export, deletion, private mode, identity switch,
+  and legacy claim. Prove accessibility and identical behavior across chat,
+  voice, desktop, mobile, and paired devices.
+- Run launched real-Keychain migration, restart, crash, failed write/readback,
+  wrong/missing/rotated key, backup/restore, deletion proof, rapid identity
+  switch, interleaved users, device-scope, prompt-injection, and long-gap trials.
+  Keep the final multi-hour and 24-72 hour soaks deferred until these and every
+  other shorter gate are green.

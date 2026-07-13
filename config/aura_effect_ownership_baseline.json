@@ -1557,22 +1557,6 @@
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
       "count": 1,
-      "path": "core/memory/shared_ground.py",
-      "scope": "<module>.SharedGroundBuffer.save"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/memory/social_memory.py",
-      "scope": "<module>.SocialMemory.save"
-    },
-    {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
       "path": "core/memory/user_profile.py",
       "scope": "<module>.UserProfile._save_to_disk"
     },
@@ -4215,6 +4199,30 @@
       "count": 1,
       "path": "core/social/relational_intelligence.py",
       "scope": "<module>.RelationalIntelligence.save"
+    },
+    {
+      "callee": "<file_write_gateway>.delete_file",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/social/relational_memory.py",
+      "scope": "<module>.RelationalMemoryAuthority._migrate_legacy"
+    },
+    {
+      "callee": "<file_write_gateway>.ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/social/relational_memory.py",
+      "scope": "<module>.RelationalMemoryAuthority._save_locked"
+    },
+    {
+      "callee": "<file_write_gateway>.write_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/social/relational_memory.py",
+      "scope": "<module>.RelationalMemoryAuthority._save_locked"
     },
     {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
@@ -8839,22 +8847,6 @@
       "count": 1,
       "path": "core/memory/scar_formation.py",
       "scope": "<module>.ScarFormationSystem._save"
-    },
-    {
-      "callee": "self.data_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/shared_ground.py",
-      "scope": "<module>.SharedGroundBuffer.__init__"
-    },
-    {
-      "callee": "self.data_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/social_memory.py",
-      "scope": "<module>.SocialMemory.__init__"
     },
     {
       "callee": "self.storage_file.parent.mkdir",
@@ -13602,6 +13594,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "11df6adcb3713ea62f8107a33f1c3231e825e551825a4a2f285aed0922df18c3",
+  "inventory_sha256": "1634e27b576d5cc25676a53b9e608ca3ee0afdb505bd112890cbeb814507dc7b",
   "schema_version": 1
 }

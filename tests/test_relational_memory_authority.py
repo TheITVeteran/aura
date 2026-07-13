@@ -1,0 +1,380 @@
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+
+import pytest
+
+from core.container import ServiceContainer
+from core.memory.shared_ground import SharedGroundBuffer
+from core.memory.social_memory import SocialMemory
+from core.social.relational_memory import (
+    LEGACY_UNSCOPED_AGENT,
+    RelationalMemoryAuthority,
+)
+
+
+def _authority(tmp_path, *, now=None, legacy_paths=()):
+    return RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"k" * 32,
+        legacy_paths=legacy_paths,
+        auto_provision_key=False,
+        now_fn=now or (lambda: 100.0),
+    )
+
+
+def test_record_is_session_only_without_explicit_agent_consent(tmp_path):
+    authority = _authority(tmp_path)
+
+    record, receipt = authority.record(
+        "bryan",
+        kind="shared_ground",
+        content="the verified release checklist",
+    )
+
+    assert record.durable is False
+    assert receipt.durable is False
+    assert authority.query("bryan", purpose="prompt") == []
+    assert not (tmp_path / "relational.json").exists()
+
+
+def test_consent_is_exact_agent_expiring_and_purpose_scoped(tmp_path):
+    now = [100.0]
+    authority = _authority(tmp_path, now=lambda: now[0])
+    authority.grant_consent(
+        "bryan",
+        kinds=["shared_ground"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="user-consent-1",
+        expires_at=200.0,
+    )
+
+    record, receipt = authority.record(
+        "bryan",
+        kind="shared_ground",
+        content="the verified release checklist",
+    )
+
+    assert record.durable is True
+    assert receipt.durable is True
+    assert authority.query("alice", purpose="prompt") == []
+    prompt = authority.prompt_block("bryan")
+    assert "the verified release checklist" in prompt
+    assert '"content":"the verified release checklist"' in prompt
+    now[0] = 201.0
+    assert authority.query("bryan", purpose="prompt") == []
+
+
+def test_encrypted_envelope_contains_no_identity_or_memory_plaintext(tmp_path):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["boundary"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="user-consent-1",
+    )
+    authority.record(
+        "bryan",
+        kind="boundary",
+        content="Never mention private-project-codename in public.",
+    )
+
+    payload = (tmp_path / "relational.json").read_text(encoding="utf-8")
+
+    assert "bryan" not in payload
+    assert "private-project-codename" not in payload
+    assert '"encryption": "AES-256-GCM"' in payload
+    assert json.loads(payload)["key_id"]
+
+
+def test_restart_round_trip_and_wrong_key_locks_without_overwrite(tmp_path):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["milestone"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="user-consent-1",
+    )
+    authority.record("bryan", kind="milestone", content="shipped the verified parser")
+    before = (tmp_path / "relational.json").read_bytes()
+
+    restored = _authority(tmp_path)
+    restored_prompt = restored.prompt_block("bryan")
+    assert '"content":"shipped the verified parser"' in restored_prompt
+
+    locked = RelationalMemoryAuthority(
+        tmp_path / "relational.json",
+        encryption_key=b"x" * 32,
+        legacy_paths=(),
+        auto_provision_key=False,
+    )
+    assert locked.status()["status"] == "locked"
+    with pytest.raises(RuntimeError, match="store is locked"):
+        locked.export_agent("bryan", authorization_receipt_id="export-1")
+    with pytest.raises(RuntimeError, match="store is locked"):
+        locked.delete_agent("bryan", authorization_receipt_id="delete-1")
+    locked.record("bryan", kind="milestone", content="must remain session only")
+    assert (tmp_path / "relational.json").read_bytes() == before
+
+
+def test_revoke_blocks_prompt_and_optional_delete_is_durable(tmp_path):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["boundary"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-1",
+    )
+    authority.record("bryan", kind="boundary", content="keep this private")
+
+    receipt = authority.revoke_consent(
+        "bryan",
+        receipt_id="revoke-1",
+        delete_records=True,
+    )
+
+    assert receipt.operation == "revoke_consent"
+    assert receipt.record_ids
+    assert authority.export_agent(
+        "bryan", authorization_receipt_id="export-after-delete"
+    )["records"] == []
+    assert authority.query("bryan", purpose="prompt") == []
+
+
+def test_legacy_plaintext_is_encrypted_quarantined_and_requires_claim(tmp_path):
+    social = tmp_path / "social_memory.json"
+    shared = tmp_path / "shared_ground.json"
+    social.write_text(
+        json.dumps(
+            {
+                "milestones": [{"description": "legacy private milestone"}],
+                "shared_keys": ["legacy callback"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    shared.write_text(
+        json.dumps([{"reference": "old joke", "context": "private context"}]),
+        encoding="utf-8",
+    )
+
+    authority = _authority(tmp_path, legacy_paths=(social, shared))
+
+    assert not social.exists()
+    assert not shared.exists()
+    assert authority.status()["legacy_quarantine_count"] == 3
+    assert "legacy private milestone" not in (
+        tmp_path / "relational.json"
+    ).read_text(encoding="utf-8")
+    assert authority.query(LEGACY_UNSCOPED_AGENT, purpose="prompt") == []
+    with pytest.raises(PermissionError):
+        authority.claim_legacy_records(
+            "bryan",
+            confirmation_receipt_id="",
+            confirmed=False,
+        )
+
+    authority.grant_consent(
+        "bryan",
+        kinds=["milestone", "shared_ground"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-1",
+    )
+    receipt = authority.claim_legacy_records(
+        "bryan",
+        confirmation_receipt_id="claim-1",
+        confirmed=True,
+    )
+    assert len(receipt.record_ids) == 3
+    assert "legacy private milestone" in authority.prompt_block("bryan")
+
+
+def test_delete_and_export_require_authorization_receipts(tmp_path):
+    authority = _authority(tmp_path)
+    with pytest.raises(PermissionError):
+        authority.export_agent("bryan", authorization_receipt_id="")
+    with pytest.raises(PermissionError):
+        authority.delete_agent("bryan", authorization_receipt_id="")
+
+
+def test_failed_persistence_never_returns_a_durable_record_receipt(tmp_path, monkeypatch):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["milestone"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-1",
+    )
+    monkeypatch.setattr(authority, "_save_locked", lambda: False)
+
+    record, receipt = authority.record(
+        "bryan",
+        kind="milestone",
+        content="write failed after consent",
+    )
+
+    assert record.durable is False
+    assert receipt.durable is False
+    assert receipt.reason == "persistence_failed_session_only"
+    with pytest.raises(RuntimeError, match="revocation could not be persisted"):
+        authority.revoke_consent("bryan", receipt_id="revoke-1")
+
+
+def test_expired_record_is_rejected_before_mutating_state(tmp_path):
+    authority = _authority(tmp_path)
+
+    with pytest.raises(ValueError, match="expiry must be in the future"):
+        authority.record(
+            "bryan",
+            kind="milestone",
+            content="already expired",
+            expires_at=99.0,
+        )
+
+    assert authority.status()["record_count"] == 0
+
+
+def test_session_only_consent_does_not_survive_restart(tmp_path):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["milestone"],
+        operations=["recall", "prompt"],
+        receipt_id="session-grant",
+    )
+    authority.record("bryan", kind="milestone", content="session context")
+
+    restored = _authority(tmp_path)
+
+    assert authority.prompt_block("bryan")
+    assert restored.prompt_block("bryan") == ""
+    assert restored.status()["active_grant_count"] == 0
+
+
+def test_failed_duplicate_update_preserves_prior_durable_record(tmp_path, monkeypatch):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["milestone"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-1",
+    )
+    original, _ = authority.record(
+        "bryan",
+        kind="milestone",
+        content="durable result",
+        confidence=0.4,
+    )
+    monkeypatch.setattr(authority, "_save_locked", lambda: False)
+
+    preserved, receipt = authority.record(
+        "bryan",
+        kind="milestone",
+        content="durable result",
+        confidence=0.9,
+    )
+
+    assert preserved.record_id == original.record_id
+    assert preserved.durable is True
+    assert preserved.confidence == 0.4
+    assert receipt.durable is False
+    assert receipt.reason == "persistence_failed_prior_preserved"
+
+
+def test_failed_control_plane_mutations_roll_back_live_state(tmp_path, monkeypatch):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["milestone"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-1",
+    )
+    record, _ = authority.record(
+        "bryan", kind="milestone", content="must survive failed controls"
+    )
+    monkeypatch.setattr(authority, "_save_locked", lambda: False)
+
+    with pytest.raises(RuntimeError, match="revocation could not be persisted"):
+        authority.revoke_consent("bryan", receipt_id="revoke-1")
+    assert authority.query("bryan", purpose="prompt")
+
+    with pytest.raises(RuntimeError, match="deletion could not be persisted"):
+        authority.delete_agent("bryan", authorization_receipt_id="delete-1")
+    assert authority.query("bryan", purpose="prompt")
+    assert authority.mark_used("bryan", record.record_id) is False
+    restored = authority.query("bryan", purpose="recall")[0]
+    assert restored.use_count == 0
+
+
+def test_failed_consent_replacement_preserves_prior_policy(tmp_path, monkeypatch):
+    authority = _authority(tmp_path)
+    original = authority.grant_consent(
+        "bryan",
+        kinds=["milestone"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-1",
+    )
+    authority.record("bryan", kind="milestone", content="still available")
+    monkeypatch.setattr(authority, "_save_locked", lambda: False)
+
+    with pytest.raises(RuntimeError, match="replacement could not be persisted"):
+        authority.replace_consent(
+            "bryan",
+            kinds=["milestone"],
+            operations=["recall", "prompt"],
+            receipt_id="session-replacement",
+        )
+
+    assert authority.allows("bryan", "milestone", "persist") is True
+    assert authority.prompt_block("bryan")
+    exported = authority.export_agent(
+        "bryan", authorization_receipt_id="verify-rollback"
+    )
+    original_export = next(
+        grant for grant in exported["grants"] if grant["grant_id"] == original.grant_id
+    )
+    assert original_export["revoked_at"] is None
+
+
+def test_legacy_adapters_share_one_exact_agent_authority(tmp_path):
+    authority = _authority(tmp_path)
+    authority.grant_consent(
+        "bryan",
+        kinds=["milestone", "shared_ground"],
+        operations=["persist", "recall", "prompt"],
+        receipt_id="grant-1",
+    )
+    social = SocialMemory(authority=authority)
+    shared = SharedGroundBuffer(authority=authority)
+    ServiceContainer.clear()
+    ServiceContainer.register_instance(
+        "other_agent_model",
+        SimpleNamespace(active_agent_id="bryan"),
+        required=False,
+    )
+
+    try:
+        milestone = social.record_milestone("verified the exact-agent migration", 0.8)
+        entry = shared.record(
+            "release checklist",
+            context="Established after live verification",
+            salience=0.7,
+            tags=["work"],
+        )
+        social.relationship_depth = 1.0
+        relationship_depth = social.relationship_depth
+        social_context = social.get_social_context("bryan")
+        shared_context = shared.get_context_injection(agent_id="bryan")
+        alice_context = shared.get_context_injection(agent_id="alice")
+    finally:
+        ServiceContainer.clear()
+
+    assert milestone.record_id
+    assert entry.agent_id == "bryan"
+    assert 0.0 < relationship_depth < 1.0
+    assert "verified the exact-agent migration" in social_context
+    assert "CONSENTED SHARED GROUND" in shared_context
+    assert alice_context == ""
+    assert not (tmp_path / "social_memory.json").exists()
+    assert not (tmp_path / "shared_ground.json").exists()

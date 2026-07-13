@@ -225,7 +225,7 @@ def get_secret(key: str, default: str | None = None) -> str | None:
     return default
 
 
-def set_secret(key: str, value: str, store: str = "keychain") -> None:
+def set_secret(key: str, value: str, store: str = "keychain") -> bool:
     """
     Persist a secret. Default target is macOS Keychain.
     """
@@ -233,10 +233,11 @@ def set_secret(key: str, value: str, store: str = "keychain") -> None:
         success = _keychain_set(key, value)
         if success:
             logger.info("Secret '%s' stored in Keychain.", key)
-            return
+            return True
         logger.warning("Keychain unavailable — storing '%s' in environment only.", key)
 
     os.environ[key] = value
+    return store != "keychain"
 
 
 def _keychain_get(key: str) -> str | None:

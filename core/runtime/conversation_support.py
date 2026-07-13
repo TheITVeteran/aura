@@ -77,20 +77,46 @@ def _is_goal_context_priority(objective: str) -> bool:
 
 def resolve_primary_user_id(state: Any) -> str:
     try:
+        estimator = service_access.optional_service("other_agent_model", default=None)
+        active_agent = str(getattr(estimator, "active_agent_id", "") or "").strip()
+        if active_agent:
+            return active_agent[:160]
+
+        cognition = getattr(state, "cognition", None)
+        current_partner = str(getattr(cognition, "current_partner", "") or "").strip()
+        if current_partner:
+            return current_partner[:160]
+
         world = getattr(state, "world", None)
         for collection_name in ("relationship_graph", "known_entities"):
             collection = getattr(world, collection_name, {}) or {}
-            for key in collection.keys():
-                normalized = str(key).strip().lower()
+            if isinstance(collection, dict) and len(collection) == 1:
+                normalized = str(next(iter(collection))).strip().lower()
                 if normalized:
-                    return normalized
+                    return normalized[:160]
     except (RuntimeError, AttributeError, TypeError) as _exc:
         _record_conversation_degradation(
             _exc,
-            action="fell back to default primary user id after relationship lookup failed",
+            action="fell back to local user id after exact partner lookup failed",
         )
         logger.debug("Suppressed Exception: %s", _exc)
-    return "bryan"
+    return "local_user"
+
+
+def relational_memory_allows(user_id: str, kind: str, operation: str) -> bool:
+    try:
+        authority = service_access.optional_service("relational_memory", default=None)
+        return bool(
+            authority
+            and hasattr(authority, "allows")
+            and authority.allows(user_id, kind, operation)
+        )
+    except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+        _record_conversation_degradation(
+            exc,
+            action="excluded relational profile data after consent lookup failed",
+        )
+        return False
 
 
 async def record_shared_ground_callbacks(response_text: str) -> None:
@@ -123,7 +149,11 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
 
     try:
         profiler = service_access.optional_service("conversational_profiler", default=None)
-        if profiler and hasattr(profiler, "get_context_injection"):
+        if (
+            profiler
+            and hasattr(profiler, "get_context_injection")
+            and relational_memory_allows(user_id, "derived_profile", "prompt")
+        ):
             profile_block = profiler.get_context_injection(user_id)
             if profile_block:
                 blocks.append(profile_block)
@@ -140,11 +170,16 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
             source_ids = (
                 dialogue.default_source_ids() if hasattr(dialogue, "default_source_ids") else None
             )
-            dialogue_block = dialogue.get_context_injection(
-                user_id,
-                current_text=objective or "",
-                source_ids=source_ids,
-            )
+            if relational_memory_allows(user_id, "dialogue_preference", "prompt"):
+                dialogue_block = dialogue.get_context_injection(
+                    user_id,
+                    current_text=objective or "",
+                    source_ids=source_ids,
+                )
+            elif hasattr(dialogue, "get_source_context_injection"):
+                dialogue_block = dialogue.get_source_context_injection(source_ids)
+            else:
+                dialogue_block = ""
             if dialogue_block:
                 blocks.append(dialogue_block)
     except (RuntimeError, AttributeError, TypeError) as exc:
@@ -156,7 +191,7 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
 
     try:
         humor = service_access.optional_service("humor_engine", default=None)
-        if humor:
+        if humor and relational_memory_allows(user_id, "style_preference", "prompt"):
             humor_guide = humor.get_humor_guidance(user_id)
             if humor_guide:
                 blocks.append(humor_guide)
@@ -185,7 +220,11 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
 
     try:
         rel_intel = service_access.optional_service("relational_intelligence", default=None)
-        if rel_intel and hasattr(rel_intel, "get_context_injection"):
+        if (
+            rel_intel
+            and hasattr(rel_intel, "get_context_injection")
+            and relational_memory_allows(user_id, "derived_profile", "prompt")
+        ):
             ri_block = rel_intel.get_context_injection(user_id)
             if ri_block:
                 blocks.append(ri_block)
@@ -198,7 +237,11 @@ def build_conversational_context_blocks(state: Any, objective: str = "") -> list
 
     try:
         social_imagination = service_access.resolve_social_imagination(default=None)
-        if social_imagination and hasattr(social_imagination, "get_context_injection"):
+        if (
+            social_imagination
+            and hasattr(social_imagination, "get_context_injection")
+            and relational_memory_allows(user_id, "social_imagination", "prompt")
+        ):
             si_block = social_imagination.get_context_injection(
                 user_id,
                 current_text=objective or "",
@@ -313,7 +356,7 @@ async def update_conversational_intelligence(
 
     try:
         profiler = service_access.optional_service("conversational_profiler", default=None)
-        if profiler:
+        if profiler and relational_memory_allows(user_id, "derived_profile", "persist"):
             await profiler.update_from_interaction(user_id, user_input, aura_response, {})
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         _record_conversation_degradation(
@@ -324,7 +367,11 @@ async def update_conversational_intelligence(
 
     try:
         dialogue = service_access.resolve_dialogue_cognition(default=None)
-        if dialogue:
+        if dialogue and relational_memory_allows(
+            user_id,
+            "dialogue_preference",
+            "persist",
+        ):
             await dialogue.update_from_interaction(user_id, user_input, aura_response, {})
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         _record_conversation_degradation(
@@ -335,7 +382,7 @@ async def update_conversational_intelligence(
 
     try:
         humor = service_access.optional_service("humor_engine", default=None)
-        if humor:
+        if humor and relational_memory_allows(user_id, "style_preference", "persist"):
             humor.record_reaction(user_id, user_input, time.time())
             dynamics = service_access.resolve_conversational_dynamics(default=None)
             if dynamics:
@@ -372,7 +419,7 @@ async def update_conversational_intelligence(
 
     try:
         rel_intel = service_access.optional_service("relational_intelligence", default=None)
-        if rel_intel:
+        if rel_intel and relational_memory_allows(user_id, "derived_profile", "persist"):
             dynamics = service_access.resolve_conversational_dynamics(default=None)
             dynamics_state = dynamics.get_current_state() if dynamics else None
             await rel_intel.update_from_interaction(
@@ -387,7 +434,11 @@ async def update_conversational_intelligence(
 
     try:
         social_imagination = service_access.resolve_social_imagination(default=None)
-        if social_imagination:
+        if social_imagination and relational_memory_allows(
+            user_id,
+            "social_imagination",
+            "persist",
+        ):
             await social_imagination.update_from_interaction(user_id, user_input, aura_response, {})
     except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
         _record_conversation_degradation(

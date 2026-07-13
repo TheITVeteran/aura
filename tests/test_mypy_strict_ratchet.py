@@ -18,8 +18,9 @@ ALLOWLIST = REPO_ROOT / "config" / "mypy_strict_files.txt"
 # files + 5 persistent-world files + 4 incident/device-boundary files +
 # self-code transaction + desktop effect verification/host automation skill +
 # bounded multimodal event-time fusion + canonical legacy sensory adapter +
-# consented visual-only speech recognition + calibrated live social situation.
-MIN_STRICT_FILES = 55
+# consented visual-only speech recognition + calibrated live social situation +
+# identity-scoped relational-memory authority and compatibility adapters.
+MIN_STRICT_FILES = 58
 
 MYPY_FLAGS = ["--follow-imports=skip", "--explicit-package-bases"]
 

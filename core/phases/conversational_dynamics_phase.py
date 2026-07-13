@@ -12,6 +12,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from core.kernel.bridge import Phase
+from core.runtime.conversation_support import (
+    relational_memory_allows,
+    resolve_primary_user_id,
+)
 from core.runtime.errors import record_degradation
 from core.state.aura_state import AuraState
 
@@ -81,6 +85,7 @@ class ConversationalDynamicsPhase(Phase):
 
         try:
             new_state = state.derive("conversational_dynamics", origin="ConversationalDynamicsPhase")
+            active_user_id = resolve_primary_user_id(new_state)
 
             # Compute dynamics from the latest user message
             dynamics = engine.update(
@@ -234,9 +239,17 @@ class ConversationalDynamicsPhase(Phase):
             try:
                 from core.container import ServiceContainer
                 humor = ServiceContainer.get("humor_engine", default=None)
-                if humor and hasattr(humor, "update_banter_state"):
+                if (
+                    humor
+                    and hasattr(humor, "update_banter_state")
+                    and relational_memory_allows(
+                        active_user_id,
+                        "style_preference",
+                        "persist",
+                    )
+                ):
                     humor.update_banter_state(objective, dynamics)
-                    guidance = humor.get_humor_guidance("owner") if hasattr(humor, "get_humor_guidance") else ""
+                    guidance = humor.get_humor_guidance(active_user_id) if hasattr(humor, "get_humor_guidance") else ""
                     banter = humor.get_banter_directive() if hasattr(humor, "get_banter_directive") else ""
                     if guidance or banter:
                         new_state.response_modifiers["humor_guidance"] = f"{guidance}\n{banter}".strip()
@@ -266,8 +279,16 @@ class ConversationalDynamicsPhase(Phase):
             try:
                 from core.container import ServiceContainer
                 rel_intel = ServiceContainer.get("relational_intelligence", default=None)
-                if rel_intel and hasattr(rel_intel, "get_context_injection"):
-                    ri_block = rel_intel.get_context_injection("owner")
+                if (
+                    rel_intel
+                    and hasattr(rel_intel, "get_context_injection")
+                    and relational_memory_allows(
+                        active_user_id,
+                        "derived_profile",
+                        "prompt",
+                    )
+                ):
+                    ri_block = rel_intel.get_context_injection(active_user_id)
                     if ri_block:
                         new_state.response_modifiers["relational_intelligence"] = ri_block
             except (ImportError, AttributeError, RuntimeError) as exc:
@@ -401,8 +422,16 @@ class ConversationalDynamicsPhase(Phase):
                 # Feed interlocutor data from user model if available
                 try:
                     user_model = ServiceContainer.get("user_model", default=None)
-                    if user_model and hasattr(user_model, "get_profile"):
-                        profile_data = user_model.get_profile("owner") or {}
+                    if (
+                        user_model
+                        and hasattr(user_model, "get_profile")
+                        and relational_memory_allows(
+                            active_user_id,
+                            "derived_profile",
+                            "prompt",
+                        )
+                    ):
+                        profile_data = user_model.get_profile(active_user_id) or {}
                         isub.update_interlocutor_model(
                             communication_style=str(profile_data.get("communication_style", "")),
                             emotional_state=str(profile_data.get("emotional_state", "")),

@@ -165,19 +165,6 @@ class ContextStreamingMixin:
             except (RuntimeError, AttributeError, TypeError, ValueError):
                 ctx["social_narrative"] = ""
 
-            # Passive depth increase with robust guard for None
-            if (
-                hasattr(self.social, "relationship_depth")
-                and self.social.relationship_depth is not None
-            ):
-                try:
-                    # Capture current value safely
-                    curr = self.social.relationship_depth
-                    if isinstance(curr, (int, float)):
-                        self.social.relationship_depth = min(1.0, float(curr) + 0.001)
-                except (TypeError, ValueError, AttributeError):
-                    logger.debug("Fast-path tool call skipped or failed.")
-
         # Strategic Project Context
         if self.strategic_planner and self.project_store:
             try:

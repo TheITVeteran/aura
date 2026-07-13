@@ -5,6 +5,7 @@ Extracts the incoming message handling pipeline, routing, and filesystem checks.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 import logging
 import re
@@ -182,6 +183,95 @@ class IncomingLogicMixin:
                 exc,
             )
             return False
+
+    def _apply_relational_memory_control(
+        self,
+        payload_context: dict[str, Any],
+        message: str,
+        user_id: str,
+    ) -> dict[str, Any] | None:
+        """Apply explicit user memory commands to the exact-agent authority."""
+        from core.container import ServiceContainer
+        from core.runtime.memory_consent import (
+            MemoryConsentMode,
+            parse_consent_command,
+        )
+
+        normalized = " ".join(str(message or "").strip().lower().split())
+        mode = parse_consent_command(normalized)
+        delete_all = any(
+            phrase in normalized
+            for phrase in (
+                "forget everything about me",
+                "delete all relational memory",
+                "erase all relationship memory",
+            )
+        )
+        if mode is None and not delete_all:
+            return None
+        authority = ServiceContainer.get("relational_memory", default=None)
+        if authority is None:
+            raise RuntimeError("relational memory authority unavailable")
+        evidence = hashlib.sha256(
+            f"{user_id}\n{normalized}".encode("utf-8", errors="replace")
+        ).hexdigest()
+        receipt_id = str(
+            payload_context.get("consent_receipt_id")
+            or f"user-command-evidence-{evidence}"
+        )[:200]
+
+        if delete_all:
+            receipt = authority.delete_agent(
+                user_id,
+                authorization_receipt_id=receipt_id,
+            )
+            result = {
+                "mode": "deleted",
+                "receipt_id": receipt.receipt_id,
+                "deleted_records": len(receipt.record_ids),
+            }
+        else:
+            grant = None
+            if mode == MemoryConsentMode.REMEMBER_ALWAYS:
+                grant = authority.replace_consent(
+                    user_id,
+                    kinds=authority.supported_kinds(),
+                    operations=["persist", "recall", "prompt"],
+                    receipt_id=receipt_id,
+                    source="explicit_user_command",
+                )
+            elif mode == MemoryConsentMode.SESSION_ONLY:
+                grant = authority.replace_consent(
+                    user_id,
+                    kinds=authority.supported_kinds(),
+                    operations=["recall", "prompt"],
+                    receipt_id=receipt_id,
+                    source="explicit_user_command",
+                )
+            else:
+                authority.revoke_consent(
+                    user_id,
+                    receipt_id=f"{receipt_id}:replace",
+                    delete_records=False,
+                )
+            result = {
+                "mode": mode.value,
+                "grant_id": grant.grant_id if grant is not None else "",
+                "persistence_requested": bool(
+                    grant is not None and "persist" in grant.operations
+                ),
+                "persistence_allowed": bool(
+                    grant is not None
+                    and "persist" in grant.operations
+                    and authority.persistence_available
+                ),
+                "persistence_available": bool(authority.persistence_available),
+                "prompt_use_allowed": bool(
+                    grant is not None and "prompt" in grant.operations
+                ),
+            }
+        payload_context["relational_memory_control"] = result
+        return result
 
     async def _route_prefixed_message(self, message: str, prefix: str, origin: str) -> Any:
         # Implementation of legacy prefix routing (e.g. stripping tag and updating origin)
@@ -402,7 +492,16 @@ class IncomingLogicMixin:
                         else None
                     )
                     try:
-                        self._observe_social_turn(payload_context, safe_msg, live_state)
+                        user_id = self._observe_social_turn(
+                            payload_context,
+                            safe_msg,
+                            live_state,
+                        )
+                        self._apply_relational_memory_control(
+                            payload_context,
+                            safe_msg,
+                            user_id,
+                        )
                     except (
                         ImportError,
                         AttributeError,
@@ -690,6 +789,18 @@ class IncomingLogicMixin:
                         action="continued user turn without calibrated other-agent state",
                     )
                     logger.error("OtherAgentState update failed: %s", exc, exc_info=True)
+
+                try:
+                    self._apply_relational_memory_control(
+                        payload_context,
+                        message,
+                        user_id,
+                    )
+                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    _record_incoming_degradation(
+                        exc,
+                        action="continued user turn after relational memory control failed",
+                    )
 
                 try:
                     discourse_tracker = ServiceContainer.get("discourse_tracker", default=None)
