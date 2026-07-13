@@ -48,6 +48,9 @@ _ACTIVITY_WINDOW_FRAMES = 30
 # Logistic calibration for motion-energy → speaking probability.
 _CALIBRATION_MIDPOINT = 0.035
 _CALIBRATION_STEEPNESS = 120.0
+# Landmark aperture deltas are smaller and cleaner than intensity motion.
+_LANDMARK_MIDPOINT = 0.006
+_LANDMARK_STEEPNESS = 700.0
 _SPEAK_ON_THRESHOLD = 0.65
 _SPEAK_OFF_THRESHOLD = 0.35
 
@@ -125,6 +128,76 @@ def _default_face_detector() -> Callable[[np.ndarray], tuple[int, int, int, int]
         return None
 
 
+# ── Landmark-grade lip tracking (mediapipe FaceMesh, bundled model) ──
+
+# FaceMesh indices: inner lips 13 (upper) / 14 (lower), mouth corners
+# 61 / 291, face-height reference 10 (forehead) / 152 (chin).
+_LIP_UPPER, _LIP_LOWER = 13, 14
+_MOUTH_LEFT, _MOUTH_RIGHT = 61, 291
+_FACE_TOP, _FACE_BOTTOM = 10, 152
+
+
+def mediapipe_available() -> bool:
+    try:
+        import mediapipe  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def lip_metrics_from_points(points: dict[int, tuple[float, float]]) -> dict[str, float] | None:
+    """Normalized lip geometry from landmark points (pixel or unit space).
+    Aperture and width are scaled by face height, so they are camera- and
+    distance-invariant — the viseme-grade signal."""
+    required = (_LIP_UPPER, _LIP_LOWER, _MOUTH_LEFT, _MOUTH_RIGHT,
+                _FACE_TOP, _FACE_BOTTOM)
+    if any(index not in points for index in required):
+        return None
+    face_height = math.dist(points[_FACE_TOP], points[_FACE_BOTTOM])
+    if face_height <= 1e-9:
+        return None
+    return {
+        "aperture": math.dist(points[_LIP_UPPER], points[_LIP_LOWER]) / face_height,
+        "width": math.dist(points[_MOUTH_LEFT], points[_MOUTH_RIGHT]) / face_height,
+    }
+
+
+class LandmarkLipTracker:
+    """MediaPipe FaceMesh lip tracker. The mesh model ships inside the
+    wheel — no downloads. Fails soft to None (caller falls back)."""
+
+    def __init__(self) -> None:
+        import mediapipe
+
+        self._mesh = mediapipe.solutions.face_mesh.FaceMesh(
+            static_image_mode=False,
+            max_num_faces=1,
+            refine_landmarks=False,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+
+    def lip_metrics(self, frame: np.ndarray) -> dict[str, float] | None:
+        try:
+            rgb = np.ascontiguousarray(frame[..., ::-1]) if frame.ndim == 3 else (
+                np.repeat(frame[..., None], 3, axis=2))
+            result = self._mesh.process(rgb)
+            faces = getattr(result, "multi_face_landmarks", None)
+            if not faces:
+                return None
+            landmarks = faces[0].landmark
+            points = {
+                index: (landmarks[index].x, landmarks[index].y)
+                for index in (_LIP_UPPER, _LIP_LOWER, _MOUTH_LEFT,
+                              _MOUTH_RIGHT, _FACE_TOP, _FACE_BOTTOM)
+            }
+            return lip_metrics_from_points(points)
+        except _VISUAL_SPEECH_ERRORS as exc:
+            record_degradation("senses.visual_speech.landmarks", exc)
+            return None
+
+
 def mouth_roi_from_face(face: tuple[int, int, int, int]) -> MouthRegion:
     """Geometric mouth region: lower third of the face, central half width."""
     x, y, w, h = face
@@ -144,11 +217,22 @@ class VisualSpeechPipeline:
         *,
         fps: float = _DEFAULT_FPS,
         face_detector: Callable[[np.ndarray], tuple[int, int, int, int] | None] | None = None,
+        use_landmarks: bool = True,
+        lip_tracker: Any = None,
     ):
         if fps <= 0:
             raise ValueError("fps must be positive")
         self.fps = float(fps)
         self._face_detector = face_detector if face_detector is not None else _default_face_detector()
+        self._lip_tracker: Any = None
+        if lip_tracker is not None:
+            self._lip_tracker = lip_tracker
+        elif use_landmarks and mediapipe_available():
+            try:
+                self._lip_tracker = LandmarkLipTracker()
+            except _VISUAL_SPEECH_ERRORS as exc:
+                record_degradation("senses.visual_speech.landmark_init", exc)
+        self._previous_aperture: float | None = None
         self._previous_mouth: np.ndarray | None = None
         self._energy_window: deque[float] = deque(maxlen=_ACTIVITY_WINDOW_FRAMES)
         self._speaking = False
@@ -197,6 +281,12 @@ class VisualSpeechPipeline:
     def process_frame(self, frame: np.ndarray, *, at: float | None = None) -> VisualSpeechObservation:
         """Consume one frame (grayscale or BGR uint8) and update state."""
         at = time.time() if at is None else float(at)
+        if self._lip_tracker is not None:
+            landmark_obs = self._process_landmark_frame(frame, at)
+            if landmark_obs is not None:
+                return landmark_obs
+            # Landmark path found no face this frame; fall through to the
+            # detector path so behavior degrades, never gaps.
         gray = self._to_gray(frame)
         face = self._face_detector(gray) if self._face_detector else None
         if face is None:
@@ -245,6 +335,54 @@ class VisualSpeechPipeline:
         )
 
     # ── internals ──────────────────────────────────────────────
+
+    def _process_landmark_frame(
+        self, frame: np.ndarray, at: float
+    ) -> VisualSpeechObservation | None:
+        """Viseme-grade path: normalized lip aperture from face landmarks.
+        Returns None when no face is tracked (caller falls back)."""
+        metrics = self._lip_tracker.lip_metrics(np.asarray(frame))
+        if metrics is None:
+            # No landmarks this frame: reset aperture history and let the
+            # detector path own the frame (and the energy window).
+            self._previous_aperture = None
+            return None
+        aperture = float(metrics["aperture"])
+        previous = self._previous_aperture
+        self._previous_aperture = aperture
+        delta = (aperture - previous) if previous is not None else 0.0
+        energy = abs(delta)
+        # The SIGNED derivative goes into the band window: rectifying it
+        # would double the articulation frequency out of the speech band.
+        self._energy_window.append(delta)
+        band_energy = self._band_limited_energy()
+        probability = 1.0 / (1.0 + math.exp(
+            -_LANDMARK_STEEPNESS * (band_energy - _LANDMARK_MIDPOINT)
+        ))
+        if not self._speaking and probability >= _SPEAK_ON_THRESHOLD:
+            self._speaking = True
+        elif self._speaking and probability <= _SPEAK_OFF_THRESHOLD:
+            self._speaking = False
+        self.observations += 1
+        return VisualSpeechObservation(
+            at=at,
+            face_present=True,
+            mouth_region=None,
+            motion_energy=energy,
+            speaking_probability=probability,
+            speaking=self._speaking,
+            viseme_features=[
+                round(min(1.0, aperture / 0.15), 5),
+                round(min(1.0, float(metrics["width"]) / 0.8), 5),
+                round(min(1.0, energy / 0.05), 5),
+            ],
+            transcript=None,
+            transcript_source=(
+                "vsr_model_attached_but_decoding_not_wired"
+                if self._vsr_session is not None
+                else "unavailable_no_vsr_model"
+            ),
+        )
 
     @staticmethod
     def _to_gray(frame: np.ndarray) -> np.ndarray:
