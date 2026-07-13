@@ -2785,6 +2785,7 @@ def test_chat_turn_memory_log_scheduler_queues_when_drain_is_active(monkeypatch)
         aura_response="hi",
         session_id="test-session",
         chat_origin="desktop_ui",
+        user_id="bryan",
     )
 
     assert scheduled is True
@@ -2842,6 +2843,7 @@ async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
         aura_response="I will keep it in the log.",
         session_id="test-session",
         chat_origin="desktop_ui",
+        user_id="bryan",
     )
 
     assert scheduled is True
@@ -2849,6 +2851,7 @@ async def test_chat_turn_memory_log_scheduler_uses_bounded_track(monkeypatch):
     await tracker.scheduled[0][0]
     assert log_calls[0]["user_message"] == "remember this"
     assert log_calls[0]["metadata"]["origin"] == "desktop_ui"
+    assert log_calls[0]["metadata"]["user_id"] == "bryan"
     assert consciousness_calls == [("remember this", "I will keep it in the log.")]
 
 
@@ -2883,6 +2886,7 @@ async def test_chat_turn_memory_log_scheduler_times_out_slow_logger(monkeypatch)
         aura_response="logger",
         session_id="test-session",
         chat_origin="desktop_ui",
+        user_id="bryan",
     )
 
     assert scheduled is True
@@ -2914,6 +2918,7 @@ def test_chat_turn_memory_log_queue_overflow_drops_oldest(monkeypatch):
             aura_response=f"reply {item}",
             session_id="test-session",
             chat_origin="desktop_ui",
+            user_id="bryan",
         )
 
     with chat_routes._CHAT_TURN_MEMORY_LOG_QUEUE_LOCK:

@@ -10,10 +10,11 @@ Features:
 4. Marks conversation turns with entity mentions and emotional context
 5. Prevents bot-like hollow conversations from being preserved (quality filter)
 """
+from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from core.runtime.errors import record_degradation
 from core.utils.task_tracker import get_task_tracker
@@ -34,15 +35,15 @@ _CHAT_TURN_RECOVERABLE_ERRORS = (
 class ChatTurnLogger:
     """Singleton for automatic chat turn logging to episodic memory."""
     
-    _instance: Optional["ChatTurnLogger"] = None
+    _instance: ChatTurnLogger | None = None
     _lock = asyncio.Lock()
     
-    def __init__(self):
+    def __init__(self) -> None:
         self._episodic_memory = None
         self._memory_facade = None
     
     @classmethod
-    async def get_instance(cls) -> "ChatTurnLogger":
+    async def get_instance(cls) -> ChatTurnLogger:
         """Get or create singleton instance."""
         if cls._instance is None:
             async with cls._lock:
@@ -51,7 +52,7 @@ class ChatTurnLogger:
                     await cls._instance._initialize()
         return cls._instance
     
-    async def _initialize(self):
+    async def _initialize(self) -> None:
         """Initialize memory system references."""
         self._refresh_services()
 
@@ -97,6 +98,49 @@ class ChatTurnLogger:
                 return False
         
         return True
+
+    def _schedule_profile_learning(
+        self,
+        *,
+        user_id: str,
+        user_message: str,
+        aura_response: str,
+        session_id: str,
+    ) -> bool:
+        """Schedule exact-agent learning independently of episodic availability."""
+        normalized_user_id = " ".join(str(user_id or "").strip().split())[:160]
+        if not normalized_user_id:
+            return False
+        try:
+            from core.memory.profile_manager import learn_from_turn_auto
+
+            async def _learn_profiles() -> None:
+                try:
+                    user_facts, self_facts = await learn_from_turn_auto(
+                        user_id=normalized_user_id,
+                        user_message=user_message,
+                        aura_response=aura_response,
+                        session_id=session_id,
+                    )
+                    if user_facts > 0 or self_facts > 0:
+                        logger.debug(
+                            "Profile learning: %d user facts, %d self facts",
+                            user_facts,
+                            self_facts,
+                        )
+                except _CHAT_TURN_RECOVERABLE_ERRORS as exc:
+                    record_degradation("chat_turn_logger.profile_learning", exc)
+                    logger.debug("Profile learning skipped: %s", exc)
+
+            get_task_tracker().create_task(
+                _learn_profiles(),
+                name=f"profile_learning_{session_id}",
+            )
+            return True
+        except _CHAT_TURN_RECOVERABLE_ERRORS as exc:
+            record_degradation("chat_turn_logger.profile_learning", exc)
+            logger.debug("Profile learning unavailable: %s", exc)
+            return False
     
     async def log_chat_turn(
         self,
@@ -104,7 +148,7 @@ class ChatTurnLogger:
         aura_response: str,
         session_id: str = "default",
         emotional_valence: float = 0.0,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         """Log a complete chat turn to episodic memory.
         
@@ -123,6 +167,18 @@ class ChatTurnLogger:
             logger.debug("Skipping hollow turn (too short or error response)")
             return False
 
+        episode_metadata = dict(metadata or {})
+        episode_metadata["session_id"] = session_id
+        episode_metadata["turn_type"] = "conversation"
+        episode_metadata["conversation_lane"] = True
+        profile_user_id = str(episode_metadata.get("user_id") or "").strip()[:160]
+        self._schedule_profile_learning(
+            user_id=profile_user_id,
+            user_message=user_message,
+            aura_response=aura_response,
+            session_id=session_id,
+        )
+
         self._refresh_services()
         if not self._episodic_memory:
             return False
@@ -135,11 +191,6 @@ class ChatTurnLogger:
             outcome = aura_response[:300]
             
             # Record with metadata
-            episode_metadata = dict(metadata or {})
-            episode_metadata["session_id"] = session_id
-            episode_metadata["turn_type"] = "conversation"
-            episode_metadata["conversation_lane"] = True
-            
             # Let episodic memory detect relational significance
             episode_id = self._episodic_memory.record_episode(
                 context=context,
@@ -154,35 +205,6 @@ class ChatTurnLogger:
             
             if episode_id:
                 logger.debug(f"✓ Chat turn logged to episodic memory (episode={episode_id})")
-                
-                # CRITICAL: Learn profiles from this turn in background
-                try:
-                    from core.memory.profile_manager import learn_from_turn_auto
-                    
-                    # Fire-and-forget profile learning
-                    async def _learn_profiles():
-                        try:
-                            user_facts, aura_facts = await learn_from_turn_auto(
-                                user_message=user_message,
-                                aura_response=aura_response,
-                                session_id=session_id,
-                            )
-                            if user_facts > 0 or aura_facts > 0:
-                                logger.debug(f"📚 Profile learning: {user_facts} user facts, {aura_facts} self facts")
-                        except _CHAT_TURN_RECOVERABLE_ERRORS as e:
-                            record_degradation("chat_turn_logger.profile_learning", e)
-                            logger.debug("Profile learning skipped: %s", e)
-                    
-                    # Schedule without blocking
-                    get_task_tracker().create_task(
-                        _learn_profiles(),
-                        name=f"profile_learning_{session_id}",
-                    )
-                
-                except _CHAT_TURN_RECOVERABLE_ERRORS as e:
-                    record_degradation("chat_turn_logger.profile_learning", e)
-                    logger.debug("Profile learning unavailable: %s", e)
-                
                 return True
             else:
                 logger.debug("Chat turn logging returned empty episode_id (governance blocked or deferral)")
@@ -197,7 +219,7 @@ class ChatTurnLogger:
         self,
         user_message: str,
         session_id: str = "default",
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> bool:
         """Log just a user message (early capture, before response)."""
         if len(user_message.strip()) < 5:
@@ -221,7 +243,7 @@ class ChatTurnLogger:
             
             if result:
                 logger.debug(f"✓ User message logged to memory (session={session_id})")
-            return result
+            return bool(result)
             
         except (AttributeError, RuntimeError, TypeError, ValueError) as e:
             record_degradation("chat_turn_logger", e)
@@ -234,7 +256,7 @@ async def log_chat_turn_auto(
     aura_response: str,
     session_id: str = "default",
     emotional_valence: float = 0.0,
-    metadata: Optional[dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
 ) -> bool:
     """Convenience function to log a chat turn."""
     try:

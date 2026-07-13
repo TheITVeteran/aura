@@ -84,3 +84,8 @@ core/social/relational_intelligence.py
 core/social/social_imagination.py
 core/conversational/humor_engine.py
 core/utils/output_gate.py
+core/memory/profile_manager.py
+core/memory/semantic_fact_extractor.py
+core/memory/user_profile.py
+core/security/device_pairing.py
+core/memory/chat_turn_logger.py

@@ -22,8 +22,10 @@ ALLOWLIST = REPO_ROOT / "config" / "mypy_strict_files.txt"
 # identity-scoped relational-memory authority and compatibility adapters +
 # authority-backed conversational-profile, dialogue-cognition, relational-
 # intelligence, social-imagination, delivered-outcome humor, and receipt-confirmed
-# user output transport.
-MIN_STRICT_FILES = 64
+# user output transport, exact-agent user profiles, semantic fact provenance,
+# principal-bound paired devices, authenticated principal resolution, and
+# exact-agent chat-turn profile scheduling.
+MIN_STRICT_FILES = 69
 
 MYPY_FLAGS = ["--follow-imports=skip", "--explicit-package-bases"]
 

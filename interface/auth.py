@@ -308,6 +308,51 @@ def paired_device_session_id(request: Request) -> str | None:
     return f"paired-device:{device_id}" if device_id else None
 
 
+def local_owner_principal_id() -> str | None:
+    """Resolve the configured primary operator without using mutable turn state."""
+    try:
+        from core.container import ServiceContainer
+
+        identity_kernel = ServiceContainer.get("identity_kernel", default=None)
+        if identity_kernel is not None and hasattr(identity_kernel, "get_current_identity"):
+            current = identity_kernel.get_current_identity()
+            if isinstance(current, dict):
+                principal = " ".join(
+                    str(current.get("primary_operator") or "").strip().split()
+                ).casefold()[:160]
+                if principal:
+                    return principal
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("auth.owner_principal", exc)
+    try:
+        from core.identity.self_contract import SelfContract
+
+        principal = " ".join(
+            str(
+                SelfContract().get_relationship_constraints().get("primary_operator")
+                or ""
+            ).strip().split()
+        ).casefold()[:160]
+        return principal or None
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("auth.owner_principal", exc)
+        return None
+
+
+def relational_principal_id_for_request(request: Request) -> str | None:
+    """Bind relational state to this authenticated request, never prior turn state."""
+    device = device_for_request(request)
+    if device is not None:
+        principal = " ".join(
+            str(getattr(device, "principal_id", "") or "").strip().split()
+        ).casefold()[:160]
+        return principal or None
+    profile = request_access_profile(request)
+    if profile.get("surface") == "owner":
+        return local_owner_principal_id()
+    return None
+
+
 def request_access_profile(request: Request | None) -> dict[str, Any]:
     """Describe the authenticated UI surface without exposing credentials."""
 

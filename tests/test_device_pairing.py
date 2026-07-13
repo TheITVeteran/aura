@@ -35,7 +35,7 @@ def _internal_only(monkeypatch, value: bool) -> None:
 
 async def test_pairing_roundtrip_and_verify(registry, monkeypatch):
     _internal_only(monkeypatch, False)
-    challenge = registry.begin_pairing()
+    challenge = registry.begin_pairing("bryan")
     assert len(challenge["code"]) == 8 and challenge["code"].isdigit()
 
     issued = await registry.complete_pairing(challenge["code"], "Bryan's phone")
@@ -45,11 +45,12 @@ async def test_pairing_roundtrip_and_verify(registry, monkeypatch):
     assert device is not None
     assert device.name == "Bryan's phone"
     assert device.scopes == (dp.SCOPE_CONVERSATION,)
+    assert device.principal_id == "bryan"
 
 
 async def test_token_never_persisted_in_clear(registry, monkeypatch, tmp_path):
     _internal_only(monkeypatch, False)
-    challenge = registry.begin_pairing()
+    challenge = registry.begin_pairing("bryan")
     issued = await registry.complete_pairing(challenge["code"], "phone")
 
     on_disk = (tmp_path / "paired_devices.json").read_text(encoding="utf-8")
@@ -62,15 +63,25 @@ async def test_token_never_persisted_in_clear(registry, monkeypatch, tmp_path):
 
 async def test_registry_persistence_survives_reload(registry, monkeypatch, tmp_path):
     _internal_only(monkeypatch, False)
-    issued = await registry.complete_pairing(registry.begin_pairing()["code"], "phone")
+    issued = await registry.complete_pairing(
+        registry.begin_pairing("bryan")["code"], "phone"
+    )
 
     reloaded = dp.DevicePairingRegistry.load(tmp_path / "paired_devices.json")
-    assert reloaded.verify_token(issued["token"]) is not None
+    restored = reloaded.verify_token(issued["token"])
+    assert restored is not None
+    assert restored.principal_id == "bryan"
+
+
+def test_pairing_rejects_missing_relational_principal(registry, monkeypatch):
+    _internal_only(monkeypatch, False)
+    with pytest.raises(dp.PairingError, match="verified relational principal"):
+        registry.begin_pairing("")
 
 
 async def test_wrong_code_attempts_exhaust_challenge(registry, monkeypatch):
     _internal_only(monkeypatch, False)
-    registry.begin_pairing()
+    registry.begin_pairing("bryan")
     for _ in range(dp._MAX_ATTEMPTS):
         with pytest.raises(dp.PairingError):
             await registry.complete_pairing("00000000", "intruder")
@@ -81,7 +92,7 @@ async def test_wrong_code_attempts_exhaust_challenge(registry, monkeypatch):
 
 async def test_expired_code_rejected(registry, monkeypatch):
     _internal_only(monkeypatch, False)
-    challenge = registry.begin_pairing()
+    challenge = registry.begin_pairing("bryan")
     registry._challenge.expires_at = time.time() - 1
     with pytest.raises(dp.PairingError):
         await registry.complete_pairing(challenge["code"], "late")
@@ -89,7 +100,9 @@ async def test_expired_code_rejected(registry, monkeypatch):
 
 async def test_revocation_kills_token(registry, monkeypatch):
     _internal_only(monkeypatch, False)
-    issued = await registry.complete_pairing(registry.begin_pairing()["code"], "phone")
+    issued = await registry.complete_pairing(
+        registry.begin_pairing("bryan")["code"], "phone"
+    )
     assert registry.verify_token(issued["token"]) is not None
 
     assert await registry.revoke_device(issued["device_id"]) is True
@@ -98,11 +111,13 @@ async def test_revocation_kills_token(registry, monkeypatch):
 
 async def test_internal_only_mode_fails_closed(registry, monkeypatch):
     _internal_only(monkeypatch, False)
-    issued = await registry.complete_pairing(registry.begin_pairing()["code"], "phone")
+    issued = await registry.complete_pairing(
+        registry.begin_pairing("bryan")["code"], "phone"
+    )
 
     _internal_only(monkeypatch, True)
     with pytest.raises(dp.PairingDisabledError):
-        registry.begin_pairing()
+        registry.begin_pairing("bryan")
     with pytest.raises(dp.PairingDisabledError):
         await registry.complete_pairing("12345678", "phone")
     # Even already-issued tokens stop verifying.
@@ -117,7 +132,9 @@ def test_malformed_tokens_rejected(registry, monkeypatch):
 
 async def test_corrupt_registry_file_authorizes_nobody(registry, monkeypatch, tmp_path):
     _internal_only(monkeypatch, False)
-    issued = await registry.complete_pairing(registry.begin_pairing()["code"], "phone")
+    issued = await registry.complete_pairing(
+        registry.begin_pairing("bryan")["code"], "phone"
+    )
     (tmp_path / "paired_devices.json").write_text("{not json", encoding="utf-8")
 
     reloaded = dp.DevicePairingRegistry.load(tmp_path / "paired_devices.json")
@@ -145,7 +162,9 @@ def _remote_request(path: str, token: str | None = None, method: str = "GET",
 async def paired_token(registry, monkeypatch):
     _internal_only(monkeypatch, False)
     monkeypatch.setattr(auth.config, "api_token", "master-token-value", raising=False)
-    issued = await registry.complete_pairing(registry.begin_pairing()["code"], "phone")
+    issued = await registry.complete_pairing(
+        registry.begin_pairing("bryan")["code"], "phone"
+    )
     return issued["token"]
 
 
@@ -195,6 +214,50 @@ async def test_device_cookie_authenticates(paired_token):
     request = _remote_request("/api/chat", method="POST")
     request.cookies = {auth.DEVICE_SESSION_COOKIE_NAME: paired_token}
     auth.validate_runtime_security_request(request)
+    assert auth.relational_principal_id_for_request(request) == "bryan"
+
+
+async def test_unbound_legacy_device_cannot_select_a_relational_profile(
+    registry,
+    monkeypatch,
+    paired_token,
+):
+    device_id = paired_token.split(".")[1]
+    registry.devices[device_id].principal_id = ""
+    request = _remote_request("/api/chat", paired_token, method="POST")
+
+    assert auth.relational_principal_id_for_request(request) is None
+
+
+def test_owner_request_uses_configured_identity_not_conversation_state(monkeypatch):
+    class _IdentityKernel:
+        @staticmethod
+        def get_current_identity():
+            return {"primary_operator": "  Bryan   Primary  "}
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: (
+                _IdentityKernel() if name == "identity_kernel" else default
+            )
+        ),
+    )
+    owner_request = _remote_request("/api/chat", method="POST")
+    owner_request.client.host = "127.0.0.1"
+
+    assert auth.relational_principal_id_for_request(owner_request) == "bryan primary"
+
+
+def test_unknown_remote_request_cannot_select_a_relational_profile(monkeypatch):
+    monkeypatch.setattr(auth.config, "api_token", "master-token-value", raising=False)
+
+    assert (
+        auth.relational_principal_id_for_request(
+            _remote_request("/api/chat", method="POST")
+        )
+        is None
+    )
 
 
 async def test_pairing_public_paths_reachable_without_credentials(registry, monkeypatch):

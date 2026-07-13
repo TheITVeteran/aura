@@ -19,10 +19,8 @@ SCRIPT_RECOVERABLE_ERRORS = (
     asyncio.TimeoutError,
 )
 
-from core.memory.semantic_fact_extractor import SemanticFactExtractor
-from core.memory.user_profile import UserProfile
-from core.memory.aura_self_profile import AuraSelfProfile
-from core.memory.profile_manager import ProfileManager
+from core.memory.profile_manager import ProfileManager  # noqa: E402
+from core.memory.semantic_fact_extractor import SemanticFactExtractor  # noqa: E402
 
 
 async def test_fact_extraction():
@@ -56,6 +54,7 @@ async def test_profile_learning():
     aura_resp = "I notice you appreciate clarity and technical depth. You work with cloud infrastructure."
     
     user_learned, aura_learned = await manager.learn_from_turn(
+        user_id="bryan",
         user_message=user_msg,
         aura_response=aura_resp,
         session_id="test"
@@ -67,7 +66,7 @@ async def test_profile_learning():
     user_profile = manager.get_user_profile()
     if user_profile:
         print("\nUser Profile:")
-        print(user_profile.summary())
+        print(user_profile.summary("bryan"))
     
     aura_profile = manager.get_aura_profile()
     if aura_profile:
@@ -83,7 +82,7 @@ async def test_context_injection():
     
     manager = await ProfileManager.get_instance()
     
-    context = await manager.get_context_injection()
+    context = await manager.get_context_injection("bryan")
     if context:
         print("Generated context block:")
         print(context[:500] + ("..." if len(context) > 500 else ""))
@@ -132,7 +131,7 @@ async def main():
         status = "✅ PASS" if result else "❌ FAIL"
         print(f"║ {test_name:<40} {status:>15} ║")
     
-    print(f"╠════════════════════════════════════════════════════════════╣")
+    print("╠════════════════════════════════════════════════════════════╣")
     print(f"║ Total: {passed}/{total} tests passed                                 ║")
     print("╚════════════════════════════════════════════════════════════╝")
     

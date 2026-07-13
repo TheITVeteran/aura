@@ -10,13 +10,12 @@ Pulls structured knowledge from conversation text:
 Facts are extracted with confidence scores and can update/contradict existing knowledge.
 """
 
-import asyncio
 import logging
 import re
-from dataclasses import dataclass, field, asdict
-from typing import Any, Optional
-from enum import Enum
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from enum import Enum
+from typing import Any
 
 from core.runtime.errors import record_degradation
 
@@ -51,7 +50,7 @@ class SemanticFact:
     confidence: float = 0.75      # 0-1 confidence score
     source_text: str = ""         # Original text it came from
     timestamp: float = field(default_factory=lambda: datetime.now().timestamp())
-    contradicts: Optional[str] = None  # ID of fact this contradicts
+    contradicts: str | None = None  # ID of fact this contradicts
     metadata: dict[str, Any] = field(default_factory=dict)
     
     def to_dict(self) -> dict[str, Any]:
@@ -76,12 +75,20 @@ class SemanticFactExtractor:
     
     # Pattern templates for extraction
     USER_PREFERENCE_PATTERNS = [
-        (r"i\s+prefer(?:ence)?\s+(?:to\s+)?([^.,;!?]+)", "user", "prefers"),
+        (
+            r"\bi\s+(?:now\s+)?prefer\s+(?:the\s+)?([^.,;!?]+?)\s+over\s+([^.,;!?]+)",
+            "user",
+            "prefers_over",
+        ),
+        (
+            r"\bi\s+(?:now\s+)?prefer(?:ence)?\s+(?:to\s+)?"
+            r"((?:(?!\s+over\b)[^.,;!?])+)",
+            "user",
+            "prefers",
+        ),
         (r"i\s+like\s+([^.,;!?]+)", "user", "likes"),
-        (r"i\s+prefer\s+(?:the\s+)?([^.,;!?]+)\s+over\s+([^.,;!?]+)", "user", "prefers_over"),
-        (r"i\s+(?:don't|don't)\s+like\s+([^.,;!?]+)", "user", "dislikes"),
+        (r"i\s+(?:do\s+not|don't|dont)\s+like\s+([^.,;!?]+)", "user", "dislikes"),
         (r"my\s+(?:preferred|favorite)\s+(?:way|style|format)\s+(?:is|:)\s+([^.,;!?]+)", "user", "prefers"),
-        (r"please\s+(?:respond|answer|format)\s+in\s+([^.,;!?]+)", "user", "requests_format"),
     ]
     
     USER_CHARACTERISTIC_PATTERNS = [
@@ -90,6 +97,11 @@ class SemanticFactExtractor:
         (r"i\s+(?:know|understand)\s+(?:about\s+)?([^.,;!?]+)", "user", "knows_about"),
         (r"my\s+(?:background|experience)\s+(?:is|in)\s+([^.,;!?]+)", "user", "experienced_in"),
         (r"i\s+(?:have|possess)\s+([^.,;!?]+)\s+(?:skills?|expertise)", "user", "has_expertise_in"),
+    ]
+
+    USER_LEARNING_PATTERNS = [
+        (r"\bi\s+(?:just\s+)?learned\s+that\s+([^.,;!?]+)", "user", "learned_that"),
+        (r"\bi\s+(?:just\s+)?discovered\s+that\s+([^.,;!?]+)", "user", "discovered_that"),
     ]
     
     AURA_LEARNING_PATTERNS = [
@@ -111,14 +123,17 @@ class SemanticFactExtractor:
         (r"(?:we're|we're?)\s+([^.,;!?]+)", "relationship", "state"),
     ]
     
-    def __init__(self):
-        self._all_patterns = []
+    def __init__(self) -> None:
+        self._all_patterns: list[tuple[FactType, str, str, str]] = []
         
         for pattern, subject, predicate in self.USER_PREFERENCE_PATTERNS:
             self._all_patterns.append((FactType.USER_PREFERENCE, pattern, subject, predicate))
         
         for pattern, subject, predicate in self.USER_CHARACTERISTIC_PATTERNS:
             self._all_patterns.append((FactType.USER_CHARACTERISTIC, pattern, subject, predicate))
+
+        for pattern, subject, predicate in self.USER_LEARNING_PATTERNS:
+            self._all_patterns.append((FactType.USER_LEARNING, pattern, subject, predicate))
         
         for pattern, subject, predicate in self.AURA_LEARNING_PATTERNS:
             self._all_patterns.append((FactType.AURA_LEARNING, pattern, subject, predicate))
@@ -145,19 +160,7 @@ class SemanticFactExtractor:
         Returns:
             List of extracted semantic facts
         """
-        facts = []
-        
-        # Extract from user message
-        try:
-            user_facts = self._extract_from_text(
-                user_message,
-                source_role="user",
-                session_id=session_id
-            )
-            facts.extend(user_facts)
-        except _FACT_EXTRACTOR_RECOVERABLE_ERRORS as e:
-            record_degradation("fact_extractor", e)
-            logger.debug("User fact extraction failed: %s", e)
+        facts = self.extract_user_facts(user_message, session_id=session_id)
         
         # Extract from Aura response
         try:
@@ -176,6 +179,26 @@ class SemanticFactExtractor:
         
         logger.debug(f"Extracted {len(facts)} semantic facts from conversation turn")
         return facts
+
+    def extract_user_facts(
+        self,
+        user_message: str,
+        *,
+        session_id: str = "default",
+    ) -> list[SemanticFact]:
+        """Extract only literal user-origin facts for exact-agent projections."""
+        try:
+            return self._deduplicate_and_score(
+                self._extract_from_text(
+                    user_message,
+                    source_role="user",
+                    session_id=session_id,
+                )
+            )
+        except _FACT_EXTRACTOR_RECOVERABLE_ERRORS as exc:
+            record_degradation("fact_extractor", exc)
+            logger.debug("User fact extraction failed: %s", exc)
+            return []
     
     def _extract_from_text(
         self,
@@ -184,19 +207,50 @@ class SemanticFactExtractor:
         session_id: str = "default",
     ) -> list[SemanticFact]:
         """Extract facts from a single text block."""
-        facts = []
+        facts: list[SemanticFact] = []
         text_lower = text.lower()
         
         for fact_type, pattern, subject, predicate in self._all_patterns:
+            if source_role == "user" and fact_type in {
+                FactType.AURA_LEARNING,
+                FactType.GENERAL_KNOWLEDGE,
+            }:
+                continue
+            if source_role == "aura" and fact_type in {
+                FactType.USER_PREFERENCE,
+                FactType.USER_CHARACTERISTIC,
+                FactType.USER_LEARNING,
+                FactType.RELATIONSHIP_FACT,
+            }:
+                continue
             try:
-                matches = re.finditer(pattern, text_lower, re.IGNORECASE)
+                matches = re.finditer(pattern, text, re.IGNORECASE)
                 for match in matches:
+                    if predicate == "prefers" and re.match(
+                        r"\s+over\b",
+                        text[match.end() :],
+                        re.IGNORECASE,
+                    ):
+                        continue
                     # Extract the captured group(s)
                     groups = match.groups()
                     if not groups:
                         continue
                     
                     obj = groups[0].strip()
+                    profile_key = ""
+                    if predicate == "prefers_over" and len(groups) > 1:
+                        alternative = str(groups[1] or "").strip()
+                        if not alternative:
+                            continue
+                        obj = f"{obj} over {alternative}"
+                        normalized_pair = sorted(
+                            {
+                                " ".join(groups[0].lower().split()),
+                                " ".join(alternative.lower().split()),
+                            }
+                        )
+                        profile_key = "|".join(normalized_pair)
                     
                     # Skip very short or generic objects
                     if len(obj) < 3 or obj in ("things", "stuff", "it", "this", "that"):
@@ -211,6 +265,32 @@ class SemanticFactExtractor:
                     elif "best" in text_lower[max(0, match.start()-10):match.end()]:
                         confidence = 0.75
                     
+                    preceding = text[max(0, match.start() - 48) : match.start()]
+                    matched_text = match.group(0)
+                    correction = bool(
+                        re.search(
+                            r"(?:\bactually\b|\bcorrection\b|\binstead\b|"
+                            r"\bfrom\s+now\s+on\b|\bi\s+now\s+prefer\b)",
+                            f"{preceding} {matched_text}",
+                            re.IGNORECASE,
+                        )
+                    )
+                    metadata: dict[str, Any] = {
+                        "source_role": source_role,
+                        "session_id": session_id,
+                    }
+                    if source_role == "user" and fact_type in {
+                        FactType.USER_PREFERENCE,
+                        FactType.USER_CHARACTERISTIC,
+                        FactType.USER_LEARNING,
+                        FactType.RELATIONSHIP_FACT,
+                    }:
+                        metadata["explicit_user_statement"] = True
+                    if correction:
+                        metadata["correction"] = True
+                    if profile_key:
+                        metadata["profile_key"] = profile_key
+
                     fact = SemanticFact(
                         fact_type=fact_type,
                         subject=subject,
@@ -218,10 +298,7 @@ class SemanticFactExtractor:
                         object=obj,
                         confidence=confidence,
                         source_text=text[max(0, match.start()-30):min(len(text), match.end()+30)],
-                        metadata={
-                            "source_role": source_role,
-                            "session_id": session_id,
-                        }
+                        metadata=metadata,
                     )
                     facts.append(fact)
             except _FACT_EXTRACTOR_RECOVERABLE_ERRORS as e:
@@ -234,7 +311,7 @@ class SemanticFactExtractor:
     def _deduplicate_and_score(self, facts: list[SemanticFact]) -> list[SemanticFact]:
         """Remove duplicates and boost confidence for repeated facts."""
         # Group by (subject, predicate, object)
-        grouped: dict[tuple, list[SemanticFact]] = {}
+        grouped: dict[tuple[str, str, str], list[SemanticFact]] = {}
         
         for fact in facts:
             key = (fact.subject, fact.predicate, fact.object)
@@ -243,7 +320,7 @@ class SemanticFactExtractor:
             grouped[key].append(fact)
         
         # For duplicates, boost confidence
-        deduped = []
+        deduped: list[SemanticFact] = []
         for group in grouped.values():
             if len(group) > 1:
                 # Boost confidence for repeated facts

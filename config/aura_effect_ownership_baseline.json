@@ -1553,14 +1553,6 @@
       "scope": "<module>.write_scar_court_policy"
     },
     {
-      "callee": "core.runtime.atomic_writer.atomic_write_text",
-      "canonical_owner": false,
-      "category": "direct_atomic_file_write",
-      "count": 1,
-      "path": "core/memory/user_profile.py",
-      "scope": "<module>.UserProfile._save_to_disk"
-    },
-    {
       "callee": "_atomic_write_json",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -8833,14 +8825,6 @@
       "scope": "<module>.SQLiteVectorStore.migrate_legacy_json"
     },
     {
-      "callee": "self._storage_path.parent.mkdir",
-      "canonical_owner": false,
-      "category": "raw_file_mutation",
-      "count": 1,
-      "path": "core/memory/user_profile.py",
-      "scope": "<module>.UserProfile._save_to_disk"
-    },
-    {
       "callee": "self.persist_directory.mkdir",
       "canonical_owner": false,
       "category": "raw_file_mutation",
@@ -13522,6 +13506,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "823c4eb535341be90192843253c67e5da9b973f2febc50b8b384f27cd7da5851",
+  "inventory_sha256": "b21c7c35296d230ab214a833171c7411f9434791d8dcefab11f92a9d3d5160cb",
   "schema_version": 1
 }

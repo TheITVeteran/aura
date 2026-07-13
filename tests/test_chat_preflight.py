@@ -16,6 +16,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -45,6 +46,37 @@ def _temp_path(suffix: str = ".jsonl") -> Path:
     if p.exists():
         p.unlink()
     return p
+
+
+class TestProfileContextIdentity(unittest.IsolatedAsyncioTestCase):
+    async def test_profile_context_uses_only_explicit_normalized_user_id(self):
+        observed: list[str] = []
+
+        class _Manager:
+            async def get_context_injection(self, user_id: str) -> str:
+                observed.append(user_id)
+                return '{"preference":"concise"}'
+
+        with mock.patch(
+            "core.memory.profile_manager.ProfileManager.get_instance",
+            new=mock.AsyncMock(return_value=_Manager()),
+        ):
+            block = await cp.inject_profile_context("  bryan   primary  ")
+
+        self.assertEqual(observed, ["bryan primary"])
+        self.assertIn("[Learned Context From Prior Conversations]", block)
+        self.assertIn('{"preference":"concise"}', block)
+
+    async def test_blank_profile_identity_never_constructs_manager(self):
+        get_instance = mock.AsyncMock()
+        with mock.patch(
+            "core.memory.profile_manager.ProfileManager.get_instance",
+            new=get_instance,
+        ):
+            block = await cp.inject_profile_context("   ")
+
+        self.assertEqual(block, "")
+        get_instance.assert_not_awaited()
 
 
 class TestFileReferenceDetection(unittest.TestCase):

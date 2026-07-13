@@ -851,7 +851,7 @@ def compose_chat_directive_prefix(message: str) -> str:
     return "[Response guidance for this turn]\n" + "\n\n".join(directives) + "\n[End guidance]\n\n"
 
 
-async def inject_profile_context() -> str:
+async def inject_profile_context(user_id: str) -> str:
     """Inject learned user/Aura profile context for continuity across conversations.
     
     Returns formatted profile context block if profiles exist, empty string otherwise.
@@ -859,8 +859,11 @@ async def inject_profile_context() -> str:
     try:
         from core.memory.profile_manager import ProfileManager
         
+        normalized_user_id = " ".join(str(user_id or "").strip().split())[:160]
+        if not normalized_user_id:
+            return ""
         manager = await ProfileManager.get_instance()
-        context = await manager.get_context_injection()
+        context = await manager.get_context_injection(normalized_user_id)
         
         if context:
             bounded = _safe_truncated_text(context, max_chars=MAX_PROFILE_CONTEXT_CHARS)

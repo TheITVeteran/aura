@@ -1055,6 +1055,22 @@ class RelationalMemoryAuthority:
                 }
                 for agent_id in agent_ids
             }
+        if namespace == "user_profile:v1":
+            categories = {
+                category: values
+                for category in (
+                    "preferences",
+                    "characteristics",
+                    "learnings",
+                    "relationship",
+                )
+                if isinstance((values := raw.get(category)), list)
+            }
+            return (
+                {"unscoped_user_profile": {"categories": categories}}
+                if categories
+                else {}
+            )
         return {}
 
     def _prepare_grant(

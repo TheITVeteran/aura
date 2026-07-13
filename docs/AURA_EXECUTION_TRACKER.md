@@ -16,10 +16,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **joy, user-profile,
-  relationship-graph, Theory-of-Mind, and remaining person-model consolidation
+- Current bounded implementation milestone: **joy-social, relationship-graph,
+  Theory-of-Mind, and remaining canonical person-model consolidation
   (`MEMORY-001`, `MIND-001`, `STATE-001`, `CTX3-SOCIAL-001..002`)**, following
-  the delivered-outcome humor authority recorded in Checkpoint 45.
+  the exact-agent user-profile authority recorded in Checkpoint 46.
   `CTX2-LANE-001..004` and
   `CTX2-TEST-001..003` are complete with deterministic, fault-injection,
   hermetic, and honestly labelled bounded live-pressure evidence.
@@ -12475,3 +12475,103 @@ Authoritative remaining person-model work:
   deletion, restart, crash, adversarial, failed-delivery, and long-gap proof.
   Final multi-hour and 24-72 hour soaks remain deferred until these and all
   other shorter requirements are green.
+
+## Checkpoint 2026-07-12-46: Authenticated Exact-Agent User Profiles
+
+This checkpoint advances `MEMORY-001`, `SOCIAL-001`, `CONVERSATION-001`,
+`ARCH-001`, `SECURITY-001`, `PRIVACY-001`, and `FAULT-001`. It replaces the
+canonical `UserProfile` and `ProfileManager` compatibility path with a
+consented exact-agent projection and binds live profile use to the principal
+authenticated for the current request. It does not close relationship graph,
+either remaining Theory-of-Mind owner, joy-social, one canonical typed person
+model, complete user controls, or launched longitudinal proof.
+
+Implemented authority-backed exact-agent profiles:
+
+- Replaced `user_profile.json`, raw directory creation, independent load/save
+  ownership, and process-global user assumptions with one bounded
+  `user_profile:v1` `derived_profile` snapshot in relational-memory authority.
+  Legacy global profiles enter encrypted unscoped quarantine and cannot be
+  attributed until explicit confirmation; exact-agent recall, prompt use,
+  durability, deletion, and session-only behavior remain authority decisions.
+- Added bounded evidence digests, observation counts, source-fact identifiers,
+  correction lineage, finite confidence/timestamps, metadata allowlisting,
+  malformed-snapshot sanitization, thirty-fact retention, and rollback when an
+  authority upsert fails. A newly proposed lowest-ranked fact at capacity now
+  returns refusal instead of reporting success after silently evicting itself.
+- Rendered deterministic JSON as quoted user-provided data with an explicit
+  anti-instruction boundary. Profile prompts may not infer hidden traits,
+  feelings, diagnosis, intent, trust, intimacy, or permission, and all direct
+  reads recheck exact-agent consent before returning copies.
+- Reworked correction semantics so unrelated preferences no longer overwrite
+  one another. Corrections require explicit user language, target shared
+  semantic anchors with a bounded recency fallback, retain superseded-value
+  digests rather than raw history, and treat reversal of the same pairwise
+  preference as one corrected relation.
+
+Implemented provenance and request identity:
+
+- Added role-aware user-only semantic extraction. Aura-generated text cannot
+  become a user fact or self-learning echo; one-turn formatting commands are
+  not promoted into durable preferences; pairwise preferences retain both
+  alternatives; and explicit user learning now has a real extraction path.
+  `ProfileManager` no longer creates a parallel Aura self-profile from generated
+  conversation text.
+- Required a non-empty exact `user_id` at every profile learn, read, prompt,
+  preflight, and post-response boundary. Consent is checked before extraction,
+  retained metadata contains digests rather than raw source excerpts, and
+  unsupported role/type combinations abstain.
+- Added schema-v2 paired-device principal binding. Owner-authorized pairing
+  captures the canonical case-folded primary operator in the short-lived
+  challenge, carries it into the issued device, persists it across restart,
+  exposes only `principal_bound` publicly, and refuses unbound legacy devices
+  for relational profile selection.
+- Captured the authenticated request principal once at chat ingress and reused
+  it for profile preflight and post-response learning. Local owner requests use
+  the identity kernel or signed self contract, paired requests use their bound
+  principal, and unknown requests receive no relational profile. Profile
+  learning is now independent of episodic-memory availability, so a temporary
+  episodic outage cannot discard an otherwise authorized explicit preference.
+
+Verification completed for this checkpoint:
+
+- The focused profile, request-principal, pairing, preflight, chat-memory,
+  HTTP-boundary, and strict-ratchet matrix passed `114/114`. New regressions
+  cover no-consent denial, exact-agent exclusion, session non-durability,
+  deletion invalidation, unscoped legacy quarantine, malformed snapshots,
+  prompt injection data boundaries, explicit correction, unrelated preference
+  preservation, one-turn command non-persistence, pairwise reversal, capacity
+  truthfulness, exact request identity, and learning during episodic outage.
+- The expanded relational authority, profile, dialogue, humor, social-context,
+  device, preflight, and full server conversation-lane matrix produced `410`
+  passes and exposed two missing imports in a concurrent service-access rewrite.
+  After repairing that active-tree integration, both failed humor-delivery
+  proofs plus fifteen adjacent service/social tests passed `17/17`.
+- The complete bounded `make quality` ladder passed: source hygiene, enterprise
+  static and collection ratchets, all `37/37` production-readiness checks,
+  paired frontend build/access contract, `13/13` cognitive gates, `75/75` skill
+  catalog/live-registry parity, model-load and resource-observation ownership,
+  architecture map, whole-tree compile, configured Ruff, governance, the
+  `2,562`-file security scan, strict MyPy, and `103/103` smoke tests. The
+  independent closeout rubric passed `20/20`.
+- Strict MyPy grew from `64` to `69` production files. Governance passes at
+  `1,792` recognized effect calls in `1,688` buckets; removing the profile
+  adapter's independent writer and raw directory mutation reduced acknowledged
+  migration debt from `1,674` to `1,672` calls. No launched-runtime, GUI, or
+  soak claim is made by this source checkpoint.
+
+Authoritative remaining person-model work:
+
+- Convert relationship graph, both remaining Theory-of-Mind representations,
+  and any person-specific joy/social state into authority-owned versioned
+  projections. Eliminate global mutable users, passive rapport/intimacy scores,
+  independent files, raw examples, and duplicated confidence/freshness rules.
+- Reconcile profile, dialogue, relational, humor, boundaries, goals, values,
+  shared references, social hypotheses, corrections, outcomes, freshness,
+  uncertainty, retention, decay, and writer ownership into one typed canonical
+  person model with explicit projection contracts and abstention rules.
+- Add authenticated signed consent/action receipts, complete desktop and API
+  controls, key rotation/recovery, and launched multiuser, identity-switch,
+  deletion, restart, crash, adversarial, failed-delivery, and long-gap proof.
+  Final multi-hour and 24-72 hour soaks remain deferred until these and every
+  other shorter requirement are green.

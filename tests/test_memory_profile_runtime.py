@@ -18,7 +18,7 @@ async def test_profile_manager_reports_partial_fact_write_failures():
     from core.memory.semantic_fact_extractor import FactType, SemanticFact
 
     class Extractor:
-        def extract_facts(self, **_kwargs):
+        def extract_user_facts(self, *_args, **_kwargs):
             return [
                 SemanticFact(
                     fact_type=FactType.USER_PREFERENCE,
@@ -26,6 +26,7 @@ async def test_profile_manager_reports_partial_fact_write_failures():
                     predicate="prefers",
                     object="concise status updates",
                     source_text="I prefer concise status updates",
+                    metadata={"source_role": "user"},
                 ),
                 SemanticFact(
                     fact_type=FactType.RELATIONSHIP_FACT,
@@ -33,6 +34,7 @@ async def test_profile_manager_reports_partial_fact_write_failures():
                     predicate="shared_goal",
                     object="ship Aura cleanly",
                     source_text="we should ship Aura cleanly together",
+                    metadata={"source_role": "user"},
                 ),
             ]
 
@@ -40,34 +42,33 @@ async def test_profile_manager_reports_partial_fact_write_failures():
         def __init__(self):
             self.calls = 0
 
-        def add_or_update_fact(self, **_kwargs):
+        def add_or_update_fact(self, _user_id, **_kwargs):
             self.calls += 1
-            raise RuntimeError("user profile write failed")
+            if self.calls == 1:
+                raise RuntimeError("user profile write failed")
+            return True
 
-    class AuraProfile:
-        def __init__(self):
-            self.facts = []
-
-        def add_or_reinforce_fact(self, **kwargs):
-            self.facts.append(dict(kwargs))
+    class Authority:
+        @staticmethod
+        def allows(_user_id, _kind, _operation):
+            return True
 
     manager = ProfileManager()
-    aura_profile = AuraProfile()
+    manager._authority = Authority()
     manager._fact_extractor = Extractor()
     user_profile = FailingUserProfile()
     manager._user_profile = user_profile
-    manager._aura_profile = aura_profile
 
     user_count, aura_count = await manager.learn_from_turn(
+        "bryan",
         "I prefer concise status updates",
         "We should ship Aura cleanly together.",
         session_id="test",
     )
 
     status = manager.get_status()
-    assert (user_count, aura_count) == (0, 1)
-    assert user_profile.calls == 1
-    assert len(aura_profile.facts) == 1
+    assert (user_count, aura_count) == (1, 0)
+    assert user_profile.calls == 2
     assert status["initialized"] is True
     assert status["learning_attempts"] == 1
     assert status["learning_failures"] == 1

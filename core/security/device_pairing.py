@@ -47,7 +47,7 @@ TOKEN_PREFIX = "adt1"
 _CODE_TTL_SECONDS = 180.0
 _MAX_ATTEMPTS = 5
 _CODE_DIGITS = 8
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _LAST_SEEN_PERSIST_INTERVAL = 300.0
 
 _REGISTRY_ERRORS = (OSError, RuntimeError, TypeError, ValueError, KeyError)
@@ -73,6 +73,7 @@ class PairedDevice:
     scopes: tuple[str, ...]
     created_at: float
     last_seen: float
+    principal_id: str = ""
     revoked: bool = False
 
     def public_view(self) -> dict[str, Any]:
@@ -82,6 +83,7 @@ class PairedDevice:
             "scopes": list(self.scopes),
             "created_at": self.created_at,
             "last_seen": self.last_seen,
+            "principal_bound": bool(self.principal_id),
             "revoked": self.revoked,
         }
 
@@ -91,6 +93,7 @@ class _PairingChallenge:
     pairing_id: str
     code: str
     expires_at: float
+    principal_id: str
     attempts_left: int = _MAX_ATTEMPTS
     consumed: bool = False
 
@@ -108,7 +111,7 @@ class DevicePairingRegistry:
     # ── construction ────────────────────────────────────────────
 
     @classmethod
-    def load(cls, path: Path) -> "DevicePairingRegistry":
+    def load(cls, path: Path) -> DevicePairingRegistry:
         registry = cls(path=path)
         try:
             if path.exists():
@@ -125,6 +128,7 @@ class DevicePairingRegistry:
                         scopes=tuple(row.get("scopes", [SCOPE_CONVERSATION])),
                         created_at=float(row.get("created_at", 0.0)),
                         last_seen=float(row.get("last_seen", 0.0)),
+                        principal_id=_sanitize_principal_id(row.get("principal_id")),
                         revoked=bool(row.get("revoked", False)),
                     )
                     registry.devices[device.device_id] = device
@@ -141,17 +145,21 @@ class DevicePairingRegistry:
     def _pairing_enabled(self) -> bool:
         return not bool(getattr(get_config().security, "internal_only_mode", False))
 
-    def begin_pairing(self) -> dict[str, Any]:
+    def begin_pairing(self, principal_id: str) -> dict[str, Any]:
         """Mint a short-lived single-use pairing code. Owner surface only —
         the caller (route layer) is responsible for owner authentication."""
         if not self._pairing_enabled():
             raise PairingDisabledError("Pairing is disabled in internal-only mode")
+        normalized_principal = _sanitize_principal_id(principal_id)
+        if not normalized_principal:
+            raise PairingError("Pairing requires a verified relational principal")
         with self._lock:
             code = "".join(secrets.choice("0123456789") for _ in range(_CODE_DIGITS))
             self._challenge = _PairingChallenge(
                 pairing_id=secrets.token_urlsafe(8),
                 code=code,
                 expires_at=time.time() + _CODE_TTL_SECONDS,
+                principal_id=normalized_principal,
             )
             return {
                 "pairing_id": self._challenge.pairing_id,
@@ -197,6 +205,7 @@ class DevicePairingRegistry:
                 scopes=(SCOPE_CONVERSATION,),
                 created_at=now,
                 last_seen=now,
+                principal_id=challenge.principal_id,
             )
             self.devices[device_id] = device
             snapshot = self._snapshot_locked()
@@ -271,6 +280,7 @@ class DevicePairingRegistry:
                     "scopes": list(d.scopes),
                     "created_at": d.created_at,
                     "last_seen": d.last_seen,
+                    "principal_id": d.principal_id,
                     "revoked": d.revoked,
                 }
                 for d in self.devices.values()
@@ -311,6 +321,10 @@ class DevicePairingRegistry:
 def _sanitize_device_name(raw: str) -> str:
     cleaned = "".join(ch for ch in str(raw or "") if ch.isprintable()).strip()
     return (cleaned or "device")[:64]
+
+
+def _sanitize_principal_id(raw: Any) -> str:
+    return " ".join(str(raw or "").strip().split()).casefold()[:160]
 
 
 # ── module singleton ─────────────────────────────────────────────

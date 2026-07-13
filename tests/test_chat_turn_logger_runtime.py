@@ -76,3 +76,122 @@ async def test_chat_turn_logger_rebinds_memory_facade_after_late_boot(monkeypatc
     assert recorded["text"].startswith("User said:")
     assert recorded["metadata"]["session_id"] == "desktop-session"
     assert recorded["metadata"]["conversation_lane"] is True
+
+
+@pytest.mark.asyncio
+async def test_chat_turn_logger_forwards_exact_identity_to_profile_learning(monkeypatch):
+    from core.memory import profile_manager
+
+    calls = []
+    tasks = []
+
+    class _EpisodicMemory:
+        def record_episode(self, **_kwargs):
+            return "episode-profile"
+
+    class _Tracker:
+        def create_task(self, coro, **_kwargs):
+            task = asyncio.create_task(coro)
+            tasks.append(task)
+            return task
+
+    async def _learn_from_turn_auto(**kwargs):
+        calls.append(kwargs)
+        return (1, 0)
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: (
+                _EpisodicMemory() if name == "episodic_memory" else default
+            )
+        ),
+    )
+    monkeypatch.setattr(chat_turn_logger, "get_task_tracker", lambda: _Tracker())
+    monkeypatch.setattr(profile_manager, "learn_from_turn_auto", _learn_from_turn_auto)
+    turn_logger = ChatTurnLogger()
+
+    assert await turn_logger.log_chat_turn(
+        "I prefer concise progress summaries.",
+        "I will keep the next progress summary concise and evidence-based.",
+        session_id="desktop-session",
+        metadata={"origin": "desktop_ui", "user_id": "bryan"},
+    )
+    await asyncio.gather(*tasks)
+
+    assert calls[0]["user_id"] == "bryan"
+    assert calls[0]["session_id"] == "desktop-session"
+
+
+@pytest.mark.asyncio
+async def test_chat_turn_logger_never_schedules_unscoped_profile_learning(monkeypatch):
+    scheduled_names = []
+
+    class _EpisodicMemory:
+        def record_episode(self, **_kwargs):
+            return "episode-unscoped"
+
+    class _Tracker:
+        def create_task(self, coro, **kwargs):
+            scheduled_names.append(kwargs.get("name"))
+            coro.close()
+            return None
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(
+            lambda name, default=None: (
+                _EpisodicMemory() if name == "episodic_memory" else default
+            )
+        ),
+    )
+    monkeypatch.setattr(chat_turn_logger, "get_task_tracker", lambda: _Tracker())
+    turn_logger = ChatTurnLogger()
+
+    assert await turn_logger.log_chat_turn(
+        "I prefer concise progress summaries.",
+        "I will keep the next progress summary concise and evidence-based.",
+        session_id="desktop-session",
+        metadata={"origin": "desktop_ui"},
+    )
+
+    assert scheduled_names == []
+
+
+@pytest.mark.asyncio
+async def test_chat_turn_logger_learns_exact_profile_when_episodic_memory_is_unavailable(
+    monkeypatch,
+):
+    from core.memory import profile_manager
+
+    calls = []
+    tasks = []
+
+    class _Tracker:
+        def create_task(self, coro, **_kwargs):
+            task = asyncio.create_task(coro)
+            tasks.append(task)
+            return task
+
+    async def _learn_from_turn_auto(**kwargs):
+        calls.append(kwargs)
+        return (1, 0)
+
+    monkeypatch.setattr(
+        "core.container.ServiceContainer.get",
+        staticmethod(lambda _name, default=None: default),
+    )
+    monkeypatch.setattr(chat_turn_logger, "get_task_tracker", lambda: _Tracker())
+    monkeypatch.setattr(profile_manager, "learn_from_turn_auto", _learn_from_turn_auto)
+    turn_logger = ChatTurnLogger()
+
+    assert await turn_logger.log_chat_turn(
+        "I prefer concise progress summaries.",
+        "I will keep this summary concise.",
+        session_id="desktop-session",
+        metadata={"origin": "desktop_ui", "user_id": "bryan"},
+    ) is False
+    await asyncio.gather(*tasks)
+
+    assert calls[0]["user_id"] == "bryan"
+    assert calls[0]["session_id"] == "desktop-session"

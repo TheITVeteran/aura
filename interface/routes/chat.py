@@ -58,6 +58,7 @@ from interface.auth import (
     _require_internal,
     _restore_owner_session_from_request,
     paired_device_session_id,
+    relational_principal_id_for_request,
     request_access_profile,
 )
 from interface.helpers import _notify_user_spoke
@@ -656,11 +657,22 @@ def _active_task_count_by_name(tracker: Any, task_name: str) -> int:
     return active
 
 
+def _resolve_exact_profile_user_id(request: Request) -> str:
+    """Capture this request's authenticated relational principal."""
+    try:
+        return str(relational_principal_id_for_request(request) or "").strip()[:160]
+    except _CHAT_RECOVERABLE_ERRORS as exc:
+        record_degradation("chat.profile_identity", exc)
+        logger.debug("Exact profile identity resolution failed: %s", exc)
+        return ""
+
+
 async def _run_chat_turn_memory_log_item(payload: dict[str, str]) -> None:
     user_message = str(payload.get("user_message") or "")
     aura_response = str(payload.get("aura_response") or "")
     session_id = str(payload.get("session_id") or "")
     chat_origin = str(payload.get("chat_origin") or "unknown")
+    user_id = str(payload.get("user_id") or "").strip()[:160]
     try:
         from core.memory.chat_turn_logger import log_chat_turn_auto
 
@@ -670,7 +682,11 @@ async def _run_chat_turn_memory_log_item(payload: dict[str, str]) -> None:
                 aura_response=aura_response,
                 session_id=session_id,
                 emotional_valence=0.0,
-                metadata={"conversation_lane": True, "origin": chat_origin},
+                metadata={
+                    "conversation_lane": True,
+                    "origin": chat_origin,
+                    "user_id": user_id,
+                },
             ),
             timeout=_CHAT_TURN_MEMORY_LOG_TIMEOUT_S,
         )
@@ -723,6 +739,7 @@ def _schedule_chat_turn_memory_log(
     aura_response: str,
     session_id: str,
     chat_origin: str,
+    user_id: str,
 ) -> bool:
     """Queue post-response memory logging without dropping turns under normal backpressure."""
     try:
@@ -745,6 +762,7 @@ def _schedule_chat_turn_memory_log(
                     "aura_response": str(aura_response or ""),
                     "session_id": str(session_id or ""),
                     "chat_origin": str(chat_origin or "unknown"),
+                    "user_id": str(user_id or "").strip()[:160],
                 }
             )
 
@@ -2843,7 +2861,7 @@ async def _fetch_deep_memory_context(user_message: str) -> str:
         return str(
             await asyncio.wait_for(fetch_deep_context(user_message), timeout=2.5) or ""
         )
-    except (TimeoutError, asyncio.TimeoutError):
+    except TimeoutError:
         logger.debug("Deep memory recall timed out for this turn (backpressure).")
         return ""
     except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
@@ -14827,6 +14845,7 @@ async def api_chat(
     conversation_only_surface = bool(
         _request_access_profile.get("conversation_only", True)
     )
+    _profile_user_id = _resolve_exact_profile_user_id(request)
     _defensive_context = ""
     try:
         from core.security.defensive_runtime import inspect_chat_ingress
@@ -15011,9 +15030,7 @@ async def api_chat(
             try:
                 from core.conversation.chat_preflight import inject_profile_context
 
-                _profile_context = (
-                    "" if conversation_only_surface else await inject_profile_context()
-                )
+                _profile_context = await inject_profile_context(_profile_user_id)
                 if _profile_context:
                     body.message = f"{_profile_context}{body.message}"
                     logger.info("Chat preflight: injected learned profile context.")
@@ -15885,6 +15902,7 @@ async def api_chat(
                 aura_response=final_text,
                 session_id=_chat_session_id,
                 chat_origin=chat_origin,
+                user_id=_profile_user_id,
             )
             
             lane_status = (

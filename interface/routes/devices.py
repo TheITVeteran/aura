@@ -37,6 +37,7 @@ from interface.auth import (
     _allow_local_without_token,
     _check_rate_limit,
     _extract_request_token,
+    local_owner_principal_id,
 )
 
 logger = logging.getLogger("Aura.Server.Devices")
@@ -92,7 +93,13 @@ class PairCompleteRequest(BaseModel):
 async def pair_begin(request: Request) -> dict[str, Any]:
     _require_owner(request)
     try:
-        challenge = get_device_registry().begin_pairing()
+        principal_id = local_owner_principal_id()
+        if not principal_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Primary operator identity is unavailable; pairing cannot bind a principal",
+            )
+        challenge = get_device_registry().begin_pairing(principal_id)
     except PairingDisabledError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     host_header = str(request.headers.get("host", "") or "")
