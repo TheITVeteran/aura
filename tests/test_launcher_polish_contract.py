@@ -55,6 +55,10 @@ def test_launcher_exposes_desktop_window_action_and_dock_presence():
     assert 'case "--open-gui-window":' in swift
     assert 'return "--gui-window"' in swift
     assert 'auraMainScript = auraRoot.appendingPathComponent("aura_main.py")' in swift
+    assert 'aura-launch-provenance.json' in swift
+    assert 'AURA_LAUNCH_EXPECTED_COMMIT' in swift
+    assert 'AURA_LAUNCH_EXPECTED_WORKSPACE_SHA256' in swift
+    assert 'bundleIdentifier == "com.aura.desktop"' in swift
     assert '["-u", auraMainScript.path, "--desktop"]' in swift
     assert "requiresProtectedFolderFallback" in swift
     assert 'desktop-terminal-launch.command' in swift
@@ -694,6 +698,7 @@ def test_bundle_script_builds_regular_dock_app_and_embeds_version_metadata():
     assert 'VERSION_FILE="${RESOURCES_DIR}/aura-version"' in bundle_script
     assert 'ROOT_DIR="$(cd -P "$(dirname "$0")/.." && pwd -P)"' in bundle_script
     assert 'VERSION_FULL_FILE="${RESOURCES_DIR}/aura-version-full"' in bundle_script
+    assert 'PROVENANCE_FILE="${RESOURCES_DIR}/aura-launch-provenance.json"' in bundle_script
     assert 'INSTALL_PATH="${AURA_INSTALL_PATH:-}"' in bundle_script
     assert 'ENTITLEMENTS_PLIST="${DIST_DIR}/aura.entitlements"' in bundle_script
     assert 'DEFAULT_CODESIGN_IDENTITY="-"' in bundle_script
@@ -716,9 +721,31 @@ def test_bundle_script_builds_regular_dock_app_and_embeds_version_metadata():
     assert 'sign_bundle "${APP_DIR}"' in bundle_script
     assert 'sign_bundle "${INSTALL_PATH}"' in bundle_script
     assert 'run_with_timeout "${timeout_s}" codesign "${CODESIGN_ARGS[@]}" "${target}"' in bundle_script
+    assert 'codesign --verify --deep --strict --verbose=2' in bundle_script
+    assert 'AURA_REQUIRE_STABLE_CODESIGN' in bundle_script
+    assert '-m core.runtime.launch_provenance emit' in bundle_script
+    assert 'ln -sfn "${ROOT_DIR}"' not in bundle_script
     assert "CFBundleShortVersionString" in bundle_script
     assert "NSAppleEventsUsageDescription" not in bundle_script
     assert "LSUIElement" not in bundle_script
+
+
+def test_shell_launcher_help_is_non_destructive():
+    from core.runtime.subprocess_gateway import get_subprocess_gateway
+
+    result = get_subprocess_gateway().run(
+        [str(PROJECT_ROOT / "launch_aura.sh"), "--help"],
+        cwd=PROJECT_ROOT,
+        read_only=True,
+        capture_output=True,
+        timeout=5,
+        source="test_launcher_polish_contract.help",
+    )
+
+    assert result.returncode == 0
+    assert "Usage: ./launch_aura.sh" in result.stdout
+    assert "Cleaning up existing instances" not in result.stdout
+    assert "Starting Aura Desktop" not in result.stdout
 
 
 def test_legacy_installer_uses_stable_bundle_manifest():

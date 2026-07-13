@@ -11,6 +11,12 @@ APP_NAME="${APP_BASENAME}.app"
 APP_DIR="${DIST_DIR}/${APP_NAME}"
 INSTALL_PATH="${AURA_INSTALL_PATH:-}"
 DEFAULT_CODESIGN_IDENTITY="-"
+if [ -n "${INSTALL_PATH}" ]; then
+    DEFAULT_REQUIRE_STABLE_CODESIGN=1
+else
+    DEFAULT_REQUIRE_STABLE_CODESIGN=0
+fi
+AURA_REQUIRE_STABLE_CODESIGN="${AURA_REQUIRE_STABLE_CODESIGN:-${DEFAULT_REQUIRE_STABLE_CODESIGN}}"
 
 run_with_timeout() {
     local timeout_s="$1"
@@ -63,6 +69,9 @@ if [ "${AURA_AUTO_USE_LOCAL_CODESIGN}" = "1" ] && command -v security >/dev/null
         chmod +x "${SIGN_PROBE_DIR}/probe"
         if run_with_timeout "${AURA_CODESIGN_PROBE_TIMEOUT_S:-8}" codesign --force --sign "${LOCAL_AURA_IDENTITY}" "${SIGN_PROBE_DIR}/probe" >/dev/null 2>&1; then
             DEFAULT_CODESIGN_IDENTITY="${LOCAL_AURA_IDENTITY}"
+        elif [ "${AURA_REQUIRE_STABLE_CODESIGN}" = "1" ]; then
+            echo "❌ Local Aura code-signing identity exists but cannot sign from this shell." >&2
+            exit 1
         else
             echo "⚠️ Local Aura code-signing identity exists but cannot sign from this shell within ${AURA_CODESIGN_PROBE_TIMEOUT_S:-8}s; using ad-hoc signing." >&2
         fi
@@ -75,10 +84,10 @@ RESOURCES_DIR="${CONTENTS_DIR}/Resources"
 EXECUTABLE_NAME="aura-launcher"
 EXECUTABLE_PATH="${MACOS_DIR}/${EXECUTABLE_NAME}"
 ICON_SOURCE="${ROOT_DIR}/aura_icon.icns"
-ROOT_LINK="${RESOURCES_DIR}/aura-root"
 ROOT_PATH_FALLBACK="${RESOURCES_DIR}/aura-root-path"
 VERSION_FILE="${RESOURCES_DIR}/aura-version"
 VERSION_FULL_FILE="${RESOURCES_DIR}/aura-version-full"
+PROVENANCE_FILE="${RESOURCES_DIR}/aura-launch-provenance.json"
 INFO_PLIST="${CONTENTS_DIR}/Info.plist"
 ENTITLEMENTS_PLIST="${DIST_DIR}/aura.entitlements"
 LAUNCHER_SOURCE="${ROOT_DIR}/scripts/AuraLauncher.swift"
@@ -111,7 +120,6 @@ SDKROOT_PATH="$(xcrun --show-sdk-path --sdk macosx 2>/dev/null || true)"
 rm -rf "${APP_DIR}"
 mkdir -p "${MACOS_DIR}" "${RESOURCES_DIR}"
 
-ln -sfn "${ROOT_DIR}" "${ROOT_LINK}"
 printf '%s\n' "${ROOT_DIR}" > "${ROOT_PATH_FALLBACK}"
 
 PYTHON_FOR_VERSION="${ROOT_DIR}/.venv/bin/python3"
@@ -139,6 +147,11 @@ PY
 
 printf '%s\n' "${APP_SEMVER}" > "${VERSION_FILE}"
 printf '%s\n' "${APP_FULL_VERSION}" > "${VERSION_FULL_FILE}"
+PYTHONPATH="${ROOT_DIR}:${PYTHONPATH:-}" "${PYTHON_FOR_VERSION}" -m core.runtime.launch_provenance emit \
+    --root "${ROOT_DIR}" \
+    --output "${PROVENANCE_FILE}" \
+    --version "${APP_FULL_VERSION}" \
+    --launcher-source "${LAUNCHER_SOURCE}" >/dev/null
 
 CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/aura-launcher-clang-cache" xcrun swiftc \
     -O \
@@ -198,7 +211,7 @@ sign_bundle() {
     if run_with_timeout "${timeout_s}" codesign "${CODESIGN_ARGS[@]}" "${target}" >/dev/null; then
         return 0
     fi
-    if [ "${CODESIGN_IDENTITY}" != "-" ]; then
+    if [ "${CODESIGN_IDENTITY}" != "-" ] && [ "${AURA_REQUIRE_STABLE_CODESIGN}" != "1" ]; then
         echo "⚠️ Codesigning ${target} with ${CODESIGN_IDENTITY} failed or timed out; falling back to ad-hoc signing." >&2
         local fallback_args=(--force --sign "-" --entitlements "${ENTITLEMENTS_PLIST}")
         run_with_timeout "${timeout_s}" codesign "${fallback_args[@]}" "${target}" >/dev/null
@@ -207,7 +220,20 @@ sign_bundle() {
     return 1
 }
 
+verify_signed_bundle() {
+    local target="$1"
+    local timeout_s="${AURA_CODESIGN_VERIFY_TIMEOUT_S:-20}"
+    if ! run_with_timeout "${timeout_s}" codesign --verify --deep --strict --verbose=2 "${target}" >/dev/null 2>&1; then
+        echo "❌ Strict code-signature verification failed for ${target}." >&2
+        return 1
+    fi
+}
+
 if command -v codesign >/dev/null 2>&1; then
+    if [ "${AURA_REQUIRE_STABLE_CODESIGN}" = "1" ] && [ "${CODESIGN_IDENTITY}" = "-" ]; then
+        echo "❌ A stable code-signing identity is required for installed Aura.app builds." >&2
+        exit 1
+    fi
     CODESIGN_ARGS=(--force --sign "${CODESIGN_IDENTITY}" --entitlements "${ENTITLEMENTS_PLIST}")
     if [ "${CODESIGN_IDENTITY}" != "-" ]; then
         CODESIGN_ARGS+=(--options runtime)
@@ -216,6 +242,7 @@ if command -v codesign >/dev/null 2>&1; then
         fi
     fi
     sign_bundle "${APP_DIR}"
+    verify_signed_bundle "${APP_DIR}"
 fi
 
 if [ -n "${INSTALL_PATH}" ]; then
@@ -224,6 +251,7 @@ if [ -n "${INSTALL_PATH}" ]; then
     cp -R "${APP_DIR}" "${INSTALL_PATH}"
     if command -v codesign >/dev/null 2>&1; then
         sign_bundle "${INSTALL_PATH}"
+        verify_signed_bundle "${INSTALL_PATH}"
     fi
     echo "✅ Installed ${INSTALL_PATH}"
 fi

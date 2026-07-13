@@ -467,7 +467,7 @@ def test_live_boot_proof_inherits_safe_desktop_mlx_limits(resource_observer):
     assert live_proof_rss_abort_mb(env) == 42_000.0
 
 
-def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(resource_observer):
+def test_live_boot_proof_desktop_mode_does_not_impersonate_packaged_launcher(resource_observer):
     from tools.live_boot_proof import build_safe_boot_env
 
     resource_observer.configure_memory(total_bytes=64 * 1024**3)
@@ -478,8 +478,8 @@ def test_live_boot_proof_desktop_mode_mirrors_packaged_launcher(resource_observe
     assert env["AURA_SAFE_BOOT_DESKTOP"] == "0"
     assert env["AURA_DESKTOP_RESOURCE_GUARD"] == "1"
     assert env["AURA_HEADLESS"] == "0"
-    assert env["AURA_LAUNCHED_FROM_APP"] == "1"
-    assert env["AURA_EXTERNAL_GUI_OWNER"] == "1"
+    assert env["AURA_LAUNCHED_FROM_APP"] == "0"
+    assert env["AURA_EXTERNAL_GUI_OWNER"] == "0"
     assert env["AURA_GOVERNANCE_MODE"] == "production"
     assert env["AURA_CONTRACTS_ENFORCE"] == "1"
     assert env["AURA_EAGER_LOCAL_SENSORY_BOOT"] == "1"

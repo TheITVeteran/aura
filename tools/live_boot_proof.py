@@ -166,10 +166,10 @@ def build_safe_boot_env(
 ) -> dict[str, str]:
     """Return the bounded desktop environment used by live proof boots.
 
-    The live proof exercises the same local model lane a desktop user relies
-    on, but it must never be allowed to reproduce an unbounded MLX/Metal memory
-    spike. These defaults mirror the app launcher while preserving explicit
-    operator overrides.
+    The direct proof exercises the same bounded local model profile a desktop
+    user relies on, but it must not impersonate the signed Aura.app launch
+    identity. Packaged-lane certification requires a real resident app process
+    and its source/signature provenance evidence.
     """
 
     env = dict(os.environ if base_env is None else base_env)
@@ -179,12 +179,15 @@ def build_safe_boot_env(
     env.setdefault("AURA_LOCAL_PARALLEL_SLOTS", "1")
     env.setdefault("AURA_GOVERNANCE_MODE", "production")
     env.setdefault("AURA_CONTRACTS_ENFORCE", "1")
+    for key in tuple(env):
+        if key.startswith("AURA_LAUNCH_"):
+            env.pop(key, None)
     if mode == "desktop":
         env["AURA_SAFE_BOOT_DESKTOP"] = "0"
         env["AURA_DESKTOP_RESOURCE_GUARD"] = "1"
         env["AURA_HEADLESS"] = "0"
-        env["AURA_LAUNCHED_FROM_APP"] = "1"
-        env["AURA_EXTERNAL_GUI_OWNER"] = "1"
+        env["AURA_LAUNCHED_FROM_APP"] = "0"
+        env["AURA_EXTERNAL_GUI_OWNER"] = "0"
         env["AURA_EAGER_LOCAL_SENSORY_BOOT"] = "1"
         env["AURA_AUTO_LISTEN"] = "1"
         env.setdefault("AURA_EAGER_CORTEX_WARMUP", "0")

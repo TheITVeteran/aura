@@ -1006,6 +1006,7 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
     private var appInstanceLockFile: URL!
     private var nativeBridgeRequestDirectory: URL!
     private var nativeBridgeResponseDirectory: URL!
+    private var launchProvenanceEnvironment: [String: String] = [:]
     private var appInstanceLockFD: Int32 = -1
     private let spawnedProcessesLock = NSLock()
     private var spawnedProcesses: [Process] = []
@@ -1098,24 +1099,74 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
             ])
         }
 
-        let rootLink = resourcesURL.appendingPathComponent("aura-root")
         let rootFallback = resourcesURL.appendingPathComponent("aura-root-path")
-
-        if let destination = try? fileManager.destinationOfSymbolicLink(atPath: rootLink.path), !destination.isEmpty {
-            auraRoot = URL(fileURLWithPath: destination, isDirectory: true)
-        } else if let text = try? String(contentsOf: rootFallback, encoding: .utf8) {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else {
-                throw NSError(domain: "AuraLauncher", code: 2, userInfo: [
-                    NSLocalizedDescriptionKey: "Aura root path is empty. Rebuild the launcher from the repo.",
-                ])
-            }
-            auraRoot = URL(fileURLWithPath: trimmed, isDirectory: true)
-        } else {
+        guard let rootText = try? String(contentsOf: rootFallback, encoding: .utf8) else {
             throw NSError(domain: "AuraLauncher", code: 3, userInfo: [
                 NSLocalizedDescriptionKey: "Aura root path is missing. Rebuild the launcher from the repo.",
             ])
         }
+        let trimmedRoot = rootText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRoot.isEmpty else {
+            throw NSError(domain: "AuraLauncher", code: 2, userInfo: [
+                NSLocalizedDescriptionKey: "Aura root path is empty. Rebuild the launcher from the repo.",
+            ])
+        }
+        auraRoot = URL(fileURLWithPath: trimmedRoot, isDirectory: true)
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+
+        let provenanceURL = resourcesURL.appendingPathComponent("aura-launch-provenance.json")
+        guard let provenanceData = try? Data(contentsOf: provenanceURL),
+              let provenance = try? JSONSerialization.jsonObject(with: provenanceData) as? [String: Any] else {
+            throw NSError(domain: "AuraLauncher", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "Aura launch provenance is missing or invalid. Rebuild the installed app.",
+            ])
+        }
+        func requiredProvenanceString(_ key: String) throws -> String {
+            let value = String(describing: provenance[key] ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else {
+                throw NSError(domain: "AuraLauncher", code: 4, userInfo: [
+                    NSLocalizedDescriptionKey: "Aura launch provenance is missing \(key). Rebuild the installed app.",
+                ])
+            }
+            return value
+        }
+        let schema = try requiredProvenanceString("schema")
+        guard schema == "aura.launch_provenance.v1" else {
+            throw NSError(domain: "AuraLauncher", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "Aura launch provenance uses an unsupported schema.",
+            ])
+        }
+        let manifestRoot = URL(
+            fileURLWithPath: try requiredProvenanceString("source_root"),
+            isDirectory: true
+        ).resolvingSymlinksInPath().standardizedFileURL
+        guard manifestRoot.path == auraRoot.path else {
+            throw NSError(domain: "AuraLauncher", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "Aura.app source root does not match its signed launch manifest.",
+            ])
+        }
+        guard let appExecutable = Bundle.main.executableURL?.resolvingSymlinksInPath() else {
+            throw NSError(domain: "AuraLauncher", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "Aura.app could not resolve its signed launcher executable.",
+            ])
+        }
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? ""
+        guard bundleIdentifier == "com.aura.desktop" else {
+            throw NSError(domain: "AuraLauncher", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "Aura.app bundle identity does not match com.aura.desktop.",
+            ])
+        }
+        launchProvenanceEnvironment = [
+            "AURA_LAUNCH_MANIFEST_PATH": provenanceURL.path,
+            "AURA_LAUNCH_APP_EXECUTABLE": appExecutable.path,
+            "AURA_LAUNCH_EXPECTED_ROOT": manifestRoot.path,
+            "AURA_LAUNCH_EXPECTED_COMMIT": try requiredProvenanceString("commit_sha"),
+            "AURA_LAUNCH_EXPECTED_BRANCH": try requiredProvenanceString("branch"),
+            "AURA_LAUNCH_EXPECTED_WORKSPACE_SHA256": try requiredProvenanceString("workspace_state_sha256"),
+            "AURA_LAUNCH_BUNDLE_ID": bundleIdentifier,
+        ]
 
         launchScript = auraRoot.appendingPathComponent("launch_aura.sh")
         auraMainScript = auraRoot.appendingPathComponent("aura_main.py")
@@ -1668,6 +1719,9 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         env["PYTHONUNBUFFERED"] = "1"
         env["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
         env["OBJC_PRINT_LOAD_METHODS"] = "NO"
+        for (key, value) in launchProvenanceEnvironment {
+            env[key] = value
+        }
         return env
     }
 
@@ -1708,9 +1762,14 @@ final class AuraLauncherDelegate: NSObject, NSApplicationDelegate {
         }
 
         let pieces = [shellQuoted(launchScript.path)] + arguments.map(shellQuoted)
+        let provenanceExports = launchProvenanceEnvironment
+            .sorted { $0.key < $1.key }
+            .map { "export \($0.key)=\(shellQuoted($0.value))" }
+            .joined(separator: "\n")
         let helperScript = """
         #!/bin/bash
         cd \(shellQuoted(auraRoot.path))
+        \(provenanceExports)
         export AURA_ATTACH_LAUNCHER=0
         export AURA_LOCAL_BACKEND=mlx
         export AURA_LAUNCHED_FROM_APP=1

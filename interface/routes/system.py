@@ -875,6 +875,96 @@ _NATIVE_CONVERSATION_LANE_STANDBY_WRAPPER = _conversation_lane_is_standby
 _NATIVE_CONVERSATION_LANE_MESSAGE_WRAPPER = _conversation_lane_user_message
 
 
+def _attach_launch_provenance_contract(
+    payload: dict[str, Any],
+    status_code: int,
+    *,
+    provenance: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], int]:
+    """Prevent an orphaned, stale, or incorrectly signed app runtime from looking ready."""
+
+    if provenance is None:
+        try:
+            from core.runtime.launch_provenance import collect_runtime_launch_provenance
+
+            provenance = collect_runtime_launch_provenance(config.paths.project_root)
+        except _SYSTEM_RECOVERABLE_ERRORS as exc:
+            launched_from_app = str(os.environ.get("AURA_LAUNCHED_FROM_APP", "")).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+            provenance = {
+                "schema": "aura.launch_provenance.v1",
+                "required": launched_from_app,
+                "verified": False,
+                "source_verified": False,
+                "issues": [f"provenance_collection_failed:{type(exc).__name__}"],
+            }
+            logger.warning("Launch provenance collection failed: %s", exc)
+
+    result = dict(payload)
+    result["launch_provenance"] = provenance
+    checks = dict(result.get("checks") or {})
+    required = bool(provenance.get("required"))
+    verified = bool(provenance.get("verified"))
+    checks["launch_provenance"] = verified if required else True
+    result["checks"] = checks
+    if not required or verified:
+        return result, status_code
+
+    blockers = [str(item) for item in result.get("blockers", []) if str(item)]
+    if "launch_provenance" not in blockers:
+        blockers.append("launch_provenance")
+    result.update(
+        {
+            "ready": False,
+            "launcher_ready": False,
+            "system_ready": False,
+            "status": "degraded",
+            "status_message": (
+                "Aura's runtime is alive, but its signed app/source provenance is not verified."
+            ),
+            "boot_phase": "launch_provenance_failed",
+            "blockers": blockers,
+        }
+    )
+    return result, 503
+
+
+def _fallback_launch_provenance(manifest_snapshot: Any = None) -> dict[str, Any]:
+    """Return non-blocking conservative evidence for event-loop fallback paths."""
+
+    snapshot = dict(manifest_snapshot) if isinstance(manifest_snapshot, dict) else {}
+    launched_from_app = str(os.environ.get("AURA_LAUNCHED_FROM_APP", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    required = bool(snapshot.get("required", launched_from_app))
+    if not required:
+        return {
+            **snapshot,
+            "schema": str(snapshot.get("schema") or "aura.launch_provenance.v1"),
+            "required": False,
+            "verified": False,
+            "launch_mode": str(snapshot.get("launch_mode") or "direct"),
+            "issues": list(snapshot.get("issues") or []),
+        }
+    issues = [str(item) for item in snapshot.get("issues", []) if str(item)]
+    if "launch_provenance_live_refresh_unavailable" not in issues:
+        issues.append("launch_provenance_live_refresh_unavailable")
+    return {
+        **snapshot,
+        "schema": str(snapshot.get("schema") or "aura.launch_provenance.v1"),
+        "required": True,
+        "verified": False,
+        "issues": issues,
+    }
+
+
 def _build_boot_health_payload_sync(*, is_gui_proxy: bool) -> tuple[dict[str, Any], int]:
     """Build boot health with a single-flight guard for HTTP readiness probes."""
 
@@ -897,6 +987,7 @@ def _build_boot_health_payload_sync(*, is_gui_proxy: bool) -> tuple[dict[str, An
                 is_gui_proxy=is_gui_proxy,
                 conversation_lane=conversation_lane,
             )
+            payload, status_code = _attach_launch_provenance_contract(payload, status_code)
             _store_boot_health_cache(payload, status_code)
             return payload, status_code
         except _SYSTEM_RECOVERABLE_ERRORS as exc:
@@ -909,8 +1000,9 @@ def _build_boot_health_payload_sync(*, is_gui_proxy: bool) -> tuple[dict[str, An
                 "conversation_lane": conversation_lane,
                 "timestamp": datetime.now(tz=UTC).isoformat(),
             }
-            _store_boot_health_cache(payload, 503)
-            return payload, 503
+            payload, status_code = _attach_launch_provenance_contract(payload, 503)
+            _store_boot_health_cache(payload, status_code)
+            return payload, status_code
     finally:
         _mark_health_probe_completed()
         _HEALTH_PROBE_LOCK.release()
@@ -942,9 +1034,15 @@ def _cached_boot_health_payload(reason: str) -> tuple[dict[str, Any], int]:
 
     manifest_payload = _runtime_manifest_boot_health_payload(reason)
     if manifest_payload is not None:
-        return manifest_payload
+        manifest_body, manifest_status = manifest_payload
+        fallback = _fallback_launch_provenance(manifest_body.get("launch_provenance"))
+        return _attach_launch_provenance_contract(
+            manifest_body,
+            manifest_status,
+            provenance=fallback,
+        )
 
-    return (
+    return _attach_launch_provenance_contract(
         {
             "ready": False,
             "status": "unhealthy",
@@ -958,6 +1056,7 @@ def _cached_boot_health_payload(reason: str) -> tuple[dict[str, Any], int]:
             "timestamp": datetime.now(tz=UTC).isoformat(),
         },
         503,
+        provenance=_fallback_launch_provenance(),
     )
 
 
@@ -1013,6 +1112,7 @@ def _runtime_manifest_boot_health_payload(reason: str) -> tuple[dict[str, Any], 
                 "cache_reason": reason,
                 "manifest_generated_at_unix": manifest.get("generated_at_unix"),
                 "manifest_age_s": round(manifest_age_s, 3),
+                "launch_provenance": manifest.get("launch_provenance"),
                 "timestamp": datetime.now(tz=UTC).isoformat(),
             },
             status_code,

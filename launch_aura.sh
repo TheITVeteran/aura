@@ -8,12 +8,30 @@
 export AURA_ROOT="$(cd -P "$(dirname "$0")" && pwd -P)"
 cd "$AURA_ROOT" || exit 1
 
+print_usage() {
+    cat <<'EOF'
+Usage: ./launch_aura.sh [options] [aura_main.py options]
+
+Options:
+  --open-gui-window, --gui-window  Open only the desktop GUI window.
+  --port PORT                      Bind Aura's local API to PORT (1-65535).
+  --reboot                         Replace an existing Aura runtime.
+  -h, --help                       Show this help without changing runtime state.
+
+All unrecognized options are passed through to aura_main.py.
+EOF
+}
+
 OPEN_GUI_WINDOW=0
 REBOOT_MODE=0
 AURA_PORT=8000
 PASSTHROUGH_ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)
+            print_usage
+            exit 0
+            ;;
         --open-gui-window|--gui-window)
             OPEN_GUI_WINDOW=1
             shift
@@ -39,6 +57,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 set -- "${PASSTHROUGH_ARGS[@]}"
+
+if ! [[ "$AURA_PORT" =~ ^[0-9]+$ ]] || [ "$AURA_PORT" -lt 1 ] || [ "$AURA_PORT" -gt 65535 ]; then
+    echo "❌ Invalid --port value: $AURA_PORT (expected 1-65535)"
+    exit 1
+fi
 
 echo -e "  \033[1;36m     ▄████████    ███    ███   ████████▄      ▄████████\033[0m"
 echo -e "  \033[1;36m    ███    ███    ███    ███   ███   ▀███    ███    ███\033[0m"
@@ -70,6 +93,17 @@ else
 fi
 
 echo "📍 Using Interpreter: $($PYTHON_CMD --version) at $PYTHON_CMD"
+
+# A signed Aura.app launch is pinned to the exact root, HEAD, branch, and dirty
+# source state captured when the bundle was built. Verify that contract before
+# cleanup so a stale app can never terminate a valid current runtime.
+if [ "${AURA_LAUNCHED_FROM_APP:-0}" = "1" ]; then
+    echo "🔏 Verifying signed app source provenance..."
+    if ! "$PYTHON_CMD" -m core.runtime.launch_provenance preflight --root "$AURA_ROOT"; then
+        echo "❌ Aura.app source provenance does not match this workspace. Rebuild the installed app before launch."
+        exit 1
+    fi
+fi
 
 LOG_DIR="${HOME}/.aura/logs"
 mkdir -p "$LOG_DIR"

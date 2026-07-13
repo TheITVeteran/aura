@@ -117,7 +117,7 @@ Status rules:
 | `REPO-001` | `OPEN` | Drain type, effect, cancellation, lifecycle, concurrency, dependency, dead-code, scaffolding/stub, configuration, documentation, and runtime/proof artifact-placement debt across every tracked source file. | Pass F 12; Matrix 11, 12, and 18 |
 | `LIFECYCLE-001` | `IN PROGRESS 2026-07-13` | Make every bounded test and runtime command terminate after its result: identify and close the non-daemon thread/process/resource owner that leaves `tests/test_skill_surface_contracts.py` alive after `99/99`, add leak detection, and prove clean interpreter exit without hiding the owner behind forced termination. | `FAULT-001`, `REPO-001`, `VALIDATE-001`; post-summary process-exit defect discovered during Checkpoint 49/50 validation |
 | `ASYNC-TASK-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate every unobserved async task failure and require owned task identity, completion observation, cancellation, and structured terminal evidence. First reproduce and root-fix the live `conversation_support.py` task whose empty `agent_id` raised `ValueError` under “Task exception was never retrieved.” | `FAULT-001`, `LIFECYCLE-001`, `CONVERSATION-001`; Checkpoint 53; live desktop log evidence 2026-07-13 |
-| `LAUNCH-PROVENANCE-001` | `IN PROGRESS 2026-07-13` | Make the signed resident Aura.app the canonical launcher, pin its source root and commit provenance to current `main`, reject stale/worktree drift, keep the native bridge resident, and expose launched root/commit/signature evidence in readiness and proof. The next live proof must replace the observed Python process running from `.claude/worktrees/fable-improvement-pass` without a resident Aura.app process. | `OPERATIONS-001`, `RUNTIME-001`, `DESKTOP-ACCESS-001`, `VALIDATE-001`; live process evidence 2026-07-13 |
+| `LAUNCH-PROVENANCE-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make the signed resident Aura.app the canonical launcher, pin its source root and commit provenance to current `main`, reject stale/worktree drift, keep the native bridge resident, and expose launched root/commit/signature evidence in readiness and proof. The next live proof must replace the observed Python process running from `.claude/worktrees/fable-improvement-pass` without a resident Aura.app process. | `OPERATIONS-001`, `RUNTIME-001`, `DESKTOP-ACCESS-001`, `VALIDATE-001`; Checkpoint 54; live process evidence 2026-07-13 |
 | `PROOF-001` | `OPEN` | Purify all proof runners against leakage, copied answers, stale artifacts, fallback success, runner-solved work, environment dependence, and unsupported claims; separate builder/solver/evaluator/signer. | Pass F 9; Matrix 16 |
 | `REPLICATION-001` | `OPEN` | Produce clean-machine setup, external challenge packs, source/SBOM/claims packages, replay commands, hashes, negative controls, and independent replication of every important causal result. | Matrix 16-17; Addendum 31 |
 | `AUDIT-001` | `OPEN` | Complete first and independent second every-line semantic passes, rerun the entire criticism/question corpus code-first, add every surviving gap, and make only evidence-defensible final assessments. | Pass F 12; Matrix 18; original assessment questions |
@@ -13334,3 +13334,74 @@ Immediate next work and proof burden:
   canonical person consolidation, standing autonomous authority, and every
   remaining master-index item. Multi-hour and 24-72 hour soaks remain deferred
   until all shorter gates are green.
+
+## Checkpoint 2026-07-13-54: Signed App Source And Resident Launch Integrity
+
+This checkpoint advances `LAUNCH-PROVENANCE-001`, `OPERATIONS-001`,
+`RUNTIME-001`, `DESKTOP-ACCESS-001`, `PROOF-001`, and `VALIDATE-001`. Source and
+the locally built bundle are green; installed-app launch, GUI behavior, and
+current-main runtime evidence remain open until the checkpoint is committed,
+pushed, rebuilt into `/Applications/Aura.app`, and exercised live.
+
+Established an exact source-to-app launch contract:
+
+- Bundle creation now emits `aura.launch_provenance.v1` with the canonical
+  source root, full Git commit, branch, exact dirty production-source digest,
+  changed-source count, launcher-source hash, version, bundle identity, and
+  generation time. Commit plus workspace digest identifies the actual live
+  source even when unrelated local runtime files are intentionally uncommitted.
+- The native launcher reads and validates this manifest, rejects root or bundle
+  identity mismatch, and passes its pinned fields and own executable path to
+  every direct and protected-folder launch lane. The shell preflight compares
+  the current root, commit, branch, and workspace state before cleanup, then
+  independently requires the resident launcher, stable `com.aura.desktop`
+  signature, and strict bundle verification before it may replace a runtime.
+- Runtime health and the durable runtime manifest expose the same source,
+  resident-process, signature, and strict-verification evidence. A launch that
+  claims Aura.app ownership but loses its app process, changes source, carries
+  an invalid signature, or fails strict bundle verification is `503` degraded
+  with a `launch_provenance` blocker instead of looking product-ready.
+
+Closed two proof and packaging falsehoods:
+
+- The bundle no longer embeds an absolute symlink out of the app, which caused
+  `codesign --verify --deep --strict` to fail even though `codesign -dv` showed
+  a local authority. Installed builds now require stable signing by default,
+  do not silently fall back to ad-hoc identity, and fail the build unless strict
+  verification passes after both build and install.
+- Direct `live_boot_proof.py --mode desktop` no longer sets
+  `AURA_LAUNCHED_FROM_APP=1` or claims an external GUI owner. It still exercises
+  the bounded full-desktop resource profile, but only an actual resident signed
+  app can certify the packaged lane. `launch_aura.sh --help` is now a real
+  non-destructive command, and invalid ports fail before cleanup.
+
+Verification completed for this source checkpoint:
+
+- Complete launch-provenance, launcher, desktop boot-safety, runtime-manifest,
+  boot-health, native-bridge, and permission-cache files pass `153/153` focused
+  tests. Configured Ruff, Python compile, Bash syntax, Swift typecheck, and
+  `git diff --check` pass.
+- The only-grows strict MyPy ratchet now includes launch provenance and passes
+  all `78/78` configured production files.
+- A real `scripts/bundle_app.sh` build produced a `com.aura.desktop` bundle
+  signed by `Aura Local Code Signing`; strict deep verification reports both
+  `valid on disk` and `satisfies its Designated Requirement`.
+- The enterprise static baseline passes without a ratchet increase, and the
+  production-readiness contract passes all `37/37` checks.
+- Standalone production-surface lint still reports exactly the seven previously
+  declared `STORAGE-GATEWAY-001` direct writes and no new finding from this
+  checkpoint. Those seven remain explicitly open rather than exempted.
+
+Immediate next work and proof burden:
+
+- Commit and push this source checkpoint directly on `main`, rebuild and install
+  `/Applications/Aura.app` from that exact revision, then prove resident app,
+  root, commit, branch, workspace digest, strict signature, Python child CWD,
+  native bridge, and readiness through the live API and visible GUI.
+- Exercise canonical self-condition chat, concurrent desktop-access probes,
+  foreground MLX admission after healthy event-loop samples, and owned social
+  callbacks while checking the new log interval for orphan task exceptions,
+  empty-agent failures, probe-timeout fault fanout, and stale lag denials.
+- After live closure, drain `STORAGE-GATEWAY-001`, then continue every remaining
+  master-index item. Multi-hour and 24-72 hour soaks remain deferred until all
+  shorter gates are green.

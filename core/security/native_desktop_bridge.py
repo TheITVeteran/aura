@@ -189,6 +189,20 @@ def bridge_executable() -> Path | None:
     return candidates[0] if candidates else None
 
 
+def native_desktop_bridge_identity(*, executable: Path | None = None) -> dict[str, Any]:
+    """Return independently observed resident-process and signing evidence."""
+
+    candidate = executable or bridge_executable()
+    if candidate is not None:
+        candidate = candidate.expanduser().resolve(strict=False)
+    return {
+        "bridge_executable": str(candidate or ""),
+        "resident_running": _resident_bridge_process_running(candidate),
+        "code_signature": _cached_code_signature_summary(candidate),
+        "captured_at_unix": time.time(),
+    }
+
+
 def _probe_cache_ttl(result: dict[str, Any]) -> float:
     """Cache good bridge evidence longer than denials or launch races.
 
@@ -577,5 +591,6 @@ __all__ = [
     "bridge_executable",
     "get_native_pyautogui",
     "invoke_native_desktop_bridge",
+    "native_desktop_bridge_identity",
     "probe_native_desktop_bridge",
 ]

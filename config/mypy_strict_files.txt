@@ -31,6 +31,7 @@ core/runtime/flight_recorder.py
 core/runtime/subprocess_gateway.py
 core/runtime/runtime_settings.py
 core/runtime/flagship_doctor.py
+core/runtime/launch_provenance.py
 core/brain/lane_admission.py
 core/observability/stall_dump.py
 core/observability/incident_narrator.py

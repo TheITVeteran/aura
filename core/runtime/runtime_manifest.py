@@ -253,9 +253,12 @@ def build_runtime_manifest(
     artifact_root: Path,
     readiness_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from core.runtime.launch_provenance import collect_runtime_launch_provenance
+
     health_by_key = _health_contract_snapshot(readiness_snapshot)
     services = _service_snapshot(health_by_key)
     roles = _role_snapshot(health_by_key)
+    launch_provenance = collect_runtime_launch_provenance(project_root)
     payload = {
         "schema": "aura.runtime_manifest.v1",
         "generated_at_unix": time.time(),
@@ -264,6 +267,7 @@ def build_runtime_manifest(
         "ready_label": ready_label,
         "python": sys.version,
         "platform": platform.platform(),
+        "launch_provenance": launch_provenance,
         "models": {
             "AURA_LOCAL_BACKEND": os.environ.get("AURA_LOCAL_BACKEND", ""),
             "AURA_MODEL": os.environ.get("AURA_MODEL", ""),

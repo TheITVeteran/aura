@@ -156,6 +156,8 @@ def test_runtime_manifest_records_pre_ready_boot_contract_snapshot(tmp_path):
     assert manifest["readiness_snapshot"]["ready"] is False
     assert manifest["readiness_snapshot"]["critical"] == ["inference_gate"]
     assert manifest["readiness_snapshot"]["required_probe_blockers"] == ["probe:inference"]
+    assert manifest["launch_provenance"]["schema"] == "aura.launch_provenance.v1"
+    assert manifest["launch_provenance"]["required"] is False
 
 
 def test_runtime_manifest_does_not_mark_registered_unready_role_healthy(tmp_path):
