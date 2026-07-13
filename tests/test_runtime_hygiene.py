@@ -122,6 +122,7 @@ async def test_runtime_hygiene_tracks_subprocesses():
 
 
 @pytest.mark.asyncio
+@pytest.mark.host_observation
 async def test_runtime_hygiene_adopts_existing_subprocesses_started_before_hygiene():
     assert runtime_hygiene_module._HAS_PSUTIL, "psutil unavailable in this environment"
     try:
@@ -153,6 +154,36 @@ async def test_runtime_hygiene_adopts_existing_subprocesses_started_before_hygie
             proc.kill()
         await hygiene.stop()
         hygiene.reset_state()
+
+
+
+def _observe_children(resource_observer, specs):
+    """Feed the process-wide simulated observer (autouse fixture) the child
+    census. Since 71b5598f the hygiene census reads the canonical
+    resource-observation seam; legacy ``._proc`` doubles are never consulted."""
+    from core.runtime.resource_observation import ProcessObservation
+
+    parent_pid = os.getpid()
+    observations = []
+    for spec in specs:
+        ppid = spec.get("ppid", parent_pid)
+        ancestors = spec.get("ancestor_pids")
+        if ancestors is None:
+            ancestors = (parent_pid,) if ppid != parent_pid else ()
+        observations.append(
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=spec["pid"],
+                ppid=ppid,
+                create_time=1_700_000_000.0,
+                status=spec.get("status", "sleeping"),
+                name=spec.get("name", "Python"),
+                cmdline=tuple(str(part) for part in spec.get("cmdline", ())),
+                rss_bytes=1024,
+                ancestor_pids=tuple(ancestors),
+            )
+        )
+    resource_observer.configure_processes(observations)
 
 
 def test_runtime_hygiene_skips_tracemalloc_by_default(monkeypatch):
@@ -265,24 +296,13 @@ def test_runtime_hygiene_tolerates_model_registry_churn(monkeypatch):
     assert hygiene._active_local_model_activity() == ["cortex:recent"]
 
 
-def test_runtime_hygiene_adopts_late_active_children_before_flagging_rogue_processes():
-    class _ChildProc:
-        pid = 43210
-
-        def cmdline(self):
-            return [sys.executable, "-m", "multiprocessing.spawn"]
-
-        def name(self):
-            return "spawned-child"
-
-        def is_running(self):
-            return True
-
-        def status(self):
-            return "sleeping"
-
+def test_runtime_hygiene_adopts_late_active_children_before_flagging_rogue_processes(resource_observer):
+    _observe_children(resource_observer, [{
+        "pid": 43210,
+        "cmdline": [sys.executable, "-m", "multiprocessing.spawn"],
+        "name": "spawned-child",
+    }])
     hygiene = RuntimeHygieneManager()
-    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [_ChildProc()])
 
     hygiene._adopt_active_child_processes()
     summary = hygiene._process_summary()
@@ -368,32 +388,23 @@ def test_runtime_hygiene_process_iter_system_error_is_nonfatal(monkeypatch):
     assert hygiene._process_records == {}
 
 
-def test_runtime_hygiene_classifies_registered_worker_descendants_as_owned():
-    class _Proc:
-        def __init__(self, pid: int, ppid: int, name: str):
-            self.pid = pid
-            self._ppid = ppid
-            self._name = name
-
-        def ppid(self):
-            return self._ppid
-
-        def cmdline(self):
-            return [sys.executable, "-m", self._name]
-
-        def name(self):
-            return self._name
-
-        def is_running(self):
-            return True
-
-        def status(self):
-            return "sleeping"
-
-    parent = _Proc(61001, 999, "mlx-worker")
-    helper = _Proc(61002, 61001, "mlx-helper")
+def test_runtime_hygiene_classifies_registered_worker_descendants_as_owned(resource_observer):
+    _observe_children(resource_observer, [
+        {
+            "pid": 61001,
+            "ppid": 999,
+            "name": "mlx-worker",
+            "cmdline": [sys.executable, "-m", "mlx-worker"],
+        },
+        {
+            "pid": 61002,
+            "ppid": 61001,
+            "name": "mlx-helper",
+            "cmdline": [sys.executable, "-m", "mlx-helper"],
+            "ancestor_pids": (os.getpid(), 61001),
+        },
+    ])
     hygiene = RuntimeHygieneManager()
-    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [parent, helper])
     hygiene.register_process_handle(
         SimpleNamespace(pid=61001),
         kind="multiprocessing",
@@ -410,32 +421,17 @@ def test_runtime_hygiene_classifies_registered_worker_descendants_as_owned():
     assert summary["rogue_samples"] == []
 
 
-def test_runtime_hygiene_adopts_direct_multiprocessing_spawn_during_summary():
-    class _Proc:
-        pid = 62001
-
-        def ppid(self):
-            return os.getpid()
-
-        def cmdline(self):
-            return [
-                sys.executable,
-                "-c",
-                "from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8, pipe_handle=20)",
-                "--multiprocessing-fork",
-            ]
-
-        def name(self):
-            return "Python"
-
-        def is_running(self):
-            return True
-
-        def status(self):
-            return "sleeping"
-
+def test_runtime_hygiene_adopts_direct_multiprocessing_spawn_during_summary(resource_observer):
+    _observe_children(resource_observer, [{
+        "pid": 62001,
+        "cmdline": [
+            sys.executable,
+            "-c",
+            "from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8, pipe_handle=20)",
+            "--multiprocessing-fork",
+        ],
+    }])
     hygiene = RuntimeHygieneManager()
-    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [_Proc()])
 
     summary = hygiene._process_summary()
 
@@ -444,31 +440,16 @@ def test_runtime_hygiene_adopts_direct_multiprocessing_spawn_during_summary():
     assert summary["rogue_child_processes"] == 0
 
 
-def test_runtime_hygiene_adopts_python312_spawn_main_without_fork_flag():
-    class _Proc:
-        pid = 62002
-
-        def ppid(self):
-            return os.getpid()
-
-        def cmdline(self):
-            return [
-                sys.executable,
-                "-c",
-                "from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8, pipe_handle=20)",
-            ]
-
-        def name(self):
-            return "Python"
-
-        def is_running(self):
-            return True
-
-        def status(self):
-            return "sleeping"
-
+def test_runtime_hygiene_adopts_python312_spawn_main_without_fork_flag(resource_observer):
+    _observe_children(resource_observer, [{
+        "pid": 62002,
+        "cmdline": [
+            sys.executable,
+            "-c",
+            "from multiprocessing.spawn import spawn_main; spawn_main(tracker_fd=8, pipe_handle=20)",
+        ],
+    }])
     hygiene = RuntimeHygieneManager()
-    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [_Proc()])
 
     summary = hygiene._process_summary()
 
@@ -478,21 +459,14 @@ def test_runtime_hygiene_adopts_python312_spawn_main_without_fork_flag():
     assert summary["rogue_samples"] == []
 
 
-def test_runtime_hygiene_keeps_unowned_child_process_fail_closed():
-    class _Proc:
-        pid = 62002
-
-        def ppid(self):
-            return 999
-
-        def cmdline(self):
-            return [sys.executable, "-m", "unexpected_worker"]
-
-        def name(self):
-            return "unexpected-worker"
-
+def test_runtime_hygiene_keeps_unowned_child_process_fail_closed(resource_observer):
+    _observe_children(resource_observer, [{
+        "pid": 62002,
+        "ppid": 999,
+        "cmdline": [sys.executable, "-m", "unexpected_worker"],
+        "name": "unexpected-worker",
+    }])
     hygiene = RuntimeHygieneManager()
-    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [_Proc()])
 
     summary = hygiene._process_summary()
 
@@ -682,7 +656,7 @@ async def test_runtime_hygiene_child_cleanup_is_concurrent():
 
 
 @pytest.mark.asyncio
-async def test_runtime_hygiene_cleans_adopted_psutil_children(monkeypatch):
+async def test_runtime_hygiene_cleans_adopted_psutil_children(monkeypatch, resource_observer):
     class PsutilChild:
         pid = 54321
 
@@ -713,11 +687,21 @@ async def test_runtime_hygiene_cleans_adopted_psutil_children(monkeypatch):
     child = PsutilChild()
     monkeypatch.setattr(runtime_hygiene_module, "_HAS_PSUTIL", True)
 
+    _observe_children(resource_observer, [{
+        "pid": 54321,
+        "cmdline": [sys.executable, "-m", "multiprocessing.spawn"],
+        "name": "spawned-child",
+    }])
     hygiene = RuntimeHygieneManager()
-    hygiene._proc = SimpleNamespace(children=lambda recursive=True: [child])
     hygiene.process_shutdown_timeout_s = 0.2
 
     hygiene._adopt_active_child_processes()
+    # Under a simulated observer adoption records the census without live
+    # psutil handles; seed the ref exactly as host-mode adoption would so
+    # the CLEANUP semantics under test stay honest.
+    for key, record in hygiene._process_records.items():
+        if record.pid == 54321:
+            hygiene._process_refs[key] = child
     await hygiene._cleanup_child_processes()
 
     assert child.terminated

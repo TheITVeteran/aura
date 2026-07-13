@@ -1775,7 +1775,7 @@ def test_dnu_runner_uses_live_message_path_for_full_aura_tasks():
     assert '"--model-tier"' in source
     assert 'os.environ["AURA_PROOF_MODEL_TIER"] = requested_proof_model_tier' in source
     assert '"--stop-existing-runtime"' in source
-    assert "find_existing_aura_runtimes()" in source
+    assert "find_existing_aura_runtimes(observer=observer)" in source
     assert "MODEL_LANE_PROBE.json" in source
     assert "run_model_lane_probe(router, requested_proof_model_tier, run_dir)" in source
     assert "await isolate_live_runtime_for_dnu_task(task)" in source

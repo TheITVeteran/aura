@@ -26,8 +26,23 @@ _EMBED_ENGINE_FAILED = False
 _WARM_INFLIGHT = False
 
 
+_SEMANTIC_RAG_FLAG = None
+
+
 def _semantic_enabled() -> bool:
-    return str(os.getenv("AURA_SEMANTIC_RAG", "1")).strip().lower() not in {"0", "false", "off", "no"}
+    global _SEMANTIC_RAG_FLAG
+    if _SEMANTIC_RAG_FLAG is None:
+        from core.runtime.flags import FlagKind, declare
+
+        _SEMANTIC_RAG_FLAG = declare(
+            "AURA_SEMANTIC_RAG",
+            kind=FlagKind.BOOL,
+            default=True,
+            description="Hybrid dense+lexical retrieval in the RAG bridge; "
+            "0 reverts to pure lexical TF-IDF",
+            owner="core/memory/rag.py",
+        )
+    return bool(_SEMANTIC_RAG_FLAG.value())
 
 
 def _get_embed_engine() -> Any:

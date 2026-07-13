@@ -41,16 +41,34 @@ class _FakeOrphan:
         return [SimpleNamespace(pid=os.getpid())]
 
 
-def test_orphan_reclaimed_before_memory_admission(monkeypatch):
+def test_orphan_reclaimed_before_memory_admission(monkeypatch, resource_observer):
     # Disable the bounded reclaim re-poll so the contrived always-blocked
     # memcheck fails fast instead of spinning the full production window.
     monkeypatch.setenv("AURA_MLX_SPAWN_RECLAIM_WAIT_S", "0")
     client = mc.MLXLocalClient(model_path="mlx-community/Qwen2.5-32B-Instruct-4bit")
     try:
         events: list[str] = []
-        monkeypatch.setattr(
-            mc.psutil, "process_iter", lambda *a, **k: [_FakeOrphan(events)]
-        )
+        orphan = _FakeOrphan(events)
+        # The orphan scan reads the canonical observer census (71b5598f)
+        # and acts through psutil.Process(pid).
+        import os as _os
+
+        from core.runtime.resource_observation import ProcessObservation
+
+        resource_observer.configure_processes([
+            ProcessObservation(
+                provenance=resource_observer.provenance,
+                pid=orphan.pid,
+                ppid=_os.getpid(),
+                create_time=1_700_000_000.0,
+                status="running",
+                name="MLXWorker-Qwen2.5-32B-Instruct-4bit",
+                cmdline=("python", "mlx_worker", "Qwen2.5-32B-Instruct-4bit"),
+                rss_bytes=1024,
+                ancestor_pids=(_os.getpid(),),
+            )
+        ])
+        monkeypatch.setattr(mc.psutil, "Process", lambda pid: orphan)
 
         def _fake_memcheck(model_path):
             events.append("memcheck")

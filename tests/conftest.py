@@ -182,6 +182,27 @@ def hermetic_resource_sandbox(tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def _live_data_write_guard(request):
+    """Hermeticity: flag any Python-level write into the real ~/.aura/data.
+
+    2026-07-12: pin tests were found appending fixture pins to the LIVE
+    session-memory ledger — phantom memories Aura could recall as real.
+    Report-mode by default (ledger in AURA_LOG_DIR);
+    AURA_TEST_LIVE_DATA_GUARD=fail escalates to hard failures.
+    """
+    import builtins as _builtins
+
+    from tests.live_data_guard import make_guarded_open
+
+    original = _builtins.open
+    _builtins.open = make_guarded_open(request.node.nodeid)
+    try:
+        yield
+    finally:
+        _builtins.open = original
+
+
+@pytest.fixture(autouse=True)
 def resource_observer(request, monkeypatch, tmp_path):
     """Keep ordinary tests independent from the developer host's pressure.
 

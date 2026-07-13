@@ -48,12 +48,14 @@ def test_environment_command_probe_uses_subprocess_gateway(monkeypatch):
 
     monkeypatch.setattr(env_module, "get_subprocess_gateway", lambda: Gateway())
 
-    result = asyncio.run(env_module._run_command(["sysctl", "-n", "hw.memsize"], timeout_s=2))
+    # Since 71b5598f the resource probes (sysctl) live on the canonical
+    # observation seam; CoreLocationCLI is the surviving _run_command user.
+    result = asyncio.run(env_module._run_command(["CoreLocationCLI", "-once"], timeout_s=2))
 
     assert result == "123"
     assert calls == [
         (
-            ("sysctl", "-n", "hw.memsize"),
+            ("CoreLocationCLI", "-once"),
             2.0,
             True,
             True,

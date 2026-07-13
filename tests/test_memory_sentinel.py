@@ -159,6 +159,25 @@ def _pid_exists_stub(monkeypatch, value=True):
     monkeypatch.setattr(psutil, "pid_exists", lambda _pid: value)
 
 
+def _observe_running_pid(resource_observer, pid):
+    """is_armed() consults the canonical observer census (71b5598f); a
+    respawned sentinel is armed only if its pid is observed running."""
+    from core.runtime.resource_observation import ProcessObservation
+
+    resource_observer.configure_processes([
+        ProcessObservation(
+            provenance=resource_observer.provenance,
+            pid=pid,
+            ppid=os.getpid(),
+            create_time=1_700_000_000.0,
+            status="running",
+            name="memory-sentinel",
+            cmdline=("python", "-m", "tools.memory_sentinel"),
+            rss_bytes=1024,
+        )
+    ])
+
+
 class TestSentinelRearm:
     """A dead contract-CRITICAL guardian must come back, boundedly.
 
@@ -187,8 +206,9 @@ class TestSentinelRearm:
         )
         return status, spawned
 
-    def test_rearm_respawns_dead_sentinel(self, monkeypatch):
+    def test_rearm_respawns_dead_sentinel(self, monkeypatch, resource_observer):
         status, spawned = self._status(monkeypatch)
+        _observe_running_pid(resource_observer, _LiveProc.pid)
         assert status.is_armed() is False
         assert status.rearm() is True
         assert status.is_armed() is True
@@ -196,8 +216,9 @@ class TestSentinelRearm:
         assert status.pid == _LiveProc.pid
         assert status.get_status()["rearms_last_hour"] == 1
 
-    def test_rearm_is_noop_while_armed(self, monkeypatch):
+    def test_rearm_is_noop_while_armed(self, monkeypatch, resource_observer):
         status, spawned = self._status(monkeypatch)
+        _observe_running_pid(resource_observer, _LiveProc.pid)
         status.rearm()
         assert status.rearm() is True
         assert len(spawned) == 1, "an armed sentinel must not be respawned"

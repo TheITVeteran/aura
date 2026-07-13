@@ -2539,8 +2539,14 @@ def test_session_memory_pin_extracts_codeword_and_strips_confirmation_instructio
     )
 
 
-def test_session_memory_pin_round_trip():
+def test_session_memory_pin_round_trip(monkeypatch, tmp_path):
     from interface.routes import chat as chat_route
+
+    monkeypatch.setattr(
+        chat_route,
+        "_session_memory_pin_ledger_path",
+        lambda: tmp_path / "session_memory_pins.jsonl",
+    )
 
     async def run():
         chat_route._session_memory_pins.clear()
@@ -2644,9 +2650,14 @@ def test_session_memory_pin_survives_restart_cross_session(monkeypatch, tmp_path
     assert "restart-42" in restored_text
 
 
-def test_session_memory_pin_writes_durable_memory(monkeypatch):
+def test_session_memory_pin_writes_durable_memory(monkeypatch, tmp_path):
     from interface.routes import chat as chat_route
 
+    monkeypatch.setattr(
+        chat_route,
+        "_session_memory_pin_ledger_path",
+        lambda: tmp_path / "session_memory_pins.jsonl",
+    )
     writes = []
 
     class MemoryFacade:
@@ -2674,8 +2685,14 @@ def test_session_memory_pin_writes_durable_memory(monkeypatch):
     assert "session_id" in writes[0][1]
 
 
-def test_session_memory_pin_recalls_from_durable_memory_when_cache_empty(monkeypatch):
+def test_session_memory_pin_recalls_from_durable_memory_when_cache_empty(monkeypatch, tmp_path):
     from interface.routes import chat as chat_route
+
+    monkeypatch.setattr(
+        chat_route,
+        "_session_memory_pin_ledger_path",
+        lambda: tmp_path / "session_memory_pins.jsonl",
+    )
 
     class MemoryFacade:
         async def search(self, query, limit=5):

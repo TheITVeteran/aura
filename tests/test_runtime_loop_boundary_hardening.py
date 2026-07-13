@@ -174,21 +174,36 @@ async def test_streaming_coordinator_subscriber_exits_on_close() -> None:
     assert await asyncio.wait_for(task, timeout=1.0) == ["text_token"]
 
 
-def test_singleton_process_metadata_records_psutil_probe_failure(monkeypatch) -> None:
+def test_singleton_process_metadata_records_unobserved_pid(resource_observer) -> None:
+    """Identity flows through the canonical observer (71b5598f): an
+    unobserved pid must record an honest identity_error, and an observed
+    one must carry observation provenance."""
     from core.utils import singleton
-
-    calls: list[int] = []
-
-    def fail_process(pid: int):
-        calls.append(pid)
-        raise OSError("process table unavailable")
-
-    monkeypatch.setitem(sys.modules, "psutil", SimpleNamespace(Process=fail_process))
 
     metadata = singleton._current_process_metadata("unit-test", 123)
 
-    assert calls == [123]
-    assert metadata["identity_error"] == "OSError: process table unavailable"
+    assert metadata["identity_error"] == "RuntimeError: process_identity_unavailable"
+    assert "create_time" not in metadata
+
+    from core.runtime.resource_observation import ProcessObservation
+
+    resource_observer.configure_processes([
+        ProcessObservation(
+            provenance=resource_observer.provenance,
+            pid=123,
+            ppid=1,
+            create_time=1_700_000_000.0,
+            status="running",
+            name="unit-test-proc",
+            cmdline=("unit-test",),
+            rss_bytes=1024,
+            username="bryan",
+        )
+    ])
+    observed = singleton._current_process_metadata("unit-test", 123)
+
+    assert observed["observation_source"] == "simulated"
+    assert observed["create_time"] == 1_700_000_000.0
 
 
 def test_runtime_loop_sources_have_explicit_boundaries() -> None:

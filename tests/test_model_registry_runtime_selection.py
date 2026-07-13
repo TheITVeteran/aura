@@ -76,6 +76,9 @@ def _reset_lane_audit_cache():
 
 
 def test_audit_lane_assignments_caches_filesystem_work(monkeypatch):
+    # The autouse resource_observer fixture zeroes the audit-cache TTL for
+    # hermeticity; this test asserts the CACHE, so it pins a real TTL.
+    monkeypatch.setenv("AURA_LANE_AUDIT_CACHE_TTL_S", "60")
     _reset_lane_audit_cache()
     calls = {"n": 0}
     real_realpath = model_registry.os.path.realpath

@@ -529,7 +529,16 @@ class InteractionSignalsEngine:
         from core.senses.visual_speech import VisualSpeechPipeline
 
         if self._visual_speech_pipeline is None:
-            fps = _safe_float(os.environ.get("AURA_VISION_SIGNAL_FPS", "10"), 10.0)
+            from core.runtime.flags import FlagKind, declare
+
+            fps_flag = declare(
+                "AURA_VISION_SIGNAL_FPS",
+                kind=FlagKind.FLOAT,
+                default=10.0,
+                description="Visual-speech pipeline frame rate (clamped 2-60)",
+                owner="core/senses/interaction_signals.py",
+            )
+            fps = _safe_float(fps_flag.value(), 10.0)
             self._visual_speech_pipeline = VisualSpeechPipeline(
                 fps=max(2.0, min(fps, 60.0)),
                 face_detector=lambda _gray: self._visual_speech_face_holder["box"],
