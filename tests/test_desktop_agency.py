@@ -19,8 +19,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Test fixtures
@@ -74,15 +73,21 @@ class DeterministicHostAutomation:
         return DeterministicAutomationReceipt("menu_select", f"{app}: {' > '.join(path)}", True)
 
     async def take_screenshot(self, save_path="", region=None):
-        path = save_path or str(Path(tempfile.gettempdir()) / "aura_test_screenshot.png")
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)  # Minimal PNG
+        def _write_fixture() -> str:
+            path = save_path or str(
+                Path(tempfile.gettempdir()) / "aura_test_screenshot.png"
+            )
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+            return path
+
+        path = await asyncio.to_thread(_write_fixture)
         return DeterministicAutomationReceipt("take_screenshot", path, True, path)
 
     async def get_screen_text(self, region=None):
         return DeterministicAutomationReceipt("get_screen_text", "", True, "Deterministic screen text for testing")
 
-    async def run_command(self, command, timeout=15.0):
+    async def run_command(self, command, timeout=15.0):  # noqa: ASYNC109
         return DeterministicAutomationReceipt("run_command", command[:100], True, "command output")
 
     async def execute_applescript(self, script):
@@ -94,7 +99,9 @@ class DeterministicHostAutomation:
     async def scroll(self, dx=0, dy=0):
         return DeterministicAutomationReceipt("scroll", f"dx={dx},dy={dy}", True)
 
-    async def wait_for_condition(self, pred, args, timeout=10, poll_interval=0.5):
+    async def wait_for_condition(
+        self, pred, args, timeout=10, poll_interval=0.5  # noqa: ASYNC109
+    ):
         return DeterministicAutomationReceipt("wait_for_condition", pred, True, "condition met")
 
     def get_recent_receipts(self, limit=20):
@@ -157,14 +164,14 @@ class TestPermissionModel(unittest.TestCase):
     """Test the permission risk model."""
 
     def test_low_risk_approved(self):
-        from core.capabilities.permission_model import get_permission_model, RiskLevel
+        from core.capabilities.permission_model import RiskLevel, get_permission_model
         model = get_permission_model()
         decision = model.check_permission("launch_app", "Notes")
         self.assertTrue(decision.approved)
         self.assertEqual(decision.risk_level, RiskLevel.LOW)
 
     def test_blocked_risk_denied(self):
-        from core.capabilities.permission_model import get_permission_model, RiskLevel
+        from core.capabilities.permission_model import RiskLevel, get_permission_model
         model = get_permission_model()
         decision = model.check_permission("rm -rf /", "/")
         self.assertFalse(decision.approved)
@@ -178,7 +185,7 @@ class TestPermissionModel(unittest.TestCase):
         self.assertEqual(decision.risk_level, RiskLevel.HIGH)
 
     def test_demo_safe_mode(self):
-        from core.capabilities.permission_model import PermissionRiskModel, RiskLevel
+        from core.capabilities.permission_model import PermissionRiskModel
         model = PermissionRiskModel()
         model.set_demo_safe_mode(True)
         decision = model.check_permission("send email", "test")
@@ -205,7 +212,7 @@ class TestTaskGraph(unittest.TestCase):
         self.assertEqual(ready[0].task_id, "t1")
 
     def test_dependency_ordering(self):
-        from core.planning.task_graph import TaskGraph, TaskNode, TaskStatus
+        from core.planning.task_graph import TaskGraph, TaskNode
         graph = TaskGraph("test_3", "Test")
         graph.add_node(TaskNode(task_id="t1", action="a"))
         graph.add_node(TaskNode(task_id="t2", action="b", preconditions=["t1"]))
@@ -287,6 +294,7 @@ class TestFileBroker(unittest.TestCase):
 
     def test_sandbox_enforcement(self):
         import tempfile
+
         from core.capabilities.file_broker import SandboxedFileBroker
         broker = SandboxedFileBroker()
         # Use a resolved temp path so symlink (/tmp → /private/tmp) doesn't break
@@ -404,7 +412,7 @@ class TestFullPipelineIntegration(unittest.TestCase):
 
     def test_decompose_and_execute_wallpaper(self):
         """Test: objective → decompose → graph → execute → verify."""
-        from core.planning.task_graph import TaskGraph, TaskNode, TaskStatus
+        from core.planning.task_graph import TaskGraph, TaskNode
 
         # Build a realistic wallpaper task graph
         graph = TaskGraph("integration_test_1", "Set wallpaper to mountain")
@@ -475,9 +483,10 @@ class TestOwnerAutonomyGating(unittest.TestCase):
 
     def test_voice_engine_grounding_and_rate_limiting(self):
         """Test transcript injection, rate-limiting, and deduplication."""
+        import time
+
         from core.senses.voice_engine import SovereignVoiceEngine
         from core.world_state import get_world_state
-        import time
 
         ws = get_world_state()
         ws._events.clear()
@@ -529,10 +538,11 @@ class TestOwnerAutonomyGating(unittest.TestCase):
 
     def test_voice_engine_direct_eventbus_requires_explicit_opt_in(self):
         """Raw STT becomes an authorized command only in direct dictation mode."""
-        from core.senses.voice_engine import SovereignVoiceEngine
-        from core.world_state import get_world_state
         import os
         from unittest import mock
+
+        from core.senses.voice_engine import SovereignVoiceEngine
+        from core.world_state import get_world_state
 
         ws = get_world_state()
         ws._events.clear()
@@ -559,8 +569,8 @@ class TestOwnerAutonomyGating(unittest.TestCase):
 
     def test_wake_word_voice_print_shift(self):
         """Wake words start sessions, but only real verifier evidence issues presence tokens."""
-        from core.voice.wake_word import WakeWordDetector
         from core.executive.authority_gateway import get_authority_gateway
+        from core.voice.wake_word import WakeWordDetector
 
         detector = WakeWordDetector()
         gateway = get_authority_gateway()
@@ -610,10 +620,10 @@ class TestOwnerAutonomyGating(unittest.TestCase):
 
     def test_presence_token_does_not_bypass_permissions_or_will(self):
         """Verified user presence cannot override blocked actions."""
-        from core.executive.authority_gateway import get_authority_gateway
         from core.capabilities.permission_model import get_permission_model
-        from core.governance.will import get_will, WillOutcome, ActionDomain
         from core.container import ServiceContainer
+        from core.executive.authority_gateway import get_authority_gateway
+        from core.governance.will import ActionDomain, WillOutcome, get_will
 
         gateway = get_authority_gateway()
         pm = get_permission_model()
@@ -656,8 +666,9 @@ class TestOwnerAutonomyGating(unittest.TestCase):
 
     def test_automatic_posture_reversion(self):
         """Test that posture reverts to defensive_sandboxed on token expiration."""
-        from core.executive.authority_gateway import get_authority_gateway
         import time
+
+        from core.executive.authority_gateway import get_authority_gateway
 
         gateway = get_authority_gateway()
         gateway.issue_user_presence_token(
@@ -842,7 +853,7 @@ class TestOwnerAutonomyGating(unittest.TestCase):
 # Test runner
 # ---------------------------------------------------------------------------
 
-def run_eval_suite() -> Dict[str, Any]:
+def run_eval_suite() -> dict[str, Any]:
     """Run the full evaluation suite and return structured results."""
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()

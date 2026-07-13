@@ -7,8 +7,8 @@ import pytest
 from core.affect import AffectState
 from core.affect.emotion_engine import EmotionEngine
 from core.affect.emotional_coloring import EmotionalColoring
-from core.runtime.models import ExecutionPlan
 from core.identity.narrative_thread import NarrativeThread
+from core.runtime.models import ExecutionPlan
 
 
 def test_execution_plan_accepts_structured_tool_payloads():
