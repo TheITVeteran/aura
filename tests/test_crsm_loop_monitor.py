@@ -28,7 +28,22 @@ def _monitor(tmp_path):
 
 
 def _write_lines(path, n):
-    path.write_text("".join(json.dumps({"text": f"sample {i}"}) + "\n" for i in range(n)), encoding="utf-8")
+    # Genuinely trainable captures (real User:/Aura: exchanges, no internal
+    # markers) so the loop's eligibility gate counts them — the monitor only
+    # reports OPEN when there is something the trainer would actually accept.
+    path.write_text(
+        "".join(
+            json.dumps({
+                "text": (
+                    f"User: Question {i} about how something works in practice?\n"
+                    f"Aura: Here is answer {i} with enough grounded detail to pass the gate."
+                ),
+                "_quality": 0.8,
+            }) + "\n"
+            for i in range(n)
+        ),
+        encoding="utf-8",
+    )
 
 
 def _jsonl_stats(path):
@@ -154,7 +169,7 @@ def test_open_state_reports_current_manifest_and_train_fuse_next_action(tmp_path
     state = m.loop_state()
 
     assert state["state"] == "open"
-    assert "integrated into the LoRA corpus" in state["reason"]
+    assert "in the LoRA corpus but not yet trained/fused" in state["reason"]
     assert state["integration_manifest"]["current_for_dataset"] is True
     assert state["integration_manifest"]["accepted"] == 80
     assert state["integration_manifest"]["output_integrity"]["corpus_current"] is True
@@ -246,3 +261,74 @@ def test_stale_manifest_reports_prepare_dataset_next_action(tmp_path):
     assert state["integration_manifest"]["current_for_dataset"] is False
     assert state["next_action"]["phase"] == "prepare_dataset"
     assert state["next_action"]["command"] == ["python", "training/build_dataset_v3.py"]
+
+
+def _write_internal_control_captures(path, n):
+    """The idle self-reflection captures Bryan's live poll surfaced: real
+    captures from Aura's side, but internal-control (<thought>/<action>,
+    will-approved self-reflection) that the training gate always rejects."""
+    path.write_text(
+        "".join(
+            json.dumps({
+                "text": (
+                    "User: Will-approved self-reflection\n"
+                    f"Aura: <thought>\nSelf-reflection {i} accepted as a plasticity signal.\n"
+                    "</thought>\n<action>\nI noticed a repair pattern.\n</action>"
+                ),
+                "_quality": 0.72,
+            }) + "\n"
+            for i in range(n)
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_internal_control_captures_are_idle_not_open(tmp_path):
+    """The reported false alarm: 33 internal-control captures made the health
+    poll cry 'CRSM→LoRA loop OPEN (proof integrity degraded)' when there was
+    nothing trainable. The loop must report IDLE, and the advisory (which
+    fires only on OPEN) must stay silent."""
+    m = _monitor(tmp_path)
+    _write_internal_control_captures(m.dataset_path, 33)
+
+    assert m.eligible_capture_count() == 0
+    state = m.loop_state()
+    assert state["state"] == "idle", state
+    assert state["eligible_captures"] == 0
+    assert "0 are eligible" in state["reason"]
+    # The integrity advisory keys off state == 'open'; idle must not trip it.
+    assert state["state"] != "open"
+
+
+def test_open_requires_eligible_captures_not_raw_lines(tmp_path):
+    """Mixed corpus: only the trainable captures hold the loop open."""
+    m = _monitor(tmp_path)
+    # 30 internal-control (ineligible) + 30 real exchanges (eligible)
+    internal = [
+        json.dumps({"text": "User: Will-approved self-reflection\nAura: <thought>x</thought>"}) + "\n"
+        for _ in range(30)
+    ]
+    eligible = [
+        json.dumps({
+            "text": f"User: Question {i} about the world?\nAura: A grounded answer {i} with real words."
+        }) + "\n"
+        for i in range(30)
+    ]
+    m.dataset_path.write_text("".join(internal + eligible), encoding="utf-8")
+
+    assert m.eligible_capture_count() == 30
+    state = m.loop_state()
+    assert state["state"] == "open", state
+    assert state["eligible_captures"] == 30
+
+
+def test_eligible_count_cached_by_dataset_sha(tmp_path):
+    m = _monitor(tmp_path)
+    _write_lines(m.dataset_path, 40)
+    first = m.eligible_capture_count()
+    assert first == 40
+    # cache hit: same sha -> no recompute path; still correct
+    assert m.eligible_capture_count() == 40
+    # dataset grows -> recompute
+    _write_lines(m.dataset_path, 60)
+    assert m.eligible_capture_count() == 60
