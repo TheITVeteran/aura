@@ -168,9 +168,16 @@ descent loop.
   processes (verified PIDs), resources honor the bound, worker crashes
   are contained. `tests/test_swarm_ray_live.py`. (k8s specifically still
   needs a real cluster; the ray path — the same swarm seam — is proven.)
-- **Open-vocabulary lip reading** — CLOSED as a pipeline (`f5481462`).
-  Complete CTC greedy+beam decoding, ONNX preprocessing/inference,
-  license-surfacing loader; proven end-to-end against a real in-test
-  trained ONNX model. Frontier-accuracy weights remain a documented,
-  provider-license-gated drop-in (the license is the provider's term,
-  not code) — `core/perception/vsr_ctc.py`, `vsr_onnx_backend.py`.
+- **Open-vocabulary lip reading** — CLOSED, license-clean (`f5481462` +
+  trainable path). Two ways, no external-license dependency required:
+  (1) the full CTC greedy+beam decoding + ONNX inference pipeline
+  (`vsr_ctc.py`, `vsr_onnx_backend.py`); (2) a from-scratch **trainable**
+  model (`core/perception/vsr_trainer.py`) — 3D-conv+BiGRU CTC net you
+  train on your OWN footage or any corpus you have rights to, exporting
+  straight into that same runtime loader. The whole free loop is proven:
+  corpus → CTC training (loss→~0, exact decode) → ONNX export → runtime
+  inference (`tests/test_vsr_trainer.py`). The BBC-LRS3 frontier weights
+  remain an optional drop-in for anyone who accepts the provider's data
+  term — but they are no longer required for the capability to exist.
+  **The only thing that was ever gated is someone else's data license;
+  the machinery, and now a trainable model, are entirely ours.**
