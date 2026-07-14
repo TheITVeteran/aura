@@ -391,6 +391,98 @@ async def test_same_world_mutations_serialize_and_persist_without_lost_updates(h
     ]
 
 
+async def test_authored_world_mutations_commit_and_survive_restart(host, tmp_path):
+    await host.create_world("authored", seed=17, size=16, theme="plains")
+    await host.conjure_body(
+        "authored",
+        {
+            "body_id": "user-orb",
+            "shape": "sphere",
+            "mass": 2.0,
+            "radius": 0.5,
+            "at": [0.0, 0.0, 4.0],
+        },
+    )
+    first_structure = await host.conjure_structure(
+        "authored",
+        kind="wall",
+        at=(1.0, 1.0, 0.0),
+        span=2,
+    )
+    second_structure = await host.conjure_structure(
+        "authored",
+        kind="wall",
+        at=(3.0, 1.0, 0.0),
+        span=2,
+    )
+    await host.set_environment("authored", gravity=-4.5)
+    await host.sculpt_terrain("authored", x=0.0, y=0.0, radius=2.0, delta=1.0)
+    await host.banish_body("authored", "user-orb")
+
+    assert set(first_structure["bodies_created"]).isdisjoint(
+        second_structure["bodies_created"]
+    )
+    live = host.load_world("authored")
+    assert live.physics.gravity[2] == pytest.approx(-4.5)
+    assert "user-orb" not in live.physics.bodies
+
+    reloaded = hosting.WorldHost(tmp_path / "worlds").load_world("authored")
+    assert reloaded.to_document() == live.to_document()
+
+
+async def test_authored_world_persistence_failure_leaves_live_state_unchanged(
+    host,
+    tmp_path,
+    monkeypatch,
+):
+    await host.create_world("author-txn", seed=23, size=16, theme="plains")
+    await host.conjure_body(
+        "author-txn",
+        {"body_id": "kept", "shape": "sphere", "mass": 1.0},
+    )
+    real_gateway = hosting.get_file_write_gateway()
+
+    class _FailingGateway:
+        async def ensure_directory_async(self, *args, **kwargs):
+            return await real_gateway.ensure_directory_async(*args, **kwargs)
+
+        async def write_json_async(self, *_args, **_kwargs):
+            raise OSError("injected authored-world persistence failure")
+
+    monkeypatch.setattr(hosting, "get_file_write_gateway", lambda: _FailingGateway())
+    operations = (
+        lambda: host.conjure_body(
+            "author-txn",
+            {"body_id": "not-committed", "shape": "sphere", "mass": 1.0},
+        ),
+        lambda: host.banish_body("author-txn", "kept"),
+        lambda: host.sculpt_terrain(
+            "author-txn",
+            x=0.0,
+            y=0.0,
+            radius=2.0,
+            delta=1.0,
+        ),
+        lambda: host.set_environment("author-txn", gravity=-3.0),
+        lambda: host.conjure_structure(
+            "author-txn",
+            kind="tower",
+            at=(0.0, 0.0, 0.0),
+            span=2,
+        ),
+    )
+
+    world = host.load_world("author-txn")
+    for operation in operations:
+        before = json.dumps(world.to_document(), sort_keys=True)
+        with pytest.raises(hosting.WorldPersistenceError, match="committed durably"):
+            await operation()
+        assert json.dumps(world.to_document(), sort_keys=True) == before
+
+    reloaded = hosting.WorldHost(tmp_path / "worlds").load_world("author-txn")
+    assert reloaded.to_document() == world.to_document()
+
+
 async def test_duplicate_world_creation_is_reserved_across_racing_calls(host):
     outcomes = await asyncio.gather(
         host.create_world("one-winner", seed=1, size=16),
@@ -437,6 +529,57 @@ async def test_cancellation_during_durable_write_finishes_commit_before_propagat
     assert host.inspect("cancel-safe")["tick"] == initial_tick + 10
     reloaded = hosting.WorldHost(tmp_path / "worlds").load_world("cancel-safe")
     assert reloaded.physics.tick == initial_tick + 10
+
+
+async def test_world_persistence_refuses_new_work_after_shutdown(host, tmp_path):
+    from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
+
+    request_shutdown("world-host-unit")
+    try:
+        with pytest.raises(hosting.WorldPersistenceError, match="runtime shutdown"):
+            await host.create_world("shutdown-refused", seed=1, size=16)
+    finally:
+        clear_shutdown_request()
+
+    assert not (tmp_path / "worlds" / "shutdown-refused.json").exists()
+    assert "shutdown-refused" not in host._worlds
+    assert "shutdown-refused" not in host._reserved_world_ids
+
+
+async def test_world_write_admitted_before_shutdown_drains_to_durable_commit(
+    host,
+    tmp_path,
+    monkeypatch,
+):
+    from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
+
+    await host.create_world("shutdown-crossing", seed=31, size=16)
+    real_gateway = hosting.get_file_write_gateway()
+    write_started = asyncio.Event()
+    allow_write = asyncio.Event()
+
+    class _DelayedGateway:
+        async def ensure_directory_async(self, *args, **kwargs):
+            return await real_gateway.ensure_directory_async(*args, **kwargs)
+
+        async def write_json_async(self, *args, **kwargs):
+            write_started.set()
+            await allow_write.wait()
+            await real_gateway.write_json_async(*args, **kwargs)
+
+    monkeypatch.setattr(hosting, "get_file_write_gateway", lambda: _DelayedGateway())
+    mutation = asyncio.create_task(host.step_world("shutdown-crossing", 7))
+    await asyncio.wait_for(write_started.wait(), timeout=2.0)
+    request_shutdown("world-host-crossing-unit")
+    allow_write.set()
+    try:
+        result = await mutation
+    finally:
+        clear_shutdown_request()
+
+    assert result["tick"] == 7
+    reloaded = hosting.WorldHost(tmp_path / "worlds").load_world("shutdown-crossing")
+    assert reloaded.physics.tick == 7
 
 
 # ── Skill facade ─────────────────────────────────────────────────

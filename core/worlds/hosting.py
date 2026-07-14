@@ -30,6 +30,10 @@ from core.config import get_config
 from core.governance_context import local_internal_governed_scope
 from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
+from core.runtime.task_ownership import (
+    drain_owned_awaitable,
+    runtime_shutdown_blocks_new_work,
+)
 from core.worlds.embodied import EmbodiedAgent
 from core.worlds.generation import WorldBlueprint, generate_world
 from core.worlds.physics import Body, PhysicsError, PhysicsWorld
@@ -436,9 +440,7 @@ class WorldHost:
     async def conjure_body(self, world_id: str, spec: dict[str, Any]) -> dict[str, Any]:
         """Add a body of Aura's design. Bounded (count, size, mass) but
         otherwise hers: dynamic or static, any material in range."""
-        world = self.load_world(world_id)
-        if len(world.physics.bodies) >= MAX_BODIES_PER_WORLD:
-            raise PhysicsError(f"body cap ({MAX_BODIES_PER_WORLD}) reached")
+        world_id = self._validate_id(world_id)
         body_id = str(spec.get("body_id", "") or "").strip().lower()
         if not _WORLD_ID_PATTERN.match(body_id):
             raise PhysicsError("body_id must be 1-64 chars of a-z 0-9 _ -")
@@ -470,60 +472,83 @@ class WorldHost:
                 spec.get("rolling_resistance", 0.02) or 0.0))),
             oriented=bool(spec.get("oriented", False)) and shape == "box",
         )
-        world.physics.add_body(body)
-        world.record("conjured", {
-            "body": body_id, "shape": shape, "mass": mass,
-            "at": [float(x) for x in body.position],
-        })
-        world.updated_at = time.time()
-        await self._persist(world)
-        return world.summary()
+        async with self._mutation_lock(world_id):
+            world = self.load_world(world_id)
+            staged = world.clone()
+            if len(staged.physics.bodies) >= MAX_BODIES_PER_WORLD:
+                raise PhysicsError(f"body cap ({MAX_BODIES_PER_WORLD}) reached")
+            staged.physics.add_body(body)
+            staged.record(
+                "conjured",
+                {
+                    "body": body_id,
+                    "shape": shape,
+                    "mass": mass,
+                    "at": [float(x) for x in body.position],
+                },
+            )
+            staged.updated_at = time.time()
+            await self._commit_existing(world, staged)
+            return world.summary()
 
     async def banish_body(self, world_id: str, body_id: str) -> dict[str, Any]:
         """Remove a body of her choosing. Agents are inhabitants, not
         furniture — they cannot be banished through this surface."""
-        world = self.load_world(world_id)
+        world_id = self._validate_id(world_id)
         body_id = str(body_id or "").strip().lower()
-        if body_id in world.agents:
-            raise PhysicsError("agents cannot be banished; they are inhabitants")
-        if not world.physics.remove_body(body_id):
-            raise PhysicsError(f"unknown body '{body_id}'")
-        world.record("banished", {"body": body_id})
-        world.updated_at = time.time()
-        await self._persist(world)
-        return world.summary()
+        async with self._mutation_lock(world_id):
+            world = self.load_world(world_id)
+            staged = world.clone()
+            if body_id in staged.agents:
+                raise PhysicsError("agents cannot be banished; they are inhabitants")
+            if not staged.physics.remove_body(body_id):
+                raise PhysicsError(f"unknown body '{body_id}'")
+            staged.record("banished", {"body": body_id})
+            staged.updated_at = time.time()
+            await self._commit_existing(world, staged)
+            return world.summary()
 
     async def sculpt_terrain(
         self, world_id: str, x: float, y: float, radius: float, delta: float
     ) -> dict[str, Any]:
         """Reshape the land: raise or carve the heightfield around (x, y)
         with a smooth falloff, then rebuild the terrain colliders."""
-        world = self.load_world(world_id)
+        world_id = self._validate_id(world_id)
         if not 0.5 <= radius <= 16.0:
             raise PhysicsError("sculpt radius must be in [0.5, 16.0]")
         if not -10.0 <= delta <= 10.0:
             raise PhysicsError("sculpt delta must be in [-10, 10]")
-        blueprint = world.blueprint
-        size = blueprint.size
-        heights = np.asarray(blueprint.heightfield, dtype=np.float64)
-        grid_x = np.arange(size) - size / 2.0 + 0.5
-        gx: np.ndarray
-        gy: np.ndarray
-        gx, gy = np.meshgrid(grid_x, grid_x, indexing="ij")
-        distance = np.sqrt((gx - float(x)) ** 2 + (gy - float(y)) ** 2)
-        falloff = np.clip(1.0 - distance / float(radius), 0.0, 1.0)
-        # Smooth (cosine) brush, heights clamped to sane terrain bounds.
-        brush = float(delta) * (0.5 - 0.5 * np.cos(np.pi * falloff))
-        heights = np.clip(heights + brush, 0.0, 30.0)
-        blueprint.heightfield = [[round(float(h), 6) for h in row] for row in heights]
-        self._rebuild_terrain(world)
-        world.record("sculpted", {
-            "at": [float(x), float(y)], "radius": float(radius),
-            "delta": float(delta),
-        })
-        world.updated_at = time.time()
-        await self._persist(world)
-        return world.summary()
+        if not np.all(np.isfinite(np.asarray([x, y, radius, delta], dtype=np.float64))):
+            raise PhysicsError("sculpt parameters must be finite")
+        async with self._mutation_lock(world_id):
+            world = self.load_world(world_id)
+            staged = world.clone()
+            blueprint = staged.blueprint
+            size = blueprint.size
+            heights = np.asarray(blueprint.heightfield, dtype=np.float64)
+            grid_x = np.arange(size) - size / 2.0 + 0.5
+            gx: np.ndarray
+            gy: np.ndarray
+            gx, gy = np.meshgrid(grid_x, grid_x, indexing="ij")
+            distance = np.sqrt((gx - float(x)) ** 2 + (gy - float(y)) ** 2)
+            falloff = np.clip(1.0 - distance / float(radius), 0.0, 1.0)
+            brush = float(delta) * (0.5 - 0.5 * np.cos(np.pi * falloff))
+            heights = np.clip(heights + brush, 0.0, 30.0)
+            blueprint.heightfield = [
+                [round(float(height), 6) for height in row] for row in heights
+            ]
+            self._rebuild_terrain(staged)
+            staged.record(
+                "sculpted",
+                {
+                    "at": [float(x), float(y)],
+                    "radius": float(radius),
+                    "delta": float(delta),
+                },
+            )
+            staged.updated_at = time.time()
+            await self._commit_existing(world, staged)
+            return world.summary()
 
     def _rebuild_terrain(self, world: HostedWorld) -> None:
         """Re-derive terrain colliders from the (possibly sculpted)
@@ -563,19 +588,21 @@ class WorldHost:
 
     async def set_environment(self, world_id: str, *, gravity: float) -> dict[str, Any]:
         """World-level choices: gravity from near-weightless to heavy."""
-        world = self.load_world(world_id)
-        if not -30.0 <= gravity <= 0.0:
+        world_id = self._validate_id(world_id)
+        if not np.isfinite(gravity) or not -30.0 <= gravity <= 0.0:
             raise PhysicsError("gravity must be in [-30, 0]")
-        world.physics.gravity[2] = float(gravity)
-        # A gravity change is world news: everything sleeping should feel it.
-        for body in world.physics.bodies.values():
-            if not body.is_static:
-                body.sleeping = False
-                body.still_ticks = 0
-        world.record("environment", {"gravity": float(gravity)})
-        world.updated_at = time.time()
-        await self._persist(world)
-        return world.summary()
+        async with self._mutation_lock(world_id):
+            world = self.load_world(world_id)
+            staged = world.clone()
+            staged.physics.gravity[2] = float(gravity)
+            for body in staged.physics.bodies.values():
+                if not body.is_static:
+                    body.sleeping = False
+                    body.still_ticks = 0
+            staged.record("environment", {"gravity": float(gravity)})
+            staged.updated_at = time.time()
+            await self._commit_existing(world, staged)
+            return world.summary()
 
     async def conjure_structure(
         self, world_id: str, *, kind: str, at: tuple[float, float, float],
@@ -584,35 +611,48 @@ class WorldHost:
         """Composed designs: wall, tower, or stairs raised in one act."""
         if kind not in {"wall", "tower", "stairs"}:
             raise PhysicsError("structure kind must be wall, tower, or stairs")
-        if not 1 <= int(span) <= 16:
+        if isinstance(span, bool) or not isinstance(span, int) or not 1 <= span <= 16:
             raise PhysicsError("span must be in [1, 16]")
-        world = self.load_world(world_id)
-        if len(world.physics.bodies) + span > MAX_BODIES_PER_WORLD:
-            raise PhysicsError(f"body cap ({MAX_BODIES_PER_WORLD}) reached")
+        world_id = self._validate_id(world_id)
         base = np.asarray(at, dtype=np.float64)
-        half = 0.5
-        stamp = world.physics.tick
-        made: list[str] = []
-        for index in range(int(span)):
-            if kind == "wall":
-                offset = np.array([index * 2 * half, 0.0, half])
-            elif kind == "tower":
-                offset = np.array([0.0, 0.0, half + index * 2 * half])
-            else:  # stairs: forward and up
-                offset = np.array([index * 2 * half, 0.0, half + index * half])
-            body_id = f"{kind}_{stamp}_{index}"
-            world.physics.add_body(Body(
-                body_id=body_id, shape="box",
-                position=base + offset, velocity=np.array([0.0, 0.0, 0.0]),
-                mass=0.0 if static else 2.0, half_extents=np.array([half, half, half]),
-                restitution=0.2, friction=0.8,
-            ))
-            made.append(body_id)
-        world.record("structure", {"kind": kind, "bodies": made,
-                                   "at": [float(v) for v in at]})
-        world.updated_at = time.time()
-        await self._persist(world)
-        return {**world.summary(), "bodies_created": made}
+        if base.shape != (3,) or not np.all(np.isfinite(base)):
+            raise PhysicsError("structure position must be a finite 3-vector")
+        async with self._mutation_lock(world_id):
+            world = self.load_world(world_id)
+            staged = world.clone()
+            if len(staged.physics.bodies) + span > MAX_BODIES_PER_WORLD:
+                raise PhysicsError(f"body cap ({MAX_BODIES_PER_WORLD}) reached")
+            half = 0.5
+            stamp = f"{staged.physics.tick}_{len(staged.journal)}"
+            made: list[str] = []
+            for index in range(span):
+                if kind == "wall":
+                    offset = np.array([index * 2 * half, 0.0, half])
+                elif kind == "tower":
+                    offset = np.array([0.0, 0.0, half + index * 2 * half])
+                else:  # stairs: forward and up
+                    offset = np.array([index * 2 * half, 0.0, half + index * half])
+                body_id = f"{kind}_{stamp}_{index}"
+                staged.physics.add_body(
+                    Body(
+                        body_id=body_id,
+                        shape="box",
+                        position=base + offset,
+                        velocity=np.array([0.0, 0.0, 0.0]),
+                        mass=0.0 if static else 2.0,
+                        half_extents=np.array([half, half, half]),
+                        restitution=0.2,
+                        friction=0.8,
+                    )
+                )
+                made.append(body_id)
+            staged.record(
+                "structure",
+                {"kind": kind, "bodies": made, "at": [float(value) for value in base]},
+            )
+            staged.updated_at = time.time()
+            await self._commit_existing(world, staged)
+            return {**world.summary(), "bodies_created": made}
 
     # ── counterfactual forking ─────────────────────────────────
 
@@ -795,6 +835,14 @@ class WorldHost:
             raise asyncio.CancelledError
 
     async def _persist(self, world: HostedWorld) -> bool:
+        if runtime_shutdown_blocks_new_work(
+            f"world-persist:{world.world_id}",
+            resource_kind="world_persistence",
+        ):
+            raise WorldPersistenceError(
+                f"world '{world.world_id}' persistence refused during runtime shutdown"
+            )
+
         async def _write() -> None:
             gateway = get_file_write_gateway()
             with local_internal_governed_scope(
@@ -811,22 +859,26 @@ class WorldHost:
                     source="worlds.host",
                 )
 
-        write_task = asyncio.create_task(_write(), name=f"world-persist:{world.world_id}")
-        cancellation_pending = False
         try:
-            while not write_task.done():
-                try:
-                    await asyncio.shield(write_task)
-                except asyncio.CancelledError:
-                    cancellation_pending = True
-            write_task.result()
+            drained = await drain_owned_awaitable(
+                _write(),
+                name=f"world-persist:{world.world_id}",
+                owner="core.worlds.hosting",
+                allow_during_shutdown=True,
+            )
+            drained.task.result()
+        except asyncio.CancelledError as exc:
+            record_degradation("worlds.persist", exc)
+            raise WorldPersistenceError(
+                f"world '{world.world_id}' persistence task ended before durable commit"
+            ) from exc
         except _HOST_ERRORS as exc:
             record_degradation("worlds.persist", exc)
             logger.error("Failed to persist world '%s': %s", world.world_id, exc)
             raise WorldPersistenceError(
                 f"world '{world.world_id}' could not be committed durably"
             ) from exc
-        return cancellation_pending
+        return drained.cancellation is not None
 
 
 # ── module singleton ─────────────────────────────────────────────

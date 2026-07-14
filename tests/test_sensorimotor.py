@@ -375,6 +375,155 @@ async def test_cancelled_actuator_closes_authority_after_real_completion(monkeyp
     assert observed["closure"]["standing_authority_token"] == "standing-cancel"
 
 
+@pytest.mark.asyncio
+async def test_actuator_refuses_new_execution_after_shutdown_request():
+    from core.actuators.actuator_registry import ActuatorRegistry, ActuatorResult, BaseActuator
+    from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
+
+    calls = 0
+
+    class ProbeActuator(BaseActuator):
+        @property
+        def name(self):
+            return "shutdown-refusal-probe"
+
+        @property
+        def description(self):
+            return "Must not execute after the runtime shutdown latch."
+
+        def validate_params(self, params):
+            return True
+
+        def execute(self, params):
+            nonlocal calls
+            calls += 1
+            return ActuatorResult(True, "unexpected", {})
+
+    registry = ActuatorRegistry()
+    registry.register(ProbeActuator())
+    request_shutdown("actuator-refusal-unit")
+    try:
+        result = await registry.execute_action_async("shutdown-refusal-probe", {})
+    finally:
+        clear_shutdown_request()
+
+    assert result.success is False
+    assert "runtime shutdown" in result.message
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_actuator_admitted_before_shutdown_drains_worker_to_completion():
+    from core.actuators.actuator_registry import ActuatorRegistry, ActuatorResult, BaseActuator
+    from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
+
+    started = threading.Event()
+    release = threading.Event()
+
+    class ProbeActuator(BaseActuator):
+        @property
+        def name(self):
+            return "shutdown-crossing-probe"
+
+        @property
+        def description(self):
+            return "Finishes work admitted immediately before shutdown."
+
+        def validate_params(self, params):
+            return True
+
+        def execute(self, params):
+            started.set()
+            release.wait(timeout=1.0)
+            return ActuatorResult(True, "completed", {"completed": True})
+
+    registry = ActuatorRegistry()
+    registry.register(ProbeActuator())
+    execution = asyncio.create_task(
+        registry.execute_action_async("shutdown-crossing-probe", {})
+    )
+    assert await asyncio.to_thread(started.wait, 0.5)
+    request_shutdown("actuator-crossing-unit")
+    release.set()
+    try:
+        result = await execution
+    finally:
+        clear_shutdown_request()
+
+    assert result.success is True
+    assert result.updates == {"completed": True}
+
+
+@pytest.mark.asyncio
+async def test_shutdown_during_authorization_closes_lease_without_executing(monkeypatch):
+    from types import SimpleNamespace
+
+    from core.actuators.actuator_registry import ActuatorRegistry, BaseActuator
+    from core.runtime.shutdown_coordinator import clear_shutdown_request, request_shutdown
+
+    authorization_started = asyncio.Event()
+    release_authorization = asyncio.Event()
+    observed: dict[str, object] = {}
+
+    class FakeGateway:
+        async def authorize_tool_execution(self, *_args, **_kwargs):
+            authorization_started.set()
+            await release_authorization.wait()
+            return SimpleNamespace(
+                approved=True,
+                reason="approved",
+                executive_intent_id="intent-shutdown",
+                capability_token_id="cap-shutdown",
+                standing_authority_token="standing-shutdown",
+            )
+
+        def verify_tool_access(self, *_args):
+            return True
+
+        def finalize_tool_execution(self, **kwargs):
+            observed["closure"] = kwargs
+            return {"closed": True}
+
+    class ProbeActuator(BaseActuator):
+        requires_authority = True
+
+        @property
+        def name(self):
+            return "authorization-shutdown-probe"
+
+        @property
+        def description(self):
+            return "Does not cross a shutdown that begins during authorization."
+
+        def validate_params(self, params):
+            return True
+
+        def execute(self, params):
+            raise AssertionError("actuator body must not execute")
+
+    monkeypatch.setattr(
+        "core.executive.authority_gateway.get_authority_gateway",
+        lambda: FakeGateway(),
+    )
+    registry = ActuatorRegistry()
+    registry.register(ProbeActuator())
+    execution = asyncio.create_task(
+        registry.execute_action_async("authorization-shutdown-probe", {})
+    )
+    await authorization_started.wait()
+    request_shutdown("actuator-authorization-unit")
+    release_authorization.set()
+    try:
+        result = await execution
+    finally:
+        clear_shutdown_request()
+
+    assert result.success is False
+    assert "shutdown began during authorization" in result.message
+    assert observed["closure"]["success"] is False
+    assert observed["closure"]["standing_authority_token"] == "standing-shutdown"
+
+
 def test_immune_executor_uses_safe_arithmetic_resolver():
     executor = ImmuneHeuristicExecutor()
     sensors = {"port_east_load": 800.0}

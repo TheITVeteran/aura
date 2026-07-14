@@ -15,6 +15,11 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+from core.runtime.task_ownership import (
+    drain_owned_awaitable,
+    runtime_shutdown_blocks_new_work,
+)
+
 logger = logging.getLogger("Aura.Actuators")
 
 
@@ -543,6 +548,15 @@ class ActuatorRegistry:
         preflight = self._preflight_actuator(actuator, name, exec_params)
         if preflight is not None:
             return preflight
+        if runtime_shutdown_blocks_new_work(
+            f"actuator:{name}",
+            resource_kind="actuator_execution",
+        ):
+            return ActuatorResult(
+                False,
+                f"Actuator '{name}' refused during runtime shutdown",
+                {},
+            )
 
         if getattr(actuator, "requires_authority", False):
             try:
@@ -583,8 +597,19 @@ class ActuatorRegistry:
                 exec_params["_aura_authorized"] = True
                 exec_params["_capability_token_id"] = capability_token_id
 
+            if runtime_shutdown_blocks_new_work(
+                f"actuator:{name}",
+                resource_kind="actuator_execution",
+            ):
+                result = ActuatorResult(
+                    False,
+                    f"Actuator '{name}' refused because runtime shutdown began during authorization",
+                    {},
+                )
+                return result
+
             if getattr(actuator, "blocking_execution", True):
-                execution_task = asyncio.create_task(
+                drained = await drain_owned_awaitable(
                     asyncio.to_thread(
                         self._execute_actuator_body,
                         actuator,
@@ -592,18 +617,11 @@ class ActuatorRegistry:
                         authority_decision,
                     ),
                     name=f"actuator:{name}",
+                    owner="core.actuators.actuator_registry",
+                    allow_during_shutdown=True,
                 )
-                while not execution_task.done():
-                    try:
-                        await asyncio.shield(execution_task)
-                    except asyncio.CancelledError as exc:
-                        if cancellation is None:
-                            cancellation = exc
-                        # Python threads cannot be cancelled safely. Continue
-                        # observing the bounded body despite repeated caller
-                        # cancellation so lease closure records the real result.
-                        continue
-                result = execution_task.result()
+                cancellation = drained.cancellation
+                result = drained.task.result()
                 if cancellation is not None:
                     # Python threads cannot be cancelled safely. Observe the
                     # bounded actuator to completion so authority closure and

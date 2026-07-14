@@ -1,6 +1,6 @@
 """core/worlds/physics.py
 ───────────────────────
-Deterministic 3D rigid-body physics (rotational-sphere v2).
+Deterministic 3D rigid-body physics (oriented-body v3).
 
 Engineering contract:
 - Fixed timestep, semi-implicit (symplectic) Euler integration. The
@@ -19,17 +19,12 @@ Engineering contract:
 Shapes: dynamic spheres, dynamic axis-aligned boxes, static planes
 (z = height, normal +z), static boxes. Z is up.
 
-Rotational dynamics (v2): spheres carry full angular state — quaternion
-orientation, world-frame angular velocity, solid-sphere inertia
-I = (2/5)mr². Contact friction acts at the contact point, exchanging
-linear and angular momentum, so a sliding ball spins up and converges
-to rolling without slipping at exactly 5/7 of its initial speed (the
-classical result; the tests assert it). Optional rolling resistance
-lets rollers come to rest.
-
-Remaining declared limitation: boxes stay axis-aligned and do not
-rotate (their inverse inertia is zero). Oriented-box dynamics with SAT
-contact manifolds is v3 territory, stated plainly.
+Rotational dynamics: spheres and opted-in oriented boxes carry quaternion
+orientation and world-frame angular velocity. Sphere inertia is isotropic;
+box inertia is a rotated tensor. Contact-point impulses exchange linear and
+angular momentum. Oriented boxes use SAT with clipped manifolds, while boxes
+that do not opt in retain the deterministic axis-aligned path. Optional
+rolling resistance lets rotating bodies come to rest.
 """
 from __future__ import annotations
 
@@ -66,7 +61,10 @@ type FloatArray = NDArray[np.float64]
 
 
 def _vec(value: Iterable[float], name: str) -> FloatArray:
-    arr = np.asarray(tuple(value), dtype=np.float64)
+    try:
+        arr = np.asarray(tuple(value), dtype=np.float64)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise PhysicsError(f"{name} must be a numeric 3-vector") from exc
     if arr.shape != (3,):
         raise PhysicsError(f"{name} must be a 3-vector")
     if not np.all(np.isfinite(arr)):
@@ -282,7 +280,7 @@ class PhysicsWorld:
             # not inherit a ghost impulse from its predecessor.
             self._contact_cache = {
                 pair: value for pair, value in self._contact_cache.items()
-                if body_id not in pair
+                if body_id not in pair[:2]
             }
         return removed
 
@@ -733,8 +731,41 @@ class PhysicsWorld:
         world.tick = int(payload.get("tick", 0))
         for row in payload.get("bodies", []):
             world.add_body(Body.from_dict(row))
-        for entry in payload.get("contact_cache", []):
-            body_a, body_b, index, impulse, friction = entry
-            world._contact_cache[(str(body_a), str(body_b), int(index))] = (
-                float(impulse), np.asarray(friction, dtype=np.float64))
+        raw_cache = payload.get("contact_cache", [])
+        if not isinstance(raw_cache, list):
+            raise PhysicsError("contact_cache must be a list")
+        restored_cache: dict[
+            tuple[str, str, int], tuple[float, FloatArray]
+        ] = {}
+        for entry in raw_cache:
+            if not isinstance(entry, list) or len(entry) != 5:
+                raise PhysicsError("contact_cache entries must have five fields")
+            body_a, body_b = entry[0], entry[1]
+            if not isinstance(body_a, str) or not isinstance(body_b, str):
+                raise PhysicsError("contact_cache body references must be strings")
+            if body_a == body_b:
+                raise PhysicsError("contact_cache cannot contain a self-contact")
+            if body_a not in world.bodies or body_b not in world.bodies:
+                raise PhysicsError("contact_cache references an unknown body")
+            raw_index = entry[2]
+            if isinstance(raw_index, bool) or not isinstance(raw_index, int):
+                raise PhysicsError("contact_cache manifold index must be an integer")
+            if raw_index < 0:
+                raise PhysicsError("contact_cache manifold index must be non-negative")
+            try:
+                impulse = float(entry[3])
+            except (TypeError, ValueError, OverflowError) as exc:
+                raise PhysicsError(
+                    "contact_cache impulse must be finite and non-negative"
+                ) from exc
+            if not math.isfinite(impulse) or impulse < 0.0:
+                raise PhysicsError(
+                    "contact_cache impulse must be finite and non-negative"
+                )
+            friction = _vec(entry[4], "contact_cache friction")
+            key = (body_a, body_b, raw_index)
+            if key in restored_cache:
+                raise PhysicsError("contact_cache contains a duplicate manifold key")
+            restored_cache[key] = (impulse, friction)
+        world._contact_cache = restored_cache
         return world

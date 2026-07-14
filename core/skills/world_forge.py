@@ -150,6 +150,33 @@ _SIMULATION_SCOPE = (
 )
 
 
+def _simulation_capabilities() -> dict[str, Any]:
+    return {
+        "schema": "aura.world_forge.capabilities.v1",
+        "supported": {
+            "deterministic_persistent_worlds": True,
+            "rigid_body_translation": True,
+            "rotational_sphere_dynamics": True,
+            "oriented_box_sat_manifolds": True,
+            "tensor_inertia": True,
+            "embodied_agent_actions": True,
+            "counterfactual_forks": True,
+            "authored_terrain_and_structures": True,
+        },
+        "integration_surfaces": {
+            "state_renderer": {"available": True},
+            "vr_renderer": {
+                "available": False,
+                "reason": "outside_world_forge_backend",
+            },
+            "physical_world_transfer": {
+                "available": False,
+                "reason": "requires_external_robotics_or_simulation_bridge",
+            },
+        },
+    }
+
+
 class WorldForgeSkill(BaseSkill):  # type: ignore[misc]
     name = "world_forge"
     description = (
@@ -300,6 +327,7 @@ class WorldForgeSkill(BaseSkill):  # type: ignore[misc]
                     "action": action,
                     "durable": mutating,
                     "simulation_scope": _SIMULATION_SCOPE,
+                    "simulation_capabilities": _simulation_capabilities(),
                     **result,
                     "summary": (
                         f"Agent '{request.agent_id}' ran '{request.command}' "
@@ -438,5 +466,6 @@ class WorldForgeSkill(BaseSkill):  # type: ignore[misc]
             "ok": True,
             "action": action,
             "simulation_scope": _SIMULATION_SCOPE,
+            "simulation_capabilities": _simulation_capabilities(),
             **payload,
         }

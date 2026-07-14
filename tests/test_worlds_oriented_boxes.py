@@ -129,7 +129,13 @@ def test_oriented_state_survives_serialization():
         ["ground", "crate", 0, float("nan"), [0.0, 0.0, 0.0]],
         ["ground", "missing", 0, 0.1, [0.0, 0.0, 0.0]],
         ["ground", "crate", -1, 0.1, [0.0, 0.0, 0.0]],
+        ["ground", "crate", True, 0.1, [0.0, 0.0, 0.0]],
+        ["ground", "crate", 0.0, 0.1, [0.0, 0.0, 0.0]],
+        ["ground", "ground", 0, 0.1, [0.0, 0.0, 0.0]],
+        ["ground", "crate", 0, -0.1, [0.0, 0.0, 0.0]],
         ["ground", "crate", 0, 0.1, [0.0, 0.0]],
+        ["ground", "crate", 0, 0.1, [float("inf"), 0.0, 0.0]],
+        [1, "crate", 0, 0.1, [0.0, 0.0, 0.0]],
         ["ground", "crate"],
     ],
 )
@@ -142,3 +148,20 @@ def test_oriented_restart_rejects_malformed_warm_start_cache(entry):
 
     with pytest.raises(PhysicsError):
         PhysicsWorld.from_dict(payload)
+
+
+def test_oriented_restart_rejects_invalid_cache_collection_and_duplicates():
+    world = PhysicsWorld(dt=1.0 / 240.0)
+    world.add_body(_plane())
+    world.add_body(_obox())
+    entry = ["ground", "crate", 0, 0.1, [0.0, 0.0, 0.0]]
+
+    invalid_collection = world.to_dict()
+    invalid_collection["contact_cache"] = {"entry": entry}
+    with pytest.raises(PhysicsError, match="must be a list"):
+        PhysicsWorld.from_dict(invalid_collection)
+
+    duplicate = world.to_dict()
+    duplicate["contact_cache"] = [entry, entry]
+    with pytest.raises(PhysicsError, match="duplicate manifold key"):
+        PhysicsWorld.from_dict(duplicate)

@@ -47,8 +47,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   item remains open or in progress unless its detailed entry explicitly carries
   a completion date and proof.
 - Overall completion percentage: **29% planning estimate as of pushed
-  Checkpoint 62**. Checkpoint 62 closes the bounded storage-gateway bypass set,
-  but
+  Checkpoint 63**. Checkpoint 63 closes the bounded production-surface raw-task
+  set and hardens transactional world mutation, but
   newly explicit system-wide frontier cognition/engineering and morphogenetic
   organ-engineering burdens increase the denominator. Recording that expansion
   lowers the rounded estimate instead of manufacturing progress by hiding
@@ -58,7 +58,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 206-276 total checkpoints for the
-  expanded program, with 62 pushed and approximately 144-214 remaining before
+  expanded program, with 63 pushed and approximately 143-213 remaining before
   final soak/release closure**. This includes every
   implementation, cleanup, repair, integration, verification, live,
   portability, release, and soak checkpoint, not only headline milestones.
@@ -104,7 +104,7 @@ Status rules:
 | `RELEASE-CONTRACT-001` | `OPEN 2026-07-13` | Define the Aura 1.0 product contract as a versioned machine-readable manifest: every supported capability, platform/hardware/account/permission mode, SLO, data guarantee, security/privacy boundary, operator control, degradation behavior, claim limit, and explicit non-goal must have an owner and acceptance evidence. Release tooling must reject an undocumented feature, unsupported claim, open severity-1/2 defect, waived mandatory gate, or proof artifact from a different commit/build. | `SCOPE-001`, `CAPABILITY-CERT-001`, `VALIDATE-001`, `OPERATIONS-001`; Aura 1.0 closure question 2026-07-13 |
 | `EXPECT-001` | `IN PROGRESS` | Complete Fable's Aura Expectation Engine so natural-language intent becomes causal acceptance criteria, observed-effect verdicts, repair, persistence, and follow-through across every action path. | Pass F 1 and 14; Matrix 9 |
 | `EFFECT-001` | `IN PROGRESS` | Put file, network, browser, OS, memory, model, patch, self-repair, social, and environmental effects through canonical authority, transaction, compensation, and reconstructable receipt boundaries. | Pass F 5; Matrix 9 and 11 |
-| `STORAGE-GATEWAY-001` | `COMPLETE 2026-07-13` | Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Canonical batch, owned-binary, durable replace/delete, governance, schema, integrity, concurrency, and fault-injection contracts preserve bootstrap/crash/rollback behavior without exemptions. The production scanner now reports zero direct-file-write findings; its only two remaining findings are separately tracked raw async task owners. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoint 62 |
+| `STORAGE-GATEWAY-001` | `COMPLETE 2026-07-13` | Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Canonical batch, owned-binary, durable replace/delete, governance, schema, integrity, concurrency, and fault-injection contracts preserve bootstrap/crash/rollback behavior without exemptions. Checkpoint 62 reached zero direct-file-write findings; Checkpoint 63 subsequently brought the complete audited production-surface scanner to zero findings. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoints 62-63 |
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
 | `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with one bounded, versioned, asynchronously refreshed health read model whose public request path is non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; one daemon single-flight refresh owner, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and one recovery transition are source-green. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoint 61; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
@@ -142,7 +142,7 @@ Status rules:
 | `THRONG-001` | `OPEN 2026-07-13` | Translate the useful Thronglets mechanisms into a scientifically bounded developmental intelligence ecology inside Aura rather than a themed duplicate mind: lineage-bearing cognitive cells, nurture/environment-dependent development, specialization, compositional language, social transmission, diversity, population-level memory, collective problem solving, and harmonic coordination must contribute through the canonical workspace, action spine, self, welfare, and resource authority. Measure growth by held-out transfer, adaptation speed, calibrated coordination, causal contribution, and lesion/lineage ablations. Enforce hard anti-patterns from the fiction: no exponential self-replication, covert resource capture, opaque external broadcast, manipulative dependency, human cognitive override, uncontrolled merger, or population growth without explicit budgets, inspectability, revocation, and extinction/rollback. | `FRONTIER-001`, `ADAPT-001`, `MULTIAGENT-001`, `SUBSTRATE-001`, `INTELLIGENCE-001`, `RESOURCE-001`, `VALUES-001`, `WELFARE-001`; user Thronglets requirement 2026-07-13 |
 | `INTELLIGENCE-001` | `OPEN` | Measure whole-system uplift with base/tools/memory/substrate/planner/full ablations, external sealed benchmarks, confidence intervals, contamination controls, and matched cost/latency. | Matrix 4; Addendum 31 |
 | `LONGHORIZON-001` | `OPEN` | Build a domain-general partially observable long-horizon agency harness, then a non-scripted NetHack-compatible evaluation with crash-resume, transfer, hidden maps, and adversarial interruption. | Matrix 5; Addendum 31 |
-| `SIMWORLD-001` | `IN PROGRESS 2026-07-12` | Preserve the deterministic hosted-world core while completing unit-aware multi-fidelity physics, full spatial/VR engine adapters, validated procedural generation, replay/migration, multi-agent synchronization, and inspectable UI without mistaking visual animation for physical correctness. | Capability Addendum 33, `CTX3-PHYS-*`, `CTX3-WORLD-*` |
+| `SIMWORLD-001` | `IN PROGRESS 2026-07-13` | Preserve the deterministic hosted-world core while completing unit-aware multi-fidelity physics, full spatial/VR engine adapters, validated procedural generation, replay/migration, multi-agent synchronization, and inspectable UI without mistaking visual animation for physical correctness. Authored mutations are now per-world serialized, clone-staged, durably committed before publication, and unchanged after write failure; malformed warm-start state fails through the typed physics contract, and skill responses expose a structured truthful capability envelope. | Capability Addendum 33, `CTX3-PHYS-*`, `CTX3-WORLD-*`; Checkpoint 63 |
 | `MULTIMODAL-001` | `IN PROGRESS 2026-07-12` | Preserve the canonical bounded event-time fusion and causal cognition path while completing every producer, consented visual speech, calibrated situation modeling, live hardware/occlusion evaluation, and longitudinal action/repair evidence. | Capability Addendum 33, `CTX3-PERCEPT-*` |
 | `SOCIAL-001` | `IN PROGRESS 2026-07-12` | Preserve the exact-agent calibrated live situation path while unifying identity-scoped relational memory, consent/boundary history, cultural and power-context uncertainty, multi-party reasoning, outcome learning, and longitudinal live repair evidence without manipulation or intimacy overclaim. | Capability Addendum 33, `CTX3-SOCIAL-*`; Checkpoints 41-45 |
 | `MULTIAGENT-001` | `OPEN` | Generalize complex subagent management into typed delegation, scoped authority, budget/deadline ownership, shared-world coordination, conflict arbitration, cancellation, recovery, and end-to-end accountability. | Capability Addendum 33, `CTX3-SUBAGENT-*` |
@@ -166,7 +166,7 @@ Status rules:
 | `SUPPORTABILITY-001` | `OPEN 2026-07-13` | Define service-level objectives and error budgets for boot, chat, action, health, memory, model, GUI, and shutdown; ship privacy-safe diagnostics, self-test/doctor, incident bundles, runbooks, symptom-to-root-cause guidance, recovery actions, support/version metadata, and known-issue discipline. Repeated faults must form one diagnosable episode with bounded reminders and an observed recovery transition. | `OBSERVE-001`, `HEALTH-SURFACE-001`, `FAULT-001`, `OPERATIONS-001`, `PERF-001`; Aura 1.0 release-gap audit 2026-07-13 |
 | `REPO-001` | `OPEN` | Drain type, effect, cancellation, lifecycle, concurrency, dependency, dead-code, scaffolding/stub, configuration, documentation, and runtime/proof artifact-placement debt across every tracked source file. | Pass F 12; Matrix 11, 12, and 18 |
 | `LIFECYCLE-001` | `COMPLETE 2026-07-13` | Preserve the now-enforced ownership contract: bounded commands terminate after their result; diagnostic/runtime lookups cannot cold-construct service graphs; `aiosqlite` workers remain repository-owned and close explicitly; launch cleanup targets exact process identity; regressions must prove real interpreter exit without forced termination. | `FAULT-001`, `ARCH-001`, `REPO-001`, `VALIDATE-001`; Checkpoint 55; exact reproducer `101/101` plus normal interpreter exit |
-| `ASYNC-TASK-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate every unobserved async task failure and require owned task identity, completion observation, cancellation, and structured terminal evidence. First reproduce and root-fix the live `conversation_support.py` task whose empty `agent_id` raised `ValueError` under “Task exception was never retrieved.” | `FAULT-001`, `LIFECYCLE-001`, `CONVERSATION-001`; Checkpoint 53; live desktop log evidence 2026-07-13 |
+| `ASYNC-TASK-001` | `IN PROGRESS (AUDITED SOURCE ZERO; EXACT-MAIN LIVE OPEN) 2026-07-13` | Eliminate every unobserved async task failure and require owned task identity, completion observation, cancellation, shutdown admission, and structured terminal evidence. The live `conversation_support.py` empty-`agent_id` failure is source-fixed, and the final production scanner owners in world persistence and blocking actuators now use one cancellation-drain primitive with pre-latch admission and shutdown-critical completion. The audited production surface reports zero findings. Exact-main signed-app proof must still demonstrate no unobserved exception or stranded authority/persistence work during conversation, action, cancellation, and quit. | `FAULT-001`, `LIFECYCLE-001`, `CONVERSATION-001`; Checkpoints 53 and 63; live desktop log evidence 2026-07-13 |
 | `LAUNCH-PROVENANCE-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make the signed resident Aura.app the canonical launcher, pin its source root and commit provenance to current `main`, reject stale/worktree drift, keep the native bridge resident, and expose launched root/commit/signature evidence in readiness and proof. The next live proof must replace the observed Python process running from `.claude/worktrees/fable-improvement-pass` without a resident Aura.app process. | `OPERATIONS-001`, `RUNTIME-001`, `DESKTOP-ACCESS-001`, `VALIDATE-001`; Checkpoint 54; live process evidence 2026-07-13 |
 | `PROOF-001` | `OPEN` | Purify all proof runners against leakage, copied answers, stale artifacts, fallback success, runner-solved work, environment dependence, and unsupported claims; separate builder/solver/evaluator/signer. | Pass F 9; Matrix 16 |
 | `PORTABILITY-001` | `OPEN 2026-07-13` | Define and test the supported macOS/Apple Silicon/RAM/storage/display/audio/camera/network/account/permission matrix, including clean and upgraded machines, no-network and degraded-network modes, missing optional hardware, low disk, thermal pressure, locale/time changes, sleep/wake, multiple displays, and standard managed-device restrictions. Every unsupported environment must be rejected or degraded truthfully with a specific recovery path. | `RELEASE-CONTRACT-001`, `DESKTOP-001`, `RESOURCE-001`, `OPERATIONS-001`, `REPLICATION-001`; Aura 1.0 release-gap audit 2026-07-13 |
@@ -14273,3 +14273,98 @@ Progress and immediate next work:
   and every remaining master-index unit. Exact-main signed-app proof follows
   when the preserved desktop is released. Final multi-hour and 24-72 hour
   soaks remain deferred until every shorter gate is green.
+
+## Checkpoint 2026-07-13-63: Owned Cancellation Drains and Transactional Worlds
+
+This checkpoint advances `ASYNC-TASK-001`, `FAULT-001`, `EFFECT-001`,
+`ACTION-SPINE-001`, `SIMWORLD-001`, `TEST-DEPTH-001`, and `REPO-001` while
+preserving the completed shutdown/lifecycle contracts. It closes both raw task
+owners left by Checkpoint 62 and takes the audited production-surface scanner
+from two findings to zero without allow-listing either call.
+
+Established one cancellation and shutdown contract for admitted work that
+cannot be abandoned safely:
+
+- `drain_owned_awaitable` creates a semantically named, owner-attributed task,
+  shields it through repeated caller cancellation, and returns both the
+  terminal task and the first captured cancellation. Callers retain explicit
+  domain failure precedence instead of losing a worker exception or reporting
+  cancellation before the consequential body has actually stopped.
+- Shutdown-critical ownership is an explicit tracker property, not an
+  unobserved raw `asyncio.create_task`. A monotonic no-new-work check receipts
+  every post-latch refusal while permitting work admitted immediately before
+  the latch to finish the durability or authority closure it already owes.
+- Blocking actuators now reject new execution both before and after awaited
+  authority acquisition, run the admitted body off-loop through the owned
+  drain, preserve the real body result under cancellation, and finalize every
+  acquired lease with the truthful terminal success value. Shutdown during
+  authority acquisition closes the lease as failed without running the body.
+
+Made hosted-world authorship transactionally truthful rather than merely
+durable on the happy path:
+
+- Persistence no longer creates a raw task. A pre-latch commit drains as
+  shutdown-critical; post-latch persistence is refused with a typed,
+  receipted `WorldPersistenceError`; inner cancellation cannot masquerade as a
+  committed world.
+- Conjure, banish, terrain sculpting, environment changes, and composed
+  structures now serialize on the per-world mutation lock, clone the committed
+  world, validate and mutate only the staged copy, persist it, then publish it
+  to the live object. Write failure leaves bodies, blueprint, environment,
+  journal, timestamps, and cache identity unchanged rather than leaking a
+  partial in-memory success.
+- Structure identities include both tick and journal generation, so repeated
+  authored structures in the same simulation tick cannot collide. Numeric,
+  shape, span, position, and finite-value boundaries fail before mutation.
+- The World Forge facade now returns a versioned structured capability envelope
+  for deterministic worlds, rigid and oriented-body dynamics, embodied action,
+  counterfactual forks, authored terrain/structures, renderer availability,
+  and the honest absence of VR and physical-robot transfer integrations.
+
+The adjacent composition exposed and repaired a separate persistence
+regression instead of being waived:
+
+- Warm-start contact-cache loading had lost its validation and accepted
+  unknown bodies, negative indices, non-finite impulses, malformed vectors,
+  duplicate keys, and partial shapes. It now validates the collection and each
+  typed field, rejects boolean/float indices and self-contacts, validates body
+  existence and finite non-negative impulses, stages the complete cache before
+  publication, and raises `PhysicsError` for every corrupt persisted form.
+- The module contract again describes the implemented oriented-body v3 engine
+  instead of the regressed v2 limitation text. Vector conversion now converts
+  malformed numeric input into the same typed physics boundary.
+
+Verification completed on the integrated `origin/main` candidate:
+
+- Direct task-ownership and sensor/actuator shutdown regressions pass `23/23`;
+  the complete world transaction suite passes `30/30`; the first composed
+  actuator/loop/shutdown/scanner set passes `83/83`.
+- The simulation-heavy world authorship, embodiment, oriented-box, rotation,
+  OBB, HTTP, and curriculum composition passes `81/81`, including all twelve
+  corrupt-cache cases. Its first run exposed five validation failures; the
+  final run passes rather than documenting or suppressing them.
+- Configured Ruff, targeted Python compilation, `git diff --check`, and the
+  governance inventory ratchet pass. Governance remains explicit about `1666`
+  pre-existing migration-debt calls; this checkpoint does not hide that
+  broader `EFFECT-001`/`REPO-001` burden.
+- The production-surface scanner passes with `0` findings, `0` high/critical
+  findings, and `0` audited exemptions. The enterprise static ratchet passes;
+  all `37/37` production-readiness checks and all `20/20` closeout-rubric
+  criteria pass on the integrated tree.
+
+Progress and immediate next work:
+
+- This is pushed Checkpoint `63`. The evidence-weighted planning estimate
+  remains `29%`; closing two scanner findings does not justify rounding up
+  against the expanded foundation, capability, frontier cognition, immune
+  coding, morphogenesis, live proof, portability, and release denominator.
+  The forecast remains `206-276` total checkpoints, with `143-213` remaining.
+- `ASYNC-TASK-001` remains exact-main-live-open until signed-app conversation,
+  action, repeated cancellation, and quit prove no unobserved exception,
+  authority leak, persistence leak, or post-latch resurrection. Source-zero is
+  necessary evidence, not live closure.
+- Continue `MEMORY-LEAK-001` attribution and the complete master index while
+  preserving the old-worktree desktop. Run the exact-main signed-app health,
+  action, task, and authority matrix when that desktop is released. Final
+  multi-hour and 24-72 hour soaks remain deferred until every shorter gate is
+  green.

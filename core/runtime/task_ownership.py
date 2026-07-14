@@ -10,11 +10,20 @@ import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any
 
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Runtime.TaskOwnership")
+
+
+@dataclass(frozen=True, slots=True)
+class OwnedTaskDrain[T]:
+    """A tracked task drained to completion despite caller cancellation."""
+
+    task: asyncio.Task[T]
+    cancellation: asyncio.CancelledError | None = None
 
 
 def _raw_asyncio_create_task(awaitable: Awaitable[Any], *, name: str | None, context: Any = None) -> asyncio.Task:
@@ -80,12 +89,15 @@ def create_tracked_task(
     bounded: bool = False,
     on_done: Callable[[asyncio.Task], Any] | None = None,
     cancel_on_fail: bool = True,
+    allow_during_shutdown: bool = False,
 ) -> asyncio.Task:
     tracker = _get_tracker()
     task: asyncio.Task | None = None
     task_kwargs: dict[str, Any] = {"name": name}
     if owner is not None:
         task_kwargs["owner"] = owner
+    if allow_during_shutdown:
+        task_kwargs["allow_during_shutdown"] = True
     try:
         if tracker is not None:
             if bounded and hasattr(tracker, "bounded_track"):
@@ -99,6 +111,16 @@ def create_tracked_task(
 
         if task is None:
             task = _create_owned_asyncio_task(awaitable, name=name)
+            if allow_during_shutdown:
+                try:
+                    task._aura_shutdown_critical = True
+                except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+                    record_degradation("task_ownership", exc)
+                    logger.debug(
+                        "Failed to annotate fallback shutdown-critical task %s: %s",
+                        name or task,
+                        exc,
+                    )
             if tracker is not None:
                 try:
                     if hasattr(tracker, "observe"):
@@ -122,6 +144,72 @@ def create_tracked_task(
         if cancel_on_fail:
             close_awaitable(awaitable)
         raise
+
+
+async def drain_owned_awaitable[T](
+    awaitable: Awaitable[T],
+    *,
+    name: str,
+    owner: str,
+    allow_during_shutdown: bool = False,
+) -> OwnedTaskDrain[T]:
+    """Observe non-cancellable work through completion under cancellation.
+
+    The returned task is terminal but deliberately unresolved so the caller can
+    apply domain-specific failure precedence before propagating the captured
+    caller cancellation. `allow_during_shutdown` is only for work admitted
+    before the shutdown latch that must finish to preserve durability or close
+    authority; callers must reject new work before using it.
+    """
+
+    task = create_tracked_task(
+        awaitable,
+        name=name,
+        owner=owner,
+        allow_during_shutdown=allow_during_shutdown,
+    )
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+    return OwnedTaskDrain(task=task, cancellation=cancellation)
+
+
+def runtime_shutdown_requested() -> bool:
+    """Return the monotonic runtime shutdown latch without cold construction."""
+
+    try:
+        from core.runtime.shutdown_coordinator import is_shutdown_requested
+
+        return bool(is_shutdown_requested())
+    except (ImportError, AttributeError, RuntimeError):
+        return False
+
+
+def runtime_shutdown_blocks_new_work(
+    operation: str,
+    *,
+    resource_kind: str,
+) -> bool:
+    """Refuse and receipt new work after the monotonic shutdown latch."""
+
+    if not runtime_shutdown_requested():
+        return False
+    try:
+        from core.runtime.shutdown_coordinator import record_shutdown_admission_event
+
+        record_shutdown_admission_event(
+            operation,
+            resource_kind=resource_kind,
+            outcome="suppressed",
+            detail="new work refused after runtime shutdown request",
+        )
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        pass
+    return True
 
 
 def fire_and_forget(
