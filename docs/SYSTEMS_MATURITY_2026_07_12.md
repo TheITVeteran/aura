@@ -94,12 +94,15 @@ mmap, or C-extension allocation, not a Python object leak. The
 `/api/system/memory/growth` surface makes that diagnosis a one-call
 operation on any future instance.
 
-VERIFIED (2026-07-13): a 38-minute idle window on the fixed code ran the
-idle RSS at **−332 MB/h** (1549→1335 MB, actually declining as caches
-settle) versus the +350 MB/h it climbed before. The perception backoff
-removed the previously observed growth over this bounded window. A final
-multi-hour idle/endurance soak on the sealed tip is still required before
-calling the leak closed under production-duration load.
+VERIFIED (2026-07-13/14): a clean 58-minute orchestrator-only idle window
+on the fixed code ran RSS **1669→1698 MB, +30 MB/h — essentially flat**,
+against +350 MB/h before the fix (~92% reduction). A partial earlier
+window agreed (−332 MB/h). Sampler caveat: measure the ORCHESTRATOR
+process, not the tree — the deferred 32B prewarm loads ~20 GB of MLX
+worker RSS near window end, which is the model becoming resident (a
+step), not the leak (a ramp); filter by RSS threshold or exclude the
+worker children. A final multi-hour production-duration soak on the
+sealed tip would confirm the fix holds under sustained load.
 
 ## CRSM→LoRA loop honesty (2026-07-13, 82f5c373)
 
