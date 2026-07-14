@@ -507,13 +507,13 @@ class HostResourceObserver:
                 username=username,
                 cwd=cwd,
             )
-        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
+        except (psutil.Error, OSError, RuntimeError, SystemError, TypeError, ValueError):
             return None
 
     def process(self, pid: int) -> ProcessObservation | None:
         try:
             return self._process_from_handle(psutil.Process(int(pid)))
-        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
+        except (psutil.Error, OSError, RuntimeError, SystemError, TypeError, ValueError):
             return None
 
     def process_ids(self) -> ProcessIdsObservation:
@@ -530,7 +530,14 @@ class HostResourceObserver:
                 provenance=self.provenance,
                 pids=observed,
             )
-        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
+        except (
+            psutil.Error,
+            OSError,
+            RuntimeError,
+            SystemError,
+            TypeError,
+            ValueError,
+        ) as exc:
             return ProcessIdsObservation(
                 provenance=self.provenance,
                 pids=(),
@@ -556,7 +563,7 @@ class HostResourceObserver:
                     cmdline=(),
                     rss_bytes=int(getattr(process.memory_info(), "rss", 0) or 0),
                 )
-        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
+        except (psutil.Error, OSError, RuntimeError, SystemError, TypeError, ValueError):
             return None
 
     def process_tree(
@@ -576,7 +583,14 @@ class HostResourceObserver:
         try:
             root = psutil.Process(int(root_pid))
             handles = (root, *root.children(recursive=bool(recursive)))
-        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
+        except (
+            psutil.Error,
+            OSError,
+            RuntimeError,
+            SystemError,
+            TypeError,
+            ValueError,
+        ) as exc:
             return ProcessTableObservation(
                 provenance=self.provenance,
                 processes=(),
@@ -608,7 +622,14 @@ class HostResourceObserver:
                 item = self._process_from_handle(process)
                 if item is not None:
                     observed.append(item)
-        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
+        except (
+            psutil.Error,
+            OSError,
+            RuntimeError,
+            SystemError,
+            TypeError,
+            ValueError,
+        ) as exc:
             return ProcessTableObservation(
                 provenance=self.provenance,
                 processes=tuple(observed),

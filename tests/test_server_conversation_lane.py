@@ -484,6 +484,44 @@ def test_full_mind_contract_preserves_proven_generation_when_lane_flips_failed(m
     assert payload["full_mind_path"] is True
 
 
+def test_live_turn_contract_reports_worker_and_post_generation_repairs():
+    from interface.routes import chat as chat_routes
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=False,
+        request_surface="api",
+        lane_status={"conversation_ready": True, "state": "ready"},
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "response_path": "cognitive_engine",
+            "post_generation_repair_applied": True,
+            "live_mind_surface_control_receipt": {
+                "instruction_shape_repair_applied": False,
+                "generation_max_tokens": 48,
+                "generated_tokens": 14,
+                "semantic_output_token_cap": 32,
+                "hard_output_token_ceiling": 48,
+                "requested_output_contract": {
+                    "kind": "sentence_count",
+                    "sentence_count": 1,
+                },
+            },
+        },
+    )
+
+    assert payload["worker_instruction_shape_repair_applied"] is False
+    assert payload["post_generation_repair_applied"] is True
+    assert payload["deterministic_repair_applied"] is True
+    assert payload["generation_max_tokens"] == 48
+    assert payload["generated_tokens"] == 14
+    assert payload["hard_output_token_ceiling"] == 48
+    assert payload["requested_output_contract"]["kind"] == "sentence_count"
+
+
 def test_bounded_planning_floor_can_prove_live_full_mind_path(monkeypatch):
     from interface.routes import chat as chat_routes
 
@@ -2020,6 +2058,172 @@ def test_live_turn_contract_requires_worker_surface_quality_gate_to_pass(monkeyp
     assert payload["live_mind_surface_quality_gate_passed"] is False
     assert payload["live_mind_controls_structurally_bound"] is False
     assert payload["full_mind_path"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "chat.cognitive_engine_retry_final_gate",
+        "chat.cognitive_engine_final_gate",
+        "chat.fastpath_final_gate",
+        "chat.final_quality_gate",
+    ],
+)
+async def test_final_reply_call_sites_record_request_scoped_mutation_provenance(
+    monkeypatch,
+    stage,
+):
+    from interface.routes import chat as chat_routes
+
+    async def _repair(*args, **kwargs):
+        return "Repaired visible reply.", False, False, False, "shape_miss", True
+
+    monkeypatch.setattr(chat_routes, "_repair_final_degraded_reply", _repair)
+    trace = {"live_mind_surface_control_receipt": {}}
+
+    result = await chat_routes._repair_final_degraded_reply_with_provenance(
+        trace,
+        stage=stage,
+        user_message="Give me the clean answer.",
+        reply_text="broken",
+        stale=False,
+        same_diff=False,
+        off_topic=False,
+    )
+
+    assert result[0] == "Repaired visible reply."
+    assert trace["post_generation_repair_applied"] is True
+    assert trace["deterministic_repair_applied"] is True
+    assert trace["text_mutations"][-1]["stage"] == stage
+    assert trace["live_mind_surface_control_receipt"]["text_mutation_count"] == 1
+
+
+def test_final_requested_output_contract_repairs_post_affordance_mutation():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes import chat as chat_routes
+
+    prompt = 'Reply exactly: "yes"'
+    trace = {"live_mind_surface_control_receipt": {}}
+    late_reply = "yes\n\nDone"
+    chat_routes._append_turn_text_mutation(
+        trace,
+        stage="chat.affordance_spoken_append",
+        method="effect_receipt_spoken_append",
+        reasons=["realized_affordance"],
+        before="yes",
+        after=late_reply,
+        deterministic=False,
+    )
+
+    final_reply = chat_routes._enforce_final_requested_output_contract(
+        trace,
+        user_message=prompt,
+        reply_text=late_reply,
+    )
+
+    assert final_reply == "yes"
+    assert assess_user_facing_reply(prompt, final_reply).ok is True
+    assert [item["stage"] for item in trace["text_mutations"]] == [
+        "chat.affordance_spoken_append",
+        "chat.final_requested_output_contract",
+    ]
+    assert trace["deterministic_repair_applied"] is True
+
+
+def test_final_requested_output_contract_never_returns_short_sentence_count_miss():
+    from core.conversation.response_reliability import assess_user_facing_reply
+    from interface.routes import chat as chat_routes
+
+    prompt = "Answer in two sentences."
+    trace = {"live_mind_surface_control_receipt": {}}
+
+    final_reply = chat_routes._enforce_final_requested_output_contract(
+        trace,
+        user_message=prompt,
+        reply_text="Okay.",
+    )
+
+    assert final_reply == "Okay. That is the direct answer."
+    assert assess_user_facing_reply(prompt, final_reply).ok is True
+    assert trace["text_mutations"][-1]["stage"] == (
+        "chat.final_requested_output_contract"
+    )
+
+
+def test_text_mutation_receipt_never_serializes_literal_violation_content():
+    from core.brain.live_mind_contract import append_text_mutation
+
+    receipt = {}
+    append_text_mutation(
+        receipt,
+        stage="response_generation.executive_guard",
+        method="deterministic_identity_alignment",
+        reasons=[
+            {
+                "type": "identity_alignment",
+                "match": "literal private response fragment",
+            }
+        ],
+        before="before",
+        after="after",
+        deterministic=True,
+    )
+
+    serialized = json.dumps(receipt, sort_keys=True)
+    assert "literal private response fragment" not in serialized
+    assert receipt["text_mutations"][0]["reasons"] == ["identity_alignment"]
+
+
+def test_live_turn_contract_derives_repair_flags_from_mutation_ledger(monkeypatch):
+    from core.brain.live_mind_contract import append_text_mutation
+    from interface.routes import chat as chat_routes
+
+    _force_full_mind_runtime(monkeypatch, chat_routes)
+    trace = _bound_live_mind_controls_trace()
+    append_text_mutation(
+        trace["live_mind_surface_control_receipt"],
+        stage="response_generation.post_voice_shape",
+        method="deterministic_instruction_shape",
+        reasons=["missing_requested_sentence_count"],
+        before="Two sentences. Extra sentence.",
+        after="Two sentences.",
+        deterministic=True,
+    )
+
+    payload = chat_routes._build_live_turn_contract_payload(
+        desktop_required=True,
+        request_surface="desktop-ui",
+        lane_status={
+            "conversation_ready": True,
+            "state": "ready",
+            "desired_model": "Cortex (32B)",
+            "foreground_endpoint": "Cortex",
+        },
+        response_confidence="high",
+        status="cognitive_engine",
+        reply_source="cognitive_engine",
+        turn_trace={
+            "engine_think_invoked": True,
+            "cognitive_engine_reply_accepted": True,
+            "bounded_contract_used": False,
+            "legacy_fallback_used": False,
+            "architecture_context_bound": True,
+            "live_mind_context_present": True,
+            "live_mind_snapshot_present": True,
+            "live_mind_snapshot_ready": True,
+            "live_mind_required_subsystems_ok": True,
+            "response_path": "cognitive_engine",
+            **trace,
+        },
+    )
+
+    assert payload["post_generation_repair_applied"] is True
+    assert payload["deterministic_repair_applied"] is True
+    assert payload["text_mutation_count"] == 1
+    assert payload["text_mutations"][0]["stage"] == (
+        "response_generation.post_voice_shape"
+    )
 
 
 def test_strict_live_inference_readiness_requires_lane_status(monkeypatch):
@@ -8517,6 +8721,7 @@ async def test_desktop_cognitive_engine_strips_internal_context_leak(monkeypatch
     )
 
     user_message = "How are you thinking about this conversation right now?"
+    trace = {}
     reply = await chat_routes._run_cognitive_engine_chat_turn(
         user_message,
         visible_user_message=user_message,
@@ -8525,6 +8730,7 @@ async def test_desktop_cognitive_engine_strips_internal_context_leak(monkeypatch
         lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
         source="desktop_ui",
         require_engine=True,
+        turn_trace=trace,
     )
 
     assert reply == (
@@ -8533,11 +8739,204 @@ async def test_desktop_cognitive_engine_strips_internal_context_leak(monkeypatch
     )
     assert "[RECENT CONTEXT]" not in reply
     assert "User: What tools" not in reply
+    assert any(
+        item["stage"] == "chat.cognitive_engine_context_leak_strip"
+        for item in trace["text_mutations"]
+    )
     assert chat_routes._desktop_required_bounded_reply_status(
         user_message,
         reply,
         {"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
     ) == ""
+
+
+@pytest.mark.asyncio
+async def test_cognitive_engine_repair_retry_adopts_winning_receipt(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    first_metadata = _bound_live_mind_controls_metadata()
+    first_metadata.update(
+        {
+            "desktop_cognitive_engine_failure": True,
+            "failure_reason": "first_generation_rejected",
+        }
+    )
+    first_metadata["live_mind_surface_control_receipt"].update(
+        {
+            "generation_max_tokens": 111,
+            "generated_tokens": 17,
+            "attempt_marker": "rejected",
+        }
+    )
+    retry_metadata = _bound_live_mind_controls_metadata()
+    retry_metadata["live_mind_surface_control_receipt"].update(
+        {
+            "generation_max_tokens": 19,
+            "generated_tokens": 1,
+            "attempt_marker": "accepted_retry",
+        }
+    )
+
+    class _FakeCognitiveEngine:
+        def __init__(self):
+            self.calls = 0
+
+        async def think(self, objective, context=None, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    content="The first generation is a declared failure envelope.",
+                    metadata=first_metadata,
+                )
+            return SimpleNamespace(content="yes", metadata=retry_metadata)
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    engine = _FakeCognitiveEngine()
+    trace = {}
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (True, "test_ready"),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_gather_recent_user_messages_for_relevance",
+        AsyncCallFixture(return_value=[]),
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: engine if name == "cognitive_engine" else default
+        ),
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        'Reply exactly: "yes"',
+        visible_user_message='Reply exactly: "yes"',
+        origin="user",
+        timeout_s=60.0,
+        lane={"conversation_ready": True, "state": "ready", "foreground_endpoint": "Cortex"},
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert reply == "yes"
+    assert engine.calls == 2
+    receipt = trace["live_mind_surface_control_receipt"]
+    assert receipt["attempt_marker"] == "accepted_retry"
+    assert receipt["generation_max_tokens"] == 19
+    assert receipt["generated_tokens"] == 1
+    assert any(
+        item["stage"] == "chat.cognitive_engine_repair_retry"
+        and item["deterministic"] is False
+        for item in receipt["text_mutations"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_metadata_less_retry_cannot_inherit_rejected_generation_proof(monkeypatch):
+    from core.providers import engine_connection_pool as pool_module
+    from interface.routes import chat as chat_routes
+
+    first_metadata = _bound_live_mind_controls_metadata()
+    first_metadata.update(
+        {
+            "desktop_cognitive_engine_failure": True,
+            "failure_reason": "first_generation_rejected",
+        }
+    )
+
+    class _FakeCognitiveEngine:
+        def __init__(self):
+            self.calls = 0
+
+        async def think(self, objective, context=None, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    content="The first generation is a declared failure envelope.",
+                    metadata=first_metadata,
+                )
+            return SimpleNamespace(
+                content="yes[RECENT CONTEXT]User: private prior turn"
+            )
+
+    class _Pool:
+        async def acquire_engine_connection(self, *_args, **_kwargs):
+            return None
+
+        async def execute_with_retry(self, _name, operation, **_kwargs):
+            return await operation()
+
+    engine = _FakeCognitiveEngine()
+    trace = {}
+    monkeypatch.setattr(pool_module, "get_engine_connection_pool", lambda: _Pool())
+    monkeypatch.setattr(
+        chat_routes,
+        "_desktop_secondary_model_repair_allowed",
+        lambda **_kwargs: (True, "test_ready"),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_gather_recent_user_messages_for_relevance",
+        AsyncCallFixture(return_value=[]),
+    )
+    monkeypatch.setattr(
+        chat_routes,
+        "_ground_runtime_fact_status_reply",
+        lambda _visible, reply, _lane, **_kwargs: f"{reply} grounded",
+    )
+    monkeypatch.setattr(
+        chat_routes.ServiceContainer,
+        "get",
+        staticmethod(
+            lambda name, default=None: engine if name == "cognitive_engine" else default
+        ),
+    )
+
+    reply = await chat_routes._run_cognitive_engine_chat_turn(
+        'Reply exactly: "yes"',
+        visible_user_message='Reply exactly: "yes"',
+        origin="user",
+        timeout_s=60.0,
+        lane={
+            "conversation_ready": True,
+            "state": "ready",
+            "foreground_endpoint": "Cortex",
+        },
+        source="desktop_ui",
+        require_engine=True,
+        turn_trace=trace,
+    )
+
+    assert reply == "yes grounded"
+    assert engine.calls == 2
+    assert trace["live_mind_generation_controls"] == {}
+    assert trace["live_mind_snapshot_ready"] is False
+    assert trace["live_mind_required_subsystems_ok"] is False
+    assert trace["live_mind_controls_worker_applied"] is False
+    receipt = trace["live_mind_surface_control_receipt"]
+    assert receipt["applied"] is False
+    assert receipt["application_status"] == "worker_receipt_missing"
+    assert [item["stage"] for item in receipt["text_mutations"]] == [
+        "chat.cognitive_engine_repair_retry",
+        "chat.cognitive_engine_retry_context_leak_strip",
+        "chat.cognitive_engine_retry_grounding",
+    ]
+    for previous, current in zip(
+        receipt["text_mutations"], receipt["text_mutations"][1:]
+    ):
+        assert previous["after_chars"] == current["before_chars"]
 
 
 @pytest.mark.asyncio

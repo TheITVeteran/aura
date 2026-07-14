@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from core.brain.generation_provenance import attributed_text, generation_metadata_of
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.Courtroom")
@@ -38,7 +39,7 @@ class CourtroomVerdict:
     candidates: list[str] = field(default_factory=list)
     objections: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
-    verifier_ok: bool = True
+    verifier_ok: bool = False
     verifier_issues: list[str] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
 
@@ -86,12 +87,15 @@ _JUDGE_SYS = (
 
 
 def _extract_answer(text: str) -> str:
+    raw = str(text or "")
+    metadata = generation_metadata_of(text)
     for marker in ("Verdict:", "Answer:"):
-        idx = text.rfind(marker)
+        idx = raw.rfind(marker)
         if idx >= 0:
-            return text[idx + len(marker):].strip().splitlines()[0].strip() or text.strip()
-    lines = [ln.strip() for ln in str(text or "").splitlines() if ln.strip()]
-    return lines[-1] if lines else str(text or "").strip()
+            extracted = raw[idx + len(marker):].strip().splitlines()[0].strip()
+            return attributed_text(extracted or raw.strip(), metadata)
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    return attributed_text(lines[-1] if lines else raw.strip(), metadata)
 
 
 class Courtroom:
@@ -105,7 +109,10 @@ class Courtroom:
         try:
             prompt = f"[ROLE]\n{system}\n\n[TASK]\n{user}"
             out = await self._generate(prompt, temperature)
-            return str(out or "").strip()
+            return attributed_text(
+                str(out or "").strip(),
+                generation_metadata_of(out),
+            )
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("courtroom_role", exc)
             return ""
@@ -143,8 +150,10 @@ class Courtroom:
         skeptic_attack, verdict = await asyncio.gather(skeptic_attack_task, verify_task)
 
         objections = [o for o in (skeptic_prior, skeptic_attack) if o]
-        verifier_ok = bool(getattr(verdict, "ok", True))
+        verifier_ok = bool(verdict is not None and getattr(verdict, "ok", False))
         verifier_issues = list(getattr(verdict, "issues", []) or [])
+        if verdict is None:
+            verifier_issues.append("verifier_unavailable")
 
         # Phase 3 — judge rules on the full record.
         dossier = (
@@ -156,13 +165,19 @@ class Courtroom:
             + (f" — issues: {'; '.join(verifier_issues[:4])}" if verifier_issues else "")
         )
         judgment = await self._ask(_JUDGE_SYS, dossier, 0.2)
+        answer_role = "judge"
         if not judgment:
             judgment = primary
+            answer_role = "solver"
         final = _extract_answer(judgment)
 
         # Phase 4 — minimalise (optional, cheap).
         simplified = await self._ask(_SIMPLIFIER_SYS, f"Question:\n{question}\n\nChosen answer:\n{final}", 0.2)
-        answer = _extract_answer(simplified) if simplified else final
+        if simplified:
+            answer = _extract_answer(simplified)
+            answer_role = "simplifier"
+        else:
+            answer = final
 
         confidence = self._score(candidates, objections, verifier_ok, bool(evidence))
         unresolved = self._unresolved(objections, verifier_issues, verifier_ok)
@@ -173,7 +188,7 @@ class Courtroom:
         return CourtroomVerdict(
             answer=answer or final,
             confidence=confidence,
-            winning_role="judge",
+            winning_role=answer_role,
             candidates=candidates,
             objections=objections,
             evidence=[clerk] if clerk else [],

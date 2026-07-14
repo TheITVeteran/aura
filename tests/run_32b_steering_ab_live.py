@@ -112,7 +112,7 @@ def _resolve_model_path(cli_value: str | None) -> str:
 MODEL_NAME = _resolve_model_path(None)
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     # Evidence runs are watched from logs: stream progress line-by-line even
     # when stdout is a pipe (a 30-minute run with fully buffered output is
     # indistinguishable from a hang).
@@ -125,7 +125,7 @@ def main() -> int:
     parser.add_argument("--model-path", default=None,
                         help="Model to test (default: active fused model, else raw base).")
     parser.add_argument("--output", default=str(ROOT / "tests" / "CAA_32B_AB_LIVE_RESULTS.json"))
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     model_path = _resolve_model_path(args.model_path)
 

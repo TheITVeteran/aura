@@ -8,7 +8,12 @@ import re
 import time
 from typing import Any
 
-from core.brain.live_mind_contract import normalize_live_mind_surface_control_receipt
+from core.brain.generation_provenance import attributed_text, generation_metadata_of
+from core.brain.live_mind_contract import (
+    append_text_mutation,
+    merge_text_mutations,
+    normalize_live_mind_surface_control_receipt,
+)
 from core.brain.llm.context_assembler import ContextAssembler
 from core.container import ServiceContainer
 from core.conversation.response_reliability import (
@@ -16,6 +21,7 @@ from core.conversation.response_reliability import (
     conversation_reliability_system_block,
     repair_generic_assistant_language,
     repair_instruction_shape,
+    requested_output_contract,
 )
 from core.phases.dialogue_policy import enforce_dialogue_contract
 from core.phases.executive_guard import get_executive_guard
@@ -671,6 +677,18 @@ class ResponseGenerationPhase(BasePhase):
             return 210.0
         return 180.0
 
+    @staticmethod
+    def _generation_metadata_snapshot(router: Any) -> dict[str, Any]:
+        getter = getattr(router, "get_last_generation_metadata", None)
+        if not callable(getter):
+            return {}
+        try:
+            metadata = getter()
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            logger.debug("ResponseGeneration could not snapshot generation metadata: %s", exc)
+            return {}
+        return dict(metadata) if isinstance(metadata, dict) else {}
+
     async def _maybe_amplify_response(
         self,
         *,
@@ -725,6 +743,17 @@ class ResponseGenerationPhase(BasePhase):
             runtime_context.get("desktop_cognitive_engine_required")
             or runtime_context.get("cognitive_engine_required")
         )
+        try:
+            amplifier_token_cap = max(
+                1,
+                int(
+                    runtime_context.get("_effective_generation_max_tokens")
+                    or runtime_context.get("max_tokens")
+                    or 1024
+                ),
+            )
+        except (TypeError, ValueError, OverflowError):
+            amplifier_token_cap = 1024
 
         async def _gen(prompt: str, temperature: float) -> str:
             messages = [
@@ -762,7 +791,16 @@ class ResponseGenerationPhase(BasePhase):
                     clean_user_surface_contract=True,
                     user_surface_validation_prompt=visible_user_message,
                     temperature=temperature,
-                    max_tokens=max(384, min(2048, int(runtime_context.get("max_tokens") or 1024))),
+                    max_tokens=min(2048, amplifier_token_cap),
+                    requested_output_contract=runtime_context.get(
+                        "requested_output_contract"
+                    ),
+                    semantic_output_token_cap=runtime_context.get(
+                        "semantic_output_token_cap"
+                    ),
+                    hard_output_token_ceiling=runtime_context.get(
+                        "hard_output_token_ceiling"
+                    ),
                     timeout=min(24.0, max(8.0, request_timeout * 0.50)),
                     cognitive_situation_sampling_bias=state.response_modifiers.get(
                         "cognitive_situation_sampling_bias"
@@ -782,9 +820,16 @@ class ResponseGenerationPhase(BasePhase):
                     action="kept original draft after Amplifier v2 generate failed",
                 )
                 return ""
+            generation_metadata = self._generation_metadata_snapshot(router)
             if isinstance(out, dict):
+                structured_metadata = out.get("generation_metadata") or out.get("metadata")
+                if isinstance(structured_metadata, dict):
+                    generation_metadata = dict(structured_metadata)
                 out = out.get("content") or out.get("response") or ""
-            return str(out or "").strip()
+            return attributed_text(
+                str(out or "").strip(),
+                generation_metadata,
+            )
 
         try:
             budget = float(min(30.0, max(8.0, (request_timeout or 20.0) * 0.60)))
@@ -795,6 +840,9 @@ class ResponseGenerationPhase(BasePhase):
                 time_budget_s=budget,
                 extra_context={
                     "live_response_phase": True,
+                    "require_generation_metadata": True,
+                    "disable_batched_candidates": True,
+                    "generation_max_tokens": amplifier_token_cap,
                     "cognitive_situation_frame": state.response_modifiers.get(
                         "cognitive_situation_frame"
                     ),
@@ -832,7 +880,14 @@ class ResponseGenerationPhase(BasePhase):
             "adopted" if (result.verified and result.answer) else "kept draft",
         )
         if result.verified and result.answer and len(result.answer.strip()) >= 3:
-            return result.answer.strip()
+            amplified_text = attributed_text(result.answer, result.generation_metadata)
+            amplified_text.reasoning_source_answer = str(
+                getattr(result, "source_answer", "") or result.answer
+            )
+            amplified_text.reasoning_text_mutations = [
+                dict(item) for item in getattr(result, "text_mutations", [])
+            ]
+            return amplified_text
         return draft
 
     @staticmethod
@@ -877,11 +932,17 @@ class ResponseGenerationPhase(BasePhase):
     ) -> tuple[str, bool, tuple[str, ...]]:
         """Repair explicit shape misses locally when the content is already substantive."""
         response_text_s = str(response_text or "").strip()
-        if len(response_text_s) < 48 or len(response_text_s.split()) < 8:
-            return response_text_s, False, ()
-
         reliability = assess_user_facing_reply(str(objective or ""), response_text_s)
         reasons = tuple(reliability.reasons or ())
+        output_contract = requested_output_contract(objective)
+        if output_contract.exact_reply and reasons == ("missing_requested_exact_reply",):
+            repaired = repair_instruction_shape(objective, response_text_s)
+            repaired_assessment = assess_user_facing_reply(str(objective or ""), repaired)
+            if repaired != response_text_s and repaired_assessment.ok:
+                return repaired, True, reasons
+        if len(response_text_s) < 48 or len(response_text_s.split()) < 8:
+            return response_text_s, False, reasons
+
         reason_set = set(reasons)
         if (
             not reliability.retryable
@@ -954,6 +1015,8 @@ class ResponseGenerationPhase(BasePhase):
             state.cognition.current_mode.value,
         )
 
+        response_mutation_receipt: dict[str, Any] = {"text_mutations": []}
+        generation_metadata: dict[str, Any] = {}
         try:
             # ── SUBSTRATE VOICE: Compile speech profile BEFORE prompt assembly ──
             # The substrate reads all internal systems and decides HOW Aura will speak.
@@ -1194,6 +1257,14 @@ class ResponseGenerationPhase(BasePhase):
                 or objective
                 or ""
             ).strip()
+            visible_output_contract = requested_output_contract(
+                user_surface_validation_prompt
+            )
+            visible_output_contract_payload = (
+                visible_output_contract.as_dict()
+                if not is_background and visible_output_contract.constrained
+                else None
+            )
             runtime_fact_status_contract = bool(
                 runtime_context.get("runtime_fact_status_contract", False)
                 or runtime_context.get("grounded_runtime_status_contract", False)
@@ -1255,7 +1326,7 @@ class ResponseGenerationPhase(BasePhase):
             requested_token_cap = runtime_context.get("max_tokens")
             if requested_token_cap is not None:
                 try:
-                    token_budget = min(token_budget, max(64, int(requested_token_cap)))
+                    token_budget = min(token_budget, max(1, int(requested_token_cap)))
                 except (TypeError, ValueError, OverflowError):
                     logger.warning(
                         "ResponseGeneration ignored invalid caller token cap %r.",
@@ -1294,14 +1365,35 @@ class ResponseGenerationPhase(BasePhase):
                 )
                 tier = "tertiary"
                 deep_handoff = False
-                token_budget = min(4096, max(256, int(token_budget * 0.7)))
+                token_budget = min(token_budget, 4096, max(1, int(token_budget * 0.7)))
                 state.response_modifiers["thermal_guard"] = True
             elif float(memory_pressure or 0.0) >= 94.0:
-                token_budget = min(4096, max(256, int(token_budget * 0.8)))
+                token_budget = min(token_budget, 4096, max(1, int(token_budget * 0.8)))
                 state.response_modifiers["thermal_guard"] = True
             else:
                 state.response_modifiers["thermal_guard"] = False
+            if (
+                visible_output_contract_payload is not None
+                and visible_output_contract.hard_token_ceiling is not None
+            ):
+                token_budget = min(
+                    token_budget,
+                    max(1, int(visible_output_contract.hard_token_ceiling)),
+                )
+            runtime_context["_effective_generation_max_tokens"] = token_budget
+            runtime_context["requested_output_contract"] = (
+                dict(visible_output_contract_payload)
+                if visible_output_contract_payload is not None
+                else None
+            )
+            runtime_context["semantic_output_token_cap"] = (
+                visible_output_contract.semantic_token_cap
+            )
+            runtime_context["hard_output_token_ceiling"] = (
+                visible_output_contract.hard_token_ceiling
+            )
 
+            response_text: Any = None
             try:
                 request_timeout = self._request_timeout(
                     is_background=is_background,
@@ -1385,23 +1477,42 @@ class ResponseGenerationPhase(BasePhase):
                         temperature=generation_temperature,
                         top_p=generation_top_p,
                         max_tokens=token_budget,
+                        requested_output_contract=(
+                            dict(visible_output_contract_payload)
+                            if visible_output_contract_payload is not None
+                            else None
+                        ),
+                        semantic_output_token_cap=visible_output_contract.semantic_token_cap,
+                        hard_output_token_ceiling=visible_output_contract.hard_token_ceiling,
                         timeout=request_timeout,
                 )
                 response_text = await asyncio.wait_for(think_coro, timeout=request_timeout + 4.0)
+                generation_metadata = self._generation_metadata_snapshot(router)
 
                 shape_repaired = False
                 if not is_background and not is_test_run:
+                    pre_shape_text = response_text
                     response_text, shape_repaired, shape_repair_reasons = (
                         self._repair_substantive_instruction_shape_miss(
                             user_surface_validation_prompt, response_text
                         )
                     )
                     if shape_repaired:
+                        append_text_mutation(
+                            response_mutation_receipt,
+                            stage="response_generation.pre_critique_shape",
+                            method="deterministic_instruction_shape",
+                            reasons=shape_repair_reasons,
+                            before=pre_shape_text,
+                            after=response_text,
+                            deterministic=True,
+                        )
                         logger.info(
                             "🛡️ ResponseGeneration repaired instruction shape locally before critique (%s).",
                             ",".join(shape_repair_reasons) or "unknown",
                         )
 
+                pre_amplifier_text = response_text
                 response_text = await self._maybe_amplify_response(
                     objective=objective,
                     draft=response_text,
@@ -1415,12 +1526,73 @@ class ResponseGenerationPhase(BasePhase):
                     is_background=is_background,
                     proof_or_benchmark=proof_answer_run,
                 )
+                amplifier_generation_metadata = generation_metadata_of(response_text)
+                amplifier_source_answer = str(
+                    getattr(response_text, "reasoning_source_answer", response_text)
+                    or ""
+                )
+                append_text_mutation(
+                    response_mutation_receipt,
+                    stage="response_generation.reasoning_amplifier",
+                    method="verifier_backed_candidate_replacement",
+                    reasons=["reasoning_amplifier_selected_candidate"],
+                    before=pre_amplifier_text,
+                    after=amplifier_source_answer,
+                    deterministic=False,
+                )
+                amplifier_text_mutations = getattr(
+                    response_text,
+                    "reasoning_text_mutations",
+                    [],
+                )
+                if amplifier_text_mutations:
+                    merged_amplifier_mutations = merge_text_mutations(
+                        response_mutation_receipt.get("text_mutations"),
+                        amplifier_text_mutations,
+                    )
+                    response_mutation_receipt["text_mutations"] = (
+                        merged_amplifier_mutations
+                    )
+                    response_mutation_receipt["text_mutation_count"] = len(
+                        merged_amplifier_mutations
+                    )
+                    response_mutation_receipt["deterministic_repair_applied"] = any(
+                        bool(item.get("deterministic"))
+                        for item in merged_amplifier_mutations
+                    )
+                if response_text != pre_amplifier_text:
+                    generation_metadata = amplifier_generation_metadata
 
                 # System 2 internal critique layer to verify logical correctness
                 try:
                     from core.brain.reasoning_strategies import ReasoningStrategies
+
                     async def _raw_generate(p, **kw):
+                        try:
+                            critique_cap = max(
+                                1,
+                                int(kw.get("max_tokens") or token_budget),
+                            )
+                        except (TypeError, ValueError, OverflowError):
+                            critique_cap = token_budget
+                        kw["max_tokens"] = min(token_budget, critique_cap)
+                        kw["requested_output_contract"] = (
+                            dict(visible_output_contract_payload)
+                            if visible_output_contract_payload is not None
+                            else None
+                        )
+                        kw["semantic_output_token_cap"] = (
+                            visible_output_contract.semantic_token_cap
+                        )
+                        kw["hard_output_token_ceiling"] = (
+                            visible_output_contract.hard_token_ceiling
+                        )
+                        kw.setdefault(
+                            "user_surface_validation_prompt",
+                            user_surface_validation_prompt,
+                        )
                         return await router.think(p, **kw)
+
                     strategies = ReasoningStrategies(_raw_generate)
                     if (
                         not desktop_cognitive_engine_required
@@ -1431,7 +1603,17 @@ class ResponseGenerationPhase(BasePhase):
                         critique_response = await strategies._self_critique(objective, response_text, origin=origin)
                         if critique_response and critique_response != response_text:
                             logger.info("⚡ [Critique] Self-critique corrected the generated response!")
+                            append_text_mutation(
+                                response_mutation_receipt,
+                                stage="response_generation.system2_critique",
+                                method="model_critique_replacement",
+                                reasons=["logical_self_critique"],
+                                before=response_text,
+                                after=critique_response,
+                                deterministic=False,
+                            )
                             response_text = critique_response
+                            generation_metadata = self._generation_metadata_snapshot(router)
                 except (ImportError, AttributeError, TypeError, ValueError, LookupError, RuntimeError, NameError, SyntaxError, TimeoutError) as critique_exc:
                     logger.warning("Failed to run System 2 self-critique: %s", critique_exc)
 
@@ -1439,7 +1621,17 @@ class ResponseGenerationPhase(BasePhase):
                 composer = self.container.get("composer_node", default=None)
                 if composer and hasattr(composer, "refine"):
                     logger.debug("🎨 [Composer] Refining response structure...")
+                    pre_composer_text = response_text
                     response_text = await composer.refine(response_text, objective=objective)
+                    append_text_mutation(
+                        response_mutation_receipt,
+                        stage="response_generation.composer_refinement",
+                        method="composer_replacement",
+                        reasons=["structural_refinement"],
+                        before=pre_composer_text,
+                        after=response_text,
+                        deterministic=False,
+                    )
 
             except TimeoutError:
                 logger.error(
@@ -1449,8 +1641,18 @@ class ResponseGenerationPhase(BasePhase):
                 required_tool_hit = self._successful_required_search_payload(state, contract)
                 if required_tool_hit and not is_background:
                     skill_name, payload = required_tool_hit
+                    pre_tool_timeout_recovery = response_text
                     response_text = self._render_required_search_answer_from_payload(
                         payload=payload,
+                    )
+                    append_text_mutation(
+                        response_mutation_receipt,
+                        stage="response_generation.required_tool_timeout_recovery",
+                        method="deterministic_grounded_evidence",
+                        reasons=["cortex_timeout_with_successful_tool_evidence"],
+                        before=pre_tool_timeout_recovery,
+                        after=response_text,
+                        deterministic=True,
                     )
                     state.response_modifiers["required_tool_timeout_repaired"] = {
                         "skill": skill_name,
@@ -1473,8 +1675,18 @@ class ResponseGenerationPhase(BasePhase):
                 required_tool_hit = self._successful_required_search_payload(state, contract)
                 if required_tool_hit and not is_background:
                     skill_name, payload = required_tool_hit
+                    pre_tool_empty_recovery = response_text
                     response_text = self._render_required_search_answer_from_payload(
                         payload=payload,
+                    )
+                    append_text_mutation(
+                        response_mutation_receipt,
+                        stage="response_generation.required_tool_empty_recovery",
+                        method="deterministic_grounded_evidence",
+                        reasons=["empty_cortex_result_with_successful_tool_evidence"],
+                        before=pre_tool_empty_recovery,
+                        after=response_text,
+                        deterministic=True,
                     )
                     state.response_modifiers["required_tool_empty_repaired"] = {
                         "skill": skill_name,
@@ -1491,8 +1703,18 @@ class ResponseGenerationPhase(BasePhase):
                 required_tool_hit = self._successful_required_search_payload(state, contract)
                 if required_tool_hit and not is_background:
                     skill_name, payload = required_tool_hit
+                    pre_tool_blank_recovery = response_text
                     response_text = self._render_required_search_answer_from_payload(
                         payload=payload,
+                    )
+                    append_text_mutation(
+                        response_mutation_receipt,
+                        stage="response_generation.required_tool_blank_recovery",
+                        method="deterministic_grounded_evidence",
+                        reasons=["blank_cortex_result_with_successful_tool_evidence"],
+                        before=pre_tool_blank_recovery,
+                        after=response_text,
+                        deterministic=True,
                     )
                     state.response_modifiers["required_tool_empty_repaired"] = {
                         "skill": skill_name,
@@ -1525,6 +1747,15 @@ class ResponseGenerationPhase(BasePhase):
                             logger.info(
                                 "🛡️ ResponseGeneration repaired instruction shape locally after refinement (%s).",
                                 ",".join(repair_reasons) or "unknown",
+                            )
+                            append_text_mutation(
+                                response_mutation_receipt,
+                                stage="response_generation.post_refinement_shape",
+                                method="deterministic_instruction_shape",
+                                reasons=repair_reasons,
+                                before=response_text,
+                                after=repaired_text,
+                                deterministic=True,
                             )
                             response_text = repaired_text
                             reliability = assess_user_facing_reply(
@@ -1627,6 +1858,16 @@ class ResponseGenerationPhase(BasePhase):
                         else:
                             content = response_text
 
+            append_text_mutation(
+                response_mutation_receipt,
+                stage="response_generation.structured_output_extraction",
+                method="deterministic_structured_content_extraction",
+                reasons=["model_wrapper_removed"],
+                before=response_text,
+                after=content,
+                deterministic=True,
+            )
+
             # Proactive XML Answer Tag formatting guard:
             # If the user prompt or system instruction requires XML answer tagging (e.g. "<answer>"),
             # but the model's generated text doesn't contain a valid "<answer>...</answer>" tag:
@@ -1663,12 +1904,31 @@ class ResponseGenerationPhase(BasePhase):
                     # Clean trailing punctuation
                     extracted_ans = extracted_ans.rstrip(".,;:!?* ")
                     # Wrap and append
+                    pre_answer_tag_text = content
                     content += f"\n\n<answer>{extracted_ans}</answer>"
+                    append_text_mutation(
+                        response_mutation_receipt,
+                        stage="response_generation.answer_tag_formatting",
+                        method="deterministic_answer_tag_append",
+                        reasons=["required_answer_tag"],
+                        before=pre_answer_tag_text,
+                        after=content,
+                        deterministic=True,
+                    )
                     logger.info("🛡️ [HARDENING] Auto-corrected and wrapped extracted answer '%s' in XML tags.", extracted_ans)
 
             # 5. Executive Guard — real-time identity alignment
             guard = get_executive_guard()
             cleaned_response, was_corrected, violations = guard.align(content)
+            append_text_mutation(
+                response_mutation_receipt,
+                stage="response_generation.executive_guard",
+                method="deterministic_identity_alignment",
+                reasons=list(violations or []),
+                before=content,
+                after=cleaned_response,
+                deterministic=True,
+            )
             if was_corrected:
                 logger.info(
                     "🛡️ ExecutiveGuard corrected %d violation(s) in LLM output.", len(violations)
@@ -1758,13 +2018,37 @@ class ResponseGenerationPhase(BasePhase):
                     temperature=generation_temperature,
                     top_p=generation_top_p,
                     max_tokens=token_budget,
+                    requested_output_contract=(
+                        dict(visible_output_contract_payload)
+                        if visible_output_contract_payload is not None
+                        else None
+                    ),
+                    semantic_output_token_cap=visible_output_contract.semantic_token_cap,
+                    hard_output_token_ceiling=visible_output_contract.hard_token_ceiling,
                     timeout=retry_timeout,
                 )
                 retried_text = str(retried or "").strip()
                 if guard and retried_text:
-                    retried_text, _, _ = guard.align(retried_text)
+                    pre_retry_guard_text = retried_text
+                    retried_text, retry_guard_corrected, retry_violations = guard.align(
+                        retried_text
+                    )
+                    append_text_mutation(
+                        response_mutation_receipt,
+                        stage="response_generation.dialogue_retry_executive_guard",
+                        method="deterministic_identity_alignment",
+                        reasons=list(retry_violations or []),
+                        before=pre_retry_guard_text,
+                        after=retried_text,
+                        deterministic=True,
+                    )
+                    if retry_guard_corrected:
+                        logger.debug(
+                            "ExecutiveGuard corrected dialogue-retry output before validation."
+                        )
                 return retried_text
 
+            pre_dialogue_text = cleaned_response
             (
                 cleaned_response,
                 dialogue_validation,
@@ -1776,20 +2060,58 @@ class ResponseGenerationPhase(BasePhase):
                 state=state,
             )
             state.response_modifiers["dialogue_validation"] = dialogue_validation.to_dict()
+            append_text_mutation(
+                response_mutation_receipt,
+                stage=(
+                    "response_generation.dialogue_contract_retry"
+                    if dialogue_retried
+                    else "response_generation.dialogue_contract_repair"
+                ),
+                method=(
+                    "model_dialogue_replacement"
+                    if dialogue_retried
+                    else "deterministic_dialogue_repair"
+                ),
+                reasons=list(getattr(dialogue_validation, "violations", []) or []),
+                before=pre_dialogue_text,
+                after=cleaned_response,
+                deterministic=not dialogue_retried,
+            )
             if dialogue_retried:
+                generation_metadata = self._generation_metadata_snapshot(router)
                 logger.info("🗣️ ResponseGeneration: retried draft to satisfy dialogue contract.")
 
+            pre_tool_repair = cleaned_response
             cleaned_response = self._repair_false_required_tool_inability(
                 state=state,
                 contract=contract,
                 response_text=cleaned_response,
             )
+            append_text_mutation(
+                response_mutation_receipt,
+                stage="response_generation.tool_inability_grounding",
+                method="deterministic_tool_claim_repair",
+                reasons=["false_required_tool_inability"],
+                before=pre_tool_repair,
+                after=cleaned_response,
+                deterministic=True,
+            )
 
             # 6. Clean response
+            pre_clean_response = cleaned_response
             cleaned_response = self._clean_response(
                 cleaned_response,
                 state,
                 allow_mumbling=is_background,
+            )
+            append_text_mutation(
+                response_mutation_receipt,
+                stage="response_generation.clean_response",
+                method="deterministic_surface_cleanup",
+                reasons=["surface_cleanup"],
+                before=pre_clean_response,
+                after=cleaned_response,
+                deterministic=True,
             )
 
             # 6b. SUBSTRATE VOICE: Shape the response — enforce the profile
@@ -1797,6 +2119,7 @@ class ResponseGenerationPhase(BasePhase):
             _shaped_messages = None
             if _sve and _speech_profile and cleaned_response and not is_test_run:
                 try:
+                    pre_voice_shape = cleaned_response
                     shaped = _sve.shape_response(cleaned_response)
                     if isinstance(shaped, list):
                         # Multi-message: use first as primary, queue rest as follow-ups
@@ -1808,6 +2131,15 @@ class ResponseGenerationPhase(BasePhase):
                         )
                     else:
                         cleaned_response = shaped
+                    append_text_mutation(
+                        response_mutation_receipt,
+                        stage="response_generation.substrate_voice",
+                        method="substrate_voice_shape",
+                        reasons=["voice_profile"],
+                        before=pre_voice_shape,
+                        after=cleaned_response,
+                        deterministic=False,
+                    )
                 except (RuntimeError, AttributeError, TypeError, ValueError) as _shape_exc:
                     _record_response_generation_degradation(
                         _shape_exc,
@@ -1823,7 +2155,17 @@ class ResponseGenerationPhase(BasePhase):
                     )
                 )
                 if repaired_shape:
+                    pre_post_voice_repair = cleaned_response
                     cleaned_response = repaired_response
+                    append_text_mutation(
+                        response_mutation_receipt,
+                        stage="response_generation.post_voice_shape",
+                        method="deterministic_instruction_shape",
+                        reasons=repair_reasons,
+                        before=pre_post_voice_repair,
+                        after=cleaned_response,
+                        deterministic=True,
+                    )
                     state.response_modifiers["post_voice_shape_repair"] = {
                         "reasons": list(repair_reasons),
                         "method": "deterministic_instruction_shape",
@@ -1833,10 +2175,20 @@ class ResponseGenerationPhase(BasePhase):
                         ",".join(repair_reasons) or "unknown",
                     )
 
+            pre_final_tool_repair = cleaned_response
             cleaned_response = self._repair_false_required_tool_inability(
                 state=state,
                 contract=contract,
                 response_text=cleaned_response,
+            )
+            append_text_mutation(
+                response_mutation_receipt,
+                stage="response_generation.final_tool_inability_grounding",
+                method="deterministic_tool_claim_repair",
+                reasons=["false_required_tool_inability"],
+                before=pre_final_tool_repair,
+                after=cleaned_response,
+                deterministic=True,
             )
 
             # 6c. Skip emission for background tasks if they produced no meaningful content
@@ -1844,23 +2196,23 @@ class ResponseGenerationPhase(BasePhase):
                 return state
 
             surface_control_receipt: dict[str, Any] = {}
-            if hasattr(router, "get_last_generation_metadata"):
-                try:
-                    generation_metadata = router.get_last_generation_metadata()
-                    if isinstance(generation_metadata, dict):
-                        candidate = generation_metadata.get("surface_control_receipt")
-                        if isinstance(candidate, dict):
-                            surface_control_receipt = dict(candidate)
-                except (AttributeError, RuntimeError, TypeError) as exc:
-                    logger.debug(
-                        "ResponseGeneration could not read surface-control receipt: %s",
-                        exc,
-                    )
+            candidate = generation_metadata.get("surface_control_receipt")
+            if isinstance(candidate, dict):
+                surface_control_receipt = dict(candidate)
             surface_control_receipt = normalize_live_mind_surface_control_receipt(
                 surface_control_receipt,
                 controls_bound=live_mind_controls_bound,
                 generation_controls=live_mind_generation_controls,
                 source="response_generation_live_mind_controls",
+            )
+            merged_mutations = merge_text_mutations(
+                surface_control_receipt.get("text_mutations"),
+                response_mutation_receipt.get("text_mutations"),
+            )
+            surface_control_receipt["text_mutations"] = merged_mutations
+            surface_control_receipt["text_mutation_count"] = len(merged_mutations)
+            surface_control_receipt["deterministic_repair_applied"] = any(
+                bool(item.get("deterministic")) for item in merged_mutations
             )
             state.response_modifiers["live_mind_surface_control_receipt"] = dict(
                 surface_control_receipt

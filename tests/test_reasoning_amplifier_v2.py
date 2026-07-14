@@ -1,11 +1,14 @@
 """Tests for the Reasoning Amplifier v2 orchestrator."""
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from core.brain.calibration_gate import CalibrationGate
+from core.brain.generation_provenance import attributed_text
 from core.brain.reasoning_amplifier_v2 import (
     AmplificationRequest,
     ReasoningAmplifierV2,
@@ -82,6 +85,12 @@ async def test_proof_mode_refuses_unverified(tmp_path):
     out = await amp.amplify(req)
     assert "can't assert" in out.answer.lower() or "did not survive" in out.answer.lower()
     assert "proof_refused_unverified" in out.receipt.fallbacks_used
+    assert out.generation_metadata["model_native_output"] is False
+    assert out.generation_metadata["deterministic_repair_applied"] is True
+    assert any(
+        item["stage"] == "reasoning_amplifier.proof_refusal"
+        for item in out.text_mutations
+    )
 
 
 @pytest.mark.asyncio
@@ -149,6 +158,85 @@ async def test_deep_mode_prose_uses_courtroom(tmp_path):
     out = await amp.amplify(req)
     assert out.receipt.mode == "deep"
     assert out.receipt.strategy_used in {"courtroom", "self_consistency", "direct"}
+
+
+class _CheckedPassingVerifier:
+    async def verify(self, candidate, *, task_type=None, context=None):
+        from core.brain.verifiers.base import VerificationResult
+
+        return VerificationResult(
+            domain=str(task_type or "generic"),
+            ok=True,
+            checked=True,
+            engine="test_checked",
+        )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_winner_keeps_its_own_generation_metadata(tmp_path):
+    invocation = 0
+
+    async def generate(prompt: str, temperature: float) -> str:
+        nonlocal invocation
+        candidate_id = invocation
+        invocation += 1
+        delays = (0.04, 0.01, 0.02)
+        await asyncio.sleep(delays[candidate_id])
+        text = "Answer: 4" if candidate_id in {0, 2} else "Answer: 5"
+        return attributed_text(text, {"candidate_id": candidate_id})
+
+    amp = _amp_with_verifier(generate, _CheckedPassingVerifier(), tmp_path)
+    out = await amp.amplify(
+        AmplificationRequest(
+            objective="what is 2 + 2",
+            task_type="math",
+            mode=ReasoningMode.NORMAL,
+            context={"disable_batched_candidates": True},
+        )
+    )
+
+    assert out.answer == "Answer: 4"
+    assert out.generation_metadata == {
+        "candidate_id": 0,
+        "reasoning_candidate_index": 0,
+    }
+    assert out.receipt.winning_candidate_id == 0
+
+
+@pytest.mark.asyncio
+async def test_calibration_rewrite_cannot_retain_model_native_attribution(tmp_path):
+    class _RewritingCalibration:
+        def assess(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                calibrated_answer="Calibrated answer.",
+                confidence=0.81,
+                overall=SimpleNamespace(value="bounded"),
+                downgraded=1,
+                flagged_impossible=0,
+            )
+
+    amp = ReasoningAmplifierV2(
+        _gen(attributed_text("Raw candidate.", {"candidate_id": 4})),
+        verifier=_CheckedPassingVerifier(),
+        calibration=_RewritingCalibration(),
+        memory=ReasoningMemory(path=tmp_path / "refl.jsonl"),
+    )
+    out = await amp.amplify(
+        AmplificationRequest(
+            objective="Give a bounded answer",
+            task_type="generic",
+            mode=ReasoningMode.FAST,
+        )
+    )
+
+    assert out.answer == "Calibrated answer."
+    assert out.source_answer == "Raw candidate."
+    assert out.generation_metadata["candidate_id"] == 4
+    assert out.generation_metadata["model_native_output"] is False
+    assert out.generation_metadata["post_generation_repair_applied"] is True
+    assert [item["stage"] for item in out.text_mutations] == [
+        "reasoning_amplifier.calibration"
+    ]
 
 
 # ── Verified-answer semantics, fail-closed (July external review) ────────

@@ -14,6 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from core.brain.live_mind_contract import (
+    append_text_mutation,
+    normalize_text_mutations,
+)
 from core.runtime.desktop_boot_safety import compute_mlx_cache_limit, compute_mlx_memory_limit
 from core.runtime.errors import record_degradation
 
@@ -250,6 +254,17 @@ def _surface_generation_control_receipt(
 ) -> dict[str, Any]:
     """Return an IPC-safe proof of user-surface generation control application."""
     enabled = bool(state.get("enabled"))
+    try:
+        generation_max_tokens = max(
+            1,
+            int(
+                state.get("generation_max_tokens_applied")
+                or job.get("max_tokens")
+                or 1
+            ),
+        )
+    except (TypeError, ValueError, OverflowError):
+        generation_max_tokens = 1
     receipt: dict[str, Any] = {
         "enabled": enabled,
         "live_mind_controls_bound": bool(job.get("live_mind_controls_bound", False)),
@@ -268,8 +283,30 @@ def _surface_generation_control_receipt(
         "grounded_runtime_status_contract": bool(
             job.get("grounded_runtime_status_contract", False)
         ),
+        "generation_max_tokens": generation_max_tokens,
+        "semantic_output_token_cap": job.get("semantic_output_token_cap"),
+        "hard_output_token_ceiling": job.get("hard_output_token_ceiling"),
+        "instruction_shape_repair_applied": bool(
+            state.get("instruction_shape_repair_applied", False)
+        ),
+        "text_mutations": normalize_text_mutations(state.get("text_mutations")),
         "applied": False,
     }
+    receipt["text_mutation_count"] = len(receipt["text_mutations"])
+    receipt["deterministic_repair_applied"] = any(
+        bool(item.get("deterministic")) for item in receipt["text_mutations"]
+    )
+    for key in (
+        "exact_reply_token_count",
+        "exact_reply_token_headroom",
+        "exact_reply_token_ceiling_valid",
+        "exact_reply_native_capacity_sufficient",
+    ):
+        if key in job:
+            receipt[key] = job.get(key)
+    output_contract = job.get("requested_output_contract")
+    if isinstance(output_contract, dict) and output_contract:
+        receipt["requested_output_contract"] = dict(output_contract)
     if not enabled:
         return receipt
 
@@ -312,6 +349,7 @@ def _surface_generation_control_receipt(
         "surface_quality_gate_attempts",
         "surface_quality_gate_reasons",
         "surface_quality_gate_error",
+        "instruction_shape_repair_applied",
     ):
         if key in state:
             receipt[key] = state.get(key)
@@ -518,6 +556,73 @@ def _repair_live_user_surface_instruction_shape(
             severity="warning",
         )
         return text
+
+
+def _exact_reply_token_requirement(
+    job: dict[str, Any],
+    tokenizer: Any,
+) -> tuple[int, int]:
+    """Measure an exact target with the selected tokenizer plus stop headroom."""
+
+    contract = job.get("requested_output_contract")
+    if not isinstance(contract, dict) or not bool(contract.get("exact_reply", False)):
+        return 0, 0
+    prompt = str(job.get("user_surface_validation_prompt") or "").strip()
+    if not prompt:
+        return 0, 0
+    try:
+        from core.conversation.response_reliability import requested_exact_reply_target
+
+        target = requested_exact_reply_target(prompt)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        return 0, 0
+    if not target:
+        return 0, 0
+    try:
+        token_ids = tokenizer.encode(target, add_special_tokens=False)
+    except TypeError:
+        token_ids = tokenizer.encode(target)
+    except (AttributeError, RuntimeError, ValueError):
+        return 0, 0
+    token_count = len(token_ids or [])
+    if token_count <= 0:
+        return 0, 0
+    return token_count, token_count + 8
+
+
+def _record_exact_reply_token_evidence(
+    job: dict[str, Any],
+    tokenizer: Any,
+    *,
+    generation_max_tokens: int,
+    hard_output_token_ceiling: int,
+) -> None:
+    """Record selected-tokenizer fit without expanding admitted ceilings."""
+
+    token_count, token_requirement = _exact_reply_token_requirement(job, tokenizer)
+    if token_requirement <= 0:
+        return
+    admitted_generation_cap = max(1, int(generation_max_tokens))
+    effective_native_cap = admitted_generation_cap
+    if hard_output_token_ceiling > 0:
+        effective_native_cap = min(effective_native_cap, hard_output_token_ceiling)
+    job["exact_reply_token_count"] = token_count
+    job["exact_reply_token_headroom"] = max(0, token_requirement - token_count)
+    job["exact_reply_native_capacity_sufficient"] = bool(
+        effective_native_cap >= token_requirement
+    )
+    job["exact_reply_token_ceiling_valid"] = bool(
+        hard_output_token_ceiling <= 0
+        or hard_output_token_ceiling >= token_requirement
+    )
+    if effective_native_cap < token_requirement:
+        logger.info(
+            "Exact target requires %d selected-tokenizer slots but the immutable "
+            "generation envelope admits %d; deterministic exact-output repair owns "
+            "the visible contract.",
+            token_requirement,
+            effective_native_cap,
+        )
 
 
 def _repair_live_user_surface_truncated_tail(response_text: Any) -> str:
@@ -798,6 +903,7 @@ def _expand_user_surface_retry_budget(
     reasons: list[str],
     *,
     ceiling: int = 2048,
+    hard_ceiling: Any = None,
 ) -> bool:
     """Give a clipped live reply one larger pass on the existing worker.
 
@@ -814,7 +920,11 @@ def _expand_user_surface_retry_budget(
     )
     if current <= 0:
         return False
-    expanded = min(max(current * 2, current + 384), max(current, int(ceiling)))
+    expansion_ceiling = max(current, int(ceiling))
+    immutable_ceiling = _safe_int(hard_ceiling, 0)
+    if immutable_ceiling > 0:
+        expansion_ceiling = min(expansion_ceiling, immutable_ceiling)
+    expanded = min(max(current * 2, current + 384), expansion_ceiling)
     if expanded <= current:
         return False
     kwargs["max_tokens"] = expanded
@@ -2856,7 +2966,19 @@ def _mlx_worker_loop(
                 except (TypeError, ValueError):
                     max_tokens = 512
                 if operator_evidence_contract:
-                    max_tokens = max(80, min(max_tokens, 192))
+                    max_tokens = min(max_tokens, 192)
+                hard_output_token_ceiling = _safe_int(
+                    job.get("hard_output_token_ceiling"),
+                    0,
+                )
+                _record_exact_reply_token_evidence(
+                    job,
+                    tokenizer,
+                    generation_max_tokens=max_tokens,
+                    hard_output_token_ceiling=hard_output_token_ceiling,
+                )
+                if hard_output_token_ceiling > 0:
+                    max_tokens = min(max_tokens, hard_output_token_ceiling)
                 schema = job.get("schema")
 
                 # [v11.0 HARDENING] Structured Generation Overrides
@@ -3032,6 +3154,9 @@ def _mlx_worker_loop(
                     surface_control_state["surface_quality_gate_passed"] = not surface_quality_gate_enabled
                     surface_control_state["surface_quality_gate_attempts"] = 0
                     surface_control_state["surface_quality_gate_reasons"] = []
+                    surface_control_state["instruction_shape_repair_applied"] = False
+                    surface_control_state["text_mutations"] = []
+                    surface_control_state["generation_max_tokens_applied"] = max_tokens
                     try:
                         with metal_semaphore:
                             # Proactive cache clearing under memory pressure
@@ -3061,8 +3186,16 @@ def _mlx_worker_loop(
                             )
 
                             for internal_attempt in range(max_internal_retries + 1):
+                                surface_control_state["generation_max_tokens_applied"] = max(
+                                    1,
+                                    _safe_int(kwargs.get("max_tokens"), max_tokens),
+                                )
                                 watchdog.start_job()
                                 try:
+                                    surface_control_state[
+                                        "instruction_shape_repair_applied"
+                                    ] = False
+                                    surface_control_state["text_mutations"] = []
                                     current_response = ""
                                     token_count = 0
                                     last_progress_emit_at = time.time()
@@ -3508,7 +3641,20 @@ def _mlx_worker_loop(
                                                 "🛡️ [WORKER] Grounded user-surface self-claim "
                                                 "before quality validation."
                                             )
+                                            append_text_mutation(
+                                                surface_control_state,
+                                                stage="mlx_worker.self_claim_grounding",
+                                                method="deterministic_self_claim_repair",
+                                                reasons=["unsupported_self_claim"],
+                                                before=response_text,
+                                                after=grounded_surface,
+                                                deterministic=True,
+                                            )
                                             response_text = grounded_surface
+                                        pre_shape_reasons = _surface_quality_failure_reasons(
+                                            job,
+                                            response_text,
+                                        )
                                         shaped_surface = _repair_live_user_surface_instruction_shape(
                                             job,
                                             response_text,
@@ -3517,6 +3663,18 @@ def _mlx_worker_loop(
                                             logger.info(
                                                 "🛡️ [WORKER] Repaired explicit user-surface "
                                                 "shape before quality validation."
+                                            )
+                                            surface_control_state[
+                                                "instruction_shape_repair_applied"
+                                            ] = True
+                                            append_text_mutation(
+                                                surface_control_state,
+                                                stage="mlx_worker.instruction_shape",
+                                                method="deterministic_instruction_shape",
+                                                reasons=pre_shape_reasons or ["instruction_shape"],
+                                                before=response_text,
+                                                after=shaped_surface,
+                                                deterministic=True,
                                             )
                                             response_text = shaped_surface
                                         surface_control_state["surface_quality_gate_attempts"] = int(
@@ -3546,6 +3704,15 @@ def _mlx_worker_loop(
                                                     "🛡️ [WORKER] Kept complete foreground "
                                                     "sentences after a clipped tail."
                                                 )
+                                                append_text_mutation(
+                                                    surface_control_state,
+                                                    stage="mlx_worker.truncated_tail",
+                                                    method="retain_complete_sentences",
+                                                    reasons=["truncated_tail"],
+                                                    before=response_text,
+                                                    after=completed_surface,
+                                                    deterministic=True,
+                                                )
                                                 response_text = completed_surface
                                                 rejection_reasons = []
                                         if rejection_reasons:
@@ -3562,6 +3729,15 @@ def _mlx_worker_loop(
                                                 logger.info(
                                                     "🛡️ [WORKER] Repaired live status draft "
                                                     "with concrete runtime telemetry."
+                                                )
+                                                append_text_mutation(
+                                                    surface_control_state,
+                                                    stage="mlx_worker.operational_status",
+                                                    method="grounded_runtime_telemetry_repair",
+                                                    reasons=rejection_reasons,
+                                                    before=response_text,
+                                                    after=telemetry_surface,
+                                                    deterministic=True,
                                                 )
                                                 response_text = telemetry_surface
                                                 rejection_reasons = []
@@ -3611,6 +3787,9 @@ def _mlx_worker_loop(
                                                 if _expand_user_surface_retry_budget(
                                                     kwargs,
                                                     rejection_reasons,
+                                                    hard_ceiling=job.get(
+                                                        "hard_output_token_ceiling"
+                                                    ),
                                                 ):
                                                     logger.info(
                                                         "🛡️ [WORKER] Expanded same-worker live reply budget to %s "
@@ -3664,6 +3843,15 @@ def _mlx_worker_loop(
                                                     "🛡️ [WORKER] Salvaged a clean brief reply after generic-language "
                                                     "retries instead of yielding zero tokens."
                                                 )
+                                                append_text_mutation(
+                                                    surface_control_state,
+                                                    stage="mlx_worker.generic_language_salvage",
+                                                    method="deterministic_generic_language_repair",
+                                                    reasons=rejection_reasons,
+                                                    before=response_text,
+                                                    after=salvaged,
+                                                    deterministic=True,
+                                                )
                                                 response_text = salvaged
                                                 surface_control_state["surface_quality_gate_passed"] = True
                                                 surface_control_state["surface_quality_gate_reasons"] = []
@@ -3680,6 +3868,15 @@ def _mlx_worker_loop(
                                                         "🛡️ [WORKER] Delivering best honest draft after gate "
                                                         "exhaustion (residual=%s) instead of a dead turn.",
                                                         ",".join(residual_reasons) or "none",
+                                                    )
+                                                    append_text_mutation(
+                                                        surface_control_state,
+                                                        stage="mlx_worker.exhaustion_salvage",
+                                                        method="best_honest_draft",
+                                                        reasons=rejection_reasons,
+                                                        before=response_text,
+                                                        after=best_draft,
+                                                        deterministic=True,
                                                     )
                                                     response_text = best_draft
                                                     surface_control_state["surface_quality_gate_passed"] = (
@@ -3840,7 +4037,10 @@ def _mlx_worker_loop(
                     try:
                         batch_prompt = str(job.get("prompt") or "")
                         n = max(1, min(16, _safe_int(job.get("n"), 4)))
-                        batch_max_tokens = max(16, min(2048, _safe_int(job.get("max_tokens"), 512)))
+                        batch_max_tokens = max(
+                            1,
+                            min(2048, _safe_int(job.get("max_tokens"), 512)),
+                        )
                         batch_temp = _safe_float(job.get("temperature"), 0.8)
                         token_ids = tokenizer.encode(batch_prompt)
                         watchdog.activity()
@@ -3853,12 +4053,16 @@ def _mlx_worker_loop(
                         )
                         watchdog.activity()
                         texts = [str(t or "").strip() for t in getattr(batch_result, "texts", [])]
+                        tokens_used_by_candidate = [
+                            len(tokenizer.encode(text)) if text else 0 for text in texts
+                        ]
                         ipc_writer.put({
                             "id": job.get("id"),
                             "action": "generate_batch",
                             "status": "ok",
                             "texts": texts,
-                            "tokens_used": sum(len(tokenizer.encode(t)) for t in texts if t),
+                            "tokens_used": sum(tokens_used_by_candidate),
+                            "tokens_used_by_candidate": tokens_used_by_candidate,
                         })
                     finally:
                         watchdog.stop_job()

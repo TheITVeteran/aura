@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
-
 import core.brain.llm.batch_candidates as bc
+from core.brain.generation_provenance import attributed_text, generation_metadata_of
 
 
 class _Client:
@@ -81,7 +80,8 @@ def test_amplifier_uses_batched_lane_before_serial(monkeypatch):
 
     amp = build_amplifier_v2(fake_generate)
 
-    async def fake_batched(prompt, n, *, timeout_s):
+    async def fake_batched(prompt, n, *, max_tokens, timeout_s):
+        assert max_tokens == 512
         return [f"candidate-{i}" for i in range(n)]
 
     monkeypatch.setattr(
@@ -97,6 +97,38 @@ def test_amplifier_uses_batched_lane_before_serial(monkeypatch):
     assert not serial_calls, "batched hit must not invoke serial sampling"
 
 
+def test_structured_batch_metadata_stays_attached_to_each_candidate(monkeypatch):
+    class _StructuredClient(_Client):
+        async def generate_batch_with_metadata_async(self, prompt, **kwargs):
+            self.calls.append({"prompt": prompt, **kwargs})
+            return {
+                "texts": ["winner", "alternate"],
+                "generation_metadata": {
+                    "endpoint": "MLX-BATCH:test",
+                    "batch_request_id": "batch-1",
+                },
+                "candidate_generation_metadata": [
+                    {"generated_tokens": 3},
+                    {"generated_tokens": 7},
+                ],
+            }
+
+    client = _StructuredClient("/models/Qwen2.5-32B-Instruct-4bit")
+    monkeypatch.setattr("core.brain.llm.mlx_client._CLIENTS", {"h": client})
+
+    out = asyncio.run(bc.generate_candidates_batched("p", 2))
+
+    assert out == ["winner", "alternate"]
+    assert generation_metadata_of(out[0]) == {
+        "endpoint": "MLX-BATCH:test",
+        "batch_request_id": "batch-1",
+        "generated_tokens": 3,
+        "batch_candidate_index": 0,
+    }
+    assert generation_metadata_of(out[1])["batch_candidate_index"] == 1
+    assert generation_metadata_of(out[1])["generated_tokens"] == 7
+
+
 def test_worker_source_contract():
     import inspect
 
@@ -107,3 +139,19 @@ def test_worker_source_contract():
     assert "batch_generate(" in src
     # Raw candidates by design: no sentinel or quality gates in the batch branch.
     assert "RAW (no sentinel/quality gates)" in src
+    assert '"tokens_used_by_candidate": tokens_used_by_candidate' in src
+    assert "batch_max_tokens = max(\n                            1," in src
+    assert "batch_max_tokens = max(16" not in src
+
+
+def test_attributed_text_preserves_zero_value_and_copies_metadata():
+    metadata = {"candidate": 0, "receipt": {"applied": True}}
+    value = attributed_text(0, metadata)
+    metadata["candidate"] = 1
+    metadata["receipt"]["applied"] = False
+
+    assert value == "0"
+    assert generation_metadata_of(value) == {
+        "candidate": 0,
+        "receipt": {"applied": True},
+    }

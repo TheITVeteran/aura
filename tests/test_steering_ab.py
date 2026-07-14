@@ -15,7 +15,6 @@ from types import ModuleType
 
 import pytest
 
-
 RUNNER_PATH = Path(__file__).with_name("run_32b_steering_ab_live.py")
 
 
@@ -56,4 +55,4 @@ def test_live_runner_covers_required_behavioral_controls():
 def test_live_32b_steering_ab_runner_passes():
     runner = _load_live_runner()
 
-    assert runner.main() == 0
+    assert runner.main([]) == 0

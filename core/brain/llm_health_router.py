@@ -23,6 +23,7 @@ import os
 import threading
 import time
 from collections.abc import Mapping
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -512,6 +513,29 @@ _USER_FACING_PURPOSES = frozenset({
 })
 
 
+def _endpoint_provider_identity(endpoint: Any) -> str:
+    """Return a concrete provider identity for one registered endpoint."""
+
+    if bool(getattr(endpoint, "is_local", False)):
+        return "local"
+    fingerprint = " ".join(
+        str(getattr(endpoint, key, "") or "").lower()
+        for key in ("name", "model", "url")
+    )
+    for marker, provider in (
+        ("gemini", "gemini"),
+        ("anthropic", "anthropic"),
+        ("claude", "anthropic"),
+        ("openai", "openai"),
+        ("gpt", "openai"),
+        ("xai", "xai"),
+        ("grok", "xai"),
+    ):
+        if marker in fingerprint:
+            return provider
+    return str(getattr(endpoint, "name", "") or "configured-cloud-endpoint")
+
+
 # ── Circuit Breaker States ────────────────────────────────────────────────────
 
 class CircuitState(Enum):
@@ -827,12 +851,41 @@ class HealthAwareLLMRouter:
         self.last_user_error: str = ""
         self.last_background_error: str = ""
         self._last_generation_metadata: dict[str, Any] = {}
+        self._generation_metadata_context: ContextVar[dict[str, Any] | None] = (
+            ContextVar(
+                f"aura_health_router_generation_metadata_{id(self)}",
+                default=None,
+            )
+        )
         self._last_fallback_warning_at: float = 0.0
         self._background_deferral_log_state: dict[str, tuple[str, float, int]] = {}
         logger.info("HealthAwareLLMRouter initialized (Legacy-Compatible mode)")
 
+    def _generation_metadata_slot(self) -> ContextVar[dict[str, Any] | None]:
+        slot = getattr(self, "_generation_metadata_context", None)
+        if slot is None:
+            slot = ContextVar(
+                f"aura_health_router_generation_metadata_{id(self)}",
+                default=None,
+            )
+            self._generation_metadata_context = slot
+        return slot
+
+    def _publish_generation_metadata(self, metadata: dict[str, Any]) -> None:
+        snapshot = dict(metadata)
+        self._generation_metadata_slot().set(snapshot)
+        self._last_generation_metadata = snapshot
+
     def get_last_generation_metadata(self) -> dict[str, Any]:
-        return dict(self._last_generation_metadata)
+        task_metadata = self._generation_metadata_slot().get()
+        if task_metadata is not None:
+            return dict(task_metadata)
+        return {}
+
+    def get_diagnostic_last_generation_metadata(self) -> dict[str, Any]:
+        """Return process-wide last-call telemetry, never request proof."""
+
+        return dict(getattr(self, "_last_generation_metadata", {}) or {})
 
     def get_stats(self) -> dict[str, Any]:
         """Aggregate endpoint statistics for proprioceptive telemetry."""
@@ -986,12 +1039,35 @@ class HealthAwareLLMRouter:
         # ep_obj is expected to have: name, tier, model_name, client
         name = normalize_endpoint_name(getattr(ep_obj, "name", "unknown")) or "unknown"
         tier_val = getattr(ep_obj, "tier", "local")
-        is_local = name in {
-            PRIMARY_ENDPOINT,
-            DEEP_ENDPOINT,
-            BRAINSTEM_ENDPOINT,
-            FALLBACK_ENDPOINT,
-        } or "MLX" in name or "Local" in name
+        declared_locality = getattr(ep_obj, "is_local", None)
+        if isinstance(declared_locality, bool):
+            is_local = declared_locality
+        else:
+            client = getattr(ep_obj, "client", None)
+            fingerprint = " ".join(
+                (
+                    name,
+                    str(getattr(ep_obj, "model_name", "") or ""),
+                    str(getattr(ep_obj, "endpoint_url", "") or ""),
+                    type(client).__module__,
+                    type(client).__name__,
+                )
+            ).lower()
+            cloud_markers = (
+                "gemini",
+                "google.genai",
+                "anthropic",
+                "claude",
+                "openai",
+                "chatgpt",
+                "gpt-",
+                "xai",
+                "grok",
+            )
+            # Unknown compatibility endpoints are local until concrete remote
+            # provider evidence says otherwise. This keeps deterministic reflex
+            # clients out of cloud-only recovery and cloud provenance receipts.
+            is_local = not any(marker in fingerprint for marker in cloud_markers)
         
         # Normalize both enum-style tiers and legacy string aliases into the router's
         # concrete routing labels: local, local_deep, local_fast, api_fast, api_deep.
@@ -1356,6 +1432,7 @@ class HealthAwareLLMRouter:
         endpoint selection, then normalises to Optional[str].
         [FIX #1-Harden] Supports 'messages' keyword for cognitive pipeline compatibility.
         """
+        self._publish_generation_metadata({})
         kwargs.pop("_contract_tool_handoff", False)
         if not prompt and "messages" in kwargs:
             prompt, inferred_system_prompt = self._coerce_prompt_from_messages(kwargs.get("messages", []))
@@ -1375,7 +1452,7 @@ class HealthAwareLLMRouter:
                 **kwargs,
             )
             if isinstance(result, dict):
-                self._last_generation_metadata = dict(result)
+                self._publish_generation_metadata(result)
             text = result.get("text", "") if isinstance(result, dict) else str(result)
             strict_answer_request = "<answer>" in str(prompt or "").lower() or "<answer>" in str(
                 system_prompt or ""
@@ -2428,6 +2505,12 @@ class HealthAwareLLMRouter:
         cloud_fallback_explicit = "allow_cloud_fallback" in kwargs
         allow_cloud_fallback = bool(kwargs.get("allow_cloud_fallback", False))
         allow_auto_cloud_recovery = not isolated_generation_contract and not cloud_fallback_explicit
+        cloud_only = bool(kwargs.get("cloud_only", False))
+        if cloud_only:
+            allow_cloud_fallback = True
+            allow_auto_cloud_recovery = False
+            deep_handoff = False
+            available = [ep for ep in available if not ep.is_local]
         strict_primary_proof_lane = False
         try:
             proof_run_enabled = str(os.environ.get("AURA_PROOF_RUN", "") or "").strip().lower() in {
@@ -2695,7 +2778,7 @@ class HealthAwareLLMRouter:
             )
             for name in fallback_names:
                 ep = self.endpoints.get(name)
-                if ep is not None:
+                if ep is not None and (not cloud_only or not ep.is_local):
                     available.append(ep)
 
             if available:
@@ -2711,14 +2794,28 @@ class HealthAwareLLMRouter:
                 return {
                     "ok": False,
                     "text": "",
-                    "endpoint": "none",
+                    "endpoint": "all_failed",
                     "tokens": 0,
                     "error": "all_endpoints_unavailable",
+                    "provider": "none",
+                    "model": "",
+                    "is_local": False,
+                    "fallback_chain": [],
                 }
 
         last_error = "unknown"
         cloud_recovery_injected = False
+        fallback_chain: list[dict[str, Any]] = []
         for ep in available:
+            if cloud_only and ep.is_local:
+                continue
+            chain_entry: dict[str, Any] = {
+                "endpoint": ep.name,
+                "model": ep.model,
+                "provider": _endpoint_provider_identity(ep),
+                "status": "attempted",
+            }
+            fallback_chain.append(chain_entry)
             # Guard: background tasks must NEVER use the primary conversation lane.
             if is_bg and ep.name == PRIMARY_ENDPOINT:
                 logger.debug("🛡️ Router: Skipping %s for background request (origin=%s).", PRIMARY_ENDPOINT, origin)
@@ -2798,6 +2895,12 @@ class HealthAwareLLMRouter:
                 finally:
                     watchdog.cancel()
                 if result["ok"]:
+                    chain_entry["status"] = "success"
+                    result["provider"] = _endpoint_provider_identity(ep)
+                    result["model"] = ep.model
+                    result["is_local"] = bool(ep.is_local)
+                    result["provider_verified"] = True
+                    result["fallback_chain"] = [dict(item) for item in fallback_chain]
                     # [TELEMETRY] Update for UI reporting
                     self.last_tier = ep.tier
                     self.last_endpoint = ep.name
@@ -2812,6 +2915,8 @@ class HealthAwareLLMRouter:
                     return result
                 else:
                     last_error = result.get("error", "unknown")
+                    chain_entry["status"] = "failed"
+                    chain_entry["error"] = str(last_error)[:240]
                     if is_bg:
                         self.last_background_error = last_error
                     else:
@@ -2863,6 +2968,8 @@ class HealthAwareLLMRouter:
                     health_probe=bool(kwargs.get("health_probe", False)),
                 )
                 last_error = f"endpoint_timeout:{ep.name}:{endpoint_budget:.1f}s"
+                chain_entry["status"] = "timeout"
+                chain_entry["error"] = last_error
                 aborted = bool(watchdog_aborted.get("value", False))
                 if not aborted:
                     aborted = _force_abort_endpoint_client(ep.client, reason=last_error)
@@ -2894,6 +3001,8 @@ class HealthAwareLLMRouter:
                 logger.error("Endpoint %s raised exception: %s", ep.name, exc)
                 ep.record_failure(str(exc))
                 last_error = str(exc)
+                chain_entry["status"] = "error"
+                chain_entry["error"] = last_error[:240]
                 if is_bg:
                     self.last_background_error = last_error
                 else:
@@ -2905,6 +3014,10 @@ class HealthAwareLLMRouter:
             "endpoint": "all_failed",
             "tokens": 0,
             "error": last_error,
+            "provider": "none",
+            "model": "",
+            "is_local": False,
+            "fallback_chain": fallback_chain,
         }
 
     async def _call_endpoint(

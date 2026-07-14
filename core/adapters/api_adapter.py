@@ -24,6 +24,7 @@ import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.runtime.errors import Severity, record_degradation
 
 logger = logging.getLogger("Aura.APIAdapter")
@@ -94,6 +95,8 @@ class APIAdapter:
         self._error_count: dict[str, int] = {"gemini": 0, "local": 0}
         self._total_tokens: int = 0
         self._gemini_backoff_until: float = 0.0
+        self._last_gemini_error: str = ""
+        self._last_generation_metadata: dict[str, Any] = {}
 
         logger.info("APIAdapter constructed.")
 
@@ -193,19 +196,43 @@ class APIAdapter:
         """
         config = config or {}
         tier        = config.get("model_tier", "local")
-        temperature = config.get("temperature", 0.7)
-        max_tokens  = config.get("max_tokens", 800)
         purpose     = config.get("purpose", "general")
 
         start = time.monotonic()
 
-        # Tier routing with fallback
-        result = await self._route_generate(prompt, tier, temperature, max_tokens, config=config)
+        result_metadata = await self.generate_with_metadata(prompt, config)
+        result = str(result_metadata.get("text") or "")
 
         elapsed = (time.monotonic() - start) * 1000
         logger.debug("APIAdapter.generate: tier=%s purpose=%s %.1fms len=%d",
                      tier, purpose, elapsed, len(result))
         return result
+
+    def get_last_generation_metadata(self) -> dict[str, Any]:
+        return dict(self._last_generation_metadata)
+
+    async def generate_with_metadata(
+        self,
+        prompt: str,
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Generate text with truthful provider, model, and fallback provenance."""
+
+        config = config or {}
+        tier = str(config.get("model_tier", "local") or "local")
+        temperature_value = config.get("temperature", 0.7)
+        temperature = float(0.7 if temperature_value is None else temperature_value)
+        max_tokens_value = config.get("max_tokens", 800)
+        max_tokens = max(1, int(800 if max_tokens_value is None else max_tokens_value))
+        result = await self._route_generate_with_metadata(
+            prompt,
+            tier,
+            temperature,
+            max_tokens,
+            config=config,
+        )
+        self._last_generation_metadata = dict(result)
+        return dict(result)
 
     async def generate_stream(
         self, prompt: str, config: dict[str, Any] | None = None
@@ -225,23 +252,138 @@ class APIAdapter:
         self, prompt: str, tier: str, temperature: float, max_tokens: int, config: dict[str, Any] | None = None
     ) -> str:
         """Route with automatic fallback chain."""
+        result = await self._route_generate_with_metadata(
+            prompt,
+            tier,
+            temperature,
+            max_tokens,
+            config=config,
+        )
+        self._last_generation_metadata = dict(result)
+        return str(result.get("text") or "")
+
+    async def _route_generate_with_metadata(
+        self,
+        prompt: str,
+        tier: str,
+        temperature: float,
+        max_tokens: int,
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Route with an explicit cloud-only mode and structured provenance."""
+
         config = config or {}
+        cloud_only = bool(config.get("cloud_only", False))
+        fallback_chain: list[dict[str, str]] = []
 
         # Cloud chain (Gemini only)
         if tier in ("api_deep", "api_fast"):
+            model_name = GEMINI_MODELS.get(tier, GEMINI_MODELS["api_fast"])
             if self.has_gemini and time.monotonic() >= self._gemini_backoff_until:
-                result = await self._gemini_generate(prompt, tier, temperature, max_tokens, config=config)
+                self._last_gemini_error = ""
+                try:
+                    result = await self._gemini_generate(
+                        prompt,
+                        tier,
+                        temperature,
+                        max_tokens,
+                        config=config,
+                    )
+                except (
+                    AttributeError,
+                    RuntimeError,
+                    *cloud_call_error_types(),
+                ) as exc:
+                    self._last_gemini_error = str(exc) or type(exc).__name__
+                    _record_api_degradation(
+                        exc,
+                        action="continued APIAdapter fallback chain after Gemini provider failure",
+                        extra={"backend": "gemini", "tier": tier},
+                    )
+                    err_text = self._last_gemini_error
+                    if "429" in err_text or "quota" in err_text.lower():
+                        self._gemini_backoff_until = time.monotonic() + 60.0
+                    self._error_count["gemini"] += 1
+                    result = None
                 if result:
-                    return result
+                    fallback_chain.append(
+                        {"provider": "gemini", "model": model_name, "status": "success"}
+                    )
+                    return {
+                        "ok": True,
+                        "text": str(result),
+                        "endpoint": f"Gemini-APIAdapter:{model_name}",
+                        "provider": "gemini",
+                        "model": model_name,
+                        "is_local": False,
+                        "provider_verified": True,
+                        "fallback_chain": fallback_chain,
+                        "error": "",
+                    }
+                failure_entry = {
+                    "provider": "gemini",
+                    "model": model_name,
+                    "status": "error" if self._last_gemini_error else "no_text",
+                }
+                if self._last_gemini_error:
+                    failure_entry["error"] = self._last_gemini_error[:240]
+                fallback_chain.append(failure_entry)
+            else:
+                status = "backoff" if self.has_gemini else "unavailable"
+                fallback_chain.append(
+                    {"provider": "gemini", "model": model_name, "status": status}
+                )
+
+        if cloud_only:
+            logger.error("APIAdapter: cloud-only generation failed for tier=%s", tier)
+            return {
+                "ok": False,
+                "text": "",
+                "endpoint": "APIAdapter-cloud-unavailable",
+                "provider": "none",
+                "model": "",
+                "is_local": False,
+                "fallback_chain": fallback_chain,
+                "error": "cloud_only_backend_unavailable",
+            }
 
         # Local fallback chain
         if self.has_local:
             result = await self._local_generate(prompt, temperature, max_tokens)
             if result:
-                return result
+                model_name = str(
+                    getattr(self._local_client, "model_name", None)
+                    or getattr(self._local_client, "model_path", None)
+                    or "managed-local-runtime"
+                )
+                fallback_chain.append(
+                    {"provider": "local", "model": model_name, "status": "success"}
+                )
+                return {
+                    "ok": True,
+                    "text": str(result),
+                    "endpoint": f"Local-APIAdapter:{model_name}",
+                    "provider": "local",
+                    "model": model_name,
+                    "is_local": True,
+                    "fallback_chain": fallback_chain,
+                    "error": "",
+                }
+            fallback_chain.append(
+                {"provider": "local", "model": "managed-local-runtime", "status": "no_text"}
+            )
 
         logger.error("APIAdapter: all backends failed for tier=%s", tier)
-        return ""
+        return {
+            "ok": False,
+            "text": "",
+            "endpoint": "APIAdapter-all-failed",
+            "provider": "none",
+            "model": "",
+            "is_local": False,
+            "fallback_chain": fallback_chain,
+            "error": "all_backends_failed",
+        }
 
     async def _route_stream(
         self, prompt: str, tier: str, temperature: float, max_tokens: int
@@ -276,6 +418,7 @@ class APIAdapter:
         config = config or {}
         if self._gemini_client and self.has_gemini:
             model_name = GEMINI_MODELS.get(tier, GEMINI_MODELS["api_fast"])
+            self._last_gemini_error = ""
             try:
                 from google import genai
                 config_kwargs = {
@@ -295,7 +438,13 @@ class APIAdapter:
                 )
                 self._call_count["gemini"] += 1
                 return response.text or ""
-            except (ImportError, AttributeError, RuntimeError) as e:
+            except (
+                ImportError,
+                AttributeError,
+                RuntimeError,
+                *cloud_call_error_types(),
+            ) as e:
+                self._last_gemini_error = str(e) or type(e).__name__
                 _record_api_degradation(
                     e,
                     action="backed off Gemini backend and allowed local generation fallback",

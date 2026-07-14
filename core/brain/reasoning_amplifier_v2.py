@@ -33,11 +33,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from core.brain.generation_provenance import attributed_text, generation_metadata_of
+from core.brain.live_mind_contract import append_text_mutation
 from core.runtime.errors import record_degradation
 
 logger = logging.getLogger("Aura.ReasoningAmplifierV2")
 
-GenerateFn = Callable[[str, float], Awaitable[str]]
+GenerateFn = Callable[[str, float], Awaitable[Any]]
 
 
 class ReasoningMode(str, Enum):
@@ -197,7 +199,7 @@ class ReasoningReceipt:
     num_candidates: int
     verifiers_run: list[str]
     valid_candidates: int
-    winning_candidate_id: int
+    winning_candidate_id: int | None
     confidence: float
     agreement: float
     epistemic_status: str
@@ -234,6 +236,9 @@ class AmplifiedAnswer:
     verified: bool
     calibrated: bool
     receipt: ReasoningReceipt
+    generation_metadata: dict[str, Any] = field(default_factory=dict)
+    source_answer: str = ""
+    text_mutations: list[dict[str, Any]] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -242,6 +247,8 @@ class AmplifiedAnswer:
             "verified": self.verified,
             "calibrated": self.calibrated,
             "receipt": self.receipt.to_dict(),
+            "generation_metadata": dict(self.generation_metadata),
+            "text_mutations": [dict(item) for item in self.text_mutations],
         }
 
 
@@ -522,7 +529,7 @@ class ReasoningAmplifierV2:
                     num_candidates=0,
                     verifiers_run=list(cached.verifiers_run),
                     valid_candidates=1,
-                    winning_candidate_id=0,
+                    winning_candidate_id=None,
                     confidence=cached.confidence,
                     agreement=1.0,
                     epistemic_status="verified",
@@ -535,6 +542,14 @@ class ReasoningAmplifierV2:
                     verified=True,
                     calibrated=False,
                     receipt=receipt,
+                    generation_metadata={
+                        "response_path": "reasoning_solved_cache",
+                        "surface_control_receipt": {
+                            "generation_required": False,
+                            "application_status": "not_applicable_verified_cache",
+                            "source": "reasoning_solved_cache",
+                        },
+                    },
                 )
 
         mode = ReasoningBudgetPolicy.choose_mode(
@@ -625,7 +640,11 @@ class ReasoningAmplifierV2:
 
             async def _escalate_one(temp: float) -> str:
                 try:
-                    return str(await self._escalate_generate(esc_prompt, temp) or "").strip()
+                    generated = await self._escalate_generate(esc_prompt, temp)
+                    return attributed_text(
+                        str(generated or "").strip(),
+                        generation_metadata_of(generated),
+                    )
                 except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                     record_degradation("amplifier_v2_escalate_generate", exc)
                     return ""
@@ -649,10 +668,34 @@ class ReasoningAmplifierV2:
                     logger.info("🧠 [AmplifyV2] tier escalation produced a verifier-clean answer.")
                     break
 
+        winning_generation_metadata = generation_metadata_of(answer)
+        winning_candidate_id: int | None = None
+        for candidate_id_key in ("reasoning_candidate_index", "batch_candidate_index"):
+            try:
+                parsed_candidate_id = int(
+                    winning_generation_metadata.get(candidate_id_key)
+                )
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if parsed_candidate_id >= 0:
+                winning_candidate_id = parsed_candidate_id
+                break
+
         # 9. final critique — calibrate confidence to epistemic status. Uses the
         # full evidence pack (caller-supplied + ReAct-gathered source spans/memories).
         evidence = list(problem.required_evidence) + list(request.context.get("evidence", []) or [])
+        source_answer = str(answer or "")
+        mutation_receipt: dict[str, Any] = {}
         calibrated_answer, calibration = self._calibrate(answer, verdict, evidence, verifier_ok)
+        append_text_mutation(
+            mutation_receipt,
+            stage="reasoning_amplifier.calibration",
+            method="deterministic_epistemic_calibration",
+            reasons=["calibration_gate_rewrite"],
+            before=source_answer,
+            after=calibrated_answer,
+            deterministic=True,
+        )
 
         # PROOF mode refuses to answer unless something ACTUALLY survived
         # verification: a crashed verifier or a vacuous pass (nothing
@@ -664,10 +707,30 @@ class ReasoningAmplifierV2:
                 reason = "nothing in the answer was mechanically checkable"
             else:
                 reason = "; ".join(verifier_issues[:2]) or "no verifier-clean candidate"
+            pre_refusal_answer = calibrated_answer
             calibrated_answer = (
                 f"I can't assert an answer here: it did not survive verification ({reason})."
             )
+            append_text_mutation(
+                mutation_receipt,
+                stage="reasoning_amplifier.proof_refusal",
+                method="deterministic_unverified_claim_refusal",
+                reasons=["proof_candidate_not_verified"],
+                before=pre_refusal_answer,
+                after=calibrated_answer,
+                deterministic=True,
+            )
             fallbacks.append("proof_refused_unverified")
+
+        text_mutations = list(mutation_receipt.get("text_mutations") or [])
+        if text_mutations:
+            winning_generation_metadata = {
+                **winning_generation_metadata,
+                "model_native_output": False,
+                "post_generation_repair_applied": True,
+                "deterministic_repair_applied": True,
+                "reasoning_text_mutations": text_mutations,
+            }
 
         confidence = round(min(calibration.confidence, 0.98 if verifier_ok else 0.55), 4)
 
@@ -736,7 +799,7 @@ class ReasoningAmplifierV2:
             num_candidates=n_cand,
             verifiers_run=[v for v in verifiers_run if v],
             valid_candidates=1 if verifier_ok else 0,
-            winning_candidate_id=0,
+            winning_candidate_id=winning_candidate_id,
             confidence=confidence,
             agreement=agreement,
             epistemic_status=calibration.overall.value,
@@ -764,12 +827,21 @@ class ReasoningAmplifierV2:
             verified=verifier_ok and verifier_checked,
             calibrated=(calibration.downgraded > 0 or calibration.flagged_impossible > 0),
             receipt=receipt,
+            generation_metadata=winning_generation_metadata,
+            source_answer=source_answer,
+            text_mutations=text_mutations,
         )
 
     # ------------------------------------------------------------------ paths
     async def _shallow_path(self, problem, guard_text, sample_budget, deadline, mode, context, fallbacks):
         """FAST/NORMAL: sample N, verifier-filter, self-consistency."""
-        candidates = await self._generate_candidates(problem, guard_text, sample_budget, deadline)
+        candidates = await self._generate_candidates(
+            problem,
+            guard_text,
+            sample_budget,
+            deadline,
+            context=context,
+        )
         if not candidates:
             fallbacks.append("no_candidates")
             return "", 0.0, None, 0, "none"
@@ -781,7 +853,11 @@ class ReasoningAmplifierV2:
         from core.brain.reasoning_amplifier import amplify
 
         verdicts = await asyncio.gather(*[self._verify(c, problem, context) for c in candidates])
-        clean = [c for c, v in zip(candidates, verdicts) if getattr(v, "ok", True)]
+        clean = [
+            c
+            for c, v in zip(candidates, verdicts, strict=True)
+            if v is not None and bool(getattr(v, "ok", False))
+        ]
         # Harvest the NEGATIVE signal the SFT-only path discards: verified-correct vs
         # verified-wrong candidates for the SAME problem become sound DPO preference pairs
         # (RLVR data, the verifier is the reward). Best-effort; never affects this turn's answer.
@@ -800,7 +876,7 @@ class ReasoningAmplifierV2:
                         checked=bool(getattr(v, "checked", False)),
                         confidence=float(getattr(v, "score", 0.0) or 0.0),
                     )
-                    for c, v in zip(candidates, verdicts)
+                    for c, v in zip(candidates, verdicts, strict=True)
                 ],
                 domain=problem.task_type,
             )
@@ -861,21 +937,49 @@ class ReasoningAmplifierV2:
         return answer, agreement, verdict, len(getattr(verdict_court, "candidates", []) or [1]), "courtroom"
 
     # ----------------------------------------------------------- primitives
-    async def _generate_candidates(self, problem: ProblemRepresentation, guard_text: str, n: int, deadline: float) -> list[str]:
+    async def _generate_candidates(
+        self,
+        problem: ProblemRepresentation,
+        guard_text: str,
+        n: int,
+        deadline: float,
+        *,
+        context: dict[str, Any] | None = None,
+    ) -> list[str]:
         sys_block = self._build_prompt(problem, guard_text)
+        context = dict(context or {})
 
         # Batched lane first: N candidates in ONE decoding pass when the live
         # MLX client supports it. Falls back to serial sampling on any miss.
-        if n >= 2:
+        if n >= 2 and not bool(context.get("disable_batched_candidates", False)):
             try:
                 from core.brain.llm.batch_candidates import generate_candidates_batched
 
                 remaining = max(10.0, deadline - time.monotonic())
+                try:
+                    batch_max_tokens = max(
+                        1,
+                        int(context.get("generation_max_tokens") or 512),
+                    )
+                except (TypeError, ValueError, OverflowError):
+                    batch_max_tokens = 512
                 batched = await generate_candidates_batched(
-                    sys_block, n, timeout_s=remaining
+                    sys_block,
+                    n,
+                    max_tokens=batch_max_tokens,
+                    timeout_s=remaining,
                 )
                 if batched:
-                    return batched
+                    return [
+                        attributed_text(
+                            candidate,
+                            {
+                                **generation_metadata_of(candidate),
+                                "reasoning_candidate_index": index,
+                            },
+                        )
+                        for index, candidate in enumerate(batched)
+                    ]
             except (ImportError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("amplifier_v2_batch_lane", exc, severity="debug")
 
@@ -883,7 +987,14 @@ class ReasoningAmplifierV2:
             if time.monotonic() >= deadline:
                 return ""
             try:
-                return str(await self._generate(sys_block, _TEMPS[i % len(_TEMPS)]) or "").strip()
+                generated = await self._generate(sys_block, _TEMPS[i % len(_TEMPS)])
+                return attributed_text(
+                    str(generated or "").strip(),
+                    {
+                        **generation_metadata_of(generated),
+                        "reasoning_candidate_index": i,
+                    },
+                )
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("amplifier_v2_generate", exc)
                 return ""
@@ -925,16 +1036,24 @@ class ReasoningAmplifierV2:
             return ""
         sandbox = self._ensure_sandbox()
 
+        repair_generation_metadata: dict[str, Any] = {}
+
         async def repair(code: str, traceback: str) -> str:
+            nonlocal repair_generation_metadata
             prompt = (
                 f"This script failed. Fix it and return only corrected Python.\n\n"
                 f"Script:\n{code}\n\nError:\n{traceback}"
             )
-            return str(await self._generate(prompt, 0.2) or "")
+            generated = await self._generate(prompt, 0.2)
+            repair_generation_metadata = generation_metadata_of(generated)
+            return str(generated or "")
 
         result = await sandbox.run_with_self_correction(blocks[0], repair, max_rounds=2)
         if result.ok and result.final_code and result.final_code != blocks[0]:
-            return answer.replace(blocks[0], result.final_code)
+            return attributed_text(
+                answer.replace(blocks[0], result.final_code),
+                repair_generation_metadata or generation_metadata_of(answer),
+            )
         return ""
 
     def _calibrate(self, answer: str, verdict: Any, evidence: list[str], verifier_ok: bool):

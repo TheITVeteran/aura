@@ -736,6 +736,288 @@ def test_exact_reply_turn_uses_deterministic_floor():
     assert not assessment.retryable
 
 
+def test_output_contract_caps_exact_sentence_and_large_word_requests():
+    from core.conversation.response_reliability import requested_output_contract
+
+    sentence = requested_output_contract(
+        "Latency sample 3: answer in one short sentence that includes the sample number."
+    )
+    unrestricted_sentence = requested_output_contract(
+        "Answer in one sentence and include every relevant constraint."
+    )
+    words = requested_output_contract("Answer in 50 words.")
+    exact = requested_output_contract("Please answer exactly: live parity holds")
+    non_ascii_exact = requested_output_contract(
+        "Reply exactly: 你好世界今天一切都好"
+    )
+
+    assert sentence.kind == "sentence_count"
+    assert sentence.semantic_token_cap == 32
+    assert sentence.hard_token_ceiling == 48
+    assert unrestricted_sentence.explicit_brevity is False
+    assert unrestricted_sentence.hard_token_ceiling == 96
+    assert words.word_min == words.word_max == 50
+    assert words.hard_token_ceiling == 166
+    assert exact.kind == "exact_reply"
+    assert exact.hard_token_ceiling >= len("live parity holds".encode("utf-8")) + 16
+    assert non_ascii_exact.hard_token_ceiling >= len(
+        "你好世界今天一切都好".encode("utf-8")
+    ) + 16
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        'Explain why the log says "answer in one sentence" and what it means.',
+        'Explain why the log says "answer exactly: live parity holds" and what it means.',
+        "Explain why the log says 'answer in one sentence' and what it means.",
+        "Explain why the log says 'answer exactly: live parity holds' and what it means.",
+        "Do not answer in one sentence; explain the tradeoff fully.",
+        "Stay with the thread and answer in a real conversational paragraph.",
+    ],
+)
+def test_output_contract_ignores_quoted_negated_and_unbounded_language(prompt):
+    from core.conversation.response_reliability import requested_output_contract
+
+    contract = requested_output_contract(prompt)
+
+    assert contract.kind == "none"
+    assert contract.hard_token_ceiling is None
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "I'm not asking you to answer in one sentence; explain the full tradeoff.",
+        "Explain why the note says ‘answer in one sentence’ and whether it is correct.",
+    ],
+)
+def test_output_contract_ignores_indirect_negation_and_curly_quoted_examples(prompt):
+    from core.conversation.response_reliability import requested_output_contract
+
+    contract = requested_output_contract(prompt)
+
+    assert contract.kind == "none"
+    assert contract.hard_token_ceiling is None
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "No need to answer in one sentence; explain fully.",
+        "Without answering in one sentence, explain the tradeoff.",
+        "Not limited to one sentence, include the relevant detail.",
+        "You do not have to reply in five words; be complete.",
+    ],
+)
+def test_output_contract_ignores_scoped_negative_constraints(prompt):
+    from core.conversation.response_reliability import requested_output_contract
+
+    contract = requested_output_contract(prompt)
+
+    assert contract.kind == "none"
+    assert contract.hard_token_ceiling is None
+
+
+def test_output_contract_uses_last_actionable_length_instruction():
+    from core.conversation.response_reliability import requested_output_contract
+
+    sentence_contract = requested_output_contract(
+        "Do not answer in one sentence. Instead, answer in two short sentences."
+    )
+    word_contract = requested_output_contract(
+        "Do not answer in five words. Instead, answer in twelve words."
+    )
+
+    assert sentence_contract.sentence_count == 2
+    assert sentence_contract.hard_token_ceiling == 96
+    assert word_contract.word_min == word_contract.word_max == 12
+
+
+def test_output_contract_uses_later_actionable_brevity_after_negation():
+    from core.conversation.response_reliability import requested_output_contract
+
+    contract = requested_output_contract(
+        "Do not be brief about the diagnosis. Instead, keep this short."
+    )
+
+    assert contract.kind == "brevity"
+    assert contract.hard_token_ceiling == 112
+
+
+def test_negation_scope_ends_before_later_constraint_clause():
+    from core.conversation.response_reliability import requested_output_contract
+
+    contract = requested_output_contract(
+        "Explain what fails without retries, then answer in one sentence."
+    )
+
+    assert contract.sentence_count == 1
+    assert contract.hard_token_ceiling == 96
+
+
+@pytest.mark.parametrize(
+    ("prompt", "kind"),
+    [
+        ("Explain without jargon and reply exactly: yes", "exact_reply"),
+        ("Explain what fails without retries and answer in one sentence", "sentence_count"),
+    ],
+)
+def test_negation_scope_ends_at_new_command_predicate(prompt, kind):
+    from core.conversation.response_reliability import requested_output_contract
+
+    assert requested_output_contract(prompt).kind == kind
+
+
+def test_exact_reply_mismatch_is_hard_failure_and_repairs_without_model_retry():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        repair_instruction_shape,
+    )
+
+    prompt = "Please answer exactly: yes"
+    mismatch = assess_user_facing_reply(
+        prompt,
+        "No, I disagree with that requested token.",
+    )
+    match = assess_user_facing_reply(prompt, "yes")
+
+    assert mismatch.ok is False
+    assert mismatch.hard_failure is True
+    assert mismatch.retryable is True
+    assert "missing_requested_exact_reply" in mismatch.reasons
+    assert repair_instruction_shape(prompt, "No, I disagree.") == "yes"
+    assert match.ok is True
+
+
+def test_exact_reply_uses_last_actionable_command_and_preserves_quoted_bytes():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        repair_instruction_shape,
+        requested_exact_reply_target,
+    )
+
+    assert requested_exact_reply_target(
+        "Do not reply exactly: no. Reply exactly: yes"
+    ) == "yes"
+    assert requested_exact_reply_target(
+        "The old instruction was reply exactly: no. Now reply exactly: yes"
+    ) == "yes"
+    quoted = 'Reply exactly: "Yes."'
+    assert requested_exact_reply_target(quoted) == "Yes."
+    assert repair_instruction_shape(quoted, "yes") == "Yes."
+    assert assess_user_facing_reply(quoted, "Yes.").ok is True
+    assert assess_user_facing_reply(quoted, "Yes").retryable is True
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        'Reply exactly: "yes" if the check passed; otherwise "no".',
+        'Reply exactly: "yes" or "no".',
+        "Reply exactly yes if it is ready, otherwise no.",
+    ],
+)
+def test_exact_reply_contract_does_not_collapse_conditional_or_disjunctive_branches(
+    prompt,
+):
+    from core.conversation.response_reliability import (
+        repair_instruction_shape,
+        requested_exact_reply_target,
+        requested_output_contract,
+    )
+
+    assert requested_exact_reply_target(prompt) == ""
+    assert requested_output_contract(prompt).kind == "none"
+    assert repair_instruction_shape(prompt, "no") == "no"
+
+
+def test_sentence_count_repair_pads_short_reply_without_inventing_domain_facts():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        repair_instruction_shape,
+    )
+
+    prompt = "Answer in two sentences."
+    repaired = repair_instruction_shape(prompt, "Okay.")
+
+    assert repaired == "Okay. That is the direct answer."
+    assert assess_user_facing_reply(prompt, repaired).ok is True
+
+
+def test_exact_reply_parser_ignores_commands_inside_escaped_quoted_target():
+    from core.conversation.response_reliability import requested_exact_reply_target
+
+    assert (
+        requested_exact_reply_target('Reply exactly: "say exactly: hi"')
+        == "say exactly: hi"
+    )
+    assert (
+        requested_exact_reply_target(r'Reply exactly: "He said \"yes\"."')
+        == 'He said "yes".'
+    )
+    assert requested_exact_reply_target("Reply exactly: 'don't panic'") == "don't panic"
+
+
+@pytest.mark.parametrize(
+    ("prompt", "target"),
+    [
+        ("Reply exactly as follows: yes", "yes"),
+        ("Please reply exactly with: don't panic", "don't panic"),
+        ('Reply exactly as follows: "Yes."', "Yes."),
+        ('Reply exactly with "Yes."', "Yes."),
+        ("Reply exactly this: yes", "yes"),
+        ("Reply exactly: yes and nothing else", "yes"),
+        ("Reply exactly: yes, with no additional text", "yes"),
+        ('Reply exactly: "yes" and nothing else', "yes"),
+        ('Reply exactly: "yes", with no additional text', "yes"),
+    ],
+)
+def test_exact_reply_parser_excludes_introducers_and_unquoted_meta_suffixes(
+    prompt,
+    target,
+):
+    from core.conversation.response_reliability import requested_exact_reply_target
+
+    assert requested_exact_reply_target(prompt) == target
+
+
+def test_exact_reply_comparison_preserves_case():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    prompt = "Reply exactly: ABC"
+
+    assert assess_user_facing_reply(prompt, "ABC").ok is True
+    assert assess_user_facing_reply(prompt, "abc").retryable is True
+
+
+def test_exact_reply_byte_ceiling_covers_adversarial_ascii_and_unicode():
+    from core.conversation.response_reliability import (
+        requested_exact_reply_target,
+        requested_output_contract,
+    )
+
+    targets = (
+        "Aa0!" * 20,
+        "emoji🙂漢字" * 12,
+    )
+    for target in targets:
+        prompt = f'Reply exactly: "{target}"'
+        parsed = requested_exact_reply_target(prompt)
+        contract = requested_output_contract(prompt)
+        assert parsed == target
+        assert contract.exact_reply_utf8_bytes == len(target.encode("utf-8"))
+        assert contract.hard_token_ceiling >= len(target.encode("utf-8")) + 16
+
+
+def test_quoted_exact_reply_example_does_not_hijack_deterministic_floor():
+    from core.synthesis import deterministic_user_facing_floor
+
+    prompt = 'Explain why the log says "answer exactly: live parity holds" and what it means.'
+
+    assert deterministic_user_facing_floor(prompt) != "live parity holds"
+
+
 def test_short_exact_reply_leak_is_rejected_for_substantive_prompt():
     from core.conversation.response_reliability import assess_user_facing_reply
 

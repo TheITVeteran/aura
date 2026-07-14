@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from core.brain.llm_health_router import HealthAwareLLMRouter
@@ -75,6 +77,12 @@ class ReceiptThinkClient:
             "surface_quality_gate_reasons": [],
             "applied": True,
         }
+
+
+class TaskLocalReceiptClient:
+    async def think(self, prompt, **kwargs):
+        await asyncio.sleep(0.03 if prompt == "slow" else 0.005)
+        return f"reply:{prompt}"
 
 
 @pytest.fixture
@@ -245,6 +253,72 @@ async def test_router_surfaces_inference_gate_surface_control_receipt_from_think
 
 
 @pytest.mark.asyncio
+async def test_router_generation_metadata_is_task_local_for_concurrent_think_calls():
+    router = HealthAwareLLMRouter()
+    router.register(
+        name="Cortex",
+        url="internal",
+        model="cortex-32b",
+        is_local=True,
+        tier="local",
+        client=TaskLocalReceiptClient(),
+    )
+    both_finished = asyncio.Event()
+    finished = 0
+
+    async def invoke(prompt: str):
+        nonlocal finished
+        text = await router.think(
+            prompt,
+            prefer_tier="primary",
+            origin="user",
+            foreground_request=True,
+            skip_runtime_payload=True,
+        )
+        finished += 1
+        if finished == 2:
+            both_finished.set()
+        await both_finished.wait()
+        return text, router.get_last_generation_metadata()
+
+    slow, fast = await asyncio.gather(invoke("slow"), invoke("fast"))
+
+    assert slow[0] == "reply:slow"
+    assert slow[1]["text"] == "reply:slow"
+    assert fast[0] == "reply:fast"
+    assert fast[1]["text"] == "reply:fast"
+
+
+@pytest.mark.asyncio
+async def test_compatibility_reflex_endpoint_is_local_and_excluded_from_cloud_only():
+    from types import SimpleNamespace
+
+    reflex = EndpointClient("deterministic local reflex")
+    router = HealthAwareLLMRouter()
+    router.register_endpoint(
+        SimpleNamespace(
+            name="Reflex-Model",
+            tier="emergency",
+            model_name="reflex-v1",
+            client=reflex,
+        )
+    )
+
+    assert router.endpoints["Reflex-Model"].is_local is True
+    result = await router.generate_with_metadata(
+        "cloud recovery",
+        prefer_tier="emergency",
+        cloud_only=True,
+        foreground_request=True,
+        skip_runtime_payload=True,
+    )
+
+    assert result["ok"] is False
+    assert result["endpoint"] == "all_failed"
+    assert reflex.calls == []
+
+
+@pytest.mark.asyncio
 async def test_foreground_primary_skips_brainstem_and_uses_cloud_fallback(router_clients):
     router, clients = router_clients
     clients["cortex"].failure = RuntimeError("32B failed")
@@ -363,3 +437,24 @@ async def test_router_preserves_clean_surface_contract_for_context_generate_clie
     assert context["clean_user_surface_contract"] is True
     assert context["clean_user_surface_recurrent_loops"] == 1
     assert context["clean_user_surface_steering_alpha"] == 0.25
+
+
+@pytest.mark.asyncio
+async def test_health_router_fresh_task_never_borrows_global_metadata():
+    router = HealthAwareLLMRouter()
+    published = asyncio.Event()
+
+    async def _writer() -> None:
+        router._publish_generation_metadata({"endpoint": "writer-request"})
+        published.set()
+
+    async def _reader() -> dict:
+        await published.wait()
+        return router.get_last_generation_metadata()
+
+    _, reader_metadata = await asyncio.gather(_writer(), _reader())
+
+    assert reader_metadata == {}
+    assert router.get_diagnostic_last_generation_metadata() == {
+        "endpoint": "writer-request"
+    }

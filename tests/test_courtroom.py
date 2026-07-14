@@ -38,6 +38,7 @@ async def test_courtroom_runs_full_pipeline():
     assert verdict.verifier_ok
     assert verdict.confidence > 0.6
     assert len(verdict.candidates) == 2
+    assert verdict.winning_role == "simplifier"
 
 
 @pytest.mark.asyncio
@@ -68,3 +69,37 @@ async def test_courtroom_handles_empty_solver():
     verdict = await court.deliberate("anything")
     assert verdict.answer == ""
     assert verdict.confidence == 0.0
+
+
+@pytest.mark.asyncio
+async def test_courtroom_reports_judge_when_simplifier_is_empty():
+    async def gen(prompt: str, temperature: float) -> str:
+        if "Simplifier" in prompt:
+            return ""
+        if "Judge" in prompt:
+            return "Verdict: judge-authored"
+        if "Solver" in prompt:
+            return "Answer: solver-authored"
+        return "review"
+
+    verdict = await Courtroom(gen).deliberate("choose", n_candidates=1)
+
+    assert verdict.answer == "judge-authored"
+    assert verdict.winning_role == "judge"
+    assert verdict.verifier_ok is False
+    assert "verifier_unavailable" in verdict.verifier_issues
+
+
+@pytest.mark.asyncio
+async def test_courtroom_reports_solver_when_judge_and_simplifier_are_empty():
+    async def gen(prompt: str, temperature: float) -> str:
+        if "Judge" in prompt or "Simplifier" in prompt:
+            return ""
+        if "Solver" in prompt:
+            return "Answer: solver-authored"
+        return "review"
+
+    verdict = await Courtroom(gen).deliberate("choose", n_candidates=1)
+
+    assert verdict.answer == "solver-authored"
+    assert verdict.winning_role == "solver"

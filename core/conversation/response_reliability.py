@@ -1196,8 +1196,31 @@ _TOOL_READINESS_BOUNDARY_RE = re.compile(
     r")\b",
     re.IGNORECASE | re.DOTALL,
 )
-_EXACT_REPLY_RE = re.compile(
-    r"(?:say|reply|respond|answer|return|print)\s+exactly\s*:?\s*[\"'“”‘’]*(?P<target>.+?)\s*[\"'“”‘’]*\s*$",
+_EXACT_REPLY_COMMAND_RE = re.compile(
+    r"\b(?:say|reply|respond|answer|return|print)\s+exactly\s*:?\s*",
+    re.IGNORECASE,
+)
+_EXACT_REPLY_QUOTE_PAIRS = {
+    '"': '"',
+    "'": "'",
+    "“": "”",
+    "‘": "’",
+}
+_EXACT_REPLY_INTRODUCER_RE = re.compile(
+    r"^(?:"
+    r"as\s+follows\s*:"
+    r"|(?:with|this)\s*:"
+    r"|(?:with\s+)?(?:the\s+)?(?:following|word|words|phrase|text)\s*:"
+    r"|with\s+(?=[\"'“‘])"
+    r")\s*",
+    re.IGNORECASE,
+)
+_EXACT_REPLY_UNQUOTED_SUFFIX_RE = re.compile(
+    r"(?:"
+    r",?\s+and\s+nothing\s+(?:else|more)"
+    r"|,?\s+nothing\s+(?:else|more)"
+    r"|,?\s+with\s+no\s+(?:additional|extra)\s+(?:text|words|commentary)"
+    r")\s*$",
     re.IGNORECASE,
 )
 _ANSWER_TAG_RE = re.compile(r"<answer>\s*(?P<answer>.*?)\s*</answer>", re.IGNORECASE | re.DOTALL)
@@ -1246,8 +1269,22 @@ _NUMBER_WORDS = {
     "eight": 8,
     "nine": 9,
     "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
 }
-_COUNT_TOKEN_RE = r"(?P<count>\d+|one|two|three|four|five|six|seven|eight|nine|ten)"
+_COUNT_WORD_PATTERN = (
+    r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|"
+    r"thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty"
+)
+_COUNT_TOKEN_RE = rf"(?P<count>\d+|{_COUNT_WORD_PATTERN})"
 _PARAGRAPH_REQUEST_RE = re.compile(
     rf"\b{_COUNT_TOKEN_RE}\s+(?:concise\s+|short\s+|brief\s+|clear\s+)?paragraphs?\b",
     re.IGNORECASE,
@@ -1276,13 +1313,13 @@ _CHOICE_CLARIFICATION_RE = re.compile(
 _ACTION_WORD_COUNT_REQUEST_RE = re.compile(
     rf"\b(?:answer|respond|reply|say|output)\s+(?:directly\s+)?"
     rf"(?:(?:in|with|using|exactly|only)\s+)?{_COUNT_TOKEN_RE}"
-    rf"(?:\s+or\s+(?P<count_max>\d+|one|two|three|four|five|six|seven|eight|nine|ten))?"
+    rf"(?:\s+or\s+(?P<count_max>\d+|{_COUNT_WORD_PATTERN}))?"
     r"\s+words?\b",
     re.IGNORECASE,
 )
 _LIMIT_WORD_COUNT_REQUEST_RE = re.compile(
     rf"\b(?:in|with|using|exactly|only)\s+{_COUNT_TOKEN_RE}"
-    rf"(?:\s+or\s+(?P<count_max>\d+|one|two|three|four|five|six|seven|eight|nine|ten))?"
+    rf"(?:\s+or\s+(?P<count_max>\d+|{_COUNT_WORD_PATTERN}))?"
     r"\s+words?\b",
     re.IGNORECASE,
 )
@@ -1361,6 +1398,11 @@ _QUESTION_BACK_NON_ANSWER_RE = re.compile(
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _JAMMED_NUMBERED_MARKER_RE = re.compile(r"(?<=[.!?])(?=\d+[.)]\s*)")
 _LIST_LINE_RE = re.compile(r"^\s*(?P<marker>(?:[-*+]|\d+[.)]))\s*(?P<body>.*)$")
+_EXACT_REPLY_CONDITIONAL_TAIL_RE = re.compile(
+    r"(?:^|[,;]\s*|\s+)"
+    r"(?:if|when|unless|otherwise|else|or(?:\s+(?:reply|respond|say|use))?)\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -1372,6 +1414,42 @@ class ConversationReplyAssessment:
 
     def has(self, reason: str) -> bool:
         return reason in self.reasons
+
+
+@dataclass(frozen=True)
+class RequestedOutputContract:
+    """Typed, user-authored output-size constraints for one visible reply."""
+
+    kind: str = "none"
+    word_min: int | None = None
+    word_max: int | None = None
+    sentence_count: int | None = None
+    explicit_brevity: bool = False
+    exact_reply: bool = False
+    exact_reply_chars: int | None = None
+    exact_reply_utf8_bytes: int | None = None
+    semantic_token_cap: int | None = None
+    hard_token_ceiling: int | None = None
+    confidence: float = 0.0
+
+    @property
+    def constrained(self) -> bool:
+        return self.hard_token_ceiling is not None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "word_min": self.word_min,
+            "word_max": self.word_max,
+            "sentence_count": self.sentence_count,
+            "explicit_brevity": self.explicit_brevity,
+            "exact_reply": self.exact_reply,
+            "exact_reply_chars": self.exact_reply_chars,
+            "exact_reply_utf8_bytes": self.exact_reply_utf8_bytes,
+            "semantic_token_cap": self.semantic_token_cap,
+            "hard_token_ceiling": self.hard_token_ceiling,
+            "confidence": self.confidence,
+        }
 
 
 def _normalize(text: Any) -> str:
@@ -1443,6 +1521,123 @@ def _count_token_to_int(value: str | None) -> int | None:
     return count
 
 
+def _word_count_token_to_int(value: str | None) -> int | None:
+    """Parse explicit word limits without imposing list-count's 20-item cap."""
+
+    token = str(value or "").strip().lower()
+    if not token:
+        return None
+    if token.isdigit():
+        count = int(token)
+    else:
+        count = _NUMBER_WORDS.get(token)
+    if count is None or count < 1 or count > 4096:
+        return None
+    return count
+
+
+def _is_escaped_character(text: str, index: int) -> bool:
+    backslashes = 0
+    cursor = index - 1
+    while cursor >= 0 and text[cursor] == "\\":
+        backslashes += 1
+        cursor -= 1
+    return bool(backslashes % 2)
+
+
+def _text_index_is_unquoted(text: str, index: int) -> bool:
+    """Return whether ``index`` is outside quoted and code-literal spans."""
+
+    quote_close = ""
+    fenced_code = False
+    inline_code = False
+    cursor = 0
+    limit = max(0, min(len(text), int(index)))
+    while cursor < limit:
+        if not quote_close and not inline_code and text.startswith("```", cursor):
+            fenced_code = not fenced_code
+            cursor += 3
+            continue
+        if fenced_code:
+            cursor += 1
+            continue
+
+        char = text[cursor]
+        if not quote_close and char == "`" and not _is_escaped_character(text, cursor):
+            inline_code = not inline_code
+            cursor += 1
+            continue
+        if inline_code:
+            cursor += 1
+            continue
+
+        if quote_close:
+            if char == quote_close and not _is_escaped_character(text, cursor):
+                quote_close = ""
+            cursor += 1
+            continue
+
+        if char in _EXACT_REPLY_QUOTE_PAIRS and not _is_escaped_character(text, cursor):
+            is_apostrophe = (
+                char == "'"
+                and cursor > 0
+                and cursor + 1 < len(text)
+                and text[cursor - 1].isalnum()
+                and text[cursor + 1].isalnum()
+            )
+            if not is_apostrophe:
+                quote_close = _EXACT_REPLY_QUOTE_PAIRS[char]
+        cursor += 1
+    return not (quote_close or fenced_code or inline_code)
+
+
+def _constraint_match_is_actionable(text: str, match: re.Match[str]) -> bool:
+    """Reject quoted, code-sample, and explicitly negated length language."""
+
+    before = text[: match.start()]
+    if not _text_index_is_unquoted(text, match.start()):
+        return False
+    prefix = (
+        before[-192:]
+        .lower()
+        .replace("‘", "'")
+        .replace("’", "'")
+    )
+    # Negation applies to its grammatical clause, not an unrelated command
+    # after punctuation or a coordinating transition.
+    prefix = re.split(r"[.!?;,\n]", prefix)[-1]
+    prefix = re.split(
+        r"\b(?:then|but|however|instead|otherwise|next|now)\b",
+        prefix,
+    )[-1]
+    prefix = re.split(
+        r"\b(?:and|or)\s+(?=(?:then\s+)?(?:answer|reply|respond|say|output|return|print)\b)",
+        prefix,
+    )[-1]
+    # Some command regexes include the command verb in the match itself. In
+    # that case the prefix ends at the coordinator, so the lookahead above
+    # cannot see the fresh predicate even though it starts at ``match``.
+    if re.search(r"\b(?:and|or)\s*$", prefix) and re.match(
+        r"\s*(?:answer|reply|respond|say|output|return|print)\b",
+        match.group(0),
+        re.IGNORECASE,
+    ):
+        prefix = ""
+    return not bool(
+        re.search(
+            r"\b(?:do\s+not|don't|never|ignore|disregard|avoid|rather\s+than|instead\s+of|"
+            r"no\s+need\s+to|without|not\s+(?:limited|restricted|confined)\s+to|"
+            r"(?:do(?:es)?\s+not|don't|doesn't)\s+have\s+to|"
+            r"(?:old|previous|example|sample)\s+(?:instruction|prompt|command|text)\s+"
+            r"(?:was|said|says|contained)|"
+            r"(?:(?:i(?:'m|\s+am)|we(?:'re|\s+are)|you(?:'re|\s+are)|"
+            r"they(?:'re|\s+are))\s+)?not\s+asking(?:\s+you)?\s+to)\b"
+            r"[^.!?;\n]{0,72}$",
+            prefix,
+        )
+    )
+
+
 def _requested_count(pattern: re.Pattern[str], user_message: Any) -> int | None:
     match = pattern.search(str(user_message or ""))
     if not match:
@@ -1452,35 +1647,226 @@ def _requested_count(pattern: re.Pattern[str], user_message: Any) -> int | None:
 
 def _requested_word_count_range(user_message: Any) -> tuple[int, int] | None:
     text = str(user_message or "")
+    candidates: list[tuple[int, int, int, int]] = []
     for pattern in (_ACTION_WORD_COUNT_REQUEST_RE, _LIMIT_WORD_COUNT_REQUEST_RE):
-        match = pattern.search(text)
-        if not match:
-            continue
-        minimum = _count_token_to_int(match.groupdict().get("count"))
-        maximum = _count_token_to_int(match.groupdict().get("count_max"))
-        if minimum is None:
-            continue
-        if maximum is None:
-            maximum = minimum
-        return min(minimum, maximum), max(minimum, maximum)
-    return None
+        for match in pattern.finditer(text):
+            if not _constraint_match_is_actionable(text, match):
+                continue
+            minimum = _word_count_token_to_int(match.groupdict().get("count"))
+            maximum = _word_count_token_to_int(match.groupdict().get("count_max"))
+            if minimum is None:
+                continue
+            if maximum is None:
+                maximum = minimum
+            candidates.append(
+                (match.start(), match.end(), min(minimum, maximum), max(minimum, maximum))
+            )
+    if not candidates:
+        return None
+    _start, _end, minimum, maximum = max(candidates, key=lambda item: (item[0], item[1]))
+    return minimum, maximum
 
 
 def _requested_sentence_count(user_message: Any) -> int | None:
+    text = str(user_message or "")
+    candidates: list[tuple[int, int, int]] = []
     for pattern in (
         _ACTION_SENTENCE_COUNT_REQUEST_RE,
         _LIMIT_SENTENCE_COUNT_REQUEST_RE,
     ):
-        requested = _requested_count(pattern, user_message)
-        if requested is not None:
-            return requested
-    return None
+        for match in pattern.finditer(text):
+            if not _constraint_match_is_actionable(text, match):
+                continue
+            requested = _count_token_to_int(match.groupdict().get("count"))
+            if requested is not None:
+                candidates.append((match.start(), match.end(), requested))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
 def requested_sentence_count(user_message: Any) -> int | None:
     """Return the exact sentence-count contract explicitly requested by the user."""
 
     return _requested_sentence_count(user_message)
+
+
+def requested_exact_reply_target(user_message: Any) -> str:
+    """Return the last actionable exact-reply target.
+
+    Surrounding transport whitespace is not part of the contract. Target case
+    and punctuation are preserved for both quoted and unquoted commands.
+    """
+
+    raw = str(user_message or "").strip()
+    if not raw:
+        return ""
+    commands = [
+        match
+        for match in _EXACT_REPLY_COMMAND_RE.finditer(raw)
+        if _text_index_is_unquoted(raw, match.start())
+    ]
+    candidates: list[tuple[int, str]] = []
+    for index, match in enumerate(commands):
+        if not _constraint_match_is_actionable(raw, match):
+            continue
+        end = commands[index + 1].start() if index + 1 < len(commands) else len(raw)
+        remainder = raw[match.end() : end].lstrip()
+        remainder = _EXACT_REPLY_INTRODUCER_RE.sub("", remainder, count=1).lstrip()
+        if not remainder:
+            continue
+        quote = remainder[0]
+        if quote in _EXACT_REPLY_QUOTE_PAIRS:
+            closing = _EXACT_REPLY_QUOTE_PAIRS[quote]
+            target_chars: list[str] = []
+            close_index = -1
+            cursor = 1
+            while cursor < len(remainder):
+                char = remainder[cursor]
+                apostrophe = bool(
+                    quote == "'"
+                    and char == "'"
+                    and cursor > 0
+                    and cursor + 1 < len(remainder)
+                    and remainder[cursor - 1].isalnum()
+                    and remainder[cursor + 1].isalnum()
+                )
+                if (
+                    char == closing
+                    and not apostrophe
+                    and not _is_escaped_character(remainder, cursor)
+                ):
+                    close_index = cursor
+                    break
+                if (
+                    char == "\\"
+                    and cursor + 1 < len(remainder)
+                    and remainder[cursor + 1] in {"\\", quote, closing}
+                ):
+                    target_chars.append(remainder[cursor + 1])
+                    cursor += 2
+                    continue
+                target_chars.append(char)
+                cursor += 1
+            if close_index <= 1:
+                continue
+            conditional_tail = _EXACT_REPLY_UNQUOTED_SUFFIX_RE.sub(
+                "",
+                remainder[close_index + 1 :],
+            ).strip()
+            if _EXACT_REPLY_CONDITIONAL_TAIL_RE.search(conditional_tail):
+                continue
+            target = "".join(target_chars).strip()
+        else:
+            target = remainder.strip()
+            target = _EXACT_REPLY_UNQUOTED_SUFFIX_RE.sub("", target).rstrip()
+            if _EXACT_REPLY_CONDITIONAL_TAIL_RE.search(target):
+                continue
+            target = re.split(
+                r"(?<=[.!?])\s+(?=(?:now|then|after|before|also|next|instead|please)\b)",
+                target,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )[0]
+            target = target.strip()
+        if target:
+            candidates.append((match.start(), target))
+    if not candidates:
+        return ""
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def _compact_output_style_requested(user_message: Any) -> bool:
+    text = _normalize(user_message)
+    if not text:
+        return False
+    pattern = re.compile(
+        r"\b(?:briefly|be brief|be concise|keep (?:it|this) (?:brief|concise|short)|"
+        r"(?:brief|concise|short|plain|direct) (?:answer|reply|response|sentence)|"
+        r"(?:brief|concise|short|plain|direct) sentences?|"
+        r"in (?:a|one) (?:brief|concise|short|plain|direct) sentence|"
+        r"answer directly|reply directly|respond directly|include nothing else|nothing else)\b"
+    )
+    return any(
+        _constraint_match_is_actionable(text, match)
+        for match in pattern.finditer(text)
+    )
+
+
+def requested_output_contract(user_message: Any) -> RequestedOutputContract:
+    """Return a conservative token ceiling derived from visible user intent.
+
+    The semantic cap is a planning target. The hard ceiling includes enough
+    tokenizer and punctuation headroom to satisfy the requested shape, while
+    remaining an absolute upper bound after affective and pressure modulation.
+    """
+
+    raw = str(user_message or "").strip()
+    if not raw:
+        return RequestedOutputContract()
+
+    exact_target = requested_exact_reply_target(raw)
+    if exact_target:
+        utf8_bytes = len(exact_target.encode("utf-8"))
+        estimated_tokens = (
+            max(1, (len(exact_target) + 2) // 3)
+            if exact_target.isascii()
+            else max(1, utf8_bytes)
+        )
+        semantic_cap = min(8192, max(8, estimated_tokens + 4))
+        # Byte-fallback tokenizers cannot require more content tokens than the
+        # UTF-8 byte count. Keep protocol/EOS headroom above that real bound;
+        # the selected worker tokenizer records and verifies the exact count.
+        hard_ceiling = max(16, utf8_bytes + 16)
+        return RequestedOutputContract(
+            kind="exact_reply",
+            explicit_brevity=True,
+            exact_reply=True,
+            exact_reply_chars=len(exact_target),
+            exact_reply_utf8_bytes=utf8_bytes,
+            semantic_token_cap=semantic_cap,
+            hard_token_ceiling=hard_ceiling,
+            confidence=1.0,
+        )
+
+    word_range = _requested_word_count_range(raw)
+    sentence_count = _requested_sentence_count(raw)
+    explicit_brevity = _explicit_brevity_requested(raw)
+    compact_style = word_range is not None or _compact_output_style_requested(raw)
+    if word_range is None and sentence_count is None and not explicit_brevity:
+        return RequestedOutputContract()
+
+    semantic_candidates: list[int] = []
+    hard_candidates: list[int] = []
+    kinds: list[str] = []
+    if word_range is not None:
+        _minimum_words, maximum_words = word_range
+        semantic_candidates.append(max(16, 8 + (2 * maximum_words)))
+        hard_candidates.append(max(32, 16 + (3 * maximum_words)))
+        kinds.append("word_count")
+    if sentence_count is not None:
+        semantic_per_sentence = 32 if compact_style else 64
+        hard_per_sentence = 48 if compact_style else 96
+        semantic_candidates.append(max(24, semantic_per_sentence * sentence_count))
+        hard_candidates.append(max(32, hard_per_sentence * sentence_count))
+        kinds.append("sentence_count")
+    if explicit_brevity and not semantic_candidates:
+        semantic_candidates.append(64)
+        hard_candidates.append(112)
+        kinds.append("brevity")
+
+    semantic_cap = min(8192, max(semantic_candidates))
+    hard_ceiling = min(8192, max(semantic_cap, max(hard_candidates)))
+    return RequestedOutputContract(
+        kind="+".join(kinds),
+        word_min=word_range[0] if word_range else None,
+        word_max=word_range[1] if word_range else None,
+        sentence_count=sentence_count,
+        explicit_brevity=compact_style,
+        semantic_token_cap=semantic_cap,
+        hard_token_ceiling=hard_ceiling,
+        confidence=0.98 if word_range is not None or sentence_count is not None else 0.9,
+    )
 
 
 def _requested_reference_values(user_message: Any) -> tuple[tuple[str, int], ...]:
@@ -1768,6 +2154,10 @@ def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[st
         return []
 
     reasons: list[str] = []
+    exact_target = requested_exact_reply_target(user)
+    if exact_target and not _matches_exact_reply_request(user, reply):
+        reasons.append("missing_requested_exact_reply")
+
     requested_word_range = _requested_word_count_range(user)
     if requested_word_range:
         minimum_words, maximum_words = requested_word_range
@@ -1961,6 +2351,35 @@ def _expand_sentence_candidates(sentences: list[str], count: int) -> list[str]:
     return expanded
 
 
+def _pad_sentence_candidates(sentences: list[str], count: int) -> list[str]:
+    """Finish a hard sentence-count contract without inventing domain facts."""
+
+    padded = list(sentences)
+    transparent_fillers = (
+        "That is the direct answer.",
+        "I am keeping it within the available context and requested scope.",
+        "No unsupported factual claim is being added.",
+        "The response remains bounded to what the completed generation established.",
+        "Any additional detail would require a fresh supported generation.",
+        "This sentence exists only to preserve the requested response structure.",
+    )
+    filler_index = 0
+    normalized = {_normalize(sentence) for sentence in padded}
+    while len(padded) < count:
+        if filler_index < len(transparent_fillers):
+            filler = transparent_fillers[filler_index]
+        else:
+            filler = (
+                f"Contract recovery sentence {filler_index + 1} adds no new factual claim."
+            )
+        filler_index += 1
+        if _normalize(filler) in normalized:
+            continue
+        padded.append(filler)
+        normalized.add(_normalize(filler))
+    return padded
+
+
 def _paragraphize_sentences(sentences: list[str], count: int) -> str:
     if count <= 1 or len(sentences) < count:
         return " ".join(sentences).strip()
@@ -2052,10 +2471,15 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
     """Deterministically repair explicit structure misses without another model call."""
     user = str(user_message or "")
     original = str(reply_text or "").strip()
-    if not user or not original:
+    if not user:
+        return original
+    exact_target = requested_exact_reply_target(user)
+    if exact_target and not _matches_exact_reply_request(user, original):
+        return exact_target
+    if not original:
         return original
     compact_acknowledgement = _compact_reference_acknowledgement(user)
-    if compact_acknowledgement:
+    if compact_acknowledgement and _BACKEND_SYMBOLIC_SURFACE_RE.search(original):
         return compact_acknowledgement
     normalized_original = normalize_user_facing_format(original)
     if not set(_instruction_coverage_reasons(user, original)):
@@ -2091,8 +2515,11 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
             _split_sentences(repaired),
             requested_sentences,
         )
-        if len(sentence_repaired) >= requested_sentences:
-            repaired = " ".join(sentence_repaired[:requested_sentences])
+        sentence_repaired = _pad_sentence_candidates(
+            sentence_repaired,
+            requested_sentences,
+        )
+        repaired = " ".join(sentence_repaired[:requested_sentences])
 
     requested_numbered = _requested_count(_NUMBERED_LIST_REQUEST_RE, user)
     requested_numbered_sentences = _requested_count(_NUMBERED_SENTENCE_REQUEST_RE, user)
@@ -2135,7 +2562,11 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
             repaired = "\n\n".join(parts)
         else:
             repaired = f"{repaired}\n\n{followup}"
-    return repaired.strip()
+    repaired = repaired.strip()
+    if _instruction_coverage_reasons(user, repaired):
+        if compact_acknowledgement:
+            return compact_acknowledgement
+    return repaired
 
 
 def repair_generic_assistant_language(user_message: Any, reply_text: Any) -> str:
@@ -2438,10 +2869,10 @@ def _explicit_brevity_requested(user_message: Any) -> bool:
         r"in (?:a|one) (?:brief|concise|short) sentence|answer directly|reply directly|"
         r"respond directly|include nothing else|nothing else)\b"
     )
-    return bool(
-        re.search(word_or_sentence_limit, text)
-        or re.search(action_word_limit, text)
-        or re.search(direct_brevity, text)
+    return any(
+        _constraint_match_is_actionable(text, match)
+        for pattern in (word_or_sentence_limit, action_word_limit, direct_brevity)
+        for match in re.finditer(pattern, text)
     )
 
 
@@ -2581,7 +3012,7 @@ def live_chat_diagnostic_floor(user_message: Any) -> str:
 
 
 def _has_exact_reply_request(user_message: Any) -> bool:
-    return bool(_EXACT_REPLY_RE.search(str(user_message or "").strip()))
+    return bool(requested_exact_reply_target(user_message))
 
 
 def _matches_exact_reply_request(user_message: Any, reply_text: Any) -> bool:
@@ -2589,12 +3020,10 @@ def _matches_exact_reply_request(user_message: Any, reply_text: Any) -> bool:
     raw_reply = str(reply_text or "").strip()
     if not raw_user or not raw_reply:
         return False
-    match = _EXACT_REPLY_RE.search(raw_user)
-    if not match:
+    target = requested_exact_reply_target(raw_user)
+    if not target:
         return False
-    target = match.group("target").strip(" .!?\t\r\n\"'“”‘’")
-    reply = raw_reply.strip(" .!?\t\r\n\"'“”‘’")
-    return bool(target and _normalize(target) == _normalize(reply))
+    return raw_reply == target
 
 
 def _matches_strict_answer_tag_request(user_message: Any, reply_text: Any) -> bool:
@@ -4237,6 +4666,7 @@ def assess_user_facing_reply(
         "unsupported_runtime_telemetry_inference",
         "unsupported_tool_readiness_claim",
         "missing_self_claim_evidence_boundary",
+        "missing_requested_exact_reply",
     }
     retryable_reasons = hard_reasons | {
         "low_signal_reliability_reply",
@@ -4259,6 +4689,7 @@ def assess_user_facing_reply(
         "missing_requested_choice_clarification",
         "missing_requested_word_count",
         "missing_requested_sentence_count",
+        "missing_requested_exact_reply",
         "missing_requested_reference_value",
         "missing_requested_followup_question",
         "missing_requested_phrase",

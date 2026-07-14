@@ -17,6 +17,7 @@ import threading as _threading
 import time
 import uuid
 from collections.abc import AsyncIterator
+from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -1102,6 +1103,20 @@ def _bounded_max_tokens(requested: Any, bridged: Any, fallback: int) -> int:
     return max(1, min(max(1, requested_int), max(1, bridged_int)))
 
 
+def _bounded_generation_max_tokens(
+    requested: Any,
+    bridged: Any,
+    hard_output_ceiling: Any,
+    fallback: int,
+) -> int:
+    """Apply latent-state shrinkage and the visible-output hard ceiling."""
+
+    bounded = _bounded_max_tokens(requested, bridged, fallback)
+    if hard_output_ceiling is None or hard_output_ceiling == "":
+        return bounded
+    return _bounded_max_tokens(bounded, hard_output_ceiling, fallback)
+
+
 def _apply_memory_pressure_generation_controls(
     options: dict[str, Any],
     snapshot: Any,
@@ -1154,9 +1169,45 @@ def _sanitize_surface_control_receipt(value: Any) -> dict[str, Any]:
         "surface_quality_gate_attempts",
         "surface_quality_gate_reasons",
         "surface_quality_gate_error",
+        "generation_max_tokens",
+        "generated_tokens",
+        "semantic_output_token_cap",
+        "hard_output_token_ceiling",
+        "instruction_shape_repair_applied",
+        "deterministic_repair_applied",
+        "text_mutation_count",
+        "exact_reply_token_count",
+        "exact_reply_token_headroom",
+        "exact_reply_token_ceiling_valid",
+        "exact_reply_native_capacity_sufficient",
         "applied",
     }
-    return {key: value[key] for key in allowed if key in value}
+    receipt = {key: value[key] for key in allowed if key in value}
+    contract = value.get("requested_output_contract")
+    if isinstance(contract, dict):
+        contract_allowed = {
+            "kind",
+            "word_min",
+            "word_max",
+            "sentence_count",
+            "explicit_brevity",
+            "exact_reply",
+            "exact_reply_chars",
+            "exact_reply_utf8_bytes",
+            "semantic_token_cap",
+            "hard_token_ceiling",
+            "confidence",
+        }
+        receipt["requested_output_contract"] = {
+            key: contract[key] for key in contract_allowed if key in contract
+        }
+    mutations = value.get("text_mutations")
+    if isinstance(mutations, list):
+        from core.brain.live_mind_contract import normalize_text_mutations
+
+        receipt["text_mutations"] = normalize_text_mutations(mutations)
+        receipt["text_mutation_count"] = len(receipt["text_mutations"])
+    return receipt
 
 
 def _coerce_timeout_seconds(value: Any) -> float | None:
@@ -1887,6 +1938,12 @@ class MLXLocalClient:
         self._foreground_generation_watchdog: _threading.Timer | None = None
         self._recurrent_depth_status: dict[str, Any] = {"active": False, "config": None}
         self._last_surface_control_receipt: dict[str, Any] = {}
+        self._surface_control_receipt_context: ContextVar[dict[str, Any] | None] = (
+            ContextVar(
+                f"aura_mlx_surface_receipt_{id(self)}",
+                default=None,
+            )
+        )
         self._last_interoception: dict[str, Any] = {}
         self._clock_sample_wall = time.time()
         self._clock_sample_monotonic = time.monotonic()
@@ -2129,13 +2186,40 @@ class MLXLocalClient:
         )
         return sleep_gap
 
+    def _surface_control_receipt_slot(self) -> ContextVar[dict[str, Any] | None]:
+        slot = getattr(self, "_surface_control_receipt_context", None)
+        if slot is None:
+            slot = ContextVar(
+                f"aura_mlx_surface_receipt_{id(self)}",
+                default=None,
+            )
+            self._surface_control_receipt_context = slot
+        return slot
+
+    def _set_task_surface_control_receipt(self, receipt: dict[str, Any]) -> None:
+        self._surface_control_receipt_slot().set(dict(receipt))
+
     def get_last_surface_control_receipt(self) -> dict[str, Any]:
-        return dict(self._last_surface_control_receipt)
+        task_receipt = self._surface_control_receipt_slot().get()
+        if task_receipt is not None:
+            return dict(task_receipt)
+        return {}
+
+    def get_diagnostic_last_surface_control_receipt(self) -> dict[str, Any]:
+        """Return process-wide last-call telemetry, never request proof."""
+
+        return dict(getattr(self, "_last_surface_control_receipt", {}) or {})
 
     def _record_surface_control_receipt_from_response(self, response: dict[str, Any]) -> None:
         receipt = _sanitize_surface_control_receipt(
             response.get("surface_control_receipt") if isinstance(response, dict) else None
         )
+        if isinstance(response, dict) and "tokens_used" in response:
+            try:
+                receipt["generated_tokens"] = max(0, int(response.get("tokens_used") or 0))
+            except (TypeError, ValueError, OverflowError):
+                pass
+        self._set_task_surface_control_receipt(receipt)
         if receipt:
             self._last_surface_control_receipt = receipt
 
@@ -3196,6 +3280,92 @@ class MLXLocalClient:
         self._req_q = None
         self._res_q = None
 
+    async def _generate_batch_response_async(
+        self,
+        prompt: str,
+        *,
+        n: int = 4,
+        max_tokens: int = 512,
+        temperature: float = 0.8,
+        timeout_s: float = 180.0,
+    ) -> dict[str, Any]:
+        """Return one task-local batched worker response without global state."""
+        if self._req_q is None or self._closed:
+            return {}
+        alive = await self._ensure_worker_alive(request_is_background=True)
+        if not alive:
+            return {}
+        try:
+            admitted_n = max(1, min(16, int(n)))
+        except (TypeError, ValueError, OverflowError):
+            admitted_n = 4
+        admitted_max_tokens = min(
+            2048,
+            _bounded_max_tokens(max_tokens, max_tokens, 512),
+        )
+        try:
+            admitted_temperature = float(temperature)
+        except (TypeError, ValueError, OverflowError):
+            admitted_temperature = 0.8
+        if admitted_temperature != admitted_temperature or not (
+            float("-inf") < admitted_temperature < float("inf")
+        ):
+            admitted_temperature = 0.8
+        admitted_temperature = max(0.0, min(2.0, admitted_temperature))
+        try:
+            admitted_timeout = max(10.0, float(timeout_s))
+        except (TypeError, ValueError, OverflowError):
+            admitted_timeout = 180.0
+        req_id = uuid.uuid4().hex
+        req = {
+            "id": req_id,
+            "action": "generate_batch",
+            "prompt": str(prompt or ""),
+            "n": admitted_n,
+            "max_tokens": admitted_max_tokens,
+            "temperature": admitted_temperature,
+        }
+        fut = _new_shared_future()
+        self._pending_generations[req_id] = fut
+        try:
+            await run_io_bound(self._req_q.put, req, True, 2.0)
+            res = await _await_shared_future(fut, timeout_s=admitted_timeout)
+        except (TimeoutError, BrokenPipeError, OSError) as exc:
+            self._pending_generations.pop(req_id, None)
+            _record_mlx_degradation(
+                exc,
+                action="returned empty batch after batched generation failed; caller falls back to serial",
+                severity="warning",
+            )
+            return {}
+        if not res or res.get("status") != "ok":
+            return {}
+        raw_texts = [str(t or "") for t in (res.get("texts") or [])]
+        raw_candidate_tokens = list(res.get("tokens_used_by_candidate") or [])
+        texts: list[str] = []
+        tokens_used_by_candidate: list[int] = []
+        for index, text in enumerate(raw_texts):
+            if not text.strip():
+                continue
+            texts.append(text)
+            try:
+                candidate_tokens = max(0, int(raw_candidate_tokens[index] or 0))
+            except (IndexError, TypeError, ValueError, OverflowError):
+                candidate_tokens = 0
+            tokens_used_by_candidate.append(candidate_tokens)
+        try:
+            tokens_used = max(0, int(res.get("tokens_used") or 0))
+        except (TypeError, ValueError, OverflowError):
+            tokens_used = 0
+        return {
+            "texts": texts,
+            "request_id": req_id,
+            "max_tokens": admitted_max_tokens,
+            "temperature": admitted_temperature,
+            "tokens_used": tokens_used,
+            "tokens_used_by_candidate": tokens_used_by_candidate,
+        }
+
     async def generate_batch_async(
         self,
         prompt: str,
@@ -3205,42 +3375,74 @@ class MLXLocalClient:
         temperature: float = 0.8,
         timeout_s: float = 180.0,
     ) -> list[str]:
-        """Decode N sampled candidates in ONE batched worker pass.
+        """Decode raw verifier candidates in one batched worker pass."""
 
-        Built for verifier-selection reasoning (best-of-N): candidates come
-        back raw; the caller's verifiers do the choosing. Returns [] on any
-        failure — callers fall back to serial sampling.
-        """
-        if self._req_q is None or self._closed:
-            return []
-        alive = await self._ensure_worker_alive(request_is_background=True)
-        if not alive:
-            return []
-        req_id = uuid.uuid4().hex
-        req = {
-            "id": req_id,
-            "action": "generate_batch",
-            "prompt": str(prompt or ""),
-            "n": max(1, min(16, int(n))),
-            "max_tokens": max(16, min(2048, int(max_tokens))),
-            "temperature": float(temperature),
+        response = await self._generate_batch_response_async(
+            prompt,
+            n=n,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_s=timeout_s,
+        )
+        return list(response.get("texts") or [])
+
+    async def generate_batch_with_metadata_async(
+        self,
+        prompt: str,
+        *,
+        n: int = 4,
+        max_tokens: int = 512,
+        temperature: float = 0.8,
+        timeout_s: float = 180.0,
+    ) -> dict[str, Any]:
+        """Return batched candidates with one truthful shared decode receipt."""
+
+        response = await self._generate_batch_response_async(
+            prompt,
+            n=n,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout_s=timeout_s,
+        )
+        texts = list(response.get("texts") or [])
+        if not texts:
+            return {}
+        model_name = os.path.basename(str(self.model_path or "")) or "unknown"
+        candidate_tokens = list(response.get("tokens_used_by_candidate") or [])
+        return {
+            "texts": texts,
+            "generation_metadata": {
+                "endpoint": f"MLX-BATCH:{model_name}",
+                "provider": "mlx",
+                "model": model_name,
+                "is_local": True,
+                "provider_verified": True,
+                "batch_request_id": response.get("request_id"),
+                "surface_control_receipt": {
+                    "enabled": False,
+                    "applied": False,
+                    "generation_required": True,
+                    "application_status": "raw_batch_requires_parent_verification",
+                    "clean_user_surface_contract": False,
+                    "surface_quality_gate_enabled": False,
+                    "surface_quality_gate_passed": False,
+                    "generation_max_tokens": response.get("max_tokens"),
+                    "batch_generated_tokens_total": response.get("tokens_used"),
+                    "batch_candidate_count": len(texts),
+                    "source": "mlx_batch_worker",
+                },
+            },
+            "candidate_generation_metadata": [
+                {
+                    "generated_tokens": (
+                        max(0, int(candidate_tokens[index] or 0))
+                        if index < len(candidate_tokens)
+                        else 0
+                    )
+                }
+                for index in range(len(texts))
+            ],
         }
-        fut = _new_shared_future()
-        self._pending_generations[req_id] = fut
-        try:
-            await run_io_bound(self._req_q.put, req, True, 2.0)
-            res = await _await_shared_future(fut, timeout_s=max(10.0, float(timeout_s)))
-        except (TimeoutError, BrokenPipeError, OSError) as exc:
-            self._pending_generations.pop(req_id, None)
-            _record_mlx_degradation(
-                exc,
-                action="returned empty batch after batched generation failed; caller falls back to serial",
-                severity="warning",
-            )
-            return []
-        if not res or res.get("status") != "ok":
-            return []
-        return [str(t) for t in (res.get("texts") or []) if str(t or "").strip()]
 
     async def ingest_nonparametric_async(
         self,
@@ -5118,6 +5320,7 @@ class MLXLocalClient:
         died between the alive-check and the queue write, we reboot and
         retry once before giving up.
         """
+        self._set_task_surface_control_receipt({})
         request_is_background = bool(kwargs.pop("is_background", False))
         foreground_request = bool(kwargs.pop("foreground_request", False))
         if request_is_background:
@@ -5285,6 +5488,8 @@ class MLXLocalClient:
                 )
                 if _span is not None:
                     _span.set_attribute("result_chars", len(result) if result else 0)
+                if not result:
+                    self._set_task_surface_control_receipt({})
                 return result
         finally:
             _deferred_reboot = self._deferred_reboot_reason
@@ -5408,6 +5613,17 @@ class MLXLocalClient:
                 return fallback
             return getattr(_bridge, field, fallback)
 
+        requested_output_contract = kwargs.get("requested_output_contract")
+        if not isinstance(requested_output_contract, dict):
+            requested_output_contract = {}
+        hard_output_token_ceiling = kwargs.get("hard_output_token_ceiling")
+        generation_max_tokens = _bounded_generation_max_tokens(
+            kwargs.get("max_tokens", self.max_tokens),
+            _bridge_get("max_tokens", self.max_tokens),
+            hard_output_token_ceiling,
+            self.max_tokens,
+        )
+
         req_id = uuid.uuid4().hex
         self._job_seq_counter += 1
         req = {
@@ -5431,14 +5647,12 @@ class MLXLocalClient:
             "presence_penalty": kwargs.get(
                 "presence_penalty", _bridge_get("presence_penalty", 0.0)
             ),
-            # max_tokens is a *cap*: the bridge can shrink it (vitality
-            # drops shorten output), but never expands what the caller
-            # asked for.
-            "max_tokens": _bounded_max_tokens(
-                kwargs.get("max_tokens", self.max_tokens),
-                _bridge_get("max_tokens", self.max_tokens),
-                self.max_tokens,
-            ),
+            # max_tokens is a cap: both the latent bridge and the typed visible
+            # output contract may shrink it, but neither can expand the caller.
+            "max_tokens": generation_max_tokens,
+            "requested_output_contract": dict(requested_output_contract),
+            "semantic_output_token_cap": kwargs.get("semantic_output_token_cap"),
+            "hard_output_token_ceiling": hard_output_token_ceiling,
             "schema": kwargs.get("schema"),
             "stop_sequences": list(kwargs.get("stop_sequences") or []),
             "strict_answer_contract": bool(kwargs.get("strict_answer_contract", False)),

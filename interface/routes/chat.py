@@ -29,7 +29,11 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from core.brain.live_mind_contract import normalize_live_mind_surface_control_receipt
+from core.brain.live_mind_contract import (
+    append_text_mutation,
+    merge_text_mutations,
+    normalize_live_mind_surface_control_receipt,
+)
 from core.brain.llm.cloud_errors import cloud_call_error_types
 from core.container import ServiceContainer
 from core.reasoning.artifact_synthesis import response_satisfies_artifact_contract
@@ -4212,6 +4216,113 @@ def _assess_live_mind_snapshot(snapshot: dict[str, Any] | None) -> dict[str, Any
     return assess_live_mind_snapshot(snapshot)
 
 
+def _append_turn_text_mutation(
+    trace: dict[str, Any],
+    *,
+    stage: str,
+    method: str,
+    reasons: Any,
+    before: Any,
+    after: Any,
+    deterministic: bool = True,
+) -> None:
+    """Keep final visible-text provenance on the request-scoped turn trace."""
+
+    receipt = dict(trace.get("live_mind_surface_control_receipt") or {})
+    receipt["text_mutations"] = merge_text_mutations(
+        receipt.get("text_mutations"),
+        trace.get("text_mutations"),
+    )
+    append_text_mutation(
+        receipt,
+        stage=stage,
+        method=method,
+        reasons=reasons,
+        before=before,
+        after=after,
+        deterministic=deterministic,
+    )
+    mutations = list(receipt.get("text_mutations") or [])
+    trace["live_mind_surface_control_receipt"] = receipt
+    trace["text_mutations"] = mutations
+    trace["text_mutation_count"] = len(mutations)
+    trace["post_generation_repair_applied"] = bool(mutations)
+    trace["deterministic_repair_applied"] = any(
+        bool(item.get("deterministic")) for item in mutations
+    )
+
+
+def _merge_turn_text_mutations(
+    trace: dict[str, Any],
+    mutations: Any,
+) -> None:
+    """Merge already-recorded events into one request-scoped ordered ledger."""
+
+    receipt = dict(trace.get("live_mind_surface_control_receipt") or {})
+    merged = merge_text_mutations(
+        receipt.get("text_mutations"),
+        trace.get("text_mutations"),
+        mutations,
+    )
+    receipt["text_mutations"] = merged
+    receipt["text_mutation_count"] = len(merged)
+    receipt["deterministic_repair_applied"] = any(
+        bool(item.get("deterministic")) for item in merged
+    )
+    trace["live_mind_surface_control_receipt"] = receipt
+    trace["text_mutations"] = merged
+    trace["text_mutation_count"] = len(merged)
+    trace["post_generation_repair_applied"] = bool(merged)
+    trace["deterministic_repair_applied"] = bool(
+        receipt["deterministic_repair_applied"]
+    )
+
+
+def _enforce_final_requested_output_contract(
+    trace: dict[str, Any],
+    *,
+    user_message: str,
+    reply_text: str,
+) -> str:
+    """Revalidate the typed output contract after every late chat mutation."""
+
+    try:
+        from core.conversation.response_reliability import (
+            assess_user_facing_reply,
+            repair_instruction_shape,
+            requested_output_contract,
+        )
+
+        contract = requested_output_contract(user_message)
+        if not contract.constrained:
+            return str(reply_text or "")
+        assessment = assess_user_facing_reply(user_message, reply_text)
+        if assessment.ok:
+            return str(reply_text or "")
+        repaired = repair_instruction_shape(user_message, reply_text)
+        final_assessment = assess_user_facing_reply(user_message, repaired)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        record_degradation("chat.final_output_contract", exc)
+        logger.error("Final requested-output contract enforcement failed: %s", exc)
+        return str(reply_text or "")
+
+    _append_turn_text_mutation(
+        trace,
+        stage="chat.final_requested_output_contract",
+        method="deterministic_instruction_shape",
+        reasons=list(assessment.reasons or ()),
+        before=reply_text,
+        after=repaired,
+        deterministic=True,
+    )
+    if not final_assessment.ok:
+        logger.error(
+            "Final requested-output contract remains unsatisfied after repair (%s).",
+            ",".join(final_assessment.reasons) or "unknown",
+        )
+    return str(repaired or "")
+
+
 def _build_live_turn_contract_payload(
     *,
     desktop_required: bool,
@@ -4287,6 +4398,19 @@ def _build_live_turn_contract_payload(
                 "surface_quality_gate_attempts",
                 "surface_quality_gate_reasons",
                 "surface_quality_gate_error",
+                "generation_max_tokens",
+                "generated_tokens",
+                "semantic_output_token_cap",
+                "hard_output_token_ceiling",
+                "instruction_shape_repair_applied",
+                "deterministic_repair_applied",
+                "text_mutations",
+                "text_mutation_count",
+                "exact_reply_token_count",
+                "exact_reply_token_headroom",
+                "exact_reply_token_ceiling_valid",
+                "exact_reply_native_capacity_sufficient",
+                "requested_output_contract",
                 "applied",
             )
             if key in raw_surface_control_receipt
@@ -4294,6 +4418,12 @@ def _build_live_turn_contract_payload(
         if isinstance(raw_surface_control_receipt, dict)
         else {}
     )
+    text_mutations = merge_text_mutations(
+        live_mind_surface_control_receipt.get("text_mutations"),
+        trace.get("text_mutations"),
+    )
+    live_mind_surface_control_receipt["text_mutations"] = text_mutations
+    live_mind_surface_control_receipt["text_mutation_count"] = len(text_mutations)
     live_mind_controls_worker_applied = bool(
         live_mind_surface_control_receipt.get("live_mind_controls_bound")
         and live_mind_surface_control_receipt.get("applied")
@@ -4313,6 +4443,25 @@ def _build_live_turn_contract_payload(
     live_mind_surface_quality_gate_passed = bool(
         (not live_mind_surface_quality_gate_enabled)
         or live_mind_surface_control_receipt.get("surface_quality_gate_passed")
+    )
+    worker_instruction_shape_repair_applied = bool(
+        live_mind_surface_control_receipt.get("instruction_shape_repair_applied")
+        or any(
+            str(item.get("stage") or "").startswith("mlx_worker.instruction_shape")
+            for item in text_mutations
+        )
+    )
+    legacy_post_generation_repair_applied = bool(
+        trace.get("post_generation_repair_applied", False)
+    )
+    post_generation_repair_applied = bool(
+        text_mutations or legacy_post_generation_repair_applied
+    )
+    deterministic_repair_applied = bool(
+        any(bool(item.get("deterministic")) for item in text_mutations)
+        or worker_instruction_shape_repair_applied
+        or trace.get("deterministic_repair_applied", False)
+        or (legacy_post_generation_repair_applied and not text_mutations)
     )
     live_mind_controls_structurally_bound = bool(
         (not live_mind_context_required)
@@ -4424,6 +4573,24 @@ def _build_live_turn_contract_payload(
         "live_mind_controls_application_satisfied": live_mind_controls_application_satisfied,
         "live_mind_surface_quality_gate_enabled": live_mind_surface_quality_gate_enabled,
         "live_mind_surface_quality_gate_passed": live_mind_surface_quality_gate_passed,
+        "worker_instruction_shape_repair_applied": worker_instruction_shape_repair_applied,
+        "post_generation_repair_applied": post_generation_repair_applied,
+        "deterministic_repair_applied": deterministic_repair_applied,
+        "text_mutations": text_mutations,
+        "text_mutation_count": len(text_mutations),
+        "generation_max_tokens": live_mind_surface_control_receipt.get(
+            "generation_max_tokens"
+        ),
+        "generated_tokens": live_mind_surface_control_receipt.get("generated_tokens"),
+        "semantic_output_token_cap": live_mind_surface_control_receipt.get(
+            "semantic_output_token_cap"
+        ),
+        "hard_output_token_ceiling": live_mind_surface_control_receipt.get(
+            "hard_output_token_ceiling"
+        ),
+        "requested_output_contract": live_mind_surface_control_receipt.get(
+            "requested_output_contract"
+        ),
         "live_mind_controls_structurally_bound": live_mind_controls_structurally_bound,
         "live_mind_required_subsystems_ok": live_mind_required_subsystems_ok,
         "preflight_live_mind_required_subsystems_ok": preflight_live_mind_required_subsystems_ok,
@@ -5354,6 +5521,105 @@ async def _run_cognitive_engine_chat_turn(
         if turn_trace is not None:
             turn_trace.update(fields)
 
+    def _adopt_generation_metadata(
+        metadata: Any,
+        *,
+        source_label: str,
+        adopt_response_path: bool = True,
+        inherit_turn_context: bool = True,
+    ) -> None:
+        """Bind the accepted generation's receipt without retaining stale fields."""
+
+        if turn_trace is None:
+            return
+        metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        raw_generation_controls = metadata.get("live_mind_generation_controls")
+        generation_controls = (
+            dict(raw_generation_controls)
+            if isinstance(raw_generation_controls, dict)
+            else {}
+        )
+        existing_generation_controls = turn_trace.get("live_mind_generation_controls")
+        if (
+            inherit_turn_context
+            and not generation_controls
+            and isinstance(existing_generation_controls, dict)
+        ):
+            generation_controls = dict(existing_generation_controls)
+        snapshot_ready = bool(
+            (inherit_turn_context and turn_trace.get("live_mind_snapshot_ready"))
+            or metadata.get("live_mind_snapshot_ready")
+        )
+        required_subsystems_ok = bool(
+            (inherit_turn_context and turn_trace.get("live_mind_required_subsystems_ok"))
+            or metadata.get("live_mind_required_subsystems_ok")
+        )
+        controls_bound = bool(
+            generation_controls
+            and (
+                metadata.get("live_mind_controls_bound")
+                or (snapshot_ready and required_subsystems_ok)
+            )
+        )
+        raw_receipt = metadata.get("live_mind_surface_control_receipt")
+        raw_receipt_present = isinstance(raw_receipt, dict) and bool(raw_receipt)
+        receipt = normalize_live_mind_surface_control_receipt(
+            raw_receipt if isinstance(raw_receipt, dict) else {},
+            controls_bound=controls_bound,
+            generation_controls=generation_controls,
+            surface_quality_gate_passed=(
+                None if raw_receipt_present else False
+            ),
+            source=source_label,
+        )
+        prior_mutations = merge_text_mutations(
+            (turn_trace.get("live_mind_surface_control_receipt") or {}).get(
+                "text_mutations"
+            ),
+            turn_trace.get("text_mutations"),
+        )
+        receipt_mutations = merge_text_mutations(
+            prior_mutations,
+            receipt.get("text_mutations"),
+        )
+        receipt["text_mutations"] = receipt_mutations
+        receipt["text_mutation_count"] = len(receipt_mutations)
+        receipt["deterministic_repair_applied"] = any(
+            bool(item.get("deterministic")) for item in receipt_mutations
+        )
+        worker_applied = bool(
+            metadata.get("live_mind_controls_worker_applied")
+            or (receipt.get("live_mind_controls_bound") and receipt.get("applied"))
+        )
+        generation_required = bool(
+            metadata.get(
+                "live_mind_generation_required",
+                receipt.get("generation_required", True),
+            )
+        )
+        turn_trace.update(
+            {
+                "live_mind_controls_bound": controls_bound,
+                "live_mind_generation_controls": generation_controls,
+                "live_mind_surface_control_receipt": receipt,
+                "live_mind_controls_worker_applied": worker_applied,
+                "live_mind_generation_required": generation_required,
+                "live_mind_snapshot_ready": snapshot_ready,
+                "live_mind_required_subsystems_ok": required_subsystems_ok,
+                "live_mind_snapshot_ready_from_thought": bool(
+                    metadata.get("live_mind_snapshot_ready")
+                ),
+                "live_mind_required_subsystems_ok_from_thought": bool(
+                    metadata.get("live_mind_required_subsystems_ok")
+                ),
+                "text_mutations": receipt_mutations,
+                "text_mutation_count": len(receipt_mutations),
+            }
+        )
+        metadata_response_path = str(metadata.get("response_path") or "").strip()
+        if adopt_response_path and metadata_response_path:
+            turn_trace["response_path"] = metadata_response_path
+
     failure_incident_recorded = False
 
     def _record_exhausted_cognitive_failure(
@@ -6239,9 +6505,10 @@ async def _run_cognitive_engine_chat_turn(
         retry_content = getattr(repair_thought, "content", None)
         if retry_content is None and isinstance(repair_thought, dict):
             retry_content = repair_thought.get("content") or repair_thought.get("response")
-        retry_text = _strip_user_visible_context_leaks(
+        raw_retry_text = str(
             retry_content if retry_content is not None else repair_thought or ""
         )
+        retry_text = _strip_user_visible_context_leaks(raw_retry_text)
         if not retry_text or retry_text == "…" or retry_text.startswith("background_thought_suppressed"):
             logger.warning("CognitiveEngine desktop chat repair retry produced no user-facing text.")
             return None
@@ -6256,6 +6523,54 @@ async def _run_cognitive_engine_chat_turn(
                 no_reply_action,
             )
             return None
+
+        def _accept_retry_text(
+            final_text: Any,
+            *,
+            pre_grounding_text: Any = None,
+            intermediate_mutations: Any = None,
+        ) -> str:
+            accepted_text = str(final_text or "").strip()
+            _adopt_generation_metadata(
+                retry_metadata,
+                source_label="desktop_chat_repair_live_mind_controls",
+                adopt_response_path=False,
+                inherit_turn_context=False,
+            )
+            if turn_trace is not None:
+                _append_turn_text_mutation(
+                    turn_trace,
+                    stage="chat.cognitive_engine_repair_retry",
+                    method="model_repair_retry_replacement",
+                    reasons=list(reasons or ("cognitive_engine_reply_rejected",)),
+                    before=rejected_reply,
+                    after=raw_retry_text,
+                    deterministic=False,
+                )
+                _append_turn_text_mutation(
+                    turn_trace,
+                    stage="chat.cognitive_engine_retry_context_leak_strip",
+                    method="deterministic_context_leak_removal",
+                    reasons=["user_visible_context_boundary"],
+                    before=raw_retry_text,
+                    after=retry_text,
+                    deterministic=True,
+                )
+                _merge_turn_text_mutations(turn_trace, intermediate_mutations)
+                _append_turn_text_mutation(
+                    turn_trace,
+                    stage="chat.cognitive_engine_retry_grounding",
+                    method="deterministic_runtime_grounding",
+                    reasons=["accepted_retry_grounding"],
+                    before=(
+                        retry_text
+                        if pre_grounding_text is None
+                        else pre_grounding_text
+                    ),
+                    after=accepted_text,
+                    deterministic=True,
+                )
+            return accepted_text
 
         if require_engine:
             retry_recent_user_messages = await _gather_recent_user_messages_for_relevance(
@@ -6275,7 +6590,7 @@ async def _run_cognitive_engine_chat_turn(
                 logger.info(
                     "CognitiveEngine desktop chat repair retry produced a clean full-mind reply."
                 )
-                return (
+                accepted_retry = (
                     retry_text
                     if memory_state_contract
                     else _ground_runtime_fact_status_reply(
@@ -6285,6 +6600,10 @@ async def _run_cognitive_engine_chat_turn(
                         cognitive_engine_handled=True,
                     )
                 )
+                return _accept_retry_text(
+                    accepted_retry,
+                    pre_grounding_text=retry_text,
+                )
             logger.warning(
                 "CognitiveEngine desktop chat repair retry remained below the required "
                 "full-mind reliability floor (%s); refusing bounded shape substitution.",
@@ -6292,10 +6611,15 @@ async def _run_cognitive_engine_chat_turn(
             )
             return None
 
+        retry_repair_trace: dict[str, Any] = {
+            "live_mind_surface_control_receipt": {}
+        }
         retry_repaired, retry_stale, retry_same_diff, retry_off_topic, retry_off_topic_reason, retry_did_repair = (
-            await _repair_final_degraded_reply(
-                visible,
-                retry_text,
+            await _repair_final_degraded_reply_with_provenance(
+                retry_repair_trace,
+                stage="chat.cognitive_engine_retry_final_gate",
+                user_message=visible,
+                reply_text=retry_text,
                 stale=False,
                 same_diff=False,
                 off_topic=False,
@@ -6325,7 +6649,7 @@ async def _run_cognitive_engine_chat_turn(
                 logger.info("CognitiveEngine desktop chat repair retry recovered by final shape repair.")
             else:
                 logger.info("CognitiveEngine desktop chat repair retry produced a clean reply.")
-            return (
+            accepted_retry = (
                 retry_repaired
                 if memory_state_contract
                 else _ground_runtime_fact_status_reply(
@@ -6334,6 +6658,11 @@ async def _run_cognitive_engine_chat_turn(
                     lane,
                     cognitive_engine_handled=True,
                 )
+            )
+            return _accept_retry_text(
+                accepted_retry,
+                pre_grounding_text=retry_repaired,
+                intermediate_mutations=retry_repair_trace.get("text_mutations"),
             )
         logger.warning(
             "CognitiveEngine desktop chat repair retry failed reliability gate "
@@ -6354,11 +6683,13 @@ async def _run_cognitive_engine_chat_turn(
                     "CognitiveEngine chat repair retry failed conversation recall; "
                     "repairing from canonical conversation log."
                 )
-                return _ground_runtime_fact_status_reply(
-                    visible,
-                    conversation_recall_reply,
-                    lane,
-                    cognitive_engine_handled=True,
+                return _accept_retry_text(
+                    _ground_runtime_fact_status_reply(
+                        visible,
+                        conversation_recall_reply,
+                        lane,
+                        cognitive_engine_handled=True,
+                    )
                 )
             owner_name_reply = _build_owner_name_recall_reply(visible)
             if owner_name_reply:
@@ -6366,11 +6697,13 @@ async def _run_cognitive_engine_chat_turn(
                     "CognitiveEngine chat repair retry failed owner identity recall; "
                     "repairing from verified runtime identity contract."
                 )
-                return _ground_runtime_fact_status_reply(
-                    visible,
-                    owner_name_reply,
-                    lane,
-                    cognitive_engine_handled=True,
+                return _accept_retry_text(
+                    _ground_runtime_fact_status_reply(
+                        visible,
+                        owner_name_reply,
+                        lane,
+                        cognitive_engine_handled=True,
+                    )
                 )
         return None
     
@@ -6449,81 +6782,26 @@ async def _run_cognitive_engine_chat_turn(
     content = getattr(thought, "content", None)
     if content is None and isinstance(thought, dict):
         content = thought.get("content") or thought.get("response")
-    text = _strip_user_visible_context_leaks(content if content is not None else thought or "")
+    raw_text = str(content if content is not None else thought or "")
     thought_metadata = getattr(thought, "metadata", None)
     if not isinstance(thought_metadata, dict) and isinstance(thought, dict):
         thought_metadata = thought.get("metadata")
     thought_metadata = thought_metadata if isinstance(thought_metadata, dict) else {}
-    raw_generation_controls = thought_metadata.get("live_mind_generation_controls")
-    generation_controls = (
-        dict(raw_generation_controls)
-        if isinstance(raw_generation_controls, dict)
-        else {}
+    _adopt_generation_metadata(
+        thought_metadata,
+        source_label="desktop_chat_preflight_live_mind_controls",
     )
-    raw_surface_control_receipt = thought_metadata.get("live_mind_surface_control_receipt")
-    surface_control_receipt = (
-        dict(raw_surface_control_receipt)
-        if isinstance(raw_surface_control_receipt, dict)
-        else {}
-    )
+    text = _strip_user_visible_context_leaks(raw_text)
     if turn_trace is not None:
-        existing_generation_controls = turn_trace.get("live_mind_generation_controls")
-        if not generation_controls and isinstance(existing_generation_controls, dict):
-            generation_controls = dict(existing_generation_controls)
-        snapshot_ready = bool(
-            turn_trace.get("live_mind_snapshot_ready")
-            or thought_metadata.get("live_mind_snapshot_ready")
+        _append_turn_text_mutation(
+            turn_trace,
+            stage="chat.cognitive_engine_context_leak_strip",
+            method="deterministic_context_leak_removal",
+            reasons=["user_visible_context_boundary"],
+            before=raw_text,
+            after=text,
+            deterministic=True,
         )
-        required_subsystems_ok = bool(
-            turn_trace.get("live_mind_required_subsystems_ok")
-            or thought_metadata.get("live_mind_required_subsystems_ok")
-        )
-        controls_bound = bool(
-            generation_controls
-            and (
-                thought_metadata.get("live_mind_controls_bound")
-                or (snapshot_ready and required_subsystems_ok)
-            )
-        )
-        surface_control_receipt = normalize_live_mind_surface_control_receipt(
-            surface_control_receipt,
-            controls_bound=controls_bound,
-            generation_controls=generation_controls,
-            source="desktop_chat_preflight_live_mind_controls",
-        )
-        worker_applied = bool(
-            thought_metadata.get("live_mind_controls_worker_applied")
-            or (
-                surface_control_receipt.get("live_mind_controls_bound")
-                and surface_control_receipt.get("applied")
-            )
-        )
-        generation_required = bool(
-            thought_metadata.get(
-                "live_mind_generation_required",
-                surface_control_receipt.get("generation_required", True),
-            )
-        )
-        metadata_response_path = str(thought_metadata.get("response_path") or "").strip()
-        turn_trace.update(
-            {
-                "live_mind_controls_bound": controls_bound,
-                "live_mind_generation_controls": generation_controls,
-                "live_mind_surface_control_receipt": surface_control_receipt,
-                "live_mind_controls_worker_applied": worker_applied,
-                "live_mind_generation_required": generation_required,
-                "live_mind_snapshot_ready": snapshot_ready,
-                "live_mind_required_subsystems_ok": required_subsystems_ok,
-                "live_mind_snapshot_ready_from_thought": bool(
-                    thought_metadata.get("live_mind_snapshot_ready")
-                ),
-                "live_mind_required_subsystems_ok_from_thought": bool(
-                    thought_metadata.get("live_mind_required_subsystems_ok")
-                ),
-            }
-        )
-        if metadata_response_path:
-            turn_trace["response_path"] = metadata_response_path
     try:
         from core.conversation.response_reliability import is_cognitive_engine_failure_envelope
     except _CHAT_RECOVERABLE_ERRORS as exc:
@@ -6968,9 +7246,11 @@ async def _run_cognitive_engine_chat_turn(
                 )
                 return None
             repaired, stale, same_diff, off_topic, off_topic_reason, did_repair = (
-                await _repair_final_degraded_reply(
-                    visible,
-                    text,
+                await _repair_final_degraded_reply_with_provenance(
+                    turn_trace,
+                    stage="chat.cognitive_engine_final_gate",
+                    user_message=visible,
+                    reply_text=text,
                     stale=False,
                     same_diff=False,
                     off_topic=False,
@@ -12142,6 +12422,35 @@ async def _repair_final_degraded_reply(
     return honest_failure, False, False, True, reflex_off_topic_reason or reflex_semantic_reason or "unrepaired_degraded_turn", True
 
 
+async def _repair_final_degraded_reply_with_provenance(
+    trace: dict[str, Any],
+    *,
+    stage: str,
+    user_message: str,
+    reply_text: str,
+    **kwargs: Any,
+) -> tuple[str, bool, bool, bool, str, bool]:
+    """Run the final gate and atomically record any visible text replacement."""
+
+    result = await _repair_final_degraded_reply(
+        user_message,
+        reply_text,
+        **kwargs,
+    )
+    repaired, _stale, _same_diff, _off_topic, reason, did_repair = result
+    if did_repair and repaired != reply_text:
+        _append_turn_text_mutation(
+            trace,
+            stage=stage,
+            method="deterministic_final_reply_repair",
+            reasons=[reason or "degraded_reply"],
+            before=reply_text,
+            after=repaired,
+            deterministic=True,
+        )
+    return result
+
+
 def _normalize_user_message(text: str) -> str:
     normalized = " ".join(str(text or "").strip().lower().split())
     normalized = normalized.replace("\u2018", "'").replace("\u2019", "'")
@@ -15637,6 +15946,8 @@ async def api_chat(
         "bounded_contract_used": False,
         "legacy_fallback_used": False,
         "response_path": "",
+        "post_generation_repair_applied": False,
+        "deterministic_repair_applied": False,
     }
 
     def _live_turn_contract(
@@ -16324,9 +16635,11 @@ async def api_chat(
                             is_off_topic,
                             off_topic_reason,
                             repaired,
-                        ) = await _repair_final_degraded_reply(
-                            _semantic_user_message,
-                            final_text,
+                        ) = await _repair_final_degraded_reply_with_provenance(
+                            _live_turn_trace,
+                            stage="chat.fastpath_final_gate",
+                            user_message=_semantic_user_message,
+                            reply_text=final_text,
                             stale=is_stale,
                             same_diff=is_same_diff,
                             off_topic=is_off_topic,
@@ -18166,9 +18479,11 @@ async def api_chat(
                 is_off_topic,
                 off_topic_reason,
                 repaired,
-            ) = await _repair_final_degraded_reply(
-                _semantic_user_message,
-                reply_text,
+            ) = await _repair_final_degraded_reply_with_provenance(
+                _live_turn_trace,
+                stage="chat.final_quality_gate",
+                user_message=_semantic_user_message,
+                reply_text=reply_text,
                 stale=is_stale,
                 same_diff=is_same_diff,
                 off_topic=is_off_topic,
@@ -18284,7 +18599,17 @@ async def api_chat(
                     "Final desktop quality gate rebound reply to canonical self-condition "
                     "evidence after CognitiveEngine invocation."
                 )
+                _pre_condition_grounding_reply = reply_text
                 reply_text = grounded_condition_reply
+                _append_turn_text_mutation(
+                    _live_turn_trace,
+                    stage="chat.final_self_condition_grounding",
+                    method="deterministic_canonical_grounding",
+                    reasons=["self_condition_evidence_grounding"],
+                    before=_pre_condition_grounding_reply,
+                    after=reply_text,
+                    deterministic=True,
+                )
                 reply_source = "cognitive_engine_self_condition_grounding"
                 response_confidence = "high"
                 hard_final_quality_failed = False
@@ -18333,7 +18658,17 @@ async def api_chat(
                     "Final desktop quality gate rebound reply to canonical identity/continuity "
                     "grounding after CognitiveEngine invocation."
                 )
+                _pre_identity_grounding_reply = reply_text
                 reply_text = grounded_identity_reply
+                _append_turn_text_mutation(
+                    _live_turn_trace,
+                    stage="chat.final_identity_grounding",
+                    method="deterministic_canonical_grounding",
+                    reasons=["identity_continuity_grounding"],
+                    before=_pre_identity_grounding_reply,
+                    after=reply_text,
+                    deterministic=True,
+                )
                 reply_source = "cognitive_engine_identity_continuity_grounding"
                 response_confidence = "high"
                 hard_final_quality_failed = False
@@ -18379,7 +18714,17 @@ async def api_chat(
                     "Final desktop quality gate rebound reply to canonical memory/state "
                     "evidence after CognitiveEngine invocation."
                 )
+                _pre_memory_grounding_reply = reply_text
                 reply_text = grounded_memory_reply
+                _append_turn_text_mutation(
+                    _live_turn_trace,
+                    stage="chat.final_memory_state_grounding",
+                    method="deterministic_canonical_grounding",
+                    reasons=["memory_state_evidence_grounding"],
+                    before=_pre_memory_grounding_reply,
+                    after=reply_text,
+                    deterministic=True,
+                )
                 response_confidence = "high"
                 hard_final_quality_failed = False
                 _consecutive_degraded_count = 0
@@ -18478,10 +18823,30 @@ async def api_chat(
         # sees what came back. The cortex was also given the continuity
         # context in body.message above, so the reply already acknowledges
         # the thread.
+        _pre_context_strip_reply = reply_text
         _final_reply = _strip_user_visible_context_leaks(reply_text) or "…"
+        _append_turn_text_mutation(
+            _live_turn_trace,
+            stage="chat.final_context_leak_strip",
+            method="deterministic_context_leak_removal",
+            reasons=["user_visible_context_boundary"],
+            before=_pre_context_strip_reply,
+            after=_final_reply,
+            deterministic=True,
+        )
         _final_status = reply_source or "ok"
+        _pre_objective_chokepoint_reply = _final_reply
         _final_reply, _final_status = await _apply_desktop_objective_chokepoint(
             _final_reply, _final_status
+        )
+        _append_turn_text_mutation(
+            _live_turn_trace,
+            stage="chat.desktop_objective_chokepoint",
+            method="desktop_objective_result_replacement",
+            reasons=[str(_final_status or "desktop_objective")],
+            before=_pre_objective_chokepoint_reply,
+            after=_final_reply,
+            deterministic=False,
         )
 
         _affordance_results: list[dict[str, Any]] = []
@@ -18497,9 +18862,35 @@ async def api_chat(
                 _affordance_results.append(_aff_result)
             _spoken = [str(r.get("spoken") or "").strip() for r in _affordance_results if r.get("spoken")]
             if _spoken:
+                _pre_affordance_reply = _final_reply
                 _final_reply = (_final_reply + "\n\n" + "\n".join(_spoken)).strip()
+                _append_turn_text_mutation(
+                    _live_turn_trace,
+                    stage="chat.affordance_spoken_append",
+                    method="effect_receipt_spoken_append",
+                    reasons=["realized_affordance"],
+                    before=_pre_affordance_reply,
+                    after=_final_reply,
+                    deterministic=False,
+                )
         if _resume_prefix_for_response:
+            _pre_resume_prefix_reply = _final_reply
             _final_reply = _resume_prefix_for_response + _final_reply
+            _append_turn_text_mutation(
+                _live_turn_trace,
+                stage="chat.resume_prefix",
+                method="deterministic_continuity_prefix",
+                reasons=["resumed_prior_turn"],
+                before=_pre_resume_prefix_reply,
+                after=_final_reply,
+                deterministic=True,
+            )
+
+        _final_reply = _enforce_final_requested_output_contract(
+            _live_turn_trace,
+            user_message=_semantic_user_message,
+            reply_text=_final_reply,
+        )
 
         final_live_turn_contract = _live_turn_contract(
             lane_status=lane_status,
@@ -18516,12 +18907,35 @@ async def api_chat(
                 "closed instead of serving partial/raw speech (path=%s).",
                 final_live_turn_contract.get("response_path") or "",
             )
+            fail_closed_reply = (
+                "I could not prove the full live mind path for that turn, "
+                "so I failed closed instead of sending an ungrounded answer."
+            )
+            _append_turn_text_mutation(
+                _live_turn_trace,
+                stage="chat.full_mind_contract_fail_closed",
+                method="deterministic_contract_failure_replacement",
+                reasons=["desktop_full_mind_contract_not_proven"],
+                before=_final_reply,
+                after=fail_closed_reply,
+                deterministic=True,
+            )
+            _live_turn_trace.update(
+                {
+                    "cognitive_engine_reply_accepted": False,
+                    "cognitive_engine_reply_failed": True,
+                    "response_path": "desktop_full_mind_contract_not_proven",
+                }
+            )
+            final_live_turn_contract = _live_turn_contract(
+                lane_status=lane_status,
+                response_confidence="failed_closed",
+                status="desktop_full_mind_contract_not_proven",
+                reply_source="desktop_full_mind_contract_not_proven",
+            )
             return JSONResponse(
                 {
-                    "response": (
-                        "I could not prove the full live mind path for that turn, "
-                        "so I failed closed instead of sending an ungrounded answer."
-                    ),
+                    "response": fail_closed_reply,
                     "status": "desktop_full_mind_contract_not_proven",
                     "reason": "desktop_full_mind_contract_not_proven",
                     "conversation_lane": lane_status,

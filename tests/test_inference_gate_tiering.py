@@ -889,6 +889,83 @@ async def test_user_facing_primary_restores_foreground_token_floor(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_explicit_output_contract_overrides_foreground_floor_and_is_receipted(monkeypatch):
+    gate = InferenceGate()
+    cortex = _ReceiptRecordingClient("Latency sample 3 completed.")
+    cortex.receipt.update(
+        {
+            "generation_max_tokens": 48,
+            "generated_tokens": 7,
+            "instruction_shape_repair_applied": False,
+        }
+    )
+    gate._mlx_client = cortex
+    monkeypatch.setenv("AURA_FOREGROUND_CHAT_MIN_TOKENS", "1024")
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    "Latency sample 3: answer in one short sentence that includes the sample number.",
+                    context={
+                        "origin": "user",
+                        "prefer_tier": "primary",
+                        "history": [],
+                        "allow_mesh_cognition": False,
+                    },
+                )
+
+    assert result == "Latency sample 3 completed."
+    generation = cortex.kwargs[0]
+    assert generation["max_tokens"] == 48
+    assert generation["semantic_output_token_cap"] == 32
+    assert generation["hard_output_token_ceiling"] == 48
+    assert generation["requested_output_contract"]["kind"] == "sentence_count"
+    metadata = gate.get_last_generation_metadata()
+    assert metadata["requested_max_tokens"] == 48
+    assert metadata["actual_max_tokens"] == 48
+    assert metadata["generated_tokens"] == 7
+    assert metadata["deterministic_repair_applied"] is False
+
+
+@pytest.mark.asyncio
+async def test_parent_output_repair_is_distinguished_from_model_native_compliance(monkeypatch):
+    gate = InferenceGate()
+    cortex = _ReceiptRecordingClient(
+        "Latency sample 4 is present. This extra sentence should be removed."
+    )
+    cortex.receipt.update(
+        {
+            "generation_max_tokens": 48,
+            "generated_tokens": 14,
+            "instruction_shape_repair_applied": False,
+        }
+    )
+    gate._mlx_client = cortex
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=_FakeClient("fallback")):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    "Latency sample 4: answer in one short sentence that includes the sample number.",
+                    context={
+                        "origin": "user",
+                        "prefer_tier": "primary",
+                        "history": [],
+                        "allow_mesh_cognition": False,
+                    },
+                )
+
+    assert result == "Latency sample 4 is present."
+    metadata = gate.get_last_generation_metadata()
+    assert metadata["surface_control_receipt"][
+        "instruction_shape_repair_applied"
+    ] is False
+    assert metadata["deterministic_repair_applied"] is True
+    assert metadata["post_generation_repair_applied"] is True
+
+
+@pytest.mark.asyncio
 async def test_user_facing_primary_retry_uses_clean_cortex_repair_lane(monkeypatch):
     gate = InferenceGate()
     good_reply = (
@@ -1464,6 +1541,36 @@ async def test_operator_evidence_contract_refuses_brainstem_fallback():
 
 
 @pytest.mark.asyncio
+async def test_operator_evidence_contract_never_expands_explicit_caller_cap():
+    gate = InferenceGate()
+    response = (
+        "The operator evidence check remains bounded by the caller's explicit "
+        "generation ceiling and the primary lane receipt."
+    )
+    cortex = _RecordingClient(response)
+    gate._mlx_client = cortex
+    gate._build_compact_system_prompt = CallProbe(return_value="compact-system")
+    gate._build_compact_living_mind_context = AsyncCallProbe(return_value="compact-live")
+
+    result = await gate.generate(
+        "Answer the operator evidence check.",
+        context={
+            "origin": "api",
+            "prefer_tier": "primary",
+            "max_tokens": 1,
+            "operator_evidence_contract": True,
+            "history": [],
+            "allow_cloud_fallback": False,
+        },
+        timeout=30.0,
+    )
+
+    assert result == response
+    assert cortex.kwargs
+    assert cortex.kwargs[0]["max_tokens"] == 1
+
+
+@pytest.mark.asyncio
 async def test_desktop_cognitive_engine_contract_refuses_brainstem_fallback():
     gate = InferenceGate()
     cortex = _NoTextReadyClient()
@@ -1886,6 +1993,288 @@ async def test_cloud_disabled_blocks_hidden_last_resort_cloud_calls(monkeypatch)
                         )
 
     assert result == "local recovery response"
+
+
+@pytest.mark.asyncio
+async def test_api_adapter_cloud_fallback_preserves_output_contract_and_metadata(monkeypatch):
+    from core.adapters.api_adapter import APIAdapter
+
+    gate = InferenceGate()
+    gate._mlx_client = _NoTextReadyClient()
+    gate._cortex_recovery_in_progress = True
+    no_text = _NoTextClient()
+    adapter = APIAdapter()
+    adapter.has_gemini = True
+    adapter.has_local = True
+    adapter._gemini_generate = AsyncCallProbe(
+        return_value="Latency sample 8 is ready. This second sentence exceeds the contract."
+    )
+    adapter._local_generate = AsyncCallProbe(return_value="mislabeled local fallback")
+
+    monkeypatch.setattr(asyncio, "sleep", AsyncCallProbe(return_value=None))
+    monkeypatch.setattr(
+        InferenceGate,
+        "_scrub_cloud_payload",
+        lambda self, system, prompt: (system, prompt),
+    )
+
+    def _container_get(name, default=None):
+        if name == "api_adapter":
+            return adapter
+        if name == "llm_router":
+            raise AssertionError("HealthRouter should not run after APIAdapter succeeds")
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_container_get))
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=no_text):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    "Latency sample 8: answer in one short sentence that includes the sample number.",
+                    context={
+                        "origin": "user",
+                        "prefer_tier": "primary",
+                        "allow_cloud_fallback": True,
+                        "allow_mesh_cognition": False,
+                    },
+                )
+
+    gemini_call = adapter._gemini_generate.calls[0]
+    options = gemini_call["kwargs"]["config"]
+    metadata = gate.get_last_generation_metadata()
+    assert options["max_tokens"] == 48
+    assert options["cloud_only"] is True
+    assert adapter._local_generate.calls == []
+    assert result == "Latency sample 8 is ready."
+    assert metadata["endpoint"] == "Gemini-APIAdapter:gemini-2.0-flash"
+    assert metadata["provider"] == "gemini"
+    assert metadata["model"] == "gemini-2.0-flash"
+    assert metadata["fallback_chain"][-1]["status"] == "success"
+    assert metadata["requested_max_tokens"] == 48
+    assert metadata["deterministic_repair_applied"] is True
+    assert metadata["post_generation_repair_applied"] is True
+    assert gate.get_last_surface_control_receipt()["text_mutations"][0]["stage"] == (
+        "inference_gate.post_generation_stabilization"
+    )
+
+
+@pytest.mark.asyncio
+async def test_api_adapter_cloud_only_failure_never_falls_back_to_local():
+    from core.adapters.api_adapter import APIAdapter
+
+    adapter = APIAdapter()
+    adapter.has_gemini = True
+    adapter.has_local = True
+    adapter._gemini_generate = AsyncCallProbe(return_value="")
+    adapter._local_generate = AsyncCallProbe(return_value="local text")
+
+    result = await adapter.generate_with_metadata(
+        "cloud recovery prompt",
+        {
+            "model_tier": "api_fast",
+            "cloud_only": True,
+            "max_tokens": 48,
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["text"] == ""
+    assert result["endpoint"] == "APIAdapter-cloud-unavailable"
+    assert result["error"] == "cloud_only_backend_unavailable"
+    assert result["fallback_chain"][-1]["status"] == "no_text"
+    assert adapter._local_generate.calls == []
+
+
+@pytest.mark.asyncio
+async def test_api_adapter_provider_exception_continues_to_local_with_error_provenance():
+    from core.adapters.api_adapter import APIAdapter
+
+    adapter = APIAdapter()
+    adapter.has_gemini = True
+    adapter.has_local = True
+    adapter._gemini_generate = AsyncCallProbe(side_effect=OSError("provider transport"))
+    adapter._local_generate = AsyncCallProbe(return_value="local recovery")
+
+    result = await adapter.generate_with_metadata(
+        "recover this request",
+        {"model_tier": "api_fast", "max_tokens": 8},
+    )
+
+    assert result["ok"] is True
+    assert result["text"] == "local recovery"
+    assert result["is_local"] is True
+    assert result["fallback_chain"][0]["status"] == "error"
+    assert "provider transport" in result["fallback_chain"][0]["error"]
+    assert result["fallback_chain"][1]["status"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_health_router_cloud_fallback_preserves_output_contract(monkeypatch):
+    from core.brain.llm_health_router import HealthAwareLLMRouter
+
+    gate = InferenceGate()
+    gate._mlx_client = _NoTextReadyClient()
+    gate._cortex_recovery_in_progress = True
+    no_text = _NoTextClient()
+    router = HealthAwareLLMRouter()
+    local_think = AsyncCallProbe(return_value="local endpoint must not run")
+    cloud_think = AsyncCallProbe(
+        return_value="Latency sample 9 is ready. This second sentence exceeds the contract."
+    )
+    router.register(
+        name="Cortex",
+        url="internal",
+        model="cortex-32b",
+        is_local=True,
+        tier="local",
+        client=SimpleNamespace(think=local_think),
+    )
+    router.register(
+        name="Gemini-Fast",
+        url="cloud",
+        model="gemini-2.0-flash",
+        is_local=False,
+        tier="api_fast",
+        client=SimpleNamespace(think=cloud_think),
+    )
+
+    monkeypatch.setattr(asyncio, "sleep", AsyncCallProbe(return_value=None))
+    monkeypatch.setattr(
+        InferenceGate,
+        "_scrub_cloud_payload",
+        lambda self, system, prompt: (system, prompt),
+    )
+
+    def _container_get(name, default=None):
+        if name == "api_adapter":
+            return None
+        if name == "llm_router":
+            return router
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_container_get))
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=no_text):
+        with replace("core.brain.llm.model_registry.get_brainstem_path", return_value="/models/brainstem"):
+            with replace("core.brain.llm.model_registry.get_fallback_path", return_value="/models/fallback"):
+                result = await gate.generate(
+                    "Latency sample 9: answer in one short sentence that includes the sample number.",
+                    context={
+                        "origin": "user",
+                        "prefer_tier": "primary",
+                        "allow_cloud_fallback": True,
+                        "allow_mesh_cognition": False,
+                    },
+                )
+
+    kwargs = cloud_think.calls[0]["kwargs"]
+    metadata = gate.get_last_generation_metadata()
+    assert kwargs["max_tokens"] == 48
+    assert kwargs["semantic_output_token_cap"] == 32
+    assert kwargs["hard_output_token_ceiling"] == 48
+    assert kwargs["foreground_request"] is True
+    assert kwargs["cloud_only"] is True
+    assert local_think.calls == []
+    assert result == "Latency sample 9 is ready."
+    assert metadata["endpoint"] == "Gemini-Fast"
+    assert metadata["provider"] == "gemini"
+    assert metadata["is_local"] is False
+    assert metadata["fallback_chain"][-1]["endpoint"] == "Gemini-Fast"
+    assert metadata["deterministic_repair_applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_api_adapter_exception_continues_to_health_router(monkeypatch):
+    from core.brain.llm_health_router import HealthAwareLLMRouter
+
+    gate = InferenceGate()
+    gate._mlx_client = _NoTextReadyClient()
+    gate._cortex_recovery_in_progress = True
+    no_text = _NoTextClient()
+
+    class _ThrowingAdapter:
+        has_gemini = True
+
+        async def generate_with_metadata(self, *_args, **_kwargs):
+            raise OSError("adapter transport failed")
+
+    cloud_think = AsyncCallProbe(return_value="HealthRouter recovered the request.")
+    router = HealthAwareLLMRouter()
+    router.register(
+        name="Gemini-Fast",
+        url="cloud",
+        model="gemini-2.0-flash",
+        is_local=False,
+        tier="api_fast",
+        client=SimpleNamespace(think=cloud_think),
+    )
+
+    monkeypatch.setattr(asyncio, "sleep", AsyncCallProbe(return_value=None))
+    monkeypatch.setattr(
+        InferenceGate,
+        "_scrub_cloud_payload",
+        lambda self, system, prompt: (system, prompt),
+    )
+
+    def _container_get(name, default=None):
+        if name == "api_adapter":
+            return _ThrowingAdapter()
+        if name == "llm_router":
+            return router
+        return default
+
+    monkeypatch.setattr(ServiceContainer, "get", staticmethod(_container_get))
+
+    with replace("core.brain.llm.mlx_client.get_mlx_client", return_value=no_text):
+        with replace(
+            "core.brain.llm.model_registry.get_brainstem_path",
+            return_value="/models/brainstem",
+        ):
+            with replace(
+                "core.brain.llm.model_registry.get_fallback_path",
+                return_value="/models/fallback",
+            ):
+                result = await gate.generate(
+                    "Recover this request through the cloud.",
+                    context={
+                        "origin": "user",
+                        "prefer_tier": "primary",
+                        "allow_cloud_fallback": True,
+                        "allow_mesh_cognition": False,
+                    },
+                )
+
+    assert result == "HealthRouter recovered the request."
+    assert cloud_think.calls
+    assert gate.get_last_generation_metadata()["endpoint"] == "Gemini-Fast"
+
+
+def test_cloud_result_requires_verified_structured_provider_identity():
+    from core.brain.inference_gate import _verified_cloud_generation_metadata
+
+    assert not _verified_cloud_generation_metadata(
+        {
+            "ok": True,
+            "text": "local fallback text",
+            "endpoint": "APIAdapter-cloud-unverified",
+            "provider": "unknown",
+            "model": "",
+            "is_local": False,
+        }
+    )
+    assert _verified_cloud_generation_metadata(
+        {
+            "ok": True,
+            "text": "verified cloud text",
+            "endpoint": "Gemini-APIAdapter:gemini-2.0-flash",
+            "provider": "gemini",
+            "model": "gemini-2.0-flash",
+            "is_local": False,
+            "provider_verified": True,
+        },
+        endpoint_prefix="Gemini-APIAdapter:",
+    )
 
 
 def test_conversation_status_is_not_ready_after_timeout_mark():
@@ -2427,6 +2816,82 @@ async def test_inference_gate_exposes_local_surface_control_receipt():
     assert receipt["surface_validation_prompt_present"] is True
     assert client.kwargs[0]["user_surface_validation_prompt"] == "What are you tracking?"
     assert client.kwargs[0]["live_mind_controls_bound"] is True
+
+
+@pytest.mark.asyncio
+async def test_inference_gate_generation_receipts_are_task_scoped():
+    gate = InferenceGate()
+
+    async def _record(label: str) -> tuple[dict, dict]:
+        gate._clear_last_generation_metadata()
+        await asyncio.sleep(0)
+        gate._record_client_generation_metadata(
+            None,
+            label=label,
+            success=True,
+            text=label,
+        )
+        await asyncio.sleep(0)
+        return (
+            gate.get_last_generation_metadata(),
+            gate.get_last_surface_control_receipt(),
+        )
+
+    first, second = await asyncio.gather(_record("request-A"), _record("request-B"))
+
+    assert first[0]["endpoint"] == "request-A"
+    assert second[0]["endpoint"] == "request-B"
+    assert first[1] == {}
+    assert second[1] == {}
+
+
+@pytest.mark.asyncio
+async def test_inference_gate_fresh_task_never_borrows_global_receipt():
+    gate = InferenceGate()
+    published = asyncio.Event()
+
+    async def _writer() -> None:
+        gate._record_client_generation_metadata(
+            None,
+            label="writer-request",
+            success=True,
+            text="writer",
+        )
+        published.set()
+
+    async def _reader() -> tuple[dict, dict]:
+        await published.wait()
+        return (
+            gate.get_last_generation_metadata(),
+            gate.get_last_surface_control_receipt(),
+        )
+
+    _, reader_receipts = await asyncio.gather(_writer(), _reader())
+
+    assert reader_receipts == ({}, {})
+    assert gate.get_diagnostic_last_generation_metadata()["endpoint"] == (
+        "writer-request"
+    )
+
+
+def test_inference_gate_records_stabilization_without_prior_provider_receipt():
+    gate = InferenceGate()
+    gate._clear_last_generation_metadata()
+
+    result = gate._stabilize_user_facing_text(
+        "no",
+        'Reply exactly: "yes"',
+        is_user_facing=True,
+    )
+
+    assert result == "yes"
+    metadata = gate.get_last_generation_metadata()
+    receipt = gate.get_last_surface_control_receipt()
+    assert metadata["endpoint"] == "unattributed-response-path"
+    assert receipt["text_mutation_count"] == 1
+    assert receipt["text_mutations"][0]["stage"] == (
+        "inference_gate.post_generation_stabilization"
+    )
 
 
 @pytest.mark.asyncio

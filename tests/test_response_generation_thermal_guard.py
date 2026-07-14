@@ -1,7 +1,10 @@
+import asyncio
+from contextvars import ContextVar
 from types import SimpleNamespace
 
 import pytest
 
+from core.brain.generation_provenance import generation_metadata_of
 from core.phases.response_generation import ResponseGenerationPhase
 from core.state.aura_state import AuraState, CognitiveMode
 
@@ -102,6 +105,33 @@ class _BlankSearchRouter(_Router):
     async def think(self, **kwargs):
         self.calls.append(kwargs)
         return ""
+
+
+class _ConcurrentAmplifierRouter(_Router):
+    def __init__(self):
+        super().__init__()
+        self.completion_order = []
+        self._metadata = ContextVar(
+            "test_amplifier_generation_metadata",
+            default=None,
+        )
+
+    async def think(self, **kwargs):
+        self.calls.append(kwargs)
+        prompt = kwargs["messages"][-1]["content"]
+        candidate_id = int(prompt.rsplit("-", 1)[-1])
+        await asyncio.sleep(0.03 if candidate_id == 0 else 0.005)
+        self._metadata.set(
+            {
+                "candidate_id": candidate_id,
+                "surface_control_receipt": {"applied": True},
+            }
+        )
+        self.completion_order.append(candidate_id)
+        return f"candidate answer {candidate_id}"
+
+    def get_last_generation_metadata(self):
+        return dict(self._metadata.get() or {})
 
 
 @pytest.mark.asyncio
@@ -429,6 +459,21 @@ async def test_response_generation_answers_from_search_evidence_when_cortex_fail
     reply = new_state.cognition.last_response
     assert "Europa: Jupiter's Ocean World" in reply
     assert "science.nasa.gov/jupiter/moons/europa" in reply
+    mutation_stages = {
+        item["stage"]
+        for item in new_state.response_modifiers["live_mind_surface_control_receipt"][
+            "text_mutations"
+        ]
+    }
+    expected_stage = (
+        "response_generation.required_tool_timeout_recovery"
+        if router_cls is _TimeoutSearchRouter
+        else "response_generation.required_tool_blank_recovery"
+    )
+    assert expected_stage in mutation_stages
+    assert new_state.response_modifiers["live_mind_surface_control_receipt"][
+        "deterministic_repair_applied"
+    ] is True
 
 
 @pytest.mark.asyncio
@@ -458,12 +503,97 @@ async def test_response_generation_honors_live_caller_token_cap_after_biases(mon
             "desktop_cognitive_engine_required": True,
             "cognitive_engine_required": True,
             "visible_user_message": state.cognition.current_objective,
-            "max_tokens": 512,
+            "max_tokens": 1,
         },
     )
 
     assert router.calls
-    assert router.calls[0]["max_tokens"] == 512
+    assert router.calls[0]["max_tokens"] == 1
+
+
+@pytest.mark.asyncio
+async def test_response_generation_forwards_compiled_visible_output_contract(monkeypatch):
+    state = AuraState()
+    state.cognition.current_objective = 'Reply exactly: "yes"'
+    state.cognition.current_origin = "user"
+    state.cognition.current_mode = CognitiveMode.REACTIVE
+
+    router = _Router()
+    phase = ResponseGenerationPhase(_Container({"llm_router": router}))
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [{"role": "system", "content": "context"}],
+    )
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=lambda text: (text, False, [])),
+    )
+
+    result = await phase.execute(
+        state,
+        context={
+            "visible_user_message": state.cognition.current_objective,
+            "max_tokens": 4096,
+        },
+    )
+
+    assert router.calls
+    call = router.calls[0]
+    assert call["max_tokens"] == len(b"yes") + 16
+    assert call["requested_output_contract"]["kind"] == "exact_reply"
+    assert call["semantic_output_token_cap"] == 8
+    assert call["hard_output_token_ceiling"] == len(b"yes") + 16
+    assert result.cognition.last_response == "yes"
+
+
+@pytest.mark.asyncio
+async def test_response_amplifier_adopts_selected_candidate_metadata_not_last_completion(
+    monkeypatch,
+):
+    router = _ConcurrentAmplifierRouter()
+    phase = ResponseGenerationPhase(_Container({"llm_router": router}))
+    state = AuraState()
+
+    async def fake_amplify_turn(_objective, generate, **_kwargs):
+        candidates = await asyncio.gather(
+            generate("candidate-0", 0.2),
+            generate("candidate-1", 0.8),
+        )
+        winner = candidates[0]
+        return SimpleNamespace(
+            answer=str(winner),
+            confidence=0.95,
+            verified=True,
+            generation_metadata=generation_metadata_of(winner),
+            receipt=SimpleNamespace(to_dict=lambda: {"winner": 0}),
+        )
+
+    monkeypatch.setattr(
+        "core.brain.reasoning_amplifier_v2.is_amplifiable",
+        lambda _objective: "planning",
+    )
+    monkeypatch.setattr(
+        "core.brain.reasoning_amplifier_v2.amplify_turn",
+        fake_amplify_turn,
+    )
+
+    answer = await phase._maybe_amplify_response(
+        objective="Plan a causally valid migration",
+        draft="initial draft",
+        router=router,
+        state=state,
+        request_timeout=30.0,
+        origin="user",
+        tier="primary",
+        runtime_context={"visible_user_message": "Plan the migration"},
+        is_user_facing=True,
+        is_background=False,
+        proof_or_benchmark=False,
+    )
+
+    assert answer == "candidate answer 0"
+    assert router.completion_order == [1, 0]
+    assert generation_metadata_of(answer)["candidate_id"] == 0
 
 
 @pytest.mark.asyncio
@@ -710,6 +840,18 @@ async def test_response_generation_dialogue_retry_preserves_live_mind_contract(m
     state.cognition.current_mode = CognitiveMode.REACTIVE
 
     router = _Router()
+    replies = iter(
+        (
+            "Confusion increases uncertainty, so I slow down and check competing interpretations before answering.",
+            "When confusion rises, I compare alternatives explicitly and preserve uncertainty until the evidence separates them.",
+        )
+    )
+
+    async def _distinct_retry_think(**kwargs):
+        router.calls.append(kwargs)
+        return next(replies)
+
+    router.think = _distinct_retry_think
     phase = ResponseGenerationPhase(_Container({"llm_router": router}))
 
     monkeypatch.setattr(
@@ -733,7 +875,7 @@ async def test_response_generation_dialogue_retry_preserves_live_mind_contract(m
         _force_retry,
     )
 
-    await phase.execute(
+    result = await phase.execute(
         state,
         context={
             "desktop_cognitive_engine_required": True,
@@ -765,3 +907,62 @@ async def test_response_generation_dialogue_retry_preserves_live_mind_contract(m
     assert retry_call["top_p"] == 0.81
     assert router.calls[0]["desktop_cognitive_engine_required"] is True
     assert router.calls[0]["allow_cloud_fallback"] is False
+    mutations = result.response_modifiers["live_mind_surface_control_receipt"][
+        "text_mutations"
+    ]
+    assert any(
+        item["stage"] == "response_generation.dialogue_contract_retry"
+        for item in mutations
+    )
+
+
+@pytest.mark.asyncio
+async def test_response_generation_ledgers_executive_guard_visible_replacement(monkeypatch):
+    state = AuraState()
+    state.cognition.current_objective = "Summarize the architectural audit."
+    state.cognition.current_origin = "desktop_ui"
+    state.cognition.current_mode = CognitiveMode.REACTIVE
+
+    router = _Router()
+    phase = ResponseGenerationPhase(_Container({"llm_router": router}))
+    monkeypatch.setattr(
+        "core.phases.response_generation.ContextAssembler.build_messages",
+        lambda *_args, **_kwargs: [
+            {"role": "system", "content": "base live Aura context"},
+            {"role": "user", "content": "Summarize the architectural audit."},
+        ],
+    )
+
+    def _align(text):
+        return str(text).replace("Thermal-safe", "Identity-aligned"), True, [
+            "identity_alignment"
+        ]
+
+    monkeypatch.setattr(
+        "core.phases.response_generation.get_executive_guard",
+        lambda: SimpleNamespace(align=_align),
+    )
+
+    result = await phase.execute(
+        state,
+        context={
+            "visible_user_message": "Summarize the architectural audit.",
+            "clean_user_surface_contract": True,
+            "live_mind_controls_bound": True,
+            "live_mind_generation_controls": {
+                "temperature": 0.55,
+                "top_p": 0.88,
+                "clean_user_surface_recurrent_loops": 2,
+                "clean_user_surface_steering_alpha": 0.30,
+            },
+        },
+    )
+
+    mutations = result.response_modifiers["live_mind_surface_control_receipt"][
+        "text_mutations"
+    ]
+    assert any(
+        item["stage"] == "response_generation.executive_guard"
+        and item["deterministic"] is True
+        for item in mutations
+    )

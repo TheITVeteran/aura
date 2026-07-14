@@ -206,6 +206,39 @@ def test_host_process_ids_never_enriches_process_table(monkeypatch):
     assert observation.pids == (3, 5, 9)
 
 
+def test_host_process_table_skips_native_process_probe_system_error(monkeypatch):
+    from core.runtime import resource_observation
+
+    class _ProtectedHandle:
+        pid = 41
+
+        def oneshot(self):
+            return contextlib.nullcontext()
+
+        def ppid(self):
+            return 1
+
+        def create_time(self):
+            return 41.0
+
+        def status(self):
+            return "running"
+
+        def name(self):
+            raise SystemError("sysctl(KERN_PROCARGS2) returned an exception")
+
+    monkeypatch.setattr(
+        resource_observation.psutil,
+        "process_iter",
+        lambda: iter((_ProtectedHandle(),)),
+    )
+
+    observation = HostResourceObserver().process_table()
+
+    assert observation.available is True
+    assert observation.processes == ()
+
+
 def test_legacy_pid_census_does_not_call_process_table(monkeypatch, resource_observer):
     resource_observer.configure_processes(
         [

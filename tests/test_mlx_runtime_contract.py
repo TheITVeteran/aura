@@ -77,6 +77,316 @@ def test_bounded_max_tokens_narrowed_exceptions():
     assert _bounded_max_tokens(50, object(), 64) == 50
 
 
+def test_mlx_output_contract_ceiling_cannot_be_expanded_by_bridge():
+    from core.brain.llm.mlx_client import _bounded_generation_max_tokens
+
+    assert _bounded_generation_max_tokens(384, 768, 48, 4096) == 48
+    assert _bounded_generation_max_tokens(24, 768, 48, 4096) == 24
+    assert _bounded_generation_max_tokens(384, 128, None, 4096) == 128
+    assert _bounded_generation_max_tokens(384, 128, "invalid", 4096) == 128
+
+
+def test_mlx_main_generation_builds_contract_cap_after_bridge_lookup():
+    import inspect
+
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    source = inspect.getsource(MLXLocalClient._generate_inner)
+    bridge_index = source.index("def _bridge_get")
+    contract_index = source.index('requested_output_contract = kwargs.get("requested_output_contract")')
+    request_index = source.index('"max_tokens": generation_max_tokens')
+
+    assert bridge_index < contract_index < request_index
+    assert "requested_output_contract" not in inspect.getsource(
+        MLXLocalClient.generate_batch_async
+    )
+
+
+def test_mlx_surface_receipt_reports_contract_tokens_and_repair():
+    from core.brain.llm.mlx_client import MLXLocalClient
+    from core.brain.llm.mlx_worker import _surface_generation_control_receipt
+
+    contract = {
+        "kind": "sentence_count",
+        "sentence_count": 1,
+        "semantic_token_cap": 32,
+        "hard_token_ceiling": 48,
+    }
+    worker_receipt = _surface_generation_control_receipt(
+        {
+            "max_tokens": 48,
+            "clean_user_surface_contract": True,
+            "requested_output_contract": contract,
+            "semantic_output_token_cap": 32,
+            "hard_output_token_ceiling": 48,
+        },
+        {
+            "enabled": True,
+            "instruction_shape_repair_applied": True,
+            "surface_quality_gate_enabled": True,
+            "surface_quality_gate_passed": True,
+        },
+    )
+    client = MLXLocalClient.__new__(MLXLocalClient)
+    client._last_surface_control_receipt = {}
+    client._record_surface_control_receipt_from_response(
+        {
+            "surface_control_receipt": worker_receipt,
+            "tokens_used": 11,
+        }
+    )
+
+    receipt = client.get_last_surface_control_receipt()
+    assert receipt["generation_max_tokens"] == 48
+    assert receipt["generated_tokens"] == 11
+    assert receipt["instruction_shape_repair_applied"] is True
+    assert receipt["requested_output_contract"]["kind"] == "sentence_count"
+
+
+def test_worker_retry_budget_never_expands_past_output_contract():
+    from core.brain.llm.mlx_worker import (
+        _expand_user_surface_retry_budget,
+        _surface_generation_control_receipt,
+    )
+
+    constrained = {"max_tokens": 48}
+    assert (
+        _expand_user_surface_retry_budget(
+            constrained,
+            ["truncated_tail"],
+            hard_ceiling=48,
+        )
+        is False
+    )
+    assert constrained["max_tokens"] == 48
+
+    unconstrained = {"max_tokens": 48}
+    assert _expand_user_surface_retry_budget(unconstrained, ["truncated_tail"])
+    assert unconstrained["max_tokens"] == 432
+
+    receipt = _surface_generation_control_receipt(
+        {"max_tokens": 48, "hard_output_token_ceiling": 48},
+        {"generation_max_tokens_applied": constrained["max_tokens"]},
+    )
+    assert receipt["generation_max_tokens"] == 48
+    assert receipt["hard_output_token_ceiling"] == 48
+
+
+def test_worker_never_expands_admitted_cap_for_mode_specific_contracts():
+    import inspect
+
+    from core.brain.llm import mlx_worker
+
+    source = inspect.getsource(mlx_worker._mlx_worker_loop)
+    operator_cap = source.index(
+        "if operator_evidence_contract:\n                    max_tokens = min(max_tokens, 192)"
+    )
+    hard_ceiling = source.index(
+        'hard_output_token_ceiling = _safe_int(\n                    job.get("hard_output_token_ceiling")'
+    )
+    kwargs_build = source.index('kwargs = {"max_tokens": max_tokens')
+
+    assert operator_cap < hard_ceiling < kwargs_build
+    assert "max_tokens = max(max_tokens, min(exact_token_requirement" not in source
+
+
+@pytest.mark.asyncio
+async def test_mlx_surface_receipts_are_task_scoped_and_empty_resets_stale_state():
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient.__new__(MLXLocalClient)
+    client._last_surface_control_receipt = {"request": "legacy"}
+    client._set_task_surface_control_receipt({})
+    assert client.get_last_surface_control_receipt() == {}
+
+    async def task_receipt(request: str) -> dict:
+        client._set_task_surface_control_receipt({"request": request})
+        await asyncio.sleep(0)
+        return client.get_last_surface_control_receipt()
+
+    first, second = await asyncio.gather(task_receipt("first"), task_receipt("second"))
+
+    assert first == {"request": "first"}
+    assert second == {"request": "second"}
+    assert client.get_last_surface_control_receipt() == {}
+
+
+@pytest.mark.asyncio
+async def test_mlx_fresh_task_never_borrows_global_surface_receipt():
+    from core.brain.llm.mlx_client import MLXLocalClient
+
+    client = MLXLocalClient.__new__(MLXLocalClient)
+    client._last_surface_control_receipt = {}
+    published = asyncio.Event()
+
+    async def _writer() -> None:
+        client._set_task_surface_control_receipt({"request": "writer"})
+        client._last_surface_control_receipt = {"request": "writer"}
+        published.set()
+
+    async def _reader() -> dict:
+        await published.wait()
+        return client.get_last_surface_control_receipt()
+
+    _, reader_receipt = await asyncio.gather(_writer(), _reader())
+
+    assert reader_receipt == {}
+    assert client.get_diagnostic_last_surface_control_receipt() == {
+        "request": "writer"
+    }
+
+
+def test_worker_rejects_and_repairs_exact_reply_mismatch_before_ipc_success():
+    from core.brain.llm.mlx_worker import (
+        _repair_live_user_surface_instruction_shape,
+        _surface_quality_failure_reasons,
+    )
+
+    job = {
+        "clean_user_surface_contract": True,
+        "user_surface_validation_prompt": "Please answer exactly: yes",
+    }
+    mismatch = "No, I disagree with that requested token."
+
+    assert "missing_requested_exact_reply" in _surface_quality_failure_reasons(
+        job,
+        mismatch,
+    )
+    repaired = _repair_live_user_surface_instruction_shape(job, mismatch)
+    assert repaired == "yes"
+    assert _surface_quality_failure_reasons(job, repaired) == []
+
+
+def test_exact_reply_ceiling_covers_selected_tokenizer_requirement():
+    from core.brain.llm.mlx_worker import _exact_reply_token_requirement
+    from core.conversation.response_reliability import requested_output_contract
+
+    class _ByteTokenizer:
+        @staticmethod
+        def encode(text, add_special_tokens=False):
+            return list(str(text).encode("utf-8"))
+
+    target = "Aa0!" * 20
+    prompt = f'Reply exactly: "{target}"'
+    contract = requested_output_contract(prompt)
+    job = {
+        "user_surface_validation_prompt": prompt,
+        "requested_output_contract": contract.as_dict(),
+        "hard_output_token_ceiling": contract.hard_token_ceiling,
+    }
+
+    token_count, requirement = _exact_reply_token_requirement(job, _ByteTokenizer())
+
+    assert token_count == len(target.encode("utf-8"))
+    assert requirement == token_count + 8
+    assert contract.hard_token_ceiling >= requirement
+
+
+def test_exact_reply_token_evidence_preserves_immutable_admitted_caps():
+    from core.brain.llm.mlx_worker import _record_exact_reply_token_evidence
+
+    class _OneTokenTokenizer:
+        @staticmethod
+        def encode(text, add_special_tokens=False):
+            del text, add_special_tokens
+            return [7]
+
+    job = {
+        "max_tokens": 1,
+        "hard_output_token_ceiling": 1,
+        "user_surface_validation_prompt": 'Reply exactly: "X"',
+        "requested_output_contract": {
+            "exact_reply": True,
+            "hard_token_ceiling": 1,
+        },
+    }
+
+    _record_exact_reply_token_evidence(
+        job,
+        _OneTokenTokenizer(),
+        generation_max_tokens=job["max_tokens"],
+        hard_output_token_ceiling=job["hard_output_token_ceiling"],
+    )
+
+    assert job["max_tokens"] == 1
+    assert job["hard_output_token_ceiling"] == 1
+    assert job["requested_output_contract"]["hard_token_ceiling"] == 1
+    assert job["exact_reply_token_count"] == 1
+    assert job["exact_reply_native_capacity_sufficient"] is False
+    assert job["exact_reply_token_ceiling_valid"] is False
+
+
+def test_worker_receipt_preserves_ordered_text_mutation_provenance():
+    from core.brain.live_mind_contract import append_text_mutation
+    from core.brain.llm.mlx_worker import _surface_generation_control_receipt
+
+    state = {"enabled": False, "text_mutations": []}
+    append_text_mutation(
+        state,
+        stage="mlx_worker.truncated_tail",
+        method="retain_complete_sentences",
+        reasons=["truncated_tail"],
+        before="Complete sentence. clipped",
+        after="Complete sentence.",
+        deterministic=True,
+    )
+
+    receipt = _surface_generation_control_receipt(
+        {"max_tokens": 48, "clean_user_surface_contract": True},
+        state,
+    )
+
+    assert receipt["text_mutation_count"] == 1
+    assert receipt["text_mutations"][0]["stage"] == "mlx_worker.truncated_tail"
+    assert receipt["deterministic_repair_applied"] is True
+
+
+def test_text_mutation_sequence_preserves_distinct_same_shaped_events():
+    from core.brain.live_mind_contract import append_text_mutation, merge_text_mutations
+
+    receipt = {"text_mutations": []}
+    append_text_mutation(
+        receipt,
+        stage="same-stage",
+        method="same-method",
+        reasons=["same-reason"],
+        before="aa",
+        after="bb",
+        deterministic=True,
+    )
+    append_text_mutation(
+        receipt,
+        stage="same-stage",
+        method="same-method",
+        reasons=["same-reason"],
+        before="cc",
+        after="dd",
+        deterministic=True,
+    )
+
+    assert receipt["text_mutation_count"] == 2
+    assert [item["sequence"] for item in receipt["text_mutations"]] == [1, 2]
+
+    independent = {"text_mutations": []}
+    append_text_mutation(
+        independent,
+        stage="same-stage",
+        method="same-method",
+        reasons=["same-reason"],
+        before="ee",
+        after="ff",
+        deterministic=True,
+    )
+    merged = merge_text_mutations(
+        receipt["text_mutations"][:1],
+        independent["text_mutations"],
+    )
+    assert len(merged) == 2
+    assert [item["sequence"] for item in merged] == [1, 2]
+    assert len({item["event_id"] for item in merged}) == 2
+    assert len(merge_text_mutations(merged, merged)) == 2
+
+
 def test_mlx_degradation_records_have_explicit_runtime_actions():
     """MLX failures must connect to recovery behavior, not only log telemetry."""
     from pathlib import Path

@@ -14,6 +14,7 @@ from core.conversation.response_reliability import (
     live_chat_diagnostic_floor,
     normalize_user_facing_format,
     repair_instruction_shape,
+    requested_exact_reply_target,
 )
 from core.runtime.errors import record_degradation
 from core.runtime.structured_input import looks_like_learning_resource_bundle
@@ -89,12 +90,6 @@ _SAFE_BINOPS = {
     ast.Pow: operator.pow,
 }
 _SAFE_UNARYOPS = {ast.UAdd: operator.pos, ast.USub: operator.neg}
-_EXACT_REPLY_RE = re.compile(
-    r"(?:say|reply|respond|answer|return|print)\s+exactly\s*:?\s*[\"'“”‘’]*(?P<target>.+?)\s*[\"'“”‘’]*\s*$",
-    re.IGNORECASE,
-)
-
-
 def strip_role_artifacts(text: str) -> str:
     """Remove leaked chat-role labels and one-turn continuation artifacts."""
     if not text:
@@ -157,11 +152,9 @@ def _direct_answer_floor(user_message: str) -> str:
     if not lower:
         return ""
 
-    exact = _EXACT_REPLY_RE.search(q)
-    if exact:
-        target = exact.group("target").strip(" .!?\t\r\n\"'“”‘’")
-        if target:
-            return target
+    exact_target = requested_exact_reply_target(q)
+    if exact_target:
+        return exact_target
 
     if is_status_check_turn(q) and (
         "brief" in lower

@@ -23,9 +23,11 @@ import threading as _threading
 import time
 import weakref
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
+from core.brain.live_mind_contract import append_text_mutation
 from core.brain.llm.chat_format import format_chatml_messages
 from core.brain.llm.model_registry import (
     BRAINSTEM_ENDPOINT,
@@ -40,6 +42,7 @@ from core.conversation.response_reliability import (
     has_requested_word_count_contract,
     is_live_self_reflection_turn,
     is_self_process_question,
+    requested_output_contract,
 )
 from core.runtime import resource_psutil as psutil
 from core.runtime.desktop_boot_safety import (
@@ -124,6 +127,29 @@ def _worker_process_is_running(proc: Any) -> bool:
     return False
 
 
+def _verified_cloud_generation_metadata(
+    value: Any,
+    *,
+    endpoint_prefix: str = "",
+) -> bool:
+    """Accept only structured results from a verified non-local endpoint."""
+
+    if not isinstance(value, dict) or value.get("ok") is not True:
+        return False
+    endpoint = str(value.get("endpoint") or "").strip()
+    provider = str(value.get("provider") or "").strip().lower()
+    model = str(value.get("model") or "").strip()
+    if value.get("is_local") is not False or value.get("provider_verified") is not True:
+        return False
+    if not endpoint or not model or provider in {"", "cloud", "local", "none", "unknown"}:
+        return False
+    if "unverified" in endpoint.lower() or endpoint.lower() in {"none", "all_failed"}:
+        return False
+    if endpoint_prefix and not endpoint.startswith(endpoint_prefix):
+        return False
+    return True
+
+
 def _grounded_state_signal_text(value: Any, *, limit: int) -> str:
     text = " ".join(str(value or "").strip().split())
     for source, replacement in _STATE_SIGNAL_REWRITES:
@@ -195,6 +221,7 @@ _DOWNSTREAM_REPAIRABLE_USER_FACING_REASONS = frozenset(
         "missing_requested_paragraph_count",
         "missing_requested_list_count",
         "missing_requested_word_count",
+        "missing_requested_sentence_count",
         "missing_requested_followup_question",
     }
 )
@@ -325,6 +352,18 @@ class InferenceGate:
         self._last_user_generation_used_fallback: bool = False
         self._last_generation_metadata: dict[str, Any] = {}
         self._last_surface_control_receipt: dict[str, Any] = {}
+        self._generation_metadata_context: ContextVar[dict[str, Any] | None] = (
+            ContextVar(
+                f"aura_inference_gate_generation_metadata_{id(self)}",
+                default=None,
+            )
+        )
+        self._surface_control_receipt_context: ContextVar[dict[str, Any] | None] = (
+            ContextVar(
+                f"aura_inference_gate_surface_receipt_{id(self)}",
+                default=None,
+            )
+        )
         type(self)._instance_ref = weakref.ref(self)
         logger.info("🛡️ InferenceGate created.")
 
@@ -334,15 +373,62 @@ class InferenceGate:
         self._last_user_generation_at = time.time()
         self._last_user_generation_used_fallback = endpoint != PRIMARY_ENDPOINT
 
+    def _generation_metadata_slot(self) -> ContextVar[dict[str, Any] | None]:
+        slot = getattr(self, "_generation_metadata_context", None)
+        if slot is None:
+            slot = ContextVar(
+                f"aura_inference_gate_generation_metadata_{id(self)}",
+                default=None,
+            )
+            self._generation_metadata_context = slot
+        return slot
+
+    def _surface_control_receipt_slot(self) -> ContextVar[dict[str, Any] | None]:
+        slot = getattr(self, "_surface_control_receipt_context", None)
+        if slot is None:
+            slot = ContextVar(
+                f"aura_inference_gate_surface_receipt_{id(self)}",
+                default=None,
+            )
+            self._surface_control_receipt_context = slot
+        return slot
+
+    def _publish_generation_metadata(
+        self,
+        metadata: dict[str, Any],
+        receipt: dict[str, Any],
+    ) -> None:
+        metadata_snapshot = dict(metadata)
+        receipt_snapshot = dict(receipt)
+        self._generation_metadata_slot().set(metadata_snapshot)
+        self._surface_control_receipt_slot().set(receipt_snapshot)
+        self._last_generation_metadata = metadata_snapshot
+        self._last_surface_control_receipt = receipt_snapshot
+
     def get_last_generation_metadata(self) -> dict[str, Any]:
-        return dict(self._last_generation_metadata)
+        task_metadata = self._generation_metadata_slot().get()
+        if task_metadata is not None:
+            return dict(task_metadata)
+        return {}
+
+    def get_diagnostic_last_generation_metadata(self) -> dict[str, Any]:
+        """Return process-wide last-call telemetry, never request proof."""
+
+        return dict(getattr(self, "_last_generation_metadata", {}) or {})
 
     def get_last_surface_control_receipt(self) -> dict[str, Any]:
-        return dict(self._last_surface_control_receipt)
+        task_receipt = self._surface_control_receipt_slot().get()
+        if task_receipt is not None:
+            return dict(task_receipt)
+        return {}
+
+    def get_diagnostic_last_surface_control_receipt(self) -> dict[str, Any]:
+        """Return process-wide last-call telemetry, never request proof."""
+
+        return dict(getattr(self, "_last_surface_control_receipt", {}) or {})
 
     def _clear_last_generation_metadata(self) -> None:
-        self._last_generation_metadata = {}
-        self._last_surface_control_receipt = {}
+        self._publish_generation_metadata({}, {})
 
     def _record_client_generation_metadata(
         self,
@@ -351,15 +437,43 @@ class InferenceGate:
         label: str,
         success: bool,
         text: str,
+        requested_max_tokens: int | None = None,
+        output_contract: dict[str, Any] | None = None,
+        generation_metadata: dict[str, Any] | None = None,
     ) -> None:
+        provider_metadata = (
+            dict(generation_metadata) if isinstance(generation_metadata, dict) else {}
+        )
+        resolved_label = str(provider_metadata.get("endpoint") or label)
         metadata: dict[str, Any] = {
             "ok": bool(success),
-            "endpoint": PRIMARY_ENDPOINT if str(label).startswith(PRIMARY_ENDPOINT) else str(label),
+            "endpoint": (
+                PRIMARY_ENDPOINT
+                if resolved_label.startswith(PRIMARY_ENDPOINT)
+                else resolved_label
+            ),
             "text_length": len(str(text or "").strip()),
         }
-        receipt: dict[str, Any] = {}
+        for key in (
+            "provider",
+            "model",
+            "is_local",
+            "provider_verified",
+            "fallback_chain",
+            "error",
+        ):
+            if key in provider_metadata:
+                metadata[key] = provider_metadata[key]
+        if requested_max_tokens is not None:
+            metadata["requested_max_tokens"] = max(1, int(requested_max_tokens))
+        if isinstance(output_contract, dict) and output_contract:
+            metadata["requested_output_contract"] = dict(output_contract)
+        raw_provider_receipt = provider_metadata.get("surface_control_receipt")
+        receipt: dict[str, Any] = (
+            dict(raw_provider_receipt) if isinstance(raw_provider_receipt, dict) else {}
+        )
         getter = getattr(client, "get_last_surface_control_receipt", None)
-        if callable(getter):
+        if success and not receipt and callable(getter):
             try:
                 raw_receipt = getter()
                 if isinstance(raw_receipt, dict):
@@ -373,8 +487,14 @@ class InferenceGate:
                 logger.debug("Surface-control receipt read failed for %s: %s", label, exc)
         if receipt:
             metadata["surface_control_receipt"] = receipt
-        self._last_generation_metadata = metadata
-        self._last_surface_control_receipt = receipt
+            for source_key, metadata_key in (
+                ("generation_max_tokens", "actual_max_tokens"),
+                ("generated_tokens", "generated_tokens"),
+                ("instruction_shape_repair_applied", "deterministic_repair_applied"),
+            ):
+                if source_key in receipt:
+                    metadata[metadata_key] = receipt[source_key]
+        self._publish_generation_metadata(metadata, receipt)
 
     @classmethod
     def _user_facing_recovery_response(cls, prompt: str) -> str:
@@ -410,16 +530,80 @@ class InferenceGate:
         # Last resort: structured acknowledgment that always works
         return "I'm processing that. My inference pipeline is working on your request—let me take a moment."
 
-    @staticmethod
-    def _stabilize_user_facing_text(text: str, prompt: str, *, is_user_facing: bool) -> str:
+    def _stabilize_user_facing_text(
+        self,
+        text: str,
+        prompt: str,
+        *,
+        is_user_facing: bool,
+    ) -> str:
         if not is_user_facing:
             return str(text or "").strip()
+        original = str(text or "").strip()
         try:
             from core.synthesis import stabilize_user_facing_response
 
-            return stabilize_user_facing_response(str(text or ""), prompt)
+            stabilized = stabilize_user_facing_response(original, prompt)
+            if stabilized != original:
+                metadata = self.get_last_generation_metadata()
+                if not metadata:
+                    metadata = {
+                        "ok": bool(stabilized),
+                        "endpoint": "unattributed-response-path",
+                        "text_length": len(stabilized),
+                    }
+                receipt = dict(metadata.get("surface_control_receipt") or {})
+                append_text_mutation(
+                    receipt,
+                    stage="inference_gate.post_generation_stabilization",
+                    method="deterministic_instruction_shape",
+                    reasons=["user_output_contract"],
+                    before=original,
+                    after=stabilized,
+                    deterministic=True,
+                )
+                metadata["surface_control_receipt"] = receipt
+                metadata["text_mutations"] = list(receipt.get("text_mutations") or [])
+                metadata["deterministic_repair_applied"] = bool(
+                    receipt.get("deterministic_repair_applied")
+                )
+                metadata["post_generation_repair_applied"] = True
+                self._publish_generation_metadata(metadata, receipt)
+            return stabilized
         except (ImportError, AttributeError, TypeError, ValueError):
-            return str(text or "").strip()
+            return original
+
+    def _finalize_nonlocal_user_facing_text(
+        self,
+        text: str,
+        prompt: str,
+        *,
+        is_user_facing: bool,
+        label: str,
+        max_tokens: int | None,
+        output_contract: dict[str, Any] | None,
+        generation_metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Finalize cloud/recovery text without retaining stale local receipts."""
+
+        cleaned = str(text or "").strip()
+        if is_user_facing:
+            self._record_client_generation_metadata(
+                None,
+                label=label,
+                success=bool(cleaned),
+                text=cleaned,
+                requested_max_tokens=max_tokens,
+                output_contract=output_contract,
+                generation_metadata=generation_metadata,
+            )
+            if cleaned:
+                self._record_user_generation_endpoint(label)
+        return self._stabilize_user_facing_text(
+            cleaned,
+            prompt,
+            is_user_facing=is_user_facing,
+        )
 
     @staticmethod
     def _repairable_user_facing_draft_for_downstream(text: str, prompt: str) -> str | None:
@@ -3247,6 +3431,12 @@ class InferenceGate:
             label=label,
             success=success,
             text=text,
+            requested_max_tokens=max_tokens,
+            output_contract=(
+                dict(kwargs.get("requested_output_contract"))
+                if isinstance(kwargs.get("requested_output_contract"), dict)
+                else None
+            ),
         )
 
         if success and text and text.strip():
@@ -4868,6 +5058,10 @@ class InferenceGate:
             explicit_visible_user_prompt
             or self._visible_user_prompt_from_messages(initial_messages, prompt)
         )
+        output_contract = requested_output_contract(initial_visible_user_prompt)
+        output_contract_payload = (
+            output_contract.as_dict() if output_contract.constrained else None
+        )
         state = context.get("state")
         origin = str(context.get("origin", "") or "").lower()
         purpose = str(context.get("purpose", "") or "").lower()
@@ -4906,6 +5100,15 @@ class InferenceGate:
                 )
                 if mesh_decision.handled:
                     context["mesh_cognition"] = mesh_decision.as_dict()
+                    self._record_client_generation_metadata(
+                        None,
+                        label="MeshCognition",
+                        success=bool(str(mesh_decision.response or "").strip()),
+                        text=str(mesh_decision.response or ""),
+                        requested_max_tokens=output_contract.semantic_token_cap,
+                        output_contract=output_contract_payload,
+                    )
+                    self._record_user_generation_endpoint("MeshCognition")
                     return self._stabilize_user_facing_text(
                         mesh_decision.response,
                         initial_visible_user_prompt,
@@ -6104,7 +6307,7 @@ class InferenceGate:
                 requested_operator_cap = int(context.get("max_tokens") or 220)
             except (TypeError, ValueError):
                 requested_operator_cap = 220
-            max_tokens = max(64, min(max_tokens, requested_operator_cap, 220))
+            max_tokens = max(1, min(max_tokens, requested_operator_cap, 220))
             context["max_tokens"] = max_tokens
             context["allow_tools"] = False
             context["disable_prompt_cache"] = True
@@ -6134,6 +6337,52 @@ class InferenceGate:
             except (TypeError, ValueError):
                 requested_cap_int = 96
             max_tokens = max(1, min(max_tokens, requested_cap_int))
+            context["max_tokens"] = max_tokens
+
+        output_contract_is_user_facing = bool(
+            not is_background
+            and not isolated_generation_contract
+            and not health_probe
+            and not benchmark_request
+            and (
+                explicit_foreground
+                or self._origin_is_user_facing(origin)
+                or requested_tier in {"primary", "secondary"}
+            )
+        )
+        if (
+            output_contract_is_user_facing
+            and output_contract_payload is not None
+            and output_contract.hard_token_ceiling is not None
+        ):
+            planned_tokens = max_tokens
+            max_tokens = max(
+                1,
+                min(max_tokens, int(output_contract.hard_token_ceiling)),
+            )
+            context["requested_output_contract"] = dict(output_contract_payload)
+            context["semantic_output_token_cap"] = output_contract.semantic_token_cap
+            context["hard_output_token_ceiling"] = output_contract.hard_token_ceiling
+            context["max_tokens"] = max_tokens
+            morpho_kwargs["requested_output_contract"] = dict(output_contract_payload)
+            morpho_kwargs["semantic_output_token_cap"] = output_contract.semantic_token_cap
+            morpho_kwargs["hard_output_token_ceiling"] = output_contract.hard_token_ceiling
+            if max_tokens < planned_tokens:
+                logger.info(
+                    "🧠 Explicit output contract capped generation %d→%d "
+                    "(kind=%s semantic=%s hard=%s).",
+                    planned_tokens,
+                    max_tokens,
+                    output_contract.kind,
+                    output_contract.semantic_token_cap,
+                    output_contract.hard_token_ceiling,
+                )
+
+        # No policy floor may expand a caller-admitted ceiling. Keep this as
+        # the final token-budget transformation before prompt construction and
+        # every local/cloud provider call below.
+        if explicit_max_tokens_cap is not None:
+            max_tokens = max(1, min(max_tokens, explicit_max_tokens_cap))
             context["max_tokens"] = max_tokens
 
         # Build the prompt only after routing intent is known so we can choose
@@ -6666,7 +6915,11 @@ class InferenceGate:
                                 "🛡️ Preserving repairable Cortex draft for downstream response repair (len=%d).",
                                 len(repairable_draft),
                             )
-                            return self._strip_silence(repairable_draft)
+                            return self._stabilize_user_facing_text(
+                                repairable_draft,
+                                visible_user_prompt,
+                                is_user_facing=True,
+                            )
                         return self._stabilize_user_facing_text(
                             text,
                             visible_user_prompt,
@@ -6820,7 +7073,11 @@ class InferenceGate:
                                         "🛡️ Preserving repairable Cortex retry draft for downstream response repair (len=%d).",
                                         len(repairable_draft),
                                     )
-                                    return self._strip_silence(repairable_draft)
+                                    return self._stabilize_user_facing_text(
+                                        repairable_draft,
+                                        visible_user_prompt,
+                                        is_user_facing=True,
+                                    )
                                 return self._stabilize_user_facing_text(
                                     text,
                                     visible_user_prompt,
@@ -7055,11 +7312,29 @@ class InferenceGate:
                         logger.info("Reset UnitaryResponsePhase circuit to HALF_OPEN for recovery")
                 except _INFERENCE_RECOVERABLE_ERRORS as exc:
                     logger.debug("Circuit-breaker recovery reset unavailable: %s", exc)
-                return self._user_facing_recovery_response(visible_user_prompt)
+                recovery_text = self._user_facing_recovery_response(visible_user_prompt)
+                return self._finalize_nonlocal_user_facing_text(
+                    recovery_text,
+                    visible_user_prompt,
+                    is_user_facing=True,
+                    label="offline-recovery",
+                    max_tokens=max_tokens,
+                    output_contract=output_contract_payload,
+                )
             return None
 
         if time.monotonic() < self._cloud_backoff_until:
             logger.warning("Cloud fallback cooling down. Skipping remote retry.")
+            if _is_user_facing:
+                recovery_text = self._user_facing_recovery_response(visible_user_prompt)
+                return self._finalize_nonlocal_user_facing_text(
+                    recovery_text,
+                    visible_user_prompt,
+                    is_user_facing=True,
+                    label="cloud-backoff-recovery",
+                    max_tokens=max_tokens,
+                    output_contract=output_contract_payload,
+                )
             return None
 
         # Resolve the recoverable error surface BEFORE the try so the handler
@@ -7079,25 +7354,112 @@ class InferenceGate:
             # PII with neutral replacements while preserving conversational context.
             scrubbed_payload = self._scrub_cloud_payload(system_prompt, prompt)
             if scrubbed_payload is None:
-                return self._user_facing_recovery_response(visible_user_prompt) if _is_user_facing else None
+                if not _is_user_facing:
+                    return None
+                recovery_text = self._user_facing_recovery_response(visible_user_prompt)
+                return self._finalize_nonlocal_user_facing_text(
+                    recovery_text,
+                    visible_user_prompt,
+                    is_user_facing=True,
+                    label="cloud-privacy-recovery",
+                    max_tokens=max_tokens,
+                    output_contract=output_contract_payload,
+                )
             cloud_system_prompt, cloud_prompt = scrubbed_payload
 
             # Try APIAdapter first (cleaner Gemini integration)
             adapter = ServiceContainer.get("api_adapter", default=None)
             if adapter and getattr(adapter, "has_gemini", False):
                 logger.info("☁️ Falling back to Gemini via APIAdapter...")
-                result = await asyncio.wait_for(
-                    adapter.generate(
-                        f"{cloud_system_prompt}\n\nUser: {cloud_prompt}\nAura:",
-                        {"model_tier": "api_fast", "max_tokens": 800, "temperature": 0.7},
-                    ),
-                    timeout=30.0,
+                adapter_options = {
+                    "model_tier": "api_fast",
+                    "max_tokens": min(800, max(1, int(max_tokens))),
+                    "temperature": 0.7,
+                    "cloud_only": True,
+                    "purpose": "user_cloud_recovery",
+                }
+                adapter_prompt = f"{cloud_system_prompt}\n\nUser: {cloud_prompt}\nAura:"
+                metadata_generate = getattr(adapter, "generate_with_metadata", None)
+                try:
+                    if callable(metadata_generate):
+                        adapter_result = await asyncio.wait_for(
+                            metadata_generate(adapter_prompt, adapter_options),
+                            timeout=30.0,
+                        )
+                    else:
+                        logger.error(
+                            "APIAdapter lacks structured provider metadata; refusing cloud fallback."
+                        )
+                        adapter_result = {
+                            "ok": False,
+                            "text": "",
+                            "endpoint": "APIAdapter-cloud-unverified",
+                            "provider": "unknown",
+                            "model": "",
+                            "is_local": None,
+                            "provider_verified": False,
+                            "fallback_chain": [],
+                            "error": "structured_cloud_provenance_unavailable",
+                        }
+                except recoverable_cloud_errors as adapter_err:
+                    record_degradation(
+                        "inference_gate",
+                        adapter_err,
+                        severity="warning",
+                        action=(
+                            "continued to HealthRouter after APIAdapter cloud provider failed"
+                        ),
+                    )
+                    adapter_error_text = str(adapter_err)
+                    if "429" in adapter_error_text or "quota" in adapter_error_text.lower():
+                        self._cloud_backoff_until = time.monotonic() + 60.0
+                    logger.warning(
+                        "APIAdapter cloud fallback failed; continuing to HealthRouter: %s",
+                        adapter_err,
+                    )
+                    adapter_result = {
+                        "ok": False,
+                        "text": "",
+                        "endpoint": "APIAdapter-cloud-error",
+                        "provider": "unknown",
+                        "model": "",
+                        "is_local": None,
+                        "provider_verified": False,
+                        "fallback_chain": [
+                            {
+                                "endpoint": "APIAdapter",
+                                "status": "error",
+                                "error_type": type(adapter_err).__name__,
+                            }
+                        ],
+                        "error": type(adapter_err).__name__,
+                    }
+                result = (
+                    str(adapter_result.get("text") or "")
+                    if isinstance(adapter_result, dict)
+                    else ""
                 )
-                if result and result.strip():
+                adapter_is_cloud = _verified_cloud_generation_metadata(
+                    adapter_result,
+                    endpoint_prefix="Gemini-APIAdapter:",
+                )
+                if result.strip() and adapter_is_cloud:
+                    endpoint = str(
+                        adapter_result.get("endpoint") or "APIAdapter-cloud-unverified"
+                    )
+                    finalized_result = self._finalize_nonlocal_user_facing_text(
+                        result.strip(),
+                        visible_user_prompt,
+                        is_user_facing=_is_user_facing,
+                        label=endpoint,
+                        max_tokens=max_tokens,
+                        output_contract=output_contract_payload,
+                        generation_metadata=adapter_result,
+                    )
                     try:
                         from core.consciousness.closed_loop import notify_closed_loop_output
 
-                        notify_closed_loop_output(result.strip())
+                        notify_closed_loop_output(finalized_result)
                     except _INFERENCE_RECOVERABLE_ERRORS as exc:
                         record_degradation(
                             "inference_gate",
@@ -7106,25 +7468,83 @@ class InferenceGate:
                             action="returned cloud result without closed-loop output notification",
                         )
                         logger.debug("Cloud output notification skipped: %s", exc)
-                    return self._stabilize_user_facing_text(
-                        result.strip(),
-                        visible_user_prompt,
-                        is_user_facing=_is_user_facing,
+                    return finalized_result
+                if result.strip() and not adapter_is_cloud:
+                    logger.error(
+                        "APIAdapter cloud-only fallback returned a local provider; rejecting mislabeled result."
                     )
 
             # Try HealthRouter as secondary cloud path (also PII-scrubbed)
             router = ServiceContainer.get("llm_router", default=None)
-            if router:
+            metadata_generate = getattr(router, "generate_with_metadata", None)
+            if router and callable(metadata_generate):
                 logger.info("☁️ Falling back to HealthRouter...")
-                result = await asyncio.wait_for(
-                    router.think(cloud_prompt, system_prompt=cloud_system_prompt),
-                    timeout=30.0,
+                try:
+                    router_result = await asyncio.wait_for(
+                        metadata_generate(
+                            cloud_prompt,
+                            system_prompt=cloud_system_prompt,
+                            prefer_tier="api_fast",
+                            max_tokens=max_tokens,
+                            origin="inference_gate_cloud_fallback",
+                            purpose="user_cloud_recovery",
+                            foreground_request=True,
+                            protected_foreground_lane=True,
+                            is_background=False,
+                            allow_cloud_fallback=True,
+                            cloud_only=True,
+                            skip_runtime_payload=True,
+                            requested_output_contract=(
+                                dict(output_contract_payload)
+                                if isinstance(output_contract_payload, dict)
+                                else None
+                            ),
+                            semantic_output_token_cap=output_contract.semantic_token_cap,
+                            hard_output_token_ceiling=output_contract.hard_token_ceiling,
+                        ),
+                        timeout=30.0,
+                    )
+                except recoverable_cloud_errors as router_err:
+                    record_degradation(
+                        "inference_gate",
+                        router_err,
+                        severity="warning",
+                        action=(
+                            "continued to exhausted-inference recovery after HealthRouter failed"
+                        ),
+                    )
+                    router_error_text = str(router_err)
+                    if "429" in router_error_text or "quota" in router_error_text.lower():
+                        self._cloud_backoff_until = time.monotonic() + 60.0
+                    logger.warning("HealthRouter cloud fallback failed: %s", router_err)
+                    router_result = {
+                        "ok": False,
+                        "text": "",
+                        "endpoint": "HealthRouter-cloud-error",
+                        "provider_verified": False,
+                        "error": type(router_err).__name__,
+                    }
+                result = (
+                    str(router_result.get("text") or "")
+                    if isinstance(router_result, dict)
+                    else ""
                 )
-                if isinstance(result, str) and result.strip():
+                router_is_cloud = _verified_cloud_generation_metadata(router_result)
+                if result.strip() and router_is_cloud:
+                    endpoint = str(router_result.get("endpoint") or "HealthRouter-cloud")
+                    finalized_result = self._finalize_nonlocal_user_facing_text(
+                        result.strip(),
+                        visible_user_prompt,
+                        is_user_facing=_is_user_facing,
+                        label=endpoint,
+                        max_tokens=max_tokens,
+                        output_contract=output_contract_payload,
+                        generation_metadata=router_result,
+                    )
                     try:
                         from core.consciousness.closed_loop import notify_closed_loop_output
 
-                        notify_closed_loop_output(result.strip())
+                        notify_closed_loop_output(finalized_result)
                     except _INFERENCE_RECOVERABLE_ERRORS as exc:
                         record_degradation(
                             "inference_gate",
@@ -7133,10 +7553,10 @@ class InferenceGate:
                             action="returned router cloud result without closed-loop output notification",
                         )
                         logger.debug("Router output notification skipped: %s", exc)
-                    return self._stabilize_user_facing_text(
-                        result.strip(),
-                        visible_user_prompt,
-                        is_user_facing=_is_user_facing,
+                    return finalized_result
+                if result.strip() and not router_is_cloud:
+                    logger.error(
+                        "HealthRouter cloud-only fallback returned a local provider; rejecting result."
                     )
         except recoverable_cloud_errors as cloud_err:
             record_degradation(
@@ -7154,7 +7574,15 @@ class InferenceGate:
         # gracefully without the error text leaking to TTS or the user.
         logger.error("All inference paths exhausted (Local + Cloud)")
         if _is_user_facing:
-            return self._user_facing_recovery_response(visible_user_prompt)
+            recovery_text = self._user_facing_recovery_response(visible_user_prompt)
+            return self._finalize_nonlocal_user_facing_text(
+                recovery_text,
+                visible_user_prompt,
+                is_user_facing=True,
+                label="exhausted-inference-recovery",
+                max_tokens=max_tokens,
+                output_contract=output_contract_payload,
+            )
         return None
 
     def _post_inference_update(self, response_text: str):
