@@ -111,3 +111,9 @@ formulation, and unlike the slogan, it can actually be won.
   unavailable). Next: P2 Procedural Memory Compiler, P3 gap-to-frontier
   telemetry (needs new verifier classes: PredictionResolution/Outcome-
   Ledger/RubricEnsemble to start moving the boundary beyond the seeds).
+- 2026-07-14 (later): foundry finding CLOSED (bd356c5b). Assert-bearing
+  blocks now execute in the symbolic sandbox; unexecutable claims demote a
+  passing static verdict to checked=False. Live regrade: code engine 4/4
+  correct, zero false passes (was the 0.879 poison case). The
+  measure→catch→fix→remeasure loop worked end-to-end on its first cycle —
+  the foundry is functioning as the arc's immune system.
