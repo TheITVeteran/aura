@@ -21,9 +21,12 @@ Aura in any production-like setting.
 
 **Cause**: GPU memory pressure, MLX runtime error, corrupted prompt
 **Likelihood**: Low
-**Impact**: Current request fails; auto-recovery spawns new worker
+**Impact**: Current request fails; auto-recovery spawns a new worker
 **Detection**: Worker health probe; `record_degradation("mlx_worker", ...)`
-**Recovery**: Automatic — InferenceGate spawns new worker within 30s
+**Recovery**: Automatic — InferenceGate respawns a worker. Caveat (see F16):
+respawn requires ~24GB headroom, and immediately after a kill the OS reclaim
+of the ~18GB model lags process exit, so respawn is briefly refused; the gate
+now waits for reclaim (`AURA_MLX_SPAWN_RECLAIM_WAIT_S`) before refusing.
 **Runbook**: `docs/runbooks/worker_crash.md`
 
 ### F03: Memory database corruption
@@ -133,6 +136,76 @@ Aura in any production-like setting.
 **Impact**: Missing observability data
 **Detection**: Telemetry health check
 **Recovery**: Restart telemetry; data gap in dashboard
+
+## Observed Failure Modes (2026-07, live-runtime)
+
+These were seen and root-fixed on the live desktop instance under sustained
+conversation. They are documented because they are the *real* daily-runtime
+edges, not hypotheticals.
+
+### F15: mind_tick false-death → "Connecting to runtime"
+
+**Cause**: The cognitive-rhythm loop marks progress at the top of each
+iteration; a single iteration that blocked on a saturated model (e.g. a
+background initiative running the full 32B with no bound) stopped re-marking
+progress, so `is_alive()` declared `mind_tick` dead.
+**Likelihood**: Medium under sustained back-to-back turns (before fix).
+**Impact**: Whole runtime flips DEGRADED even though conversation works; the
+desktop GUI reverts to the "Connecting to runtime" reconnect surface.
+**Detection**: Health pulse `contract/important: mind_tick (is_alive returned False)`.
+**Recovery**: Fixed — the background kernel tick is bounded and yields under
+foreground load; dead contract loops are revived from health-pulse threads via
+the owning event loop; the GUI keeps the live UI in a `degraded_ready` state
+whenever conversation is ready. Self-recovers; a restart clears it immediately.
+
+### F16: MLX worker-kill cold-lane cascade (the honest daily-stability edge)
+
+**Cause**: MLX cannot soft-cancel a running generation, so freeing a busy
+worker means force-killing it (unloading the ~18GB model). A foreground deep
+generation that exceeds its budget therefore kills the worker; on a
+memory-constrained host the reload races the next turn's timeout, which kills
+the reloading worker and restarts the load — a cold-lane cascade.
+**Likelihood**: Medium on a host with <~25GB free (e.g. other apps running).
+**Impact**: A cluster of turns returns 503 / fail-closed until the model
+finishes loading; RSS cycles (21GB→~1GB→reload). Self-recovers; RSS stays
+bounded (this is NOT the OOM growth of F07).
+**Detection**: `Cortex generation exceeded inference-gate timeout … aborting`
+followed by repeated `Loading model:`; worker RSS drops to ~0.
+**Recovery**: Partially mitigated — background timeouts no longer kill the
+shared worker, respawn waits for memory reclaim, and mid-load workers are not
+torn down. **Open architectural work**: a soft-cancel path into the MLX worker
+or a persistent model server; more host RAM headroom removes the cascade
+entirely.
+
+### F17: Failure-lockdown escalation from expected backpressure
+
+**Cause**: A bounded background generation (memory consolidation, dialectical
+crucible) timing out while the foreground lane holds the model was recorded as
+a degradation on a *fail-closed* subsystem, which escalated a plain
+`TimeoutError` to a CRITICAL SERVICE FAILURE and drove
+`unified_failure_lockdown` toward 1.00.
+**Likelihood**: Was high under load; low after fix.
+**Impact**: At lockdown 1.00, memory writes, tool execution, and
+self-modification are all blocked; existential-threat spikes.
+**Detection**: `unified_failure_lockdown_1.00` in the log; `Executive REJECTED`
+lines for memory/tool actions.
+**Recovery**: Fixed — `core/runtime/backpressure.py` records expected
+backpressure on a non-fail-closed channel with the policy disabled; foreground
+yields precede background generation.
+
+### F18: Launch-provenance `ready:false` on source drift
+
+**Cause**: A signed `Aura.app` pins the exact commit + workspace hash it was
+built for; running code that has drifted forward (active development) fails the
+provenance check.
+**Likelihood**: Every launch of an actively developed checkout.
+**Impact**: `ready:false` with a `launch_provenance` blocker. She stays fully
+conversational (the `degraded_ready` path); it is a correct tamper-detection
+signal, not a functional break.
+**Detection**: `boot_phase: launch_provenance_failed`; issues
+`commit_sha_mismatch` / `workspace_state_sha256_mismatch`.
+**Recovery**: Expected in dev. To clear: rebuild/re-sign the app to re-pin, or
+launch via `launch_aura.sh` (which does not require provenance).
 
 ## Recovery Drill Schedule
 
