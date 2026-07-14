@@ -1113,6 +1113,22 @@ async def _boot_runtime_orchestrator(
         record_degradation("aura_main", exc)
         logger.debug("online_lora_governor registration skipped: %s", exc)
 
+    if _env_flag("AURA_ENABLE_VERIFIER_FOUNDRY", True):
+        try:
+            from core.brain.verifiers.foundry import boot_verifier_foundry
+
+            foundry = boot_verifier_foundry()
+            fstatus = foundry.status()
+            logger.info(
+                "🔬 Verifier Foundry online — %d reliability cells, %d pending "
+                "verdicts, admissions: %s.",
+                len(fstatus["cells"]), fstatus["pending_verdicts"],
+                {d: a for d, a in fstatus["admissions"].items() if a},
+            )
+        except _AURA_MAIN_BOUNDARY_ERRORS as exc:
+            record_degradation("aura_main", exc)
+            logger.warning("Verifier Foundry boot failed: %s", exc)
+
     if _env_flag("AURA_ENABLE_WHOLE_SYSTEM_PHI", True):
         try:
             from core.consciousness.whole_system_phi_service import boot_whole_system_phi

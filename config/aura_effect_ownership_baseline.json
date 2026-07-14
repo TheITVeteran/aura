@@ -2897,6 +2897,22 @@
       "scope": "<module>.TraceLogger.log"
     },
     {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().ensure_directory",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/verifiers/foundry.py",
+      "scope": "<module>.VerifierFoundry._ensure_root"
+    },
+    {
+      "callee": "core.runtime.file_write_gateway.get_file_write_gateway().append_text",
+      "canonical_owner": false,
+      "category": "file_write_gateway",
+      "count": 1,
+      "path": "core/brain/verifiers/foundry.py",
+      "scope": "<module>.VerifierFoundry._persist_event"
+    },
+    {
       "callee": "core.runtime.file_write_gateway.get_file_write_gateway().write_text",
       "canonical_owner": false,
       "category": "file_write_gateway",
@@ -13642,6 +13658,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "7b64a5165c8c6dcc955abbd47b245472f63e19b77e35f0f325b673319d418a4f",
+  "inventory_sha256": "5bbbf4ef3cc53855c37bba29ddac38d948e963736282eeb722e6bddd3a93e227",
   "schema_version": 1
 }

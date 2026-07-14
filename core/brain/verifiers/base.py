@@ -53,12 +53,21 @@ class Verifier(Protocol):
     async def verify(self, candidate: str, *, context: dict[str, Any] | None = None) -> VerificationResult: ...
 
 
-def combine_results(domain: str, results: list[VerificationResult]) -> VerificationResult:
+def combine_results(
+    domain: str,
+    results: list[VerificationResult],
+    *,
+    weights: dict[str, float] | None = None,
+) -> VerificationResult:
     """Fold many engine verdicts into one for a candidate.
 
-    Hard gate: ``ok`` is False if *any* engine that actually checked failed.
-    ``checked`` is True if at least one engine checked. ``score`` is the mean of
-    the checked engines (defaulting to neutral 0.5 when nothing was checkable).
+    Hard gate: ``ok`` is False if *any* engine that actually checked failed —
+    NEVER weighted; a provable failure is final regardless of the engine's
+    track record. ``checked`` is True if at least one engine checked.
+    ``score`` is the mean of the checked engines (defaulting to neutral 0.5
+    when nothing was checkable); when ``weights`` (per-engine measured
+    reliability, from the Verifier Foundry) are provided, the soft mean is
+    reliability-weighted so a leaky engine's enthusiasm counts for less.
     """
     checked = [r for r in results if r.checked]
     issues: list[str] = []
@@ -70,7 +79,15 @@ def combine_results(domain: str, results: list[VerificationResult]) -> Verificat
         if r.engine:
             engines.append(r.engine)
     ok = all(r.ok for r in checked) if checked else True
-    score = sum(r.score for r in checked) / len(checked) if checked else 0.5
+    if checked and weights:
+        wsum = sum(max(0.0, float(weights.get(r.engine or "?", 1.0))) for r in checked)
+        if wsum > 0:
+            score = sum(r.score * max(0.0, float(weights.get(r.engine or "?", 1.0)))
+                        for r in checked) / wsum
+        else:
+            score = sum(r.score for r in checked) / len(checked)
+    else:
+        score = sum(r.score for r in checked) / len(checked) if checked else 0.5
     return VerificationResult(
         domain=domain,
         ok=ok,

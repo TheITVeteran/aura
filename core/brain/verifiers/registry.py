@@ -78,7 +78,45 @@ class VerifierRegistry:
                 return VerificationResult(domain=normalized, ok=True, checked=False, engine=getattr(v, "name", "?"))
 
         results = await asyncio.gather(*[_run(v) for v in verifiers])
+
+        # Verifier Foundry (frontier-general P1): record every checked verdict
+        # so reality can grade it later, and weight the SOFT fold by measured
+        # reliability. The hard gate is never weighted — a provable failure is
+        # final regardless of the engine's track record.
+        weights: dict[str, float] | None = None
+        foundry = self._foundry()
+        if foundry is not None:
+            try:
+                task_key = str((context or {}).get("task_key", ""))
+                verdict_ids: dict[str, str] = {}
+                weights = {}
+                for r in results:
+                    engine = r.engine or "?"
+                    vid = foundry.record_verdict(
+                        verifier=engine, domain=normalized, hard_pass=r.ok,
+                        score=r.score, checked=r.checked, task_key=task_key,
+                    )
+                    if vid:
+                        verdict_ids[engine] = vid
+                    weights[engine] = foundry.weight_for(engine, normalized)
+                combined = combine_results(normalized, list(results), weights=weights)
+                if verdict_ids:
+                    combined.detail["foundry_verdicts"] = verdict_ids
+                return combined
+            except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+                record_degradation("verifier_foundry", exc, severity="warning",
+                                   action="verdict folding fell back to unweighted")
+
         return combine_results(normalized, list(results))
+
+    @staticmethod
+    def _foundry():
+        try:
+            from core.runtime.service_access import optional_service
+
+            return optional_service("verifier_foundry", default=None)
+        except (ImportError, RuntimeError):
+            return None
 
 
 _registry: VerifierRegistry | None = None

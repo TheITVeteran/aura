@@ -131,6 +131,15 @@ class ReasoningSelfImprovement:
         if not clean or float(confidence) < self._min_confidence:
             self._stats["skipped"] += 1
             return False
+        if not self._domain_admitted(tt):
+            # Verifier Foundry admission gate (frontier-general P1): a win may
+            # only become TRAINING DATA when this domain's verification has
+            # measured reliability (or a seed admission that evidence hasn't
+            # revoked). Self-training on weakly-verified domains is how a
+            # model amplifies its own garbage — the gate is the ceiling-mover.
+            self._stats["skipped"] += 1
+            self._stats["unadmitted"] = self._stats.get("unadmitted", 0) + 1
+            return False
         key = _problem_key(objective, tt)
         with self._lock:
             self._traces[key] = ReasoningTrace(
@@ -144,6 +153,23 @@ class ReasoningSelfImprovement:
             self._evict_if_needed()
             self._persist()
         return True
+
+    @staticmethod
+    def _domain_admitted(task_type: str) -> bool:
+        """Consult the Verifier Foundry's admission gate. Absent foundry =
+        legacy behavior (admitted) so the existing loop never bricks; when the
+        foundry is registered, its evidence-based verdict is authoritative."""
+        try:
+            from core.runtime.service_access import optional_service
+
+            foundry = optional_service("verifier_foundry", default=None)
+            if foundry is None:
+                return True
+            return bool(foundry.domain_admitted(task_type).admitted)
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            record_degradation("reasoning_self_improvement", exc, severity="warning",
+                               action="treated domain as admitted after foundry check failed")
+            return True
 
     def pending_count(self) -> int:
         with self._lock:
