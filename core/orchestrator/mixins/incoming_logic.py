@@ -1265,19 +1265,29 @@ class IncomingLogicMixin:
                                     exc_info=True,
                                 )
 
-                            try:
-                                from core.world_model.expectation_engine import ExpectationEngine
+                            if exec_success:
+                                try:
+                                    from core.world_model.expectation_engine import (
+                                        ExpectationEngine,
+                                    )
 
-                                ee = ExpectationEngine(getattr(self, "cognitive_engine", None))
-                                await ee.update_beliefs_from_result(pathway.skill_name, rich_res)
-                            except (ImportError, AttributeError, RuntimeError) as belief_err:
-                                _record_incoming_degradation(
-                                    belief_err,
-                                    action="continued hardwired tool response after expectation-belief update failed",
-                                )
-                                logger.error(
-                                    "Hardwired belief update failed: %s", belief_err, exc_info=True
-                                )
+                                    ee = ExpectationEngine(
+                                        getattr(self, "cognitive_engine", None)
+                                    )
+                                    await ee.update_beliefs_from_result(
+                                        pathway.skill_name,
+                                        rich_res,
+                                    )
+                                except (ImportError, AttributeError, RuntimeError) as belief_err:
+                                    _record_incoming_degradation(
+                                        belief_err,
+                                        action="continued hardwired tool response after expectation-belief update failed",
+                                    )
+                                    logger.error(
+                                        "Hardwired belief update failed: %s",
+                                        belief_err,
+                                        exc_info=True,
+                                    )
 
                             self._publish_telemetry(
                                 {

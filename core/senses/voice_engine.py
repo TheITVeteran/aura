@@ -1679,9 +1679,8 @@ class SovereignVoiceEngine:
                 from core.governance_context import local_internal_governed_scope
 
                 temp_wav = self.data_dir / "tts_play_cache.wav"
-                # Governed scope must be established INSIDE this thread:
-                # run_in_executor does not propagate contextvars, so even a
-                # governed caller loses its scope crossing into the pool.
+                # Establish authority inside the worker rather than relying on
+                # whichever caller context happened to schedule playback.
                 with local_internal_governed_scope(
                     "voice_engine.play_locally", domain="tool_execution"
                 ):
@@ -1706,8 +1705,7 @@ class SovereignVoiceEngine:
                 record_degradation('voice_engine', e)
                 logger.error("Local playback failed: %s", e)
 
-        loop = getattr(self, "loop", None) or asyncio.get_running_loop()
-        await loop.run_in_executor(None, _play)
+        await asyncio.to_thread(_play)
 
     async def _emit_tts_audio(self, audio_data: bytes):
         """Mirror generated audio to browser subscribers and optional callbacks."""
@@ -1772,8 +1770,7 @@ class SovereignVoiceEngine:
             with open(out_path, "rb") as f:
                 return f.read()
 
-        loop = getattr(self, "loop", None) or asyncio.get_running_loop()
-        audio_data = await loop.run_in_executor(None, _get_audio)
+        audio_data = await asyncio.to_thread(_get_audio)
         
         if not audio_data:
             return
@@ -1909,9 +1906,7 @@ class SovereignVoiceEngine:
                 self.tts_engine.say(text)
                 self.tts_engine.runAndWait()
 
-        # Issue 37: Fallback to running loop
-        loop = self.loop or asyncio.get_running_loop()
-        await loop.run_in_executor(None, _say)
+        await asyncio.to_thread(_say)
 
     # ══════════════════════════════════════════════════════
     # CONTROL & STATUS

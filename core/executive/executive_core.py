@@ -17,8 +17,6 @@ Design:
     - Maintains a full audit ledger of all decisions
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import logging
@@ -31,10 +29,20 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.container import ServiceContainer
+from core.executive.bounded_sandbox_policy import validate_idle_sandbox_probe_arguments
 from core.executive.executive_ledger import ExecutiveLedger
-from core.goals.goal_text import first_actionable_goal_text, is_actionable_goal_text, is_intrinsic_goal_text
+from core.goals.goal_text import (
+    first_actionable_goal_text,
+    is_actionable_goal_text,
+    is_intrinsic_goal_text,
+)
 from core.memory.retention_policy import working_history_retention_policy
-from core.runtime.service_access import resolve_canonical_self, resolve_canonical_self_engine, resolve_state_repository
+from core.runtime.errors import record_degradation
+from core.runtime.service_access import (
+    resolve_canonical_self,
+    resolve_canonical_self_engine,
+    resolve_state_repository,
+)
 from core.state.aura_state import _is_speculative_autonomy_label, _normalize_goal_text
 
 logger = logging.getLogger("Aura.Executive")
@@ -503,32 +511,62 @@ class ExecutiveCore:
             logger.info("♻️ Executive: swept %d stale intents (TTL 90s, sync)", len(stale))
 
     @staticmethod
-    def _is_temporal_safe_autonomous_tool(intent: Intent) -> bool:
+    def _temporal_safe_autonomous_tool_constraints(
+        intent: Intent,
+    ) -> dict[str, Any] | None:
         if intent.action_type != ActionType.TOOL_CALL:
-            return False
+            return None
         tool_name = str(intent.payload.get("tool_name", "") or "").strip()
         if tool_name == "process_supervisor":
-            return True
+            return {"timeout_s": 45, "read_only": True}
+        if tool_name == "subconscious_sandbox_probe":
+            args = intent.payload.get("args", {}) or {}
+            valid, _reason = validate_idle_sandbox_probe_arguments(args)
+            if not valid:
+                return None
+            return {
+                "timeout_s": 30,
+                "sandboxed_compute": True,
+                "network_access": False,
+            }
         if tool_name in TEMPORAL_SAFE_AUTONOMOUS_TOOLS:
             args = intent.payload.get("args", {}) or {}
             mode = str(args.get("mode") or "").strip().lower()
             if tool_name == "email_adapter":
-                return mode in {"", "check", "read", "search"}
+                if mode not in {"", "check", "read", "search"}:
+                    return None
             if tool_name == "reddit_adapter":
-                return mode in {"", "browse", "read_post", "check_inbox", "read_rules", "check_shadowban"}
-            return True
+                if mode not in {
+                    "",
+                    "browse",
+                    "read_post",
+                    "check_inbox",
+                    "read_rules",
+                    "check_shadowban",
+                }:
+                    return None
+            return {"timeout_s": 45, "read_only": True}
         if tool_name == "auto_refactor":
             args = intent.payload.get("args", {}) or {}
-            return not bool(args.get("run_tests"))
+            if not bool(args.get("run_tests")):
+                return {"timeout_s": 45, "read_only": True}
+            return None
         if tool_name == "self_evolution":
             args = intent.payload.get("args", {}) or {}
             action = str(args.get("action") or "propose").strip().lower()
-            return action in {"", "propose"}
+            if action in {"", "propose"}:
+                return {"timeout_s": 45, "read_only": True}
+            return None
         if tool_name == "memory_ops":
             args = intent.payload.get("args", {}) or {}
             action = str(args.get("action") or args.get("mode") or "").strip().lower()
-            return action in {"", "recall", "search", "query", "read"}
-        return False
+            if action in {"", "recall", "search", "query", "read"}:
+                return {"timeout_s": 45, "read_only": True}
+        return None
+
+    @classmethod
+    def _is_temporal_safe_autonomous_tool(cls, intent: Intent) -> bool:
+        return cls._temporal_safe_autonomous_tool_constraints(intent) is not None
 
     async def _evaluate(self, intent: Intent) -> DecisionRecord:
         """Core evaluation logic. All approval paths converge here."""
@@ -611,12 +649,13 @@ class ExecutiveCore:
             }
             and intent.priority < 0.85
         ):
-            if self._is_temporal_safe_autonomous_tool(intent):
+            temporal_constraints = self._temporal_safe_autonomous_tool_constraints(intent)
+            if temporal_constraints is not None:
                 return self._degrade(
                     intent,
                     "temporal_safe_autonomous_tool",
                     1.0,
-                    constraints={"timeout_s": 45, "read_only": True},
+                    constraints=temporal_constraints,
                 )
             return self._defer(
                 intent,
@@ -820,12 +859,13 @@ class ExecutiveCore:
             }
             and intent.priority < 0.85
         ):
-            if self._is_temporal_safe_autonomous_tool(intent):
+            temporal_constraints = self._temporal_safe_autonomous_tool_constraints(intent)
+            if temporal_constraints is not None:
                 return self._degrade(
                     intent,
                     "temporal_safe_autonomous_tool",
                     1.0,
-                    constraints={"timeout_s": 45, "read_only": True},
+                    constraints=temporal_constraints,
                 )
             return self._defer(
                 intent,

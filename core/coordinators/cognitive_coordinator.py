@@ -551,8 +551,17 @@ class CognitiveCoordinator:
         if not (hasattr(thought, "expectation") and thought.expectation):
             return False
         try:
-            from core.world_model.expectation_engine import ExpectationEngine
+            from core.world_model.expectation_engine import (
+                ExpectationEngine,
+                result_supports_learning,
+            )
             ee = ExpectationEngine(orch.cognitive_engine)
+            if not result_supports_learning(result):
+                logger.debug(
+                    "Skipping surprise learning for non-executed %s result",
+                    tool_name,
+                )
+                return False
             surprise = await ee.calculate_surprise(thought.expectation, str(result)[:500])
             _schedule_cognitive_task(
                 ee.update_beliefs_from_result(tool_name, str(result)[:1000]),

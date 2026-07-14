@@ -162,9 +162,18 @@ class MessagePipelineMixin:
             return False
 
         try:
-            from core.world_model.expectation_engine import ExpectationEngine
+            from core.world_model.expectation_engine import (
+                ExpectationEngine,
+                result_supports_learning,
+            )
 
             ee = ExpectationEngine(self.cognitive_engine)
+            if not result_supports_learning(result):
+                logger.debug(
+                    "Skipping surprise learning for non-executed %s result",
+                    tool_name,
+                )
+                return False
             surprise = await ee.calculate_surprise(thought.expectation, str(result)[:500])
 
             # Substrate authority gate: belief updates are STATE_MUTATION

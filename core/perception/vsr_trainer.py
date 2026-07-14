@@ -217,10 +217,13 @@ def export_onnx(model, path: str | Path, *, num_frames: int = 32) -> dict:
 
     path = Path(path)
     model.eval()
-    example_input = torch.zeros((1, 1, num_frames, MOUTH_SIZE, MOUTH_SIZE), dtype=torch.float32)
+    sample_input = torch.zeros(
+        (1, 1, num_frames, MOUTH_SIZE, MOUTH_SIZE),
+        dtype=torch.float32,
+    )
     try:
         torch.onnx.export(
-            model, example_input, str(path),
+            model, sample_input, str(path),
             input_names=["mouth_crops"], output_names=["logits"],
             dynamic_axes={"mouth_crops": {2: "frames"}, "logits": {1: "frames"}},
             opset_version=17,

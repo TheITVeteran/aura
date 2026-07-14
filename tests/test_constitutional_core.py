@@ -1,21 +1,22 @@
-from types import SimpleNamespace
 import time
+from types import SimpleNamespace
 
 import pytest
 
+from core import constitution as constitution_module
+from core.agency.intention_loop import IntentionLoop
+from core.constitution import get_constitutional_core
 from core.container import ServiceContainer
 from core.continuity import ContinuityEngine
 from core.executive import executive_core as executive_core_module
-from core.constitution import get_constitutional_core
-from core import constitution as constitution_module
-from core.health.degraded_events import clear_degraded_events, record_degraded_event
+from core.executive.bounded_sandbox_policy import idle_sandbox_probe_arguments
+from core.executive.executive_core import ActionType, Intent, IntentSource
 from core.health import degraded_events as degraded_events_module
+from core.health.degraded_events import clear_degraded_events, record_degraded_event
+from core.self_model import SelfModel
 from core.state.aura_state import AuraState, CognitiveMode
 from core.state.state_repository import StateRepository
-from core.self_model import SelfModel
-from core.agency.intention_loop import IntentionLoop
 from core.world_model.belief_graph import BeliefGraph
-from core.executive.executive_core import ActionType, Intent, IntentSource
 
 
 async def async_noop(*_args, **_kwargs):
@@ -665,6 +666,70 @@ async def test_executive_allows_safe_autonomous_tools_under_temporal_obligation(
     assert record.outcome == executive_core_module.DecisionOutcome.DEGRADED
     assert record.reason == "temporal_safe_autonomous_tool"
     assert record.constraints["read_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_executive_allows_exact_bounded_sandbox_under_temporal_obligation(
+    service_container,
+):
+    reset_constitutional_singletons()
+    clear_degraded_events()
+    ServiceContainer.register_instance("self_model", object(), required=False)
+    state = AuraState()
+    state.cognition.current_objective = "Protect continuity"
+    state.cognition.pending_initiatives = [{"goal": "Investigate anomaly"}]
+    ServiceContainer.register_instance(
+        "state_repository",
+        SimpleNamespace(_current=state),
+        required=False,
+    )
+    ServiceContainer.lock_registration()
+
+    executive = executive_core_module.get_executive_core()
+    intent, record = await executive.prepare_tool_intent(
+        "subconscious_sandbox_probe",
+        idle_sandbox_probe_arguments(),
+        source="autonomous",
+    )
+
+    assert intent.source == executive_core_module.IntentSource.AUTONOMOUS
+    assert record.outcome == executive_core_module.DecisionOutcome.DEGRADED
+    assert record.reason == "temporal_safe_autonomous_tool"
+    assert record.constraints == {
+        "timeout_s": 30,
+        "sandboxed_compute": True,
+        "network_access": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_executive_defers_substituted_sandbox_under_temporal_obligation(
+    service_container,
+):
+    reset_constitutional_singletons()
+    clear_degraded_events()
+    ServiceContainer.register_instance("self_model", object(), required=False)
+    state = AuraState()
+    state.cognition.current_objective = "Protect continuity"
+    state.cognition.pending_initiatives = [{"goal": "Investigate anomaly"}]
+    ServiceContainer.register_instance(
+        "state_repository",
+        SimpleNamespace(_current=state),
+        required=False,
+    )
+    ServiceContainer.lock_registration()
+
+    arguments = idle_sandbox_probe_arguments()
+    arguments["script_sha256"] = "0" * 64
+    executive = executive_core_module.get_executive_core()
+    _intent, record = await executive.prepare_tool_intent(
+        "subconscious_sandbox_probe",
+        arguments,
+        source="autonomous",
+    )
+
+    assert record.outcome == executive_core_module.DecisionOutcome.DEFERRED
+    assert record.reason.startswith("temporal_obligation_active:")
 
 
 @pytest.mark.asyncio

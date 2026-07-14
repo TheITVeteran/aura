@@ -553,7 +553,7 @@ def test_voice_threshold_signal_only_on_change_or_heartbeat(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_voice_local_playback_uses_gateways(monkeypatch, tmp_path) -> None:
+async def test_voice_local_playback_uses_gateways_on_calling_loop(monkeypatch, tmp_path) -> None:
     import core.senses.voice_engine as voice_module
 
     writes: list[tuple[str, bytes, str]] = []
@@ -594,6 +594,12 @@ async def test_voice_local_playback_uses_gateways(monkeypatch, tmp_path) -> None
     monkeypatch.setattr(voice_module, "get_subprocess_gateway", lambda: SubprocessGateway())
 
     engine = voice_module.SovereignVoiceEngine(data_dir=str(tmp_path))
+
+    class ForeignOwnerLoop:
+        def run_in_executor(self, *_args, **_kwargs):
+            raise AssertionError("playback used the engine's stale owner loop")
+
+    engine.loop = ForeignOwnerLoop()
 
     await engine._play_locally(b"RIFF-audio")
 

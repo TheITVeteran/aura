@@ -3,7 +3,7 @@ pipeline must close — synthetic labeled clips train to near-zero CTC
 loss with exact greedy decode, and the trained net exports to the ONNX
 contract the runtime backend already loads.
 
-Skips cleanly without torch; runs on CPU in seconds when present.
+The full capability suite requires the ML dependency profile and runs on CPU.
 """
 from __future__ import annotations
 
@@ -15,10 +15,6 @@ from core.perception.vsr_trainer import (
     LabeledClip,
     synthesize_clip,
 )
-
-# torch is an optional ML extra (requirements/ml.txt): import-or-skip the whole
-# module rather than a skipif marker that hides an always-skipped suite.
-pytest.importorskip("torch")
 
 VOCAB = Vocabulary("abcdefgh ")
 
@@ -58,7 +54,8 @@ def test_trained_model_predicts_via_greedy_decode():
 
 
 def test_export_to_onnx_matches_runtime_backend(tmp_path):
-    onnxruntime = pytest.importorskip("onnxruntime")
+    import onnxruntime
+
     from core.perception.vsr_trainer import export_onnx, train_vsr
 
     clips = _corpus(["cab", "fee"])
@@ -70,8 +67,7 @@ def test_export_to_onnx_matches_runtime_backend(tmp_path):
     assert provenance["license"].startswith("owner-trained")
     assert provenance["acknowledged"] is True
     # Sidecar written next to the model.
-    assert (model_path.with_suffix(".provenance.json")).exists() or \
-        (model_path.parent / f"{model_path.name}.provenance.json").exists() or True
+    assert model_path.with_suffix(".provenance.json").exists()
 
     # The exported graph loads and runs on the same runtime as the
     # downloaded models would — same input name, same (1, T, V) logits.
