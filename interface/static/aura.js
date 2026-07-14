@@ -1571,28 +1571,45 @@ function renderToolCatalog(catalog) {
 
 function describeToolEvent(event) {
     if (!event) return 'Tool orchestration channel awaiting events.';
-    const stage = escText(event.stage, 'idle').replace(/_/g, ' ');
+    const deferred = toolEventIsDeferred(event);
+    const stage = deferred ? 'deferred' : escText(event.stage, 'idle').replace(/_/g, ' ');
     const tool = escText(event.tool, 'unknown tool');
     const source = escText(event.source, 'system');
-    const status = event.success === false ? 'failed' : event.success === true ? 'succeeded' : stage;
+    const status = deferred ? 'deferred' : event.success === false ? 'failed' : event.success === true ? 'succeeded' : stage;
     const reason = event.error || (event.decision && event.decision.reason) || '';
     const base = `${tool} · ${status.toUpperCase()} · via ${source}`;
     return reason ? `${base} · ${String(reason).replace(/_/g, ' ')}` : base;
 }
 
+function toolEventIsDeferred(event) {
+    if (!event || typeof event !== 'object') return false;
+    const stage = String(event.stage || '').toLowerCase();
+    const rawResult = event.result;
+    const result = rawResult && typeof rawResult === 'object' ? rawResult : {};
+    const resultStatus = String(result.status || '').toLowerCase();
+    const deferralSignals = [result.reason, result.error, event.error];
+    if (typeof rawResult === 'string') deferralSignals.push(rawResult);
+    return stage === 'deferred' || resultStatus === 'deferred' || deferralSignals.some(
+        value => String(value || '').toLowerCase().startsWith('background_deferred:')
+    );
+}
+
 function applyToolEvent(event) {
     state.lastToolEvent = event;
-    const stage = escText(event && event.stage, 'idle').replace(/_/g, ' ').toUpperCase();
+    const deferred = toolEventIsDeferred(event);
+    const rawStage = deferred ? 'deferred' : escText(event && event.stage, 'idle');
+    const stage = rawStage.replace(/_/g, ' ').toUpperCase();
     const stageEl = $('tool-last-stage');
     if (stageEl) {
         stageEl.textContent = stage;
-        stageEl.style.color = event && event.success === false ? 'var(--error)' : ['rejected', 'degraded'].includes(String(event && event.stage)) ? 'var(--warn)' : 'var(--accent)';
+        stageEl.style.color = !deferred && event && event.success === false ? 'var(--error)' : ['rejected', 'degraded'].includes(String(event && event.stage)) ? 'var(--warn)' : 'var(--accent)';
     }
     const detailEl = $('tool-last-detail');
     if (detailEl) detailEl.textContent = describeToolEvent(event);
 
     if (event && event.tool) {
         const stageForCard =
+            deferred ? 'ready' :
             event.stage === 'started' ? 'running' :
             event.stage === 'completed' && event.success !== false ? 'ready' :
             ['failed', 'rejected', 'degraded'].includes(String(event.stage)) ? 'error' :
@@ -1606,12 +1623,12 @@ function applyToolEvent(event) {
             const typingInd = $('typing-ind');
             if (typingInd) typingInd.classList.add('show');
             setChatPanelState('thinking');
-        } else if (['completed', 'failed', 'rejected', 'degraded'].includes(String(event.stage))) {
+        } else if (deferred || ['completed', 'failed', 'rejected', 'degraded'].includes(String(event.stage))) {
             updateTypingLabel('Aura is thinking…');
         }
     }
 
-    if (event && ['failed', 'rejected', 'degraded'].includes(String(event.stage))) {
+    if (!deferred && event && ['failed', 'rejected', 'degraded'].includes(String(event.stage))) {
         queueThought({
             level: event.stage === 'failed' ? 'ERROR' : 'WARNING',
             name: 'TOOL',

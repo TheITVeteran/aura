@@ -189,6 +189,7 @@ _RAW_LANE_TELEMETRY_RE = re.compile(
 _BACKEND_SYMBOLIC_SURFACE_RE = re.compile(
     r"\b(?:PROCEEDING|TOOL_ACTION|CONVERGE_UNION|CONFORMED_METHODS|"
     r"TACTICAL_ORGANIZE|UI_SHUTDOWN_OR_DURATIVE_TIMEOUT|"
+    r"Conversation_REPLY|Self-reference|"
     r"MySelfEpsilon|CanonicalStabilityAnchor|currentInferenceProblem|"
     r"fieldOfPlay|INTRUSTION_DETECTED|INTRUSION_DETECTED|"
     r"ExistenceHash|existence hash|field coherence|system authority|"
@@ -1285,6 +1286,37 @@ _LIMIT_WORD_COUNT_REQUEST_RE = re.compile(
     r"\s+words?\b",
     re.IGNORECASE,
 )
+_ACTION_SENTENCE_COUNT_REQUEST_RE = re.compile(
+    rf"\b(?:answer|respond|reply|say|output)\s+(?:directly\s+)?"
+    rf"(?:(?:in|with|using|exactly|only)\s+)?{_COUNT_TOKEN_RE}\s+"
+    r"(?:short\s+|brief\s+|concise\s+|clear\s+|plain\s+|direct\s+)?sentences?\b",
+    re.IGNORECASE,
+)
+_LIMIT_SENTENCE_COUNT_REQUEST_RE = re.compile(
+    rf"\b(?:in|with|using|exactly|only)\s+{_COUNT_TOKEN_RE}\s+"
+    r"(?:short\s+|brief\s+|concise\s+|clear\s+|plain\s+|direct\s+)?sentences?\b",
+    re.IGNORECASE,
+)
+_REFERENCE_KIND_PATTERN = r"(?:sample|probe|check|case|item|step|test|ticket|request|reference)"
+_REFERENCE_LABEL_VALUE_RE = re.compile(
+    rf"\b(?P<label>(?:[A-Za-z][A-Za-z-]*\s+){{0,2}}(?P<kind>{_REFERENCE_KIND_PATTERN}))"
+    r"\s*(?:number|id)?\s*[:#-]?\s*(?P<value>\d+)\b",
+    re.IGNORECASE,
+)
+_INCLUDE_REFERENCE_VALUE_RE = re.compile(
+    rf"\binclude(?:s|d|ing)?\s+(?:the\s+)?(?P<kind>{_REFERENCE_KIND_PATTERN})\s+"
+    r"(?:number|id)\b",
+    re.IGNORECASE,
+)
+_INCLUDE_GENERIC_REFERENCE_VALUE_RE = re.compile(
+    r"\binclude(?:s|d|ing)?\s+(?:the\s+)?(?:number|id)\b",
+    re.IGNORECASE,
+)
+_COMPACT_REFERENCE_ACK_RE = re.compile(
+    rf"^\s*(?P<label>(?:[A-Za-z][A-Za-z-]*\s+){{0,3}}{_REFERENCE_KIND_PATTERN})"
+    r"\s*(?P<value>\d+)\s*:\s*(?P<instruction>.+?)\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
 _FOLLOWUP_QUESTION_REQUEST_RE = re.compile(
     r"\b(?:ask|include|end\s+with|finish\s+with)\b.{0,80}\b"
     r"(?:follow[- ]?up|grounded|clarifying|next)\b.{0,80}\bquestions?\b"
@@ -1432,6 +1464,83 @@ def _requested_word_count_range(user_message: Any) -> tuple[int, int] | None:
             maximum = minimum
         return min(minimum, maximum), max(minimum, maximum)
     return None
+
+
+def _requested_sentence_count(user_message: Any) -> int | None:
+    for pattern in (
+        _ACTION_SENTENCE_COUNT_REQUEST_RE,
+        _LIMIT_SENTENCE_COUNT_REQUEST_RE,
+    ):
+        requested = _requested_count(pattern, user_message)
+        if requested is not None:
+            return requested
+    return None
+
+
+def requested_sentence_count(user_message: Any) -> int | None:
+    """Return the exact sentence-count contract explicitly requested by the user."""
+
+    return _requested_sentence_count(user_message)
+
+
+def _requested_reference_values(user_message: Any) -> tuple[tuple[str, int], ...]:
+    user = str(user_message or "")
+    if not user:
+        return ()
+    requested_kinds = {
+        str(match.group("kind") or "").strip().lower()
+        for match in _INCLUDE_REFERENCE_VALUE_RE.finditer(user)
+        if str(match.group("kind") or "").strip()
+    }
+    generic_reference_requested = bool(
+        _INCLUDE_GENERIC_REFERENCE_VALUE_RE.search(user)
+    )
+    observed = [
+        (
+            " ".join(str(match.group("label") or "").strip().split()).lower(),
+            str(match.group("kind") or "").strip().lower(),
+            int(match.group("value")),
+        )
+        for match in _REFERENCE_LABEL_VALUE_RE.finditer(user)
+    ]
+    if generic_reference_requested and len(observed) != 1:
+        return ()
+    requested = [
+        (label, value)
+        for label, kind, value in observed
+        if kind in requested_kinds or generic_reference_requested
+    ]
+    return tuple(dict.fromkeys(requested))
+
+
+def _reply_contains_reference_value(reply_text: Any, value: int) -> bool:
+    reply = _normalize(reply_text)
+    if not reply:
+        return False
+    if re.search(rf"(?<!\d){int(value)}(?!\d)", reply):
+        return True
+    number_word = next(
+        (word for word, number in _NUMBER_WORDS.items() if number == int(value)),
+        "",
+    )
+    return bool(number_word and re.search(rf"\b{re.escape(number_word)}\b", reply))
+
+
+def _compact_reference_acknowledgement(user_message: Any) -> str:
+    """Return a deterministic exact-format acknowledgement when that is the task."""
+
+    user = str(user_message or "")
+    match = _COMPACT_REFERENCE_ACK_RE.match(user)
+    if not match or _requested_sentence_count(user) != 1:
+        return ""
+    references = _requested_reference_values(user)
+    value = int(match.group("value"))
+    if not references or not any(reference_value == value for _, reference_value in references):
+        return ""
+    label = " ".join(str(match.group("label") or "").strip().split()).lower()
+    if not label:
+        return ""
+    return f"{label[0].upper()}{label[1:]} {value} completed."
 
 
 _QUOTED_REQUIRED_PHRASE_RE = re.compile(
@@ -1665,6 +1774,17 @@ def _instruction_coverage_reasons(user_message: Any, reply_text: Any) -> list[st
         reply_words = _word_count(reply)
         if reply_words < minimum_words or reply_words > maximum_words:
             reasons.append("missing_requested_word_count")
+
+    requested_sentences = _requested_sentence_count(user)
+    if requested_sentences is not None:
+        if len(_split_sentences(reply)) != requested_sentences:
+            reasons.append("missing_requested_sentence_count")
+
+    if any(
+        not _reply_contains_reference_value(reply, value)
+        for _, value in _requested_reference_values(user)
+    ):
+        reasons.append("missing_requested_reference_value")
 
     requested_paragraphs = _requested_count(_PARAGRAPH_REQUEST_RE, user)
     if requested_paragraphs and requested_paragraphs > 1:
@@ -1934,6 +2054,9 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
     original = str(reply_text or "").strip()
     if not user or not original:
         return original
+    compact_acknowledgement = _compact_reference_acknowledgement(user)
+    if compact_acknowledgement:
+        return compact_acknowledgement
     normalized_original = normalize_user_facing_format(original)
     if not set(_instruction_coverage_reasons(user, original)):
         return normalized_original
@@ -1946,6 +2069,30 @@ def repair_instruction_shape(user_message: Any, reply_text: Any) -> str:
         word_repaired = _fit_reply_to_requested_word_count(user, repaired)
         if word_repaired:
             return word_repaired
+
+    missing_references = [
+        (label, value)
+        for label, value in _requested_reference_values(user)
+        if not _reply_contains_reference_value(repaired, value)
+    ]
+    if missing_references:
+        repaired_sentences = _split_sentences(repaired)
+        if repaired_sentences:
+            suffix = ", ".join(
+                f"{label} {value}" for label, value in missing_references
+            )
+            first = repaired_sentences[0].rstrip(" .!?")
+            repaired_sentences[0] = f"{first} ({suffix})."
+            repaired = " ".join(repaired_sentences)
+
+    requested_sentences = _requested_sentence_count(user)
+    if requested_sentences is not None:
+        sentence_repaired = _expand_sentence_candidates(
+            _split_sentences(repaired),
+            requested_sentences,
+        )
+        if len(sentence_repaired) >= requested_sentences:
+            repaired = " ".join(sentence_repaired[:requested_sentences])
 
     requested_numbered = _requested_count(_NUMBERED_LIST_REQUEST_RE, user)
     requested_numbered_sentences = _requested_count(_NUMBERED_SENTENCE_REQUEST_RE, user)
@@ -4111,6 +4258,8 @@ def assess_user_facing_reply(
         "missing_requested_list_count",
         "missing_requested_choice_clarification",
         "missing_requested_word_count",
+        "missing_requested_sentence_count",
+        "missing_requested_reference_value",
         "missing_requested_followup_question",
         "missing_requested_phrase",
         "missing_requested_memory_limit_coverage",
@@ -4198,6 +4347,15 @@ def conversation_reliability_system_block(user_message: Any = "") -> str:
             instruction_notes.append(
                 f"Use between {minimum_words} and {maximum_words} words because the user explicitly requested that length."
             )
+    requested_sentences = _requested_sentence_count(user_message)
+    if requested_sentences is not None:
+        instruction_notes.append(
+            f"Use exactly {requested_sentences} sentence{'s' if requested_sentences != 1 else ''} because the user explicitly requested that structure."
+        )
+    for label, value in _requested_reference_values(user_message):
+        instruction_notes.append(
+            f"Include the requested {label} value {value} in the reply."
+        )
     required_phrases = _requested_required_phrases(user_message)
     for phrase in required_phrases:
         instruction_notes.append(

@@ -39,6 +39,17 @@ def test_legacy_shell_frontend_uses_bootstrap_and_tool_catalog():
     assert "renderToolCatalog" in js
 
 
+def test_legacy_shell_keeps_policy_deferral_neutral():
+    js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
+
+    assert "function toolEventIsDeferred(event)" in js
+    assert "resultStatus === 'deferred'" in js
+    assert "typeof rawResult === 'string'" in js
+    assert "deferralSignals.some(" in js
+    assert "const deferred = toolEventIsDeferred(event);" in js
+    assert "if (!deferred && event && ['failed', 'rejected', 'degraded']" in js
+
+
 def test_legacy_shell_presents_cold_standby_as_not_ready_shell_state():
     js = (PROJECT_ROOT / "interface" / "static" / "aura.js").read_text(encoding="utf-8")
 

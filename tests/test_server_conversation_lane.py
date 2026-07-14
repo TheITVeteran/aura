@@ -5673,7 +5673,10 @@ async def test_api_chat_desktop_soak_lane_question_uses_cognitive_engine_when_re
                 "response_path": "cognitive_engine",
             })
         cognitive_calls.append("desktop_cognitive_engine")
-        return "Cortex (32B) is the active foreground lane and I am answering through CognitiveEngine."
+        return (
+            "Cortex (32B) is the active foreground lane. "
+            "I am answering through CognitiveEngine."
+        )
 
     async def _fake_log_exchange(*_args, **_kwargs):
         return None
@@ -5907,8 +5910,8 @@ async def test_api_chat_desktop_nonexecuting_decision_question_blocks_desktop_ta
             })
         cognitive_calls.append("desktop_cognitive_engine")
         return (
-            "I would use Notes for a quick local note and Google Docs when the user needs "
-            "cloud editing, sharing, or a polished longer document."
+            "I would use Notes for a quick local note. "
+            "I would use Google Docs when the user needs cloud editing, sharing, or a polished longer document."
         )
 
     async def _forbidden_desktop_objective(*_args, **_kwargs):

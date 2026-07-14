@@ -114,6 +114,17 @@ def unpack_governance_result(result: Any) -> tuple[bool, str, Any | None]:
     return bool(result), "", None
 
 
+def _tool_result_is_deferred(result: Any) -> bool:
+    if isinstance(result, dict):
+        status = str(result.get("status", "") or "").strip().lower()
+        error = str(result.get("error", "") or "").strip().lower()
+        reason = str(result.get("reason", "") or "").strip().lower()
+        return status == "deferred" or any(
+            value.startswith("background_deferred:") for value in (error, reason)
+        )
+    return "background_deferred:" in str(result or "").lower()
+
+
 class BeliefAuthority:
     """Single epistemic entry point for durable belief writes."""
 
@@ -551,17 +562,12 @@ class ConstitutionalCore:
                 "errors": [],
             }
 
+        deferred_result = _tool_result_is_deferred(result)
         intention_loop = self._get_intention_loop()
         if intention_loop is not None and handle.intention_id:
             try:
                 tool_name = handle.proposal.payload.get("tool_name", "unknown")
                 args = dict(handle.proposal.payload.get("args", {}) or {})
-                deferred_result = False
-                if isinstance(result, dict):
-                    deferred_result = str(result.get("status", "") or "").lower() == "deferred"
-                    deferred_result = deferred_result or str(result.get("error", "") or "").startswith("background_deferred:")
-                else:
-                    deferred_result = "background_deferred:" in str(result or "").lower()
                 intention_loop.record_action(
                     handle.intention_id,
                     tool_name=tool_name,
@@ -673,15 +679,15 @@ class ConstitutionalCore:
             }
         tool_name = str(handle.proposal.payload.get("tool_name", "unknown") or "unknown")
         self._emit_tool_event(
-            "completed" if success else "failed",
+            "deferred" if deferred_result else ("completed" if success else "failed"),
             tool_name,
             source=handle.proposal.source,
             args=dict(handle.proposal.payload.get("args", {}) or {}),
             decision=handle.decision,
             handle=handle,
             result=result,
-            success=success,
-            error=error,
+            success=None if deferred_result else success,
+            error=None if deferred_result else error,
             duration_ms=duration_ms,
         )
         return closure

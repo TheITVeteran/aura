@@ -761,6 +761,47 @@ def test_explicit_brevity_request_allows_short_direct_reply():
     assert "too_thin_for_user_turn" not in assessment.reasons
 
 
+def test_explicit_sentence_and_reference_contract_rejects_shape_miss():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Latency sample 3: answer in one short sentence that includes the sample number.",
+        "Been there, seen that. Speed is back. What was the topic?",
+    )
+
+    assert assessment.retryable
+    assert "missing_requested_sentence_count" in assessment.reasons
+    assert "missing_requested_reference_value" in assessment.reasons
+
+
+def test_compact_numbered_diagnostic_gets_deterministic_exact_shape():
+    from core.conversation.response_reliability import (
+        assess_user_facing_reply,
+        repair_instruction_shape,
+    )
+
+    prompt = "Latency sample 1: answer in one short sentence that includes the sample number."
+    repaired = repair_instruction_shape(
+        prompt,
+        "Conversation_REPLY -> Self-reference: How do I contribute to recovery?",
+    )
+
+    assert repaired == "Latency sample 1 completed."
+    assert assess_user_facing_reply(prompt, repaired).ok
+
+
+def test_internal_conversation_reply_label_is_not_user_presentable():
+    from core.conversation.response_reliability import assess_user_facing_reply
+
+    assessment = assess_user_facing_reply(
+        "Tell me what changed.",
+        "Conversation_REPLY -> Self-reference: The state changed.",
+    )
+
+    assert assessment.hard_failure
+    assert "backend_symbolic_surface_leak" in assessment.reasons
+
+
 def test_explicit_word_count_request_rejects_wrong_count():
     from core.conversation.response_reliability import assess_user_facing_reply
 

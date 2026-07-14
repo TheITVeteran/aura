@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SHELL_APP = ROOT / "interface/static/shell/src/App.jsx"
 LEGACY_INDEX = ROOT / "interface/static/index.html"
@@ -19,6 +18,18 @@ def test_react_shell_marks_chat_requests_as_desktop_cognitive_engine_required():
     assert '"X-Aura-Surface": "desktop-ui"' in source
     assert '"X-Aura-Require-CognitiveEngine": "true"' in source
     assert "headers: desktopChatHeaders()" in source
+
+
+def test_react_shell_keeps_policy_deferral_neutral():
+    source = _source()
+
+    assert "function toolEventIsDeferred(event)" in source
+    assert 'resultStatus === "deferred"' in source
+    assert 'typeof rawResult === "string"' in source
+    assert "deferralSignals.some(" in source
+    assert "const deferred = toolEventIsDeferred(rawEvent);" in source
+    assert 'stage: deferred ? "deferred" : rawEvent.stage' in source
+    assert "success: deferred ? null : rawEvent.success" in source
 
 
 def test_react_shell_renders_fail_closed_chat_response_body_before_generic_error():

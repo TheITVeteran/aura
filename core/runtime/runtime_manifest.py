@@ -95,11 +95,6 @@ def _service_snapshot(
     from core.container import ServiceContainer
 
     contract_health = health_by_key or {}
-    try:
-        statuses = ServiceContainer.get_all_subsystem_statuses()
-    except _MANIFEST_ERRORS:
-        statuses = {}
-
     services: dict[str, dict[str, Any]] = {}
     acquired = ServiceContainer._lock.acquire(timeout=_CONTAINER_LOCK_TIMEOUT_S)
     if not acquired:
@@ -135,11 +130,20 @@ def _service_snapshot(
             present = bool(health_evidence.get("present", False))
             liveness = str(health_evidence.get("liveness", "") or "")
             health_status = "ok" if present and liveness == "ok" else "liveness_failed"
+        elif instance is not None:
+            # A manifest is an observer, not a service-health executor. Calling
+            # arbitrary get_status()/status() methods here made one boot snapshot
+            # inherit multi-second model and maintenance work after health had
+            # already been evaluated by the canonical contract.
+            health_status = "registered_unchecked"
         else:
-            health_status = statuses.get(name, "registered_unchecked")
+            health_status = "missing" if bool(getattr(desc, "required", False)) else "optional_missing"
+        declared_owner = str(getattr(desc, "owner", "") or "").strip()
         services[name] = {
             "service": name,
-            "owner": _source_owner(owner_target) if owner_target is not None else "unknown",
+            "owner": declared_owner or (
+                _source_owner(owner_target) if owner_target is not None else "unknown"
+            ),
             "required": bool(getattr(desc, "required", False)),
             "initialized": bool(getattr(desc, "initialized", False)),
             "health_status": health_status,

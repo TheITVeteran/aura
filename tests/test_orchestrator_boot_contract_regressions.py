@@ -265,6 +265,39 @@ def test_runtime_manifest_does_not_mark_registered_unready_role_healthy(tmp_path
         ServiceContainer.clear()
 
 
+def test_runtime_manifest_snapshot_never_invokes_arbitrary_service_status(tmp_path):
+    from core.runtime.runtime_manifest import build_runtime_manifest
+
+    class BlockingStatusService:
+        @staticmethod
+        def get_status():
+            raise AssertionError("runtime manifest observation invoked service code")
+
+    ServiceContainer.clear()
+    try:
+        ServiceContainer.register_instance(
+            "manifest_observation_probe",
+            BlockingStatusService(),
+            required=False,
+        )
+        manifest = build_runtime_manifest(
+            profile="desktop",
+            ready_label="Server",
+            project_root=PROJECT_ROOT,
+            artifact_root=tmp_path,
+            readiness_snapshot={
+                "ready": True,
+                "status": "healthy",
+                "required_probe_blockers": [],
+            },
+        )
+
+        service = manifest["services"]["manifest_observation_probe"]
+        assert service["health_status"] == "registered_unchecked"
+    finally:
+        ServiceContainer.clear()
+
+
 def test_foreground_start_keeps_scheduler_heartbeat_alive():
     main_source = (PROJECT_ROOT / "core" / "orchestrator" / "main.py").read_text(
         encoding="utf-8"

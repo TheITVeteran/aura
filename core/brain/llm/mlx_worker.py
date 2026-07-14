@@ -418,6 +418,8 @@ _DELIVERABLE_RESIDUAL_SURFACE_REASONS = frozenset(
     {
         "missing_requested_phrase",
         "missing_requested_word_count",
+        "missing_requested_sentence_count",
+        "missing_requested_reference_value",
         "missing_requested_paragraph_count",
         "missing_requested_list_count",
         "empty_requested_list_item",
@@ -491,6 +493,29 @@ def _repair_live_user_surface_self_claims(response_text: Any) -> str:
             exc,
             action="continued with unmodified draft after self-claim grounding failed",
             severity="error",
+        )
+        return text
+
+
+def _repair_live_user_surface_instruction_shape(
+    job: dict[str, Any],
+    response_text: Any,
+) -> str:
+    """Apply deterministic explicit-format repairs before spending another decode."""
+
+    text = str(response_text or "").strip()
+    prompt = str(job.get("user_surface_validation_prompt") or "").strip()
+    if not text or not prompt:
+        return text
+    try:
+        from core.conversation.response_reliability import repair_instruction_shape
+
+        return repair_instruction_shape(prompt, text)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        _record_mlx_degradation(
+            exc,
+            action="continued to quality validation after instruction-shape repair failed",
+            severity="warning",
         )
         return text
 
@@ -3484,6 +3509,16 @@ def _mlx_worker_loop(
                                                 "before quality validation."
                                             )
                                             response_text = grounded_surface
+                                        shaped_surface = _repair_live_user_surface_instruction_shape(
+                                            job,
+                                            response_text,
+                                        )
+                                        if shaped_surface != response_text:
+                                            logger.info(
+                                                "🛡️ [WORKER] Repaired explicit user-surface "
+                                                "shape before quality validation."
+                                            )
+                                            response_text = shaped_surface
                                         surface_control_state["surface_quality_gate_attempts"] = int(
                                             surface_control_state.get("surface_quality_gate_attempts", 0)
                                             or 0

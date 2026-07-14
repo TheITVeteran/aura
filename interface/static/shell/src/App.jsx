@@ -40,6 +40,19 @@ function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function toolEventIsDeferred(event) {
+  const normalized = safeObject(event);
+  const rawResult = normalized.result;
+  const result = safeObject(rawResult);
+  const stage = String(normalized.stage || "").toLowerCase();
+  const resultStatus = String(result.status || "").toLowerCase();
+  const deferralSignals = [result.reason, result.error, normalized.error];
+  if (typeof rawResult === "string") deferralSignals.push(rawResult);
+  return stage === "deferred" || resultStatus === "deferred" || deferralSignals.some(
+    (value) => String(value || "").toLowerCase().startsWith("background_deferred:"),
+  );
+}
+
 function mergeObject(defaults, value) {
   return { ...defaults, ...safeObject(value) };
 }
@@ -398,12 +411,19 @@ export default function App() {
     if (kind === "tool_event") {
       const eventPayload = safeObject(payload.payload);
       const decision = safeObject(payload.decision || eventPayload.decision);
+      const rawEvent = {
+        stage: payload.stage || eventPayload.stage,
+        success: payload.success ?? eventPayload.success,
+        error: payload.error || eventPayload.error || "",
+        result: payload.result || eventPayload.result,
+      };
+      const deferred = toolEventIsDeferred(rawEvent);
       const item = {
         id: payload.event_id || makeId("tool"),
-        stage: payload.stage || eventPayload.stage,
+        stage: deferred ? "deferred" : rawEvent.stage,
         tool: payload.tool || eventPayload.tool || "tool",
-        success: payload.success ?? eventPayload.success,
-        reason: decision.reason || payload.error || eventPayload.error || "",
+        success: deferred ? null : rawEvent.success,
+        reason: decision.reason || rawEvent.error,
         at: payload.event_ts || payload.timestamp || Date.now(),
       };
       startTransition(() => {

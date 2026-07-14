@@ -5051,29 +5051,56 @@ def _ground_runtime_fact_status_reply(
     recurrent_active = bool(recurrent.get("active"))
     model_label = _canonical_runtime_model_label(lane)
     tools_available = _runtime_tool_governance_available()
-    parts = [
+    statements = [
         (
             "I am speaking through the launched desktop UI into /api/chat, through "
-            f"CognitiveEngine, with {model_label} as the active foreground lane"
+            f"CognitiveEngine, with {model_label} as the active foreground lane."
         ),
-        f"CognitiveEngine handled this turn: {'yes' if cognitive_engine_handled else 'no'}",
+        f"CognitiveEngine handled this turn: {'yes' if cognitive_engine_handled else 'no'}.",
         (
-            f"governed tools available: {'yes' if tools_available else 'no'}, "
-            "subject to explicit request, Will/Authority approval, and receipts"
+            f"Governed tools available: {'yes' if tools_available else 'no'}, "
+            "subject to explicit request, Will/Authority approval, and receipts."
         ),
     ]
     if "recurrent depth" in str(user_message or "").lower() or recurrent_active:
-        parts.append(f"recurrent depth: {'active' if recurrent_active else 'inactive'}")
+        statements.append(
+            f"Recurrent depth: {'active' if recurrent_active else 'inactive'}."
+        )
     status_prompt = str(user_message or "").lower()
     if "generic assistant" in status_prompt or "fallback" in status_prompt:
-        parts.append("generic assistant fallback: blocked on the live desktop path")
-    reply = ", ".join(parts) + "."
+        statements.append("Generic assistant fallback: blocked on the live desktop path.")
     if _is_current_request_recap_request(user_message):
-        return _append_requested_phrases_for_quality_gate(
-            user_message,
-            "You asked me to identify the current request and name the live cognition "
-            f"path handling this turn. {reply}",
+        statements.insert(
+            0,
+            "You asked me to identify the current request and name the live cognition path handling this turn.",
         )
+
+    try:
+        from core.conversation.response_reliability import (
+            repair_instruction_shape,
+            requested_sentence_count,
+        )
+
+        sentence_count = requested_sentence_count(user_message)
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+        repair_instruction_shape = None
+        sentence_count = None
+
+    if sentence_count is not None and 0 < sentence_count <= len(statements):
+        # Preserve every authoritative fact while honoring compact exact-count
+        # requests instead of dropping evidence or emitting a comma-heavy run-on.
+        leading = statements[: max(0, sentence_count - 1)]
+        remaining = [statement.rstrip(" .") for statement in statements[len(leading):]]
+        continuation_clauses = []
+        for index, clause in enumerate(remaining):
+            if index > 0 and clause.startswith(("Governed ", "Recurrent ", "Generic ")):
+                clause = clause[:1].lower() + clause[1:]
+            continuation_clauses.append(clause)
+        reply = " ".join([*leading, "; ".join(continuation_clauses) + "."])
+    else:
+        reply = " ".join(statements)
+        if sentence_count is not None and repair_instruction_shape is not None:
+            reply = repair_instruction_shape(user_message, reply)
     return _append_requested_phrases_for_quality_gate(user_message, reply)
 
 

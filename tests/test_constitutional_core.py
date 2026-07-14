@@ -79,13 +79,23 @@ async def test_constitutional_core_tracks_tool_execution_and_closes_intent(servi
 
 
 @pytest.mark.asyncio
-async def test_constitutional_core_marks_governed_deferral_without_high_surprise(service_container, tmp_path):
+async def test_constitutional_core_marks_governed_deferral_without_high_surprise(
+    service_container,
+    tmp_path,
+    monkeypatch,
+):
     reset_constitutional_singletons()
     ServiceContainer.register_instance("binding_engine", SimpleNamespace(get_coherence=lambda: 1.0), required=False)
     intention_loop = IntentionLoop(db_path=str(tmp_path / "intention_loop.db"))
     ServiceContainer.register_instance("intention_loop", intention_loop, required=False)
 
     core = get_constitutional_core()
+    emitted: list[tuple[str, dict]] = []
+
+    def capture_event(stage, _tool_name, **kwargs):
+        emitted.append((stage, kwargs))
+
+    monkeypatch.setattr(core, "_emit_tool_event", capture_event)
     handle = await core.begin_tool_execution(
         "auto_refactor",
         {"mode": "scan"},
@@ -106,6 +116,10 @@ async def test_constitutional_core_marks_governed_deferral_without_high_surprise
     assert record.status.value == "deferred"
     assert record.surprise == 0.0
     assert intention_loop.get_recent_surprises() == []
+    assert emitted[-1][0] == "deferred"
+    assert emitted[-1][1]["success"] is None
+    assert emitted[-1][1]["error"] is None
+    assert not any(stage == "failed" for stage, _ in emitted)
 
 
 @pytest.mark.asyncio

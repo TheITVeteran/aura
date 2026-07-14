@@ -17,6 +17,7 @@ from __future__ import annotations
 from core.brain.llm.mlx_worker import (
     _DELIVERABLE_RESIDUAL_SURFACE_REASONS,
     _SELF_CLAIM_BOUNDARY_SUFFIX,
+    _repair_live_user_surface_instruction_shape,
     _salvage_exhausted_user_surface,
 )
 
@@ -90,6 +91,16 @@ def test_deliverable_set_contains_no_leak_or_overclaim_reasons():
     forbidden_markers = ("leak", "artifact", "unsupported", "telemetry", "boilerplate", "envelope")
     for reason in _DELIVERABLE_RESIDUAL_SURFACE_REASONS:
         assert not any(marker in reason for marker in forbidden_markers), reason
+
+
+def test_worker_repairs_compact_explicit_shape_before_retry_decode():
+    prompt = "Latency sample 2: answer in one short sentence that includes the sample number."
+    repaired = _repair_live_user_surface_instruction_shape(
+        _job_for(prompt),
+        "Done. Sample two. Ask the user another question.",
+    )
+
+    assert repaired == "Latency sample 2 completed."
 
 
 def test_live_failure_shape_now_delivers():
