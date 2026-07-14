@@ -493,10 +493,17 @@ def _coerce_and_harmonize_params(params: dict[str, Any], input_model: Any) -> di
                 continue
 
         if not coerced and coercion_error is not None:
+            # A value that won't coerce (e.g. limit="not_an_int") is bad INPUT
+            # gracefully handled by keeping the original — not a capability_engine
+            # fault. Under a fail-closed policy + production governance this
+            # warning would otherwise escalate to a CRITICAL service failure and
+            # raise, spiking existential threat (the same July-2026 live pathology
+            # already fixed at the sanitized-fallback site below).
             _record_capability_degradation(
                 coercion_error,
                 action=f"kept original value for parameter {name!r} after coercion failed",
                 severity="warning",
+                enforce_failure_policy=False,
             )
 
     # 3. Inject Defaults for missing keys
@@ -622,9 +629,13 @@ class SkillMetadata(BaseModel):
 
             return params
         except (json.JSONDecodeError, TypeError, ValueError) as e:
+            # Malformed parameter JSON from the model/user is bad input the
+            # engine correctly rejected — return the raw-params fallback rather
+            # than let a fail-closed policy convert it into a CRITICAL failure.
             _record_capability_degradation(
                 e,
                 action="returned raw skill parameters after argument validation failed",
+                enforce_failure_policy=False,
             )
             # Fallback for complex extraction failures
             return {"raw_params": params_raw, "_error": str(e)}
