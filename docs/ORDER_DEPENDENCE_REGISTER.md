@@ -31,7 +31,16 @@ governance out of unit tests whose subject is something else (FTS ranking).
 | `tests/test_gateway_enforcement.py` ×7 | same root as the personality family: the captured SimpleNamespace persona corrupted a downstream runtime path that ended in the global receipt store being closed mid-chunk (`emit()` → "receipt store is closed") | healed by the personality read-through fix — with it, chunk 3 runs 2115/2115 green and the store is never closed (probe plugin, zero transitions across two prior deterministic failures) |
 | `test_sota_hardeners::test_extract_and_validate_args_resilience` | once an earlier test leaves `capability_engine` registered fail-closed (a real container boot does), the coercion-failure and malformed-JSON degradations in `capability_engine.extract_and_validate_args` escalated WARNING→CRITICAL and **raised** under production governance — so `limit="not_an_int"` crashed instead of returning `_error` | the two sites now pass `enforce_failure_policy=False` (the July-2026 pattern; sibling site already had it). Also a live pathology: bad skill params would mint a CRITICAL incident + existential-threat spike |
 
-## Open — `test_unified_will.py` (3, surfaced 2026-07-14 chunk 6)
+## Resolved upstream — `test_unified_will.py` (3, surfaced and cleared 2026-07-14)
+
+Verified gone: a fixture-shaped-Will probe run over the full chunk-6 prefix
+passed green with zero poisoning transitions, and a subsequent full chunk-6
+certification passed 2001/2001 with an empty register. The pollution was
+healed by intervening parallel-agent commits (runtime maintenance/agency
+boundary hardening) rather than by a fix from this side. The probe method
+below remains the recurrence playbook.
+
+## (Historical) — `test_unified_will.py` (3, surfaced 2026-07-14 chunk 6)
 
 `TestWillState::test_counters_track`,
 `TestAllDomains::test_aura_now_defer_allows_read_only_observation_tool`,
