@@ -13,6 +13,11 @@ import time
 from typing import Any
 
 from core.container import ServiceContainer
+from core.executive.bounded_sandbox_policy import (
+    IDLE_SANDBOX_PROBE_SCRIPT,
+    idle_sandbox_probe_arguments,
+)
+from core.governance_context import governed_scope
 from core.runtime.background_policy import background_activity_allowed
 from core.runtime.errors import Severity, record_degradation
 from core.utils.task_tracker import get_task_tracker
@@ -151,7 +156,7 @@ class SubconsciousLoop:
                 self.last_dream_cycle = now + 60.0  # Back off a bit
 
         # 2. Epistemic Foraging / Hypothesis Testing (Sandbox)
-        # Bypasses the user to run code autonomously
+        # Runs under a narrowly bound autonomous child lease.
         if now - self.last_sandbox_experiment > 900.0:  # Every 15 minutes of idle
             try:
                 logger.info("🧪 Subconscious running proactive sandbox experiment...")
@@ -181,14 +186,8 @@ class SubconsciousLoop:
             )
             return
             
-        script = """
-# Autonomous Subconscious Check
-try:
-    import platform
-    print(f"Subconscious ping: Running on {platform.system()} {platform.release()}")
-except (ImportError, AttributeError, RuntimeError) as e:
-    print(f"Subconscious error: {e}")
-"""
+        script = IDLE_SANDBOX_PROBE_SCRIPT
+        authority_arguments = idle_sandbox_probe_arguments()
         handle = None
         constitutional_core = None
         error_text = None
@@ -202,7 +201,7 @@ except (ImportError, AttributeError, RuntimeError) as e:
             constitutional_core = get_constitutional_core(self.orchestrator)
             handle = await constitutional_core.begin_tool_execution(
                 "subconscious_sandbox_probe",
-                {"purpose": "idle_probe"},
+                authority_arguments,
                 source="subconscious_loop",
                 objective="Idle subconscious sandbox experiment",
             )
@@ -229,10 +228,11 @@ except (ImportError, AttributeError, RuntimeError) as e:
             return
 
         try:
-            success, result = await asyncio.wait_for(
-                tool_orch.execute_python(script),
-                timeout=self.sandbox_timeout,
-            )
+            async with governed_scope(handle.decision):
+                success, result = await asyncio.wait_for(
+                    tool_orch.execute_python(script),
+                    timeout=self.sandbox_timeout,
+                )
             if not success:
                 error_text = str(result or "sandbox_failed")
             if success:

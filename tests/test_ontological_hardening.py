@@ -11,6 +11,11 @@ from core.autonomy.genuine_refusal import RefusalEngine
 from core.autonomy.research_cycle import ResearchCycle
 from core.capability_engine import CapabilityEngine, SkillMetadata
 from core.consciousness.subconscious_loop import SubconsciousLoop
+from core.executive.bounded_sandbox_policy import (
+    IDLE_SANDBOX_PROBE_SCRIPT,
+    idle_sandbox_probe_arguments,
+)
+from core.governance_context import get_active_governance
 from core.health.degraded_events import clear_degraded_events, get_recent_degraded_events
 from core.phases.cognitive_routing_unitary import CognitiveRoutingPhase
 from core.phases.response_contract import build_response_contract
@@ -273,6 +278,71 @@ async def test_subconscious_loop_performs_idle_dream_and_constitutional_sandbox(
 
     assert len(dream.calls) == 1
     assert len(execute_python.calls) == 1
+    assert len(finish_tool_execution.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_subconscious_sandbox_propagates_bound_governance_to_effect_sink(
+    service_container,
+    monkeypatch,
+):
+    observed = {}
+
+    async def _execute(script):
+        token = get_active_governance()
+        observed.update(
+            {
+                "script": script,
+                "receipt_id": getattr(token, "receipt_id", None),
+                "domain": getattr(token, "domain", None),
+                "source": getattr(token, "source", None),
+            }
+        )
+        return True, "Subconscious ping ok"
+
+    execute_python = AsyncCallRecorder(effect=_execute)
+    service_container.register_instance(
+        "tool_orchestrator",
+        SimpleNamespace(execute_python=execute_python),
+        required=False,
+    )
+    begin_tool_execution = AsyncCallRecorder(
+        result=SimpleNamespace(
+            approved=True,
+            decision=SimpleNamespace(
+                reason="approved",
+                receipt_id="will-subconscious-sandbox",
+                domain="tool_execution",
+                source="subconscious_loop",
+                constraints={"standing_authority_grant_id": "bounded-probe"},
+            ),
+        )
+    )
+    finish_tool_execution = AsyncCallRecorder()
+    fake_core = SimpleNamespace(
+        begin_tool_execution=begin_tool_execution,
+        finish_tool_execution=finish_tool_execution,
+    )
+    monkeypatch.setattr(
+        "core.constitution.get_constitutional_core",
+        lambda *_a, **_k: fake_core,
+    )
+
+    loop = SubconsciousLoop(orchestrator=SimpleNamespace())
+    await loop._run_proactive_sandbox()
+
+    begin_call = begin_tool_execution.calls[0]
+    assert begin_call.args[:2] == (
+        "subconscious_sandbox_probe",
+        idle_sandbox_probe_arguments(),
+    )
+    assert observed == {
+        "script": IDLE_SANDBOX_PROBE_SCRIPT,
+        "receipt_id": "will-subconscious-sandbox",
+        "domain": "tool_execution",
+        "source": "subconscious_loop",
+    }
+    assert get_active_governance() is None
     assert len(finish_tool_execution.calls) == 1
 
 

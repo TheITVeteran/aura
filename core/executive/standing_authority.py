@@ -24,6 +24,9 @@ from pathlib import Path
 from typing import Any
 
 from core.agency.capability_token import CapabilityTokenStore, get_token_store
+from core.executive.bounded_sandbox_policy import (
+    validate_idle_sandbox_probe_arguments,
+)
 from core.executive.execution_policy import (
     classify_execution_risk,
     normalize_risk,
@@ -133,6 +136,7 @@ LOCAL_OBSERVATION_TOOLS = frozenset(
 
 CONNECTED_ACCOUNT_READ_TOOLS = frozenset({"email_adapter", "reddit_adapter"})
 READ_ONLY_MAINTENANCE_TOOLS = frozenset({"auto_refactor"})
+BOUNDED_SANDBOX_TOOLS = frozenset({"subconscious_sandbox_probe"})
 
 _UNSAFE_PUBLIC_RESEARCH_MARKERS = frozenset(
     {
@@ -160,6 +164,7 @@ _SUPPORTED_ARGUMENT_POLICIES = frozenset(
     {
         "any",
         "aura_local_read",
+        "bounded_sandbox_probe",
         "connected_account_read",
         "foreground_user_request",
         "local_introspection",
@@ -436,6 +441,23 @@ def _builtin_grants() -> tuple[StandingAuthorityGrant, ...]:
             argument_policy="read_only_maintenance",
             built_in=True,
         ),
+        StandingAuthorityGrant(
+            grant_id="aura.autonomous-bounded-sandbox-probe",
+            issuer="owner_policy",
+            description=(
+                "Aura's subconscious may execute the exact checked-in idle probe "
+                "inside the local no-network Python sandbox."
+            ),
+            allowed_origins=("subconscious_loop",),
+            allowed_tools=tuple(sorted(BOUNDED_SANDBOX_TOOLS)),
+            allowed_effect_scopes=("sandboxed_compute",),
+            max_risk="high",
+            max_actions=8,
+            window_seconds=3600.0,
+            lease_ttl_seconds=90.0,
+            argument_policy="bounded_sandbox_probe",
+            built_in=True,
+        ),
     )
 
 
@@ -469,9 +491,8 @@ class StandingAuthorityManager:
 
     def _gateway(self) -> Any:
         if self._state_gateway is None:
-            from core.state.state_gateway import get_state_gateway
-
             from core.runtime.flags import FlagKind, declare
+            from core.state.state_gateway import get_state_gateway
 
             configured_root = str(
                 declare(
@@ -657,6 +678,10 @@ class StandingAuthorityManager:
             if tool_name not in INTROSPECTION_TOOLS:
                 return False, "introspection_tool_mismatch"
             return True, "local_introspection"
+        if policy == "bounded_sandbox_probe":
+            if tool_name not in BOUNDED_SANDBOX_TOOLS:
+                return False, "bounded_sandbox_probe_tool_mismatch"
+            return validate_idle_sandbox_probe_arguments(arguments)
         if policy == "connected_account_read":
             mode = str(arguments.get("mode") or "").strip().lower()
             allowed_modes = {

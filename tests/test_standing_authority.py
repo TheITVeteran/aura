@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from core.agency.capability_token import CapabilityTokenStore
+from core.executive.bounded_sandbox_policy import idle_sandbox_probe_arguments
 from core.executive.execution_policy import (
     classify_execution_risk,
     resolve_execution_effect_scope,
@@ -231,6 +232,52 @@ async def test_autonomous_private_observation_and_maintenance_are_mode_bound():
     assert maintenance_scan.approved is True
     assert maintenance_scan.grant_id == "aura.autonomous-read-only-maintenance"
     assert maintenance_apply.approved is False
+
+
+@pytest.mark.asyncio
+async def test_subconscious_sandbox_lease_is_exact_origin_bound_and_receipted():
+    manager = _manager()
+    arguments = idle_sandbox_probe_arguments()
+
+    decision = await manager.issue_child_lease(
+        "subconscious_sandbox_probe",
+        arguments,
+        origin="subconscious_loop",
+    )
+
+    assert decision.approved is True
+    assert decision.grant_id == "aura.autonomous-bounded-sandbox-probe"
+    assert decision.budget_remaining == 7
+    valid, reason, record = manager.validate_context(
+        decision.context,
+        tool_name="subconscious_sandbox_probe",
+        arguments=arguments,
+        origin="subconscious_loop",
+        effect_scope="sandboxed_compute",
+        risk_level="high",
+    )
+    assert (valid, reason) == (True, "standing_authority_lease_valid")
+    assert record is not None
+
+
+@pytest.mark.asyncio
+async def test_subconscious_sandbox_lease_rejects_payload_and_origin_substitution():
+    valid_arguments = idle_sandbox_probe_arguments()
+    invalid_requests = (
+        ({"purpose": "idle_probe"}, "subconscious_loop"),
+        ({**valid_arguments, "purpose": "arbitrary_code"}, "subconscious_loop"),
+        ({**valid_arguments, "script_sha256": "0" * 64}, "subconscious_loop"),
+        ({**valid_arguments, "code": "print('substituted')"}, "subconscious_loop"),
+        (valid_arguments, "curiosity"),
+    )
+
+    for arguments, origin in invalid_requests:
+        decision = await _manager().issue_child_lease(
+            "subconscious_sandbox_probe",
+            arguments,
+            origin=origin,
+        )
+        assert decision.approved is False
 
 
 @pytest.mark.asyncio
