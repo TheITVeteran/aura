@@ -103,11 +103,12 @@ def _full_services():
 
 
 def _install_services(monkeypatch, services):
-    monkeypatch.setattr(
-        ServiceContainer,
-        "get",
-        classmethod(lambda _cls, name, default=None: services.get(name, default)),
-    )
+    # The collector reads via ServiceContainer.peek (a health snapshot must
+    # never instantiate factories); patch both lookups so the doubles are
+    # visible regardless of which seam a component reader uses.
+    _lookup = classmethod(lambda _cls, name, default=None: services.get(name, default))
+    monkeypatch.setattr(ServiceContainer, "get", _lookup)
+    monkeypatch.setattr(ServiceContainer, "peek", _lookup)
 
 
 def test_full_desktop_runtime_reports_every_canonical_background_organ(monkeypatch):
