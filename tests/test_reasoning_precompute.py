@@ -8,7 +8,11 @@ import pytest
 
 from core.brain import reasoning_precompute as rpc
 from core.brain import reasoning_solved_cache as rsc
-from core.brain.reasoning_precompute import PrecomputeQueue, get_precompute_queue, reset_precompute_queue
+from core.brain.reasoning_precompute import (
+    PrecomputeQueue,
+    get_precompute_queue,
+    reset_precompute_queue,
+)
 
 
 @pytest.fixture
@@ -117,3 +121,32 @@ def test_register_reasoning_jobs_idempotent():
     assert register_reasoning_jobs(c) is False  # idempotent
     assert "reasoning_idle_precompute" in registered
     assert "reasoning_self_improve" in registered
+    assert "reasoning_nonparametric_ingest" in registered
+
+
+@pytest.mark.asyncio
+async def test_nonparametric_background_never_spawns_model_for_maintenance(monkeypatch):
+    from types import SimpleNamespace
+
+    from core.brain import reasoning_background
+    from core.brain.llm import mlx_client
+
+    class _ColdClient:
+        def is_alive(self):
+            return False
+
+        async def ingest_nonparametric_async(self, **_kwargs):
+            raise AssertionError("cold maintenance must not start worker ingestion")
+
+    monkeypatch.setattr(mlx_client, "get_mlx_client", lambda: _ColdClient())
+    monkeypatch.setattr(
+        "core.utils.memory_monitor.get_memory_pressure_snapshot",
+        lambda: SimpleNamespace(refuse_heavy_local_generation=False),
+    )
+
+    result = await reasoning_background._job_nonparametric_ingest()
+
+    assert result == {
+        "status": "skipped_worker_not_resident",
+        "spawned_worker": False,
+    }

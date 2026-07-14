@@ -97,16 +97,6 @@
     },
     {
       "expected_load_references": 1,
-      "guard_symbol": "acquire_in_process_model_lane",
-      "min_guard_sites": 1,
-      "modules": [
-        "mlx_lm"
-      ],
-      "ownership_mode": "in_process_heartbeat",
-      "path": "core/brain/reasoning_background.py"
-    },
-    {
-      "expected_load_references": 1,
       "guard_symbol": "acquire_synchronous_in_process_model_lane",
       "min_guard_sites": 1,
       "modules": [

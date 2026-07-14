@@ -2168,6 +2168,154 @@ def clear_stale_soft_cancel(cancel_seq: Any, job_seq: int) -> None:
         logger.debug("Stale soft-cancel clear failed; continuing.")
 
 
+def _run_nonparametric_ingest_job(
+    model: Any,
+    tokenizer: Any,
+    job: dict[str, Any],
+    *,
+    cancel_seq: Any = None,
+    progress: Any = None,
+    clock: Any = time.monotonic,
+) -> dict[str, Any]:
+    """Ingest a tiny trusted batch using the resident worker model.
+
+    Keeping this operation inside the model worker is the ownership boundary:
+    the orchestrator must not load a second Cortex merely to derive keys.  One
+    pair is encoded with one causal forward, with hard sequence, position, and
+    wall-clock budgets so foreground service remains the dominant workload.
+    """
+
+    from core.brain.nonparametric_generation import MLXEncoder
+    from core.brain.nonparametric_ingest import (
+        NonParametricIngestor,
+        collect_trusted_pairs,
+    )
+    from core.brain.nonparametric_memory import get_nonparametric_memory
+
+    max_pairs = max(1, min(4, int(job.get("max_pairs") or 1)))
+    scan_limit = max(max_pairs, min(64, int(job.get("scan_limit") or 16)))
+    max_positions = max(1, min(256, int(job.get("max_positions") or 96)))
+    max_sequence_tokens = max(
+        8,
+        min(512, int(job.get("max_sequence_tokens") or 192)),
+    )
+    deadline_s = max(1.0, min(30.0, float(job.get("deadline_s") or 20.0)))
+    deadline_at = float(clock()) + deadline_s
+    job_seq = max(0, int(job.get("seq") or 0))
+    stop_reason = ""
+
+    def _should_continue() -> bool:
+        nonlocal stop_reason
+        if soft_cancel_requested(cancel_seq, job_seq):
+            stop_reason = "soft_cancelled"
+            return False
+        if float(clock()) >= deadline_at:
+            stop_reason = "deadline_reached"
+            return False
+        return True
+
+    dim = int(getattr(getattr(model, "args", None), "hidden_size", 0) or 0)
+    if dim <= 0:
+        return {
+            "state": "model_hidden_size_unavailable",
+            "pairs_scanned": 0,
+            "pairs_ingested": 0,
+            "positions_ingested": 0,
+        }
+    memory = get_nonparametric_memory(dim)
+    if memory is None:
+        return {
+            "state": "memory_unavailable",
+            "pairs_scanned": 0,
+            "pairs_ingested": 0,
+            "positions_ingested": 0,
+        }
+
+    ingestor = NonParametricIngestor(memory)
+    collected_pairs = collect_trusted_pairs(limit=max(500, scan_limit))
+    if not collected_pairs:
+        return {
+            "state": "no_trusted_pairs",
+            "pairs_scanned": 0,
+            "pairs_ingested": 0,
+            "positions_ingested": 0,
+        }
+    pairs = [
+        (context, answer)
+        for context, answer in collected_pairs
+        if not ingestor.has_seen(context, answer)
+    ]
+    if not pairs:
+        return {
+            "state": "no_new_trusted_pairs",
+            "pairs_scanned": 0,
+            "pairs_ingested": 0,
+            "positions_ingested": 0,
+        }
+
+    encoder = MLXEncoder(model, tokenizer)
+    pairs_considered = 0
+    pairs_scanned = 0
+    pairs_ingested = 0
+    positions_ingested = 0
+    for context, answer in pairs:
+        if (
+            pairs_ingested >= max_pairs
+            or pairs_scanned >= scan_limit
+            or not _should_continue()
+        ):
+            break
+        pairs_considered += 1
+        if not ingestor.sequence_within_budget(
+            context,
+            answer,
+            encoder,
+            max_positions=max_positions,
+            max_sequence_tokens=max_sequence_tokens,
+        ):
+            continue
+        pairs_scanned += 1
+        added = ingestor.ingest_sequence(
+            context,
+            answer,
+            encoder,
+            max_positions=max_positions,
+            max_sequence_tokens=max_sequence_tokens,
+            should_continue=_should_continue,
+        )
+        if added > 0:
+            pairs_ingested += 1
+            positions_ingested += int(added)
+        if callable(progress):
+            progress(
+                {
+                    "pairs_considered": pairs_considered,
+                    "pairs_scanned": pairs_scanned,
+                    "pairs_ingested": pairs_ingested,
+                    "positions_ingested": positions_ingested,
+                }
+            )
+
+    if positions_ingested > 0:
+        if not memory.persist():
+            raise RuntimeError("nonparametric_memory_persist_failed")
+        if not ingestor.persist_seen():
+            raise RuntimeError("nonparametric_ingest_receipt_persist_failed")
+    state = stop_reason or (
+        "complete" if positions_ingested > 0 else "no_new_eligible_pairs"
+    )
+    return {
+        "state": state,
+        "pairs_considered": pairs_considered,
+        "pairs_scanned": pairs_scanned,
+        "pairs_ingested": pairs_ingested,
+        "positions_ingested": positions_ingested,
+        "max_pairs": max_pairs,
+        "max_positions": max_positions,
+        "max_sequence_tokens": max_sequence_tokens,
+    }
+
+
 def _speculative_eligible(draft_model: Any, generation_kwargs: dict, job: dict) -> bool:
     """Speculative decoding is only safe on the plain generation path.
 
@@ -3899,6 +4047,87 @@ def _mlx_worker_loop(
                     # completes or fails, ensuring pure state for next request.
                     if mx and device != "cpu":
                         _clear_mlx_cache(mx)
+
+            elif action == "nonparametric_ingest":
+                request_id = str(job.get("id") or "")
+                job_seq = max(0, int(job.get("seq") or 0))
+                response: dict[str, Any] = {
+                    "id": request_id,
+                    "action": "nonparametric_ingest",
+                }
+                clear_stale_soft_cancel(cancel_seq, job_seq)
+                try:
+                    if expert_adapter_state["path"]:
+                        response.update(
+                            {
+                                "status": "error",
+                                "message": "expert_adapter_active",
+                            }
+                        )
+                    else:
+                        watchdog.start_job()
+
+                        def _ingest_progress(
+                            payload: dict[str, Any],
+                            *,
+                            _request_id: str = request_id,
+                        ) -> None:
+                            watchdog.activity()
+                            ipc_writer.put(
+                                {
+                                    "id": _request_id,
+                                    "action": "nonparametric_ingest",
+                                    "status": "progress",
+                                    **payload,
+                                }
+                            )
+
+                        with metal_semaphore:
+                            result = _run_nonparametric_ingest_job(
+                                model,
+                                tokenizer,
+                                job,
+                                cancel_seq=cancel_seq,
+                                progress=_ingest_progress,
+                            )
+                            if mx and device != "cpu":
+                                _clear_mlx_cache(mx)
+                        response.update({"status": "ok", **result})
+                except (
+                    ImportError,
+                    OSError,
+                    RuntimeError,
+                    AttributeError,
+                    TypeError,
+                    ValueError,
+                ) as ingest_exc:
+                    _record_mlx_degradation(
+                        ingest_exc,
+                        action=(
+                            "kept the resident worker available after bounded "
+                            "non-parametric ingestion failed"
+                        ),
+                        severity="warning",
+                    )
+                    response.update(
+                        {
+                            "status": "error",
+                            "message": (
+                                "nonparametric_ingest_failed:"
+                                f"{type(ingest_exc).__name__}"
+                            ),
+                        }
+                    )
+                finally:
+                    watchdog.stop_job()
+                    if soft_cancel_requested(cancel_seq, job_seq):
+                        try:
+                            cancel_seq.value = 0
+                        except (AttributeError, OSError, TypeError, ValueError):
+                            logger.debug(
+                                "Non-parametric ingest soft-cancel acknowledgement failed."
+                            )
+                ipc_writer.put(response)
 
             elif action == "ping":
                 if mx and device != "cpu":

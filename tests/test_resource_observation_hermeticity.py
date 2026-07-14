@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import os
 import random
 import subprocess
@@ -143,6 +144,50 @@ def test_live_pressure_evidence_rejects_simulation_and_plain_host(resource_obser
     )
     assert_live_pressure_observer(live)
     assert live.provenance.qualifies_as_live_pressure is True
+
+
+def test_host_observer_process_tree_uses_lightweight_targeted_probe(monkeypatch):
+    from core.runtime import resource_observation
+
+    class _Memory:
+        rss = 32 * 1024 * 1024
+
+    class _Handle:
+        def __init__(self, pid, ppid):
+            self.pid = pid
+            self._ppid = ppid
+
+        def oneshot(self):
+            return contextlib.nullcontext()
+
+        def ppid(self):
+            return self._ppid
+
+        def create_time(self):
+            return float(self.pid)
+
+        def status(self):
+            return "running"
+
+        def memory_info(self):
+            return _Memory()
+
+        def children(self, *, recursive):
+            assert recursive is True
+            return [_Handle(12, self.pid)]
+
+    monkeypatch.setattr(resource_observation.psutil, "Process", lambda pid: _Handle(pid, 1))
+    observer = HostResourceObserver(
+        source=ObservationSource.HOST,
+        scenario_id="targeted-tree-test",
+    )
+
+    table = observer.process_tree(11)
+
+    assert table.available is True
+    assert [process.pid for process in table.processes] == [11, 12]
+    assert all(process.cmdline == () for process in table.processes)
+    assert all(process.name == "" for process in table.processes)
 
 
 def test_legacy_resource_facade_never_reaches_sabotaged_host_apis(

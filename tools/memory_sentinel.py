@@ -46,72 +46,103 @@ from core.runtime.process_footprint import (  # noqa: E402
 from core.runtime.resource_observation import (  # noqa: E402
     HostResourceObserver,
     ObservationSource,
+    ProcessObservation,
+    ProcessTableObservation,
 )
 
 _RUsageV4 = DarwinRUsageInfoV4
 current_phys_footprint_bytes = current_darwin_footprint_bytes
-
 _OBSERVER = HostResourceObserver(
     source=ObservationSource.HOST,
     scenario_id="external-memory-sentinel",
 )
 
 RING_MAX_LINES = 600  # ~20 minutes at 2s
+RING_WINDOW_S = 20 * 60
+RING_MAX_LINES_LIMIT = 7_200
 IMMEDIATE_KILL_OVERSHOOT = 1.15
+_RING_LINE_COUNTS: dict[Path, int] = {}
 
 def phys_footprint_mb(pid: int) -> float:
     """Current RSS + compressed + IOKit-mapped footprint."""
     return darwin_phys_footprint_bytes(pid) / (1024 * 1024)
 
 
-def child_pids(root_pid: int, *, recursive: bool = True, max_children: int = 128) -> list[int]:
-    """Return observed descendants of one protected root."""
+def child_pids(
+    root_pid: int,
+    *,
+    recursive: bool = True,
+    max_children: int | None = None,
+) -> list[int]:
+    """Return descendants without building a full host process inventory."""
 
-    table = _OBSERVER.process_table()
+    table = _OBSERVER.process_tree(int(root_pid), recursive=recursive)
     if not table.available:
         return []
-    direct = [process.pid for process in table.processes if process.ppid == root_pid]
-    if not recursive:
-        return direct[:max_children]
-    return [
-        process.pid
-        for process in table.processes
-        if root_pid in process.ancestor_pids
-    ][:max_children]
+    pids = [int(process.pid) for process in table.processes if process.pid != int(root_pid)]
+    if max_children is None:
+        return pids
+    return pids[: max(0, int(max_children))]
 
 
-def tree_rss_mb(root_pid: int) -> tuple[float, float, int, float]:
-    table = _OBSERVER.process_table()
-    if not table.available:
+def _root_process(
+    table: ProcessTableObservation,
+    root_pid: int,
+) -> ProcessObservation | None:
+    return next(
+        (process for process in table.processes if process.pid == int(root_pid)),
+        None,
+    )
+
+
+def tree_rss_mb(
+    root_pid: int,
+    *,
+    table: ProcessTableObservation | None = None,
+) -> tuple[float, float, int, float]:
+    observed = table or _OBSERVER.process_tree(int(root_pid), recursive=True)
+    root = _root_process(observed, root_pid)
+    if not observed.available or root is None:
         return 0.0, 0.0, 0, 0.0
-    root = next((process for process in table.processes if process.pid == root_pid), None)
-    if root is None:
-        return 0.0, 0.0, 0, 0.0
+    core = float(root.rss_bytes) / (1024 * 1024)
     descendants = [
-        process for process in table.processes if root_pid in process.ancestor_pids
+        process for process in observed.processes if process.pid != int(root_pid)
     ]
-    core = 0.0
-    children = 0.0
-    count = 1
-    footprint = phys_footprint_mb(root.pid)
-    core = root.rss_bytes / (1024 * 1024)
-    count += len(descendants)
+    children = sum(float(process.rss_bytes) for process in descendants) / (1024 * 1024)
+    footprint = phys_footprint_mb(root_pid)
     for child in descendants:
-        children += child.rss_bytes / (1024 * 1024)
-        footprint += phys_footprint_mb(child.pid)
-    return core, children, count, footprint
+        try:
+            footprint += phys_footprint_mb(int(child.pid))
+        except (OSError, RuntimeError, TypeError, ValueError):
+            continue
+    return core, children, len(observed.processes), footprint
 
 
-def write_ring(path: Path, entry: dict) -> None:
+def write_ring(path: Path, entry: dict, *, max_lines: int = RING_MAX_LINES) -> None:
+    """Append one sample and compact periodically instead of rewriting per tick."""
+
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        lines: list[str] = []
-        if path.exists():
-            lines = path.read_text(errors="replace").splitlines()[-(RING_MAX_LINES - 1):]
-        lines.append(json.dumps(entry))
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text("\n".join(lines) + "\n")
-        os.replace(tmp, path)
+        bounded_max = max(60, min(RING_MAX_LINES_LIMIT, int(max_lines)))
+        count = _RING_LINE_COUNTS.get(path)
+        if count is None:
+            if path.exists():
+                with path.open("r", encoding="utf-8", errors="replace") as handle:
+                    count = sum(1 for _line in handle)
+            else:
+                count = 0
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, separators=(",", ":")) + "\n")
+            handle.flush()
+        count += 1
+        if count >= bounded_max * 2:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            retained = lines[-bounded_max:]
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text("\n".join(retained) + "\n", encoding="utf-8")
+            os.replace(tmp, path)
+            count = len(retained)
+        _RING_LINE_COUNTS[path] = count
     except OSError:
         pass  # The sentinel must never die from bookkeeping.
 
@@ -151,6 +182,19 @@ def should_kill_for_memory(
     return consecutive_over >= 2
 
 
+def target_process_is_current(
+    target: ProcessObservation | None,
+    started_at: float,
+) -> bool:
+    """Return true only while the guarded pid still identifies the same process."""
+
+    return bool(
+        target is not None
+        and abs(float(target.create_time) - float(started_at)) <= 0.5
+        and str(target.status).lower() not in {"dead", "zombie"}
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pid", type=int, required=True)
@@ -168,8 +212,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if _OBSERVER.process(args.pid) is None:
+    tree = _OBSERVER.process_tree(args.pid, recursive=True)
+    target = _root_process(tree, args.pid)
+    if target is None:
         return 0  # Already gone; nothing to guard.
+    target_started_at = float(target.create_time)
 
     # Die quietly if our own parent re-execs; we re-attach by pid anyway.
     signal.signal(signal.SIGHUP, signal.SIG_IGN)
@@ -195,12 +242,20 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     consecutive_over = 0
+    ring_max_lines = max(
+        RING_MAX_LINES,
+        min(
+            RING_MAX_LINES_LIMIT,
+            int(RING_WINDOW_S / max(0.5, float(args.interval))) + 1,
+        ),
+    )
     # Bounded by the target's own lifetime: the sentinel exists exactly
     # as long as the process it guards.
-    while (target := _OBSERVER.process(args.pid)) is not None:
-        if target.status.lower() in {"dead", "zombie"}:
-            break
-        core_mb, child_mb, proc_count, footprint_mb = tree_rss_mb(args.pid)
+    while target_process_is_current(target, target_started_at):
+        core_mb, child_mb, proc_count, footprint_mb = tree_rss_mb(
+            args.pid,
+            table=tree,
+        )
         # memorystatus kills on footprint (RSS + compressed); guard on
         # whichever view is larger so compression cannot hide a runaway.
         managed = max(core_mb + child_mb, footprint_mb)
@@ -211,10 +266,10 @@ def main(argv: list[str] | None = None) -> int:
             "footprint_mb": round(footprint_mb, 1),
             "managed_mb": round(managed, 1),
             "procs": proc_count,
-            "observation_source": _OBSERVER.provenance.source.value,
-            "observation_scenario_id": _OBSERVER.provenance.scenario_id,
+            "observation_source": tree.provenance.source.value,
+            "observation_scenario_id": tree.provenance.scenario_id,
         }
-        write_ring(args.ring, entry)
+        write_ring(args.ring, entry, max_lines=ring_max_lines)
 
         if managed >= args.lethal_mb:
             consecutive_over += 1
@@ -254,6 +309,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         time.sleep(max(0.5, args.interval))
+        tree = _OBSERVER.process_tree(args.pid, recursive=True)
+        target = _root_process(tree, args.pid)
 
     # Target vanished without OUR kill: capture the unified log around
     # the death immediately — silent SIGKILLs leave their only evidence

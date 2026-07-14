@@ -489,6 +489,68 @@ class HostResourceObserver:
         except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
             return None
 
+    def _lightweight_process_from_handle(
+        self,
+        process: psutil.Process,
+    ) -> ProcessObservation | None:
+        """Observe identity and RSS without expensive whole-process metadata."""
+
+        try:
+            with process.oneshot():
+                return ProcessObservation(
+                    provenance=self.provenance,
+                    pid=int(process.pid),
+                    ppid=int(process.ppid()),
+                    create_time=float(process.create_time()),
+                    status=str(process.status()),
+                    name="",
+                    cmdline=(),
+                    rss_bytes=int(getattr(process.memory_info(), "rss", 0) or 0),
+                )
+        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError):
+            return None
+
+    def process_tree(
+        self,
+        root_pid: int,
+        *,
+        recursive: bool = True,
+    ) -> ProcessTableObservation:
+        """Observe one process tree without enumerating every host process.
+
+        This is the hot-path counterpart to :meth:`process_table`. It collects
+        only identity, status, and RSS because watchdogs do not need command
+        lines, CPU sampling, filesystem identity, or parent-chain expansion on
+        every tick.
+        """
+
+        try:
+            root = psutil.Process(int(root_pid))
+            handles = (root, *root.children(recursive=bool(recursive)))
+        except (psutil.Error, OSError, RuntimeError, TypeError, ValueError) as exc:
+            return ProcessTableObservation(
+                provenance=self.provenance,
+                processes=(),
+                available=False,
+                error=f"{type(exc).__name__}:{exc}",
+            )
+
+        observed: list[ProcessObservation] = []
+        seen_pids: set[int] = set()
+        for handle in handles:
+            item = self._lightweight_process_from_handle(handle)
+            if item is None or item.pid in seen_pids:
+                continue
+            seen_pids.add(item.pid)
+            observed.append(item)
+        root_present = bool(observed and observed[0].pid == int(root_pid))
+        return ProcessTableObservation(
+            provenance=self.provenance,
+            processes=tuple(observed),
+            available=root_present,
+            error="" if root_present else "root_process_unobservable",
+        )
+
     def process_table(self) -> ProcessTableObservation:
         observed: list[ProcessObservation] = []
         try:

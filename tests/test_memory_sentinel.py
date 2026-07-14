@@ -7,6 +7,13 @@ import pytest
 
 import aura_main
 from core.container import ServiceContainer
+from core.runtime.resource_observation import (
+    ObservationProvenance,
+    ObservationSource,
+    ProcessObservation,
+    ProcessTableObservation,
+)
+from tools import memory_sentinel
 from tools.memory_sentinel import should_kill_for_memory
 
 
@@ -55,6 +62,76 @@ def test_memory_sentinel_kills_large_overshoot_immediately():
         )
         is True
     )
+
+
+def test_memory_sentinel_samples_only_protected_tree(monkeypatch):
+    provenance = ObservationProvenance(
+        source=ObservationSource.HOST,
+        scenario_id="sentinel-test",
+    )
+    table = ProcessTableObservation(
+        provenance=provenance,
+        processes=(
+            ProcessObservation(
+                provenance=provenance,
+                pid=11,
+                ppid=1,
+                create_time=100.0,
+                status="running",
+                name="",
+                cmdline=(),
+                rss_bytes=100 * 1024 * 1024,
+            ),
+            ProcessObservation(
+                provenance=provenance,
+                pid=12,
+                ppid=11,
+                create_time=101.0,
+                status="running",
+                name="",
+                cmdline=(),
+                rss_bytes=20 * 1024 * 1024,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        memory_sentinel,
+        "phys_footprint_mb",
+        lambda pid: {11: 150.0, 12: 25.0}[pid],
+    )
+
+    assert memory_sentinel.tree_rss_mb(11, table=table) == (100.0, 20.0, 2, 175.0)
+
+
+def test_memory_sentinel_ring_appends_and_compacts_periodically(tmp_path):
+    ring = tmp_path / "ring.jsonl"
+    memory_sentinel._RING_LINE_COUNTS.clear()
+
+    for index in range(130):
+        memory_sentinel.write_ring(ring, {"sample": index}, max_lines=60)
+
+    lines = ring.read_text(encoding="utf-8").splitlines()
+    assert 60 <= len(lines) < 120
+    assert '"sample":129' in lines[-1]
+
+
+def test_memory_sentinel_rejects_reused_target_pid():
+    provenance = ObservationProvenance(
+        source=ObservationSource.HOST,
+        scenario_id="sentinel-test",
+    )
+    target = ProcessObservation(
+        provenance=provenance,
+        pid=11,
+        ppid=1,
+        create_time=200.0,
+        status="running",
+        name="",
+        cmdline=(),
+        rss_bytes=1,
+    )
+
+    assert memory_sentinel.target_process_is_current(target, 100.0) is False
 
 
 def test_memory_sentinel_default_ceiling_is_host_safe_on_64gb_node(monkeypatch):
@@ -269,7 +346,6 @@ def test_boot_registers_supervised_sentinel(monkeypatch):
     class FakePopen:
         def __init__(self, args, **kwargs):
             self.pid = os.getpid()
-            stdout = kwargs.get("stdout")
             popen_procs.append(self)
             self._dead = False
 

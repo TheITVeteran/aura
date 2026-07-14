@@ -12,11 +12,11 @@ def test_repository_model_load_inventory_is_complete() -> None:
     report = run_audit()
 
     assert report["passed"] is True
-    # 28th entry + 40th reference: tools/nonparametric_proof.py loads the
-    # reflex model under standalone_model_lane (2026-07-12).
-    assert report["inventory_entries"] == 28
-    assert report["owned_paths"] == 28
-    assert report["load_references"] == 40
+    # reasoning_background no longer loads a second Cortex in-process. The
+    # resident MLX worker owns non-parametric key generation instead.
+    assert report["inventory_entries"] == 27
+    assert report["owned_paths"] == 27
+    assert report["load_references"] == 39
     assert report["source_paths_scanned"] >= 2_000
 
 

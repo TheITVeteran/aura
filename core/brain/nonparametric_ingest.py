@@ -15,7 +15,7 @@ import hashlib
 import json
 import logging
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -88,6 +88,11 @@ class NonParametricIngestor:
         self._seen: set[str] = set()
         self._load_seen()
 
+    def has_seen(self, context: str, answer: str) -> bool:
+        """Return whether a trusted pair already has a committed ingest receipt."""
+
+        return _pair_hash(str(context or "").strip(), str(answer or "").strip()) in self._seen
+
     def ingest_pair(self, context: str, answer: str, encoder: Encoder, *, weight: float = 1.0) -> bool:
         context, answer = str(context or "").strip(), str(answer or "").strip()
         if not context or not answer:
@@ -106,7 +111,17 @@ class NonParametricIngestor:
         self._seen.add(h)
         return True
 
-    def ingest_sequence(self, context: str, answer: str, encoder: Encoder, *, weight: float = 1.0) -> int:
+    def ingest_sequence(
+        self,
+        context: str,
+        answer: str,
+        encoder: Encoder,
+        *,
+        weight: float = 1.0,
+        max_positions: int | None = None,
+        max_sequence_tokens: int | None = None,
+        should_continue: Callable[[], bool] | None = None,
+    ) -> int:
         """Full-sequence ingestion: store (prefix-hidden → next token) for every answer position.
 
         Single-token ingestion only lets the model recall the FIRST answer token; generation
@@ -120,28 +135,120 @@ class NonParametricIngestor:
         enc_ids = getattr(encoder, "encode_hidden_ids", None)
         enc_tokens = getattr(encoder, "encode_tokens", None)
         if not callable(enc_ids) or not callable(enc_tokens):
-            return 1 if self.ingest_pair(context, answer, encoder, weight=weight) else 0
+            added = self.ingest_pair(context, answer, encoder, weight=weight)
+            return 1 if added else 0
         h = _pair_hash(context, answer)
         if h in self._seen:
             return 0
+        if should_continue is not None and not should_continue():
+            return 0
         try:
-            ctx_ids = enc_tokens(context)
-            full_ids = enc_tokens(context + " " + answer)
+            ctx_ids = list(enc_tokens(context))
+            full_ids = list(enc_tokens(context + " " + answer))
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
             record_degradation("nonparametric_ingest_tokenize", exc)
             return 0
+        start = max(0, len(ctx_ids) - 1)
+        positions = list(range(start, len(full_ids) - 1))
+        if not positions:
+            return 0
+        if max_sequence_tokens is not None and len(full_ids) > max(
+            1, int(max_sequence_tokens)
+        ):
+            return 0
+        if max_positions is not None and len(positions) > max(1, int(max_positions)):
+            return 0
+
+        prepared: list[tuple[np.ndarray, int, str]] = []
+        batch_encoder = getattr(encoder, "encode_hidden_sequence_ids", None)
+        try:
+            if callable(batch_encoder):
+                keys = np.asarray(batch_encoder(full_ids), dtype=np.float32)
+                if keys.ndim != 2 or keys.shape[0] < len(full_ids):
+                    raise ValueError(
+                        "sequence encoder returned fewer hidden states than input tokens"
+                    )
+                prepared = [
+                    (
+                        keys[position],
+                        int(full_ids[position + 1]),
+                        answer if position == start else "",
+                    )
+                    for position in positions
+                ]
+            else:
+                # Compatibility path for lightweight/test encoders.  Compute
+                # every key before mutating the datastore so cancellation can
+                # never publish a partial pair.
+                for position in positions:
+                    if should_continue is not None and not should_continue():
+                        return 0
+                    prepared.append(
+                        (
+                            np.asarray(
+                                enc_ids(full_ids[: position + 1]),
+                                dtype=np.float32,
+                            ),
+                            int(full_ids[position + 1]),
+                            answer if position == start else "",
+                        )
+                    )
+        except (RuntimeError, AttributeError, TypeError, ValueError, IndexError) as exc:
+            record_degradation("nonparametric_ingest_sequence", exc)
+            return 0
+
+        if should_continue is not None and not should_continue():
+            return 0
+
         added = 0
-        for p in range(max(0, len(ctx_ids) - 1), len(full_ids) - 1):
+        for key, token_id, token_text in prepared:
             try:
-                key = enc_ids(full_ids[: p + 1])
-                if self._mem.add(key, int(full_ids[p + 1]), token=answer if p == len(ctx_ids) - 1 else "", weight=weight):
+                if self._mem.add(
+                    key,
+                    token_id,
+                    token=token_text,
+                    weight=weight,
+                ):
                     added += 1
             except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("nonparametric_ingest_sequence", exc)
         if added:
             self._seen.add(h)
-            self._save_seen()
         return added
+
+    def sequence_within_budget(
+        self,
+        context: str,
+        answer: str,
+        encoder: Encoder,
+        *,
+        max_positions: int | None = None,
+        max_sequence_tokens: int | None = None,
+    ) -> bool:
+        """Check sequence budgets without running a model forward or mutating memory."""
+
+        context, answer = str(context or "").strip(), str(answer or "").strip()
+        if not context or not answer:
+            return False
+        enc_tokens = getattr(encoder, "encode_tokens", None)
+        if not callable(enc_tokens):
+            return True
+        try:
+            ctx_ids = list(enc_tokens(context))
+            full_ids = list(enc_tokens(context + " " + answer))
+            positions = max(0, (len(full_ids) - 1) - max(0, len(ctx_ids) - 1))
+            if positions <= 0:
+                return False
+            if max_sequence_tokens is not None and len(full_ids) > max(
+                1, int(max_sequence_tokens)
+            ):
+                return False
+            if max_positions is not None and positions > max(1, int(max_positions)):
+                return False
+            return True
+        except (RuntimeError, AttributeError, TypeError, ValueError, OverflowError) as exc:
+            record_degradation("nonparametric_ingest_budget", exc)
+            return False
 
     def ingest_pairs(self, pairs: Iterable[tuple[str, str]], encoder: Encoder, *, weight: float = 1.0) -> int:
         n = 0
@@ -149,11 +256,15 @@ class NonParametricIngestor:
             if self.ingest_pair(ctx, ans, encoder, weight=weight):
                 n += 1
         if n:
-            self._save_seen()
             try:
-                self._mem.persist()
+                memory_persisted = bool(self._mem.persist())
             except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
                 record_degradation("nonparametric_ingest_persist", exc)
+                memory_persisted = False
+            if not memory_persisted:
+                return 0
+            if not self.persist_seen():
+                return 0
         return n
 
     def ingest_from_trusted_stores(self, encoder: Encoder, *, limit: int = 500) -> int:
@@ -166,6 +277,11 @@ class NonParametricIngestor:
             return 0
         return self.ingest_pairs(collect_trusted_pairs(limit=limit), encoder)
 
+    def persist_seen(self) -> bool:
+        """Durably publish dedup receipts after the datastore is durable."""
+
+        return self._save_seen()
+
     # ── dedup persistence ───────────────────────────────────────────────────────
     def _load_seen(self) -> None:
         if not self._dedup_path.exists():
@@ -175,11 +291,13 @@ class NonParametricIngestor:
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
             record_degradation("nonparametric_ingest_load_seen", exc)
 
-    def _save_seen(self) -> None:
+    def _save_seen(self) -> bool:
         try:
             self._dedup_path.parent.mkdir(parents=True, exist_ok=True)
             # keep the dedup ledger bounded
             seen = list(self._seen)[-50_000:]
             atomic_write_text(self._dedup_path, json.dumps({"seen": seen}), encoding="utf-8")
+            return True
         except (OSError, ValueError, TypeError) as exc:
             record_degradation("nonparametric_ingest_save_seen", exc)
+            return False

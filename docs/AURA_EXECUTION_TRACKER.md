@@ -16,23 +16,23 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 62 closes the
-  production storage-gateway bypass set (`STORAGE-GATEWAY-001`) while the live
-  health-surface root fix (`HEALTH-SURFACE-001`) remains source-green and the
-  preserved concurrent Fable runtime occupies the shared desktop; exact-main
-  signed-app proof remains mandatory**, then run the full signed-app proof of the
-  source-green canonical action spine, standing authority, owned-task, self-condition,
+- Current bounded implementation milestone: **Checkpoint 64 removes the
+  in-orchestrator Cortex load and quadratic non-parametric ingestion path that
+  retained a full Metal allocation and starved foreground service. Maintenance
+  now reuses the resident worker under hard budgets and canonical model-lane
+  ownership; the external memory sentinel now uses a lightweight attributed
+  target-tree observer. Exact-main signed-app plateau and health proof remain
+  mandatory**, followed by the full signed-app proof of the source-green
+  canonical action spine, standing authority, owned-task, self-condition,
   desktop-access, event-loop pressure, and launch provenance
   (`AUTONOMY-AUTHORITY-001`, `ASYNC-TASK-001`, `SELF-STATE-CHAT-001`,
   `DESKTOP-ACCESS-001`, `FOREGROUND-LATENCY-001`,
-  `LAUNCH-PROVENANCE-001`) when the preserved concurrent Fable runtime releases
-  the shared desktop. Close the two remaining production-surface raw task
-  owners in `core/worlds/hosting.py` and
-  `core/actuators/actuator_registry.py`, and continue `MEMORY-LEAK-001` while
-  that live lane remains occupied, followed by joy/social
+  `LAUNCH-PROVENANCE-001`) on the exact pushed build. Continue the remaining
+  `MEMORY-LEAK-001` attribution and prove a stable plateau after a controlled
+  restart, followed by joy/social
   self-state separation and the remaining typed canonical person-model
   consolidation (`MEMORY-001`, `MIND-001`, `STATE-001`,
-  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 62 establish the current
+  `CTX3-SOCIAL-001..002`). Checkpoints 49 through 64 establish the current
   social, OS-automation, runtime-pressure, desktop-access, self-condition,
   owned-task, standing-authority, action-execution, and pressure-resilient
   health source boundaries, signed
@@ -46,9 +46,10 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `CTX2-SKILL-001..002`) are complete with checkpoint evidence. Every other
   item remains open or in progress unless its detailed entry explicitly carries
   a completion date and proof.
-- Overall completion percentage: **29% planning estimate as of pushed
-  Checkpoint 63**. Checkpoint 63 closes the bounded production-surface raw-task
-  set and hardens transactional world mutation, but
+- Overall completion percentage: **30% planning estimate as of pushed
+  Checkpoint 64**. Checkpoint 64 closes a dominant model-maintenance ownership,
+  algorithmic-complexity, foreground-starvation, and sentinel-overhead defect,
+  but
   newly explicit system-wide frontier cognition/engineering and morphogenetic
   organ-engineering burdens increase the denominator. Recording that expansion
   lowers the rounded estimate instead of manufacturing progress by hiding
@@ -58,7 +59,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 206-276 total checkpoints for the
-  expanded program, with 63 pushed and approximately 143-213 remaining before
+  expanded program, with 64 pushed and approximately 142-212 remaining before
   final soak/release closure**. This includes every
   implementation, cleanup, repair, integration, verification, live,
   portability, release, and soak checkpoint, not only headline milestones.
@@ -106,11 +107,11 @@ Status rules:
 | `EFFECT-001` | `IN PROGRESS` | Put file, network, browser, OS, memory, model, patch, self-repair, social, and environmental effects through canonical authority, transaction, compensation, and reconstructable receipt boundaries. | Pass F 5; Matrix 9 and 11 |
 | `STORAGE-GATEWAY-001` | `COMPLETE 2026-07-13` | Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Canonical batch, owned-binary, durable replace/delete, governance, schema, integrity, concurrency, and fault-injection contracts preserve bootstrap/crash/rollback behavior without exemptions. Checkpoint 62 reached zero direct-file-write findings; Checkpoint 63 subsequently brought the complete audited production-surface scanner to zero findings. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoints 62-63 |
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
-| `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with one bounded, versioned, asynchronously refreshed health read model whose public request path is non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; one daemon single-flight refresh owner, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and one recovery transition are source-green. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoint 61; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
+| `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with one bounded, versioned, asynchronously refreshed health read model whose public request path is non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; one daemon single-flight refresh owner, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and one recovery transition are source-green. Checkpoint 64 also removes the background in-process Cortex owner that starved the conversational worker and contributed to repeated neural health-poll failure. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoints 61 and 64; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
-| `RESOURCE-001` | `COMPLETE 2026-07-12` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. | Pass F 3; Addendum 22; Checkpoint 34 |
-| `MEMORY-LEAK-001` | `OPEN (H1 CONFIRMED) 2026-07-13` | Attribute and eliminate the measured 350-450 MB/hour idle orchestrator RSS growth without relying on restart, pressure-triggered reclamation, model-worker exclusion, or a raised limit. Use allocation-growth evidence plus owned cache/queue/task/resource cardinalities to identify every contributor; add bounded-growth and release regressions, prove a stable live plateau across idle and ordinary interaction, and retain restart/crash continuity. | `RESOURCE-001`, `RUNTIME-001`, `FAULT-001`, `PERF-001`; two independent 45/70-minute idle windows in `docs/SYSTEMS_MATURITY_2026_07_12.md`; attribution attempt `never_ready` remains open |
-| `FOREGROUND-LATENCY-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. | `PERF-001`, `RUNTIME-001`, `FAULT-001`; Checkpoints 51, 57, and 60; live `event_loop_lag_3.638s` MLX admission denial at 00:32 on 2026-07-13 |
+| `RESOURCE-001` | `COMPLETE 2026-07-13` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. Checkpoint 64 adds a canonical lightweight target-tree observer so safety sentinels avoid full-host scans without bypassing provenance. | Pass F 3; Addendum 22; Checkpoints 34 and 64 |
+| `MEMORY-LEAK-001` | `IN PROGRESS (DOMINANT LIVE OWNER SOURCE-FIXED; EXACT-MAIN PLATEAU OPEN) 2026-07-13` | Attribute and eliminate the measured 350-450 MB/hour idle orchestrator RSS growth without relying on restart, pressure-triggered reclamation, model-worker exclusion, or a raised limit. Checkpoint 64 identified a live orchestrator retaining about 19.7 GB physical footprint, including about 17.2 GB of IOAccelerator regions, while stacks remained in the background non-parametric ingest path for more than 1,098 seconds. The source now forbids model loading in that owner and reuses the resident worker with one causal forward, hard pair/token/position/deadline budgets, foreground preemption, durable ordering, and cache cleanup. The old running process still retains its already-loaded allocation; controlled exact-main restart, remaining allocation/cardinality attribution, bounded-growth regressions, and stable idle plus interaction plateau proof remain mandatory. | `RESOURCE-001`, `RUNTIME-001`, `FAULT-001`, `PERF-001`; two independent 45/70-minute idle windows in `docs/SYSTEMS_MATURITY_2026_07_12.md`; live stack/vmmap attribution and Checkpoint 64 |
+| `FOREGROUND-LATENCY-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoint 64 removes an approximately 18-minute quadratic in-orchestrator model job and makes its resident-worker replacement foreground-preemptible. | `PERF-001`, `RUNTIME-001`, `FAULT-001`; Checkpoints 51, 57, 60, and 64; live `event_loop_lag_3.638s` MLX admission denial at 00:32 on 2026-07-13 |
 | `SHUTDOWN-001` | `COMPLETE 2026-07-11` | Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes. | Addendum 32, `CTX2-SHUTDOWN-001..003` |
 | `FAULT-001` | `IN PROGRESS` | Drain the FMEA and degradation-policy backlog: root-fix broad catches, swallowed cancellation, false success/health, partial mutation, retry storms, leaks, and noisy fallback at their originating layer. | Pass F 4; Matrix 12 |
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
@@ -14368,3 +14369,94 @@ Progress and immediate next work:
   action, task, and authority matrix when that desktop is released. Final
   multi-hour and 24-72 hour soaks remain deferred until every shorter gate is
   green.
+
+## Checkpoint 2026-07-13-64: Resident-Worker Maintenance and Attributed Sentinel
+
+This checkpoint advances `MEMORY-LEAK-001`, `FOREGROUND-LATENCY-001`,
+`HEALTH-SURFACE-001`, `RESOURCE-001`, `FAULT-001`, `ARCH-001`, and
+`TEST-DEPTH-001`. It closes a dominant live model-maintenance owner in source
+without claiming the exact-main plateau or health surface live-green.
+
+Live attribution identified a causal owner rather than merely raising limits or
+adding another watchdog:
+
+- The preserved runtime carried about 19.7 GB physical footprint despite about
+  2.2 GB ordinary RSS. `vmmap` attributed about 17.2 GB to IOAccelerator regions,
+  and repeated process samples remained inside
+  `reasoning_background -> nonparametric_ingest -> nonparametric_generation`
+  for more than 1,098 seconds.
+- The old job loaded a full Cortex inside the orchestrator, recomputed one full
+  prefix forward per answer token, and released Python references without
+  releasing the retained Metal allocation. It took about 18 minutes, starved
+  the separate conversational worker, and explains a material class of
+  `worker_not_alive`, `worker_progress_stale`, and neural health-poll failures.
+
+The replacement establishes one bounded maintenance ownership contract:
+
+- `reasoning_background` cannot load model weights. It declines cold
+  maintenance and sends one bounded command only to an already-resident MLX
+  worker.
+- The worker reuses its serving model and computes all causal prefix hidden
+  states with one forward. Pair, candidate, position, token, and wall-clock
+  budgets are hard-clamped; oversized early candidates cannot starve later
+  eligible work.
+- The client shares the request lock and durable model-lane fence, advertises
+  active ownership, accepts foreground preemption through cooperative cancel,
+  drains cancellation, and recycles only when the worker cannot drain by the
+  deadline. Maintenance never spawns a model.
+- Every pair is prepared before datastore mutation. Memory persistence precedes
+  dedup-receipt publication, persistence failure remains retryable, and a
+  partial/cancelled pair cannot receive durable success credit.
+
+The external memory guard now protects the host without becoming a material
+load owner itself:
+
+- `HostResourceObserver.process_tree` provides an attributed lightweight target
+  tree containing only identity, status, and RSS. The sentinel no longer scans
+  and enriches every host process twice per second, but it also does not bypass
+  canonical observation or hard-code provenance.
+- Ring writes append in O(1) and compact periodically while preserving a
+  20-minute window at the configured sample interval. PID create-time fencing
+  rejects reuse, all descendants are observed and killed rather than silently
+  truncating at 128, and the guard exits when its exact target disappears.
+- An isolated 0.5-second proof measured about 0.9% CPU and 24 MB RSS, emitted
+  host-attributed target-tree samples, and exited cleanly after the disposable
+  target ended. The old live sentinel had consumed about 27% CPU.
+
+Verification completed on the integrated `origin/main` candidate:
+
+- Focused ingestion, worker, reasoning, sentinel, and ownership sets pass
+  `57/57`; the final MLX, model-lane, memory-safety, resource-observation, and
+  sentinel composition passes `238/238`.
+- Configured Ruff, targeted compilation, and `git diff --check` pass. The model
+  ownership audit passes with `27` owned paths and `39` load references. The
+  resource-observation audit passes across `2692` Python files with zero
+  findings or parse errors.
+- The production-surface scanner passes with zero findings, zero high/critical
+  findings, and zero exemptions. Governance matches `1803` recognized calls in
+  `1695` buckets while retaining `1666` explicit migration-debt calls.
+- The enterprise static ratchet passes; production readiness passes `37/37` and
+  the closeout rubric passes `20/20`.
+- The mechanical closeout audit passes after enumerating `4136` code files and
+  `1,148,271` code lines. It truthfully keeps full closeout false: only `436`
+  code files have current full semantic-review receipts and `3669` remain
+  wholly unreviewed, with additional partially reviewed files.
+
+Progress and immediate next work:
+
+- This is pushed Checkpoint `64`. The evidence-weighted planning estimate is
+  `30%`; the forecast remains `206-276` total checkpoints, with `142-212`
+  remaining. The increase reflects a closed causal runtime owner and hardened
+  observation boundary, not test-count inflation.
+- The already-running old-worktree process still retains the allocation it
+  loaded before this source fix. `MEMORY-LEAK-001`, `HEALTH-SURFACE-001`, and
+  `FOREGROUND-LATENCY-001` remain exact-main-live-open until a controlled signed
+  app boot proves stable idle/interaction plateaus, responsive health, model
+  availability, and no recurrence.
+- `FRONTIER-COGNITION-001`, `IMMUNE-CODING-001`, and
+  `MORPHOGENETIC-ENGINEERING-001` remain fully open. No GPT 5.6, Fable 5,
+  Mythos, Sol Ultra, or successor parity is claimed without the specified
+  provider-neutral integration and sealed matched evidence.
+- Continue every remaining master-index obligation and semantic-review unit.
+  Final multi-hour and 24-72 hour soaks remain deferred until every shorter
+  source, fault, live, GUI, portability, and release gate is green.

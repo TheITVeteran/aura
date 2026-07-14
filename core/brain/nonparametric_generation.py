@@ -37,6 +37,19 @@ def normalize(vec: np.ndarray) -> np.ndarray:
     return v / n if n > 1e-8 else v
 
 
+def normalize_rows(matrix: np.ndarray) -> np.ndarray:
+    """Unit-normalize a matrix of datastore keys without per-row Python loops."""
+
+    values = np.asarray(matrix, dtype=np.float32)
+    if values.ndim != 2:
+        raise ValueError("nonparametric key batch must be a two-dimensional matrix")
+    if values.shape[0] == 0:
+        return values
+    norms = np.linalg.norm(values, axis=1, keepdims=True)
+    safe_norms = np.where(norms > 1e-8, norms, 1.0)
+    return (values / safe_norms).astype(np.float32, copy=False)
+
+
 def cosine_from_l2(distance: float) -> float:
     """Cosine similarity from the L2 distance between two UNIT vectors."""
     return 1.0 - (float(distance) ** 2) / 2.0
@@ -56,6 +69,23 @@ class MLXEncoder:
 
     def encode_hidden_ids(self, ids: list[int]) -> np.ndarray:
         return normalize(self._hidden_from_ids(list(ids)))
+
+    def encode_hidden_sequence_ids(self, ids: list[int]) -> np.ndarray:
+        """Encode every prefix position with one model forward.
+
+        The previous ingestion path reran the entire prefix for every answer
+        token, making one trusted pair quadratic in sequence length.  A causal
+        transformer already returns the hidden state for every prefix position
+        in one forward, so retain that exact result instead.
+        """
+
+        import mlx.core as mx
+
+        token_ids = list(ids)
+        if not token_ids:
+            return np.empty((0, self.dim), dtype=np.float32)
+        hidden = self.model.model(mx.array([token_ids]))
+        return normalize_rows(np.array(hidden[0], dtype=np.float32))
 
     def _hidden_from_ids(self, ids: list[int]) -> np.ndarray:
         import mlx.core as mx
@@ -89,7 +119,7 @@ def _topk_probs(logits: np.ndarray, k: int = 64) -> dict[int, float]:
     sub = sub - sub.max()
     ex = np.exp(sub)
     ex /= ex.sum()
-    return {int(t): float(p) for t, p in zip(idx, ex)}
+    return {int(t): float(p) for t, p in zip(idx, ex, strict=True)}
 
 
 def generate_with_memory(
@@ -198,7 +228,7 @@ def make_nonparametric_logits_processor(
             sub = lg[idx] - lg[idx].max()
             ex = np.exp(sub)
             ex /= ex.sum()
-            lm_probs = {int(t): float(p) for t, p in zip(idx, ex)}
+            lm_probs = {int(t): float(p) for t, p in zip(idx, ex, strict=True)}
             blended = memory.interpolate(
                 lm_probs, key, k=k, temperature=temperature, phi=phi,
                 free_energy=free_energy, lam_override=min(lam, 0.9),

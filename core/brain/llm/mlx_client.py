@@ -2979,6 +2979,7 @@ class MLXLocalClient:
         wait_started = loop.time()
         wait_deadline = wait_started + wait_budget
         last_log_at = 0.0
+        maintenance_preempt_requested = False
 
         while loop.time() < wait_deadline:
             if self._request_lock.acquire(False):
@@ -2988,9 +2989,25 @@ class MLXLocalClient:
 
             now = loop.time()
             waited = max(0.0, now - wait_started)
+            holder = self._request_lock_owner_label or "another_request"
+
+            if (
+                foreground_request
+                and not maintenance_preempt_requested
+                and holder == "reasoning_nonparametric_ingest"
+            ):
+                receipt = self.soft_cancel_active_generation(
+                    reason="foreground_preemption_nonparametric_ingest"
+                )
+                maintenance_preempt_requested = bool(receipt.get("requested"))
+                if maintenance_preempt_requested:
+                    logger.info(
+                        "⏭️ [MLX] Foreground request preempted bounded "
+                        "non-parametric maintenance on %s.",
+                        os.path.basename(self.model_path),
+                    )
 
             if waited >= 5.0 and (now - last_log_at) >= 5.0:
-                holder = self._request_lock_owner_label or "another_request"
                 holder_age = (
                     max(0.0, time.time() - self._request_lock_acquired_at)
                     if self._request_lock_acquired_at
@@ -3224,6 +3241,175 @@ class MLXLocalClient:
         if not res or res.get("status") != "ok":
             return []
         return [str(t) for t in (res.get("texts") or []) if str(t or "").strip()]
+
+    async def ingest_nonparametric_async(
+        self,
+        *,
+        max_pairs: int = 1,
+        scan_limit: int = 16,
+        max_positions: int = 96,
+        max_sequence_tokens: int = 192,
+        timeout_s: float = 20.0,
+    ) -> dict[str, Any]:
+        """Run bounded trusted-memory ingestion on a resident worker only.
+
+        This maintenance command never spawns or loads a model.  It shares the
+        worker request lock, advertises active ownership to the lane controller,
+        and cooperatively cancels before recycling a worker that exceeds its
+        deadline.
+        """
+
+        base = {
+            "schema": "aura.nonparametric_ingest.worker.v1",
+            "spawned_worker": False,
+        }
+        if self._closed:
+            return {**base, "status": "skipped_client_closed"}
+        if _foreground_owner_active():
+            return {**base, "status": "skipped_foreground_active"}
+        if self._active_generations > 0 or self._warmup_in_flight:
+            return {**base, "status": "skipped_worker_busy"}
+        if (
+            self._req_q is None
+            or not self._init_done
+            or self._process is None
+            or not self._process.is_alive()
+        ):
+            return {**base, "status": "skipped_worker_not_resident"}
+        try:
+            if get_memory_pressure_snapshot().refuse_heavy_local_generation:
+                return {**base, "status": "skipped_memory_pressure"}
+        except (OSError, AttributeError, RuntimeError, TypeError, ValueError):
+            return {**base, "status": "skipped_memory_unobservable"}
+
+        try:
+            bounded_timeout_s = max(2.0, min(35.0, float(timeout_s)))
+            bounded_max_pairs = max(1, min(4, int(max_pairs)))
+            bounded_scan_limit = max(1, min(64, int(scan_limit)))
+            bounded_max_positions = max(1, min(256, int(max_positions)))
+            bounded_max_sequence_tokens = max(
+                8,
+                min(512, int(max_sequence_tokens)),
+            )
+        except (TypeError, ValueError, OverflowError):
+            return {**base, "status": "invalid_maintenance_budget"}
+        deadline = get_deadline(bounded_timeout_s)
+        acquired = await self._acquire_request_lock(
+            owner_label="reasoning_nonparametric_ingest",
+            deadline=deadline,
+            foreground_request=False,
+        )
+        if not acquired:
+            return {**base, "status": "skipped_request_lane_busy"}
+
+        future: SharedFuture | None = None
+        request_id = ""
+        deferred_reboot = ""
+        try:
+            if (
+                self._req_q is None
+                or not self._init_done
+                or self._process is None
+                or not self._process.is_alive()
+            ):
+                return {**base, "status": "skipped_worker_not_resident"}
+            if not await self._set_durable_lane_preemptible(False):
+                return {**base, "status": "skipped_lane_fence_lost"}
+
+            request_id = uuid.uuid4().hex
+            self._job_seq_counter += 1
+            request_seq = self._job_seq_counter
+            request = {
+                "id": request_id,
+                "seq": request_seq,
+                "action": "nonparametric_ingest",
+                "max_pairs": bounded_max_pairs,
+                "scan_limit": bounded_scan_limit,
+                "max_positions": bounded_max_positions,
+                "max_sequence_tokens": bounded_max_sequence_tokens,
+                "deadline_s": max(1.0, bounded_timeout_s - 2.0),
+            }
+            future = _new_shared_future()
+            self._pending_generations[request_id] = future
+            self._current_gen_future = future
+            self._active_generations += 1
+            self._mark_generation_started(
+                request_id,
+                first_token_hard_ceiling_s=bounded_timeout_s,
+                request_seq=request_seq,
+            )
+            await run_io_bound(self._req_q.put, request, True, 2.0)
+            try:
+                response = await _await_shared_future(
+                    future,
+                    timeout_s=bounded_timeout_s,
+                )
+            except TimeoutError:
+                self.soft_cancel_active_generation(
+                    reason="nonparametric_ingest_deadline"
+                )
+                try:
+                    response = await _await_shared_future(future, timeout_s=3.0)
+                except TimeoutError:
+                    deferred_reboot = "nonparametric_ingest_deadline"
+                    return {**base, "status": "timed_out_worker_recycled"}
+            if not isinstance(response, dict):
+                return {**base, "status": "invalid_worker_response"}
+            if response.get("status") != "ok":
+                return {
+                    **base,
+                    "status": "worker_error",
+                    "reason": str(response.get("message") or "unknown"),
+                }
+            return {
+                **base,
+                "status": str(response.get("state") or "complete"),
+                "pairs_considered": int(response.get("pairs_considered") or 0),
+                "pairs_scanned": int(response.get("pairs_scanned") or 0),
+                "pairs_ingested": int(response.get("pairs_ingested") or 0),
+                "positions_ingested": int(
+                    response.get("positions_ingested") or 0
+                ),
+            }
+        except asyncio.CancelledError:
+            if future is not None:
+                self.soft_cancel_active_generation(
+                    reason="nonparametric_ingest_caller_cancelled"
+                )
+                try:
+                    await asyncio.shield(
+                        _await_shared_future(future, timeout_s=3.0)
+                    )
+                except (asyncio.CancelledError, TimeoutError):
+                    deferred_reboot = "nonparametric_ingest_cancel_drain_failed"
+            raise
+        except (BrokenPipeError, OSError, TimeoutError, queue.Full) as exc:
+            _record_mlx_degradation(
+                exc,
+                action=(
+                    "kept non-parametric maintenance bounded after resident "
+                    "worker IPC failed"
+                ),
+                severity="warning",
+            )
+            return {**base, "status": f"ipc_failed:{type(exc).__name__}"}
+        finally:
+            try:
+                if future is not None:
+                    await asyncio.shield(
+                        self._finish_generation_ownership(
+                            request_id,
+                            future,
+                            None,
+                        )
+                    )
+            finally:
+                self._release_request_lock()
+                if deferred_reboot:
+                    await self.reboot_worker(
+                        reason=deferred_reboot,
+                        mark_failed=False,
+                    )
 
     async def set_expert_adapter(
         self, adapter_path: str | None, *, timeout_s: float = 90.0
@@ -3897,7 +4083,13 @@ class MLXLocalClient:
                         self._mark_progress()
                         _set_shared_future_result(self._init_future, res)
                         continue
-                elif action in ("generate", "generate_batch", "stream_done", "set_expert_adapter"):
+                elif action in (
+                    "generate",
+                    "generate_batch",
+                    "stream_done",
+                    "set_expert_adapter",
+                    "nonparametric_ingest",
+                ):
                     future = self._pending_generations.pop(req_id, None) if req_id else None
                     if future and not future.done():
                         self._mark_progress()
