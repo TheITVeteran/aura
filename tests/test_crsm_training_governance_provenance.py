@@ -19,6 +19,23 @@ def _install_delegated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AURA_DELEGATED_GOVERNANCE_PARENT_PID", str(os.getppid()))
 
 
+def _write_current_manifest(dataset, manifest_path, *, rejected_by_reason=None) -> None:
+    state = train_and_fuse._jsonl_file_stats(dataset)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "source_lines": state["lines"],
+                "source_size": state["size"],
+                "source_mtime": state["mtime"],
+                "source_sha256": state["sha256"],
+                "accepted": state["lines"],
+                "rejected_by_reason": rejected_by_reason or {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_live_crsm_closeout_requires_parent_bound_semantic_receipt(monkeypatch) -> None:
     monkeypatch.setenv("AURA_LAUNCHED_FROM_APP", "1")
     for key in (
@@ -125,16 +142,7 @@ def test_consumed_marker_preserves_authority_receipts(monkeypatch, tmp_path) -> 
     dataset = tmp_path / "captures.jsonl"
     dataset.write_text("{}\n", encoding="utf-8")
     manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "source_lines": 1,
-                "source_mtime": dataset.stat().st_mtime,
-                "accepted": 1,
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_current_manifest(dataset, manifest_path)
     monkeypatch.setattr(train_and_fuse, "CRSM_DATASET", dataset)
     captured: dict[str, object] = {}
 
@@ -160,16 +168,7 @@ def test_consumed_marker_failure_is_a_terminal_training_failure(monkeypatch, tmp
     dataset = tmp_path / "captures.jsonl"
     dataset.write_text("{}\n", encoding="utf-8")
     manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "source_lines": 1,
-                "source_mtime": dataset.stat().st_mtime,
-                "accepted": 1,
-            }
-        ),
-        encoding="utf-8",
-    )
+    _write_current_manifest(dataset, manifest_path)
     monkeypatch.setattr(train_and_fuse, "CRSM_DATASET", dataset)
 
     class _Monitor:
@@ -185,4 +184,41 @@ def test_consumed_marker_failure_is_a_terminal_training_failure(monkeypatch, tmp
             tmp_path / "fused",
             manifest_path=manifest_path,
             source="training.train_and_fuse.crsm_delta",
+        )
+
+
+def test_same_size_dataset_change_cannot_commit_consumed_marker(monkeypatch, tmp_path) -> None:
+    dataset = tmp_path / "captures.jsonl"
+    dataset.write_text("{}\n", encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    _write_current_manifest(dataset, manifest_path)
+    dataset.write_text("[]\n", encoding="utf-8")
+    monkeypatch.setattr(train_and_fuse, "CRSM_DATASET", dataset)
+
+    with pytest.raises(SystemExit, match="dataset identity changed"):
+        train_and_fuse.mark_crsm_loop_consumed_after_training(
+            tmp_path / "fused",
+            manifest_path=manifest_path,
+            source="training.train_and_fuse.crsm_delta",
+            required=True,
+        )
+
+
+def test_untrained_selection_overflow_cannot_close_loop(monkeypatch, tmp_path) -> None:
+    dataset = tmp_path / "captures.jsonl"
+    dataset.write_text("{}\n", encoding="utf-8")
+    manifest_path = tmp_path / "manifest.json"
+    _write_current_manifest(
+        dataset,
+        manifest_path,
+        rejected_by_reason={"over_max_examples": 1},
+    )
+    monkeypatch.setattr(train_and_fuse, "CRSM_DATASET", dataset)
+
+    with pytest.raises(SystemExit, match="remain untrained"):
+        train_and_fuse.mark_crsm_loop_consumed_after_training(
+            tmp_path / "fused",
+            manifest_path=manifest_path,
+            source="training.train_and_fuse.crsm_delta",
+            required=True,
         )

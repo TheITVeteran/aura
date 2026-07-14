@@ -91,7 +91,7 @@ class _FakeMonitor:
                     },
                     "training_state": {
                         "crsm_delta": {
-                            "status": "fused_published_consumed",
+                            "status": "fused_published_marker_ready",
                             "governance": governance,
                         }
                     },

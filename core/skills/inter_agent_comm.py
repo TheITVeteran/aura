@@ -1,15 +1,15 @@
-from core.runtime.errors import record_degradation
 import asyncio
 import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+from core.container import ServiceContainer
+from core.runtime.errors import record_degradation
 from core.runtime.file_write_gateway import get_file_write_gateway
 from core.runtime.network_gateway import get_network_gateway
 from core.skills.base_skill import BaseSkill
-from core.container import ServiceContainer
 
 # Configure logger
 logger = logging.getLogger("Skills.InterAgent")
@@ -20,6 +20,7 @@ class InterAgentCommSkill(BaseSkill):
     """
     
     name = "inter_agent_comm"
+    retry_safe = False  # external send/act — never double-fire on retry
     description = "Send a message to an external agent (Gemini, etc) to request assistance."
 
     def __init__(self):
@@ -28,7 +29,7 @@ class InterAgentCommSkill(BaseSkill):
         self.comm_log_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info("✅ InterAgentComm initialized (v3.4 Patch Applied)")
 
-    async def execute(self, goal: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, goal: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
         """Execute the communication request (Async)."""
         params = goal.get("params", {}) if "params" in goal else goal
         agent_name = params.get("agent_name") or params.get("recipient")
@@ -104,7 +105,7 @@ class InterAgentCommSkill(BaseSkill):
                 "error": str(e)
             }
 
-    def _log_communication(self, data: Dict[str, Any]):
+    def _log_communication(self, data: dict[str, Any]):
         """Append communication record to log file"""
         try:
             get_file_write_gateway().append_text(

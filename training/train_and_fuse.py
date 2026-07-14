@@ -41,6 +41,7 @@ REPO_DIR = TRAINING_DIR.parent
 if str(REPO_DIR) not in sys.path:
     sys.path.insert(0, str(REPO_DIR))
 
+from core.runtime.atomic_writer import atomic_write_text  # noqa: E402
 from core.runtime.model_lane_control import (  # noqa: E402
     LaneClaim,
     estimate_model_job_footprint_gb,
@@ -794,9 +795,11 @@ def publish_manifest(fused_path: Path, *, tag: str, base_model: Path) -> None:
     governance = delegated_governance_provenance()
     if governance:
         manifest["governance"] = governance
-    tmp = ACTIVE_MANIFEST.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True))
-    os.replace(tmp, ACTIVE_MANIFEST)
+    atomic_write_text(
+        ACTIVE_MANIFEST,
+        json.dumps(manifest, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
     print(f"\nWrote active manifest: {ACTIVE_MANIFEST}")
     print(json.dumps(manifest, indent=2))
     print(
@@ -818,35 +821,46 @@ def mark_crsm_loop_consumed_after_training(
     *,
     manifest_path: Path | None = None,
     source: str = "training.train_and_fuse",
-) -> None:
+    required: bool = False,
+) -> bool:
     """Close the CRSM→LoRA monitor only after real train/fuse evidence exists."""
+    def _reject(reason: str) -> bool:
+        message = f"CRSM loop not marked consumed: {reason}"
+        if required:
+            raise SystemExit(message)
+        print(f"\n{message}")
+        return False
+
     manifest_path = manifest_path or CRSM_INTEGRATION_MANIFEST
     if not CRSM_DATASET.exists():
-        return
+        return _reject(f"capture dataset is missing: {CRSM_DATASET}")
     manifest = _read_json(manifest_path)
     if not manifest:
-        print(
-            "\nCRSM loop not marked consumed: missing "
-            f"{manifest_path}. Rebuild the dataset before training."
-        )
-        return
+        return _reject(f"missing {manifest_path}; rebuild the dataset before training")
 
     try:
-        dataset_stat = CRSM_DATASET.stat()
-    except OSError:
-        return
+        dataset_state = _jsonl_file_stats(CRSM_DATASET)
+    except OSError as exc:
+        return _reject(f"capture dataset identity unavailable: {type(exc).__name__}: {exc}")
 
     source_lines = int(manifest.get("source_lines", 0) or 0)
-    source_mtime = float(manifest.get("source_mtime", 0.0) or 0.0)
+    source_size = int(manifest.get("source_size", -1) or -1)
+    source_sha256 = str(manifest.get("source_sha256") or "")
     accepted = int(manifest.get("accepted", 0) or 0)
     rejected = max(0, source_lines - accepted)
 
     if source_lines <= 0:
-        print("\nCRSM loop not marked consumed: integration manifest saw no source captures.")
-        return
-    if source_mtime + 1.0 < float(dataset_stat.st_mtime):
-        print("\nCRSM loop not marked consumed: capture dataset changed after integration manifest.")
-        return
+        return _reject("integration manifest saw no source captures")
+    if (
+        not source_sha256
+        or source_sha256 != str(dataset_state.get("sha256") or "")
+        or source_size != int(dataset_state.get("size", -2) or -2)
+        or source_lines != int(dataset_state.get("lines", -2) or -2)
+    ):
+        return _reject("capture dataset identity changed after dataset selection")
+    rejected_by_reason = dict(manifest.get("rejected_by_reason") or {})
+    if int(rejected_by_reason.get("over_max_examples", 0) or 0) > 0:
+        return _reject("eligible captures exceeded the bounded dataset selection and remain untrained")
 
     from core.consciousness.crsm_loop_monitor import get_crsm_loop_monitor
 
@@ -868,11 +882,12 @@ def mark_crsm_loop_consumed_after_training(
         )
     marked = get_crsm_loop_monitor().mark_dataset_consumed(**marker_payload)
     if marked is not True:
-        sys.exit("CRSM training completed, but the final consumed marker was not committed.")
+        raise SystemExit("CRSM training completed, but the final consumed marker was not committed.")
     print(
         "\nMarked CRSM captures handled after successful train/fuse: "
         f"{accepted} trained, {rejected} retired."
     )
+    return True
 
 
 def record_crsm_delta_training_state(
@@ -902,17 +917,21 @@ def record_crsm_delta_training_state(
             "valid_sha256": (dict(output.get("valid") or {})).get("sha256"),
             "iters": iters,
             "max_seq_length": max_seq_length,
-            "status": "fused_published_consumed",
+            "status": "fused_published_marker_ready",
         }
         governance = delegated_governance_provenance()
         if governance:
             payload["governance"] = governance
         state["crsm_delta"] = payload
-        tmp = state_path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
-        os.replace(tmp, state_path)
+        atomic_write_text(
+            state_path,
+            json.dumps(state, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
     except (OSError, TypeError, ValueError) as exc:
-        print(f"\nWarning: failed to record CRSM delta training state: {type(exc).__name__}: {exc}")
+        raise RuntimeError(
+            f"failed to record CRSM delta training state: {type(exc).__name__}: {exc}"
+        ) from exc
 
 
 def main() -> None:
@@ -1049,6 +1068,7 @@ def main() -> None:
             fused_path,
             manifest_path=crsm_marker_manifest,
             source=crsm_marker_source,
+            required=args.crsm_delta,
         )
 
 

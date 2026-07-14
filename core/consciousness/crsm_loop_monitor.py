@@ -61,6 +61,9 @@ class CRSMLoopMonitor:
         # sha256 per poll was a fingerprinted event-loop stall class
         # (api_health → crsm get_status, 5-10s under load).
         self._digest_cache: dict[str, tuple[tuple[int, float], tuple[int, str]]] = {}
+        # Eligibility is expensive (parse + safety-gate every capture) but
+        # changes only when the dataset does — cache it by the dataset sha256.
+        self._eligible_cache: tuple[str, int] | None = None
 
     def _digest_file(self, path: Path) -> tuple[int, str, int, float]:
         """Return (lines, sha256, size, mtime), re-reading the file only when
@@ -98,6 +101,40 @@ class CRSMLoopMonitor:
         except OSError as exc:
             record_degradation("crsm_loop_monitor", exc)
             return {"exists": False, "lines": 0, "mtime": 0.0, "size": 0, "sha256": ""}
+
+    def eligible_capture_count(self) -> int:
+        """How many captures would actually TRAIN, through the trainer's own gate.
+
+        The loop's raw line count includes internal-control captures (idle
+        self-reflection with <thought>/<action> tags, will-approved receipts)
+        that the training safety filter always rejects. Counting raw lines as
+        "untrained captures" made the health poll cry 'CRSM→LoRA loop OPEN (N
+        captures untrained)' forever for a corpus with nothing trainable in
+        it. This routes through build_crsm_experience_examples — the SAME gate
+        the trainer uses — so the monitor and the trainer can never disagree.
+        Cached by the dataset sha256: it recomputes only when captures change.
+        """
+        ds = self.dataset_state()
+        sha = str(ds.get("sha256") or "")
+        if not ds.get("exists") or int(ds.get("lines", 0)) == 0:
+            return 0
+        if self._eligible_cache is not None and self._eligible_cache[0] == sha:
+            return self._eligible_cache[1]
+        try:
+            from training.build_dataset_v3 import build_crsm_experience_examples
+
+            examples, _manifest = build_crsm_experience_examples(
+                self.dataset_path, max_examples=5000
+            )
+            count = len(examples)
+        except (ImportError, OSError, ValueError, RuntimeError, TypeError) as exc:
+            record_degradation("crsm_loop_monitor", exc)
+            # Unknown eligibility must not manufacture a false OPEN: assume the
+            # optimistic case (there may be trainable captures) only when we
+            # genuinely cannot tell, and let the raw path decide.
+            return int(ds.get("lines", 0))
+        self._eligible_cache = (sha, count)
+        return count
 
     def latest_training_artifact(self) -> dict[str, Any]:
         """Newest fused-model directory + the active-model pointer's fuse time."""
@@ -370,14 +407,27 @@ class CRSMLoopMonitor:
                 "a newer model exists, but current captures lack a verified active-model consumption marker",
             )
         elif unconsumed > _UNCONSUMED_WARN or (ds_mtime - last_train) > _STALE_AFTER_S:
-            state = "open"
-            if manifest.get("current_for_dataset"):
+            # Only genuinely trainable captures can hold the loop OPEN. A
+            # corpus of pure internal-control captures (idle self-reflection)
+            # is nothing to crystallize — reporting it as OPEN / 'proof
+            # integrity degraded' is a false alarm, and the closer would fail
+            # the dataset build anyway ("no eligible captures").
+            eligible = self.eligible_capture_count()
+            if eligible <= 0:
+                state = "idle"
                 reason = (
-                    f"{unconsumed} captures are integrated into the LoRA corpus "
-                    "but have not been trained/fused into the active model"
+                    f"{unconsumed} captures accumulated but 0 are eligible for "
+                    "training (internal-control/ineligible); nothing to crystallize"
                 )
             else:
-                reason = f"{unconsumed} captures accumulated but not trained in"
+                state = "open"
+                if manifest.get("current_for_dataset"):
+                    reason = (
+                        f"{eligible} of {unconsumed} captures are trainable and in "
+                        "the LoRA corpus but not yet trained/fused into the active model"
+                    )
+                else:
+                    reason = f"{eligible} of {unconsumed} accumulated captures are trainable but not trained in"
         else:
             state, reason = "pending", "captures awaiting the next training run"
 
@@ -386,6 +436,7 @@ class CRSMLoopMonitor:
             "reason": reason,
             "dataset_lines": lines,
             "unconsumed": unconsumed,
+            "eligible_captures": self.eligible_capture_count(),
             "accepted_lines": accepted,
             "rejected_lines": rejected,
             "last_training_at": last_train,
@@ -426,8 +477,15 @@ class CRSMLoopMonitor:
             "--tag",
             "crsm-closeout",
         ]
-        if state == "closed":
-            return {"required": False, "reason": "CRSM captures already consumed by active training marker"}
+        if state in {"closed", "idle"}:
+            return {
+                "required": False,
+                "reason": (
+                    "CRSM captures already consumed by active training marker"
+                    if state == "closed"
+                    else "No eligible CRSM captures require training"
+                ),
+            }
         if not manifest.get("current_for_dataset"):
             return {
                 "required": True,

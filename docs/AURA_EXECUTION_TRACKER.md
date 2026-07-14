@@ -29,8 +29,12 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   exact prepare/train/fuse path must produce observed monitor closure before it
   can report success. Checkpoint 70 raises the real 32B train/fuse budget from
   one hour to three hours; Checkpoint 71 binds nested model descendants to one
-  durable lane and process group, validates and strips delegated authority
-  secrets, and reaps the full tree on timeout or cancellation. Checkpoint 67
+  durable lane and process group, validates child model roots and purposes,
+  strips delegated authority secrets, and reaps the full tree on timeout or
+  cancellation. It also binds the consumed marker to the exact selected
+  dataset/model/count transaction and changes skill retries to explicit
+  idempotency opt-in with contradictory failure signals taking precedence over
+  `ok: true`. Checkpoint 67
   adds a license-clean trainable VSR path and Checkpoint 68 source-fixes the
   attributed idle perception subprocess/RSS churn. Exact-main
   signed-app proof of the autonomous sandbox effect, no recursive result
@@ -142,6 +146,7 @@ Status rules:
 | `DESKTOP-ACCESS-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Eliminate repeated resident-bridge/direct TCC probe timeouts from the launched desktop path. Separate expected permission latency from faults, deduplicate concurrent probes, preserve successful dimensions, use truthful cached/readiness conditions, and prevent one probe timeout from producing duplicate degradation, fault, and affective-strain amplification. | `DESKTOP-001`, `FAULT-001`, `RUNTIME-001`; Checkpoint 51; live `system.desktop_access.*_probe` timeout defects at 00:28 on 2026-07-13 |
 | `TOOLS-001` | `IN PROGRESS` | Make long, precise multi-tool workflows typed, resumable, idempotent, budgeted, compensating, provider-change tolerant, source preserving, and complete only after durable observed effects. | Matrix 9; original context tool/handoff goals |
 | `SKILLS-001` | `COMPLETE 2026-07-10` | Preserve fail-closed cognitive gates and deterministic semantically equivalent discovery/import/instantiation/registry validation for every executable skill. | Addendum 23, `CTX2-GATE-*` and `CTX2-SKILL-*` |
+| `SKILL-EXECUTION-001` | `IN PROGRESS (SAFE DEFAULT SOURCE GREEN; PER-SKILL CERTIFICATION OPEN) 2026-07-13` | Certify every executable skill's real effect semantics rather than inferring quality from discovery or a shared wrapper. Checkpoint 71 makes transient replay explicit opt-in, disables replay for approval-gated effects, and makes any error/failed/blocked/`success: false` evidence authoritative over a contradictory `ok: true`. Complete a machine inventory that classifies every skill as read-only, idempotent, deduplicated-effect, compensating transaction, or at-most-once; bind retry attempts to stable idempotency keys and observed reconciliation; prove ambiguous timeout, cancellation, provider duplicate, partial effect, restart, and compensation behavior; then run complete live causal-effect certification for each skill. Unclassified skills remain at-most-once and may not silently acquire retries. | `CAPABILITY-CERT-001`, `TOOLS-001`, `EFFECT-001`, `FAULT-001`, `TEST-DEPTH-001`; Checkpoint 71 merge review |
 | `CAPABILITY-CERT-001` | `OPEN 2026-07-13` | Give every advertised Aura capability a certification dossier that proves the complete casual-user expectation rather than technical invocation: typed contract, prerequisites, happy path, boundary cases, malformed/adversarial input, partial failure, cancellation, restart/resume, observable effect, compensation, latency/resource budget, privacy/authority, GUI/API parity, and current signed-app evidence. Generate a release-blocking report with zero untested, mocked-only, stale-build, fallback-only, shallow-success, or unsupported capability claims. | `RELEASE-CONTRACT-001`, `EXPECT-001`, `EFFECT-001`, `TOOLS-001`, `VALIDATE-001`; user no-shallow-action and demo-readiness bar |
 | `AGENCY-001` | `OPEN` | Prove bounded self-generated goals, coherent priority, obstacle recovery, foreground yielding, stale-obligation cleanup, restart continuity, operator override, indefinite-life behavior, and real initiative that is not reduced to waiting for a human prompt. | Matrix 10; resident-colleague scope |
 | `AUTONOMY-AUTHORITY-001` | `IN PROGRESS (FOUNDATION SOURCE GREEN; LIVE + EXPANSION OPEN) 2026-07-13` | Replace repeated human-in-loop approval with durable, revocable, least-privilege standing authority, risk budgets, and self-issued child capabilities for safe reversible work. Aura must act autonomously within policy, learn from receipted outcomes, pause on uncertainty or boundary conflict, and request confirmation only when consequential scope was never granted or cannot be safely reversed. The first durable grant registry, argument/effect/risk-bound child leases, immediate revocation, owner control API, canonical Will/Constitution/Capability integration, and autonomous research/introspection/local-read/account-read/maintenance grants are source-green. CapabilityEngine recognizes an internally verified standing child lease as the confirmation contract it represents; Checkpoint 65 makes it the single governance owner for registered skills. Checkpoint 66 adds the exact argument-bound subconscious `sandboxed_compute` grant. Checkpoint 71 carries that exact envelope through Executive temporal arbitration with a 30-second no-network compute constraint while substituted purpose, digest, shape, or code remains deferred; ordinary use does not require human approval. It also adds a dedicated `semantic_weight_update` Will/Executive/Substrate path for the allow-listed CRSM adapter, keeps the intent open until observed closure, and binds the delegated training process to the exact receipt, source, intent, parent PID, and command without per-run approval. Virtual, missing, forged, and pre-runtime tools retain the outer fail-closed boundary, and failed lease revalidation strips all partial authority context. Authenticated-principal attestation, broader reversible operational grants, outcome-to-policy learning, and current-app live proof remain mandatory. | `AGENCY-001`, `EFFECT-001`, `VALUES-001`; user autonomy/free-will requirement reaffirmed 2026-07-13; Checkpoints 59-60, 65-66, and 71 |
@@ -150,7 +155,7 @@ Status rules:
 | `IMMUNE-CODING-001` | `OPEN 2026-07-13` | Make Aura's repair, optimization, self-modification, adaptive-immunity, healing-swarm, and code-maintenance cells a frontier-quality software-engineering system rather than patch generators. Build one typed repair workspace and causal authority chain from live incident/reproducer through cross-module architecture and runtime diagnosis, hypothesis ranking, isolated multi-file implementation, migration/compatibility analysis, static/type/security/performance review, targeted plus adjacent/property/fuzz/mutation/race/fault tests, independent adversarial review, canary, compensation/rollback, signed receipt, outcome monitoring, and evidence-gated learning. Route each phase to the strongest policy-eligible coding/reasoning model through a versioned provider-neutral contract; preserve provenance and source context across handoffs; support Python, native/Swift, web UI, data/schema, async/concurrency, security, model/runtime, and operations faults. Autonomous reversible repairs use standing authority without per-action approval, while consequence budgets and exact rollback constrain unsafe self-mutation. Certify the quality claim only through sealed unseen-repository tasks, historical Aura fault replay, injected live failures, regression resistance, cost/latency budgets, long-horizon repair success, and matched comparison against the declared frontier baseline; reject shallow tests, benchmark leakage, reviewer collusion, fake success, and themed multi-agent federation. | `CODING-001`, `ADAPT-001`, `FAULT-001`, `ACTION-SPINE-001`, `AUTONOMY-AUTHORITY-001`, `PROOF-001`, `TEST-DEPTH-001`; frontier-quality immune coding request 2026-07-13 |
 | `FRONTIER-COGNITION-001` | `OPEN 2026-07-13` | Build one canonical frontier cognition and engineering substrate that every applicable Aura organ can invoke without creating a second mind: immune and repair cells, morphogenesis, organ design, self-modification, optimization, incident response, operations, capability construction, research, planning, and review. Provide versioned capability negotiation across the strongest policy-eligible local or remote models; repository/world semantic graphs; persistent long-context task state; grounded retrieval; multimodal perception; terminal/browser/desktop/tool use; hypothesis, planning, implementation, verification, critique, context compression, handoff, and resumable long-horizon execution; explicit uncertainty, cost, latency, privacy, authority, and fallback contracts; and identity/memory/substrate integration through the canonical workspace and action spine. A provider or model label is never proof. Claim parity with GPT 5.6, Fable 5, Mythos, Sol Ultra, or a successor only after contamination-resistant matched sealed evaluations of coding, reasoning, research, tool use, multimodal work, repair, regression resistance, and sustained completion at declared budgets; retain the strongest measured configuration and reject benchmark-only uplift or an ungoverned model bypass. | `CODING-001`, `IMMUNE-CODING-001`, `TOOLS-001`, `SUBSTRATE-001`, `INTELLIGENCE-001`, `PROOF-001`, `AUTONOMY-AUTHORITY-001`; system-wide Sol Ultra/frontier capability request clarified 2026-07-13 |
 | `MORPHOGENETIC-ENGINEERING-001` | `OPEN 2026-07-13` | Give lineage-bearing cells and organ-forming systems frontier-grade diagnosis and software engineering through `FRONTIER-COGNITION-001`, while preventing arbitrary live-code proliferation. Implement a typed organogenesis lifecycle from unmet causal need and lesion evidence through interface/specification, dependency and data-contract design, isolated construction, generated and adversarial tests, resource/authority/lifecycle registration, compatibility and migration proof, staged canary, canonical-workspace integration, causal contribution measurement, monitoring, repair, consolidation, pruning, extinction, and exact rollback. Organs must solve held-out needs better than the pre-formation baseline, remain inspectable and bounded across restart, and merge into canonical ownership rather than accumulate themed cells, duplicate services, or self-validating swarms. | `FRONTIER-COGNITION-001`, `IMMUNE-CODING-001`, `ADAPT-001`, `THRONG-001`, `ARCH-001`, `SUBSTRATE-001`, `ACTION-SPINE-001`, `RESOURCE-001`, `TEST-DEPTH-001`; frontier-quality cells and organ formation clarification 2026-07-13 |
-| `ADAPT-001` | `IN PROGRESS (CRSM CLOSURE INFRASTRUCTURE SOURCE GREEN; REAL TRAINING + QUALITY PROOF OPEN) 2026-07-13` | Correct and safely enable one-shot hidden-state adaptation; validate CRSM/CAA/LoRA/compounding with uncontaminated behavioral holdouts, calibration, rollback, and real capability-growth curves. Checkpoint 69 introduces the CRSM closer and boot owner; Checkpoint 70 corrects its one-hour timeout; Checkpoint 71 makes it default-on with an explicit kill switch, exact prepare/train/fuse commands, dynamic headroom, one allow-listed semantic-weight authority transaction, durable nested model-lane ownership, delegated provenance, cancellation cleanup, and monitor-observed closure. The separately operated `python training/train_and_fuse.py --crsm-delta --tag crsm-closeout` result, produced artifacts, signed-app autonomous run, uncontaminated held-out uplift, rollback, CAA steering extraction, and longitudinal growth remain release-blocking and must not be inferred from source or exit code alone. | Pass F 8; Addendum 25; learning/substrate closure; Checkpoints 69-71 |
+| `ADAPT-001` | `IN PROGRESS (CRSM CLOSURE INFRASTRUCTURE SOURCE GREEN; REAL TRAINING + QUALITY PROOF OPEN) 2026-07-13` | Correct and safely enable one-shot hidden-state adaptation; validate CRSM/CAA/LoRA/compounding with uncontaminated behavioral holdouts, calibration, rollback, and real capability-growth curves. Checkpoint 69 introduces the CRSM closer and boot owner; Checkpoint 70 corrects its one-hour timeout; Checkpoint 71 makes it default-on with an explicit kill switch, exact prepare/train/fuse commands, dynamic headroom, one allow-listed semantic-weight authority transaction, durable nested model-lane ownership, delegated provenance, cancellation cleanup, and monitor-observed exact dataset/model/count closure. If eligible data exceeds one bounded selection, closure now fails honestly; a durable content-addressed cursor/batch protocol must train every eligible capture exactly once across resumable batches before aggregate closure. The separately operated `python training/train_and_fuse.py --crsm-delta --tag crsm-closeout` result, produced artifacts, signed-app autonomous run, uncontaminated held-out uplift, rollback, CAA steering extraction, and longitudinal growth remain release-blocking and must not be inferred from source or exit code alone. | Pass F 8; Addendum 25; learning/substrate closure; Checkpoints 69-71 |
 | `AMPLIFY-001` | `OPEN` | Repair verifier soundness and retain reasoning amplification only where sealed matched controls show calibrated quality gains within latency/resource budgets. | Addendum 24 |
 | `IDENTITY-001` | `OPEN` | Preserve signed longitudinal identity, beliefs, commitments, values, relationships, consent, accountability, and uncertainty through restart, conflict, correction, rollback, and model replacement. | Addendum 27-28 |
 | `WELFARE-001` | `OPEN` | Unify computational welfare signals and prove longitudinal causal effects on attention, policy, learning, consent/refusal, continuity protection, and recovery under adversarial controls. | Addendum 29 |
@@ -14780,9 +14785,24 @@ The repair establishes one truthful boundary for each failure:
   and model-lane secrets are stripped before grandchildren launch.
 - The complete 32B train/fuse/verify tree owns one three-hour, dynamically sized
   durable model lane and isolated process group. Nested model children reuse
-  that accounted group without opening competing reservations; direct operator
-  training receives explicit attributable claims; timeout and cancellation
-  terminate and reap the complete group.
+  that accounted group without opening competing reservations, but only for
+  the reservation's declared model roots and train/fuse/benchmark purposes.
+  Explicit child environments cannot rehydrate stripped parent secrets; direct
+  operator training receives explicit attributable claims; timeout and
+  cancellation terminate and reap the complete group even when its root has
+  already exited.
+- CRSM publication is one exact content transaction. The active manifest,
+  training-state receipt, and consumed marker are atomically persisted and bind
+  source byte size, SHA-256, line count, selected count, model identity, and
+  authority provenance. Marker readiness is distinct from marker publication;
+  same-size dataset replacement, missing or failed receipts, over-counted
+  markers, and an eligible selection larger than the bounded training set all
+  fail terminally instead of manufacturing closure.
+- Skill replay is safe by default: unclassified skills execute at most once,
+  only explicitly proven idempotent/read-only skills may retry, and an
+  approval-gated effect never retries. Negative result evidence is authoritative
+  over a contradictory `ok: true`. Full per-skill idempotency and live-effect
+  certification remains open as `SKILL-EXECUTION-001`.
 
 Verification on the source candidate is substantive and non-overlapping:
 
@@ -14799,10 +14819,17 @@ Verification on the source candidate is substantive and non-overlapping:
   and the production-surface scanner reports zero findings, zero high/critical
   findings, and zero exemptions. The closeout rubric passes `20/20`; this does
   not override its still-open semantic-review, live, portability, or soak work.
-- The integrated CRSM authority, scheduler, provenance, model-child, direct
-  training-claim, and cancellation slice passes `28/28` after the nested-lane
-  defect was repaired. The broader adjacent CRSM/model/governance suite and all
-  release gates must be rerun after the operator-owned training lane is free.
+- The integrated CRSM authority, scheduler, dataset gate, provenance,
+  model-child, direct training claim, cancellation, Will, governance-bypass,
+  model-loader, boot-autonomy, and skill-retry composition passes `183/183`
+  after the nested-lane and transaction-identity defects were repaired.
+  Focused CRSM/preflight/retry execution also passes; these CPU-only tests do
+  not substitute for the operator-owned 32B training verdict.
+- Configured Ruff and targeted compilation pass after merge reconciliation.
+  The reviewed governance inventory now records the scheduler's governed async
+  state owner, removes its old raw mkdir/direct-Will buckets, and records the
+  canonical model-child subprocess gateway without normalizing unrelated debt.
+  Broad release gates remain required after the external training lane is free.
 
 Progress and immediate next work:
 
@@ -14816,6 +14843,10 @@ Progress and immediate next work:
   verdict and inspect its dataset, adapter, fused-model, active-manifest,
   consumed-marker, training-state, and lane receipts. An exit code or output
   directory alone is not learning-loop closure or quality evidence.
+- Build the content-addressed resumable CRSM batch cursor required when eligible
+  captures exceed one bounded selection, and complete the per-skill retry,
+  idempotency, reconciliation, and live-effect matrix. The safer defaults in
+  this checkpoint expose rather than close those depth obligations.
 - Rebuild the signed app from this exact pushed checkpoint and require an actual
   sandbox child lease/effect/closure, no extractor redispatch, loop-correct
   voice, responsive health, and clean Neural plus terminal evidence.

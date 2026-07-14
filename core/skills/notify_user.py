@@ -1,10 +1,10 @@
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from pydantic import BaseModel, Field
 
-from core.skills.base_skill import BaseSkill
 from core.senses.notifications import DeliveryResult, DesktopNotifier
+from core.skills.base_skill import BaseSkill
 
 logger = logging.getLogger("Skills.NotifyUser")
 
@@ -19,6 +19,7 @@ class NotifyUserSkill(BaseSkill):
     """Proactively alerts the user via a native OS desktop notification."""
 
     name = "notify_user"
+    retry_safe = False  # external send/act — never double-fire on retry
     description = (
         "Pushes a native OS desktop notification to the user. "
         "Use this when completing a long-running background task, or when "
@@ -28,7 +29,7 @@ class NotifyUserSkill(BaseSkill):
         "assume the user saw anything unless delivered=True."
     )
 
-    async def execute(self, params: Any, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, params: Any, context: dict[str, Any]) -> dict[str, Any]:
         if isinstance(params, dict):
             params = NotifyUserInput(**params)
 

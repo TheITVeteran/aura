@@ -52,14 +52,21 @@ def _record_skill_degradation(
 
 
 def _infer_ok_flag(result: dict[str, Any]) -> bool:
-    if "ok" in result:
-        return bool(result["ok"])
+    # Negative evidence is authoritative. A contradictory payload such as
+    # {"ok": True, "success": False} cannot be normalized into success.
     if result.get("error") is not None or result.get("errors"):
         return False
     if result.get("failed") is True:
         return False
+    # A skill that reports its own outcome with a 'success' key (11 skills do)
+    # was being marked ok=True on {"success": False} — a dishonest success
+    # (e.g. local_reference returning "corpus empty" as a successful lookup).
+    if result.get("success") is False:
+        return False
     if str(result.get("status", "")).lower() in {"blocked", "error", "failed"}:
         return False
+    if "ok" in result:
+        return bool(result["ok"])
     return True
 
 
@@ -107,6 +114,13 @@ class BaseSkill(ABC):
     metabolic_cost: int = 1
     is_core_personality: bool = False
     requires_approval: bool = False
+
+    # Retry safety is explicit opt-in. safe_execute retries transient failures
+    # up to 3x, which is correct only for operations proven idempotent or
+    # read-only. An unclassified skill must execute at most once: a skill that
+    # completes an external effect and then times out reading the response
+    # cannot safely be replayed.
+    retry_safe: bool = False
 
     # Execution stats (instance-level)
     _total_executions: int = 0
@@ -258,7 +272,12 @@ class BaseSkill(ABC):
                 time.monotonic() - start
             )
 
-        max_attempts = 3
+        # Only retry when it is safe to re-run this skill's side effects.
+        # requires_approval implies a destructive/consequential action that
+        # must never double-fire; retry_safe is the explicit opt-out for
+        # non-destructive-but-side-effectful skills (send/post/notify).
+        retryable = bool(self.retry_safe) and not bool(self.requires_approval)
+        max_attempts = 3 if retryable else 1
         base_delay = 1.0
         result: Any = None
         last_err: Exception = RuntimeError("skill execution did not start")

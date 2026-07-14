@@ -1249,6 +1249,14 @@
       "scope": "<module>.ContinualLoRAMerger.plan"
     },
     {
+      "callee": "core.runtime.atomic_writer.async_atomic_write_text",
+      "canonical_owner": false,
+      "category": "direct_atomic_file_write",
+      "count": 1,
+      "path": "core/learning/crsm_closure_scheduler.py",
+      "scope": "<module>.CRSMClosureScheduler._persist_status"
+    },
+    {
       "callee": "core.runtime.atomic_writer.atomic_write_text",
       "canonical_owner": false,
       "category": "direct_atomic_file_write",
@@ -12321,6 +12329,14 @@
       "scope": "<module>.SubprocessGateway.run"
     },
     {
+      "callee": "subprocess.run",
+      "canonical_owner": true,
+      "category": "raw_subprocess",
+      "count": 1,
+      "path": "core/runtime/subprocess_gateway.py",
+      "scope": "<module>.SubprocessGateway.run_model_blocking"
+    },
+    {
       "callee": "subprocess.Popen",
       "canonical_owner": true,
       "category": "raw_subprocess",
@@ -12631,6 +12647,14 @@
       "count": 1,
       "path": "core/learning/autonomous_rsi.py",
       "scope": "<module>._run_generated_solver"
+    },
+    {
+      "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
+      "canonical_owner": false,
+      "category": "subprocess_gateway",
+      "count": 1,
+      "path": "core/learning/crsm_closure_scheduler.py",
+      "scope": "<module>.CRSMClosureScheduler._run_training"
     },
     {
       "callee": "core.runtime.subprocess_gateway.get_subprocess_gateway().run_async",
@@ -13586,6 +13610,6 @@
     }
   ],
   "description": "Exact AST effect-ownership debt ratchet; refresh only after reviewed change",
-  "inventory_sha256": "014a7dde2b34f67f6de6491240ea4a36fd96f4fc7f8451f56d73db771ac3dc10",
+  "inventory_sha256": "2674ba0a685bb34cf077f9d3e70138ff487033bbc9c415fcc58529d87a751916",
   "schema_version": 1
 }

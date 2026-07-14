@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from training import resume_training, run_unattended, train_and_fuse
 
 GIB = 1024**3
@@ -295,7 +297,7 @@ def test_record_crsm_delta_training_state_writes_receipt(monkeypatch, tmp_path):
 
     state = json.loads(state_path.read_text())
     receipt = state["crsm_delta"]
-    assert receipt["status"] == "fused_published_consumed"
+    assert receipt["status"] == "fused_published_marker_ready"
     assert receipt["adapter_path"] == str(tmp_path / "delta_adapter")
     assert receipt["fused_model_path"] == str(tmp_path / "fused_model")
     assert receipt["source_lines"] == 10
@@ -306,3 +308,27 @@ def test_record_crsm_delta_training_state_writes_receipt(monkeypatch, tmp_path):
     assert receipt["valid_sha256"] == "valid-hash"
     assert receipt["iters"] == 25
     assert receipt["max_seq_length"] == 1024
+
+
+def test_record_crsm_delta_training_state_fails_when_receipt_is_not_durable(
+    monkeypatch,
+    tmp_path,
+):
+    adapter_dir = tmp_path / "adapter"
+    adapter_dir.mkdir()
+    (adapter_dir / "training_state.json").write_text("{}", encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"source_lines": 1, "accepted": 1}), encoding="utf-8")
+    monkeypatch.setattr(train_and_fuse, "ADAPTER_DIR", adapter_dir)
+    monkeypatch.setattr(
+        train_and_fuse,
+        "atomic_write_text",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk-full")),
+    )
+
+    with pytest.raises(RuntimeError, match="failed to record CRSM delta training state"):
+        train_and_fuse.record_crsm_delta_training_state(
+            adapter_dir=tmp_path / "delta",
+            fused_path=tmp_path / "fused",
+            manifest_path=manifest,
+        )

@@ -94,9 +94,49 @@ mmap, or C-extension allocation, not a Python object leak. The
 `/api/system/memory/growth` surface makes that diagnosis a one-call
 operation on any future instance.
 
-Still owed: a VERIFICATION idle window on the fixed code showing the idle
-slope collapse (target: from ~350 MB/h toward flat). Runs on the next
-quiet box.
+VERIFIED (2026-07-13): a 38-minute idle window on the fixed code ran the
+idle RSS at **−332 MB/h** (1549→1335 MB, actually declining as caches
+settle) versus the +350 MB/h it climbed before. The perception backoff
+removed the previously observed growth over this bounded window. A final
+multi-hour idle/endurance soak on the sealed tip is still required before
+calling the leak closed under production-duration load.
+
+## CRSM→LoRA loop honesty (2026-07-13, 82f5c373)
+
+The live health poll reported "proof integrity degraded: CRSM→LoRA loop
+OPEN (33 captures untrained)" persistently. Running the closer exposed the
+truth: all 33 captures are idle self-reflection moments (`<thought>`/
+`<action>` tags, "will-approved self-reflection") that the training safety
+gate rejects by design — you never train a model on its own control-plane
+structure. The loop could never close, and the monitor was counting *raw
+lines* as "untrained captures." Fixed: the monitor now gates OPEN on
+*eligible* captures through the trainer's own gate (cached by dataset
+sha256), reporting honest "idle" when nothing is trainable. Also built the
+autonomous closer (`crsm_closure_scheduler.py`) for when real eligible
+experience accumulates. The closer is enabled by default and can be
+explicitly disabled with `AURA_CRSM_AUTOCLOSE=0`; execution still requires
+the normal Will, authority, resource-admission, and model-lane receipts.
+
+## Skill framework: three "technically-true" gaps (2026-07-13)
+
+An audit of the 93 skills — prompted by "are any missing the attention to
+detail a casual user or engineer would expect?" — found useful framework
+controls (pydantic input validation, governance receipts, per-skill circuit
+breakers, standardized error results, and a zero-stub gate). It also found
+three cross-cutting gaps. These framework fixes establish a stronger baseline;
+they do not replace per-skill causal, idempotency, and live-behavior
+certification.
+
+| Fix | The defect | Commit |
+| --- | --- | --- |
+| Retry double-fire | `safe_execute` retried transient failures 3× *unconditionally* — a skill that sent/acted then hit a transient error re-fired it (at-least-once where the user expects at-most-once). Retries are now explicit opt-in through `retry_safe` and are always disabled for approval-gated execution; each opt-in still requires an idempotency review. | 2e32b4ce + merge hardening |
+| Dishonest success | `_infer_ok_flag` missed the `success` key (11 skills use it) — `local_reference` returning `{success: False, "corpus empty"}` was marked `ok=True`, so Aura believed she'd consulted her knowledge successfully. | c40f9f97 |
+| CRSM loop honesty | (above) the monitor counted raw lines, not eligible captures. | 82f5c373 |
+
+Each is the "actions fire but shallow/technically-true" pattern — caught
+at the framework altitude so all 93 skills inherit safer behavior. The
+remaining per-skill review and external live-effect certification stay open;
+an internal integrity self-audit is evidence, not independent closure proof.
 
 ## The meta-lesson
 

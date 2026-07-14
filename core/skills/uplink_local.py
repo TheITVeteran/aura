@@ -8,12 +8,11 @@ round-trip on the data directory, and only reports verified when both hold.
 
 import os
 import time
-from typing import Any, Dict
+from typing import Any
 
 from core.container import ServiceContainer
 from core.runtime.errors import record_degradation
 from core.skills.base_skill import BaseSkill
-
 
 # last_commit_at older than this (with commits expected) counts as stale.
 _STALE_COMMIT_SECONDS = 15 * 60
@@ -21,6 +20,7 @@ _STALE_COMMIT_SECONDS = 15 * 60
 
 class UplinkSkill(BaseSkill):
     name = "uplink_local"
+    retry_safe = False  # external send/act — never double-fire on retry
     description = (
         "Verify local persistence for real: state-repository health (DB connected, "
         "consumer alive, commits flowing) plus a governed write-read-delete "
@@ -29,11 +29,11 @@ class UplinkSkill(BaseSkill):
     inputs = {"goal": "objective"}
     output = "Evidence-backed persistence verdict"
 
-    def match(self, goal: Dict[str, Any]) -> bool:
+    def match(self, goal: dict[str, Any]) -> bool:
         return "Uplink" in goal.get("objective", "") or "Persistence" in goal.get("objective", "")
 
-    async def execute(self, params: Any, context: Dict[str, Any]) -> Dict[str, Any]:
-        checks: Dict[str, Any] = {}
+    async def execute(self, params: Any, context: dict[str, Any]) -> dict[str, Any]:
+        checks: dict[str, Any] = {}
 
         state_ok = self._check_state_repository(checks)
         disk_ok = await self._check_disk_round_trip(checks)
@@ -53,7 +53,7 @@ class UplinkSkill(BaseSkill):
         }
 
     @staticmethod
-    def _check_state_repository(checks: Dict[str, Any]) -> bool:
+    def _check_state_repository(checks: dict[str, Any]) -> bool:
         repo = ServiceContainer.get("state_repository", default=None)
         if repo is None or not hasattr(repo, "get_runtime_status"):
             checks["state_repository"] = {
@@ -97,7 +97,7 @@ class UplinkSkill(BaseSkill):
         return not problems
 
     @staticmethod
-    async def _check_disk_round_trip(checks: Dict[str, Any]) -> bool:
+    async def _check_disk_round_trip(checks: dict[str, Any]) -> bool:
         try:
             from core.config import config
             from core.runtime.file_write_gateway import get_file_write_gateway

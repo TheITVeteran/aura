@@ -86,8 +86,8 @@ class CRSMClosureScheduler:
         self._required_free_gb_cache = self.min_free_gb
         self._model_request_gb_cache = self.min_free_gb
         # A 32B CRSM delta at the default 600 iters plus the fuse can run
-        # 60-90 min. Budget three hours so a valid pass is never killed at the
-        # one-hour boundary merely because fusion follows training.
+        # 60-90 min; a timeout below that wastes the whole pass. Budget three
+        # hours and let iteration limits shorten work rather than the clock.
         self.train_timeout_s = float(
             _env_int("AURA_CRSM_AUTOCLOSE_TIMEOUT_S", 3 * 3600)
         )
@@ -659,7 +659,7 @@ class CRSMClosureScheduler:
             errors.append("active_manifest_receipt")
         if active_governance.get("executive_intent_id") != expected_intent:
             errors.append("active_manifest_intent")
-        if crsm_state.get("status") != "fused_published_consumed":
+        if crsm_state.get("status") != "fused_published_marker_ready":
             errors.append("training_state_status")
         if training_governance.get("will_receipt_id") != expected_receipt:
             errors.append("training_state_receipt")
