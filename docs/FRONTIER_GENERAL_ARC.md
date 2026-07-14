@@ -100,3 +100,14 @@ formulation, and unlike the slogan, it can actually be won.
 
 - 2026-07-14: arc chartered; recon complete (amplifier v2 budget seam,
   registry shape, eval arena, CRSM entry points identified). Next: P1.
+- 2026-07-14 (later): **P1 SHIPPED** (e1b462bc). Foundry live: reliability
+  ledger (Wilson-pessimistic, false-pass-bounded), registry folding
+  reliability-weighted (hard gate untouched), training pipe gated by
+  domain_admitted() with revocable seed admissions, booted in aura_main,
+  21 known-answer tests. First live contact caught a real leak: the code
+  engine reports checked=True headless when it cannot actually execute —
+  foundry measured false_pass_ub=0.879 in two grades. Follow-up: fix code
+  engine checked-semantics (report checked=False when execution
+  unavailable). Next: P2 Procedural Memory Compiler, P3 gap-to-frontier
+  telemetry (needs new verifier classes: PredictionResolution/Outcome-
+  Ledger/RubricEnsemble to start moving the boundary beyond the seeds).
