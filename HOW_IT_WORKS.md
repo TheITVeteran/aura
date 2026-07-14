@@ -247,6 +247,11 @@ Memories that keep coming up together drift closer in memory space over
 time. That creates emergent clusters of related knowledge that weren't in
 the original encoding.
 
+Underneath those three conceptual layers, memory is stored in typed stores —
+episodic, semantic, goals, skills, plus a **reference** store backed by an
+offline knowledge corpus (added mid-2026) so factual recall can ground on real
+sources and admit an honest miss instead of confabulating.
+
 ### Dreaming
 
 When Aura has been idle for a while, it enters a dream cycle:
@@ -744,12 +749,13 @@ Each is independently publishable. Together they're a research program.
 - **Test coverage.** 225 consciousness-specific tests across six core
   suites (null hypothesis defeat, causal exclusion, grounding,
   functional phenomenology, embodied dynamics, phenomenal convergence)
-  plus 81 consciousness-conditions tests, 58 technological-autonomy
-  tests, 32 stability tests, and 185 total test files with 2,100+
-  functions across kernel lifecycle, infrastructure, resilience,
-  cognitive routing, and memory.
+  plus consciousness-conditions, technological-autonomy, and stability
+  suites — part of roughly 1,140 test files with 12,600+ test functions
+  across kernel lifecycle, infrastructure, resilience, cognitive routing,
+  and memory.
 - **Lock contention.** The affect system wraps `RobustLock`. Tick
-  intervals moved from 0.5s to 2.0s with adaptive backoff to reduce
+  intervals are mode-keyed — 2.0s in conversation, 4.0s reflecting, 10.0s
+  asleep, 0.5s under a critical event — with adaptive backoff to reduce
   contention. The full fix is the Actor Model transition, where affect,
   memory, and inference run as isolated processes communicating by
   message passing — no shared-memory locking at all.

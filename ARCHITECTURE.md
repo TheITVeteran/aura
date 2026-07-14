@@ -1442,11 +1442,11 @@ The consciousness stack has grown to 90+ modules. Beyond the 20 documented
 above, notable additions include:
 
 - **Phenomenal Now** (`phenomenal_now.py`, 842 lines): real-time phenomenal state integration maintaining the subjective temporal present
-- **Phenomenological Experiencer** (`phenomenological_experiencer.py`, 1572 lines): full experiential state computation integrating all subsystem outputs into a unified experience vector
-- **Alife Dynamics** (`alife_dynamics.py`, 812 lines) + **Alife Extensions** (`alife_extensions.py`, 1260 lines): artificial life dynamics with evolutionary adaptation and emergent behavioral patterns
+- **Phenomenological Experiencer** (`phenomenological_experiencer.py`, 1860 lines): full experiential state computation integrating all subsystem outputs into a unified experience vector
+- **Alife Dynamics** (`alife_dynamics.py`, 920 lines) + **Alife Extensions** (`alife_extensions.py`, 1260 lines): artificial life dynamics with evolutionary adaptation and emergent behavioral patterns
 - **Endogenous Fitness** (`endogenous_fitness.py`, 1313 lines): internal fitness landscape for self-evaluation independent of external reward
 - **Criticality Regulator** (`criticality_regulator.py`, 677 lines): self-organized criticality management at the edge of chaos
-- **Closed Loop** (`closed_loop.py`, 799 lines): full closed-loop pipeline from affect state through steering vectors to behavioral output and back
+- **Closed Loop** (`closed_loop.py`, 1532 lines): full closed-loop pipeline from affect state through steering vectors to behavioral output and back
 - **Homeostatic Coupling** (`homeostatic_coupling.py`): cross-subsystem homeostatic regulation ensuring system-wide balance
 - **Theory of Mind** (`theory_of_mind.py`): model of other agents' mental states for social cognition
 - **Animal Cognition** (`animal_cognition.py`): pre-linguistic cognitive primitives
@@ -1463,7 +1463,7 @@ above, notable additions include:
 The resilience layer keeps the system running across failure modes. It
 sits below the consciousness stack and above the raw infrastructure.
 
-### Stability guardian (`stability_guardian.py`, 899 lines)
+### Stability guardian (`stability_guardian.py`, 1338 lines)
 
 Real-time health monitoring with structured check results. Tracks: memory
 percentage, CPU percentage, per-subsystem health with severity levels
@@ -1832,9 +1832,9 @@ theories:
 
 - **Causal Exclusion** (`test_causal_exclusion.py`, 10 tests): cryptographic state binding, counterfactual injection, RLHF isolation. Tests whether the stack determines LLM generation parameters in ways RLHF training alone can't replicate.
 - **Grounding** (`test_grounding.py`, 8 tests): multi-dimensional specificity (valence→tokens, arousal→temperature), temporal dynamics (receptor adaptation, STDP trajectory divergence, homeostasis degradation).
-- **Functional Phenomenology** (`test_functional_phenomenology.py`, 11 tests): GWT broadcast signatures, HOT accuracy with anti-confabulation, IIT perturbation propagation, honest degradation reporting.
-- **Embodied Dynamics** (`test_embodied_dynamics.py`, 11 tests): free energy active inference, homeostatic override of GWT competition, STDP surprise gating, cross-subsystem temporal coherence.
-- **Phenomenal Convergence** (`test_phenomenal_convergence.py`, 17 tests): QDT 6-gate protocol — pre-report quality space geometry, counterfactual state swap, no-report behavioral footprint, perturbational integration, baseline failure verification, phenomenal tethering via architectural anesthesia.
+- **Functional Phenomenology** (`test_functional_phenomenology.py`, 16 tests): GWT broadcast signatures, HOT accuracy with anti-confabulation, IIT perturbation propagation, honest degradation reporting.
+- **Embodied Dynamics** (`test_embodied_dynamics.py`, 13 tests): free energy active inference, homeostatic override of GWT competition, STDP surprise gating, cross-subsystem temporal coherence.
+- **Phenomenal Convergence** (`test_phenomenal_convergence.py`, 13 tests): QDT 6-gate protocol — pre-report quality space geometry, counterfactual state swap, no-report behavioral footprint, perturbational integration, baseline failure verification, phenomenal tethering via architectural anesthesia.
 
 Full results and analysis: [TESTING.md](TESTING.md)
 

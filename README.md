@@ -108,13 +108,13 @@ asking readers to infer maturity from prose.
 - `core/brain/llm/sensorimotor_grounding.py` maps camera/screen/audio
   observations into the substrate input vector, so live sensor events perturb
   the ODE directly instead of arriving only as text/tool summaries.
-- `core/consciousness/phi_core.py` (1,837 lines) implements real IIT-style
+- `core/consciousness/phi_core.py` (2,114 lines) implements real IIT-style
   integration math: binarization, empirical TPM, KL-divergence φ, exclusion
   postulate, polynomial-time spectral partitioning, with an exhaustive
   8-bipartition validation baseline.
 - `core/consciousness/hierarchical_phi.py` implements the 32-node hierarchical
   φ with K=8 overlapping subsystems and Bayesian-smoothed estimation.
-- `core/consciousness/affective_steering.py` (1,336 lines) is a real CAA
+- `core/consciousness/affective_steering.py` (2,258 lines) is a real CAA
   injection pipeline that hooks MLX transformer blocks and modifies the
   residual stream at generation time.
 - `training/caa_32b_validation.py` validates production-model CAA artifacts:
@@ -361,7 +361,7 @@ decision the agent can make. Volition levels 0–3 gate progressively autonomous
 behavior up to and including self-modification.
 
 ### Skills (`core/skills/`, legacy wrappers in `skills/`)
-39 modules: shell with sandboxing, web search and browse, coding, sleep and
+Roughly 90 modules: shell with sandboxing, web search and browse, coding, sleep and
 dream consolidation, local media generation, social media (Twitter, Reddit),
 screen capture, filesystem, browser automation, network recon, malware
 analysis, self-evolution and self-repair, inter-agent messaging, knowledge
@@ -371,10 +371,10 @@ legacy compatibility layer for older imports. Every skill call carries a
 capability token and has to pass the Will gate.
 
 ### Orchestrator (`core/orchestrator/`)
-About 2,200 lines in `main.py` split across 12 mixins: message handling,
-incoming logic, response processing, tool execution, autonomy, cognitive
-background, context streaming, learning and evolution, personality bridge,
-output formatting, boot sequencing. Handlers under `orchestrator/handlers/`
+About 3,240 lines in `main.py` split across 11 mixins: message handling,
+message pipeline, incoming logic, response processing, tool execution,
+autonomy, cognitive background, context streaming, learning and evolution,
+personality bridge, output formatting. Handlers under `orchestrator/handlers/`
 dispatch by message type. This is the glue between the tick pipeline, the
 LLM router, and the consciousness stack.
 
