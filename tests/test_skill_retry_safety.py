@@ -78,3 +78,17 @@ def test_send_skills_are_marked_retry_unsafe():
 
 def test_base_default_is_retry_safe():
     assert BaseSkill.retry_safe is True
+
+
+def test_infer_ok_flag_honors_success_key():
+    """A skill reporting {'success': False} must not be marked ok=True."""
+    from core.skills.base_skill import _infer_ok_flag
+
+    assert _infer_ok_flag({"success": False, "message": "corpus empty"}) is False
+    assert _infer_ok_flag({"success": True, "results": [1]}) is True
+    # explicit ok still wins; error/failed/status still honored
+    assert _infer_ok_flag({"ok": True, "success": False}) is True
+    assert _infer_ok_flag({"error": "boom"}) is False
+    assert _infer_ok_flag({"status": "failed"}) is False
+    # a plain successful payload stays ok
+    assert _infer_ok_flag({"results": [1, 2, 3]}) is True

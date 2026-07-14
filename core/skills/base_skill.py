@@ -58,6 +58,11 @@ def _infer_ok_flag(result: dict[str, Any]) -> bool:
         return False
     if result.get("failed") is True:
         return False
+    # A skill that reports its own outcome with a 'success' key (11 skills do)
+    # was being marked ok=True on {"success": False} — a dishonest success
+    # (e.g. local_reference returning "corpus empty" as a successful lookup).
+    if result.get("success") is False:
+        return False
     if str(result.get("status", "")).lower() in {"blocked", "error", "failed"}:
         return False
     return True
