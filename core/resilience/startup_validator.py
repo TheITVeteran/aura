@@ -78,7 +78,6 @@ class StartupValidator:
 
         # Calculate results
         failed_critical = [c for c in self.checks if not c.passed and c.critical]
-        failed_optional = [c for c in self.checks if not c.passed and not c.critical]
 
         self.print_report()
 
@@ -201,28 +200,32 @@ class StartupValidator:
         if not repo:
             c.passed = False; c.message = "State repository missing from container."; return
 
-        # Resilience: Try to get state. If proxy, it'll check SHM.
-        # Added retry loop to wait for SHM propagation from Vault Actor during boot.
-        state = None
-        for attempt in range(10): # 5 seconds total
-            state = await repo.get_current()
-            if state:
+        # Read the repository once, then accept the already-authoritative kernel
+        # or repository state immediately. The former loop slept for five seconds
+        # before consulting that fallback on every healthy desktop boot.
+        state = await repo.get_current()
+        ki = getattr(self.orchestrator, "kernel_interface", None)
+        kernel_state = getattr(getattr(ki, "kernel", None), "state", None) if ki else None
+        fallback_state = kernel_state or getattr(repo, "_current", None)
+        state_source = "repository"
+        if state is None and fallback_state is not None:
+            state = fallback_state
+            state_source = "authoritative fallback"
+
+        # A genuinely empty boot may still be waiting for the vault actor's SHM
+        # handoff. Keep that bounded retry only when no authoritative state exists.
+        for _attempt in range(9):
+            if state is not None:
                 break
             await asyncio.sleep(0.5)
+            state = await repo.get_current()
 
         if state:
             c.passed = True
-            c.message = f"State bound (v{state.version})."
+            c.message = f"State bound via {state_source} (v{state.version})."
         else:
-            ki = getattr(self.orchestrator, "kernel_interface", None)
-            kernel_state = getattr(getattr(ki, "kernel", None), "state", None) if ki else None
-            fallback_state = kernel_state or getattr(repo, "_current", None)
-            if fallback_state is not None:
-                c.passed = True
-                c.message = f"State bound via authoritative fallback (v{fallback_state.version})."
-            else:
-                c.passed = False
-                c.message = "State repository unreachable or empty (SHM sync failed)."
+            c.passed = False
+            c.message = "State repository unreachable or empty (SHM sync failed)."
 
     async def _check_sys_01(self, c: ValidationCheck):
         try:

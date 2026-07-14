@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -452,6 +453,103 @@ def test_observability_readiness_uses_runtime_health_contract():
     assert result["status"] == "not_ready"
     assert any(issue.startswith("runtime_contract:") for issue in result["issues"])
     assert any(issue.startswith("required_probes:") for issue in result["issues"])
+
+
+def test_observability_readiness_uses_mind_tick_not_metabolic_pulse(monkeypatch):
+    import time
+
+    from core.observability import metrics as metrics_module
+
+    collector = metrics_module.MetricsCollector()
+    collector._boot_time = time.time() - 300.0
+    collector._tick_count = 5
+    collector._last_tick_time = time.time() - 45.0
+    monkeypatch.setattr(metrics_module, "_metrics_instance", collector)
+    ServiceContainer.register_instance(
+        "mind_tick",
+        SimpleNamespace(
+            get_health_status=lambda: {
+                "healthy": True,
+                "tick_count": 150,
+                "last_successful_tick_at": time.time() - 1.0,
+                "last_loop_progress_at": time.time() - 0.5,
+                "active_tick_stage": "idle",
+            },
+            is_alive=lambda: True,
+        ),
+    )
+    monkeypatch.setattr(
+        "core.runtime.health_contract.runtime_health_report",
+        lambda: {
+            "status": "healthy",
+            "operational": True,
+            "required_probes": {
+                group: {
+                    "ok": True,
+                    "components": {component: True for component in components},
+                }
+                for group, components in REQUIRED_HEALTH_PROBE_GROUPS.items()
+            }
+            | {"all_passed": True},
+        },
+    )
+
+    result = metrics_module.check_readiness()
+
+    assert result["ready"] is True
+    assert result["tick_source"] == "mind_tick"
+    assert result["tick_count"] == 150
+    assert result["tick_age_s"] < 2.0
+    assert result["metabolic_tick_count"] == 5
+    assert result["metabolic_tick_age_s"] >= 45.0
+    assert not any("last_tick_stale" in issue for issue in result["issues"])
+
+
+def test_runtime_health_report_attributes_probe_and_total_latency(monkeypatch):
+    from core.runtime import health_contract
+
+    requirement = health_contract.RUNTIME_CONTRACT[0]
+    service = SimpleNamespace()
+
+    def liveness():
+        time.sleep(0.01)
+        return True
+
+    setattr(service, str(requirement.liveness_check), liveness)
+    monkeypatch.setattr(health_contract, "RUNTIME_CONTRACT", [requirement])
+    monkeypatch.setattr(
+        health_contract,
+        "get_runtime_service",
+        lambda key, default=None: service if key == requirement.container_key else default,
+    )
+    monkeypatch.setattr(
+        health_contract,
+        "_unified_memory_pressure_status",
+        lambda: health_contract.ServiceStatus(
+            health_contract.UNIFIED_MEMORY_PRESSURE_REQUIREMENT,
+            True,
+            True,
+        ),
+    )
+    monkeypatch.setattr(
+        health_contract,
+        "_runtime_pressure_status",
+        lambda: health_contract.ServiceStatus(
+            health_contract.UNIFIED_RUNTIME_PRESSURE_REQUIREMENT,
+            True,
+            True,
+        ),
+    )
+
+    report = health_contract.evaluate_health().to_report()
+    measured = next(
+        item
+        for item in report["services"]
+        if item["container_key"] == requirement.container_key
+    )
+
+    assert measured["duration_ms"] >= 8.0
+    assert report["evaluation_duration_ms"] >= measured["duration_ms"]
 
 
 def test_runtime_contract_rejects_deferred_inference_as_healthy():

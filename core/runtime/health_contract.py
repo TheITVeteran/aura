@@ -448,6 +448,7 @@ class ServiceStatus:
     present: bool
     liveness_ok: bool | None = None  # None = no liveness check defined
     error: str | None = None
+    duration_ms: float = 0.0
 
 
 @dataclass
@@ -457,6 +458,7 @@ class HealthVerdict:
     level: HealthLevel
     services: list[ServiceStatus]
     timestamp: float = field(default_factory=time.time)
+    evaluation_duration_ms: float = 0.0
 
     @property
     def is_operational(self) -> bool:
@@ -535,6 +537,7 @@ class HealthVerdict:
             "operational": operational,
             "status_code": 200 if operational else 503,
             "timestamp_unix": self.timestamp,
+            "evaluation_duration_ms": self.evaluation_duration_ms,
             "required_probes": required_probes,
             "probe_blockers": probe_blockers,
             "tier_summary": tier_summary,
@@ -660,6 +663,7 @@ def _service_status_payload(status: ServiceStatus) -> dict[str, Any]:
         "liveness": liveness,
         "liveness_check": requirement.liveness_check,
         "error": status.error,
+        "duration_ms": status.duration_ms,
     }
 
 
@@ -972,9 +976,11 @@ def evaluate_health() -> HealthVerdict:
 
     This is safe to call from any context — it never throws.
     """
+    evaluation_started = time.perf_counter()
     statuses: list[ServiceStatus] = []
 
     for req in RUNTIME_CONTRACT:
+        probe_started = time.perf_counter()
         try:
             svc = get_runtime_service(req.container_key, default=None)
             present = svc is not None
@@ -1005,6 +1011,10 @@ def evaluate_health() -> HealthVerdict:
                     present=present,
                     liveness_ok=liveness_ok,
                     error=error,
+                    duration_ms=round(
+                        (time.perf_counter() - probe_started) * 1000.0,
+                        3,
+                    ),
                 )
             )
         except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
@@ -1014,6 +1024,10 @@ def evaluate_health() -> HealthVerdict:
                     present=False,
                     liveness_ok=False,
                     error=str(exc),
+                    duration_ms=round(
+                        (time.perf_counter() - probe_started) * 1000.0,
+                        3,
+                    ),
                 )
             )
 
@@ -1045,7 +1059,14 @@ def evaluate_health() -> HealthVerdict:
     else:
         level = HealthLevel.DEAD
 
-    return HealthVerdict(level=level, services=statuses)
+    return HealthVerdict(
+        level=level,
+        services=statuses,
+        evaluation_duration_ms=round(
+            (time.perf_counter() - evaluation_started) * 1000.0,
+            3,
+        ),
+    )
 
 
 def runtime_health_report() -> dict[str, Any]:

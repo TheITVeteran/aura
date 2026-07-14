@@ -1054,6 +1054,48 @@ class TestEternalMemoryCaching(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(summary, phase._summary_cache)
 
+    async def test_eternal_memory_refresh_is_nonblocking_and_singleflight(self):
+        from core.kernel.upgrades_10x import EternalMemoryPhase
+
+        phase = EternalMemoryPhase(_CallRecorder())
+        phase._background_llm_should_defer = lambda: False
+        phase._load_eternal_slice = lambda limit: [{"summary": "retained"}]
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        calls = 0
+
+        async def slow_summary(history):
+            nonlocal calls
+            calls += 1
+            entered.set()
+            await release.wait()
+            return [{"role": "system", "content": "[ETERNAL MEMORY]\nretained"}]
+
+        phase._generate_eternal_summary = slow_summary
+
+        started = time.perf_counter()
+        initial = await phase._get_cached_or_refresh_summary()
+        elapsed = time.perf_counter() - started
+
+        self.assertEqual(initial, [])
+        self.assertLess(elapsed, 0.05)
+        await asyncio.wait_for(entered.wait(), timeout=1.0)
+        first_task = phase._summary_refresh_task
+        self.assertIsNotNone(first_task)
+
+        duplicate = await phase._get_cached_or_refresh_summary()
+        self.assertEqual(duplicate, [])
+        self.assertIs(phase._summary_refresh_task, first_task)
+        self.assertEqual(calls, 1)
+
+        release.set()
+        await asyncio.wait_for(first_task, timeout=1.0)
+        self.assertIsNone(phase._summary_refresh_task)
+        self.assertEqual(
+            await phase._get_cached_or_refresh_summary(),
+            [{"role": "system", "content": "[ETERNAL MEMORY]\nretained"}],
+        )
+
 
 class TestNativeMultimodalBridgeGuards(unittest.IsolatedAsyncioTestCase):
     async def test_native_multimodal_bridge_skips_disabled_vision_without_name_error(self):

@@ -444,25 +444,61 @@ def check_readiness() -> Dict[str, Any]:
     """Readiness probe: can Aura accept and process requests?
 
     Checks:
-    1. Last tick completed < 30s ago (or no ticks yet within 60s of boot)
+    1. The canonical MindTick service is alive and making supervised progress
     2. Substrate state is finite (no NaN/Inf)
     3. Database is accessible
+    4. The canonical runtime health contract is operational
     """
     metrics = get_metrics()
     issues: list[str] = []
     ready = True
 
-    # Check tick recency
     now = time.time()
     age_since_boot = now - metrics._boot_time
-    if metrics._last_tick_time > 0:
-        tick_age = now - metrics._last_tick_time
-        if tick_age > 30.0:
-            issues.append(f"last_tick_stale: {tick_age:.1f}s ago")
-            ready = False
-    elif age_since_boot > 120.0:
-        issues.append("no_ticks_completed_after_120s")
+    tick_count = 0
+    tick_age_s: float | None = None
+    tick_source = "mind_tick"
+    try:
+        from core.runtime.service_registry import get_runtime_service
+
+        mind_tick = get_runtime_service("mind_tick", default=None)
+        if mind_tick is None:
+            if age_since_boot > 120.0:
+                issues.append("mind_tick_unavailable_after_120s")
+                ready = False
+        else:
+            status_getter = getattr(mind_tick, "get_health_status", None)
+            status = status_getter() if callable(status_getter) else {}
+            if not isinstance(status, dict):
+                status = {}
+            alive = status.get("healthy")
+            if alive is not True:
+                is_alive = getattr(mind_tick, "is_alive", None)
+                alive = is_alive() if callable(is_alive) else False
+            tick_count = int(
+                status.get("tick_count", getattr(mind_tick, "_tick_count", 0)) or 0
+            )
+            freshest_progress = max(
+                float(status.get("last_successful_tick_at", 0.0) or 0.0),
+                float(status.get("last_loop_progress_at", 0.0) or 0.0),
+            )
+            if freshest_progress > 0.0:
+                tick_age_s = max(0.0, now - freshest_progress)
+            if alive is not True:
+                stage = str(status.get("active_tick_stage", "unknown") or "unknown")
+                issues.append(f"mind_tick_unhealthy: stage={stage}")
+                ready = False
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        issues.append(f"mind_tick_probe_unavailable: {type(exc).__name__}")
         ready = False
+
+    # ``record_tick`` is currently emitted by the 60-second metabolic pulse.
+    # Preserve it as telemetry, but never use a 30-second freshness threshold
+    # against that slower scheduler and call the result cognitive readiness.
+    metabolic_tick_count = metrics._tick_count
+    metabolic_tick_age_s = None
+    if metrics._last_tick_time > 0:
+        metabolic_tick_age_s = max(0.0, now - metrics._last_tick_time)
 
     # Check substrate
     try:
@@ -524,5 +560,13 @@ def check_readiness() -> Dict[str, Any]:
         "ready": ready,
         "issues": issues,
         "uptime_s": round(age_since_boot, 1),
-        "tick_count": metrics._tick_count,
+        "tick_source": tick_source,
+        "tick_count": tick_count,
+        "tick_age_s": round(tick_age_s, 3) if tick_age_s is not None else None,
+        "metabolic_tick_count": metabolic_tick_count,
+        "metabolic_tick_age_s": (
+            round(metabolic_tick_age_s, 3)
+            if metabolic_tick_age_s is not None
+            else None
+        ),
     }

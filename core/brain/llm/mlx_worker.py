@@ -3032,7 +3032,7 @@ def _mlx_worker_loop(
                             # drafting again for a user who has stopped waiting.
                             surface_retry_started = time.monotonic()
                             surface_retry_wall_s = _safe_float(
-                                os.getenv("AURA_SURFACE_RETRY_WALL_S", "75"), 75.0
+                                os.getenv("AURA_SURFACE_RETRY_WALL_S", "20"), 20.0
                             )
 
                             for internal_attempt in range(max_internal_retries + 1):

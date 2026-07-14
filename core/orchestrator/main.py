@@ -2990,6 +2990,7 @@ class RobustOrchestrator(
 
     def health_check(self) -> bool:
         """Perform the orchestrator health check using the canonical runtime contract."""
+        health_started = time.monotonic()
         status = getattr(self, "status", None)
         if status is None:
             return False
@@ -3029,6 +3030,7 @@ class RobustOrchestrator(
             )
 
             contract = runtime_health_report()
+            self._last_runtime_health_report = dict(contract)
             self._last_runtime_health_phase = str(contract.get("status") or "unknown")
             contract_ready = (
                 contract.get("healthy") is True
@@ -3056,6 +3058,11 @@ class RobustOrchestrator(
         # All checks must explicitly succeed. Malformed truthy values do not
         # count as healthy because this value gates live desktop readiness.
         healthy = all(result is True for _name, result in checks)
+        self._last_health_check_monotonic = time.monotonic()
+        self._last_health_check_duration_ms = round(
+            (self._last_health_check_monotonic - health_started) * 1000.0,
+            3,
+        )
         if not healthy and not str(getattr(self, "_last_health_reason", "") or ""):
             failed_checks = [name for name, result in checks if result is not True]
             self._last_health_reason = "failed checks: " + ",".join(failed_checks)
@@ -3064,6 +3071,7 @@ class RobustOrchestrator(
         try:
             status.healthy = healthy
         except _ORCHESTRATOR_RECOVERABLE_ERRORS as exc:
+            self._last_health_check_result = False
             _record_main_degradation(
                 exc,
                 action="failed to persist orchestrator health status after contract evaluation",
@@ -3071,6 +3079,7 @@ class RobustOrchestrator(
             )
             return False
 
+        self._last_health_check_result = healthy
         return healthy
 
     async def _setup_event_listeners(self):

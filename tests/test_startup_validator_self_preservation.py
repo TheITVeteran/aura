@@ -1,3 +1,4 @@
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -43,6 +44,38 @@ async def test_startup_validator_accepts_safe_backup_when_legacy_files_absent(tm
 
     assert check.passed is True
     assert check.message == "Unsafe self-preservation path removed; safe backup active."
+
+
+@pytest.mark.asyncio
+async def test_state_validation_uses_authoritative_kernel_fallback_without_sleep():
+    from core.container import ServiceContainer
+    from core.resilience.startup_validator import StartupValidator, ValidationCheck
+
+    calls = 0
+
+    class Repository:
+        _current = None
+
+        async def get_current(self):
+            nonlocal calls
+            calls += 1
+            return None
+
+    state = SimpleNamespace(version=17)
+    orchestrator = SimpleNamespace(
+        kernel_interface=SimpleNamespace(kernel=SimpleNamespace(state=state))
+    )
+    ServiceContainer.register_instance("state_repository", Repository())
+    check = ValidationCheck("core_03", "State Repository Bound", "", True)
+
+    started = time.perf_counter()
+    await StartupValidator(orchestrator)._check_core_03(check)
+    elapsed = time.perf_counter() - started
+
+    assert check.passed is True
+    assert check.message == "State bound via authoritative fallback (v17)."
+    assert calls == 1
+    assert elapsed < 0.05
 
 
 @pytest.mark.asyncio

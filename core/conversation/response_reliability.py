@@ -2275,14 +2275,21 @@ def _explicit_brevity_requested(user_message: Any) -> bool:
 
     number = r"(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+)"
     count = rf"{number}(?:\s+or\s+{number})?"
-    word_or_sentence_limit = rf"\b(?:in|with|using|exactly|only)\s+{count}\s+(?:words?|sentences?)\b"
+    length_modifier = r"(?:(?:short|brief|concise)\s+)?"
+    word_or_sentence_limit = (
+        rf"\b(?:in|with|using|exactly|only)\s+{count}\s+"
+        rf"{length_modifier}(?:words?|sentences?)\b"
+    )
     action_word_limit = (
         rf"\b(?:answer|respond|reply|say|output)\s+"
-        rf"(?:directly\s+)?(?:in\s+)?(?:exactly\s+)?{count}\s+(?:words?|sentences?)\b"
+        rf"(?:directly\s+)?(?:in\s+)?(?:exactly\s+)?{count}\s+"
+        rf"{length_modifier}(?:words?|sentences?)\b"
     )
     direct_brevity = (
-        r"\b(?:briefly|be brief|be concise|concise answer|short answer|answer directly|"
-        r"reply directly|respond directly|include nothing else|nothing else)\b"
+        r"\b(?:briefly|be brief|be concise|keep (?:it|this) (?:brief|concise|short)|"
+        r"concise (?:answer|reply|response|sentence)|short (?:answer|reply|response|sentence)|"
+        r"in (?:a|one) (?:brief|concise|short) sentence|answer directly|reply directly|"
+        r"respond directly|include nothing else|nothing else)\b"
     )
     return bool(
         re.search(word_or_sentence_limit, text)

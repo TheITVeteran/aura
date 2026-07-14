@@ -1,6 +1,7 @@
 import asyncio
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -184,6 +185,28 @@ def test_runtime_manifest_unready_refresh_logs_on_change_not_every_poll(monkeypa
         if "Runtime health still not clean before manifest" in record.getMessage()
     ]
     assert len(unready_warnings) == 1
+
+
+def test_runtime_manifest_reuses_fresh_successful_health_receipt(monkeypatch):
+    import aura_main
+
+    class Orchestrator:
+        status = SimpleNamespace(initialized=True, running=True)
+        _last_health_check_result = True
+        _last_health_check_monotonic = time.monotonic()
+
+        @staticmethod
+        def health_check():
+            raise AssertionError("fresh boot health must not be recomputed")
+
+    result = aura_main._refresh_orchestrator_health_before_manifest(
+        Orchestrator(),
+        "Desktop",
+    )
+
+    assert result["ready"] is True
+    assert result["source"] == "fresh_orchestrator_health_receipt"
+    assert result["receipt_age_s"] < 0.05
 
 
 def test_runtime_manifest_records_pre_ready_boot_contract_snapshot(tmp_path):

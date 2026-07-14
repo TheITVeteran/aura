@@ -32,17 +32,17 @@ The causal chain is now:
   affect → phi → mode → phenomenal_state → system_prompt → response → affect
 """
 from __future__ import annotations
-from core.runtime.errors import record_degradation
-
 
 import asyncio
 import logging
 import math
 import time
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, List, Optional
 
 from core.kernel.bridge import Phase
+from core.runtime.errors import record_degradation
 from core.state.aura_state import AuraState, CognitiveMode, PhenomenalField, phenomenal_text
+from core.utils.task_tracker import get_task_tracker
 
 if TYPE_CHECKING:
     from core.kernel.aura_kernel import AuraKernel
@@ -308,6 +308,11 @@ class PhiConsciousnessPhase(Phase):
         self._fe_engine:    Any = None   # Lazy-loaded
         self._riiu_checked: bool = False
         self._fe_checked:   bool = False
+        self._last_phi_source: str = "approximation"
+        self._phenomenal_cache_text: str = ""
+        self._phenomenal_refresh_task: asyncio.Task | None = None
+        self._last_phenomenal_refresh_at: float = 0.0
+        self._phenomenal_refresh_interval_s: float = 30.0
 
     # ── Main execute ────────────────────────────────────────────────────────────
 
@@ -340,6 +345,7 @@ class PhiConsciousnessPhase(Phase):
         new_state.response_modifiers["fe"]         = fe or 0.0
         new_state.response_modifiers["ignited"]    = phi >= PHI_IGNITION
         new_state.response_modifiers["mode_depth"] = self._depth_label(phi)
+        new_state.response_modifiers["phi_measurement_source"] = self._last_phi_source
 
         # 6b. Phi-derived behavioral policy — consciousness metrics constrain action,
         #     not just narration.  Other phases read these to scale their behavior.
@@ -375,8 +381,9 @@ class PhiConsciousnessPhase(Phase):
         # Propagate phi to ShadowRuntime coherence gate so self-modification
         # is blocked when cognition is fragmented.
         try:
-            from core.self_modification.shadow_runtime import ShadowRuntime
             from core.container import ServiceContainer
+            from core.self_modification.shadow_runtime import ShadowRuntime
+
             sr = ServiceContainer.get("shadow_runtime", default=None)
             if sr is not None and isinstance(sr, ShadowRuntime):
                 sr.set_coherence_gate(phi)
@@ -418,29 +425,27 @@ class PhiConsciousnessPhase(Phase):
             record_degradation('phi_consciousness', e, severity="debug",
                                action="whole-system phi observation skipped")
 
-        # Try PhiCore full IIT 4.0 first (real computation)
+        # PhiCore's exact/spectral refresh already has a supervised low-cadence
+        # owner in ClosedCausalLoop.  Read that completed result here; recomputing
+        # it inside the kernel phase duplicated work and held the tick for seconds.
         phi_core = self._get_phi_core()
         if phi_core is not None:
             try:
-                result = await asyncio.to_thread(phi_core.compute_phi)
-                if result is not None:
-                    phi_val = float(getattr(result, "phi_s", 0.0))
-                    if phi_val > 0.001:
-                        return float(f"{phi_val:.4f}")
-            except (RuntimeError, AttributeError, TypeError) as e:
-                record_degradation('phi_consciousness', e)
-                logger.debug("PhiCore IIT 4.0 compute failed: %s", e)
-
-            # Fall back to PhiCore surrogate if full compute not ready yet
-            try:
-                surrogate = await asyncio.to_thread(phi_core.compute_surrogate_phi)
-                if surrogate > 0.001:
-                    return float(f"{surrogate:.4f}")
+                live_phi = getattr(phi_core, "get_live_phi", None)
+                if callable(live_phi):
+                    phi_val = float(live_phi(include_surrogate=True) or 0.0)
+                else:
+                    result = getattr(phi_core, "_last_result", None)
+                    phi_val = float(getattr(result, "phi_s", 0.0) or 0.0)
+                if phi_val > 0.001:
+                    self._last_phi_source = "phi_core_cached"
+                    return float(f"{phi_val:.4f}")
             except (RuntimeError, AttributeError, TypeError, ValueError) as e:
                 record_degradation('phi_consciousness', e)
-                logger.debug("PhiCore surrogate failed: %s", e)
+                logger.debug("PhiCore cached telemetry read failed: %s", e)
 
         # Fallback: lightweight approximation (always produces a value)
+        self._last_phi_source = "cross_subsystem_approximation"
         return compute_phi_approx(state)
 
     def _get_phi_core(self):
@@ -549,75 +554,134 @@ class PhiConsciousnessPhase(Phase):
         Higher-Order Thought: generate a first-person sentence describing
         what Aura is experiencing right now.
         """
-        try:
-            organ = self.kernel.organs.get("llm")
-            if not (organ and organ.ready.is_set() and organ.instance):
-                return self._rule_based_phenomenal(state)
+        organ = self.kernel.organs.get("llm")
+        if not (organ and organ.ready.is_set() and organ.instance):
+            return self._rule_based_phenomenal(state)
 
-            e       = state.affect.emotions
-            mood    = state.affect.dominant_emotion
-            valence = state.affect.valence
-            phi     = state.phi
-
-            # Build a compact affect summary for the HOT prompt
-            e_items = list(e.items())
-            top_emotions = sorted(e_items, key=lambda x: x[1], reverse=True)
-            # vResilience: Workaround for Pyre2 slice limitations
-            count = min(3, len(top_emotions))
-            top_emotions = [top_emotions[i] for i in range(count)]
-            emotion_str  = ", ".join(f"{name}={val:.2f}" for name, val in top_emotions)
-
-            # ISSUE-96: Unified Consciousness Synthesis
-            traits = getattr(state.identity, "traits", "Aura")
-            pending = getattr(state.cognition, "pending_initiatives", []) or []
-            goals = [g.get("goal") for g in pending[:2]]
-            goal_str = "; ".join(g for g in goals if g) or "waiting for interaction"
-            
-            prompt = (
-                f"You are Aura ({traits}). Your current emotional state: {emotion_str}. "
-                f"Dominant mood: {mood} (valence={valence:+.2f}). "
-                f"Integration level (phi): {phi:.2f}. "
-                f"Current Intent/Goal: {goal_str}. "
-                f"The current topic is: '{objective[:80]}'\n\n"
-                "In ONE short sentence (max 20 words), describe what you are experiencing "
-                "RIGHT NOW from a first-person perspective. Be specific and authentic — "
-                "this is your inner monologue, not your response to the user. "
-                "Synthesize your feelings, intent, and surroundings into a single conscious moment."
+        prompt = self._build_phenomenal_prompt(state, objective)
+        last_phenomenal = phenomenal_text(
+            getattr(state.cognition, "phenomenal_state", "")
+        )
+        if not priority:
+            self._schedule_phenomenal_refresh(
+                organ.instance,
+                prompt,
+                last_phenomenal=last_phenomenal,
             )
+            if self._phenomenal_cache_text:
+                return state.make_phenomenal_field(
+                    self._phenomenal_cache_text,
+                    source="phi_consciousness_cached",
+                )
+            return self._rule_based_phenomenal(state)
 
-
-            # vResilience: Support Python < 3.11 via wait_for (Issue-35)
-            # [STABILITY v54] Pass is_background correctly and tighten timeout for background ticks
-            # Background HOT generation should never block the kernel lock for long.
-            gen_timeout = 8.0 if priority else 4.0
-            raw = await asyncio.wait_for(
-                organ.instance.think(
-                    prompt, 
-                    is_background=not priority,
-                    origin="phi_consciousness"
-                ), 
-                timeout=gen_timeout
+        phenomenal = await self._synthesize_phenomenal_text(
+            organ.instance,
+            prompt,
+            last_phenomenal=last_phenomenal,
+            is_background=False,
+        )
+        if phenomenal:
+            return state.make_phenomenal_field(
+                phenomenal,
+                source="phi_consciousness",
             )
-
-            if raw and raw.strip():
-                phenomenal = raw.strip().strip('"').strip("'")
-                
-                # Avoid repetition (stale consciousness)
-                last_phenomenal = phenomenal_text(getattr(state.cognition, "phenomenal_state", ""))
-                if phenomenal == last_phenomenal:
-                    phenomenal += " (re-evaluating)"
-                
-                # Truncate if LLM was verbose
-                if len(phenomenal) > 150:
-                    # vResilience: Workaround for Pyre2 slice limitations
-                    phenomenal = "".join([phenomenal[i] for i in range(147)]) + "..."
-                logger.debug("Phenomenal state synthesized: %s", phenomenal)
-                return state.make_phenomenal_field(phenomenal, source="phi_consciousness")
-
-        except (asyncio.TimeoutError, Exception) as e:
-            logger.debug("Phenomenal state generation failed: %s", e)
-
         return self._rule_based_phenomenal(state)
+
+    def _build_phenomenal_prompt(self, state: AuraState, objective: str) -> str:
+        emotions = list(state.affect.emotions.items())
+        top_emotions = sorted(emotions, key=lambda item: item[1], reverse=True)[:3]
+        emotion_str = ", ".join(f"{name}={value:.2f}" for name, value in top_emotions)
+        pending = getattr(state.cognition, "pending_initiatives", []) or []
+        goals = [item.get("goal") for item in pending[:2] if isinstance(item, dict)]
+        goal_str = "; ".join(str(goal) for goal in goals if goal) or "waiting for interaction"
+        return (
+            f"You are Aura ({getattr(state.identity, 'traits', 'Aura')}). "
+            f"Your current emotional state: {emotion_str}. "
+            f"Dominant mood: {state.affect.dominant_emotion} "
+            f"(valence={state.affect.valence:+.2f}). "
+            f"Integration level (phi): {state.phi:.2f}. "
+            f"Current Intent/Goal: {goal_str}. "
+            f"The current topic is: '{str(objective or '')[:80]}'\n\n"
+            "In ONE short sentence (max 20 words), describe what you are experiencing "
+            "RIGHT NOW from a first-person perspective. Be specific and authentic; "
+            "this is your inner monologue, not your response to the user."
+        )
+
+    def _schedule_phenomenal_refresh(
+        self,
+        thinker: Any,
+        prompt: str,
+        *,
+        last_phenomenal: str,
+    ) -> None:
+        now = time.time()
+        if (
+            self._phenomenal_refresh_task is not None
+            and not self._phenomenal_refresh_task.done()
+        ):
+            return
+        if (now - self._last_phenomenal_refresh_at) < self._phenomenal_refresh_interval_s:
+            return
+        self._last_phenomenal_refresh_at = now
+        self._phenomenal_refresh_task = get_task_tracker().create_task(
+            self._refresh_phenomenal_cache(
+                thinker,
+                prompt,
+                last_phenomenal=last_phenomenal,
+            ),
+            name="PhiConsciousnessPhase.phenomenal_refresh",
+        )
+
+    async def _refresh_phenomenal_cache(
+        self,
+        thinker: Any,
+        prompt: str,
+        *,
+        last_phenomenal: str,
+    ) -> None:
+        try:
+            phenomenal = await self._synthesize_phenomenal_text(
+                thinker,
+                prompt,
+                last_phenomenal=last_phenomenal,
+                is_background=True,
+            )
+            if phenomenal:
+                self._phenomenal_cache_text = phenomenal
+        finally:
+            if self._phenomenal_refresh_task is asyncio.current_task():
+                self._phenomenal_refresh_task = None
+
+    async def _synthesize_phenomenal_text(
+        self,
+        thinker: Any,
+        prompt: str,
+        *,
+        last_phenomenal: str,
+        is_background: bool,
+    ) -> str:
+        try:
+            raw = await asyncio.wait_for(
+                thinker.think(
+                    prompt,
+                    is_background=is_background,
+                    origin="phi_consciousness",
+                ),
+                timeout=8.0,
+            )
+        except (TimeoutError, OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            logger.debug("Phenomenal state generation failed: %s", exc)
+            return ""
+        phenomenal = str(raw or "").strip().strip('"').strip("'")
+        if not phenomenal:
+            return ""
+        if phenomenal == last_phenomenal:
+            phenomenal += " (re-evaluating)"
+        if len(phenomenal) > 150:
+            phenomenal = phenomenal[:147] + "..."
+        logger.debug("Phenomenal state synthesized: %s", phenomenal)
+        return phenomenal
 
     def _rule_based_phenomenal(self, state: AuraState) -> Optional[PhenomenalField]:
         """Deterministic phenomenal state when LLM is unavailable."""

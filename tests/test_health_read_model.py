@@ -317,6 +317,108 @@ async def test_api_health_returns_initial_snapshot_while_collector_is_blocked(mo
     release.set()
 
 
+@pytest.mark.asyncio
+async def test_readyz_uses_cached_canonical_readiness_without_inline_probe(monkeypatch):
+    from core.runtime.health_contract import REQUIRED_HEALTH_PROBE_GROUPS
+    from interface.routes import system as system_routes
+
+    required_probes = {
+        group: {
+            "ok": True,
+            "components": {component: True for component in components},
+        }
+        for group, components in REQUIRED_HEALTH_PROBE_GROUPS.items()
+    }
+    required_probes["all_passed"] = True
+    payload = {
+        "status": "ok",
+        "healthy": True,
+        "uptime": 321.5,
+        "blockers": [],
+        "required_probes": required_probes,
+        "readiness_contract": {
+            "healthy": True,
+            "system_ready": True,
+            "conversation_ready": True,
+            "runtime_probe_healthy": True,
+            "required_probes": required_probes,
+            "blockers": [],
+        },
+        "health_read_model": {
+            "expired": False,
+            "snapshot_generation": 9,
+            "age_s": 1.25,
+            "serving": "fresh",
+        },
+    }
+
+    class ReadModel:
+        def read(self):
+            return payload
+
+    monkeypatch.setattr(system_routes, "_HEALTH_READ_MODEL", ReadModel())
+    monkeypatch.setattr(system_routes, "is_shutdown_requested", lambda: False)
+    monkeypatch.setattr(
+        system_routes,
+        "_shutdown_health_status",
+        lambda: {"running": False, "request": {"requested": False}},
+    )
+
+    started = time.monotonic()
+    response = await system_routes.readyz(SimpleNamespace(headers={}))
+    elapsed = time.monotonic() - started
+    result = json.loads(response.body)
+
+    assert elapsed < 0.05
+    assert response.status_code == 200
+    assert result == {
+        "status": "ready",
+        "ready": True,
+        "issues": [],
+        "uptime_s": 321.5,
+        "conversation_ready": True,
+        "runtime_probe_healthy": True,
+        "required_probes_passed": True,
+        "snapshot_generation": 9,
+        "snapshot_age_s": 1.25,
+        "serving": "fresh",
+    }
+
+
+@pytest.mark.asyncio
+async def test_readyz_fails_closed_when_health_snapshot_is_expired(monkeypatch):
+    from interface.routes import system as system_routes
+
+    payload = system_routes._health_snapshot_fallback()
+    payload["health_read_model"] = {
+        "expired": True,
+        "captured_at_unix": 1.0,
+        "snapshot_generation": 3,
+        "age_s": 31.0,
+        "serving": "expired",
+    }
+
+    class ReadModel:
+        def read(self):
+            return payload
+
+    monkeypatch.setattr(system_routes, "_HEALTH_READ_MODEL", ReadModel())
+    monkeypatch.setattr(system_routes, "is_shutdown_requested", lambda: False)
+    monkeypatch.setattr(
+        system_routes,
+        "_shutdown_health_status",
+        lambda: {"running": False, "request": {"requested": False}},
+    )
+
+    response = await system_routes.readyz(SimpleNamespace(headers={}))
+    result = json.loads(response.body)
+
+    assert response.status_code == 503
+    assert result["ready"] is False
+    assert result["issues"][0] == "health_snapshot_expired"
+    assert result["serving"] == "expired"
+
+
 def test_public_health_route_applies_shutdown_truth_to_cached_success(monkeypatch):
     from interface.routes import system as system_routes
 

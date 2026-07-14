@@ -3142,13 +3142,7 @@ async def healthz(request: Request):
 
 @router.get("/readyz", tags=["health"])
 async def readyz(request: Request):
-    """Readiness probe: can Aura accept and process requests?
-
-    Returns 200 if ready, 503 if not. Checks:
-    - Last tick completed recently
-    - Substrate state is finite
-    - Database is accessible
-    """
+    """Serve a compact readiness verdict from the versioned health read model."""
     if is_shutdown_requested():
         return JSONResponse(
             {
@@ -3160,10 +3154,56 @@ async def readyz(request: Request):
             status_code=503,
         )
     try:
-        from core.observability.metrics import check_readiness
+        from core.runtime.health_contract import required_probe_groups_pass
 
-        result = check_readiness()
-        status_code = 200 if result.get("ready", False) else 503
+        snapshot = _apply_health_read_model_truth(_HEALTH_READ_MODEL.read())
+        snapshot = _apply_current_shutdown_truth(snapshot)
+        readiness = dict(snapshot.get("readiness_contract") or {})
+        required_probes = dict(
+            readiness.get("required_probes")
+            or snapshot.get("required_probes")
+            or {}
+        )
+        ready = bool(
+            readiness.get("healthy") is True
+            and readiness.get("system_ready") is True
+            and readiness.get("conversation_ready") is True
+            and readiness.get("runtime_probe_healthy") is True
+            and required_probe_groups_pass(required_probes)
+        )
+        issues = list(
+            dict.fromkeys(
+                str(item)
+                for item in (
+                    list(snapshot.get("blockers") or [])
+                    + list(readiness.get("blockers") or [])
+                )
+                if str(item)
+            )
+        )
+        if not ready and not issues:
+            if readiness.get("system_ready") is not True:
+                issues.append("system_not_ready")
+            if readiness.get("conversation_ready") is not True:
+                issues.append("conversation_lane_not_ready")
+            if readiness.get("runtime_probe_healthy") is not True:
+                issues.append("runtime_probe_unhealthy")
+            if not required_probe_groups_pass(required_probes):
+                issues.append("runtime_required_probes")
+        metadata = dict(snapshot.get("health_read_model") or {})
+        result = {
+            "status": "ready" if ready else "not_ready",
+            "ready": ready,
+            "issues": issues,
+            "uptime_s": round(float(snapshot.get("uptime", 0.0) or 0.0), 1),
+            "conversation_ready": readiness.get("conversation_ready") is True,
+            "runtime_probe_healthy": readiness.get("runtime_probe_healthy") is True,
+            "required_probes_passed": required_probe_groups_pass(required_probes),
+            "snapshot_generation": int(metadata.get("snapshot_generation", 0) or 0),
+            "snapshot_age_s": round(float(metadata.get("age_s", 0.0) or 0.0), 3),
+            "serving": str(metadata.get("serving", "unknown") or "unknown"),
+        }
+        status_code = 200 if ready else 503
         return JSONResponse(result, status_code=status_code)
     except _SYSTEM_RECOVERABLE_ERRORS as e:
         record_degradation('system', e)

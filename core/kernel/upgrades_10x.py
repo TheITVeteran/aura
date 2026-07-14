@@ -103,8 +103,10 @@ class EternalMemoryPhase(Phase):
         self.vault_path.parent.mkdir(exist_ok=True)
         self._summary_cache: list[dict[str, str]] = []
         self._last_summary_refresh_at: float = 0.0
+        self._last_summary_refresh_completed_at: float = 0.0
         self._summary_refresh_interval_s: float = 120.0
         self._history_slice_limit: int = 512
+        self._summary_refresh_task: asyncio.Task | None = None
 
     async def execute(self, state: AuraState, objective: str | None = None, **kwargs) -> AuraState:
         # Handle optional objective from the kernel without inventing a stronger claim.
@@ -140,22 +142,46 @@ class EternalMemoryPhase(Phase):
         return []
 
     async def _get_cached_or_refresh_summary(self) -> list[dict[str, str]]:
+        """Return the current summary and schedule stale maintenance single-flight.
+
+        Eternal-memory synthesis is useful background cognition, but it must not
+        hold the unitary kernel lock while a local model loads or decodes.  The
+        next tick consumes a completed refresh; this tick keeps the last durable
+        summary (or an empty cache during first boot).
+        """
         now = time.time()
-        if (
-            self._summary_cache
-            and (now - self._last_summary_refresh_at) < self._summary_refresh_interval_s
-        ):
+        if self._summary_refresh_task is not None and not self._summary_refresh_task.done():
+            return list(self._summary_cache)
+        if (now - self._last_summary_refresh_at) < self._summary_refresh_interval_s:
             return list(self._summary_cache)
         if self._background_llm_should_defer():
             return list(self._summary_cache)
 
-        history = await asyncio.to_thread(self._load_eternal_slice, limit=self._history_slice_limit)
-        summary = await self._generate_eternal_summary(history)
         self._last_summary_refresh_at = now
-        if summary:
-            self._summary_cache = list(summary)
-            return list(summary)
+        self._summary_refresh_task = get_task_tracker().create_task(
+            self._refresh_eternal_summary(),
+            name="EternalMemoryPhase.summary_refresh",
+        )
         return list(self._summary_cache)
+
+    async def _refresh_eternal_summary(self) -> None:
+        try:
+            history = await asyncio.to_thread(
+                self._load_eternal_slice,
+                limit=self._history_slice_limit,
+            )
+            summary = await self._generate_eternal_summary(history)
+            if summary:
+                self._summary_cache = list(summary)
+            self._last_summary_refresh_completed_at = time.time()
+        except (OSError, RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            _record_upgrades_degradation(
+                exc,
+                action="retained prior eternal memory after background refresh failed",
+            )
+        finally:
+            if self._summary_refresh_task is asyncio.current_task():
+                self._summary_refresh_task = None
 
     def _prepare_eternal_entry(self, state: AuraState) -> dict:
         return {

@@ -1,3 +1,5 @@
+import asyncio
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -7,7 +9,7 @@ from core.phases.phi_consciousness import (
     _build_emotion_vector,
     compute_phi_approx,
 )
-from core.state.aura_state import AuraState, CognitiveMode
+from core.state.aura_state import AuraState, CognitiveMode, phenomenal_text
 
 
 def _seed_affect(state: AuraState) -> AuraState:
@@ -127,8 +129,10 @@ async def test_phi_phase_uses_phi_core_phi_s_field(monkeypatch):
     phase = PhiConsciousnessPhase(kernel)
 
     fake_phi_core = SimpleNamespace(
-        compute_phi=lambda: SimpleNamespace(phi_s=0.3471),
-        compute_surrogate_phi=lambda: 0.0,
+        get_live_phi=lambda *, include_surrogate: 0.3471,
+        compute_phi=lambda: (_ for _ in ()).throw(
+            AssertionError("kernel phase must not recompute PhiCore")
+        ),
     )
 
     monkeypatch.setattr(phase, "_get_phi_core", lambda: fake_phi_core)
@@ -167,8 +171,10 @@ async def test_phi_phase_schedules_whole_system_measurement_without_joining_it(m
         phase,
         "_get_phi_core",
         lambda: SimpleNamespace(
-            compute_phi=lambda: SimpleNamespace(phi_s=0.25),
-            compute_surrogate_phi=lambda: 0.0,
+            get_live_phi=lambda *, include_surrogate: 0.25,
+            compute_phi=lambda: (_ for _ in ()).throw(
+                AssertionError("whole-system observation must not join PhiCore compute")
+            ),
         ),
     )
 
@@ -177,3 +183,59 @@ async def test_phi_phase_schedules_whole_system_measurement_without_joining_it(m
     assert phi == pytest.approx(0.25)
     assert service.observed == 1
     assert service.scheduled == 1
+
+
+@pytest.mark.asyncio
+async def test_background_phenomenal_refresh_is_nonblocking_and_singleflight():
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def think(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return "I feel focused on the current causal thread."
+
+    ready = asyncio.Event()
+    ready.set()
+    kernel = SimpleNamespace(
+        organs={"llm": SimpleNamespace(ready=ready, instance=SimpleNamespace(think=think))}
+    )
+    phase = PhiConsciousnessPhase(kernel)
+    state = _seed_affect(AuraState.default())
+    state.phi = 0.6
+
+    started = time.perf_counter()
+    initial = await phase._generate_phenomenal_state(
+        state,
+        "Measure phase latency without blocking the kernel.",
+        priority=False,
+    )
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.05
+    assert initial is not None
+    await asyncio.wait_for(entered.wait(), timeout=1.0)
+    first_task = phase._phenomenal_refresh_task
+    assert first_task is not None
+
+    await phase._generate_phenomenal_state(
+        state,
+        "Measure phase latency without blocking the kernel.",
+        priority=False,
+    )
+    assert phase._phenomenal_refresh_task is first_task
+    assert calls == 1
+
+    release.set()
+    await asyncio.wait_for(first_task, timeout=1.0)
+    assert phase._phenomenal_refresh_task is None
+
+    cached = await phase._generate_phenomenal_state(
+        state,
+        "Measure phase latency without blocking the kernel.",
+        priority=False,
+    )
+    assert phenomenal_text(cached) == "I feel focused on the current causal thread."

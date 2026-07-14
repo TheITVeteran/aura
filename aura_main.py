@@ -52,6 +52,7 @@ _AURA_MAIN_DEGRADATION_KEY = "aura_main"
 _FAULT_FORENSICS_HANDLE: TextIO | None = None
 _MANIFEST_UNREADY_LOG_STATE: dict[str, tuple[float, tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]]] = {}
 _MANIFEST_UNREADY_LOG_INTERVAL_S = 60.0
+_MANIFEST_HEALTH_CACHE_MAX_AGE_S = 15.0
 _AURA_MAIN_BOUNDARY_ERRORS = (
     AttributeError,
     ImportError,
@@ -903,6 +904,7 @@ async def _boot_runtime_orchestrator(
 
     orchestrator = create_orchestrator()
     await bootstrap_aura(orchestrator)
+    _mark_runtime_boot_phase("resilient_ignition_tail")
 
     # The desktop speech contract consumes already-live organs through a
     # non-instantiating registry bridge. Materialize and behaviorally probe its
@@ -921,6 +923,7 @@ async def _boot_runtime_orchestrator(
             f"errors={live_mind_report.get('activation_errors', {})} "
             f"quality={live_mind_report.get('snapshot_quality', {})}"
         )
+    _mark_runtime_boot_phase("live_mind_activation")
 
     # ── Morphogenetic self-organization runtime ───────────────────────
     # Starts bounded cell ecology, metabolism, and organ stabilizer.
@@ -937,11 +940,14 @@ async def _boot_runtime_orchestrator(
             logger.warning("Morphogenetic runtime startup skipped/degraded: %s", morph_exc)
     else:
         logger.info("🧬 Morphogenetic runtime disabled for foreground-only boot.")
+    _mark_runtime_boot_phase("morphogenesis_start")
 
     await orchestrator.start()
+    _mark_runtime_boot_phase("orchestrator_runtime_start")
 
     if readiness_context and hasattr(orchestrator, "_ensure_inference_gate_ready"):
         await orchestrator._ensure_inference_gate_ready(context=readiness_context)
+    _mark_runtime_boot_phase("inference_readiness")
 
     # Register the runtime singletons that the ServiceManifest names as
     # canonical owners but that did not previously live in ServiceContainer.
@@ -950,6 +956,7 @@ async def _boot_runtime_orchestrator(
 
     ServiceContainer.lock_registration()
     _enforce_service_manifest(ready_label)
+    _mark_runtime_boot_phase("registry_and_service_manifest")
     try:
         ownership_root = (
             PROJECT_ROOT
@@ -967,17 +974,15 @@ async def _boot_runtime_orchestrator(
         logger.info("🧾 Runtime service ownership manifest written: %s", ownership_path)
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         logger.warning("⚠️ Failed to write runtime service ownership manifest: %s", exc)
+    _mark_runtime_boot_phase("service_ownership_manifest")
     await _enforce_boot_probes(ready_label)
-    try:
-        from core.runtime.boot_profile import get_boot_profiler as _gbp
-        _gbp().mark("boot_probe_enforcement")
-    except _AURA_MAIN_BOUNDARY_ERRORS:
-        pass
+    _mark_runtime_boot_phase("boot_probe_enforcement")
     readiness_snapshot = await asyncio.to_thread(
         _refresh_orchestrator_health_before_manifest,
         orchestrator,
         ready_label,
     )
+    _mark_runtime_boot_phase("readiness_health_snapshot")
     await asyncio.to_thread(
         _write_runtime_manifest,
         profile=profile or ready_label.lower(),
@@ -985,6 +990,7 @@ async def _boot_runtime_orchestrator(
         artifact_root=artifact_root,
         readiness_snapshot=readiness_snapshot,
     )
+    _mark_runtime_boot_phase("runtime_manifest_write")
     _schedule_runtime_manifest_ready_refresh(
         orchestrator=orchestrator,
         profile=profile or ready_label.lower(),
@@ -992,11 +998,7 @@ async def _boot_runtime_orchestrator(
         artifact_root=artifact_root,
         initial_readiness=readiness_snapshot,
     )
-    try:
-        from core.runtime.boot_profile import get_boot_profiler as _gbp
-        _gbp().mark("readiness_manifests")
-    except _AURA_MAIN_BOUNDARY_ERRORS:
-        pass
+    _mark_runtime_boot_phase("readiness_refresh_schedule")
     logger.info("🛡️ Registry Locked. Aura Ready (%s).", ready_label)
     try:
         from core.runtime.boot_profile import get_boot_profiler
@@ -1818,13 +1820,51 @@ async def boot_aura_runtime(
         readiness_context=readiness_context or f"{profile}_boot",
         profile=profile,
         artifact_root=artifact_root,
-    )
+        )
+
+
+def _mark_runtime_boot_phase(name: str) -> float:
+    """Record one canonical boot segment without risking the boot path."""
+
+    try:
+        from core.runtime.boot_profile import get_boot_profiler
+
+        return float(get_boot_profiler().mark(name))
+    except _AURA_MAIN_BOUNDARY_ERRORS:
+        return 0.0
 
 
 def _refresh_orchestrator_health_before_manifest(orchestrator: Any, ready_label: str) -> dict[str, Any]:
     """Refresh live runtime health immediately before writing proof/desktop manifests."""
 
     try:
+        status = getattr(orchestrator, "status", None)
+        cached_at = float(
+            getattr(orchestrator, "_last_health_check_monotonic", 0.0) or 0.0
+        )
+        cache_age_s = max(0.0, time.monotonic() - cached_at) if cached_at else float("inf")
+        cached_ready = getattr(orchestrator, "_last_health_check_result", None) is True
+        if (
+            cached_ready
+            and cache_age_s <= _MANIFEST_HEALTH_CACHE_MAX_AGE_S
+            and getattr(status, "initialized", False) is True
+            and getattr(status, "running", False) is True
+        ):
+            logger.info(
+                "✅ Runtime health receipt reused before manifest (%s, age=%.3fs).",
+                ready_label,
+                cache_age_s,
+            )
+            return {
+                "ready": True,
+                "status": "healthy",
+                "critical": [],
+                "important": [],
+                "required_probe_blockers": [],
+                "source": "fresh_orchestrator_health_receipt",
+                "receipt_age_s": round(cache_age_s, 3),
+            }
+
         healthy = bool(orchestrator.health_check())
         if healthy:
             logger.info("✅ Runtime health confirmed before manifest (%s).", ready_label)

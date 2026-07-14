@@ -24,7 +24,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger("Aura.BootProfile")
 
-SLOW_PHASE_WARN_S = 20.0
+SLOW_PHASE_WARN_S = 2.0
 
 
 class BootProfiler:

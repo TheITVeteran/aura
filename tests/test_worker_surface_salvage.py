@@ -124,6 +124,13 @@ class TestSurfaceRetryWall:
 
         assert _surface_retry_wall_exceeded(time.monotonic() - 80.0, 75.0) is True
 
+    def test_interactive_default_wall_avoids_second_slow_decode(self):
+        import time
+
+        from core.brain.llm.mlx_worker import _surface_retry_wall_exceeded
+
+        assert _surface_retry_wall_exceeded(time.monotonic() - 21.0, 20.0) is True
+
     def test_misconfigured_wall_cannot_disable_first_retry(self):
         import time
 

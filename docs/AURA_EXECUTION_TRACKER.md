@@ -98,8 +98,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   `CTX2-SKILL-001..002`) are complete with checkpoint evidence. Every other
   item remains open or in progress unless its detailed entry explicitly carries
   a completion date and proof.
-- Overall completion percentage: **30% planning estimate as of pushed
-  Checkpoint 77, with exact-build live proof still open**.
+- Overall completion percentage: **30% planning estimate at source
+  Checkpoint 80, with Checkpoint 79 pushed and exact-build live proof still
+  open**.
   Checkpoints 67-73 close additional capability, idle-resource, authority,
   recursive-learning, and loop-ownership gaps in source, but the signed-app
   plateau failed on repeated event-loop lag, model-lane saturation, and
@@ -113,8 +114,9 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 214-286 total checkpoints for the
-  expanded program, with 77 pushed and approximately 137-209 remaining before
-  final soak/release closure**. This includes every
+  expanded program, with 79 pushed, source Checkpoint 80 in validation, and
+  approximately 134-206 remaining after that candidate is pushed before final
+  soak/release closure**. This includes every
   implementation, cleanup, repair, integration, verification, live,
   portability, release, and soak checkpoint, not only headline milestones.
   The wide initial interval
@@ -161,12 +163,12 @@ Status rules:
 | `EFFECT-001` | `IN PROGRESS` | Put file, network, browser, OS, memory, model, patch, self-repair, social, and environmental effects through canonical authority, transaction, compensation, and reconstructable receipt boundaries. | Pass F 5; Matrix 9 and 11 |
 | `STORAGE-GATEWAY-001` | `COMPLETE 2026-07-13` | Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Canonical batch, owned-binary, durable replace/delete, governance, schema, integrity, concurrency, and fault-injection contracts preserve bootstrap/crash/rollback behavior without exemptions. Checkpoint 62 reached zero direct-file-write findings; Checkpoint 63 subsequently brought the complete audited production-surface scanner to zero findings. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoints 62-63 |
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
-| `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with bounded, versioned, asynchronously refreshed read models whose public request paths are non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; single-flight refresh ownership, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and recovery transitions are source-green. Checkpoint 64 removes the background in-process Cortex owner that starved the conversational worker; Checkpoint 65 removes sampled process-census, goal-lock, and immunity-persistence blockers; Checkpoint 68 backs idle desktop perception off after attributed subprocess churn; Checkpoint 71 prevents deferred action results from recursively re-entering cognition while moving CRSM closure state off-loop; and Checkpoint 72 gives degradation/CRSM/CAA integrity its own prewarmed named snapshot so heartbeat and `CRSMLoraBridge` status never hash or parse training artifacts inline. Expired integrity evidence blocks proof readiness without falsely blocking conversational runtime health. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, voice, training maintenance, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoints 61, 64-65, 68, and 71-72; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
-| `BOOT-HEALTH-001` | `IN PROGRESS (RECOVERY CASCADE SOURCE-CLOSED; EXACT-MAIN LIVE OPEN) 2026-07-14` | Make boot and recovery converge through one phased desired-state contract rather than emitting a permanently unhealthy aggregate. Checkpoint 77 separates event-loop lifecycle/freshness from active incident health and durable history, reduces recovery to consecutive fresh samples plus a bounded stability interval, lets current pressure/admission recover without erasing the incident, prevents background generation from force-aborting the serving worker, corrects oldest-lease telemetry, and makes Skynet emit confirmed transitions plus bounded reminders. Prove on exact pushed main that `event_loop_monitor` owns the canonical loop, `unified_runtime_pressure` clears current lag and scoped gate saturation only from fresh evidence, `runtime_control_plane` reconciles, Cortex prewarm exits `warmup_deferred`, conversation remains available, and pulses transition to healthy without a five-minute lockout, raised lag thresholds, deleted probes, or hidden warnings. | `RUNTIME-001`, `HEALTH-SURFACE-001`, `FOREGROUND-LATENCY-001`, `CONVERSATION-001`, `FAULT-001`; recurring live pulse at 21:34 on 2026-07-13 and Checkpoint 77 |
+| `HEALTH-SURFACE-001` | `IN PROGRESS (READINESS READ MODEL SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-14` | Replace heavyweight request-time health aggregation with bounded, versioned, asynchronously refreshed read models whose public paths are non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated warning cards are removed; single-flight refresh ownership, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and recovery transitions are source-green. Checkpoints 64-72 remove the attributed model, process-census, goal-lock, perception, recursive-result, and integrity blockers. Checkpoint 80 makes `/api/readyz` consume the canonical health snapshot instead of recomputing full runtime health on the HTTP owner loop, fail closed on initial/expired evidence, separate the canonical `MindTick` from its slower metabolic telemetry heartbeat, and preserve structural required-probe truth. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, voice, training maintenance, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoints 61, 64-65, 68, 71-72, and 80; CP79 exact app returned `/api/readyz` 503 in 30/30 polls because a 60-second telemetry heartbeat was judged by a 30-second cognitive-readiness threshold |
+| `BOOT-HEALTH-001` | `IN PROGRESS (RECOVERY AND DUPLICATE BOOT WORK SOURCE-CLOSED; EXACT-MAIN LIVE OPEN) 2026-07-14` | Make boot and recovery converge through one phased desired-state contract rather than emitting a permanently unhealthy aggregate. Checkpoint 77 separates event-loop lifecycle/freshness from active incident health and durable history, reduces recovery to consecutive fresh samples plus a bounded stability interval, lets current pressure/admission recover without erasing the incident, prevents background generation from force-aborting the serving worker, corrects oldest-lease telemetry, and makes Skynet emit confirmed transitions plus bounded reminders. Checkpoint 80 removes the startup validator's five-second polling delay when kernel/repository state is already authoritative, reuses a fresh successful orchestrator-health receipt before manifest generation, exposes per-service and aggregate health-evaluation duration, and splits boot profiling into attributable ignition, activation, morphogenesis, orchestration, inference, registry, ownership, probe, readiness, manifest-write, and refresh phases. Prove on exact pushed main that the canonical monitor and pressure state recover, Cortex exits `warmup_deferred`, conversation remains available, and boot reaches truthful readiness without duplicate multi-second health work, threshold relaxation, deleted probes, or hidden warnings. | `RUNTIME-001`, `HEALTH-SURFACE-001`, `FOREGROUND-LATENCY-001`, `CONVERSATION-001`, `FAULT-001`; recurring live pulse at 21:34 on 2026-07-13 and Checkpoints 77 and 80 |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
 | `RESOURCE-001` | `COMPLETE 2026-07-13` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. Checkpoint 64 adds a canonical lightweight target-tree observer; Checkpoint 65 adds a provenance-bearing PID census and targeted process-tree observation so ordinary liveness, sovereignty, shutdown, and supervisor checks do not enrich the full host process table. | Pass F 3; Addendum 22; Checkpoints 34, 64, and 65 |
 | `MEMORY-LEAK-001` | `IN PROGRESS (DOMINANT LIVE OWNER SOURCE-FIXED; EXACT-MAIN PLATEAU OPEN) 2026-07-13` | Attribute and eliminate the measured 350-450 MB/hour idle orchestrator RSS growth without relying on restart, pressure-triggered reclamation, model-worker exclusion, or a raised limit. Checkpoint 64 identified a live orchestrator retaining about 19.7 GB physical footprint, including about 17.2 GB of IOAccelerator regions, while stacks remained in the background non-parametric ingest path for more than 1,098 seconds. The source now forbids model loading in that owner and reuses the resident worker with one causal forward, hard pair/token/position/deadline budgets, foreground preemption, durable ordering, and cache cleanup. The old running process still retains its already-loaded allocation; controlled exact-main restart, remaining allocation/cardinality attribution, bounded-growth regressions, and stable idle plus interaction plateau proof remain mandatory. | `RESOURCE-001`, `RUNTIME-001`, `FAULT-001`, `PERF-001`; two independent 45/70-minute idle windows in `docs/SYSTEMS_MATURITY_2026_07_12.md`; live stack/vmmap attribution and Checkpoint 64 |
-| `FOREGROUND-LATENCY-001` | `IN PROGRESS (KNOWN PHI/PERCEPTION/BOOT-MANIFEST OWNERS SOURCE-CLOSED; EXACT-MAIN LIVE OPEN) 2026-07-14` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoints 64-73 close the previously attributed model, process-census, goal-lock, immunity, perception, CRSM, voice, integrity, and NumPy/Torch owners. Checkpoint 78 benchmarks the due whole-system Phi path at 2.66 seconds for 16 channels and 31.96 seconds for 32, removes it from the awaited cognition phase, requires zero-wait background resource admission, bounds the effective quotient at 16 elements while retaining all observed-channel coverage, and reduces measured 16/24/32-channel costs to about 1.5-2.0 seconds off the foreground path. Checkpoint 79 attributes the CP78 exact-app 6.277-second startup stall to synchronous pre-manifest health/manifest work, moves health, runtime-manifest, and ownership-manifest work off the owner loop without weakening readiness ordering, and replaces the 19-30-second repair scan with 100-file resumable batches whose measured real-tree maximum is 777.5 ms. Exact pushed-main event-loop, health, model-load, chat, probe, and plateau proof remains open and no lag threshold was raised. | `PERF-001`, `RUNTIME-001`, `FAULT-001`, `SUBSTRATE-001`, `IIT-SYSTEM-001`; Checkpoints 51, 57, 60, 64-65, 68, 71-73, and 78-79; live `event_loop_lag_3.638s` MLX admission denial, 4.304s and 7.0294s boot-health overruns, and CP66 main-thread NumPy/Torch sample on 2026-07-13 |
+| `FOREGROUND-LATENCY-001` | `IN PROGRESS (ATTRIBUTED PHASE/READINESS/RETRY OWNERS SOURCE-CLOSED; EXACT-MAIN LIVE OPEN) 2026-07-14` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Checkpoints 64-73 close the previously attributed model, process-census, goal-lock, immunity, perception, CRSM, voice, integrity, and NumPy/Torch owners. Checkpoint 78 removes measured whole-system Phi computation from awaited cognition; Checkpoint 79 moves pre-manifest health/manifests off-loop and bounds repair scanning. CP79 exact-app proof then found 4.3-4.6-second synchronous Phi and Eternal Memory kernel phases, 30/30 false readiness failures, a 59.65-second requested-short-answer retry cascade, and 12.542-second boot with 4.627-second probe enforcement plus 5.643-second readiness manifests. Checkpoint 80 makes Phi and Eternal Memory tracked single-flight maintenance with immediate cached/rule-based reads, fixes explicit brevity classification, caps surface-quality retry wall time at 20 seconds while preserving fail-closed integrity, serves readiness from the canonical cached snapshot, removes redundant startup polling/health work, and exposes detailed health/boot timings. Exact pushed-main event-loop, phase, health, model-load, chat, probe, and plateau proof remains open and no lag threshold was raised. | `PERF-001`, `RUNTIME-001`, `FAULT-001`, `SUBSTRATE-001`, `IIT-SYSTEM-001`; Checkpoints 51, 57, 60, 64-65, 68, 71-73, and 78-80; live `event_loop_lag_3.638s` MLX admission denial, 4.304s and 7.0294s boot-health overruns, and CP79 exact-build attribution |
 | `SHUTDOWN-001` | `COMPLETE 2026-07-11` | Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes. | Addendum 32, `CTX2-SHUTDOWN-001..003` |
 | `FAULT-001` | `IN PROGRESS` | Drain the FMEA and degradation-policy backlog: root-fix broad catches, swallowed cancellation, false success/health, partial mutation, retry storms, leaks, and noisy fallback at their originating layer. | Pass F 4; Matrix 12 |
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
@@ -174,7 +176,7 @@ Status rules:
 | `MIND-001` | `OPEN` | Prove one boot-identified canonical self, workspace, substrate, welfare/homeostasis, consciousness cycle, identity, executive authority, and memory authority on the exact live path. | Matrix 3; Addendum 19 |
 | `STATE-001` | `OPEN` | Build the versioned canonical state catalog and inspectable causal graph with writer authority, freshness, arbitration, persistence, model-swap semantics, redaction, and action-to-learning traces. | Addendum 20 |
 | `MEMORY-001` | `IN PROGRESS 2026-07-12` | Preserve the encrypted exact-agent relational-memory authority while unifying every remaining memory writer/reader, cross-store semantic retrieval, provenance, conflict/freshness handling, exact live consumption proof, deletion, key rotation, and symmetric observed rollback. | Addendum 26; Checkpoints 42-45 |
-| `CONVERSATION-001` | `IN PROGRESS 2026-07-12` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. | Pass F 6; Matrix 6 |
+| `CONVERSATION-001` | `IN PROGRESS (REQUESTED-BREVITY RETRY CASCADE SOURCE-CLOSED; LIVE OPEN) 2026-07-14` | Achieve sustained human-grade live chat/voice continuity through CognitiveEngine: no identity drift, context loss, repetition, truncation, silent stalls, retry reflexes, fallback takeover, or stream spam. Checkpoint 80 recognizes natural explicit-brevity forms such as "one short sentence" and "keep it brief" so a valid concise answer is not rejected as too thin and repeatedly regenerated. The quality retry wall is bounded at 20 seconds while control-token/integrity violations remain fail-closed. Sustained exact-app conversational latency, quality, identity, memory, and recovery proof remains open. | Pass F 6; Matrix 6; `INFERENCE-RELIABILITY-001`, `FOREGROUND-LATENCY-001`; Checkpoint 80 |
 | `INFERENCE-RELIABILITY-001` | `IN PROGRESS (BACKGROUND DESTRUCTIVE FAILOVER SOURCE-CLOSED; SERVING FABRIC OPEN) 2026-07-14` | Replace the linear Primary -> Secondary -> Tertiary -> Reflex -> Cloud -> static-rule failure cascade with one supervised inference serving fabric. Preserve at least one warm identity-faithful reasoning path through proactive capacity reservation, health- and quality-scored routing, hedged/bounded failover, circuit recovery, queue fairness, foreground preemption, state/context handoff, provider/model diversity, restart continuity, and explicit SLO/error budgets. A background or repair request may never evict, force-abort, or degrade the active user lane; Checkpoint 77 closes that destructive authority inversion. Static rules may provide narrowly typed safety/availability notices but may never be presented as a successful answer to an open-domain request. Certify with injected endpoint/model/Metal/network failures, cold boot, sustained mixed load, context and identity scoring, answer-quality floors against the primary baseline, recovery-time distributions, no fallback loops, and exact-main desktop/voice evidence. | `CONVERSATION-001`, `LANE-001`, `RUNTIME-001`, `FAULT-001`, `CAPABILITY-CERT-001`, `FRONTIER-COGNITION-001`; fallback-cascade criticism 2026-07-14 and Checkpoint 77 |
 | `SELF-STATE-CHAT-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make direct questions about Aura's own condition use one fresh canonical self-state projection with calibrated uncertainty and conversational continuity; host telemetry may support but must never replace the answer. Prove the launched desktop path cannot route "are you okay/feeling fine" into a generic RAM/CPU status response. | `CONVERSATION-001`, `MIND-001`, `STATE-001`; Checkpoint 52; live defect at 00:27-00:28 on 2026-07-13 |
 | `SUBSTRATE-001` | `IN PROGRESS (CANONICAL REVISIONED STATE SOURCE-GREEN; UNITY + LIVE PROOF OPEN) 2026-07-13` | Make attention, affect, self-model, uncertainty, memory, voice, planning, tool choice, repair, and future policy causally one mind; lesion decorative or disconnected state. Checkpoint 73 establishes one revisioned NumPy state authority for dynamics, recurrence, phenomenal perception, inference feedback, bridge chemistry/field effects, Will metabolism, metacognitive reset, stimulus, observation, idle decay, and psych homeostasis. Worker transforms preserve concurrent causal writes and publish a freshness-labelled Torch mirror rather than silently replacing newer state. Complete writer inventory, typed state gateway integration, downstream causal lesions, persistence/migration, and exact-main unity proof remain open. | Matrix 2-3; Addendum 20 and 29; `STATE-001`, `MIND-001`, `FOREGROUND-LATENCY-001`; Checkpoint 73 |
@@ -216,7 +218,7 @@ Status rules:
 | `UI-001` | `IN PROGRESS 2026-07-12` | Audit every desktop route, screen, control and state for live-data truth, interaction completeness, accessibility, long text, responsive layout, visual stability, specific recovery, and screenshot evidence. | Pass F 11; Matrix 14 |
 | `SPLASH-001` | `OPEN 2026-07-13` | Replace the unpolished Aura splash with a production launch experience derived from the supplied retro references: disciplined CRT/scanline texture, geometric terminal-era typography, restrained cyan/magenta/green neon, crisp hierarchy, and an original Aura identity rather than imitation. Every phase/progress/status line must come from real boot state, preserve a usable failure/recovery path, support Retina and small screens, meet contrast and reduced-motion requirements, avoid GPU-heavy decorative churn, hand off without flash or layout shift, and pass deterministic visual-regression plus signed-app screenshot/video proof. | `UI-001`, `RUNTIME-001`, `LAUNCH-PROVENANCE-001`, `PERF-001`, `VALIDATE-001`; user splash and aesthetic references supplied 2026-07-13 |
 | `ACCESSIBILITY-I18N-001` | `OPEN 2026-07-13` | Certify the complete desktop, splash, voice, notification, and paired-device surface for keyboard navigation, focus order, screen-reader names/state, reduced motion/transparency, zoom and dynamic text, contrast/color independence, captions/transcripts, non-audio alternatives, locale/time/number formatting, Unicode and bidirectional text safety, and long translated strings. Run automated checks plus real VoiceOver/keyboard/screenshot workflows without breaking dense expert use. | `UI-001`, `SPLASH-001`, `CONVERSATION-001`, `CAPABILITY-CERT-001`; Aura 1.0 release-gap audit 2026-07-13 |
-| `PERF-001` | `OPEN` | Establish and enforce end-to-end latency, throughput, memory, thermal, startup, model-switch, queue-growth, and UI responsiveness budgets without reducing intelligence or correctness. | Runtime/resource/colleague SLOs; original context performance goals |
+| `PERF-001` | `IN PROGRESS (ATTRIBUTION INSTRUMENTATION SOURCE GREEN; SLO PROGRAM OPEN) 2026-07-14` | Establish and enforce end-to-end latency, throughput, memory, thermal, startup, model-switch, queue-growth, and UI responsiveness budgets without reducing intelligence or correctness. Checkpoint 80 adds per-service health-evaluation duration and detailed boot-phase marks, then removes four measured latency cascades at their owners. Machine-readable end-to-end SLOs, load/queue/thermal envelopes, regression budgets, GUI frame proof, exact-app distributions, and release enforcement remain open. | Runtime/resource/colleague SLOs; original context performance goals; `FOREGROUND-LATENCY-001`, `HEALTH-SURFACE-001`; Checkpoint 80 |
 | `OBSERVE-001` | `IN PROGRESS 2026-07-12` | Standardize structured logs, traces, metrics, crash taxonomy, receipt correlation, privacy-aware incident export, operator diagnosis, and replayable failure reconstruction. | Pass F 2, 4, and 10; Matrix 12 and 15 |
 | `SECURITY-001` | `IN PROGRESS 2026-07-12` | Complete threat modeling, secret/privacy boundaries, prompt/tool/desktop abuse tests, dependency and license review, SBOM/provenance, signed artifacts, and recovery from hostile inputs. | Pass F 9-10; Matrix 15-16 |
 | `ENTERPRISE-CONTROL-001` | `OPEN 2026-07-13` | Provide inspectable owner/administrator policy without turning ordinary agency into approval theater: authenticated principals and paired-device roles, least-privilege profiles, standing-authority budgets/revocation, data/telemetry/retention controls, tamper-evident audit export, managed configuration, emergency stop/recovery, separation of duties for consequential effects, and explicit local single-owner defaults. Prove policy changes, revocation, and audit continuity across restart and offline operation. | `AUTONOMY-AUTHORITY-001`, `SECURITY-001`, `IDENTITY-001`, `OPERATIONS-001`; enterprise-quality closure audit 2026-07-13 |
@@ -15467,6 +15469,125 @@ Progress and immediate next work:
   whole-system causal measurement, immune coding stack, capability/foundation
   master index, semantic every-line review, GUI, portability, clean-machine,
   and release work.
+- Final multi-hour and 24-72 hour soaks remain deferred until every shorter
+  source, deterministic, fault-injection, bounded live, GUI, portability, and
+  release gate is green.
+
+## Checkpoint 2026-07-14-80: Canonical Readiness, Bounded Cognitive Maintenance, and Retry-Cascade Removal
+
+This checkpoint advances `HEALTH-SURFACE-001`, `BOOT-HEALTH-001`,
+`FOREGROUND-LATENCY-001`, `CONVERSATION-001`, `PERF-001`, `FAULT-001`,
+`ASYNC-TASK-001`, and `TEST-DEPTH-001`. It follows the exact Checkpoint 79 app
+through four measured latency owners and fixes those owners without weakening
+readiness, integrity, or health truth. Exact rebuilt-app proof remains open, so
+this is a source checkpoint rather than live or release closure.
+
+The Checkpoint 79 installed app supplied causal measurements instead of a
+generic latency warning:
+
+- `/api/health` remained responsive in 30/30 polls with a 5.675 ms median and
+  all three chat samples used the genuine Cortex/CognitiveEngine path, but
+  `/api/readyz` returned false `503` in 30/30 polls. Readiness was applying a
+  30-second stale threshold to a separate 60-second metabolic telemetry
+  heartbeat instead of consulting the canonical `MindTick` authority.
+- One requested-short-answer turn took 59.65 seconds. The valid five-token
+  draft was rejected because "one short sentence" did not match the explicit
+  brevity grammar, causing three surface-quality generations, an empty-output
+  cache-reset retry, a sentinel-loop retry, and governed repair.
+- `EternalMemoryPhase` repeatedly consumed about 4.6 seconds and
+  `PhiConsciousnessPhase` about 4.3-4.6 seconds in the awaited kernel cycle.
+  Their stale-summary/phenomenology generation was still synchronous even
+  though canonical Phi refresh already had a supervised background owner.
+- Boot took 12.542 seconds. The aggregate profile attributed 4.627 seconds to
+  probe enforcement and 5.643 seconds to readiness manifests, but did not
+  expose the individual validator, activation, orchestration, health, and
+  manifest costs needed to prevent recurrence.
+
+The readiness and cognitive paths now preserve truth with bounded foreground
+cost:
+
+- `/api/readyz` reads the canonical asynchronously refreshed health snapshot,
+  applies expiry and shutdown truth, and derives compact readiness from system,
+  conversation, runtime-probe, and structurally complete required-probe state.
+  Initial or expired evidence fails closed. The HTTP owner loop does not
+  reconstruct full runtime health. Canonical `MindTick` liveness is distinct
+  from the slower metabolic telemetry heartbeat.
+- Explicit-brevity parsing covers optional concise/brief/short modifiers and
+  direct forms such as "keep it short." A valid concise answer therefore
+  clears the quality gate. The default surface-quality retry wall is 20 seconds
+  instead of 75; control-token and integrity failures retain their hard
+  fail-closed behavior.
+- Eternal Memory returns current cache immediately, performs file/LLM refresh
+  as one tracked single-flight maintenance task, applies retry cadence even to
+  an empty cache, consumes completed results on later ticks, and preserves old
+  cache on degradation.
+- The Phi phase reads canonical live/cached Phi produced by the supervised
+  causal-loop owner. HOT/phenomenal synthesis is a tracked 30-second
+  single-flight maintenance task, while the kernel receives immediate cached
+  or rule-based state. Explicit priority invocation retains a synchronous path;
+  ordinary live-priority conversation skips this maintenance phase.
+
+Boot work is attributable and no longer repeats already-authoritative work:
+
+- The startup validator consults kernel/repository self-preservation state once
+  and accepts it immediately when authoritative; bounded shared-memory polling
+  remains only when no authority exists.
+- A recent successful orchestrator-health receipt is reusable for manifest
+  generation while failed, unready, stale, or non-running state recomputes.
+  Receipt truth is stamped only after health-state persistence succeeds.
+- Every service health result carries `duration_ms` and the aggregate verdict
+  carries `evaluation_duration_ms`. Boot profiling now separates resilient
+  ignition tail, live-mind activation, morphogenesis, orchestrator start,
+  inference readiness, registry/service manifest, ownership manifest, probe
+  enforcement, readiness snapshot, runtime-manifest write, and refresh
+  scheduling. Slow-phase diagnostics begin at two seconds.
+
+Verification on the integrated source candidate:
+
+- Two composed suites pass `824` distinct tests plus one subtest, with one
+  intentional deselection. They cover health/readiness, runtime health and boot
+  contracts, startup validation, Phi and kernel phase isolation, chat
+  reliability, worker salvage, inference admission, thermal generation,
+  control-plane/device routes, and server hardening.
+- Timing regressions prove canonical readiness does not inherit the stale
+  metabolic heartbeat, cached `/api/readyz` is fast and stale-aware, startup
+  authority avoids polling, recent health receipts avoid duplicate collection,
+  and slow Phi/Eternal generation returns control in under 50 ms while one
+  tracked background task remains active.
+- Targeted compilation, configured Ruff, and `git diff --check` pass. The
+  production-surface scanner reports zero findings and zero exemptions. The
+  enterprise static ratchet passes its exact baseline, production readiness
+  passes `37/37`, and the closeout rubric passes `20/20`. Governance remains at
+  its reviewed baseline of 1,816 recognized calls in 1,705 buckets, including
+  1,671 explicitly open older migration-debt calls.
+- The exact dirty-candidate closeout audit passes every configured technical
+  gate in 163.30 seconds while mechanically enumerating 5,161 tracked files,
+  5,142 text files, 3,667,822 text lines, and 4,154 code files. Full closeout
+  remains false: only 432 code files have complete current semantic receipts,
+  3,691 remain unreviewed, 882 receipts are stale, and 26 are orphaned.
+  Mechanical success does not substitute for semantic every-line review. The
+  separately configured architecture baseline remains honestly red/stale at
+  42.49 versus 46.38 with 944 excess edges, a larger SCC, and 12 additional
+  oversized modules; this checkpoint adds no new module and does not refresh
+  that baseline.
+
+Progress and immediate next work:
+
+- This is source Checkpoint `80`. Evidence-weighted completion remains `30%`
+  until the exact pushed commit is rebuilt and proves the readiness, boot,
+  cognitive phase, chat, health, model-load, GUI, and Neural/terminal behavior
+  live. The forecast remains `214-286` total meaningful checkpoints, with
+  `134-206` remaining after this candidate is pushed.
+- Commit and push this candidate directly to `main`, rebuild/install from that
+  commit, and measure 30-poll
+  health/readiness distributions, detailed boot phases, three requested-short
+  genuine CognitiveEngine turns, local performance-frame telemetry, kernel
+  phase timings, model admission, and Neural/terminal streams. Fix each live
+  warning at its owner rather than suppressing it or raising a threshold.
+- Then continue architecture-baseline attribution, inference serving fabric,
+  CRSM artifact/quality closure, whole-system causal measurement, immune coding
+  stack, capability/foundation certification, semantic every-line review, GUI,
+  portability, clean-machine, and release work.
 - Final multi-hour and 24-72 hour soaks remain deferred until every shorter
   source, deterministic, fault-injection, bounded live, GUI, portability, and
   release gate is green.
