@@ -61,11 +61,42 @@ cognition, and the slope under load is statistically the same. That is
 falsified — reclamation pressure changes nothing because load isn't
 the driver). July 7's "242 MB/h under load" was this same leak.
 
-Still owed: ATTRIBUTION — the tracemalloc idle window
-(`AURA_RUNTIME_HYGIENE_TRACEMALLOC=1`, read via
-`/api/system/memory/growth`) names the subsystem; the 2026-07-13 05:50
-attribution attempt aborted (`never_ready`, the candidate-readiness
-cluster). It reruns with the next quiet idle window, before the fix.
+### Attribution + fix (2026-07-13, b5d69941)
+
+A 66-minute tracemalloc idle window (worktree instance on :8001,
+`AURA_RUNTIME_HYGIENE_TRACEMALLOC=1`, read through the new
+`/api/system/memory/growth` allocation-diff surface) resolved the "where".
+The verdict is instructive: the **Python heap was essentially flat**
+(~18 MB/h, and every buffer involved is a bounded `deque(maxlen=…)` — the
+Python side is already good engineering) while RSS climbed ~350 MB/h. That
+gap IS the diagnosis — the leak is **native**, invisible to tracemalloc
+because the Python objects are freed. Every top native allocation site
+routed through `Popen`.
+
+Root cause: the **desktop perception loop** shells out ~4 times per cycle
+(osascript window-focus, pbpaste clipboard, browser-tab enumeration,
+`ps -A`) at a 2 s cadence — ~7,000 subprocesses/hour **at idle**. On macOS
+that fork/exec churn grows the parent's malloc arena and the OS never
+returns it. The loop's own comment already called subprocess churn "the
+dominant source of RSS churn" and made the *headless* path dormant — but
+the *desktop* path Bryan runs daily kept storming.
+
+Fix: activity-gated backoff (`AURA_PERCEPTION_IDLE_BACKOFF_AFTER_S`,
+default 120 s, reusing the existing idle threshold). Full 2 s cadence
+while the user is active; dormant 45 s cadence once idle — a ~35× cut in
+idle subprocess spawns, worst-case ~45 s latency to notice the user's
+return. The file-mutation scan window tracks the effective interval so
+backoff never drops a change. 3 contract tests.
+
+The general lesson for the codebase: **a flat tracemalloc heap next to a
+climbing RSS is a native-churn signature** — look for subprocess/`Popen`,
+mmap, or C-extension allocation, not a Python object leak. The
+`/api/system/memory/growth` surface makes that diagnosis a one-call
+operation on any future instance.
+
+Still owed: a VERIFICATION idle window on the fixed code showing the idle
+slope collapse (target: from ~350 MB/h toward flat). Runs on the next
+quiet box.
 
 ## The meta-lesson
 
