@@ -67,6 +67,27 @@ async def test_approval_required_skill_never_double_fires():
     assert s.calls == 1, "requires_approval must never retry, even with retry_safe=True"
 
 
+@pytest.mark.asyncio
+async def test_policy_deferred_skill_does_not_increment_failure_metrics():
+    class DeferredSkill(BaseSkill):
+        name = "deferred_test_skill"
+
+        async def execute(self, params, context):
+            return {
+                "ok": False,
+                "status": "deferred",
+                "reason": "foreground_generation_active",
+            }
+
+    skill = DeferredSkill()
+    result = await skill.safe_execute({})
+
+    assert result["ok"] is False
+    assert result["status"] == "deferred"
+    assert skill.get_stats()["executions"] == 1
+    assert skill.get_stats()["failures"] == 0
+
+
 def test_send_skills_are_marked_retry_unsafe():
     """The external-communication skills must not silently double-send."""
     from core.skills.notify_user import NotifyUserSkill

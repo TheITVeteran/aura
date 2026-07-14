@@ -141,7 +141,7 @@ def _params_for_skill(skill_name: str, tmp_path: Path) -> dict[str, Any]:
     overrides = {
         "ManageAbilities": {"action": "activate", "skill_name": "clock"},
         "add_belief": {"source": "Bryan", "relation": "prefers", "target": "Python"},
-        "auto_refactor": {"path": str(tmp_path), "run_tests": False},
+        "auto_refactor": {"path": ".", "run_tests": False},
         "code_repl": {"code": "1 + 1", "timeout": 1, "capture_files": False},
         "coding_skill": {"objective": "", "params": {"task": ""}},
         "cognitive_trainer": {"dataset_name": "unsupported", "limit": 1, "dry_run": True},

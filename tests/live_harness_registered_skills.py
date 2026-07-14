@@ -294,7 +294,7 @@ async def main() -> int:
             return _judge_productive(payload, "summary")
 
         async def probe_auto_refactor():
-            payload = await run_skill("auto_refactor", {"path": str(temp_path), "run_tests": False})
+            payload = await run_skill("auto_refactor", {"path": ".", "run_tests": False})
             ok = bool(payload.get("ok")) and int(payload.get("issues_found", 0) or 0) >= 1
             return ok, _detail_from_payload(payload, "message", "summary", "error")
 

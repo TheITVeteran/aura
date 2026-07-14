@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -39,6 +40,31 @@ async def test_dev_mode_callback_runtime_errors_degrade_but_invariants_surface(m
     with pytest.raises(AssertionError, match="callback invariant broke"):
         await invariant_dev_mode._emit_event("tool_trace", {"ok": True})
     assert invariant_events == ["tool_trace"]
+
+
+@pytest.mark.asyncio
+async def test_dev_mode_represents_policy_deferral_without_failure_marker(caplog):
+    from core.transparency.dev_mode import DevMode
+
+    dev_mode = DevMode()
+    trace = await dev_mode.record_tool_execution(
+        "auto_refactor",
+        {"path": "."},
+        origin="autonomy",
+    )
+
+    with caplog.at_level(logging.INFO, logger="core.transparency.dev_mode"):
+        await dev_mode.complete_tool_execution(
+            trace,
+            {"ok": False, "status": "deferred", "reason": "recent_user_287"},
+            0.4,
+        )
+
+    assert trace.status == "deferred"
+    assert trace.error is None
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("Tool Deferred: auto_refactor" in message for message in messages)
+    assert not any("❌ Tool Result: auto_refactor" in message for message in messages)
 
 
 def test_vector_memory_chroma_writer_stops_and_rejects_after_close(monkeypatch, tmp_path):

@@ -347,8 +347,16 @@ class BaseSkill(ABC):
         normalized_result["ok"] = _infer_ok_flag(normalized_result)
         normalized_result["skill"] = self.name
         normalized_result["duration_ms"] = round(duration_ms, 1)
+        deferred = str(normalized_result.get("status", "") or "").lower() == "deferred"
 
-        if normalized_result.get("ok"):
+        if deferred:
+            logger.info(
+                "Skill '%s' deferred in %.0fms: %s",
+                self.name,
+                duration_ms,
+                normalized_result.get("reason", "policy_deferred"),
+            )
+        elif normalized_result.get("ok"):
             logger.info(
                 "✅ Skill '%s' completed in %.0fms",
                 self.name, duration_ms

@@ -1,4 +1,8 @@
+import asyncio
+import time
 from pathlib import Path
+
+import pytest
 
 from core.container import ServiceContainer
 from core.orchestrator import RobustOrchestrator
@@ -63,12 +67,14 @@ def test_canonical_boot_refreshes_health_before_manifest():
     assert boot_slice.index("activate_live_mind_runtime") < boot_slice.index(
         "ServiceContainer.lock_registration()"
     )
-    assert "readiness_snapshot = _refresh_orchestrator_health_before_manifest(orchestrator, ready_label)" in boot_slice
+    assert "readiness_snapshot = await asyncio.to_thread(" in boot_slice
+    assert "ServiceContainer.write_service_ownership_manifest," in boot_slice
+    assert "await asyncio.to_thread(\n        _write_runtime_manifest," in boot_slice
     assert "readiness_snapshot=readiness_snapshot" in boot_slice
     assert "_schedule_runtime_manifest_ready_refresh(" in boot_slice
     assert "initial_readiness=readiness_snapshot" in boot_slice
     assert boot_slice.index("_refresh_orchestrator_health_before_manifest") < boot_slice.index(
-        "_write_runtime_manifest("
+        "_write_runtime_manifest,"
     )
 
 
@@ -85,6 +91,46 @@ def test_runtime_manifest_pre_ready_snapshot_gets_bounded_refresh_task():
     assert "runtime_manifest.ready_refresh" in refresh_slice
     assert "if bool(snapshot.get(\"ready\")):" in refresh_slice
     assert "readiness_snapshot=snapshot" in refresh_slice
+    assert "snapshot = await asyncio.to_thread(" in refresh_slice
+    assert "await asyncio.to_thread(\n                _write_runtime_manifest," in refresh_slice
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_refresh_keeps_owner_loop_responsive(monkeypatch, tmp_path):
+    import aura_main
+
+    def slow_health(_orchestrator, _ready_label):
+        time.sleep(0.08)
+        return {"ready": True, "status": "healthy", "required_probe_blockers": []}
+
+    def slow_write(**_kwargs):
+        time.sleep(0.08)
+
+    monkeypatch.setattr(
+        aura_main,
+        "_refresh_orchestrator_health_before_manifest",
+        slow_health,
+    )
+    monkeypatch.setattr(aura_main, "_write_runtime_manifest", slow_write)
+    monkeypatch.setattr(aura_main, "is_shutdown_requested", lambda: False)
+
+    refresh = asyncio.create_task(
+        aura_main._refresh_runtime_manifest_until_ready(
+            orchestrator=object(),
+            profile="desktop",
+            ready_label="Desktop",
+            artifact_root=tmp_path,
+            timeout_s=1.0,
+            interval_s=0.01,
+        )
+    )
+    owner_loop_ticks = 0
+    while not refresh.done():
+        owner_loop_ticks += 1
+        await asyncio.sleep(0.005)
+    await refresh
+
+    assert owner_loop_ticks >= 20
 
 
 def test_runtime_manifest_unready_refresh_logs_on_change_not_every_poll(monkeypatch, caplog):

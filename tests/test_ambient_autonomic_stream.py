@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
+import time
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 import psutil
 import pytest
@@ -151,6 +152,164 @@ def test_ambient_network_permission_boundary_is_observed_without_degradation(
     assert probe_calls == ["net_connections"]
     assert events[0].kind == "socket_visibility_unavailable"
     assert events[0].count == 0
+
+
+def test_ambient_text_sources_reject_stale_files_and_do_not_replay(tmp_path):
+    log_dir = tmp_path / "logs"
+    terminal_dir = tmp_path / "terminal"
+    log_dir.mkdir()
+    terminal_dir.mkdir()
+    stale = log_dir / "stale.log"
+    active = log_dir / "active.log"
+    terminal = terminal_dir / "active.txt"
+    stale.write_text("ERROR historical soak failure\n", encoding="utf-8")
+    active.write_text("ERROR first live failure\n", encoding="utf-8")
+    terminal.write_text("Traceback: first terminal failure\n", encoding="utf-8")
+    old = time.time() - 600
+    os.utime(stale, (old, old))
+
+    stream = AmbientDeveloperStream(
+        project_root=tmp_path,
+        watch_roots=(),
+        log_roots=(log_dir,),
+        terminal_roots=(terminal_dir,),
+        recent_window_s=60.0,
+    )
+
+    first_logs = stream._collect_log_events()
+    first_terminal = stream._collect_terminal_events()
+    assert [event.line for event in first_logs] == ["ERROR first live failure"]
+    assert [event.line for event in first_terminal] == [
+        "Traceback: first terminal failure"
+    ]
+    assert first_logs[0].file_mtime > 0
+    assert first_logs[0].observed_at >= first_logs[0].file_mtime
+    assert stream._collect_log_events() == []
+    assert stream._collect_terminal_events() == []
+
+    with active.open("a", encoding="utf-8") as handle:
+        handle.write("INFO progress\nERROR second live failure\n")
+    with terminal.open("a", encoding="utf-8") as handle:
+        handle.write("ERROR second terminal failure\n")
+
+    assert [event.line for event in stream._collect_log_events()] == [
+        "ERROR second live failure"
+    ]
+    assert [event.line for event in stream._collect_terminal_events()] == [
+        "ERROR second terminal failure"
+    ]
+
+
+def test_ambient_text_cursor_recovers_from_truncation(tmp_path):
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    log_path = log_dir / "active.log"
+    log_path.write_text("ERROR a substantially longer original failure line\n", encoding="utf-8")
+    stream = AmbientDeveloperStream(
+        project_root=tmp_path,
+        watch_roots=(),
+        log_roots=(log_dir,),
+        terminal_roots=(),
+        recent_window_s=60.0,
+    )
+
+    assert len(stream._collect_log_events()) == 1
+    log_path.write_text("ERROR new\n", encoding="utf-8")
+
+    events = stream._collect_log_events()
+    assert [event.line for event in events] == ["ERROR new"]
+    assert stream._collect_log_events() == []
+
+
+def test_ambient_text_cursor_waits_for_complete_initial_record(tmp_path):
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    log_path = log_dir / "active.log"
+    log_path.write_bytes(b"ERROR incomplete")
+    stream = AmbientDeveloperStream(
+        project_root=tmp_path,
+        watch_roots=(),
+        log_roots=(log_dir,),
+        terminal_roots=(),
+        recent_window_s=60.0,
+    )
+
+    assert stream._collect_log_events() == []
+    with log_path.open("ab") as handle:
+        handle.write(b" record\n")
+
+    assert [event.line for event in stream._collect_log_events()] == [
+        "ERROR incomplete record"
+    ]
+    assert stream._collect_log_events() == []
+
+
+def test_ambient_text_candidates_do_not_starve_beyond_first_page(tmp_path):
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    for index in range(6):
+        path = log_dir / f"runtime-{index}.log"
+        path.write_text(f"ERROR runtime {index}\n", encoding="utf-8")
+        timestamp = time.time() + index * 0.01
+        os.utime(path, (timestamp, timestamp))
+    stream = AmbientDeveloperStream(
+        project_root=tmp_path,
+        watch_roots=(),
+        log_roots=(log_dir,),
+        terminal_roots=(),
+        recent_window_s=60.0,
+    )
+
+    first = stream._collect_log_events()
+    second = stream._collect_log_events()
+
+    assert len(first) == 4
+    assert len(second) == 2
+    assert {event.line for event in first + second} == {
+        f"ERROR runtime {index}" for index in range(6)
+    }
+    assert stream._collect_log_events() == []
+
+
+def test_ambient_text_cursor_detects_same_size_rewrite(tmp_path):
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    log_path = log_dir / "active.log"
+    log_path.write_text("ERROR old\n", encoding="utf-8")
+    stream = AmbientDeveloperStream(
+        project_root=tmp_path,
+        watch_roots=(),
+        log_roots=(log_dir,),
+        terminal_roots=(),
+        recent_window_s=60.0,
+    )
+
+    assert [event.line for event in stream._collect_log_events()] == ["ERROR old"]
+    time.sleep(0.002)
+    log_path.write_text("ERROR new\n", encoding="utf-8")
+
+    assert [event.line for event in stream._collect_log_events()] == ["ERROR new"]
+    assert stream._collect_log_events() == []
+
+
+def test_ambient_recent_file_events_emit_only_on_change(tmp_path):
+    watched = tmp_path / "core"
+    watched.mkdir()
+    source = watched / "live.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    stream = AmbientDeveloperStream(
+        project_root=tmp_path,
+        watch_roots=(watched,),
+        log_roots=(),
+        terminal_roots=(),
+        recent_window_s=60.0,
+        max_scan_files=20,
+    )
+
+    assert [event.path for event in stream._collect_recent_files()] == ["core/live.py"]
+    assert stream._collect_recent_files() == []
+    source.write_text("value = 2\n", encoding="utf-8")
+    assert [event.path for event in stream._collect_recent_files()] == ["core/live.py"]
 
 
 def test_timescale_bridge_samples_perceptual_and_ambient_sources_independently():

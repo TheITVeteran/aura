@@ -55,7 +55,7 @@ class ToolExecutionTrace:
     timestamp: float = field(default_factory=time.time)
     tool_name: str = ""
     params: dict[str, Any] = field(default_factory=dict)
-    status: str = "pending"  # pending, running, succeeded, failed
+    status: str = "pending"  # pending, running, succeeded, deferred, failed
     result: dict[str, Any] | None = None
     error: str | None = None
     execution_time_ms: float = 0.0
@@ -172,15 +172,33 @@ class DevMode:
                                      result: dict[str, Any],
                                      execution_time_ms: float = 0.0):
         """Record tool execution completion."""
-        trace.status = "succeeded" if result.get("ok", False) else "failed"
+        result_status = str(result.get("status", "") or "").strip().lower()
+        deferred = result_status == "deferred"
+        trace.status = (
+            "deferred"
+            if deferred
+            else ("succeeded" if result.get("ok", False) else "failed")
+        )
         trace.result = result
         trace.execution_time_ms = execution_time_ms
-        trace.error = result.get("error") if not result.get("ok") else None
+        trace.error = (
+            None
+            if deferred or result.get("ok")
+            else str(result.get("error") or result.get("reason") or "execution_failed")
+        )
         
         if self.level != TransparencyLevel.SILENT:
-            status_emoji = "✅" if result.get("ok") else "❌"
-            logger.info("%s Tool Result: %s in %.0fms", 
-                       status_emoji, trace.tool_name, execution_time_ms)
+            if deferred:
+                logger.info(
+                    "⏸️ Tool Deferred: %s in %.0fms (%s)",
+                    trace.tool_name,
+                    execution_time_ms,
+                    str(result.get("reason") or "policy_deferred")[:120],
+                )
+            else:
+                status_emoji = "✅" if result.get("ok") else "❌"
+                logger.info("%s Tool Result: %s in %.0fms",
+                           status_emoji, trace.tool_name, execution_time_ms)
             if self.level in {TransparencyLevel.DEBUG}:
                 summary = result.get("summary") or result.get("result") or ""
                 if isinstance(summary, str):

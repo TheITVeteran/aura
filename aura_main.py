@@ -960,7 +960,10 @@ async def _boot_runtime_orchestrator(
                 or PROJECT_ROOT / "artifacts" / "current"
             )
         )
-        ownership_path = ServiceContainer.write_service_ownership_manifest(ownership_root)
+        ownership_path = await asyncio.to_thread(
+            ServiceContainer.write_service_ownership_manifest,
+            ownership_root,
+        )
         logger.info("🧾 Runtime service ownership manifest written: %s", ownership_path)
     except _AURA_MAIN_BOUNDARY_ERRORS as exc:
         logger.warning("⚠️ Failed to write runtime service ownership manifest: %s", exc)
@@ -970,8 +973,13 @@ async def _boot_runtime_orchestrator(
         _gbp().mark("boot_probe_enforcement")
     except _AURA_MAIN_BOUNDARY_ERRORS:
         pass
-    readiness_snapshot = _refresh_orchestrator_health_before_manifest(orchestrator, ready_label)
-    _write_runtime_manifest(
+    readiness_snapshot = await asyncio.to_thread(
+        _refresh_orchestrator_health_before_manifest,
+        orchestrator,
+        ready_label,
+    )
+    await asyncio.to_thread(
+        _write_runtime_manifest,
         profile=profile or ready_label.lower(),
         ready_label=ready_label,
         artifact_root=artifact_root,
@@ -1977,10 +1985,15 @@ async def _refresh_runtime_manifest_until_ready(
     last_snapshot: dict[str, Any] | None = None
     while time.monotonic() < deadline and not is_shutdown_requested():
         await asyncio.sleep(interval_s)
-        snapshot = _refresh_orchestrator_health_before_manifest(orchestrator, ready_label)
+        snapshot = await asyncio.to_thread(
+            _refresh_orchestrator_health_before_manifest,
+            orchestrator,
+            ready_label,
+        )
         last_snapshot = snapshot
         if bool(snapshot.get("ready")):
-            _write_runtime_manifest(
+            await asyncio.to_thread(
+                _write_runtime_manifest,
                 profile=profile,
                 ready_label=ready_label,
                 artifact_root=artifact_root,

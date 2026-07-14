@@ -13,6 +13,7 @@ import logging
 import os
 import platform
 import re
+import threading
 import time
 from collections import deque
 from dataclasses import asdict, dataclass, field
@@ -148,6 +149,8 @@ class AmbientFileEvent:
 class AmbientLogEvent:
     path: str
     line: str
+    file_mtime: float = 0.0
+    observed_at: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -157,6 +160,8 @@ class AmbientLogEvent:
 class AmbientTerminalEvent:
     path: str
     line: str
+    file_mtime: float = 0.0
+    observed_at: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -182,6 +187,16 @@ class AmbientResourceInterrupt:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass
+class _TextReadCursor:
+    device: int
+    inode: int
+    offset: int
+    mtime_ns: int
+    remainder: bytes = b""
+    last_seen: float = field(default_factory=time.time)
 
 
 @dataclass(frozen=True)
@@ -238,9 +253,19 @@ class AmbientDeveloperStream:
         recent_window_s: float | None = None,
     ) -> None:
         self.project_root = (project_root or _project_root()).resolve()
-        self.watch_roots = watch_roots or _default_watch_roots(self.project_root)
-        self.log_roots = log_roots or _log_roots(self.project_root)
-        self.terminal_roots = terminal_roots or self._default_terminal_roots()
+        self.watch_roots = (
+            watch_roots
+            if watch_roots is not None
+            else _default_watch_roots(self.project_root)
+        )
+        self.log_roots = (
+            log_roots if log_roots is not None else _log_roots(self.project_root)
+        )
+        self.terminal_roots = (
+            terminal_roots
+            if terminal_roots is not None
+            else self._default_terminal_roots()
+        )
         self.sample_interval_s = (
             sample_interval_s
             if sample_interval_s is not None
@@ -264,6 +289,10 @@ class AmbientDeveloperStream:
         self._started_at = 0.0
         self._latest_frame: AmbientDeveloperFrame | None = None
         self._frames: deque[AmbientDeveloperFrame] = deque(maxlen=120)
+        self._source_state_lock = threading.RLock()
+        self._recent_file_fingerprints: dict[str, tuple[int, int, int, int]] = {}
+        self._text_read_cursors: dict[tuple[str, str], _TextReadCursor] = {}
+        self._text_bytes_dropped = 0
 
     async def start(self) -> None:
         if self.running:
@@ -438,6 +467,17 @@ class AmbientDeveloperStream:
                             stat = entry.stat(follow_symlinks=False)
                             if stat.st_mtime < cutoff:
                                 continue
+                            source_key = str(path.resolve())
+                            fingerprint = (
+                                int(stat.st_dev),
+                                int(stat.st_ino),
+                                int(stat.st_mtime_ns),
+                                int(stat.st_size),
+                            )
+                            with self._source_state_lock:
+                                if self._recent_file_fingerprints.get(source_key) == fingerprint:
+                                    continue
+                                self._recent_file_fingerprints[source_key] = fingerprint
                             events.append(
                                 AmbientFileEvent(
                                     path=self._relative(path),
@@ -453,31 +493,162 @@ class AmbientDeveloperStream:
         events.sort(key=lambda event: event.mtime, reverse=True)
         return events[:25]
 
-    def _collect_log_events(self) -> list[AmbientLogEvent]:
-        candidates: list[Path] = []
-        for root in self.log_roots:
+    def _recent_text_candidates(
+        self,
+        roots: tuple[Path, ...],
+        *,
+        stream: str,
+        suffixes: tuple[str, ...],
+        limit: int = 4,
+    ) -> list[tuple[Path, os.stat_result]]:
+        cutoff = time.time() - self.recent_window_s
+        candidates: dict[str, tuple[Path, os.stat_result]] = {}
+        for root in roots:
             if not root.exists():
                 continue
-            try:
-                files = [path for path in root.glob("*.log") if path.is_file()]
-            except _RUNTIME_ERRORS:
-                continue
-            candidates.extend(files)
-        candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0.0, reverse=True)
+            for suffix in suffixes:
+                try:
+                    paths = root.glob(f"*{suffix}")
+                    for path in paths:
+                        try:
+                            stat = path.stat()
+                        except _RUNTIME_ERRORS:
+                            continue
+                        if not path.is_file() or stat.st_size <= 0 or stat.st_mtime < cutoff:
+                            continue
+                        if not self._text_source_needs_read(path, stat, stream=stream):
+                            continue
+                        candidates[str(path.resolve())] = (path, stat)
+                except _RUNTIME_ERRORS:
+                    continue
+        return sorted(
+            candidates.values(),
+            key=lambda item: (float(item[1].st_mtime), str(item[0])),
+            reverse=True,
+        )[:limit]
+
+    def _text_source_needs_read(
+        self,
+        path: Path,
+        stat: os.stat_result,
+        *,
+        stream: str,
+    ) -> bool:
+        cursor_key = (stream, str(path.resolve()))
+        identity = (int(stat.st_dev), int(stat.st_ino))
+        with self._source_state_lock:
+            cursor = self._text_read_cursors.get(cursor_key)
+            if cursor is None or (cursor.device, cursor.inode) != identity:
+                return True
+            return (
+                int(stat.st_size) != cursor.offset
+                or int(stat.st_mtime_ns) != cursor.mtime_ns
+            )
+
+    def _read_incremental_lines(
+        self,
+        path: Path,
+        stat: os.stat_result,
+        *,
+        stream: str,
+        byte_budget: int,
+    ) -> tuple[list[str], float, float]:
+        """Read each source byte at most once while handling rotation/truncation."""
+
+        observed_at = time.time()
+        resolved = str(path.resolve())
+        cursor_key = (stream, resolved)
+        identity = (int(stat.st_dev), int(stat.st_ino))
+        with self._source_state_lock:
+            cursor = self._text_read_cursors.get(cursor_key)
+            reset = (
+                cursor is None
+                or (cursor.device, cursor.inode) != identity
+                or int(stat.st_size) < cursor.offset
+                or (
+                    int(stat.st_size) == cursor.offset
+                    and int(stat.st_mtime_ns) != cursor.mtime_ns
+                )
+            )
+            if (
+                not reset
+                and int(stat.st_size) == cursor.offset
+                and int(stat.st_mtime_ns) == cursor.mtime_ns
+            ):
+                cursor.last_seen = observed_at
+                return [], float(stat.st_mtime), observed_at
+
+            remainder = b"" if reset else cursor.remainder
+            start = max(0, int(stat.st_size) - byte_budget) if reset else cursor.offset
+            unread = max(0, int(stat.st_size) - start)
+            if unread > byte_budget:
+                dropped = unread - byte_budget
+                self._text_bytes_dropped += dropped
+                start = int(stat.st_size) - byte_budget
+                remainder = b""
+
+            with path.open("rb") as handle:
+                handle.seek(start)
+                chunk = handle.read(byte_budget)
+                final_stat = os.fstat(handle.fileno())
+            next_offset = start + len(chunk)
+
+            if reset and start > 0:
+                newline = chunk.find(b"\n")
+                chunk = chunk[newline + 1 :] if newline >= 0 else b""
+            combined = (b"" if reset else remainder) + chunk
+            newline = combined.rfind(b"\n")
+            if newline < 0:
+                self._text_bytes_dropped += max(0, len(combined) - 4096)
+                complete = b""
+                next_remainder = combined[-4096:]
+            else:
+                complete = combined[: newline + 1]
+                trailing = combined[newline + 1 :]
+                self._text_bytes_dropped += max(0, len(trailing) - 4096)
+                next_remainder = trailing[-4096:]
+
+            self._text_read_cursors[cursor_key] = _TextReadCursor(
+                device=int(final_stat.st_dev),
+                inode=int(final_stat.st_ino),
+                offset=next_offset,
+                mtime_ns=int(final_stat.st_mtime_ns),
+                remainder=next_remainder,
+                last_seen=observed_at,
+            )
+            if len(self._text_read_cursors) > 256:
+                oldest = sorted(
+                    self._text_read_cursors,
+                    key=lambda key: self._text_read_cursors[key].last_seen,
+                )[: len(self._text_read_cursors) - 256]
+                for key in oldest:
+                    self._text_read_cursors.pop(key, None)
+
+        lines = complete.decode("utf-8", errors="replace").splitlines()
+        return lines, float(final_stat.st_mtime), observed_at
+
+    def _collect_log_events(self) -> list[AmbientLogEvent]:
         events: list[AmbientLogEvent] = []
-        for path in candidates[:4]:
+        for path, stat in self._recent_text_candidates(
+            self.log_roots,
+            stream="log",
+            suffixes=(".log",),
+        ):
             try:
-                with path.open("rb") as handle:
-                    handle.seek(0, os.SEEK_END)
-                    size = handle.tell()
-                    handle.seek(max(0, size - 16000))
-                    text = handle.read().decode("utf-8", errors="replace")
-                for line in text.splitlines()[-120:]:
+                lines, file_mtime, observed_at = self._read_incremental_lines(
+                    path,
+                    stat,
+                    stream="log",
+                    byte_budget=16000,
+                )
+                for line in lines[-120:]:
                     if _LOG_PATTERN.search(line):
                         events.append(
                             AmbientLogEvent(
                                 path=self._relative(path),
                                 line=_bounded_text(line, 260),
+                                file_mtime=round(file_mtime, 3),
+                                observed_at=round(observed_at, 3),
                             )
                         )
                         if len(events) >= 12:
@@ -487,34 +658,27 @@ class AmbientDeveloperStream:
         return events
 
     def _collect_terminal_events(self) -> list[AmbientTerminalEvent]:
-        candidates: list[Path] = []
-        for root in self.terminal_roots:
-            if not root.exists():
-                continue
-            try:
-                candidates.extend(
-                    path for path in root.glob("*.log") if path.is_file() and path.stat().st_size > 0
-                )
-                candidates.extend(
-                    path for path in root.glob("*.txt") if path.is_file() and path.stat().st_size > 0
-                )
-            except _RUNTIME_ERRORS:
-                continue
-        candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0.0, reverse=True)
         events: list[AmbientTerminalEvent] = []
-        for path in candidates[:4]:
+        for path, stat in self._recent_text_candidates(
+            self.terminal_roots,
+            stream="terminal",
+            suffixes=(".log", ".txt"),
+        ):
             try:
-                with path.open("rb") as handle:
-                    handle.seek(0, os.SEEK_END)
-                    size = handle.tell()
-                    handle.seek(max(0, size - 12000))
-                    text = handle.read().decode("utf-8", errors="replace")
-                for line in text.splitlines()[-80:]:
+                lines, file_mtime, observed_at = self._read_incremental_lines(
+                    path,
+                    stat,
+                    stream="terminal",
+                    byte_budget=12000,
+                )
+                for line in lines[-80:]:
                     if _LOG_PATTERN.search(line) or "Traceback" in line:
                         events.append(
                             AmbientTerminalEvent(
                                 path=self._relative(path),
                                 line=_bounded_text(line, 260),
+                                file_mtime=round(file_mtime, 3),
+                                observed_at=round(observed_at, 3),
                             )
                         )
                         if len(events) >= 10:
@@ -714,6 +878,9 @@ class AmbientDeveloperStream:
             "latest_frame": self._latest_frame.to_dict() if self._latest_frame else None,
             "watch_roots": [str(path) for path in self.watch_roots],
             "terminal_roots": [str(path) for path in self.terminal_roots],
+            "recent_window_s": self.recent_window_s,
+            "text_cursor_count": len(self._text_read_cursors),
+            "text_bytes_dropped": self._text_bytes_dropped,
         }
 
     status = get_status

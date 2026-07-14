@@ -166,10 +166,11 @@ Status rules:
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
 | `RESOURCE-001` | `COMPLETE 2026-07-13` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. Checkpoint 64 adds a canonical lightweight target-tree observer; Checkpoint 65 adds a provenance-bearing PID census and targeted process-tree observation so ordinary liveness, sovereignty, shutdown, and supervisor checks do not enrich the full host process table. | Pass F 3; Addendum 22; Checkpoints 34, 64, and 65 |
 | `MEMORY-LEAK-001` | `IN PROGRESS (DOMINANT LIVE OWNER SOURCE-FIXED; EXACT-MAIN PLATEAU OPEN) 2026-07-13` | Attribute and eliminate the measured 350-450 MB/hour idle orchestrator RSS growth without relying on restart, pressure-triggered reclamation, model-worker exclusion, or a raised limit. Checkpoint 64 identified a live orchestrator retaining about 19.7 GB physical footprint, including about 17.2 GB of IOAccelerator regions, while stacks remained in the background non-parametric ingest path for more than 1,098 seconds. The source now forbids model loading in that owner and reuses the resident worker with one causal forward, hard pair/token/position/deadline budgets, foreground preemption, durable ordering, and cache cleanup. The old running process still retains its already-loaded allocation; controlled exact-main restart, remaining allocation/cardinality attribution, bounded-growth regressions, and stable idle plus interaction plateau proof remain mandatory. | `RESOURCE-001`, `RUNTIME-001`, `FAULT-001`, `PERF-001`; two independent 45/70-minute idle windows in `docs/SYSTEMS_MATURITY_2026_07_12.md`; live stack/vmmap attribution and Checkpoint 64 |
-| `FOREGROUND-LATENCY-001` | `IN PROGRESS (KNOWN PHI/PERCEPTION OWNERS SOURCE-CLOSED; EXACT-MAIN LIVE OPEN) 2026-07-14` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoints 64-73 close the previously attributed model, process-census, goal-lock, immunity, perception, CRSM, voice, integrity, and NumPy/Torch owners. Checkpoint 78 benchmarks the due whole-system Phi path at 2.66 seconds for 16 channels and 31.96 seconds for 32, removes it from the awaited cognition phase, requires zero-wait background resource admission, bounds the effective quotient at 16 elements while retaining all observed-channel coverage, and reduces measured 16/24/32-channel costs to about 1.5-2.0 seconds off the foreground path. Exact pushed-main event-loop, health, model-load, chat, probe, and plateau proof remains open and no lag threshold was raised. | `PERF-001`, `RUNTIME-001`, `FAULT-001`, `SUBSTRATE-001`, `IIT-SYSTEM-001`; Checkpoints 51, 57, 60, 64-65, 68, 71-73, and 78; live `event_loop_lag_3.638s` MLX admission denial, 4.304s and 7.0294s boot-health overruns, and CP66 main-thread NumPy/Torch sample on 2026-07-13 |
+| `FOREGROUND-LATENCY-001` | `IN PROGRESS (KNOWN PHI/PERCEPTION/BOOT-MANIFEST OWNERS SOURCE-CLOSED; EXACT-MAIN LIVE OPEN) 2026-07-14` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoints 64-73 close the previously attributed model, process-census, goal-lock, immunity, perception, CRSM, voice, integrity, and NumPy/Torch owners. Checkpoint 78 benchmarks the due whole-system Phi path at 2.66 seconds for 16 channels and 31.96 seconds for 32, removes it from the awaited cognition phase, requires zero-wait background resource admission, bounds the effective quotient at 16 elements while retaining all observed-channel coverage, and reduces measured 16/24/32-channel costs to about 1.5-2.0 seconds off the foreground path. Checkpoint 79 attributes the CP78 exact-app 6.277-second startup stall to synchronous pre-manifest health/manifest work, moves health, runtime-manifest, and ownership-manifest work off the owner loop without weakening readiness ordering, and replaces the 19-30-second repair scan with 100-file resumable batches whose measured real-tree maximum is 777.5 ms. Exact pushed-main event-loop, health, model-load, chat, probe, and plateau proof remains open and no lag threshold was raised. | `PERF-001`, `RUNTIME-001`, `FAULT-001`, `SUBSTRATE-001`, `IIT-SYSTEM-001`; Checkpoints 51, 57, 60, 64-65, 68, 71-73, and 78-79; live `event_loop_lag_3.638s` MLX admission denial, 4.304s and 7.0294s boot-health overruns, and CP66 main-thread NumPy/Torch sample on 2026-07-13 |
 | `SHUTDOWN-001` | `COMPLETE 2026-07-11` | Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes. | Addendum 32, `CTX2-SHUTDOWN-001..003` |
 | `FAULT-001` | `IN PROGRESS` | Drain the FMEA and degradation-policy backlog: root-fix broad catches, swallowed cancellation, false success/health, partial mutation, retry storms, leaks, and noisy fallback at their originating layer. | Pass F 4; Matrix 12 |
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
+| `ARCH-BASELINE-001` | `OPEN 2026-07-14` | Reconcile the stale architecture-quality baseline without normalizing accumulated debt. Reconstruct exact checkpoint-to-checkpoint architecture deltas, attribute the currently reported 944-edge growth, expanded import SCC, score drop from 46.38 to 42.49, and 12 additional oversized modules, then reduce or explicitly migrate each cause before writing a new reviewed baseline. New checkpoints must prove they add no oversized module, duplicate owner, or import cycle and must not refresh the baseline merely to make the gate green. | `ARCH-001`, `REPO-001`, `FOUNDATION-100-001`, `TEST-DEPTH-001`; Checkpoint 79 architecture gate evidence |
 | `MIND-001` | `OPEN` | Prove one boot-identified canonical self, workspace, substrate, welfare/homeostasis, consciousness cycle, identity, executive authority, and memory authority on the exact live path. | Matrix 3; Addendum 19 |
 | `STATE-001` | `OPEN` | Build the versioned canonical state catalog and inspectable causal graph with writer authority, freshness, arbitration, persistence, model-swap semantics, redaction, and action-to-learning traces. | Addendum 20 |
 | `MEMORY-001` | `IN PROGRESS 2026-07-12` | Preserve the encrypted exact-agent relational-memory authority while unifying every remaining memory writer/reader, cross-store semantic retrieval, provenance, conflict/freshness handling, exact live consumption proof, deletion, key rotation, and symmetric observed rollback. | Addendum 26; Checkpoints 42-45 |
@@ -15334,6 +15335,138 @@ Progress and immediate next work:
   continue the inference serving fabric, CRSM artifact/quality verdict,
   complete capability/foundation/master index, semantic every-line review, GUI,
   portability, clean-machine, and release work.
+- Final multi-hour and 24-72 hour soaks remain deferred until every shorter
+  source, deterministic, fault-injection, bounded live, GUI, portability, and
+  release gate is green.
+
+## Checkpoint 2026-07-14-79: Owner-Loop Boot Isolation, Fresh Developer Evidence, and Bounded Repair Scanning
+
+This checkpoint advances `FOREGROUND-LATENCY-001`, `IMMUNE-CODING-001`,
+`OBSERVE-001`, `FAULT-001`, `ASYNC-TASK-001`, `CAPABILITY-CERT-001`,
+`ARCH-001`, `ARCH-BASELINE-001`, and `TEST-DEPTH-001`. It closes three
+source-level latency and causal-evidence defects found while running the exact
+pushed Checkpoint 78 app. Exact rebuilt-app proof remains open, so this section
+does not claim live or release closure.
+
+The exact Checkpoint 78 live evidence separated the owners instead of treating
+all startup time as one symptom:
+
+- The eight behavioral boot probes took 641 ms in total, but the profiler's
+  `readiness_manifests` phase took 6.530 seconds and the owner-loop monitor
+  observed a 6.277-second startup stall. The async boot function was directly
+  calling synchronous orchestrator health, runtime-manifest construction, and
+  service-ownership emission.
+- AmbientDeveloperStream repeatedly returned 12 alleged recent errors from a
+  July 7 `soak_verify.log` on July 14. Every 30-second sample reread old file
+  tails and reintroduced the same lines into repair candidates, WorldState,
+  TimescaleBridge, and autonomic reflection.
+- A prior `auto_refactor` call timed out at 30.007 seconds; another complete
+  traversal took about 19 seconds and returned 1,749 shallow findings. Current
+  zero-millisecond outcomes were correctly policy-deferred during recent user
+  activity, but DevMode rendered every `ok=false` result as a red tool failure
+  and BaseSkill counted deferral against reliability.
+
+The boot and ambient repairs preserve ordering and evidence while removing
+blocking/replay behavior:
+
+- Canonical boot still awaits pre-manifest health and both manifests before
+  publishing readiness, but their synchronous CPU/filesystem bodies now run in
+  `asyncio.to_thread`. The bounded post-warmup manifest refresh uses the same
+  off-loop contract. A behavioral regression holds health and manifest workers
+  for 80 ms each while proving the owner loop continues to tick.
+- Log and terminal sources are filtered by the declared recent window and read
+  through independent inode/device/offset cursors. Initial reads are bounded
+  tails; subsequent reads deliver only appended complete lines. Rotation,
+  replacement, truncation, oversized append gaps, partial records, and cursor
+  retention are bounded and observable. Each event carries file mtime and
+  observation time.
+- Watched source files use exact device/inode/mtime/size fingerprints, so an
+  unchanged recent file is not emitted as a new event every sample. Explicitly
+  empty watch/log/terminal root tuples now remain empty instead of silently
+  reverting to defaults.
+
+The repair scanner is now infrastructure rather than an opaque recursive walk:
+
+- `AutoRefactorSkill` is a 395-line governed adapter;
+  `IncrementalCodeHealthScanner` is a 324-line inventory/cache engine; and
+  `code_health_rules` is a 296-line deterministic analyzer. No new module
+  exceeds the 500-line architecture threshold.
+- A cycle incrementally inventories repository-scoped Python sources, excludes
+  archives/generated/dependency trees, fingerprints every source, caches
+  unchanged findings, handles replacement/deletion, limits target states, and
+  retains inventory/read errors across batches. Each result reports cycle ID,
+  discovered and completed files, parsed/cache counts, exact time/file budgets,
+  deadline/batch-limit state, truncation, and whether 100% coverage is proved.
+- Rules distinguish syntax/read failures, mutable defaults, blocking sleep in
+  async functions, broad exception boundaries, long/branch-heavy functions,
+  oversized source, and deferred-work comments. Findings carry stable rule ID,
+  severity, confidence, location, explanation, and remediation. They are
+  candidates for causal triage, not automatically asserted defects.
+- Proposal publication is content-addressed and six-hour deduplicated. A
+  concurrent scan returns a typed deferral instead of queuing duplicate work.
+  Repository escape is rejected.
+- `run_tests` no longer launches pytest from the skill or pretends an unrelated
+  active-coding directory contains the repository. A bounded specific test
+  file or test subtree creates one content-addressed tracked job owned by the
+  canonical `SafeModificationHarness`; that owner performs isolated candidate overlay,
+  pytest, rollback, resource, and source-immutability checks and retains the
+  result for later retrieval. Broad test scopes defer truthfully.
+- DevMode records policy deferral as `deferred`, with no error or red failure
+  marker. BaseSkill keeps `ok=false` deferral semantics but does not increment
+  failure metrics. Timeouts and genuine failures remain failures.
+
+Verification on the integrated source candidate:
+
+- The composed scanner, ambient/autonomic, boot, event-loop, catalog,
+  capability-policy, registered-skill, transparency, and BaseSkill suites pass
+  `232/232` in 169.37 seconds. The final focused regression run passes `47/47`
+  in 30.92 seconds, including the canonical-validation selectors; these are
+  overlap, not added to the unique total.
+- A cold real-tree scanner cycle covers all 3,962 eligible Python files in 40
+  resumable default batches with zero scan errors and no truncation. Median
+  batch time is 423.7 ms, maximum is 901.2 ms, and aggregate work is 18.767
+  seconds. It retains 2,157 heuristic candidates for ranked review rather than
+  claiming 2,157 confirmed bugs.
+- Targeted compilation, configured Ruff, and `git diff --check` pass. The
+  production-surface scanner reports zero findings, zero high/critical
+  findings, and zero exemptions. The enterprise static ratchet passes without
+  baseline changes. Governance matches 1,816 reviewed calls in 1,705 buckets,
+  with 1,671 older migration-debt calls still open. Skill discovery has 75
+  accepted/validated/live skills, exact Rust/Python parity, and no quarantine.
+- Resource-observation ownership passes across 2,700 files with zero findings;
+  cognitive candidate gates pass 13/13; production readiness passes 37/37; and
+  the closeout rubric passes 20/20.
+- The dirty-candidate closeout audit passes every configured technical gate in
+  221.08 seconds while mechanically enumerating 5,159 tracked files and
+  3,666,409 text lines. It truthfully leaves full closeout false: only 432 of
+  4,152 code files currently have complete hash-matched semantic-review
+  receipts, with 3,689 code files still unreviewed. Mechanical enumeration is
+  not represented as human semantic review.
+- The separately configured architecture-quality baseline remains red and is
+  not refreshed: it reports score 42.49 versus 46.38, 944 accumulated edges
+  beyond its allowance, a larger import SCC, and 12 additional oversized
+  modules across prior mainline work. `ARCH-BASELINE-001` now owns exact
+  attribution and reduction. This checkpoint adds no oversized module and does
+  not claim that a stale aggregate baseline is green.
+
+Progress and immediate next work:
+
+- This is source Checkpoint `79`. Evidence-weighted completion remains `30%`
+  until the exact pushed commit is rebuilt and proves the owner-loop, ambient,
+  repair-scan, health, chat, and Neural/terminal behavior live. The forecast
+  remains `214-286` total meaningful checkpoints, with `135-207` remaining
+  after this source checkpoint.
+- Commit and push this exact candidate on `main`, rebuild/install from that
+  commit, and prove no multi-second pre-manifest owner-loop stall, fresh-only
+  ambient evidence across repeated samples, bounded self-development scan
+  batches, neutral policy deferrals, responsive health, successful chat/model
+  service, and clean terminal plus Neural streams. Fix any surfaced warning at
+  its owner rather than suppressing or raising a threshold.
+- Reconcile the architecture-quality baseline from exact historical commits,
+  continue the inference-serving fabric, CRSM artifact/quality verdict,
+  whole-system causal measurement, immune coding stack, capability/foundation
+  master index, semantic every-line review, GUI, portability, clean-machine,
+  and release work.
 - Final multi-hour and 24-72 hour soaks remain deferred until every shorter
   source, deterministic, fault-injection, bounded live, GUI, portability, and
   release gate is green.
