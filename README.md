@@ -616,6 +616,45 @@ Kurzgesagt consciousness-series concepts and the cited literature:
 Every new subsystem has an end-to-end and an adversarial test. See
 [TESTING.md](TESTING.md).
 
+### Reasoning, self-model, and resilience (mid-2026)
+
+A later wave shifted focus from *being a coherent agent* to *reasoning well,
+knowing herself, and running reliably every day*. Full detail is in
+[ARCHITECTURE.md §15](ARCHITECTURE.md#15-the-reasoning-self-model-and-resilience-layer)
+and the plain-English tour in
+[HOW_IT_WORKS.md](HOW_IT_WORKS.md#the-reasoning-and-self-layer-mid-2026):
+
+- **Verifier-gated reasoning** — hard turns generate several candidates,
+  check them against a verifier registry and a sandbox, and assert only what a
+  checker confirmed. A **verifier foundry** measures how reliable each checker
+  actually is and gates self-training on that, so a bad checker can't launder
+  wrong answers.
+- **Honest discovery** — a Frontier Discovery Engine with an explicit
+  PROVEN / SUPPORTED / CONJECTURE / REFUTED taxonomy (only PROVEN is stated as
+  fact), an analogical-leap engine that declares off-map problems with evidence,
+  and a local knowledge substrate that admits honest misses instead of
+  confabulating.
+- **Program-DNA reconstruction** — build a behavioral genome of an authorized
+  program from its available evidence and differentially test a clean-room
+  rebuild against the original, tagging each piece verified / inferred /
+  synthesized (no DRM/binary theft).
+- **Self-model proprioception** — boot-over-boot diffs of her own code, a live
+  "someone is operating on me" pulse, a SIGKILL-survivable flight recorder she
+  can answer crash questions from, and a "felt thought" signal from her own
+  token-level uncertainty that is causal on cognition.
+- **Ulysses Covenant** — enforceable volitional self-binding (easy to tighten,
+  hard to loosen, fail-closed witness), seeded from real crashes.
+- **Runtime resilience** — background housekeeping yields to the live
+  conversation instead of fighting it for the model, honest heartbeat/liveness
+  under load, a `degraded_ready` UI that stays up whenever she can still talk,
+  and a chat turn-death floor so a turn never returns a server error. Honest
+  open edge: the local model can't be interrupted mid-thought, so a slow deep
+  answer still costs a reload — a soft-cancel path is deliberate future work.
+- **Ablation legibility** — a reviewer can run Aura with pieces switched off
+  (memory, Will, substrate, verifier, planner) and see the measured delta each
+  makes, with no-delta results reported honestly. See
+  [docs/ABLATION_LEGIBILITY.md](docs/ABLATION_LEGIBILITY.md).
+
 ---
 
 ## Benchmarks
