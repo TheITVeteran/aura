@@ -140,6 +140,7 @@ ALLOWED_PLASTIC_MODULES = frozenset(
         "grounding_plastic_adapter",
         "memory_reranker_adapter",
         "context_attention_adapter",
+        "crsm_lora_adapter",
         "perception_adapter",
     }
 )
@@ -855,6 +856,7 @@ class UnifiedWill:
                 ActionDomain.MEMORY_WRITE: ActionCategory.MEMORY_WRITE,
                 ActionDomain.INITIATIVE: ActionCategory.INITIATIVE,
                 ActionDomain.STATE_MUTATION: ActionCategory.STATE_MUTATION,
+                ActionDomain.SEMANTIC_WEIGHT_UPDATE: ActionCategory.STATE_MUTATION,
                 ActionDomain.EXPRESSION: ActionCategory.EXPRESSION,
                 ActionDomain.EXPLORATION: ActionCategory.EXPLORATION,
                 ActionDomain.STABILIZATION: ActionCategory.STABILIZATION,

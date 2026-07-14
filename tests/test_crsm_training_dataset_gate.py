@@ -78,6 +78,7 @@ def test_train_and_fuse_marks_crsm_consumed_only_from_current_manifest(tmp_path,
     class FakeMonitor:
         def mark_dataset_consumed(self, **kwargs):
             calls.append(kwargs)
+            return True
 
     monkeypatch.setattr(train_and_fuse, "CRSM_DATASET", dataset)
     monkeypatch.setattr(train_and_fuse, "CRSM_INTEGRATION_MANIFEST", manifest)

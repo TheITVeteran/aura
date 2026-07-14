@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -113,6 +115,113 @@ def test_blocking_model_gateway_routes_through_async_lifecycle(
     assert calls[0][1]["timeout"] == 12.0
 
 
+def test_delegated_governance_environment_must_match_active_scope() -> None:
+    from core.governance_context import governed_scope_sync
+
+    decision = SimpleNamespace(
+        will_receipt_id="will-delegated-1",
+        domain="semantic_weight_update",
+        source="system_maintenance:crsm_closure",
+        constraints={"executive_intent_id": "intent-delegated-1"},
+    )
+    env = {
+        "AURA_GOVERNANCE_MODE": "delegated_subprocess",
+        "AURA_DELEGATED_GOVERNANCE_RECEIPT_ID": "will-delegated-1",
+        "AURA_DELEGATED_GOVERNANCE_DOMAIN": "semantic_weight_update",
+        "AURA_DELEGATED_GOVERNANCE_SOURCE": "system_maintenance:crsm_closure",
+        "AURA_DELEGATED_AUTHORITY_INTENT_ID": "intent-delegated-1",
+        "AURA_DELEGATED_GOVERNANCE_PARENT_PID": str(os.getpid()),
+    }
+    with governed_scope_sync(decision):
+        subprocess_gateway._validate_delegated_governance_environment(
+            env,
+            source="system_maintenance:crsm_closure:crsm_delta_train_fuse_publish",
+        )
+        env["AURA_DELEGATED_AUTHORITY_INTENT_ID"] = "forged-intent"
+        with pytest.raises(
+            subprocess_gateway.GovernanceViolation,
+            match="does not match active scope",
+        ):
+            subprocess_gateway._validate_delegated_governance_environment(
+                env,
+                source="system_maintenance:crsm_closure:crsm_delta_train_fuse_publish",
+            )
+
+
+def test_explicit_child_environment_does_not_rehydrate_parent_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AURA_GOVERNANCE_MODE", "delegated_subprocess")
+    monkeypatch.setenv("AURA_DELEGATED_GOVERNANCE_RECEIPT_ID", "parent-secret")
+    monkeypatch.setenv("AURA_DELEGATED_GOVERNANCE_DOMAIN", "semantic_weight_update")
+    monkeypatch.setenv("AURA_DELEGATED_GOVERNANCE_SOURCE", "parent-source")
+    monkeypatch.setenv("AURA_DELEGATED_AUTHORITY_INTENT_ID", "parent-intent")
+    monkeypatch.setenv("AURA_DELEGATED_GOVERNANCE_PARENT_PID", str(os.getpid()))
+
+    child_env = {
+        "AURA_GOVERNANCE_MODE": "delegated_subprocess_child",
+        "AURA_REQUIRE_GOVERNANCE": "0",
+    }
+    subprocess_gateway._validate_delegated_governance_environment(
+        child_env,
+        source="training_tooling:delegated-child",
+    )
+
+
+def test_inherited_model_child_reuses_parent_group_and_strips_delegation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.runtime import model_lane_control
+
+    captured: dict[str, object] = {}
+
+    class _Controller:
+        def validate_inherited_child_claim(self, **kwargs):
+            captured["validation"] = kwargs
+            return True
+
+    def _run(command, **kwargs):
+        captured["command"] = list(command)
+        captured["run"] = kwargs
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(model_lane_control, "get_model_lane_controller", _Controller)
+    monkeypatch.setattr(subprocess_gateway.subprocess, "run", _run)
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: False)
+    env = {
+        "AURA_MODEL_LANE_INHERITED_OWNER_ID": "pipeline-owner",
+        "AURA_MODEL_LANE_INHERITED_REQUEST_ID": "pipeline-request",
+        "AURA_MODEL_LANE_INHERITED_MODEL_PATH": "/models/qwen-32b",
+        "AURA_MODEL_LANE_INHERITED_PURPOSE": "compound",
+        "AURA_MODEL_LANE_DELEGATION_TOKEN": "secret-token",
+        "AURA_DELEGATED_GOVERNANCE_RECEIPT_ID": "secret-receipt",
+    }
+    claim = LaneClaim(
+        owner_id="nested-train",
+        model_path="/models/qwen-32b",
+        request_gb=12.0,
+        purpose="train",
+    )
+
+    result = subprocess_gateway.SubprocessGateway().run_model_blocking(
+        [sys.executable, "-c", "print('nested')"],
+        env=env,
+        offline_tooling=True,
+        source="training_tooling:nested-model",
+        model_lane_claim=claim,
+    )
+
+    assert result.returncode == 0
+    assert captured["validation"]["requested_gb"] == 12.0
+    assert captured["validation"]["child_model_path"] == "/models/qwen-32b"
+    assert captured["validation"]["child_purpose"] == "train"
+    run = captured["run"]
+    assert run["start_new_session"] is False
+    assert run["env"]["AURA_MODEL_LANE_PARENT_ACCOUNTED"] == "1"
+    assert "AURA_MODEL_LANE_DELEGATION_TOKEN" not in run["env"]
+    assert "AURA_DELEGATED_GOVERNANCE_RECEIPT_ID" not in run["env"]
+
+
 @pytest.mark.asyncio
 async def test_blocking_model_gateway_refuses_active_event_loop() -> None:
     claim = LaneClaim(
@@ -129,6 +238,75 @@ async def test_blocking_model_gateway_refuses_active_event_loop() -> None:
             source="training_tooling:blocking-loop-refusal",
             model_lane_claim=claim,
         )
+
+
+@pytest.mark.asyncio
+async def test_cancelled_effectful_run_terminates_process_group_before_propagating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = subprocess_gateway.SubprocessGateway()
+    communicate_started = asyncio.Event()
+    cleaned = asyncio.Event()
+
+    class _Process:
+        returncode = None
+
+        async def communicate(self, _input=None):
+            communicate_started.set()
+            await asyncio.Event().wait()
+
+    process = _Process()
+
+    async def _spawn_async(*args, **kwargs):
+        return process
+
+    async def _cleanup(candidate, **kwargs):
+        assert candidate is process
+        cleaned.set()
+        return b"", b""
+
+    monkeypatch.setattr(gateway, "spawn_async", _spawn_async)
+    monkeypatch.setattr(subprocess_gateway, "_terminate_async_process_group", _cleanup)
+    task = asyncio.create_task(
+        gateway.run_async(
+            [sys.executable, "-c", "pass"],
+            source="system_maintenance:cancellation-test",
+        )
+    )
+    await communicate_started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cleaned.is_set()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_signals_isolated_group_after_root_already_exited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signals: list[tuple[int, signal.Signals]] = []
+
+    class _ExitedRoot:
+        pid = 11001
+        returncode = 0
+        _aura_process_group_id = 22002
+        _aura_start_new_session = True
+
+        async def communicate(self):
+            return b"", b""
+
+        def terminate(self):
+            raise AssertionError("isolated process group should be signalled")
+
+    monkeypatch.setattr(
+        subprocess_gateway.os,
+        "killpg",
+        lambda pgid, sig: signals.append((pgid, sig)),
+    )
+
+    assert await subprocess_gateway._terminate_async_process_group(_ExitedRoot()) == (b"", b"")
+    assert signals == [(22002, signal.SIGTERM)]
 
 
 @pytest.mark.host_observation
@@ -937,6 +1115,31 @@ def test_offline_tooling_spawn_denied_when_live_governance_active(monkeypatch: p
             offline_tooling=True,
             source="training_tooling:test",
         )
+
+
+def test_semantic_weight_receipt_can_launch_exact_live_effect(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from core.governance_context import governed_scope_sync
+
+    monkeypatch.setattr(subprocess_gateway, "governance_runtime_active", lambda: True)
+    decision = SimpleNamespace(
+        will_receipt_id="will-semantic-subprocess-1",
+        domain="semantic_weight_update",
+        source="system_maintenance:crsm_closure",
+        constraints={},
+    )
+    with governed_scope_sync(decision):
+        result = subprocess_gateway.SubprocessGateway().run(
+            [sys.executable, "-c", "print('semantic-governed')"],
+            timeout=5,
+            source="system_maintenance:crsm_closure:test",
+        )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "semantic-governed"
 
 
 def test_offline_tooling_spawn_async_denied_when_live_governance_active(

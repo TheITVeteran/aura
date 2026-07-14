@@ -70,6 +70,80 @@ _LIVE_AURA_CMD_MARKERS = (
     "tools/live_boot_proof.py",
     "tools/visible_journal_demo_proof.py",
 )
+_DELEGATED_GOVERNANCE_ENV_KEYS = (
+    "AURA_DELEGATED_GOVERNANCE_RECEIPT_ID",
+    "AURA_DELEGATED_GOVERNANCE_DOMAIN",
+    "AURA_DELEGATED_GOVERNANCE_SOURCE",
+    "AURA_DELEGATED_AUTHORITY_INTENT_ID",
+    "AURA_DELEGATED_GOVERNANCE_PARENT_PID",
+)
+_INHERITED_MODEL_LANE_ENV_KEYS = (
+    "AURA_MODEL_LANE_INHERITED_OWNER_ID",
+    "AURA_MODEL_LANE_INHERITED_REQUEST_ID",
+    "AURA_MODEL_LANE_INHERITED_MODEL_PATH",
+    "AURA_MODEL_LANE_INHERITED_PURPOSE",
+    "AURA_MODEL_LANE_DELEGATION_TOKEN",
+)
+
+
+def delegated_governance_provenance() -> dict[str, str]:
+    """Return the parent authority identifiers carried into this worker."""
+    receipt_id = str(os.getenv("AURA_DELEGATED_GOVERNANCE_RECEIPT_ID", "")).strip()
+    intent_id = str(os.getenv("AURA_DELEGATED_AUTHORITY_INTENT_ID", "")).strip()
+    domain = str(os.getenv("AURA_DELEGATED_GOVERNANCE_DOMAIN", "")).strip()
+    source = str(os.getenv("AURA_DELEGATED_GOVERNANCE_SOURCE", "")).strip()
+    if not receipt_id and not intent_id:
+        return {}
+    return {
+        "will_receipt_id": receipt_id,
+        "executive_intent_id": intent_id,
+        "domain": domain,
+        "source": source,
+    }
+
+
+def enforce_live_delegated_authority(*, crsm_delta: bool, tag: str) -> None:
+    """Require the live scheduler's parent-bound receipt for its exact lane."""
+    if not crsm_delta or tag != "crsm-closeout" or not _env_flag("AURA_LAUNCHED_FROM_APP"):
+        return
+    provenance = delegated_governance_provenance()
+    expected_parent = str(os.getppid())
+    supplied_parent = str(os.getenv("AURA_DELEGATED_GOVERNANCE_PARENT_PID", "")).strip()
+    if (
+        not provenance.get("will_receipt_id")
+        or not provenance.get("executive_intent_id")
+        or provenance.get("domain") != "semantic_weight_update"
+        or provenance.get("source") != "system_maintenance:crsm_closure"
+        or supplied_parent != expected_parent
+    ):
+        raise SystemExit(
+            "live CRSM closeout requires a parent-bound semantic_weight_update authority receipt"
+        )
+
+
+def consume_inherited_pipeline_lane() -> bool:
+    """Consume the outer pipeline delegation before its short token expires."""
+    values = {
+        key: str(os.getenv(key, "")).strip()
+        for key in _INHERITED_MODEL_LANE_ENV_KEYS
+    }
+    if not any(values.values()):
+        return False
+    if not all(values.values()):
+        raise SystemExit("incomplete inherited model-lane delegation")
+    from core.runtime.model_lane_control import acquire_standalone_model_lane
+
+    lease = acquire_standalone_model_lane(
+        owner_id="crsm-closeout-pipeline-worker",
+        model_path=values["AURA_MODEL_LANE_INHERITED_MODEL_PATH"],
+        purpose=values["AURA_MODEL_LANE_INHERITED_PURPOSE"],
+        request_gb=0.1,
+        metadata={"pipeline": "train_and_fuse", "delegated_worker": True},
+    )
+    if not lease.inherited:
+        lease.release(reason="unexpected_non_inherited_pipeline_lane")
+        raise SystemExit("delegated pipeline failed to consume its inherited model lane")
+    return True
 
 
 def _run(
@@ -83,9 +157,19 @@ def _run(
 ) -> int:
     print(f"\n$ {' '.join(cmd)}", flush=True)
     gateway = get_subprocess_gateway()
+    effective_env = dict(env) if env is not None else None
+    if os.getenv("AURA_GOVERNANCE_MODE", "").strip() == "delegated_subprocess":
+        effective_env = dict(os.environ if effective_env is None else effective_env)
+        for key in _DELEGATED_GOVERNANCE_ENV_KEYS:
+            effective_env.pop(key, None)
+        effective_env["AURA_GOVERNANCE_MODE"] = "delegated_subprocess_child"
+        effective_env["AURA_REQUIRE_GOVERNANCE"] = "0"
+        if not (model_job or model_lane_claim is not None):
+            for key in _INHERITED_MODEL_LANE_ENV_KEYS:
+                effective_env.pop(key, None)
     run_kwargs = {
         "cwd": REPO_DIR,
-        "env": env,
+        "env": effective_env,
         "timeout": timeout if timeout is not None else TRAINING_COMMAND_TIMEOUT_S,
         "capture_output": False,
         "offline_tooling": True,
@@ -100,6 +184,21 @@ def _run(
     else:
         result = gateway.run(cmd, **run_kwargs)
     return result.returncode
+
+
+def _training_lane_claim(base_model: Path, *, source: str) -> LaneClaim:
+    timeout = TRAINING_COMMAND_TIMEOUT_S
+    return LaneClaim(
+        owner_id=f"training:{source}:{os.getpid()}:{time.time_ns()}",
+        model_path=str(base_model),
+        request_gb=estimate_model_job_footprint_gb(str(base_model), purpose="train"),
+        purpose="train",
+        priority=80,
+        preemptible=True,
+        reservation_ttl_s=timeout + 30.0,
+        owner_lease_ttl_s=timeout + 30.0,
+        metadata={"source": source, "pipeline": "train_and_fuse"},
+    )
 
 
 def build_dataset() -> None:
@@ -127,6 +226,10 @@ def train_lora(*, base_model: Path, resume: bool = False) -> None:
     rc = _run(
         cmd,
         env=env,
+        model_lane_claim=_training_lane_claim(
+            base_model,
+            source="training_tooling:train_lora",
+        ),
         source="training_tooling:train_lora",
     )
     if rc != 0:
@@ -424,6 +527,10 @@ def train_crsm_delta_lora(
     rc = _run(
         cmd,
         model_job=True,
+        model_lane_claim=_training_lane_claim(
+            base_model,
+            source="training_tooling:crsm_delta_lora",
+        ),
         source="training_tooling:crsm_delta_lora",
     )
     if rc != 0:
@@ -630,16 +737,16 @@ def verify_load(fused_path: Path) -> None:
     """Smoke-test: tokenize one prompt to confirm the fused model is loadable."""
     print(f"\nVerifying fused model loads: {fused_path}")
     code = (
+        "import contextlib\n"
+        "import os\n"
         "import sys\n"
         "from core.runtime.model_lane_control import standalone_model_lane\n"
         "from mlx_lm import load\n"
         "model_path = sys.argv[1]\n"
-        "with standalone_model_lane(\n"
-        "    owner_id='verify-fused-model',\n"
-        "    model_path=model_path,\n"
-        "    purpose='benchmark',\n"
-        "    preemptible=True,\n"
-        "):\n"
+        "lane = contextlib.nullcontext() if os.getenv('AURA_MODEL_LANE_PARENT_ACCOUNTED') == '1' else standalone_model_lane(\n"
+        "    owner_id='verify-fused-model', model_path=model_path,\n"
+        "    purpose='benchmark', preemptible=True)\n"
+        "with lane:\n"
         "    model, tok = load(model_path)\n"
         "    ids = tok.encode('Hello')\n"
         "    print(f'OK: tokenized {len(ids)} tokens, vocab_size={tok.vocab_size}')\n"
@@ -684,6 +791,9 @@ def publish_manifest(fused_path: Path, *, tag: str, base_model: Path) -> None:
         "base_model": str(base_model),
         "schema_version": 2,
     }
+    governance = delegated_governance_provenance()
+    if governance:
+        manifest["governance"] = governance
     tmp = ACTIVE_MANIFEST.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(manifest, indent=2, sort_keys=True))
     os.replace(tmp, ACTIVE_MANIFEST)
@@ -740,14 +850,25 @@ def mark_crsm_loop_consumed_after_training(
 
     from core.consciousness.crsm_loop_monitor import get_crsm_loop_monitor
 
-    get_crsm_loop_monitor().mark_dataset_consumed(
-        model_path=str(fused_path),
-        lines_consumed=source_lines,
-        accepted_lines=accepted,
-        rejected_lines=rejected,
-        manifest_path=str(manifest_path),
-        source=source,
-    )
+    governance = delegated_governance_provenance()
+    marker_payload = {
+        "model_path": str(fused_path),
+        "lines_consumed": source_lines,
+        "accepted_lines": accepted,
+        "rejected_lines": rejected,
+        "manifest_path": str(manifest_path),
+        "source": source,
+    }
+    if governance:
+        marker_payload.update(
+            {
+                "governance_receipt_id": governance.get("will_receipt_id"),
+                "authority_intent_id": governance.get("executive_intent_id"),
+            }
+        )
+    marked = get_crsm_loop_monitor().mark_dataset_consumed(**marker_payload)
+    if marked is not True:
+        sys.exit("CRSM training completed, but the final consumed marker was not committed.")
     print(
         "\nMarked CRSM captures handled after successful train/fuse: "
         f"{accepted} trained, {rejected} retired."
@@ -783,6 +904,9 @@ def record_crsm_delta_training_state(
             "max_seq_length": max_seq_length,
             "status": "fused_published_consumed",
         }
+        governance = delegated_governance_provenance()
+        if governance:
+            payload["governance"] = governance
         state["crsm_delta"] = payload
         tmp = state_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
@@ -845,9 +969,17 @@ def main() -> None:
     parser.add_argument("--tag", default="")
     args = parser.parse_args()
 
+    enforce_live_delegated_authority(crsm_delta=args.crsm_delta, tag=args.tag)
+
     base_model = Path(args.base_model)
     if not base_model.exists():
         sys.exit(f"Base model not found: {base_model}")
+    inherited_pipeline_lane = consume_inherited_pipeline_lane()
+    if _env_flag("AURA_TRAINING_ALLOW_LIVE_AURA") and _env_flag("AURA_LAUNCHED_FROM_APP"):
+        if not inherited_pipeline_lane or not delegated_governance_provenance():
+            sys.exit(
+                "live Aura training coexistence requires delegated governance and model-lane ownership"
+            )
 
     print("=" * 60)
     print("  AURA TRAIN → FUSE → PUBLISH PIPELINE")
@@ -899,12 +1031,6 @@ def main() -> None:
     fused_path = fuse_adapter(base_model=base_model, tag=args.tag, adapter_dir=adapter_dir)
     verify_load(fused_path)
     publish_manifest(fused_path, tag=args.tag, base_model=base_model)
-    if args.crsm_delta or not args.skip_train or args.mark_crsm_consumed:
-        mark_crsm_loop_consumed_after_training(
-            fused_path,
-            manifest_path=crsm_marker_manifest,
-            source=crsm_marker_source,
-        )
     if args.crsm_delta and crsm_delta_adapter_dir is not None:
         record_crsm_delta_training_state(
             adapter_dir=crsm_delta_adapter_dir,
@@ -915,6 +1041,14 @@ def main() -> None:
                 args.crsm_delta_max_seq_length
                 or _env_int("AURA_CRSM_DELTA_MAX_SEQ_LENGTH", 2048, minimum=512, maximum=4096)
             ),
+        )
+    # The consumed marker is the public transaction commit point. All durable
+    # model and training-state artifacts must exist before it can close the loop.
+    if args.crsm_delta or not args.skip_train or args.mark_crsm_consumed:
+        mark_crsm_loop_consumed_after_training(
+            fused_path,
+            manifest_path=crsm_marker_manifest,
+            source=crsm_marker_source,
         )
 
 

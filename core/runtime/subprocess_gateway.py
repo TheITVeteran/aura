@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import signal
 import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -33,6 +34,7 @@ _EFFECT_DOMAINS = (
     "tool_execution",
     "state_mutation",
     "file_write",
+    "semantic_weight_update",
     "self_modification",
 )
 _OFFLINE_TOOLING_SOURCE_PREFIXES = (
@@ -53,6 +55,20 @@ _DESKTOP_LONGRUN_COMMAND_MARKERS = (
     "run_longevity_soak.py",
     "aletheia_tier5",
     "run_aletheia",
+)
+_DELEGATED_GOVERNANCE_ENV_KEYS = (
+    "AURA_DELEGATED_GOVERNANCE_RECEIPT_ID",
+    "AURA_DELEGATED_GOVERNANCE_DOMAIN",
+    "AURA_DELEGATED_GOVERNANCE_SOURCE",
+    "AURA_DELEGATED_AUTHORITY_INTENT_ID",
+    "AURA_DELEGATED_GOVERNANCE_PARENT_PID",
+)
+_INHERITED_MODEL_LANE_ENV_KEYS = (
+    "AURA_MODEL_LANE_INHERITED_OWNER_ID",
+    "AURA_MODEL_LANE_INHERITED_REQUEST_ID",
+    "AURA_MODEL_LANE_INHERITED_MODEL_PATH",
+    "AURA_MODEL_LANE_INHERITED_PURPOSE",
+    "AURA_MODEL_LANE_DELEGATION_TOKEN",
 )
 logger = logging.getLogger("Aura.SubprocessGateway")
 
@@ -168,8 +184,9 @@ def _truthy_env_value(value: object) -> bool:
 
 
 def _effective_env_value(env: Mapping[str, str] | None, key: str) -> str | None:
-    if env is not None and key in env:
-        return str(env[key])
+    if env is not None:
+        value = env.get(key)
+        return str(value) if value is not None else None
     return os.getenv(key)
 
 
@@ -185,6 +202,39 @@ def _desktop_longrun_override(env: Mapping[str, str] | None) -> bool:
     return _truthy_env_value(_effective_env_value(env, "AURA_ALLOW_DESKTOP_LONGRUNS")) or _truthy_env_value(
         _effective_env_value(env, "AURA_ALLOW_DESKTOP_NETHACK")
     )
+
+
+def _validate_delegated_governance_environment(
+    env: Mapping[str, str] | None,
+    *,
+    source: str,
+) -> None:
+    """Bind delegated child provenance to the active in-process receipt."""
+    mode = str(_effective_env_value(env, "AURA_GOVERNANCE_MODE") or "").strip()
+    values = {
+        key: str(_effective_env_value(env, key) or "").strip()
+        for key in _DELEGATED_GOVERNANCE_ENV_KEYS
+    }
+    if mode != "delegated_subprocess" and not any(values.values()):
+        return
+    if mode != "delegated_subprocess" or not all(values.values()):
+        raise GovernanceViolation("incomplete delegated governance environment")
+    if values["AURA_DELEGATED_GOVERNANCE_PARENT_PID"] != str(os.getpid()):
+        raise GovernanceViolation("delegated governance parent PID mismatch")
+
+    token = _governance_context.get_active_governance()
+    constraints = dict(getattr(token, "constraints", ()) or ()) if token else {}
+    expected_source = values["AURA_DELEGATED_GOVERNANCE_SOURCE"]
+    if (
+        token is None
+        or token.receipt_id != values["AURA_DELEGATED_GOVERNANCE_RECEIPT_ID"]
+        or token.domain != values["AURA_DELEGATED_GOVERNANCE_DOMAIN"]
+        or token.source != expected_source
+        or constraints.get("executive_intent_id")
+        != values["AURA_DELEGATED_AUTHORITY_INTENT_ID"]
+        or not (source == expected_source or source.startswith(f"{expected_source}:"))
+    ):
+        raise GovernanceViolation("delegated governance receipt does not match active scope")
 
 
 def _validate_desktop_safe_subprocess(
@@ -287,6 +337,44 @@ def _require_effect_governance(operation: str) -> None:
         raise GovernanceViolation(f"{operation} called outside governed context")
 
 
+async def _terminate_async_process_group(
+    process: asyncio.subprocess.Process,
+    *,
+    grace_s: float = 5.0,
+) -> tuple[bytes | None, bytes | None]:
+    """Terminate and reap an isolated async process and all descendants."""
+    process_group_id = int(getattr(process, "_aura_process_group_id", 0) or 0)
+    try:
+        if process_group_id <= 0:
+            process_group_id = int(os.getpgid(process.pid))
+    except (OSError, ProcessLookupError, ValueError):
+        if bool(getattr(process, "_aura_start_new_session", False)):
+            process_group_id = int(process.pid)
+
+    try:
+        if process_group_id > 0 and process_group_id != os.getpgrp():
+            os.killpg(process_group_id, signal.SIGTERM)
+        else:
+            process.terminate()
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        return await asyncio.wait_for(process.communicate(), timeout=max(0.1, grace_s))
+    except TimeoutError:
+        try:
+            if process_group_id > 0 and process_group_id != os.getpgrp():
+                os.killpg(process_group_id, signal.SIGKILL)
+            else:
+                process.kill()
+        except (OSError, ProcessLookupError):
+            pass
+        try:
+            return await asyncio.wait_for(process.communicate(), timeout=max(0.1, grace_s))
+        except TimeoutError:
+            logger.error("Async subprocess group could not be reaped pid=%s pgid=%s", process.pid, process_group_id)
+            return None, None
+
+
 def _require_not_shutting_down(
     operation: str,
     *,
@@ -350,6 +438,7 @@ class SubprocessGateway:
             command=command,
             env=env,
         )
+        _validate_delegated_governance_environment(env, source=source)
         _require_not_shutting_down(
             f"subprocess_gateway.run:{source}",
             read_only=read_only,
@@ -422,6 +511,93 @@ class SubprocessGateway:
             raise RuntimeError(
                 "run_model_blocking cannot block an active event loop; await run_async"
             )
+
+        inherited_owner = str(
+            _effective_env_value(env, "AURA_MODEL_LANE_INHERITED_OWNER_ID") or ""
+        ).strip()
+        inherited_request = str(
+            _effective_env_value(env, "AURA_MODEL_LANE_INHERITED_REQUEST_ID") or ""
+        ).strip()
+        inherited_model = str(
+            _effective_env_value(env, "AURA_MODEL_LANE_INHERITED_MODEL_PATH") or ""
+        ).strip()
+        inherited_purpose = str(
+            _effective_env_value(env, "AURA_MODEL_LANE_INHERITED_PURPOSE") or ""
+        ).strip()
+        inherited_token = str(
+            _effective_env_value(env, "AURA_MODEL_LANE_DELEGATION_TOKEN") or ""
+        ).strip()
+        inherited_fields = (
+            inherited_owner,
+            inherited_request,
+            inherited_model,
+            inherited_purpose,
+            inherited_token,
+        )
+        if any(inherited_fields):
+            if not all(inherited_fields):
+                raise GovernanceViolation("incomplete inherited model-lane delegation")
+            from core.runtime.model_lane_control import get_model_lane_controller
+
+            inherited_valid = get_model_lane_controller().validate_inherited_child_claim(
+                owner_id=inherited_owner,
+                request_id=inherited_request,
+                model_path=inherited_model,
+                purpose=inherited_purpose,
+                delegation_token=inherited_token,
+                child_pid=os.getpid(),
+                parent_pid=os.getppid(),
+                requested_gb=float(claim.request_gb),
+                child_model_path=str(claim.model_path),
+                child_purpose=str(claim.purpose),
+            )
+            if not inherited_valid:
+                raise GovernanceViolation("invalid inherited model-child delegation")
+
+            offline_bypass = _validate_offline_tooling_bypass(
+                offline_tooling=offline_tooling,
+                source=source,
+                command=command,
+                env=env,
+            )
+            _require_not_shutting_down(
+                f"subprocess_gateway.run_model_blocking:{source}",
+                read_only=read_only,
+                offline_tooling=offline_tooling,
+                allow_during_shutdown=allow_during_shutdown,
+                bounded_completion=True,
+            )
+            if not read_only and not offline_bypass:
+                _require_effect_governance(
+                    f"subprocess_gateway.run_model_blocking:{source}"
+                )
+            _validate_desktop_safe_subprocess(
+                command,
+                env=env,
+                source=source,
+                operation="run_model_blocking",
+            )
+            # Deliberately inherit the outer worker's isolated process group.
+            # Its durable lane owner and cancellation boundary account for the
+            # full train/fuse/verify descendant tree as one transaction.
+            child_env = dict(env) if env is not None else dict(os.environ)
+            for key in (*_DELEGATED_GOVERNANCE_ENV_KEYS, *_INHERITED_MODEL_LANE_ENV_KEYS):
+                child_env.pop(key, None)
+            child_env["AURA_GOVERNANCE_MODE"] = "delegated_subprocess_child"
+            child_env["AURA_REQUIRE_GOVERNANCE"] = "0"
+            child_env["AURA_MODEL_LANE_PARENT_ACCOUNTED"] = "1"
+            return subprocess.run(
+                command,
+                cwd=_coerce_cwd(cwd),
+                env=child_env,
+                timeout=float(timeout),
+                capture_output=bool(capture_output),
+                input=input,
+                text=True,
+                check=bool(check),
+                shell=False,
+                start_new_session=False,
+            )
         return asyncio.run(
             self.run_async(
                 command,
@@ -461,7 +637,11 @@ class SubprocessGateway:
             source=source,
             timeout_s=float(timeout),
         )
-        if inferred_claim is not None:
+        # Live effectful work stays in an async-owned process group even when it
+        # does not load a model. That gives cancellation and timeout a real
+        # descendant-reaping boundary instead of abandoning subprocess.run in
+        # a worker thread.
+        if inferred_claim is not None or (not read_only and not offline_tooling):
             process = await self.spawn_async(
                 command,
                 stdin=asyncio.subprocess.PIPE if input is not None else None,
@@ -482,14 +662,16 @@ class SubprocessGateway:
                     timeout=float(timeout),
                 )
             except TimeoutError as exc:
-                process.kill()
-                stdout_bytes, stderr_bytes = await process.communicate()
+                stdout_bytes, stderr_bytes = await _terminate_async_process_group(process)
                 raise subprocess.TimeoutExpired(
                     command,
                     float(timeout),
                     output=stdout_bytes,
                     stderr=stderr_bytes,
                 ) from exc
+            except asyncio.CancelledError:
+                await _terminate_async_process_group(process)
+                raise
             stdout_text = (
                 stdout_bytes.decode("utf-8", errors="replace")
                 if isinstance(stdout_bytes, bytes)
@@ -565,6 +747,7 @@ class SubprocessGateway:
             command=command,
             env=env,
         )
+        _validate_delegated_governance_environment(env, source=source)
         _require_not_shutting_down(
             f"subprocess_gateway.spawn:{source}",
             read_only=read_only,
@@ -678,6 +861,7 @@ class SubprocessGateway:
             command=command,
             env=env,
         )
+        _validate_delegated_governance_environment(env, source=source)
         _require_not_shutting_down(
             f"subprocess_gateway.spawn_async:{source}",
             read_only=read_only,
@@ -733,6 +917,13 @@ class SubprocessGateway:
                 env=process_env,
                 start_new_session=start_new_session,
             )
+            process_pid = int(getattr(proc, "pid", 0) or 0)
+            try:
+                process_group_id = int(os.getpgid(process_pid)) if process_pid > 0 else 0
+            except (OSError, ProcessLookupError, ValueError):
+                process_group_id = process_pid if start_new_session else 0
+            proc._aura_process_group_id = process_group_id  # type: ignore[attr-defined]
+            proc._aura_start_new_session = bool(start_new_session)  # type: ignore[attr-defined]
         except (OSError, RuntimeError, ValueError):
             if model_controller is not None and model_decision is not None:
                 await _cancel_model_lane_process(

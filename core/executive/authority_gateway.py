@@ -309,6 +309,11 @@ class AuthorityGateway:
                 "cloud_call": getattr(ActionDomain, "CLOUD_CALL", ActionDomain.TOOL_EXECUTION),
                 "ci_cd": getattr(ActionDomain, "CI_CD", ActionDomain.TOOL_EXECUTION),
                 "self_modification": getattr(ActionDomain, "SELF_MODIFICATION", ActionDomain.STATE_MUTATION),
+                "semantic_weight_update": getattr(
+                    ActionDomain,
+                    "SEMANTIC_WEIGHT_UPDATE",
+                    ActionDomain.STATE_MUTATION,
+                ),
             }
             domain = domain_map.get(domain_str, ActionDomain.STATE_MUTATION)
             will = get_will()
@@ -912,6 +917,97 @@ class AuthorityGateway:
         )
         if decision.approved:
             self._complete_intent_safely(intent.intent_id, success=True)
+        return decision
+
+    async def authorize_semantic_weight_update(
+        self,
+        origin: str,
+        cause: str,
+        *,
+        target_module: str,
+        context: dict[str, Any] | None = None,
+        priority: float = 0.7,
+    ) -> AuthorityDecision:
+        """Authorize a bounded learned-weight update without closing it early.
+
+        Unlike ordinary in-memory state mutation, model adaptation is a
+        long-running effect. The returned Executive intent remains open until
+        the caller observes and finalizes the training result.
+        """
+        source = str(origin or "system_maintenance:semantic_weight_update")
+        target = str(target_module or "").strip()
+        from core.will import is_plastic_target_allowed
+
+        if not is_plastic_target_allowed(target):
+            return self._contextualize(
+                approved=False,
+                outcome="rejected",
+                reason=f"semantic_weight_target_denied:{target or 'missing'}",
+                constraints={"blocked": True, "target_module": target},
+                domain="semantic_weight_update",
+                source=source,
+            )
+
+        runtime_context = {
+            **dict(context or {}),
+            "effect_scope": "model_weight_mutation",
+            "semantic_weight_target": target,
+            "target_module": target,
+        }
+        will_block, will_decision = self._will_gate(
+            f"semantic_weight_update:{target}:{cause}",
+            source,
+            "semantic_weight_update",
+            priority,
+            context=runtime_context,
+        )
+        if will_block is not None:
+            return will_block
+
+        blocked, substrate_constraints, receipt_id = self._substrate_preflight(
+            content=f"semantic_weight_update:{target}:{cause}",
+            source=source,
+            category=ActionCategory.STATE_MUTATION,
+            priority=priority,
+            require_substrate=True,
+            will_receipt_id=getattr(will_decision, "receipt_id", None),
+            domain="semantic_weight_update",
+        )
+        if blocked is not None:
+            return blocked
+
+        intent = Intent(
+            source=_coerce_intent_source(source),
+            goal=f"semantic_weight_update:{target}",
+            action_type=ActionType.MUTATE_STATE,
+            payload={
+                "origin": source,
+                "cause": str(cause or "unspecified"),
+                "target_module": target,
+                "effect_scope": "model_weight_mutation",
+                "context": runtime_context,
+            },
+            priority=priority,
+        )
+        record = await self._get_executive_core().request_approval(intent)
+        decision = self._decision_from_record(
+            record,
+            executive_intent_id=intent.intent_id,
+            substrate_constraints=substrate_constraints,
+            substrate_receipt_id=receipt_id,
+            will_receipt_id=getattr(will_decision, "receipt_id", None),
+            domain="semantic_weight_update",
+            source=source,
+        )
+        if decision.approved:
+            decision.constraints.update(
+                {
+                    "effect_scope": "model_weight_mutation",
+                    "target_module": target,
+                    "completion_required": True,
+                    "executive_intent_id": intent.intent_id,
+                }
+            )
         return decision
 
     def authorize_state_mutation_sync(

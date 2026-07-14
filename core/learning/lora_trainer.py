@@ -1,11 +1,12 @@
 """core/learning/lora_trainer.py
 Coordinates fine-tuning of local models via MLX LoRA scripts.
 """
-import os
+import asyncio
 import logging
 import sys
+from pathlib import Path
 from subprocess import SubprocessError
-from typing import Dict, Any
+from typing import Any
 
 from core.config import get_config
 from core.runtime.errors import record_degradation
@@ -32,8 +33,8 @@ class LoraTrainer:
         batch_size: int = 2,
         num_layers: int = 8,
         fine_tune_type: str = "lora",
-        timeout: float = 1800.0,
-    ) -> Dict[str, Any]:
+        timeout: float = 1800.0,  # noqa: ASYNC109 - delegated to the subprocess gateway.
+    ) -> dict[str, Any]:
         """Execute a local mlx_lm.lora fine-tune if resources permit.
 
         ``dataset_path`` is a DIRECTORY holding ``{train,valid}.jsonl`` and
@@ -42,7 +43,7 @@ class LoraTrainer:
         model for a fast, reproducible sleep-consolidation cycle).
         """
         model = model_path or self.config.llm.local_cortex_path
-        if not model or not os.path.exists(model):
+        if not model or not await asyncio.to_thread(Path(model).exists):
             return {"status": "skipped", "reason": "Active MLX model path not configured"}
 
         # MLX LoRA script invocation command (mlx-lm 0.31.x: --adapter-path is a
@@ -69,15 +70,9 @@ class LoraTrainer:
                 source="training_tooling:lora_trainer",
             )
             if res.returncode == 0:
-                # Close the CRSM→LoRA loop observably: record that this training run
-                # consumed the captured dataset, so loop closure is a verified fact.
-                try:
-                    if "synthetic_training" in str(dataset_path):
-                        from core.consciousness.crsm_loop_monitor import get_crsm_loop_monitor
-
-                        get_crsm_loop_monitor().mark_dataset_consumed(model_path=output_path)
-                except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
-                    record_degradation("learning.lora_trainer", exc)
+                # Adapter creation is not loop closure. Only the atomic
+                # train→fuse→verify→publish pipeline may commit the public CRSM
+                # consumed marker, after the active model points at its output.
                 return {
                     "status": "success",
                     "adapter_path": output_path,

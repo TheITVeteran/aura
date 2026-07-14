@@ -114,12 +114,14 @@ class CRSMLoopMonitor:
             record_degradation("crsm_loop_monitor", exc)
         active_fused_at = 0.0
         active_path = None
+        active_governance: dict[str, Any] = {}
         try:
             active_json = self.fused_model_dir / "active.json"
             if active_json.exists():
                 data = json.loads(active_json.read_text(encoding="utf-8"))
                 active_fused_at = float(data.get("fused_at", 0.0) or 0.0)
                 active_path = data.get("active_model_path")
+                active_governance = dict(data.get("governance") or {})
         except (OSError, ValueError, TypeError) as exc:
             record_degradation("crsm_loop_monitor", exc)
         return {
@@ -127,6 +129,7 @@ class CRSMLoopMonitor:
             "newest_mtime": newest_mtime,
             "active_fused_at": active_fused_at,
             "active_model_path": active_path,
+            "active_governance": active_governance,
         }
 
     def _consumed_marker(self) -> dict[str, Any]:
@@ -234,6 +237,7 @@ class CRSMLoopMonitor:
             if not self.training_state_path.exists():
                 return {"exists": False}
             state = json.loads(self.training_state_path.read_text(encoding="utf-8"))
+            crsm_delta = dict(state.get("crsm_delta") or {})
             return {
                 "exists": True,
                 "path": str(self.training_state_path),
@@ -244,6 +248,7 @@ class CRSMLoopMonitor:
                 "last_resume_rc": state.get("last_resume_rc"),
                 "last_signal": state.get("last_signal"),
                 "last_heartbeat": state.get("last_heartbeat"),
+                "crsm_delta": crsm_delta,
             }
         except (OSError, ValueError, TypeError) as exc:
             record_degradation("crsm_loop_monitor", exc)
@@ -260,7 +265,9 @@ class CRSMLoopMonitor:
         rejected_lines: int | None = None,
         manifest_path: str | None = None,
         source: str | None = None,
-    ) -> None:
+        governance_receipt_id: str | None = None,
+        authority_intent_id: str | None = None,
+    ) -> bool:
         """Record that a training run ingested the dataset — call after LoRA training.
 
         Writes how many dataset lines were consumed and which model resulted, so loop
@@ -282,6 +289,8 @@ class CRSMLoopMonitor:
             "model_path": model_path,
             "manifest_path": manifest_path,
             "source": source or "unspecified",
+            "governance_receipt_id": governance_receipt_id,
+            "authority_intent_id": authority_intent_id,
         }
         try:
             get_file_write_gateway().write_text(
@@ -291,8 +300,10 @@ class CRSMLoopMonitor:
                 source="training:crsm_loop_monitor",
             )
             logger.info("🔁 [CRSMLoop] dataset consumed: %d lines → %s", lines_consumed, model_path)
+            return True
         except OSError as exc:
             record_degradation("crsm_loop_monitor", exc)
+            return False
 
     def loop_state(self) -> dict[str, Any]:
         ds = self.dataset_state()
@@ -309,17 +320,38 @@ class CRSMLoopMonitor:
             marker_hash
             and marker_hash == str(ds.get("sha256") or "")
             and marker_size == int(ds.get("size", 0) or 0)
-            and consumed >= lines
+            and consumed == lines
         )
         last_train = max(float(art.get("newest_mtime", 0.0)), float(art.get("active_fused_at", 0.0)))
         ds_mtime = float(ds.get("mtime", 0.0))
 
         accepted = int(marker.get("accepted_lines", consumed) or 0)
         rejected = int(marker.get("rejected_lines", max(0, consumed - accepted)) or 0)
+        marker_model_path = str(marker.get("model_path") or "")
+        active_model_path = str(art.get("active_model_path") or "")
+        marker_model_matches_active = bool(
+            marker_model_path
+            and active_model_path
+            and Path(marker_model_path).expanduser().resolve()
+            == Path(active_model_path).expanduser().resolve()
+        )
+        marker_counts_reconcile = bool(
+            accepted >= 0
+            and rejected >= 0
+            and accepted + rejected == consumed
+        )
+        marker_consumed_at = float(marker.get("consumed_at", 0.0) or 0.0)
+        verified_consumption = bool(
+            marker_matches_dataset
+            and marker_model_matches_active
+            and marker_counts_reconcile
+            and marker_consumed_at > 0.0
+            and last_train > 0.0
+        )
 
         if lines == 0:
             state, reason = "idle", "no captured moments yet"
-        elif (consumed >= lines and last_train >= ds_mtime) or marker_matches_dataset:
+        elif verified_consumption:
             if rejected > 0:
                 state, reason = (
                     "closed",
@@ -327,12 +359,15 @@ class CRSMLoopMonitor:
                 )
             else:
                 state, reason = "closed", "dataset trained in and weights persisted"
-        elif last_train >= ds_mtime and unconsumed <= _UNCONSUMED_WARN:
-            state, reason = "closed", "latest model is newer than the captured data"
         elif unconsumed == 0 and consumed >= lines:
             state, reason = (
                 "pending",
                 "capture corpus changed after the last consumed marker; current corpus needs train/fuse confirmation",
+            )
+        elif last_train >= ds_mtime and unconsumed <= _UNCONSUMED_WARN:
+            state, reason = (
+                "pending",
+                "a newer model exists, but current captures lack a verified active-model consumption marker",
             )
         elif unconsumed > _UNCONSUMED_WARN or (ds_mtime - last_train) > _STALE_AFTER_S:
             state = "open"
@@ -355,7 +390,12 @@ class CRSMLoopMonitor:
             "rejected_lines": rejected,
             "last_training_at": last_train,
             "active_model": art.get("active_model_path"),
+            "active_model_governance": dict(art.get("active_governance") or {}),
             "dataset_mtime": ds_mtime,
+            "marker_matches_dataset": marker_matches_dataset,
+            "marker_model_matches_active": marker_model_matches_active,
+            "marker_counts_reconcile": marker_counts_reconcile,
+            "verified_consumption": verified_consumption,
             "integration_manifest": manifest,
             "training_state": training_state,
             "next_action": self.next_action(state, manifest, training_state),

@@ -2666,6 +2666,87 @@ class ModelLaneController:
             self._save_locked(state)
             return True
 
+    def validate_inherited_child_claim(
+        self,
+        *,
+        owner_id: str,
+        request_id: str,
+        model_path: str,
+        purpose: str,
+        delegation_token: str,
+        child_pid: int,
+        parent_pid: int,
+        requested_gb: float,
+        child_model_path: str,
+        child_purpose: str,
+    ) -> bool:
+        """Authorize a nested model child inside one delegated pipeline lane.
+
+        The outer worker must first prove the one-time inherited delegation and
+        must itself be the committed process owner. Only reservations that
+        explicitly opted into nested children may reuse their isolated process
+        group, and no child may exceed the parent's admitted capacity.
+        """
+        if not self.validate_inherited_claim(
+            owner_id=owner_id,
+            request_id=request_id,
+            model_path=model_path,
+            purpose=purpose,
+            delegation_token=delegation_token,
+            child_pid=child_pid,
+            parent_pid=parent_pid,
+        ):
+            return False
+        now = self._clock()
+        with self._thread_lock, interprocess_file_lock(self.lock_path):
+            state = self._load_locked()
+            if self._prune_locked(state, now):
+                self._save_locked(state)
+            record = state["reservations"].get(str(request_id))
+            owner = state["owners"].get(str(owner_id))
+            if not isinstance(record, Mapping) or not isinstance(owner, Mapping):
+                return False
+            if str(record.get("state") or "") != LaneTransactionState.COMMITTED.value:
+                return False
+            metadata = dict(record.get("metadata") or {})
+            if metadata.get("allow_inherited_model_children") is not True:
+                return False
+            allowed_purposes = {
+                str(value)
+                for value in (metadata.get("allowed_inherited_model_purposes") or ())
+                if str(value)
+            }
+            if str(child_purpose) not in allowed_purposes:
+                return False
+            try:
+                child_path = Path(str(child_model_path)).expanduser().resolve()
+                parent_path = Path(str(record.get("model_path") or "")).expanduser().resolve()
+                allowed_roots = tuple(
+                    Path(str(value)).expanduser().resolve()
+                    for value in (metadata.get("allowed_inherited_model_roots") or ())
+                    if str(value)
+                )
+            except (OSError, RuntimeError, TypeError, ValueError):
+                return False
+            if child_path != parent_path and not any(
+                child_path == root or child_path.is_relative_to(root)
+                for root in allowed_roots
+            ):
+                return False
+            if float(requested_gb) <= 0.0:
+                return False
+            if float(requested_gb) > float(record.get("request_gb") or 0.0):
+                return False
+            owner_metadata = dict(owner.get("metadata") or {})
+            if owner_metadata.get("managed_model_process") is not True:
+                return False
+            if owner_metadata.get("start_new_session") is not True:
+                return False
+            try:
+                return int(owner_metadata.get("process_group_id") or 0) == os.getpgrp()
+            except (OSError, TypeError, ValueError):
+                return False
+
     def snapshot(self) -> dict[str, Any]:
         self._refresh_external_owners()
         now = self._clock()

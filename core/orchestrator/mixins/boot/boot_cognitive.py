@@ -258,10 +258,10 @@ class BootCognitiveMixin:
     async def _init_crsm_closure(self):
         """Start the autonomous CRSM→LoRA loop closer.
 
-        Default-OFF (AURA_CRSM_AUTOCLOSE): when enabled, it closes the capture
-        loop the health poll reports as OPEN — running the bounded, Will-
-        governed, deep-idle CRSM delta train/fuse the monitor computes. Without
-        it, captured experience is never crystallized into weights on its own.
+        This is normal autonomous maintenance and is enabled by default. The
+        AURA_CRSM_AUTOCLOSE=0 kill switch disables it. It closes the capture
+        loop the health poll reports as OPEN by running an exact, resource-
+        admitted, Will-governed CRSM delta train/fuse transaction in deep idle.
         """
         try:
             from core.learning.crsm_closure_scheduler import (
@@ -303,6 +303,8 @@ class BootCognitiveMixin:
         try:
             from core.learning.deliberate_practice import (
                 SERVICE_NAME as PRACTICE_DIRECTOR_SERVICE,
+            )
+            from core.learning.deliberate_practice import (
                 get_practice_director,
             )
 

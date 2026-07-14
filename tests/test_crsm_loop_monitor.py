@@ -71,6 +71,21 @@ def _write_manifest_with_corpus(m, *, source_lines, accepted):
     )
 
 
+def _publish_active(m, model_path, *, governance=None):
+    model = m.fused_model_dir / model_path if not str(model_path).startswith("/") else None
+    resolved = model if model is not None else model_path
+    if model is not None:
+        model.mkdir(parents=True, exist_ok=True)
+    active = {
+        "active_model_path": str(resolved),
+        "fused_at": time.time(),
+    }
+    if governance:
+        active["governance"] = governance
+    (m.fused_model_dir / "active.json").write_text(json.dumps(active), encoding="utf-8")
+    return str(resolved)
+
+
 def test_idle_when_no_captures(tmp_path):
     m = _monitor(tmp_path)
     assert m.loop_state()["state"] == "idle"
@@ -89,9 +104,9 @@ def test_closed_after_training_consumes_dataset(tmp_path):
     _write_lines(m.dataset_path, 100)
     manifest = tmp_path / "crsm_manifest.json"
     # a newer fused model appears + training marks consumption
-    (m.fused_model_dir / "Aura-32B-new").mkdir()
+    model_path = _publish_active(m, "Aura-32B-new")
     m.mark_dataset_consumed(
-        model_path=str(m.fused_model_dir / "Aura-32B-new"),
+        model_path=model_path,
         lines_consumed=100,
         accepted_lines=80,
         rejected_lines=20,
@@ -106,11 +121,29 @@ def test_closed_after_training_consumes_dataset(tmp_path):
     assert "80 eligible captures trained" in state["reason"]
 
 
+def test_overcounted_consumed_marker_cannot_close_current_dataset(tmp_path):
+    m = _monitor(tmp_path)
+    _write_lines(m.dataset_path, 100)
+    model_path = _publish_active(m, "Aura-32B-overcount")
+    m.mark_dataset_consumed(
+        model_path=model_path,
+        lines_consumed=101,
+        accepted_lines=101,
+        rejected_lines=0,
+        source="test-overcount",
+    )
+
+    state = m.loop_state()
+    assert state["state"] != "closed"
+    assert state["marker_matches_dataset"] is False
+    assert state["verified_consumption"] is False
+
+
 def test_open_again_when_new_captures_arrive_after_training(tmp_path):
     m = _monitor(tmp_path)
     _write_lines(m.dataset_path, 50)
-    (m.fused_model_dir / "model-a").mkdir()
-    m.mark_dataset_consumed(model_path="model-a", lines_consumed=50)
+    model_path = _publish_active(m, "model-a")
+    m.mark_dataset_consumed(model_path=model_path, lines_consumed=50)
     assert m.loop_state()["state"] == "closed"
     # more captures arrive, dataset grows past the warn threshold
     time.sleep(0.01)
@@ -197,8 +230,9 @@ def test_identical_capture_rewrite_does_not_stale_current_manifest(tmp_path):
 def test_consumed_marker_with_content_hash_survives_identical_rewrite(tmp_path):
     m = _monitor(tmp_path)
     _write_lines(m.dataset_path, 30)
+    model_path = _publish_active(m, "model-a")
     m.mark_dataset_consumed(
-        model_path="model-a",
+        model_path=model_path,
         lines_consumed=30,
         accepted_lines=25,
         rejected_lines=5,
@@ -211,7 +245,20 @@ def test_consumed_marker_with_content_hash_survives_identical_rewrite(tmp_path):
     state = m.loop_state()
 
     assert state["state"] == "closed"
+    assert state["verified_consumption"] is True
     assert "25 eligible captures trained" in state["reason"]
+
+
+def test_newer_model_without_matching_consumption_marker_stays_pending(tmp_path):
+    m = _monitor(tmp_path)
+    _write_lines(m.dataset_path, 10)
+    _publish_active(m, "model-newer")
+
+    state = m.loop_state()
+
+    assert state["state"] == "pending"
+    assert state["verified_consumption"] is False
+    assert "lack a verified active-model consumption marker" in state["reason"]
 
 
 def test_legacy_consumed_marker_reports_hashless_pending_after_rewrite(tmp_path):

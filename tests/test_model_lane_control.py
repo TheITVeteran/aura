@@ -542,6 +542,65 @@ def test_delegation_secret_is_hashed_and_wrong_token_is_rejected(tmp_path: Path)
     ) is False
 
 
+def test_inherited_child_is_bound_to_declared_model_roots_and_purposes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    alive = AliveTable()
+    controller = _controller(tmp_path, alive)
+    fused_root = tmp_path / "fused-model"
+    decision = controller.reserve_sync(
+        LaneClaim(
+            owner_id="subprocess:compound",
+            model_path=str(tmp_path / "base-model"),
+            request_gb=40.0,
+            purpose="compound",
+            request_id="compound-request",
+            metadata={
+                "allow_inherited_model_children": True,
+                "allowed_inherited_model_purposes": ["train", "fuse", "benchmark"],
+                "allowed_inherited_model_roots": [str(fused_root)],
+            },
+        )
+    )
+    committed = controller.commit_sync(
+        decision,
+        process=ProcessIdentity.current(observer=controller.resource_observer),
+        metadata={
+            "managed_model_process": True,
+            "start_new_session": True,
+            "process_group_id": os.getpgrp(),
+        },
+    )
+    monkeypatch.setattr(controller, "validate_inherited_claim", lambda **_kwargs: True)
+    common = {
+        "owner_id": committed.owner_id,
+        "request_id": committed.request_id,
+        "model_path": committed.model_path,
+        "purpose": "compound",
+        "delegation_token": "already-consumed-by-worker",
+        "child_pid": os.getpid(),
+        "parent_pid": os.getppid(),
+        "requested_gb": 20.0,
+    }
+
+    assert controller.validate_inherited_child_claim(
+        **common,
+        child_model_path=str(fused_root / "candidate"),
+        child_purpose="benchmark",
+    ) is True
+    assert controller.validate_inherited_child_claim(
+        **common,
+        child_model_path=str(tmp_path / "unrelated-model"),
+        child_purpose="benchmark",
+    ) is False
+    assert controller.validate_inherited_child_claim(
+        **common,
+        child_model_path=committed.model_path,
+        child_purpose="serve",
+    ) is False
+
+
 @pytest.mark.asyncio
 async def test_compensator_survives_owner_unregistration_for_failed_candidate() -> None:
     owner = _owner("in-process:recoverable", "/models/recoverable-7b", 5.0, os.getpid())

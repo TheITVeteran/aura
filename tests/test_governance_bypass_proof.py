@@ -116,6 +116,91 @@ async def test_memory_write_blocked_without_will_approval(refusing_will):
     assert refusing_will.decisions[0]["domain"].value == "memory_write"
 
 
+@pytest.mark.asyncio
+async def test_semantic_weight_update_blocked_without_will_approval(refusing_will):
+    """Learned-weight mutation must use its explicit Will domain."""
+    from core.executive.authority_gateway import AuthorityGateway
+
+    gateway = AuthorityGateway()
+    decision = await gateway.authorize_semantic_weight_update(
+        "system_maintenance:crsm_closure",
+        "close_crsm_lora_learning_loop",
+        target_module="crsm_lora_adapter",
+        context={"bounded_pipeline": True},
+    )
+
+    assert not decision.approved
+    assert "will_refuse" in decision.outcome
+    assert refusing_will.decisions[0]["domain"].value == "semantic_weight_update"
+
+
+@pytest.mark.asyncio
+async def test_semantic_weight_update_rejects_unlisted_target_before_will(refusing_will):
+    from core.executive.authority_gateway import AuthorityGateway
+
+    gateway = AuthorityGateway()
+    decision = await gateway.authorize_semantic_weight_update(
+        "system_maintenance:crsm_closure",
+        "replace_base_model",
+        target_module="base_llm",
+    )
+
+    assert not decision.approved
+    assert decision.reason == "semantic_weight_target_denied:base_llm"
+    assert refusing_will.decisions == []
+
+
+@pytest.mark.asyncio
+async def test_semantic_weight_update_intent_stays_open_until_effect_finalization(monkeypatch):
+    from core.executive import authority_gateway as authority_module
+    from core.executive.authority_gateway import AuthorityGateway
+    from core.executive.executive_core import DecisionOutcome
+
+    gateway = AuthorityGateway()
+    will_decision = SimpleNamespace(receipt_id="will-semantic-1")
+    monkeypatch.setattr(gateway, "_will_gate", lambda *args, **kwargs: (None, will_decision))
+    monkeypatch.setattr(
+        gateway,
+        "_substrate_preflight",
+        lambda **kwargs: (None, {}, "substrate-semantic-1"),
+    )
+    monkeypatch.setattr(authority_module, "get_organism_status", lambda: {})
+
+    class _Executive:
+        def __init__(self):
+            self.intents = []
+            self.completed = []
+
+        async def request_approval(self, intent):
+            self.intents.append(intent)
+            return SimpleNamespace(
+                outcome=DecisionOutcome.APPROVED,
+                reason="approved",
+                constraints={},
+            )
+
+        def complete_intent(self, intent_id, *, success):
+            self.completed.append((intent_id, success))
+
+    executive = _Executive()
+    monkeypatch.setattr(gateway, "_get_executive_core", lambda: executive)
+
+    decision = await gateway.authorize_semantic_weight_update(
+        "system_maintenance:crsm_closure",
+        "close_crsm_lora_learning_loop",
+        target_module="crsm_lora_adapter",
+        context={"max_pipeline_stages": 2},
+    )
+
+    assert decision.approved
+    assert decision.domain == "semantic_weight_update"
+    assert decision.will_receipt_id == "will-semantic-1"
+    assert decision.executive_intent_id == executive.intents[0].intent_id
+    assert decision.constraints["completion_required"] is True
+    assert decision.constraints["executive_intent_id"] == decision.executive_intent_id
+    assert executive.completed == [], "authorization must not pre-claim effect success"
+
+
 def test_authority_gateway_classifies_interaction_memory_without_belief_preflight():
     """Conversation continuity must stay governed without being treated as belief mutation."""
     from core.executive.authority_gateway import AuthorityGateway
