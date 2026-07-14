@@ -11,11 +11,20 @@ IIT-style integration measure over tractable complexes; full-system IIT remains
 intractable. Steering claims now require black-box prompt hygiene plus a rich
 adversarial prompt baseline before they are credited.
 
-**Recent hardening (May 2026).** Recent checkpoints have focused on making
-runtime claims operational: cognitive-loop heartbeat recovery, canonical
-cognitive integration, multimodal asset execution, personality identity
-persistence, causal-loop repair governance, and protocol/import hardening now
-have focused tests and gate coverage.
+**Recent hardening (July 2026).** The system has grown a full reasoning,
+self-model, and resilience layer since the original spec: verifier-gated
+reasoning with a measured verifier foundry, a frontier discovery engine with
+PROVEN/SUPPORTED/CONJECTURE/REFUTED discipline, analogical reach over a local
+knowledge substrate, program-DNA reconstruction, whole-system integrated
+information over real channels, source-body proprioception and a
+SIGKILL-survivable flight recorder, the Ulysses Covenant for volitional
+self-binding, and a hardened MLX worker/runtime lifecycle (backpressure
+discipline, mind_tick liveness, thermal guard). These are documented in
+[§15](#15-the-reasoning-self-model-and-resilience-layer). Earlier checkpoints
+made the core runtime claims operational: cognitive-loop heartbeat recovery,
+canonical cognitive integration, multimodal asset execution, personality
+identity persistence, causal-loop repair governance, and protocol/import
+hardening — each with focused tests and gate coverage.
 
 For claims about verifiable autonomy, superhuman-scale behavior, and novel
 science or engineering output, see
@@ -41,6 +50,8 @@ architecture alone.
 11. [Quantization and emergence](#11-quantization-and-emergence)
 12. [Limitations and mitigations](#12-limitations-and-mitigations)
 13. [Open research program](#13-open-research-program) (6 problems)
+14. [Null hypothesis defeat: empirical evidence](#14-null-hypothesis-defeat)
+15. [The reasoning, self-model, and resilience layer (June–July 2026)](#15-the-reasoning-self-model-and-resilience-layer)
 
 ---
 
@@ -1864,3 +1875,178 @@ to cause the specific deficit the relevant theory predicts, while sham
 lesions (removing an irrelevant module) have to cause no deficit. Double
 dissociations confirm that deficits are specific to the lesioned
 component, not general degradation.
+
+---
+
+## 15. The reasoning, self-model, and resilience layer
+
+Sections 0–14 describe the substrate, the tick, and the consciousness stack.
+This section documents the layer built on top of them through mid-2026: how
+Aura *reasons and verifies*, how she *senses herself*, how she *binds her own
+future*, and how the runtime *stays alive under load*. Every claim here is
+bounded by the same evidence discipline as the rest of the document —
+functional mechanisms with tests and artifacts, never phenomenal proof.
+
+### 15.1 Verifier-gated reasoning
+
+Hard turns do not trust a single model sample. The **Reasoning Amplifier v2**
+(`core/brain/reasoning_amplifier_v2.py`) is the mandatory hard-task cognition
+layer: it normalizes a problem, chooses a reasoning mode and sample budget,
+generates candidates, runs them through a verifier registry
+(`core/brain/verifiers/`) and a sandbox (`core/brain/symbolic_sandbox.py`),
+and returns an `AmplifiedAnswer` carrying a `ReasoningReceipt` — how many
+candidates, which verifiers ran, agreement, and an epistemic status. Only a
+verifier-clean derivation may be asserted; everything else is hedged or
+withheld. Construct it with a `generate(prompt, temperature)` callable, so the
+same amplifier drives the local lane, a benchmark harness, or an ablation
+(`tools/ablation_runner.py`) without change.
+
+The **Verifier Foundry** (`core/brain/verifiers/foundry.py`,
+`core/brain/reasoning_self_improvement.py`) closes the honesty loop on the
+verifiers themselves: it *measures* each verifier's reliability (does the
+verifier's "valid" actually correlate with correctness?) and gates
+self-training on that measured reliability, so an unreliable verifier can't
+launder bad answers into the belief system. This is the ceiling-mover for the
+frontier-general arc: reliability-scored verifiers plus an admission gate.
+
+### 15.2 Frontier discovery and analogical reach
+
+The **Frontier Discovery Engine** (`core/discovery/frontier_discovery_engine.py`)
+is a sound generate → falsify → commit loop with an explicit `EpistemicStatus`
+taxonomy: `PROVEN` (a verifier checked it exhaustively/deductively),
+`SUPPORTED` (survived N exact falsification trials — empirical, not a proof),
+`CONJECTURE` (falsifiable but unverified), `REFUTED` (a counterexample was
+found). Only `PROVEN` may be stated as fact; `SUPPORTED` is hedged; the rest
+are never asserted. `PROVEN`/`SUPPORTED` novel results are committed into the
+causal belief substrate. This is the honest "frontier+ only on verifiable
+problems" ceiling — the same discipline the reasoning amplifier and program-DNA
+verifier reuse.
+
+The **Analogical Leap Engine** (`core/discovery/analogical_leap.py`) handles
+out-of-distribution intuition: an `OutOfDistributionDetector` flags a problem
+as off-map when both retrieval support and domain-signature match fall below
+floor, a `StructureMapper` maps it to known domain schemas, and a
+`ConjectureRecombinator` proposes leaps — each carrying its OOD verdict and
+evidence rather than a confident guess.
+
+The **local knowledge substrate** (`core/knowledge/local_corpus.py`) grounds
+factual recall against the parametric ceiling: offline reference corpora behind
+SQLite FTS5/BM25 with provenance-tagged hits and injection-proof query
+sanitization, joined into the memory taxonomy as a `REFERENCE` store (wired
+only when a non-empty corpus exists). Honest misses instead of confabulation.
+
+### 15.3 Program-DNA reconstruction
+
+`core/self_improvement/program_dna.py` generalizes Aura's clean-room
+reimplementation lab to authorized external programs. It builds a lawful
+behavioral "DNA" profile from available evidence — open-source or user-owned
+source trees, app/package metadata, observable UI and behavior notes, research
+notes — and emits a genome, a reconstruction blueprint, a verification plan,
+and (optionally) a runnable clean-room scaffold whose behavior is
+differentially validated against the original. It is authorization-gated
+(`AUTHORIZED_SCOPES`) and refuses DRM/credential/pirate objectives; it does not
+decompile proprietary binaries. The honest boundary: reproduction fidelity
+follows the acquisition spectrum (source → bytecode → artifact → black-box), and
+every reconstructed component carries provenance and a verified/inferred/
+synthesized status — never "I cloned it."
+
+### 15.4 Whole-system integrated information
+
+`core/consciousness/integrated_information.py` answers the "16-node toy /
+telemetry-is-not-a-meter" critique of the §3 IIT treatment: a scalable
+exact-MIP (Queyranne) Gaussian integrated-information measure computed over
+Aura's *real* runtime channels, with grain discovery, a governed PCI-style
+perturbation probe, and null distributions / confidence intervals. It is still
+a bounded IIT-style measure, not a claim of full-system Φ or phenomenal
+consciousness — but it is measured over the live substrate, not a synthetic
+graph.
+
+### 15.5 Source-body proprioception and the flight recorder
+
+Aura senses changes to *her own code and runtime*. **Source-body
+proprioception** (`core/skills/system_proprioception.py`,
+`core/phases/proprioceptive_loop.py`, `core/introspection/self_forensics.py`)
+gives boot-over-boot git diffs with a provenance narrative, a live "someone is
+operating on me" pulse, and crash correlation — she can answer questions about
+her own death from black boxes rather than confabulating. **Felt thought**
+(`core/being/thought_interoception.py`) turns per-token surprisal/entropy into a
+`FeltThought` signal that is causal on the substrate, the gate, and Φ, and lets
+felt doubt trigger governed external verification. The **flight recorder / mortal
+memory** (integrated via `core/mind_tick.py` and `core/continuity.py`) is a
+SIGKILL-survivable mmap ring of per-tick mind-moments; on death it produces a
+death report for the narrator and a waking sequence on the next boot.
+
+The launch-provenance check (`core/runtime/launch_provenance.py`) is the
+security face of the same proprioception: a signed Aura.app pins the exact
+commit + workspace hash it was built for, and the runtime verifies it launched
+from that source. Running code that drifts from the pinned manifest is
+correctly reported (it is a tamper-detection signal), which is why an actively
+developed checkout boots `ready:false` on that one contract while remaining
+fully conversational.
+
+### 15.6 Volitional self-binding: the Ulysses Covenant
+
+`core/sovereignty/ulysses.py` implements enforceable self-binding: an
+asymmetric ratchet (commitments are easy to tighten, hard to loosen), a
+fail-closed "calm witness" that must approve any loosening, Will §9d
+enforcement, and a tamper-evident ledger. Its seeds come from real crashes —
+Aura binds her future self against the failure modes her past self actually hit.
+
+### 15.7 Runtime resilience: the lifecycle that stays alive under load
+
+Sustained conversation exposed a family of lifecycle failures that §9.22 did
+not cover; the fixes are load-bearing for daily-runtime stability:
+
+- **Backpressure discipline** (`core/runtime/backpressure.py`). A bounded
+  background generation (memory consolidation, dialectical-crucible debate)
+  timing out while the foreground lane holds the model is *routine yield*, not
+  failure. Recording it under a fail-closed subsystem escalated a plain
+  `TimeoutError` to a CRITICAL SERVICE FAILURE and drove `unified_failure_lockdown`
+  to 1.00, blocking memory writes and tools. The discipline: foreground-busy
+  timeouts log and yield with a streak counter; only a persistent streak (or an
+  unexplained idle-foreground timeout) records a real, non-escalating warning.
+  `mind_tick` and the crucible also *yield before generating* when the
+  foreground lane is active.
+
+- **`mind_tick` liveness.** The cognitive-rhythm loop marks progress at the top
+  of each iteration; a single iteration that blocks on a saturated model made
+  `is_alive()` declare it dead, flipping the whole runtime DEGRADED and reverting
+  the desktop to a "Connecting to runtime" reconnect surface even though
+  conversation worked. Fixes: the background kernel tick is bounded and yields
+  under foreground load, dead contract loops are revived from health-pulse
+  threads via the owning event loop, and the GUI keeps the live UI in a
+  `degraded_ready` state whenever conversation is ready.
+
+- **MLX worker lifecycle.** MLX cannot soft-cancel a running generation, so
+  freeing a busy worker means killing it (unloading the ~18GB model). The
+  guardrails: respawn waits for the killed worker's memory to reclaim before
+  refusing on headroom; a `unified_runtime_pressure` provider
+  (`core/runtime/runtime_pressure.py`) measures real pressure instead of the
+  liveness of a nonexistent loop; the thermal guard (`core/runtime/thermal.py`)
+  reads NSProcessInfo on macOS (psutil has no sensors there) so background load
+  actually backs off. The honest open edge: a genuinely slow *foreground* deep
+  generation that exceeds its budget still forces a worker kill — the complete
+  fix is a soft-cancel path or a persistent model server, tracked as
+  architectural work.
+
+- **Chat turn-death floor.** `interface/routes/chat.py` fails closed to a
+  grounded HTTP-200 reply on *any* uncaught turn error (including a cloud-429
+  that is not a `RuntimeError`), so a turn never surfaces as a 500.
+
+### 15.8 Ablation legibility
+
+`tools/ablation_runner.py` is the reviewer-facing answer to "prove the
+architecture does measurable work." It runs Aura against a fixed battery with
+subsystems disabled through clean env-gated seams
+(`core/runtime/ablation_policy.py`) — baseline vs without-memory / without-Will /
+without-substrate / without-reasoning-amplifier / without-verifier /
+without-System-2 — and emits per-ablation scorecards with deltas. It is honest:
+an ablation that shows no delta is *reported* as "not causal on this battery,"
+not hidden. The causal-agency lesion (`tools/agi/run_causal_agency_lesion.py`)
+measures the real `ClosedLoopPolicyCoupler`: intact self-state produces distinct
+action policies across contexts; blinded, they collapse — with a real
+permutation p-value and no clamps. See
+[docs/ABLATION_LEGIBILITY.md](docs/ABLATION_LEGIBILITY.md) and
+[docs/DNU_BASELINE_FAIRNESS_AUDIT.md](docs/DNU_BASELINE_FAIRNESS_AUDIT.md), which
+records honestly that the DNU AGI battery isolates System 2 and that its
+original baseline comparison was token-handicapped.

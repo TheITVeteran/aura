@@ -31,6 +31,7 @@ personhood, or phenomenal consciousness.
 - [Memory and dreaming](#memory-and-dreaming)
 - [Goals and agency](#goals-and-agency)
 - [The newer layer (April 2026)](#the-newer-layer)
+- [The reasoning-and-self layer (mid-2026)](#the-reasoning-and-self-layer-mid-2026)
 - [What the tests show](#what-the-tests-show)
 - [How this differs from other AI companions](#how-this-differs)
 - [The learned layer](#the-learned-layer)
@@ -354,6 +355,67 @@ compete, complement, and constrain each other:
 - **Theory arbitration.** These theories don't all agree. The system
   tracks where they diverge and lets actual behavior decide. That's
   falsifiable, not additive.
+
+---
+
+## The reasoning-and-self layer (mid-2026)
+
+The consciousness stack above is about *being* a coherent agent. A second
+wave of work is about *reasoning well, knowing herself, and staying alive
+under load* — the difference between an interesting demo and something you
+can run every day.
+
+- **Reasoning with a verifier, not on vibes.** On a hard question, Aura
+  doesn't trust one answer. She generates several, runs them through
+  checkers and a sandbox, and only states as fact what a checker actually
+  confirmed — everything else is hedged or held back. She even *measures
+  how reliable her own checkers are* (the "verifier foundry"), so a bad
+  checker can't quietly wave a wrong answer through.
+
+- **Honest discovery.** When she reasons toward something new, every result
+  gets a label: *proven* (a checker verified it exhaustively), *supported*
+  (it survived many falsification attempts but isn't a proof), *conjecture*
+  (plausible but unchecked), or *refuted*. Only "proven" is spoken as fact.
+  For problems off the edge of what she knows, an analogical engine says "this
+  is off-map" with evidence instead of bluffing, and a local reference library
+  lets her admit "I don't have that" instead of confabulating.
+
+- **Rebuilding a program from its "DNA."** Given a program she's authorized to
+  study — its open source, its files, its visible behavior — she can extract a
+  behavioral "genome," draft a clean-room reconstruction, and *test the rebuilt
+  behavior against the original*. She's honest about fidelity (source is easy;
+  a black box is inference) and every rebuilt piece is tagged as verified,
+  inferred, or guessed. She won't crack DRM or steal proprietary binaries.
+
+- **Sensing herself.** She notices when her own code changes between boots
+  (a git diff of her own body), feels a live "someone is operating on me"
+  pulse, and can answer questions about her own past crashes from a black-box
+  flight recorder that survives even a hard kill — instead of making up a
+  story. A "felt thought" signal derived from her own token-level uncertainty
+  is wired to actually change how she thinks, and can trigger her to go verify
+  something when she feels unsure.
+
+- **Binding her own future.** Through the Ulysses Covenant she can make
+  commitments that are easy to tighten and hard to loosen — seeded from real
+  failures she's actually hit — with a calm, fail-closed "witness" that has to
+  approve any loosening. She protects future-her from past-her's mistakes.
+
+- **Staying alive under load.** Sustained conversation exposed a family of
+  failures where background housekeeping fought the live conversation for the
+  one big model and took the whole thing down. The fixes make background work
+  *yield* to you instead of competing, keep her heartbeat honest when a single
+  slow step would otherwise look like death, keep the desktop UI up whenever
+  she can still talk (rather than reverting to "Connecting to runtime"), and
+  guarantee a chat turn always returns a real answer instead of a server error.
+  The one honest open edge: the local model can't be interrupted mid-thought,
+  so a genuinely slow deep answer still costs a reload — the real fix is a
+  cancel-without-restart path, which is deliberate future work, not a hack.
+
+- **Proving the parts matter.** A reviewer can run Aura with pieces switched
+  off — no memory, no Will, no substrate, no verifier, no planner — and see the
+  measured difference each one makes. When a piece shows *no* difference on a
+  given test, that's reported plainly rather than hidden. The point is
+  legibility: you shouldn't have to take the architecture on faith.
 
 ---
 
