@@ -31,10 +31,30 @@ from core.perception.multimodal_sync import (
     PrivacyPolicy,
 )
 from core.runtime.errors import record_degradation
+from core.runtime.flags import FlagKind, declare
 from core.runtime.subprocess_gateway import get_subprocess_gateway
 from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.PerceptionDaemon")
+
+# The desktop perception loop polls the GUI (window focus, clipboard, browser
+# tabs, `ps`) every check_interval by shelling out — ~4 subprocesses per cycle,
+# ~7k/hour at a 2s cadence. On macOS that fork/exec churn grows the parent's
+# malloc arena and the OS does not reclaim it, which 2026-07-13 tracemalloc
+# attribution isolated as the dominant IDLE RSS leak (Python heap flat at
+# ~18MB/h while RSS climbed ~350MB/h; every top native site routed through
+# Popen). When the user has been idle past this threshold the loop backs off
+# to the dormant interval; any detected activity snaps the cadence back.
+_IDLE_BACKOFF_AFTER_FLAG = declare(
+    "AURA_PERCEPTION_IDLE_BACKOFF_AFTER_S",
+    kind=FlagKind.FLOAT,
+    default=120.0,
+    description=(
+        "Seconds of user inactivity after which the desktop perception loop "
+        "backs off to the dormant interval, ending the idle subprocess storm."
+    ),
+    owner="core/perception/perception_daemon.py",
+)
 
 _PERCEPTION_DAEMON_RECOVERABLE_ERRORS = (
     AttributeError,
@@ -60,6 +80,10 @@ class PerceptionDaemon:
         # Idle cadence when there is no GUI surface to perceive (headless/proof
         # runtime): the loop stays alive but skips the subprocess-spawning probes.
         self._dormant_interval_s = 45.0
+        # Desktop idle backoff: once the user has been inactive this long, the
+        # loop polls at the dormant cadence instead of check_interval so the
+        # per-cycle subprocess storm stops while nothing is happening.
+        self._idle_backoff_after_s = float(_IDLE_BACKOFF_AFTER_FLAG.value())
         self.running = False
         self._tasks: list[asyncio.Task] = []
 
@@ -316,7 +340,19 @@ class PerceptionDaemon:
                 if headless:
                     await asyncio.sleep(self._dormant_interval_s)
                     continue
-                await asyncio.sleep(self.check_interval)
+                # Adaptive cadence: full speed while the user is active, dormant
+                # once idle past the threshold. This is the fix for the measured
+                # idle-RSS leak — the subprocess storm only runs when there is
+                # plausibly something to perceive. Worst case on the user's
+                # return is one dormant interval (~45s) of latency before Aura
+                # notices, which is acceptable for an ambient companion.
+                idle_time = time.time() - self.last_user_activity
+                effective_interval = (
+                    self._dormant_interval_s
+                    if idle_time > self._idle_backoff_after_s
+                    else self.check_interval
+                )
+                await asyncio.sleep(effective_interval)
 
                 # 1. Active Window Focus Check (macOS)
                 window = await self._check_active_window()
@@ -391,7 +427,7 @@ class PerceptionDaemon:
                     recent_files = await asyncio.to_thread(
                         self._scan_recent_file_mutations,
                         self._file_scan_root,
-                        self.check_interval,
+                        effective_interval,
                     )
                     if recent_files:
                         self.register_moment(

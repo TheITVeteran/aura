@@ -224,3 +224,53 @@ async def test_perception_daemon_active_window_timeout_does_not_kill_main_loop(m
     assert checks["active_window"] == 1
     assert checks["clipboard"] == 0
     assert daemon.running is False
+
+
+def test_perception_daemon_idle_backoff_reads_flag(monkeypatch):
+    """The idle-backoff threshold is operator-tunable and defaults to 120s."""
+    monkeypatch.setenv("AURA_PERCEPTION_IDLE_BACKOFF_AFTER_S", "300")
+    daemon = PerceptionDaemon()
+    assert daemon._idle_backoff_after_s == 300.0
+
+    monkeypatch.delenv("AURA_PERCEPTION_IDLE_BACKOFF_AFTER_S", raising=False)
+    assert PerceptionDaemon()._idle_backoff_after_s == 120.0
+
+
+@pytest.mark.asyncio
+async def test_perception_daemon_backs_off_when_user_idle(monkeypatch):
+    """The subprocess-spawning loop must sleep the dormant interval once the
+    user has been idle past the threshold — the fix for the idle-RSS leak
+    (2026-07-13: ~4 subprocesses/cycle at 2s = the dominant native leak)."""
+    import time as _time
+
+    daemon = PerceptionDaemon()
+    daemon.running = True
+    daemon._idle_backoff_after_s = 120.0
+    daemon.check_interval = 2.0
+    daemon._dormant_interval_s = 45.0
+
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds):
+        slept.append(seconds)
+        # Break the loop cleanly BEFORE any probe spawns a real subprocess:
+        # the loop handles CancelledError with `break`.
+        raise asyncio.CancelledError
+
+    # Headless resolution is imported lazily inside the loop; force non-headless.
+    monkeypatch.setattr(
+        "core.runtime.proof_policy.proof_headless_run", lambda: False, raising=False
+    )
+    monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
+
+    # User idle for 10 minutes -> must back off to the dormant interval.
+    daemon.last_user_activity = _time.time() - 600.0
+    await daemon._main_perceptual_loop()
+    assert slept == [45.0], f"idle loop should back off to dormant interval, got {slept}"
+
+    # User active -> full cadence.
+    slept.clear()
+    daemon.running = True
+    daemon.last_user_activity = _time.time()
+    await daemon._main_perceptual_loop()
+    assert slept == [2.0], f"active loop should poll at check_interval, got {slept}"
