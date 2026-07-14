@@ -1,7 +1,11 @@
 """Tests for the consolidated system-integrity audit."""
 from __future__ import annotations
 
+import threading
+import time
+
 import core.runtime.integrity_audit as ia
+from core.health.read_model import HealthReadModelConfig, HealthSnapshotReadModel
 
 
 def test_audit_aggregates_signals_and_reports_structure():
@@ -37,6 +41,99 @@ def test_maybe_run_is_throttled(monkeypatch):
     monkeypatch.setattr(ia, "run_integrity_audit", lambda **k: ran.__setitem__("n", ran["n"] + 1) or orig(**k))
     ia.maybe_run(interval_s=10_000)
     assert ran["n"] == 0                      # throttled — did not re-run
+
+
+def test_integrity_read_model_never_joins_blocked_collector(monkeypatch):
+    started = threading.Event()
+    release = threading.Event()
+
+    def collect():
+        started.set()
+        assert release.wait(1.0)
+        return {
+            "healthy": True,
+            "concerns": [],
+            "advisory": [],
+            "crsm_loop": {"state": "closed"},
+            "caa_readiness": {"level": "production"},
+        }
+
+    model = HealthSnapshotReadModel(
+        collect,
+        ia._integrity_snapshot_fallback,
+        config=HealthReadModelConfig(
+            refresh_interval_s=1.0,
+            max_stale_s=2.0,
+            collection_timeout_s=0.5,
+            metadata_key="integrity_read_model",
+            worker_name_prefix="AuraIntegritySnapshotTest",
+            incident_prefix="integrity-refresh",
+            log_label="Integrity snapshot test",
+        ),
+    )
+    monkeypatch.setattr(ia, "_INTEGRITY_READ_MODEL", model)
+
+    started_at = time.monotonic()
+    report = ia.read_integrity_audit()
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 0.05
+    assert report["healthy"] is False
+    assert report["concerns"] == ["integrity_snapshot_initializing"]
+    assert report["integrity_read_model"]["serving"] == "initializing"
+    assert report["integrity_read_model"]["refresh_in_flight"] is True
+    assert started.wait(0.2)
+    release.set()
+
+
+def test_integrity_snapshot_expiry_blocks_proof_not_runtime_health():
+    from interface.routes.system import _runtime_integrity_public_payload
+
+    payload = _runtime_integrity_public_payload(
+        {
+            "healthy": True,
+            "concerns": [],
+            "advisory": [],
+            "crsm_loop": {"state": "closed"},
+            "caa_readiness": {"level": "production"},
+            "integrity_read_model": {
+                "expired": True,
+                "captured_at_unix": 100.0,
+            },
+        }
+    )
+
+    assert payload["healthy"] is True
+    assert payload["proof_readiness"] is False
+    assert "integrity:integrity_snapshot_expired" in payload["proof_blockers"]
+
+
+def test_crsm_bridge_status_reuses_integrity_snapshot(monkeypatch, tmp_path):
+    import core.consciousness.crsm_loop_monitor as monitor_module
+    import core.consciousness.crsm_lora_bridge as bridge_module
+
+    monkeypatch.setattr(
+        bridge_module,
+        "PERSIST_PATH",
+        tmp_path / "crsm_lora_buffer.jsonl",
+    )
+    monkeypatch.setattr(
+        ia,
+        "read_integrity_audit",
+        lambda: {
+            "crsm_loop": {"state": "closed", "verified_consumption": True},
+            "integrity_read_model": {"serving": "fresh", "expired": False},
+        },
+    )
+
+    def fail_if_scanned():
+        raise AssertionError("ordinary bridge status must not scan CRSM state")
+
+    monkeypatch.setattr(monitor_module, "get_crsm_loop_monitor", fail_if_scanned)
+    status = bridge_module.CRSMLoraBridge().get_status()
+
+    assert status["loop"]["state"] == "closed"
+    assert status["loop_read_model"]["serving"] == "fresh"
 
 
 def test_strict_mode_reflected(monkeypatch):

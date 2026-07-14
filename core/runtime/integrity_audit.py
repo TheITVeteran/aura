@@ -6,11 +6,12 @@ receipt system is comprehensive but requires active reading." Failures are recor
 quietly run below capacity — but nothing pulls these together and says so out loud.
 
 This audit consolidates the three signals — degradation receipts, CRSM→LoRA loop
-closure, and CAA steering readiness — into one report, logs a single loud summary when
-anything is wrong, and is throttled so it can be called from a hot path (health
-heartbeat) without spamming. Under ``AURA_STRICT_RUNTIME=1`` it always emits the
-report even when clean, so production runs surface the activation state every interval
-instead of requiring someone to go read receipts.
+closure, and CAA steering readiness — into one report and logs a single loud summary
+when anything is wrong. Health callers consume a bounded stale-while-revalidate read
+model; filesystem hashing, dataset parsing, and CAA readiness checks never run on the
+HTTP event loop. Under ``AURA_STRICT_RUNTIME=1`` the collector emits the report even
+when clean, so production runs surface the activation state without requiring someone
+to go read receipts.
 """
 from __future__ import annotations
 
@@ -19,6 +20,8 @@ import os
 import threading
 import time
 from typing import Any
+
+from core.health.read_model import HealthReadModelConfig, HealthSnapshotReadModel
 
 logger = logging.getLogger("Aura.IntegrityAudit")
 
@@ -35,6 +38,13 @@ _DEGRADATION_CONCERN_WINDOW_S = 1800.0
 
 def strict_mode() -> bool:
     return os.environ.get("AURA_STRICT_RUNTIME") == "1"
+
+
+def _env_positive_float(name: str, default: float) -> float:
+    try:
+        return max(0.05, float(os.environ.get(name, str(default))))
+    except (TypeError, ValueError):
+        return float(default)
 
 
 def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
@@ -146,8 +156,73 @@ def run_integrity_audit(*, log: bool = True) -> dict[str, Any]:
     return report
 
 
+def _integrity_snapshot_fallback() -> dict[str, Any]:
+    return {
+        "healthy": False,
+        "concerns": ["integrity_snapshot_initializing"],
+        "advisory": [],
+        "strict_mode": strict_mode(),
+        "degradations": {},
+        "crsm_loop": {},
+        "caa_readiness": {},
+        "failure_state": {},
+        "at": None,
+    }
+
+
+def _new_integrity_read_model() -> HealthSnapshotReadModel:
+    refresh_s = _env_positive_float("AURA_INTEGRITY_REFRESH_S", 15.0)
+    return HealthSnapshotReadModel(
+        run_integrity_audit,
+        _integrity_snapshot_fallback,
+        config=HealthReadModelConfig(
+            refresh_interval_s=refresh_s,
+            max_stale_s=max(
+                refresh_s,
+                _env_positive_float("AURA_INTEGRITY_MAX_STALE_S", 90.0),
+            ),
+            collection_timeout_s=_env_positive_float(
+                "AURA_INTEGRITY_COLLECTION_TIMEOUT_S", 8.0
+            ),
+            retry_base_s=_env_positive_float("AURA_INTEGRITY_RETRY_BASE_S", 2.0),
+            retry_max_s=_env_positive_float("AURA_INTEGRITY_RETRY_MAX_S", 30.0),
+            schema_version="aura.integrity.snapshot.v1",
+            metadata_key="integrity_read_model",
+            worker_name_prefix="AuraIntegritySnapshot",
+            incident_prefix="integrity-refresh",
+            log_label="Integrity snapshot",
+        ),
+    )
+
+
+_INTEGRITY_READ_MODEL = _new_integrity_read_model()
+
+
+def start_integrity_read_model() -> bool:
+    """Prewarm integrity evidence without joining the collector."""
+
+    return _INTEGRITY_READ_MODEL.start()
+
+
+def stop_integrity_read_model() -> None:
+    _INTEGRITY_READ_MODEL.close()
+
+
+def reset_integrity_read_model_for_test() -> None:
+    _INTEGRITY_READ_MODEL.reset_for_test()
+
+
+def read_integrity_audit() -> dict[str, Any]:
+    """Return immediately with current or explicitly stale integrity evidence."""
+
+    return _INTEGRITY_READ_MODEL.read()
+
+
 def maybe_run(*, interval_s: float = 300.0) -> dict[str, Any] | None:
-    """Throttled audit — safe to call from a hot path (e.g. the health heartbeat)."""
+    """Legacy synchronous throttle for CLI/background callers.
+
+    Event-loop and request paths must use :func:`read_integrity_audit`.
+    """
     global _last_run
     now = time.time()
     with _lock:

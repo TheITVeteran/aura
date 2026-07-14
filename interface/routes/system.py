@@ -4077,15 +4077,24 @@ _HEALTH_READ_MODEL = _new_health_read_model()
 def start_health_read_model() -> bool:
     """Prewarm the public health snapshot after server services register."""
 
+    from core.runtime.integrity_audit import start_integrity_read_model
+
+    start_integrity_read_model()
     return _HEALTH_READ_MODEL.start()
 
 
 def stop_health_read_model() -> None:
+    from core.runtime.integrity_audit import stop_integrity_read_model
+
     _HEALTH_READ_MODEL.close()
+    stop_integrity_read_model()
 
 
 def _reset_health_read_model_for_test() -> None:
+    from core.runtime.integrity_audit import reset_integrity_read_model_for_test
+
     _HEALTH_READ_MODEL.reset_for_test()
+    reset_integrity_read_model_for_test()
 
 
 def _force_unhealthy_snapshot(
@@ -4512,7 +4521,7 @@ def _normalize_conversation_health_blockers(
 
 
 def _collect_runtime_integrity_report() -> dict[str, Any]:
-    """Return the throttled proof/learning integrity audit.
+    """Return the non-blocking proof/learning integrity read model.
 
     This is intentionally separated from launch readiness. CRSM/CAA learning
     debt should not masquerade as a clean proof state, but it should also not
@@ -4520,9 +4529,9 @@ def _collect_runtime_integrity_report() -> dict[str, Any]:
     probes are otherwise safe.
     """
     try:
-        from core.runtime.integrity_audit import maybe_run
+        from core.runtime.integrity_audit import read_integrity_audit
 
-        report = maybe_run()
+        report = read_integrity_audit()
         if isinstance(report, dict):
             return report
     except _SYSTEM_RECOVERABLE_ERRORS as exc:
@@ -4562,6 +4571,13 @@ def _runtime_integrity_proof_blockers(report: dict[str, Any] | None) -> list[str
         if str(item or "").strip()
     ]
     blockers.extend(f"integrity:{item}" for item in advisory)
+    read_model = report.get("integrity_read_model")
+    if isinstance(read_model, dict) and bool(read_model.get("expired", False)):
+        blockers.append(
+            "integrity:integrity_snapshot_initializing"
+            if read_model.get("captured_at_unix") is None
+            else "integrity:integrity_snapshot_expired"
+        )
     return list(dict.fromkeys(blockers))
 
 
@@ -4589,6 +4605,7 @@ def _runtime_integrity_public_payload(report: dict[str, Any] | None) -> dict[str
         "crsm_loop": report.get("crsm_loop") or {},
         "caa_readiness": report.get("caa_readiness") or {},
         "at": report.get("at"),
+        "read_model": report.get("integrity_read_model") or {},
     }
 
 

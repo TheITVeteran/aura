@@ -16,7 +16,16 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   not an honest measure of daily reliability, enterprise maturity, semantic
   review, independent replication, clean-machine portability, or final soak
   readiness.
-- Current bounded implementation milestone: **Checkpoint 71 closes three
+- Current bounded implementation milestone: **Checkpoint 72 removes the
+  remaining synchronous integrity/CRSM proof work from heartbeat and ordinary
+  substrate-status reads. One named stale-while-revalidate owner prewarms the
+  complete degradation/CRSM/CAA report; heartbeat and UI collectors return
+  immutable freshness-labelled evidence without joining hashing, JSONL parsing,
+  CAA readiness, or a blocked collector. The server now binds degradation-to-
+  immunity work to its canonical loop, so worker and temporary `asyncio.run`
+  loops cannot steal ownership and no untracked per-fault daemon thread survives
+  teardown. Exact-main live health-pressure and recovery proof remains open.
+  Checkpoint 71 closes three
   source causes exposed by the signed Checkpoint 66 runtime: Executive temporal
   arbitration now recognizes only the exact argument-bound subconscious sandbox
   probe and returns truthful no-network compute constraints; deferred, denied,
@@ -65,8 +74,8 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   item remains open or in progress unless its detailed entry explicitly carries
   a completion date and proof.
 - Overall completion percentage: **30% planning estimate as of pushed
-  Checkpoint 71, with exact-build live proof still open**.
-  Checkpoints 67-71 close additional capability, idle-resource, authority,
+  Checkpoint 72, with exact-build live proof still open**.
+  Checkpoints 67-72 close additional capability, idle-resource, authority,
   recursive-learning, and loop-ownership gaps in source, but the signed-app
   plateau failed on repeated event-loop lag, model-lane saturation, and
   readiness recovery; live proof remains open and
@@ -79,7 +88,7 @@ program is tracked separately so a historical proof pass cannot be mistaken for
   generated denominator; new obligations increase it, regressions reopen it,
   and source-green/live-open work never receives full closure credit.
 - Total checkpoint forecast: **approximately 206-276 total checkpoints for the
-  expanded program, with 71 pushed and approximately 135-205 remaining before
+  expanded program, with 72 pushed and approximately 134-204 remaining before
   final soak/release closure**. This includes every
   implementation, cleanup, repair, integration, verification, live,
   portability, release, and soak checkpoint, not only headline milestones.
@@ -127,11 +136,11 @@ Status rules:
 | `EFFECT-001` | `IN PROGRESS` | Put file, network, browser, OS, memory, model, patch, self-repair, social, and environmental effects through canonical authority, transaction, compensation, and reconstructable receipt boundaries. | Pass F 5; Matrix 9 and 11 |
 | `STORAGE-GATEWAY-001` | `COMPLETE 2026-07-13` | Removed all seven production-surface direct-write bypasses in local TLS material, self-repair backlog state, flight-recorder emergency output, Program DNA staging, and rollback state. Canonical batch, owned-binary, durable replace/delete, governance, schema, integrity, concurrency, and fault-injection contracts preserve bootstrap/crash/rollback behavior without exemptions. Checkpoint 62 reached zero direct-file-write findings; Checkpoint 63 subsequently brought the complete audited production-surface scanner to zero findings. | `EFFECT-001`, `FAULT-001`, `REPO-001`; Checkpoints 62-63 |
 | `RUNTIME-001` | `IN PROGRESS` | Finish desired-state reconciliation and truthful startup/liveness/readiness/degradation/proof/certification conditions without aggregate false health. | Pass F 2; Matrix 13 |
-| `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with one bounded, versioned, asynchronously refreshed health read model whose public request path is non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; one daemon single-flight refresh owner, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and one recovery transition are source-green. Checkpoint 64 removes the background in-process Cortex owner that starved the conversational worker; Checkpoint 65 removes sampled process-census, goal-lock, and immunity-persistence blockers; Checkpoint 68 backs idle desktop perception off after attributed subprocess churn; and Checkpoint 71 prevents deferred action results from recursively re-entering cognition while keeping CRSM health reads cached and moving its durable state and monitor observation off-loop. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, voice, training maintenance, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoints 61, 64-65, 68, and 71; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
+| `HEALTH-SURFACE-001` | `IN PROGRESS (SOURCE GREEN; EXACT-MAIN LIVE OPEN) 2026-07-13` | Replace the heavyweight request-time `/api/health` aggregation with bounded, versioned, asynchronously refreshed read models whose public request paths are non-blocking, stale-aware, and available under owner-loop and CPU pressure. The request-time collector, duplicate fixed UI timers, rich service-worker polling, cold service construction, mutation-on-observation, and repeated per-attempt warning cards are removed; single-flight refresh ownership, explicit expiry truth, retry telemetry, jittered client backoff, incident coalescing, bounded reminders, and recovery transitions are source-green. Checkpoint 64 removes the background in-process Cortex owner that starved the conversational worker; Checkpoint 65 removes sampled process-census, goal-lock, and immunity-persistence blockers; Checkpoint 68 backs idle desktop perception off after attributed subprocess churn; Checkpoint 71 prevents deferred action results from recursively re-entering cognition while moving CRSM closure state off-loop; and Checkpoint 72 gives degradation/CRSM/CAA integrity its own prewarmed named snapshot so heartbeat and `CRSMLoraBridge` status never hash or parse training artifacts inline. Expired integrity evidence blocks proof readiness without falsely blocking conversational runtime health. Exact-main signed-app proof must still demonstrate responsive liveness/readiness while cognition, Phi, neural-mesh, MLX recovery, desktop perception, voice, training maintenance, and attribution work are active. | `RUNTIME-001`, `FOREGROUND-LATENCY-001`, `OBSERVE-001`, `UI-001`, `PERF-001`; Checkpoints 61, 64-65, 68, and 71-72; live old-runtime `/api/health` measured `200`, 135883 bytes, 5.3s against a 1.5s UI abort budget with repeated `[health_poll] ... Load failed` on preserved Fable runtime 2026-07-13 |
 | `LANE-001` | `COMPLETE 2026-07-12` | Preserve atomic fenced reservations, synchronous required eviction/reclamation, all-owner accounting, heartbeats, compensation, terminal receipts, race exclusion, and bounded live physical-release-before-load evidence across future model owners. | Addendum 21-22, `CTX2-LANE-001..004` |
 | `RESOURCE-001` | `COMPLETE 2026-07-13` | Preserve typed attributed RAM, accelerator, thermal, disk, compute, power, process, connection, open-file, cache, and pressure observation; keep ordinary tests hermetic and live-pressure evidence explicitly labelled and conservatively bounded. Checkpoint 64 adds a canonical lightweight target-tree observer; Checkpoint 65 adds a provenance-bearing PID census and targeted process-tree observation so ordinary liveness, sovereignty, shutdown, and supervisor checks do not enrich the full host process table. | Pass F 3; Addendum 22; Checkpoints 34, 64, and 65 |
 | `MEMORY-LEAK-001` | `IN PROGRESS (DOMINANT LIVE OWNER SOURCE-FIXED; EXACT-MAIN PLATEAU OPEN) 2026-07-13` | Attribute and eliminate the measured 350-450 MB/hour idle orchestrator RSS growth without relying on restart, pressure-triggered reclamation, model-worker exclusion, or a raised limit. Checkpoint 64 identified a live orchestrator retaining about 19.7 GB physical footprint, including about 17.2 GB of IOAccelerator regions, while stacks remained in the background non-parametric ingest path for more than 1,098 seconds. The source now forbids model loading in that owner and reuses the resident worker with one causal forward, hard pair/token/position/deadline budgets, foreground preemption, durable ordering, and cache cleanup. The old running process still retains its already-loaded allocation; controlled exact-main restart, remaining allocation/cardinality attribution, bounded-growth regressions, and stable idle plus interaction plateau proof remain mandatory. | `RESOURCE-001`, `RUNTIME-001`, `FAULT-001`, `PERF-001`; two independent 45/70-minute idle windows in `docs/SYSTEMS_MATURITY_2026_07_12.md`; live stack/vmmap attribution and Checkpoint 64 |
-| `FOREGROUND-LATENCY-001` | `IN PROGRESS (MULTIPLE SOURCE CAUSES CLOSED; LIVE NUMPY OWNER OPEN) 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoint 64 removes an approximately 18-minute quadratic in-orchestrator model job; Checkpoint 65 moves sampled host-process enrichment, goal-store locking, and adaptive-immunity persistence off-loop; Checkpoint 68 removes idle perception subprocess storm cadence; and Checkpoint 71 removes deferred-result cognitive redispatch, stale-loop voice executors, and synchronous CRSM monitor/state I/O from the owner loop. The CRSM train/fuse process is model-lane admitted and isolated from foreground service ownership, but exact live contention proof remains open. A macOS sample still attributes about 29% of a five-second main-thread window to synchronous NumPy dispatcher work, so Phi/neural/substrate owner attribution and offload remain the next source gate before live closure. | `PERF-001`, `RUNTIME-001`, `FAULT-001`; Checkpoints 51, 57, 60, 64-65, 68, and 71; live `event_loop_lag_3.638s` MLX admission denial, 4.304s boot-health overrun, and CP66 main-thread NumPy sample on 2026-07-13 |
+| `FOREGROUND-LATENCY-001` | `IN PROGRESS (MULTIPLE SOURCE CAUSES CLOSED; LIVE NUMPY OWNER OPEN) 2026-07-13` | Eliminate live event-loop stalls that deny normal foreground model admission. Attribute every blocking owner, move blocking probes/work off-loop, preserve truthful lag admission instead of raising thresholds, and prove chat/model load remains available under desktop-access, immunity, telemetry, action execution, and background activity. Ordinary memory observation and blocking actuator bodies are source-offloaded; background MLX admission pressure is a retryable information-level deferral while a foreground denial remains visible. Checkpoint 64 removes an approximately 18-minute quadratic in-orchestrator model job; Checkpoint 65 moves sampled host-process enrichment, goal-store locking, and adaptive-immunity persistence off-loop; Checkpoint 68 removes idle perception subprocess storm cadence; Checkpoint 71 removes deferred-result cognitive redispatch, stale-loop voice executors, and synchronous CRSM scheduler I/O; and Checkpoint 72 removes request-loop integrity/CRSM/CAA inspection plus unowned degradation-repair threads. The CRSM train/fuse process is model-lane admitted and isolated from foreground service ownership, but exact live contention proof remains open. A macOS sample still attributes about 29% of a five-second main-thread window to synchronous NumPy dispatcher work, so Phi/neural/substrate owner attribution and offload remain the next source gate before live closure. | `PERF-001`, `RUNTIME-001`, `FAULT-001`; Checkpoints 51, 57, 60, 64-65, 68, and 71-72; live `event_loop_lag_3.638s` MLX admission denial, 4.304s boot-health overrun, and CP66 main-thread NumPy sample on 2026-07-13 |
 | `SHUTDOWN-001` | `COMPLETE 2026-07-11` | Preserve monotonic quiescence, reverse-order bounded teardown, terminal evidence, and no post-latch construction or resurrection across all future changes. | Addendum 32, `CTX2-SHUTDOWN-001..003` |
 | `FAULT-001` | `IN PROGRESS` | Drain the FMEA and degradation-policy backlog: root-fix broad catches, swallowed cancellation, false success/health, partial mutation, retry storms, leaks, and noisy fallback at their originating layer. | Pass F 4; Matrix 12 |
 | `ARCH-001` | `IN PROGRESS` | Establish canonical subsystem ownership and typed dependency boundaries; remove duplicate runtime owners, cross-wired service lookups, bypasses, monolith debt, and mixed runtime/proof/research meaning. | Pass F 5; Matrix 11; context architecture criticisms |
@@ -188,7 +197,7 @@ Status rules:
 | `SUPPORTABILITY-001` | `OPEN 2026-07-13` | Define service-level objectives and error budgets for boot, chat, action, health, memory, model, GUI, and shutdown; ship privacy-safe diagnostics, self-test/doctor, incident bundles, runbooks, symptom-to-root-cause guidance, recovery actions, support/version metadata, and known-issue discipline. Repeated faults must form one diagnosable episode with bounded reminders and an observed recovery transition. | `OBSERVE-001`, `HEALTH-SURFACE-001`, `FAULT-001`, `OPERATIONS-001`, `PERF-001`; Aura 1.0 release-gap audit 2026-07-13 |
 | `REPO-001` | `OPEN` | Drain type, effect, cancellation, lifecycle, concurrency, dependency, dead-code, scaffolding/stub, configuration, documentation, and runtime/proof artifact-placement debt across every tracked source file. | Pass F 12; Matrix 11, 12, and 18 |
 | `LIFECYCLE-001` | `COMPLETE 2026-07-13` | Preserve the now-enforced ownership contract: bounded commands terminate after their result; diagnostic/runtime lookups cannot cold-construct service graphs; `aiosqlite` workers remain repository-owned and close explicitly; launch cleanup targets exact process identity; regressions must prove real interpreter exit without forced termination. | `FAULT-001`, `ARCH-001`, `REPO-001`, `VALIDATE-001`; Checkpoint 55; exact reproducer `101/101` plus normal interpreter exit |
-| `ASYNC-TASK-001` | `IN PROGRESS (AUDITED SOURCE ZERO; EXACT-MAIN LIVE OPEN) 2026-07-13` | Eliminate every unobserved async task failure and require owned task identity, completion observation, cancellation, shutdown admission, and structured terminal evidence. The live `conversation_support.py` empty-`agent_id` failure is source-fixed, and the final production scanner owners in world persistence and blocking actuators now use one cancellation-drain primitive with pre-latch admission and shutdown-critical completion. The audited production surface reports zero findings. Exact-main signed-app proof must still demonstrate no unobserved exception or stranded authority/persistence work during conversation, action, cancellation, and quit. | `FAULT-001`, `LIFECYCLE-001`, `CONVERSATION-001`; Checkpoints 53 and 63; live desktop log evidence 2026-07-13 |
+| `ASYNC-TASK-001` | `IN PROGRESS (AUDITED SOURCE ZERO; EXACT-MAIN LIVE OPEN) 2026-07-13` | Eliminate every unobserved async task failure and require owned task identity, completion observation, cancellation, shutdown admission, and structured terminal evidence. The live `conversation_support.py` empty-`agent_id` failure is source-fixed, and the final production scanner owners in world persistence and blocking actuators now use one cancellation-drain primitive with pre-latch admission and shutdown-critical completion. Checkpoint 72 removes degradation repair's per-event raw daemon-thread fallback: the server explicitly binds the canonical loop, cross-thread and temporary-loop events bridge to it through tracked bounded tasks, shutdown refuses new work, and no-owner contexts close and report deferral truthfully. The audited production surface reports zero findings. Exact-main signed-app proof must still demonstrate no unobserved exception or stranded authority/persistence/immune work during conversation, action, health pressure, cancellation, and quit. | `FAULT-001`, `LIFECYCLE-001`, `CONVERSATION-001`; Checkpoints 53, 63, and 72; live desktop log evidence 2026-07-13 |
 | `LAUNCH-PROVENANCE-001` | `IN PROGRESS (SOURCE GREEN; LIVE OPEN) 2026-07-13` | Make the signed resident Aura.app the canonical launcher, pin its source root and commit provenance to current `main`, reject stale/worktree drift, keep the native bridge resident, and expose launched root/commit/signature evidence in readiness and proof. The next live proof must replace the observed Python process running from `.claude/worktrees/fable-improvement-pass` without a resident Aura.app process. | `OPERATIONS-001`, `RUNTIME-001`, `DESKTOP-ACCESS-001`, `VALIDATE-001`; Checkpoint 54; live process evidence 2026-07-13 |
 | `PROOF-001` | `OPEN` | Purify all proof runners against leakage, copied answers, stale artifacts, fallback success, runner-solved work, environment dependence, and unsupported claims; separate builder/solver/evaluator/signer. | Pass F 9; Matrix 16 |
 | `PORTABILITY-001` | `OPEN 2026-07-13` | Define and test the supported macOS/Apple Silicon/RAM/storage/display/audio/camera/network/account/permission matrix, including clean and upgraded machines, no-network and degraded-network modes, missing optional hardware, low disk, thermal pressure, locale/time changes, sleep/wake, multiple displays, and standard managed-device restrictions. Every unsupported environment must be rejected or degraded truthfully with a specific recovery path. | `RELEASE-CONTRACT-001`, `DESKTOP-001`, `RESOURCE-001`, `OPERATIONS-001`, `REPLICATION-001`; Aura 1.0 release-gap audit 2026-07-13 |
@@ -14856,3 +14865,75 @@ Progress and immediate next work:
   graceful-shutdown proof.
 - Final multi-hour and 24-72 hour soaks remain deferred until every shorter
   source, fault-injection, live, GUI, portability, and release gate is green.
+
+## Checkpoint 2026-07-13-72: Nonblocking Integrity and Owner-Loop Immune Dispatch
+
+This checkpoint advances `HEALTH-SURFACE-001`, `FOREGROUND-LATENCY-001`,
+`ASYNC-TASK-001`, `FAULT-001`, `ADAPT-001`, and `OBSERVE-001`. It closes the
+remaining request-time integrity/CRSM inspection path in source and removes an
+unowned repair-thread race, without claiming that the signed desktop health
+poll or live event-loop plateau has passed.
+
+The health path now has one explicit evidence owner per cadence:
+
+- The established single-flight snapshot primitive supports named schema,
+  metadata, worker, incident, and log identities without changing the public
+  health contract. Integrity uses that same timeout, stale-while-revalidate,
+  retry, coalesced-incident, and recovery machinery instead of creating a
+  second polling design.
+- A prewarmed `aura.integrity.snapshot.v1` owner collects degradation pressure,
+  exact CRSM closure, and CAA readiness every bounded interval. Heartbeat reads
+  its immutable snapshot immediately; initialization or expiry blocks proof
+  readiness truthfully but does not misclassify a conversationally available
+  runtime as unavailable.
+- Ordinary `CRSMLoraBridge.get_status()` consumes the shared integrity snapshot
+  and publishes its freshness metadata. Only an explicit `force_refresh=True`
+  training/diagnostic caller may synchronously hash and parse the current
+  dataset, manifests, marker, model publication, and training receipt.
+- Server startup and shutdown prewarm and close both read models together. One
+  blocked integrity collector remains one visible worker; HTTP/UI polling never
+  joins it and cannot create a scan or warning storm.
+
+The adjacent repair lifecycle was corrected after verification exposed a
+post-summary `cannot schedule new futures after shutdown` warning:
+
+- Degradation repair no longer starts one raw daemon thread per immune event.
+  The server explicitly binds the canonical event loop; synchronous workers and
+  temporary `asyncio.run` collectors bridge to that owner through tracked,
+  bounded tasks. A temporary loop cannot replace a live canonical owner.
+- Shutdown admission refuses new immune work through the standard latch. A
+  context with no live owner closes the coroutine and reports
+  `deferred:no_owner_loop` instead of claiming it was scheduled. Re-running the
+  original health-truthfulness suite produces no teardown warning.
+
+Verification on the source candidate:
+
+- Health read-model, integrity, and CAA compatibility pass `31/31`.
+- Boot health, boot runtime safety, runtime health contract, runtime health
+  truthfulness, and subsystem route contracts pass `133/133` across individually
+  completed files; the truthfulness rerun is clean after the repair fix.
+- Degradation-to-repair routing passes `7/7`, including current-loop,
+  cross-thread bound-loop, temporary-loop non-replacement, shutdown-compatible
+  ownership, and truthful no-owner deferral. Three adjacent server health
+  payload selectors pass `3/3`; total non-overlapping test evidence is
+  `174/174`.
+- Configured Ruff, targeted compilation, and owned `git diff --check` pass. The
+  enterprise static ratchet passes, production readiness passes `37/37`, the
+  production-surface scanner reports zero findings/high-critical findings/
+  exemptions, and the closeout rubric passes `20/20`. These mechanical gates do
+  not substitute for open semantic/live/release work. No Aura process or model
+  was launched, preserving the separately operated CRSM training lane.
+
+Progress and immediate next work:
+
+- This is pushed Checkpoint `72`. The evidence-weighted planning estimate
+  remains `30%`; the forecast remains `206-276` total checkpoints, with
+  `134-204` remaining before final soak/release closure. This source checkpoint
+  receives no signed-app, model-quality, portability, release, or soak credit.
+- Ingest and verify the external CRSM training transaction when its owner
+  reports completion. Then rebuild the signed app from exact pushed `main` and
+  require bounded heartbeat/UI health latency, fresh integrity generations,
+  no repeated Neural `health_poll` failures, no owner-loop lag alarm, and one
+  observed failure/recovery episode under forced collector pressure.
+- Continue the sampled synchronous NumPy/Phi/neural owner attribution and every
+  open master-index unit. Final multi-hour and 24-72 hour soaks remain last.

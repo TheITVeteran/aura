@@ -14,7 +14,11 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from core.runtime.task_ownership import create_tracked_task
+from core.runtime.task_ownership import (
+    close_awaitable,
+    create_tracked_task,
+    runtime_shutdown_blocks_new_work,
+)
 
 logger = logging.getLogger("Aura.Resilience.DegradationRepair")
 
@@ -67,6 +71,35 @@ class DegradationRepairRouter:
             else self.SELF_MODIFICATION_COOLDOWN_S
         )
         self._last_self_modification_dispatch: dict[str, float] = {}
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
+        self._owner_loop_lock = threading.RLock()
+
+    def bind_owner_loop(
+        self,
+        loop: asyncio.AbstractEventLoop | None = None,
+        *,
+        replace: bool = False,
+    ) -> bool:
+        """Bind cross-thread repair dispatch to the canonical runtime loop."""
+
+        try:
+            target = loop or asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        if target.is_closed() or not target.is_running():
+            return False
+        with self._owner_loop_lock:
+            existing = self._owner_loop
+            if (
+                not replace
+                and existing is not None
+                and existing is not target
+                and not existing.is_closed()
+                and existing.is_running()
+            ):
+                return False
+            self._owner_loop = target
+        return True
 
     def route(
         self,
@@ -200,7 +233,7 @@ class DegradationRepairRouter:
                 "occurrence_count": int(getattr(incident, "occurrence_count", 0) or 0),
                 "repair_requested": bool(extra.get("repair_requested")),
             }
-            self._schedule_coro(
+            scheduled, reason = self._schedule_coro(
                 immune.observe_event(
                     event,
                     anomaly_score=0.9 if event["severity"] == "critical" else 0.65,
@@ -208,7 +241,7 @@ class DegradationRepairRouter:
                 ),
                 label="adaptive_immunity.observe_degradation",
             )
-            action.immune_status = "scheduled"
+            action.immune_status = "scheduled" if scheduled else f"deferred:{reason}"
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError) as exc:
             action.immune_status = f"unavailable:{type(exc).__name__}"
             logger.debug("Adaptive immunity routing failed: %s", exc)
@@ -268,27 +301,13 @@ class DegradationRepairRouter:
         occurrence_count = int(getattr(incident, "occurrence_count", 0) or 0)
         return occurrence_count >= min(2, self.INCIDENT_REPEAT_THRESHOLD)
 
-    @staticmethod
-    def _schedule_coro(coro: Any, *, label: str) -> None:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            def _run_in_thread() -> None:
-                try:
-                    asyncio.run(coro)
-                except asyncio.CancelledError:
-                    return
-                except (RuntimeError, OSError, TypeError, ValueError) as exc:
-                    logger.warning("%s thread failed: %s", label, exc)
-
-            thread = threading.Thread(
-                target=_run_in_thread,
-                name=f"aura-{label}",
-                daemon=True,
-            )
-            thread.start()
-            return
-
+    def _schedule_on_owner_loop(self, coro: Any, label: str) -> bool:
+        if runtime_shutdown_blocks_new_work(
+            label,
+            resource_kind="adaptive_immunity_task",
+        ):
+            close_awaitable(coro)
+            return False
         try:
             create_tracked_task(
                 coro,
@@ -296,8 +315,61 @@ class DegradationRepairRouter:
                 owner="degradation_repair_router",
                 bounded=True,
             )
+            return True
         except (RuntimeError, AttributeError, TypeError, ValueError) as exc:
+            close_awaitable(coro)
             logger.warning("%s task scheduling failed: %s", label, exc)
+            return False
+
+    def _schedule_coro(self, coro: Any, *, label: str) -> tuple[bool, str]:
+        if runtime_shutdown_blocks_new_work(
+            label,
+            resource_kind="adaptive_immunity_task",
+        ):
+            close_awaitable(coro)
+            return False, "runtime_shutdown"
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        with self._owner_loop_lock:
+            owner_loop = self._owner_loop
+            if owner_loop is not None and (
+                owner_loop.is_closed() or not owner_loop.is_running()
+            ):
+                self._owner_loop = None
+                owner_loop = None
+
+        if owner_loop is None and running_loop is not None:
+            self.bind_owner_loop(running_loop)
+            owner_loop = running_loop
+
+        if running_loop is not None and running_loop is owner_loop:
+            scheduled = self._schedule_on_owner_loop(coro, label)
+            return (
+                (True, "current_owner_loop")
+                if scheduled
+                else (False, "task_schedule_failed")
+            )
+
+        if (
+            owner_loop is None
+            or owner_loop.is_closed()
+            or not owner_loop.is_running()
+        ):
+            close_awaitable(coro)
+            return False, "no_owner_loop"
+        try:
+            owner_loop.call_soon_threadsafe(
+                self._schedule_on_owner_loop,
+                coro,
+                label,
+            )
+        except (RuntimeError, AttributeError, TypeError, ValueError):
+            close_awaitable(coro)
+            return False, "owner_loop_unavailable"
+        return True, "bound_owner_loop"
 
 
 _router: DegradationRepairRouter | None = None

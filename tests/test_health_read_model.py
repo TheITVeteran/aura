@@ -43,6 +43,31 @@ def test_read_model_normalizes_retry_bounds():
     assert model.config.retry_max_s == 0.05
 
 
+def test_read_model_supports_named_snapshot_identity():
+    model = HealthSnapshotReadModel(
+        lambda: {"healthy": True},
+        lambda: {"healthy": False},
+        config=HealthReadModelConfig(
+            refresh_interval_s=1.0,
+            schema_version="aura.integrity.snapshot.v1",
+            metadata_key="integrity_read_model",
+            worker_name_prefix="AuraIntegritySnapshot",
+            incident_prefix="integrity-refresh",
+            log_label="Integrity snapshot",
+        ),
+    )
+
+    assert model.start() is True
+    _wait_until(lambda: model.read().get("healthy") is True)
+    payload = model.read()
+
+    assert "health_read_model" not in payload
+    assert payload["integrity_read_model"]["schema_version"] == (
+        "aura.integrity.snapshot.v1"
+    )
+    assert payload["integrity_read_model"]["fresh"] is True
+
+
 def test_read_model_never_joins_blocked_collector_and_keeps_one_worker():
     started = threading.Event()
     release = threading.Event()

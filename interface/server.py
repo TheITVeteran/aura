@@ -408,8 +408,13 @@ async def lifespan(app: FastAPI):
     else:
         logger.debug("EventBridge task already running; skipping redundant spawn.")
 
+    from core.resilience.degradation_repair import get_degradation_repair_router
     from interface.routes import system as system_routes
 
+    get_degradation_repair_router().bind_owner_loop(
+        asyncio.get_running_loop(),
+        replace=True,
+    )
     system_routes.start_health_read_model()
     logger.info("Aura Server online — %s", version_string("full"))
     try:

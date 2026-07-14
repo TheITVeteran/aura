@@ -21,6 +21,10 @@ class HealthReadModelConfig:
     retry_base_s: float = 2.0
     retry_max_s: float = 30.0
     schema_version: str = "aura.health.snapshot.v1"
+    metadata_key: str = "health_read_model"
+    worker_name_prefix: str = "AuraHealthSnapshot"
+    incident_prefix: str = "health-refresh"
+    log_label: str = "Health snapshot"
 
     def normalized(self) -> HealthReadModelConfig:
         refresh = max(0.05, float(self.refresh_interval_s))
@@ -32,6 +36,12 @@ class HealthReadModelConfig:
             retry_base_s=retry_base,
             retry_max_s=max(retry_base, float(self.retry_max_s)),
             schema_version=str(self.schema_version or "aura.health.snapshot.v1"),
+            metadata_key=str(self.metadata_key or "health_read_model"),
+            worker_name_prefix=str(
+                self.worker_name_prefix or "AuraHealthSnapshot"
+            ),
+            incident_prefix=str(self.incident_prefix or "health-refresh"),
+            log_label=str(self.log_label or "Health snapshot"),
         )
 
 
@@ -161,7 +171,7 @@ class HealthSnapshotReadModel:
             worker = threading.Thread(
                 target=self._run_refresh,
                 args=(epoch, generation, now),
-                name=f"AuraHealthSnapshot-{generation}",
+                name=f"{self._config.worker_name_prefix}-{generation}",
                 daemon=True,
             )
             self._active_thread = worker
@@ -173,7 +183,8 @@ class HealthSnapshotReadModel:
             payload = self._collector()
             if not isinstance(payload, dict):
                 raise TypeError(
-                    f"health collector returned {type(payload).__name__}, expected dict"
+                    f"{self._config.log_label.lower()} collector returned "
+                    f"{type(payload).__name__}, expected dict"
                 )
         except Exception as exc:  # noqa: BLE001 - terminal worker boundary
             self._finish_failure(epoch, generation, started_at, exc)
@@ -215,7 +226,8 @@ class HealthSnapshotReadModel:
             self._clear_active_locked(generation)
         if recovered:
             logger.info(
-                "Health snapshot refresh recovered incident %s after %d failed refreshes",
+                "%s refresh recovered incident %s after %d failed refreshes",
+                self._config.log_label,
                 recovered[0],
                 recovered[1],
             )
@@ -244,7 +256,8 @@ class HealthSnapshotReadModel:
             failure_count = self._consecutive_failures
         log = logger.warning if first_failure else logger.debug
         log(
-            "Health snapshot refresh incident %s failed (streak=%d): %s",
+            "%s refresh incident %s failed (streak=%d): %s",
+            self._config.log_label,
             incident_id,
             failure_count,
             exc,
@@ -255,7 +268,7 @@ class HealthSnapshotReadModel:
         if first_failure:
             self._incident_sequence += 1
             self._active_incident_id = (
-                f"health-refresh-{self._incident_sequence:06d}"
+                f"{self._config.incident_prefix}-{self._incident_sequence:06d}"
             )
         self._consecutive_failures += 1
         self._total_failures += 1
@@ -288,7 +301,8 @@ class HealthSnapshotReadModel:
         self._timed_out_generation = self._active_generation
         self._total_timeouts += 1
         self._record_failure_locked(
-            f"TimeoutError: health refresh exceeded {self._config.collection_timeout_s:.3f}s",
+            f"TimeoutError: {self._config.log_label.lower()} refresh exceeded "
+            f"{self._config.collection_timeout_s:.3f}s",
             now=now,
         )
         return True
@@ -377,12 +391,13 @@ class HealthSnapshotReadModel:
             }
         if timed_out:
             logger.warning(
-                "Health snapshot refresh incident %s exceeded %.3fs; serving %s snapshot",
+                "%s refresh incident %s exceeded %.3fs; serving %s snapshot",
+                self._config.log_label,
                 metadata.get("incident_id"),
                 self._config.collection_timeout_s,
                 metadata.get("serving"),
             )
-        payload["health_read_model"] = metadata
+        payload[self._config.metadata_key] = metadata
         return payload
 
 

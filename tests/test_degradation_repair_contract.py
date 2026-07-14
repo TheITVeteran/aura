@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
+
+import pytest
 
 from core.resilience.degradation_repair import (
     DegradationRepairRouter,
@@ -178,7 +181,8 @@ def test_record_degradation_updates_health_incident_and_repair_route(monkeypatch
     assert len(autonomous.requests) == 1
 
 
-def test_degradation_router_sends_warnings_to_immune_and_safe_repair():
+@pytest.mark.asyncio
+async def test_degradation_router_sends_warnings_to_immune_and_safe_repair():
     from core.resilience.autonomous_repair_executor import (
         set_autonomous_repair_executor_for_tests,
     )
@@ -208,8 +212,90 @@ def test_degradation_router_sends_warnings_to_immune_and_safe_repair():
     finally:
         set_autonomous_repair_executor_for_tests(None)
 
+    for _ in range(20):
+        if immune.events:
+            break
+        await asyncio.sleep(0)
+
     assert action.self_modification_status == "dispatched"
     assert action.autonomous_repair_status == "scheduled"
     assert action.immune_status == "scheduled"
     assert self_modification.calls[0]["context"]["error_already_logged"] is True
     assert autonomous.requests[0].subsystem == "cognitive_engine"
+    assert len(immune.events) == 1
+
+
+def test_degradation_router_defers_immunity_without_an_owner_loop():
+    immune = FakeImmune()
+    router = DegradationRepairRouter(
+        service_getter=lambda name: {"adaptive_immune_system": immune}.get(name),
+        cooldown_seconds=0.0,
+    )
+
+    action = router.route(
+        record=_record(subsystem="desktop_access", severity="warning"),
+        error=TimeoutError("probe timed out"),
+    )
+
+    assert action.immune_status == "deferred:no_owner_loop"
+    assert immune.events == []
+
+
+@pytest.mark.asyncio
+async def test_degradation_router_bridges_worker_thread_to_bound_owner_loop():
+    immune = FakeImmune()
+    router = DegradationRepairRouter(
+        service_getter=lambda name: {"adaptive_immune_system": immune}.get(name),
+        cooldown_seconds=0.0,
+    )
+    assert router.bind_owner_loop() is True
+
+    action = await asyncio.to_thread(
+        router.route,
+        record=_record(subsystem="health_worker", severity="warning"),
+        error=RuntimeError("worker degradation"),
+    )
+    for _ in range(20):
+        if immune.events:
+            break
+        await asyncio.sleep(0)
+
+    assert action.immune_status == "scheduled"
+    assert len(immune.events) == 1
+
+
+@pytest.mark.asyncio
+async def test_temporary_worker_loop_cannot_replace_bound_owner_loop():
+    owner_loop = asyncio.get_running_loop()
+
+    class LoopRecordingImmune(FakeImmune):
+        observed_loop = None
+
+        async def observe_event(self, event, **kwargs):
+            self.observed_loop = asyncio.get_running_loop()
+            return await super().observe_event(event, **kwargs)
+
+    immune = LoopRecordingImmune()
+    router = DegradationRepairRouter(
+        service_getter=lambda name: {"adaptive_immune_system": immune}.get(name),
+        cooldown_seconds=0.0,
+    )
+    assert router.bind_owner_loop(owner_loop) is True
+
+    def route_from_temporary_loop():
+        async def run_route():
+            return router.route(
+                record=_record(subsystem="health_snapshot", severity="warning"),
+                error=RuntimeError("temporary-loop degradation"),
+            )
+
+        return asyncio.run(run_route())
+
+    action = await asyncio.to_thread(route_from_temporary_loop)
+    for _ in range(20):
+        if immune.events:
+            break
+        await asyncio.sleep(0)
+
+    assert action.immune_status == "scheduled"
+    assert immune.observed_loop is owner_loop

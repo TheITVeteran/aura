@@ -27,18 +27,17 @@ The quality score passed to FinetunePipe:
            - 0.2 * (1 - confidence)        (uncertain responses = weaker signal)
 """
 from __future__ import annotations
-import os
-from core.runtime.errors import record_degradation
-
-from core.utils.task_tracker import get_task_tracker
 
 import json
 import logging
+import os
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Deque, Dict, List, Optional
+
+from core.runtime.errors import record_degradation
+from core.utils.task_tracker import get_task_tracker
 
 logger = logging.getLogger("Aura.CRSMLoraBridge")
 
@@ -59,7 +58,7 @@ class CapturedMoment:
     hedonic_before: float       # hedonic score before inference
     hedonic_after: float        # hedonic score after inference (set retroactively)
     crsm_hidden_norm: float     # L2 norm of CRSM hidden state (felt intensity)
-    processing_context: Dict[str, object] = field(default_factory=dict)
+    processing_context: dict[str, object] = field(default_factory=dict)
     quality_score: float = 0.0  # computed after hedonic_after is set
     flushed: bool = False
 
@@ -71,17 +70,17 @@ class CRSMLoraBridge:
     """
 
     def __init__(self):
-        self._buffer: Deque[CapturedMoment] = deque(maxlen=MAX_BUFFER_SIZE)
-        self._pending: Optional[CapturedMoment] = None  # awaiting hedonic_after
+        self._buffer: deque[CapturedMoment] = deque(maxlen=MAX_BUFFER_SIZE)
+        self._pending: CapturedMoment | None = None  # awaiting hedonic_after
         self._capture_count: int = 0
         self._flush_count: int = 0
         self._total_flushed: int = 0
-        self._status_cache: tuple[float, Dict] | None = None
+        self._status_cache: tuple[float, dict] | None = None
         PERSIST_PATH.parent.mkdir(parents=True, exist_ok=True)
         logger.info("CRSMLoraBridge online — experience → substrate loop active.")
 
-    def _capture_processing_context(self) -> Dict[str, object]:
-        context: Dict[str, object] = {}
+    def _capture_processing_context(self) -> dict[str, object]:
+        context: dict[str, object] = {}
         try:
             from core.container import ServiceContainer
 
@@ -201,7 +200,7 @@ class CRSMLoraBridge:
         except (TypeError, ValueError):
             return default
 
-    def get_status(self, *, force_refresh: bool = False) -> Dict:
+    def get_status(self, *, force_refresh: bool = False) -> dict:
         ttl = self._status_cache_ttl_s()
         now = time.monotonic()
         if not force_refresh and ttl > 0.0 and self._status_cache is not None:
@@ -222,14 +221,27 @@ class CRSMLoraBridge:
             ),
             "last_processing_context": self._buffer[-1].processing_context if self._buffer else {},
         }
-        # Loop-closure verification: is captured experience actually being trained
-        # into weights and persisted, or just accumulating?
+        # Loop-closure verification can hash and parse the training corpus. Normal
+        # status readers consume the prewarmed integrity snapshot so inference and
+        # HTTP callers never perform that work inline. Training/diagnostic callers
+        # retain an explicit force-refresh path for current transaction proof.
         try:
-            from core.consciousness.crsm_loop_monitor import get_crsm_loop_monitor
+            if force_refresh:
+                from core.consciousness.crsm_loop_monitor import get_crsm_loop_monitor
 
-            status["loop"] = get_crsm_loop_monitor().loop_state()
+                status["loop"] = get_crsm_loop_monitor().loop_state()
+                status["loop_read_model"] = {"serving": "forced_current"}
+            else:
+                from core.runtime.integrity_audit import read_integrity_audit
+
+                integrity = read_integrity_audit()
+                status["loop"] = integrity.get("crsm_loop") or None
+                status["loop_read_model"] = dict(
+                    integrity.get("integrity_read_model") or {}
+                )
         except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
             status["loop"] = None
+            status["loop_read_model"] = {"serving": "unavailable"}
         if ttl > 0.0:
             self._status_cache = (now, dict(status))
         return status
@@ -347,7 +359,7 @@ class CRSMLoraBridge:
 
 # ── Singleton ──────────────────────────────────────────────────────────────────
 
-_bridge: Optional[CRSMLoraBridge] = None
+_bridge: CRSMLoraBridge | None = None
 
 
 def get_crsm_lora_bridge() -> CRSMLoraBridge:
