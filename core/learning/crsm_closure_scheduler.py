@@ -71,7 +71,10 @@ class CRSMClosureScheduler:
         # A 32B CRSM delta fuse peaks well above the resident model; require
         # genuine headroom before we ever start one. Conservative by default.
         self.min_free_gb = float(_env_int("AURA_CRSM_AUTOCLOSE_MIN_FREE_GB", 40))
-        self.train_timeout_s = float(_env_int("AURA_CRSM_AUTOCLOSE_TIMEOUT_S", 3600))
+        # A 32B CRSM delta at the default 600 iters plus the fuse can run
+        # 60-90 min; a timeout below that wastes the whole pass. Budget 3h and
+        # let AURA_CRSM_DELTA_ITERS shorten the run rather than the clock.
+        self.train_timeout_s = float(_env_int("AURA_CRSM_AUTOCLOSE_TIMEOUT_S", 3 * 3600))
         self._state_path = (
             Path(os.getenv("AURA_STATE_DIR", str(Path.home() / ".aura" / "run")))
             / "crsm_closure_state.json"
