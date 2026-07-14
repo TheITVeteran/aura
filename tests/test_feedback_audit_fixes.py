@@ -955,7 +955,11 @@ def test_degraded_events_forward_schedules_async_on_error(monkeypatch):
             return DummyOrchestrator()
         return default
 
-    monkeypatch.setattr("core.container.ServiceContainer.get", staticmethod(fake_get))
+    # degraded_events resolves the orchestrator via get_runtime_service.
+    monkeypatch.setattr(
+        "core.runtime.service_registry.get_runtime_service",
+        lambda name, default=None: fake_get(name, default),
+    )
 
     de_mod._forward_to_error_intelligence(
         ("sub", "reason", "warning", "background_degraded"),

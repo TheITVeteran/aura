@@ -661,7 +661,11 @@ async def record_conversation_experience(
         state_obj = getattr(repo, "_current", None) if repo is not None else None
 
     exact_agent_id = resolve_exact_partner_id(state_obj)
-    user_id = exact_agent_id or "local_user"
+    # Fall through to the full resolver (relationship graph / known
+    # entities), not a bare 'local_user' — otherwise a known partner named
+    # in the graph is written to episodic memory and the entity graph as an
+    # anonymous 'local_user' edge, forking their identity.
+    user_id = exact_agent_id or resolve_primary_user_id(state_obj)
     importance = _conversation_importance(user_input)
     emotional_valence = _conversation_emotional_valence(user_input)
     analysis = analyze_turn(user_input)

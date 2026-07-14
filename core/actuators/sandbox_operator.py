@@ -23,9 +23,20 @@ class SandboxOperator:
     Allows the model to synthesize, run, and debug its own arbitrary tools.
     """
     def __init__(self, sandbox_dir: str | None = None):
+        from core.runtime.flags import FlagKind, declare
+
+        configured_dir = str(
+            declare(
+                "AURA_SANDBOX_DIR",
+                kind=FlagKind.STRING,
+                default="",
+                description="Root directory for synthesized-tool sandbox execution",
+                owner="core.actuators.sandbox_operator",
+            ).value()
+        )
         self.sandbox_dir = os.path.abspath(
             sandbox_dir
-            or os.getenv("AURA_SANDBOX_DIR")
+            or configured_dir
             or os.path.join(tempfile.gettempdir(), "aura_sandbox")
         )
         os.makedirs(self.sandbox_dir, exist_ok=True)

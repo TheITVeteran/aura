@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, cast
 
 from core.governance_context import (
     governance_runtime_active,
@@ -350,7 +350,7 @@ class FileWriteGateway:
         fd = os.open(str(target), flags, _validated_permissions(permissions))
         try:
             os.fchmod(fd, _validated_permissions(permissions))
-            return os.fdopen(fd, mode)
+            return cast("BinaryIO", os.fdopen(fd, mode))
         except (OSError, ValueError):
             os.close(fd)
             raise
